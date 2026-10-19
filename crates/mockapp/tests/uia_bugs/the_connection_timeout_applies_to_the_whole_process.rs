@@ -3,12 +3,13 @@
 //! transaction timeouts a client sets belong to its process, and the last
 //! setting by any client is what every client reads; and Verbatim's
 //! workaround, that `verbatim_uia` sets both once per process, to
-//! `CALL_TIMEOUT`, during UIA's first-time setup, and nothing else sets
+//! `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT`, during UIA's first-time
+//! setup, and nothing else sets
 //! them.
 
 use std::sync::mpsc;
 
-use verbatim_uia::CALL_TIMEOUT;
+use verbatim_uia::{CONNECTION_TIMEOUT, TRANSACTION_TIMEOUT};
 use windows::Win32::UI::Accessibility::{IUIAutomation, IUIAutomation2};
 use windows::core::Interface;
 
@@ -63,13 +64,21 @@ pub fn timeouts_set_through_one_client_are_read_by_another() {
     other.join().expect("the other client's thread");
 }
 
-/// The first client `verbatim_uia` makes in a process reads both timeouts
-/// as `CALL_TIMEOUT`, which UIA's first-time setup set, in place of UIA's
-/// defaults of 2 and 20 seconds.
+/// The first client `verbatim_uia` makes in a process reads the timeouts
+/// as `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT`, which UIA's
+/// first-time setup set, in place of UIA's defaults of 2 and 20 seconds.
 pub fn the_first_client_in_a_process_has_verbatims_timeouts() {
     let uia = support::client();
-    let call_timeout = u32::try_from(CALL_TIMEOUT.as_millis()).expect("the timeout fits");
-    assert_eq!(timeouts(uia.client()), (call_timeout, call_timeout));
+    let milliseconds = |timeout: std::time::Duration| {
+        u32::try_from(timeout.as_millis()).expect("the timeout fits")
+    };
+    assert_eq!(
+        timeouts(uia.client()),
+        (
+            milliseconds(CONNECTION_TIMEOUT),
+            milliseconds(TRANSACTION_TIMEOUT)
+        )
+    );
 }
 
 /// Timeouts a test sets through one client are kept while `verbatim_uia`

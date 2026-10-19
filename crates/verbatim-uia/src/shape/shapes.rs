@@ -694,6 +694,22 @@ impl SuggestionsRefresh {
 }
 
 uia_shape! {
+    /// Which providers serve an element, cached with an outpost's lookup by
+    /// handle or of the focused element and read only by the proxy rule
+    /// (`docs/design/listener-without-connections.md`, section 5).
+    pub struct ProviderOrigin {
+        gates: none;
+        groups {}
+        properties {
+            /// The provider's description, naming each provider's module.
+            description: UIA_ProviderDescriptionPropertyId => string,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+uia_shape! {
     /// An element normalized to itself or its nearest ancestor that is a
     /// window (NVDA's `getNearestWindowHandle`).
     pub struct WindowLookup {

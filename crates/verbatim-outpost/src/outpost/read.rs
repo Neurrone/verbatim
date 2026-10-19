@@ -43,8 +43,9 @@ pub(super) const MAX_ANCESTOR_HOPS: u32 = 64;
 /// How long reading a focus's containers may take before the focus is
 /// reported with them unknown: a focus is spoken late at worst, never lost
 /// because its containers took too long to read. Checked between the
-/// walk's calls, each of which UIA ends after its call timeout
-/// ([`verbatim_uia::CALL_TIMEOUT`]), so a walk ends within this budget and
+/// walk's calls, each of which UIA ends after its connection or
+/// transaction timeout ([`verbatim_uia::CONNECTION_TIMEOUT`],
+/// [`verbatim_uia::TRANSACTION_TIMEOUT`]), so a walk ends within this budget and
 /// one call; the worker's deadline for the entry, enforced by abandonment,
 /// bounds the rest.
 const ENRICHMENT_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);

@@ -17,7 +17,7 @@
 //!   `Invoke`/`Toggle`/legacy-`DoDefaultAction` pattern ladder.
 //! - [`BoundedClient`] — a client on a thread of its own, for an operation
 //!   made of many provider calls (a search, a dialog's text) that needs a
-//!   deadline of its own: UIA's timeouts ([`CALL_TIMEOUT`]) bound each call,
+//!   deadline of its own: UIA's timeouts ([`TRANSACTION_TIMEOUT`]) bound each call,
 //!   not the operation, and a call cannot be cancelled, so an operation
 //!   that passes its deadline is abandoned with its thread.
 //! - [`Registration`] — a property-change, automation-event, or notification
@@ -59,6 +59,7 @@
 //! - [`text`] — the same kind of wrappers over the text pattern and its
 //!   ranges (milestone M4), which the outpost's text protocol reads with.
 
+mod answered;
 mod bounded;
 mod cache;
 pub mod calls;
@@ -81,7 +82,8 @@ pub mod text;
 pub use bounded::{BoundedClient, Unanswered};
 pub use checks::{CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting};
 pub use client::{
-    AncestorParts, AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, release_mta_usage,
+    AncestorParts, AncestorStops, AncestorWalk, CONNECTION_TIMEOUT, TRANSACTION_TIMEOUT, Uia,
+    release_mta_usage,
 };
 pub use com::{
     element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id, timed_out,

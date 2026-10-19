@@ -1106,7 +1106,7 @@ fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
         .expect("the listener's cache request");
     let window = client
         .uia
-        .window_element(hwnd.0 as isize, &listener)
+        .any_window_element(hwnd.0 as isize, &listener)
         .expect("mockapp's window element, through the MSAA proxy");
     let (judged, calls) = outpost.listener_read(&window);
     let Judged::Dropped(reason) = judged else {

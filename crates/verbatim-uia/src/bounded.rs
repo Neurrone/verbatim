@@ -4,7 +4,7 @@
 //! UIA's timeouts bound each call UIA makes into a provider, not an
 //! operation: a `FindFirst` over a window's subtree, or a dialog's text
 //! gathered from its children, makes many provider calls, and waits a full
-//! [`CALL_TIMEOUT`](crate::CALL_TIMEOUT) for each one a held application
+//! [`TRANSACTION_TIMEOUT`](crate::TRANSACTION_TIMEOUT) for each one a held application
 //! does not answer (`docs/uia-bugs.md`, "A timeout bounds each provider
 //! call, not an operation"). A UIA call cannot be cancelled, so such an operation is run on
 //! a [`BoundedClient`]'s thread, with its own client, while the caller

@@ -3,11 +3,13 @@
 //! provider call (`hold`) until the test releases it, and each limit is
 //! shown to end the wait while the call is still held.
 //!
-//! - A property read, one provider call, ends at UIA's call timeout, which
-//!   the process's first client set ([`verbatim_uia::CALL_TIMEOUT`]).
+//! - A property read, one provider call on a held element, ends at UIA's
+//!   transaction timeout, which the process's first client set
+//!   ([`verbatim_uia::TRANSACTION_TIMEOUT`]).
 //! - A search, many provider calls, ends at its own deadline on a
-//!   [`BoundedClient`], before any call timeout, its thread abandoned.
-//! - A subscription's move that does not finish is abandoned when the
+//!   [`BoundedClient`], before any transaction timeout, its thread abandoned.
+//! - A subscription's move whose registrations each wait out UIA's
+//!   connection timeout and do not finish is abandoned when the
 //!   registration is settled, at [`MOVE_DEADLINE`], and its thread
 //!   replaced.
 //!
@@ -23,19 +25,19 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use verbatim_uia::{
-    BoundedClient, CALL_TIMEOUT, ElementExt as _, MOVE_DEADLINE, Node, Part, PropertyEvent,
-    Registration, Scope, Shape, Subscription, Uia, Unanswered,
+    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, MOVE_DEADLINE, Node, Part, PropertyEvent,
+    Registration, Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
 };
 use windows::Win32::UI::Accessibility::UIA_NamePropertyId;
 
-/// How long a search may take in the test: well under UIA's call timeout,
+/// How long a search may take in the test: well under UIA's transaction timeout,
 /// so the search's end is its deadline's, not UIA's.
 const SEARCH_DEADLINE: Duration = Duration::from_secs(1);
 
 /// A property read held in the provider fails with `UIA_E_TIMEOUT` once
-/// UIA's call timeout has passed, while the call is still held: one
+/// UIA's transaction timeout has passed, while the call is still held: one
 /// timeout, not UIA's default transaction timeout of 20 seconds.
-fn a_held_property_read_ends_at_the_call_timeout() {
+fn a_held_property_read_ends_at_the_transaction_timeout() {
     common::init_com();
     let title = common::unique_title("mockapp-held-read");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -71,14 +73,14 @@ fn a_held_property_read_ends_at_the_call_timeout() {
         "the read ended by UIA's timeout: {error}"
     );
     assert!(
-        elapsed >= CALL_TIMEOUT && elapsed < CALL_TIMEOUT * 2,
-        "the read ended after one call timeout: {elapsed:?}"
+        elapsed >= TRANSACTION_TIMEOUT && elapsed < TRANSACTION_TIMEOUT * 2,
+        "the read ended after one transaction timeout: {elapsed:?}"
     );
     app.quit();
 }
 
 /// A search held in the provider is given up at its own deadline, before
-/// UIA's call timeout would end any of its calls, and its thread is
+/// UIA's transaction timeout would end any of its calls, and its thread is
 /// abandoned; the abandoned thread ends once the call is released.
 fn a_held_search_ends_at_its_deadline() {
     common::init_com();
@@ -119,7 +121,7 @@ fn a_held_search_ends_at_its_deadline() {
         "{found:?}"
     );
     assert!(
-        elapsed >= SEARCH_DEADLINE && elapsed < CALL_TIMEOUT,
+        elapsed >= SEARCH_DEADLINE && elapsed < TRANSACTION_TIMEOUT,
         "the search ended at its deadline: {elapsed:?}"
     );
     assert!(!held.is_empty(), "a call of the search was held");
@@ -129,19 +131,28 @@ fn a_held_search_ends_at_its_deadline() {
     app.quit();
 }
 
-/// A subscription moved onto the subtrees of three held windows, each of a
-/// mockapp of its own, their elements looked up before the holds, so that
-/// its move makes three registrations that each wait out UIA's call
-/// timeout, longer in all than [`MOVE_DEADLINE`], is abandoned when settled
-/// once the deadline has passed, and replaced; closing the registration
-/// waits for the abandoned thread, which ends once the calls are released.
-/// (One held call alone ends at the call timeout, within the deadline.)
+/// A subscription moved onto the subtrees of [`HELD_WINDOWS`] held
+/// windows, each of a mockapp of its own, their elements looked up before
+/// the holds, so that its move makes that many registrations that each
+/// wait out UIA's connection timeout, longer in all than
+/// [`MOVE_DEADLINE`], is abandoned when settled once the deadline has
+/// passed, and replaced; closing the registration waits for the abandoned
+/// thread, which ends once the calls are released. (One held registration
+/// alone ends at the connection timeout, within the deadline.)
 /// The windows are three applications' because the move's own calls are
 /// its registrations, and registering on a second element of an
 /// application whose registration timed out makes no call there.
+/// How many held windows a move registers on: one more than the
+/// connection timeouts that fit in [`MOVE_DEADLINE`].
+const HELD_WINDOWS: u32 = 6;
+
 fn a_held_subscription_move_is_abandoned_at_its_deadline() {
+    assert!(
+        CONNECTION_TIMEOUT * (HELD_WINDOWS - 1) >= MOVE_DEADLINE,
+        "the held registrations outlast the move's deadline"
+    );
     common::init_com();
-    let mut apps: Vec<common::MockApp> = (0..3)
+    let mut apps: Vec<common::MockApp> = (0..HELD_WINDOWS)
         .map(|index| {
             let title = common::unique_title(&format!("mockapp-held-move-{index}"));
             common::spawn("small.json", "uia", &title)
@@ -176,11 +187,11 @@ fn a_held_subscription_move_is_abandoned_at_its_deadline() {
     let elapsed = started.elapsed();
     assert!(!held.is_empty(), "a call of the move was held");
     assert!(
-        elapsed >= MOVE_DEADLINE && elapsed < MOVE_DEADLINE + CALL_TIMEOUT,
+        elapsed >= MOVE_DEADLINE && elapsed < MOVE_DEADLINE + CONNECTION_TIMEOUT,
         "the settle ended at the move's deadline: {elapsed:?}"
     );
     assert_eq!(registration.abandoned(), 1);
-    // The abandoned move went on to the second and the third.
+    // The abandoned move went on to the others.
     for app in &mut apps[1..] {
         assert!(!app.held().is_empty(), "a call of the move was held");
     }
@@ -196,8 +207,8 @@ fn a_held_subscription_move_is_abandoned_at_its_deadline() {
 fn main() {
     harness::run_isolated(&[
         (
-            "a_held_property_read_ends_at_the_call_timeout",
-            a_held_property_read_ends_at_the_call_timeout,
+            "a_held_property_read_ends_at_the_transaction_timeout",
+            a_held_property_read_ends_at_the_transaction_timeout,
         ),
         (
             "a_held_search_ends_at_its_deadline",

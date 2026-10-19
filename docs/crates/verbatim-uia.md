@@ -5,17 +5,23 @@ threads, and the arbitration probe.
 
 Public API:
 
-- `CALL_TIMEOUT` — five seconds, UIA's connection timeout and transaction
-  timeout for the whole process. Both are settings of the process, not of
+- `CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT` — two seconds, UIA's
+  connection timeout (a lookup by handle, the focused element's lookup,
+  and the waits of UIA's own focus tracking), and five seconds, its
+  transaction timeout (each call on a held element), for the whole
+  process. Both are settings of the process, not of
   a client (experiment E1 in `docs/design/focus-pipeline.md`), so UIA's
   first-time setup sets them once, through its own client, and creating a
   client changes neither (measured 2026-10-11: a new client, on the same
   thread or another, reads whatever was set last). Each bounds one call
   into a provider, not an operation: a search makes many calls and waits a
   full timeout for each that is not answered, which is why
-  `BoundedClient` exists. Five seconds is under the outpost worker's
-  ten-second deadline and over the two to three seconds a starting
-  application takes to answer.
+  `BoundedClient` exists. Two seconds is UIA's default and NVDA's, which
+  bounds how long a hung window named in a focus `WinEvent` holds the
+  listener's UIA events (`docs/design/listener-without-connections.md`,
+  section 5); five seconds is under the outpost worker's ten-second
+  deadline and over the two to three seconds a starting application
+  takes to answer a call.
 - `BoundedClient` — a client on a thread of its own for an operation made
   of many provider calls that needs a deadline of its own (a `FindFirst`
   search, a dialog's text). `run(deadline, operation)` queues the
@@ -32,13 +38,23 @@ Public API:
   counts them.
 - `Uia` — a per-thread client (one COM apartment, one `IUIAutomation`
   instance; nothing COM crosses threads), each of whose calls waits up to
-  `CALL_TIMEOUT` for the application. Every fetch takes a shape's
+  `CONNECTION_TIMEOUT` to connect to the application and
+  `TRANSACTION_TIMEOUT` for its answer. Every fetch takes a shape's
   `Request` and returns its `Cached` (the shape module, below), or a
   `Live` when nothing of the element is read: `window_element(hwnd,
-  request)` (a window's element, `ElementFromHandleBuildCache`),
+  request)` (a window's element, `ElementFromHandleBuildCache`, for an
+  outpost's own application's window with a provider; refused, by the
+  proxy rule, when only `UIAutomationCore.dll`'s own proxies serve the
+  element returned, as a lookup of an application busy past the
+  connection timeout returns, read from the provider description cached
+  with the lookup, an empty one counting as answered),
+  `any_window_element(hwnd, request)` (the same lookup without the proxy
+  rule, for a window with no provider, whose element is UIA's proxies by
+  nature),
   `request_fixed::<S>()` (the request of a shape with no gates; local),
   `request::<S>(gates)` (the request of a shape for the gates given;
-  local), `focused(request)` (the focused element as a shape),
+  local), `focused(request)` (the focused element as a shape, under the
+  proxy rule as `window_element` is),
   `window_live(hwnd)` (a window's element with no cache, for a caller
   that reads nothing of it, only searches under it: `ElementFromHandle`,
   one call), `children(parent, request)` (`parent`'s raw-view children,
@@ -99,7 +115,7 @@ Public API:
   caller's out-of-time check (`out_of_time`) or a hop that UIA's
   transaction timeout ended (`AncestorWalk::OutOfTime`); any other failed
   hop is the root. The check is made between hops, each of which UIA ends after
-  `CALL_TIMEOUT`. The walk never steps across the process boundary:
+  `TRANSACTION_TIMEOUT`. The walk never steps across the process boundary:
   before each hop from an element whose own window (`element_window` for
   the first, the cached handle after) has a parent window, or visible
   owner, that another process serves (`parent_across_process_boundary`),
@@ -411,7 +427,8 @@ Public API:
   cost an application.
 - A registration's thread has a watchdog, the
   outpost worker's rule: when a move has taken `MOVE_DEADLINE` (ten
-  seconds, two call timeouts) by the time the registration is next
+  seconds, two transaction timeouts, covering a registration's wait, which
+  follows the connection timeout) by the time the registration is next
   retargeted or settled, the thread is abandoned and a new one, with its
   own client and the same parts, registers on the newest scope and group;
   `settle()` then returns without waiting for it. An abandoned thread's

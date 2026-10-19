@@ -53,7 +53,7 @@
 //! directly, the calls run unguarded.
 //!
 //! The wait has no time limit of its own: each guarded call is bounded by
-//! UIA's own timeouts ([`crate::CALL_TIMEOUT`]), and a thread waits for the
+//! UIA's own timeouts ([`crate::CONNECTION_TIMEOUT`], [`crate::TRANSACTION_TIMEOUT`]), and a thread waits for the
 //! calls queued ahead of it, each within those limits (section 20.5). A
 //! mutex whose holder ended while holding it is taken and reported
 //! abandoned: it guards no data that could be left inconsistent.

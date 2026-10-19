@@ -132,7 +132,7 @@ All of that process's UIA event delivery waits, every application's events and n
 - Each focus WinEvent naming the hung window pays the full wait again: three held 5,814 ms at 1,000 ms, one held 1,824 ms.
 - Each client object in the process that holds a focus registration runs its own focus tracking on the same thread: two client objects with a desktop handler each made four calls (1,820 ms at 500 ms).
 - The first measurements (focus pipeline section 12.11, 2026-10-10) saw 14,800 ms in a 15-second stall, and a name change at a desktop-wide registration not delivered within 25 s, with clients whose connection timeout Verbatim then set to 10 seconds.
-- Verbatim now sets the connection timeout to 5 seconds (`CALL_TIMEOUT`), so the listener's hold is inferred to be up to about 10 seconds per focus WinEvent.
+- Verbatim sets the connection timeout to UIA's default 2 seconds (`CONNECTION_TIMEOUT`), so the listener's hold is up to about 4 seconds per focus WinEvent, as measured at 2,000 ms above.
 
 #### Not affected
 
@@ -190,7 +190,7 @@ Not measured across processes; each process has its own value (inferred from the
 
 #### Workarounds that worked
 
-- Verbatim's choice: both timeouts are set once per process, to `CALL_TIMEOUT` (5 seconds), during UIA's first-time setup in `crates/verbatim-uia/src/client.rs`, and nothing else sets them. Tests that need a different value change it for the whole test process and run alone (`TRANSACTION_TIMEOUT` in `crates/mockapp/tests/remote_ops.rs`, and the runner's process per test).
+- Verbatim's choice: both timeouts are set once per process, to `CONNECTION_TIMEOUT` (2 seconds) and `TRANSACTION_TIMEOUT` (5 seconds), during UIA's first-time setup in `crates/verbatim-uia/src/client.rs`, and nothing else sets them. Tests that need a different value change it for the whole test process and run alone (`TRANSACTION_TIMEOUT` in `crates/mockapp/tests/remote_ops.rs`, and the runner's process per test).
 
 #### Workarounds that didn't work
 
@@ -270,7 +270,7 @@ Single reads under the same timeout fail as expected: `CurrentName` after 1,095 
 
 #### Workarounds that worked
 
-None is built. Proposed: treat a registration that took longer than the timeout as failed and make it again (section 11, E-TT), or, for a hand-over of an application's focus, trust a registration only once its first event has arrived (section 13.2). The first leaves the failed registration to remove, and no safe time to remove it is known: a removal during the gap fails and leaves it delivering, nothing marks the gap's end, removal after the gap was tried at one time only, 3 seconds after the stall's end (e58, 5 trials), and whether a removal retried after `UIA_E_TIMEOUT` succeeds is not tested. The second rests on what e57 shows: a registration that timed out does start to deliver, and it loses no event raised after its first delivered one. That first event comes no sooner than about 2 seconds after the registration returned. Until then the registration loses every event raised, so whatever served the window before must go on serving it, and an application that raises no event never confirms the registration. Whether a second registration made after the stall ends delivers at once is not tested.
+None is built. With the outposts' connection timeout at 2 seconds, Verbatim's exposure was measured on new File Explorer windows, which are busy 2.7 to 3.9 seconds as they open: in 20 runs (`measure_repeat_explorer` and `explorer_folder_window`, 10 each, 2026-10-19) the outposts made 3,621 registrations, the longest 32 ms, and 3,602 removals, every one successful (`docs/design/listener-without-connections.md`, section 10, step 8), because an outpost registers on an element only once its focus has been read. Proposed: treat a registration that took longer than the timeout as failed and make it again (section 11, E-TT), or, for a hand-over of an application's focus, trust a registration only once its first event has arrived (section 13.2). The first leaves the failed registration to remove, and no safe time to remove it is known: a removal during the gap fails and leaves it delivering, nothing marks the gap's end, removal after the gap was tried at one time only, 3 seconds after the stall's end (e58, 5 trials), and whether a removal retried after `UIA_E_TIMEOUT` succeeds is not tested. The second rests on what e57 shows: a registration that timed out does start to deliver, and it loses no event raised after its first delivered one. That first event comes no sooner than about 2 seconds after the registration returned. Until then the registration loses every event raised, so whatever served the window before must go on serving it, and an application that raises no event never confirms the registration. Whether a second registration made after the stall ends delivers at once is not tested.
 
 #### Workarounds that didn't work
 
@@ -282,7 +282,7 @@ Not known.
 
 #### Reproduction test
 
-`a_group_registered_while_its_provider_is_held_reports_success` in `crates/mockapp/tests/uia_bugs/a_registration_that_times_out_reports_success.rs` reproduces it, with both timeouts at 500 ms: the registration returns success while mockapp still holds its provider in `FragmentRoot`. `a_read_while_its_provider_is_held_fails`, beside it, shows the case under "Not affected": a name read, held in `GetPropertyValue`, fails with `UIA_E_TIMEOUT`. Each passed 20 of 20 runs.
+`a_group_registered_while_its_provider_is_held_reports_success` in `crates/mockapp/tests/uia_bugs/a_registration_that_times_out_reports_success.rs` reproduces it, with both timeouts at 500 ms: the registration returns success while mockapp still holds its provider in `FragmentRoot`. `a_read_while_its_provider_is_held_fails`, beside it, shows the case under "Not affected": a name read, held in `GetPropertyValue`, fails with `UIA_E_TIMEOUT` while mockapp still holds its provider, with the transaction timeout at 500 ms and the connection timeout set longer than the test waits, so the transaction timeout is what bounds a read on a held element (e59). Each passed 20 of 20 runs.
 
 No test reproduces the loss of events raised after the stall. Nothing marks the end of the gap: in e58, with no event raised, nothing reached the application in the 6 seconds after the stall's end. So a test cannot wait for evidence that the gap is over, and without that it cannot tell an event lost in the gap from one delivered late. The loss rests on e57 and e58.
 

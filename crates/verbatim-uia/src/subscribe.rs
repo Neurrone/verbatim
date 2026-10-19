@@ -120,8 +120,12 @@ pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 8] = [
 
 /// How long a registration's thread may take over one move (registering on
 /// a new scope and removing what is no longer in it) before it is abandoned
-/// and replaced: two of UIA's call timeouts ([`crate::CALL_TIMEOUT`]), so a
-/// move whose calls each answer within the timeout is never abandoned.
+/// and replaced: two of UIA's transaction timeouts
+/// ([`crate::TRANSACTION_TIMEOUT`]), which also cover a registration's
+/// wait, since a registration on a busy application returns after the
+/// connection timeout ([`crate::CONNECTION_TIMEOUT`]; `docs/uia-bugs.md`,
+/// "A registration that times out reports success"), so a move whose
+/// calls each answer within the timeouts is never abandoned.
 pub const MOVE_DEADLINE: Duration = Duration::from_secs(10);
 
 /// Where a registration listens.

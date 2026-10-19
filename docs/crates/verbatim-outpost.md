@@ -645,8 +645,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     queues an `Abandoned` answer, so the watchdog never waits on the
     writer.
   - Time limits inside an entry (`docs/design/focus-pipeline.md`, section
-    6). Each UIA call ends after
-    `verbatim_uia::CALL_TIMEOUT`, five seconds, set once for the process.
+    6). Each UIA call ends after `verbatim_uia::CONNECTION_TIMEOUT`, two
+    seconds, when it connects, or `verbatim_uia::TRANSACTION_TIMEOUT`,
+    five seconds, on a held element, both set once for the process.
     A focus's ancestor walk checks its two-second budget
     (`ENRICHMENT_BUDGET`, by the outpost's clock) between calls, so it
     ends within the budget and one call. The one operation made of many provider calls, a UIA
@@ -1984,8 +1985,8 @@ process's exit, as the supervisor logs it (`shut down cleanly`,
 the focus listener's once. The only thing that can make it take longer is a call in
 progress, which the outpost lets finish. UIA ends a call to a provider
 that never answers by its transaction timeout, and one to a provider that
-cannot be reached by its connection timeout, both `CALL_TIMEOUT`, five
-seconds, set once per process; this bounds a classic call and a remote
+cannot be reached by its connection timeout, `TRANSACTION_TIMEOUT`, five
+seconds, and `CONNECTION_TIMEOUT`, two, set once per process; this bounds a classic call and a remote
 operation's `Execute` alike (mockapp's `remote_ops` and `time_limits`
 tests pin it). A search makes several calls, each waiting up to that
 long, so the limit was left at 21 seconds when the timeouts were

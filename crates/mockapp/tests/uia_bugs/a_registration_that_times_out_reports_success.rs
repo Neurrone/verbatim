@@ -29,20 +29,34 @@ use windows::core::{AgileReference, HRESULT, Interface};
 use crate::common;
 use crate::support::{self, Handler};
 
-/// The connection and transaction timeouts these tests set, short so that
+/// The connection and transaction timeouts these tests set short, so that
 /// the waits are too.
 const TIMEOUT: Duration = Duration::from_millis(500);
 
 /// mockapp's window element, read before anything is held, on a client
 /// whose process's timeouts are both [`TIMEOUT`].
 fn window_with_short_timeouts(hwnd: HWND) -> AgileReference<IUIAutomationElement> {
+    window_with_timeouts(hwnd, TIMEOUT, TIMEOUT)
+}
+
+/// mockapp's window element, read before anything is held, on a client
+/// whose process's connection timeout is `connection` and transaction
+/// timeout `transaction`.
+fn window_with_timeouts(
+    hwnd: HWND,
+    connection: Duration,
+    transaction: Duration,
+) -> AgileReference<IUIAutomationElement> {
     let uia = support::client();
     let client: IUIAutomation2 = uia.client().cast().expect("an IUIAutomation2 client");
-    let milliseconds = u32::try_from(TIMEOUT.as_millis()).expect("the timeout fits");
+    let milliseconds =
+        |timeout: Duration| u32::try_from(timeout.as_millis()).expect("the timeout fits");
     // SAFETY: a live client; a plain integer.
-    unsafe { client.SetConnectionTimeout(milliseconds) }.expect("the connection timeout set");
+    unsafe { client.SetConnectionTimeout(milliseconds(connection)) }
+        .expect("the connection timeout set");
     // SAFETY: as above.
-    unsafe { client.SetTransactionTimeout(milliseconds) }.expect("the transaction timeout set");
+    unsafe { client.SetTransactionTimeout(milliseconds(transaction)) }
+        .expect("the transaction timeout set");
     AgileReference::new(&support::element(uia.client(), hwnd)).expect("an agile reference")
 }
 
@@ -98,10 +112,13 @@ pub fn a_group_registered_while_its_provider_is_held_reports_success() {
 }
 
 /// A read of the window's name, its provider held, fails with
-/// `UIA_E_TIMEOUT` while the provider is still held.
+/// `UIA_E_TIMEOUT` while the provider is still held. The connection
+/// timeout is set longer than the test waits for the read, so the read's
+/// end shows the transaction timeout bounds a read on a held element
+/// (e59).
 pub fn a_read_while_its_provider_is_held_fails() {
     let (mut app, hwnd) = support::mockapp("timeout-read", "uia");
-    let window = window_with_short_timeouts(hwnd);
+    let window = window_with_timeouts(hwnd, common::WAIT_TIMEOUT * 4, TIMEOUT);
     app.hold();
     let read = on_a_thread(window, |_, window| {
         // SAFETY: a live element; a cross-process read.

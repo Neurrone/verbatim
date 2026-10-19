@@ -160,11 +160,12 @@ of 0.3 and 3.5 ms; at first sight, waits of a few milliseconds and the
 first held fact to `Ready` unchanged; idle wake-ups and processor time
 within the runs' own spread.
 
-UIA's connection and transaction timeouts are five seconds in every
-Verbatim process (`verbatim_uia::CALL_TIMEOUT`), set once by UIA's
-first-time setup, where they were UIA's default 20 seconds for a
-transaction and ten for a connection. A call that the application answers
-costs the same; only a call it does not answer ends sooner.
+UIA's connection timeout is two seconds, UIA's default and NVDA's, and
+its transaction timeout five, in every Verbatim process
+(`verbatim_uia::CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT`), set once
+by UIA's first-time setup, where the transaction timeout was UIA's
+default 20 seconds. A call that the application answers costs the same;
+only a call it does not answer ends sooner.
 
 ## Cold and steady state
 
@@ -406,9 +407,12 @@ verdict for the focus's window rather than asking the window again.
   only the application's outpost may send one into it (section 2 of the
   same design).
 - Today: 5 UIA calls, all the listener's, whichever way the outpost walks
-  to its own copy of the element. 302 provider calls in all with the
-  outpost's remote walk, 415 with its classic walk, the subscriptions'
-  moves included. The listener's one remote operation made 4 calls and
+  to its own copy of the element. 303 provider calls in all with the
+  outpost's remote walk, 416 with its classic walk, the subscriptions'
+  moves included; one of them is the `GetPropertyValue` that the
+  provider description cached with the outpost's lookup of the route's
+  window costs, for the proxy rule (`docs/design/listener-without-connections.md`,
+  section 5), in the same call. The listener's one remote operation made 4 calls and
   331 provider calls; its classic read with the keyboard focus and the
   nearest window asked again made 7 (2026-10-19, section 10, step 6).
 - The application's lock (`verbatim_uia::lock`), taken around the calls
@@ -465,8 +469,8 @@ focus waits behind the events queued before it as NVDA's does.
 - Today: 6 UIA calls and 1 window message, all the listener's: the
   sender's nearest window, its plain keyboard focus read, its refreshed
   cache, and three steps, to the group, to the window, and to the
-  desktop's root, where the walk stops; and the raw probe. 345 provider
-  calls in all with the outpost's remote walk, 411 with its classic walk.
+  desktop's root, where the walk stops; and the raw probe. 346 provider
+  calls in all with the outpost's remote walk, 412 with its classic walk.
   The raw probe costs mockapp one `WM_GETOBJECT`, with wParam 0, where
   `UiaHasServerSideProvider` cost it two, first with a nonzero wParam and
   then with wParam 0, and seven more provider calls as UIA connected (five
@@ -514,8 +518,8 @@ The focus lands on the list itself, and its selected item is read with it.
   windowless element, and the selected item's two (`SelectionPattern2`'s
   `FirstSelectedItem`, fetched with the `Selection` pattern, and
   `BuildUpdatedCache` on it).
-- Today: 7 UIA calls, all the listener's. 338 provider calls in all with
-  the outpost's remote walk, 408 with its classic walk. The listener's
+- Today: 7 UIA calls, all the listener's. 339 provider calls in all with
+  the outpost's remote walk, 409 with its classic walk. The listener's
   one remote operation made 4 calls, 343 provider calls.
 - Target: the minimum.
 
@@ -526,8 +530,8 @@ The focus moves from one list item to the next.
 - Minimum: 5 UIA calls, as for any steady-state focus change on a
   windowless element.
 - Today: 5 UIA calls, the same as a steady-state focus change; the walk
-  stops at the list, which the previous chain holds. 317 provider calls
-  in all with the outpost's remote walk, 478 with its classic walk. The
+  stops at the list, which the previous chain holds. 318 provider calls
+  in all with the outpost's remote walk, 479 with its classic walk. The
   listener's one remote operation made 4 calls, 346 provider calls.
 - Target: the minimum.
 
