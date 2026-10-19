@@ -19,9 +19,10 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use std::os::windows::io::AsRawHandle;
+use std::os::windows::process::CommandExt;
 
 use windows::Win32::Foundation::{HWND, WAIT_OBJECT_0};
-use windows::Win32::System::Threading::WaitForSingleObject;
+use windows::Win32::System::Threading::{DETACHED_PROCESS, WaitForSingleObject};
 use windows::core::PCWSTR;
 
 /// Joins this thread to a COM apartment, required before any MSAA call that
@@ -342,7 +343,10 @@ pub fn now_us() -> u64 {
 
 /// Spawns `mockapp --fixture <fixture> --backend <backend> --title <title>`,
 /// waits (with [`WAIT_TIMEOUT`]) for it to print `ready`, and returns the
-/// guard. Panics with a clear message if the process never becomes ready.
+/// guard. mockapp runs with no console (`DETACHED_PROCESS`), whatever the
+/// test runner's, so a console fixture's window has no console host to
+/// read: its provider is the process whose threads created it, mockapp
+/// (`verbatim_uia::served_by`). Panics with a clear message if the process never becomes ready.
 #[must_use]
 pub fn spawn(fixture: &str, backend: &str, title: &str) -> MockApp {
     spawn_with(fixture, backend, title, &[])
@@ -376,6 +380,7 @@ fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> Mock
         .arg("--title")
         .arg(title)
         .args(extra)
+        .creation_flags(DETACHED_PROCESS.0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

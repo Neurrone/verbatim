@@ -494,10 +494,7 @@ Public API:
   whether `pid` serves the window: its provider process, or for such a
   console window whether it is one of `pid`'s threads' windows by
   `EnumThreadWindows`, which goes by the thread that created it, so a
-  console host's outpost still recognizes its own console window; and a
-  window of the console class that its owner created on its own threads,
-  as a test application's is, is that owner's, no console host serving
-  it. The
+  console host's outpost still recognizes its own console window. The
   tests' console comes from the dev-only crate `verbatim-test-console`.
 - `parent_across_process_boundary(hwnd)` — the window above `hwnd` in
   UIA's raw view when another process serves it, by

@@ -66,7 +66,9 @@ is the same window with a terminal's text, and
 `tests/fixtures/console_terminal_button.json` adds a native push button
 and serves the root's MSAA client, so a focus can move from the text
 area, read through UIA, to a Win32 control read through MSAA, as a Find
-dialog takes it). A tree view's `window_class` registers it under another
+dialog takes it; the tests start mockapp with no console, so no console
+host can be read for that window and mockapp, whose threads created it,
+serves it, whatever console the test runner has). A tree view's `window_class` registers it under another
 name first, a superclass whose `WM_GETOBJECT` answers the client object
 with comctl32's tree view proxy (`CreateStdAccessibleProxyW`), as Windows
 Forms names and wraps its tree view. With `state_images`, every item gets
