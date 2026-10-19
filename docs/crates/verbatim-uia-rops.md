@@ -176,7 +176,8 @@ read), the runtime ids the caller already knows, a depth limit, the
 `verbatim_uia::Fill<Ancestor>` every returned element is filled by (the
 shape's properties for the gates its request was built with: every gate
 on for the listener, the theme's for the outpost), an out-of-time check
-(`out_of_time`), which only the classic walk makes, between hops,
+(`out_of_time`), which only the classic walk makes, before each of its
+calls after the first, what a skipped call would have read then unknown,
 and `nearest_window`, the element's nearest window when the caller has
 already found it, which the classic walk then does not look up. Since the input is typed, its
 control type is always in its cache, and the live read of it the query
