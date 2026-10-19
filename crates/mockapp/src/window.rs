@@ -484,15 +484,6 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         acknowledge("applied");
         return true;
     }
-    if let Command::StallUntilRelease(reports, after) = command {
-        if let Some(after) = after
-            && !apply(hwnd, context, *after)
-        {
-            return false;
-        }
-        crate::held::stall_now_until_release(reports);
-        return true;
-    }
     if let Command::StallAfterFocusRead(reads) = command {
         crate::held::arm_stall_after_focus_read(reads);
         acknowledge("applied");

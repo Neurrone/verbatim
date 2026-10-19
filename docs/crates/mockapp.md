@@ -184,56 +184,16 @@ provider call, whichever client makes it, prints `held <method>` on
 stdout as it begins and waits until `release`, so a test knows a client's
 call is in progress and decides when it ends; acknowledged `applied`),
 `stall-after-focus-read <n>` (the `n`th read of a node's
-`HasKeyboardFocus` from now, once answered, stalls the window thread
-until `release`, holding and naming messages as `stall-until-release
-posted` does, as the listener's remote operation's arrival is posted to
-it; acknowledged `applied` when armed; its `release` is readied as the
-command is read, as `stall-until-release`'s is; the lock tests' hold of
-`docs/design/focus-pipeline.md`, section 20.7), `stall-until-release` (the window thread stalls at once,
-or, with `stall-until-release after <command>`, once it has applied the
-command in the same turn, as an application raises an event and then
-hangs, until `release`, answering no client meanwhile, as a hung
-application's does: a hook on the thread (`WH_CALLWNDPROC`), called before any window
-procedure is given a sent message, holds every message sent from another
-thread to any window on the thread, mockapp's own, the native controls',
-COM's `OleMainThreadWndClass` and the input method's, until `release`,
-printing `stall message sent <message> to <class>`, the message
-(`WM_GETOBJECT` with its object id, a registered message's name, or its
-number) and the class of the window it was sent to, so a test waits for
-exactly the call it expects; the thread goes on taking sent messages, each
-held inside the one before, so they are answered in the reverse order of
-their arrival; three kinds are answered and not reported: the system's
-broadcasts, the messages Windows documents as sent to every top-level
-window, on the tests' desktops too, such as `WM_SETTINGCHANGE` when a
-screen reader starts or stops, `WM_THEMECHANGED`, `WM_DISPLAYCHANGE`,
-`WM_POWERBROADCAST` and `WM_DWMCOMPOSITIONCHANGED` (`held::BROADCASTS`
-lists them all; it is a known set, so any other message sent to a stalled
-thread is held and reported, and a test that does not expect it fails on
-the line), a message the thread sends itself, as it may while it answers a
-broadcast, and a message whose sender waits for no answer
-(`SendNotifyMessage`), such as a registered message broadcast to every
-window; it prints `stall started` as it begins and nothing after
-`release`'s acknowledgement; its `release` is readied as its command is
-read, so a `release` written after the command ends the stall even before
-it has begun, and it then prints nothing at all;
-`stall-until-release posted` also names the first message posted to the
-thread whose number is not one of mockapp's own posts (`WM_APP` to
-`WM_APP + 0xFF`), a timer's (`WM_TIMER` to 0x0118) or a hot key's
-(`WM_HOTKEY`), once, as `stall message posted <id> to <class>`, as a
-remote operation's arrival is posted, read without taking it;
-`stall-until-release quiet` takes no message at all and says nothing
-between its start and its end, for a test whose evidence comes from
-elsewhere; a wait that fails prints `stall failed: <reason>`, and the
-thread then takes no message until `release`; a stall takes a message
-only when one is sent to it, so, as for a real hang, Windows counts its
-windows as hung (`IsHungAppWindow`) once it has taken none for 5 seconds,
-and a sender using `SMTO_ABORTIFHUNG` gives up on them at once from then
-on; the UIA fault tests' hung and busy windows),
+`HasKeyboardFocus` from now, once answered, stalls the window thread,
+which takes no message until `release`, printing `stall started` as it
+begins and `stall message arrived` once when the first message is posted
+or sent to it meanwhile; acknowledged `applied` when armed; the lock tests'
+hold of `docs/design/focus-pipeline.md`, section 20.7),
 `menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
 the focus listener reads as a focus on it; an automation event, which UIA
 delivers on a desktop where no window has the keyboard focus, as it does
 not deliver a focus event; UIA-only), `release` (lets the held call, or
-a stall that lasts until release, go on; applied and acknowledged `applied` by the stdin thread
+either hold, go on; applied and acknowledged `applied` by the stdin thread
 itself, since the window thread is the one held), and `quit`.
 
 Every other command is acknowledged on stdout by the window thread once it
