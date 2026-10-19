@@ -11,6 +11,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use verbatim_model::{
@@ -103,6 +104,10 @@ struct Entry {
     /// caret watch waits for a caret key's evidence: it does not keep
     /// Verbatim from being idle ([`RequestTable::outstanding`]).
     passive: bool,
+    /// When Core ends the request itself if the outpost has not answered
+    /// ([`RequestTable::expire`]); `None` for a request only its outpost or
+    /// the outpost's end answers.
+    deadline: Option<Instant>,
 }
 
 /// Outstanding queries, keyed by request id. Owned by the reducer thread.
@@ -115,7 +120,19 @@ pub(crate) struct RequestTable {
 impl RequestTable {
     /// Records a query about to be sent to `outpost` and returns its id.
     pub(crate) fn begin(&mut self, outpost: OutpostId, asker: Asker) -> RequestId {
-        self.insert(outpost, asker, false)
+        self.insert(outpost, asker, false, None)
+    }
+
+    /// Records a query about to be sent to `outpost` that Core ends itself,
+    /// as failed, if no outcome has come by `deadline`
+    /// ([`expire`](Self::expire)), and returns its id.
+    pub(crate) fn begin_until(
+        &mut self,
+        outpost: OutpostId,
+        asker: Asker,
+        deadline: Instant,
+    ) -> RequestId {
+        self.insert(outpost, asker, false, Some(deadline))
     }
 
     /// Records a passive request about to be sent to `outpost`, one that
@@ -125,10 +142,16 @@ impl RequestTable {
     /// key that moved nothing leaves open until its bound, does not keep
     /// Verbatim from being idle.
     pub(crate) fn begin_passive(&mut self, outpost: OutpostId, asker: Asker) -> RequestId {
-        self.insert(outpost, asker, true)
+        self.insert(outpost, asker, true, None)
     }
 
-    fn insert(&mut self, outpost: OutpostId, asker: Asker, passive: bool) -> RequestId {
+    fn insert(
+        &mut self,
+        outpost: OutpostId,
+        asker: Asker,
+        passive: bool,
+        deadline: Option<Instant>,
+    ) -> RequestId {
         self.next += 1;
         let id = RequestId(self.next);
         self.entries.insert(
@@ -137,6 +160,7 @@ impl RequestTable {
                 outpost,
                 asker,
                 passive,
+                deadline,
             },
         );
         id
@@ -179,6 +203,37 @@ impl RequestTable {
             .filter_map(|id| self.entries.remove(&id))
             .flat_map(|entry| deliver(entry.asker, QueryOutcome::Gone))
             .collect()
+    }
+
+    /// Ends every request whose deadline is `now` or earlier as failed,
+    /// returning the reducer inputs that produces. A later answer from its
+    /// outpost finds no request and is dropped.
+    pub(crate) fn expire(&mut self, now: Instant) -> Vec<Input> {
+        let expired: Vec<RequestId> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| entry.deadline.is_some_and(|deadline| deadline <= now))
+            .map(|(id, _)| *id)
+            .collect();
+        expired
+            .into_iter()
+            .filter_map(|id| self.entries.remove(&id))
+            .flat_map(|entry| {
+                deliver(
+                    entry.asker,
+                    QueryOutcome::Failed("no answer came by the request's deadline".to_owned()),
+                )
+            })
+            .collect()
+    }
+
+    /// The earliest deadline of an outstanding request
+    /// ([`begin_until`](Self::begin_until)).
+    pub(crate) fn next_deadline(&self) -> Option<Instant> {
+        self.entries
+            .values()
+            .filter_map(|entry| entry.deadline)
+            .min()
     }
 
     /// The outstanding tree dump named `ticket`, and the outpost it went
@@ -618,6 +673,54 @@ mod tests {
             }]
         ));
         assert_eq!(table.len(), 1);
+    }
+
+    /// A shell items request whose outcomes are recorded in order.
+    fn shell_items(
+        outcomes: &std::sync::Arc<std::sync::Mutex<Vec<Option<Vec<verbatim_gui::ShellItem>>>>>,
+    ) -> Asker {
+        let kept = std::sync::Arc::clone(outcomes);
+        Asker::ShellItems {
+            deliver: Box::new(move |items| kept.lock().expect("outcomes").push(items)),
+        }
+    }
+
+    #[test]
+    fn a_shell_items_request_answered_before_its_deadline_is_not_expired() {
+        let outcomes = std::sync::Arc::default();
+        let mut table = RequestTable::default();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let id = table.begin_until(OutpostId(1), shell_items(&outcomes), deadline);
+        assert_eq!(table.next_deadline(), Some(deadline));
+        table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
+        );
+        assert_eq!(table.expire(deadline), [] as [verbatim_model::Input; 0]);
+        assert_eq!(table.next_deadline(), None);
+        assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(Vec::new())]);
+    }
+
+    #[test]
+    fn a_shell_items_request_unanswered_at_its_deadline_gets_nothing_and_its_late_answer_is_dropped()
+     {
+        let outcomes = std::sync::Arc::default();
+        let mut table = RequestTable::default();
+        let now = Instant::now();
+        let deadline = now + std::time::Duration::from_secs(5);
+        let id = table.begin_until(OutpostId(1), shell_items(&outcomes), deadline);
+        table.begin(OutpostId(1), navigation(7));
+        table.expire(now);
+        assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
+        table.expire(deadline);
+        table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::ShellItems(Vec::new())),
+        );
+        assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
+        assert_eq!(table.len(), 1, "a request without a deadline is kept");
     }
 
     #[test]

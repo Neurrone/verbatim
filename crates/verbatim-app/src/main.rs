@@ -17,6 +17,7 @@ mod latency;
 mod live;
 mod requests;
 mod screen_reader_flag;
+mod shell_requests;
 mod single_instance;
 mod speech_events;
 mod terminal_settings;
@@ -1005,7 +1006,7 @@ struct ReducerThread<'a> {
     focus_now_wanted: HashMap<Pid, Pid>,
     /// The shell's items wanted by the list dialogs, each asked of the
     /// taskbar's process once its outpost is ready.
-    shell_items_wanted: Vec<(Pid, ShellItemKind, verbatim_gui::DeliverShellItems)>,
+    shell_items_wanted: shell_requests::ShellItemsWanted,
     /// The views last sent to the supervisor.
     views: (Option<Pid>, BTreeSet<OutpostId>),
     /// The highest numbered harness key handled so far.
@@ -1063,51 +1064,7 @@ impl ReducerThread<'_> {
                 outpost,
                 target_pid,
                 reason,
-            } => {
-                tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
-                // Everything it sent is ahead of its end: in the idle
-                // barrier's round, its end is its answer.
-                self.barrier.ended(outpost);
-                // An outpost that failed, crashed or killed, is replaced by
-                // the supervisor whatever application it served, at once or
-                // after its backoff (`docs/design/focus-pipeline.md`,
-                // section 19.5). For the attention application, or the
-                // focus's when that is another (a Settings page's content,
-                // inside ApplicationFrameHost's window), the replacement is
-                // asked for the focus once it is ready, which is taken
-                // silently if the user already heard it; the reducer's own
-                // view of attention decides, rather than the supervisor's,
-                // which follows it by a message. A retired outpost, or one
-                // whose application exited, is not replaced. A console
-                // host's outpost reports for the console's client. A given
-                // spare that failed before its `Ready` loses nothing: its
-                // application's held facts went to the next incarnation,
-                // which reports them, so nothing is asked.
-                let reincarnated = self.reincarnated.remove(&outpost);
-                let replaced = !reincarnated
-                    && !matches!(reason, EndReason::Retired | EndReason::TargetExited);
-                let application = self.live.application_of(outpost).unwrap_or(target_pid);
-                if replaced
-                    && (self.state.attention() == Some(application)
-                        || self.state.focus_source() == Some(application))
-                {
-                    self.focus_now_wanted.insert(target_pid, application);
-                }
-                if self.live.ended(outpost) {
-                    self.context
-                        .outposts
-                        .lock()
-                        .expect("outposts lock")
-                        .remove(&target_pid);
-                }
-                self.apply(Input::OutpostEnded { outpost });
-                for input in self.requests.outpost_ended(outpost) {
-                    self.apply(input);
-                }
-                if let Some(server) = self.context.server_slot.get() {
-                    server.broadcast_outpost_ended(target_pid, reason.to_string());
-                }
-            }
+            } => self.on_outpost_ended(outpost, target_pid, reason),
             OutpostMessage::Reincarnated {
                 outpost,
                 next,
@@ -1147,7 +1104,7 @@ impl ReducerThread<'_> {
                 // will answer for it, so its focus is no longer awaited,
                 // nor the shell's items.
                 self.focus_now_wanted.remove(&target_pid);
-                self.no_shell_items_from(target_pid);
+                self.shell_items_wanted.refuse(target_pid);
                 let mut outposts = self.context.outposts.lock().expect("outposts lock");
                 if outposts
                     .get(&target_pid)
@@ -1365,8 +1322,8 @@ impl ReducerThread<'_> {
                     }
                     self.focus_now(outpost, application);
                 }
-                for (_, kind, deliver) in self.take_shell_items_wanted(target_pid) {
-                    self.ask_shell_items(outpost, kind, deliver);
+                for wanted in self.shell_items_wanted.take(target_pid) {
+                    self.ask_shell_items(outpost, wanted.kind, wanted.deliver, wanted.deadline);
                 }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
@@ -1795,30 +1752,36 @@ impl ReducerThread<'_> {
     /// shell's items of `kind`, starting one when there is none, so
     /// verbatim.exe makes no UIA connection into the shell's windows
     /// (`docs/design/listener-without-connections.md`, decision 9). The
-    /// outcome goes to `deliver`; `None` when there is no taskbar or its
-    /// process gets no outpost.
+    /// outcome goes to `deliver`, exactly once; `None` when there is no
+    /// taskbar, when its process gets no outpost, or when no answer has
+    /// come by [`shell_requests::SHELL_ITEMS_DEADLINE`] from now.
     fn shell_items(&mut self, kind: ShellItemKind, deliver: verbatim_gui::DeliverShellItems) {
         let Some(pid) = taskbar_process() else {
             tracing::warn!(?kind, "the taskbar window was not found");
             deliver(None);
             return;
         };
+        let deadline = Instant::now() + shell_requests::SHELL_ITEMS_DEADLINE;
         if let Some(outpost) = self.live.ready(pid) {
-            self.ask_shell_items(outpost, kind, deliver);
+            self.ask_shell_items(outpost, kind, deliver, deadline);
         } else {
-            self.shell_items_wanted.push((pid, kind, deliver));
+            self.shell_items_wanted.push(pid, kind, deliver, deadline);
             self.context.supervisor.ensure_spawned(pid);
         }
     }
 
-    /// Sends `outpost` the shell items query.
+    /// Sends `outpost` the shell items query, answered with nothing by Core
+    /// if no outcome has come by `deadline`.
     fn ask_shell_items(
         &mut self,
         outpost: OutpostId,
         kind: ShellItemKind,
         deliver: verbatim_gui::DeliverShellItems,
+        deadline: Instant,
     ) {
-        let id = self.requests.begin(outpost, Asker::ShellItems { deliver });
+        let id = self
+            .requests
+            .begin_until(outpost, Asker::ShellItems { deliver }, deadline);
         let command = SupervisorToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
@@ -1828,29 +1791,85 @@ impl ReducerThread<'_> {
         self.send(outpost, id, command);
     }
 
-    /// Answers every shell items request waiting for the process `pid`'s
-    /// outpost, which will not come, with nothing.
-    fn no_shell_items_from(&mut self, pid: Pid) {
-        for (_, kind, deliver) in self.take_shell_items_wanted(pid) {
-            tracing::warn!(
-                ?kind,
-                %pid,
-                "the taskbar's process has no outpost; the shell's items are not listed"
-            );
-            deliver(None);
+    /// Handles the end of `outpost`, which watched `target_pid`, for
+    /// `reason`.
+    fn on_outpost_ended(&mut self, outpost: OutpostId, target_pid: Pid, reason: EndReason) {
+        tracing::info!(%outpost, %target_pid, %reason, "outpost ended");
+        // Everything it sent is ahead of its end: in the idle
+        // barrier's round, its end is its answer.
+        self.barrier.ended(outpost);
+        // An outpost that failed, crashed or killed, is replaced by
+        // the supervisor whatever application it served, at once or
+        // after its backoff (`docs/design/focus-pipeline.md`,
+        // section 19.5). For the attention application, or the
+        // focus's when that is another (a Settings page's content,
+        // inside ApplicationFrameHost's window), the replacement is
+        // asked for the focus once it is ready, which is taken
+        // silently if the user already heard it; the reducer's own
+        // view of attention decides, rather than the supervisor's,
+        // which follows it by a message. A retired outpost, or one
+        // whose application exited, is not replaced. A console
+        // host's outpost reports for the console's client. A given
+        // spare that failed before its `Ready` loses nothing: its
+        // application's held facts went to the next incarnation,
+        // which reports them, so nothing is asked.
+        let reincarnated = self.reincarnated.remove(&outpost);
+        let replaced =
+            !reincarnated && !matches!(reason, EndReason::Retired | EndReason::TargetExited);
+        let application = self.live.application_of(outpost).unwrap_or(target_pid);
+        if replaced
+            && (self.state.attention() == Some(application)
+                || self.state.focus_source() == Some(application))
+        {
+            self.focus_now_wanted.insert(target_pid, application);
+        }
+        if self.live.ended(outpost) {
+            self.context
+                .outposts
+                .lock()
+                .expect("outposts lock")
+                .remove(&target_pid);
+        }
+        if !reincarnated && !replaced {
+            self.no_outpost_follows(target_pid);
+        }
+        self.apply(Input::OutpostEnded { outpost });
+        for input in self.requests.outpost_ended(outpost) {
+            self.apply(input);
+        }
+        if let Some(server) = self.context.server_slot.get() {
+            server.broadcast_outpost_ended(target_pid, reason.to_string());
         }
     }
 
-    /// The shell items wanted from the process `pid`, taken from the list.
-    fn take_shell_items_wanted(
-        &mut self,
-        pid: Pid,
-    ) -> Vec<(Pid, ShellItemKind, verbatim_gui::DeliverShellItems)> {
-        let (taken, kept) = std::mem::take(&mut self.shell_items_wanted)
+    /// Answers the shell items requests waiting for the outpost of `pid`,
+    /// whose outpost ended with no replacement, its application exited or
+    /// the outpost retired, with nothing, unless another of its outposts is
+    /// starting.
+    fn no_outpost_follows(&mut self, pid: Pid) {
+        if self.live.newest(pid).is_none() {
+            self.shell_items_wanted.refuse(pid);
+        }
+    }
+
+    /// The earliest time a shell items request is answered with nothing
+    /// if it has had no outcome by then.
+    fn next_deadline(&self) -> Option<Instant> {
+        self.shell_items_wanted
+            .next_deadline()
             .into_iter()
-            .partition(|(wanted, _, _)| *wanted == pid);
-        self.shell_items_wanted = kept;
-        taken
+            .chain(self.requests.next_deadline())
+            .min()
+    }
+
+    /// Answers every shell items request whose deadline is `now` or
+    /// earlier, still waiting for its outpost or for the outpost's answer,
+    /// with nothing.
+    fn expire(&mut self, now: Instant) {
+        self.shell_items_wanted.expire(now);
+        for input in self.requests.expire(now) {
+            self.apply(input);
+        }
     }
 
     /// Withdraws the tree dump named `ticket`, whose caller stopped
@@ -1914,7 +1933,7 @@ fn reducer_loop(
         requests: RequestTable::default(),
         live: LiveOutposts::default(),
         focus_now_wanted: HashMap::new(),
-        shell_items_wanted: Vec::new(),
+        shell_items_wanted: shell_requests::ShellItemsWanted::default(),
         views: (None, BTreeSet::new()),
         handled_input: 0,
         frames: context.supervisor.frames(),
@@ -1925,8 +1944,24 @@ fn reducer_loop(
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));
     thread.send_views();
-    while let Some(command) = command_rx.recv() {
-        thread.on_command(command);
+    loop {
+        // A shell items request's deadline wakes the thread; with none
+        // outstanding it waits for its next command alone.
+        let (command, due) = match thread.next_deadline() {
+            Some(due) => (
+                command_rx.recv_timeout(due.saturating_duration_since(Instant::now())),
+                Some(due),
+            ),
+            None => (command_rx.recv(), None),
+        };
+        thread.expire(Instant::now());
+        match command {
+            Some(command) => thread.on_command(command),
+            // The deadline passed with no command.
+            None if due.is_some_and(|due| Instant::now() >= due) => {}
+            // Every poster has gone.
+            None => break,
+        }
         thread.send_views();
         thread.advance_idle_barrier(&mut command_rx);
     }

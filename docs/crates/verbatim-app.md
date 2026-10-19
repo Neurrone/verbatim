@@ -460,8 +460,16 @@ knowing for review:
   owner, a local call), sends that process's ready outpost
   `Query::ShellItems` under `Asker::ShellItems`, or starts an outpost
   for it and sends the query once it is ready, and hands the outcome to
-  the dialog's delivery callback, `None` for any failure or when the
-  process gets no outpost. The GUI event thread speaks `GuiEvent::ShellItemGone`
+  the dialog's delivery callback, exactly once: the items, or `None` for
+  any failure, when the process gets no outpost (`NotWatched`, or an end
+  with no replacement while it starts), or when no answer has come five
+  seconds after the request (`shell_requests::SHELL_ITEMS_DEADLINE`, the
+  outpost's own deadline for the walk). The requests still waiting for an
+  outpost are `shell_requests::ShellItemsWanted`'s; a request sent is the
+  request table's, recorded with its deadline (`RequestTable::begin_until`),
+  so a late answer is dropped. The reducer thread waits for its next
+  command only until the earliest such deadline (`recv_timeout`), and
+  waits without one when none is outstanding. The GUI event thread speaks `GuiEvent::ShellItemGone`
   as queued text, when the list dialog finds its chosen item gone. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and shuts the outposts and the listener down cleanly through
