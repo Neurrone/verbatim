@@ -81,11 +81,16 @@ console window element, named and with the window role, which is the
 text area's parent (`eventHandler.doPreGainFocus`). Verbatim does the
 same (`docs/parity/focus-context.md`, "Window announcement on switching
 applications"). **matched (unverified)**, pending live checks.
-Different: when the event's thread cannot be opened, NVDA falls back to
-the window's own thread, which names the client, while Verbatim drops
-the event, so that no outpost but the console host's reads its window
-(Dickson, 2026-10-19; `docs/design/listener-without-connections.md`,
-section 10, step 3).
+Different: NVDA gives a console window's events to the client's app
+module whatever the event's thread, its object for the window taking
+the window's process, the client, rather than UIA's
+(`NVDAObjects/UIA/__init__.py` 2336 to 2346), and takes the window's
+thread from each event without opening it
+(`IAccessibleHandler/internalWinEventHandler.py` 151 to 153 and 266 to
+273); Verbatim routes them to the console host's outpost and drops them
+when the host cannot be read from the event's thread, so that no outpost
+but the console host's reads its window (Dickson, 2026-10-19;
+`docs/design/listener-without-connections.md`, section 10, step 3).
 
 ### A control's own focus with a focused child
 
