@@ -65,22 +65,15 @@ use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
 use windows::Win32::Foundation::{
-    CloseHandle, DUPLICATE_HANDLE_OPTIONS, DuplicateHandle, FILETIME, HANDLE, HANDLE_FLAG_INHERIT,
-    HANDLE_FLAGS, HWND, SetHandleInformation, WAIT_ABANDONED, WAIT_EVENT, WAIT_OBJECT_0,
-    WAIT_TIMEOUT,
+    DUPLICATE_HANDLE_OPTIONS, DuplicateHandle, FILETIME, HANDLE, HANDLE_FLAG_INHERIT, HANDLE_FLAGS,
+    SetHandleInformation, WAIT_ABANDONED, WAIT_EVENT, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows::Win32::System::Threading::{
     CreateMutexW, GetCurrentProcess, GetProcessTimes, INFINITE, MUTEX_MODIFY_STATE, OpenProcess,
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, ReleaseMutex,
     SYNCHRONIZATION_SYNCHRONIZE, WaitForSingleObject,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetWindowThreadProcessId};
 use windows::core::PCWSTR;
-
-/// The class of a console window, whose provider is the console host, the
-/// process of the window's thread, while `GetWindowThreadProcessId` names the
-/// console's client as its owner.
-const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
 
 /// One application's lock: the application's process id and creation time,
 /// which together name the process for as long as it runs, and a handle to
@@ -207,12 +200,14 @@ pub fn guarded<T>(name: &'static str, call: impl FnOnce() -> T) -> T {
 
 /// Runs `call`, a new connection to the window `hwnd` by its handle,
 /// holding this thread's lock when the window's provider process
-/// ([`provider_process`]) is the lock's application, and unguarded
+/// ([`crate::provider_process`]) is the lock's application, and unguarded
 /// otherwise: a connection to a window of another application takes no
 /// lock (section 20.9). `name` names the call in the log.
 pub fn guarded_window<T>(name: &'static str, hwnd: isize, call: impl FnOnce() -> T) -> T {
     match current() {
-        Some(lock) if provider_process(hwnd) == Some(lock.pid) => guarded_by(&lock, name, call),
+        Some(lock) if crate::provider::provider_process(hwnd) == Some(lock.pid) => {
+            guarded_by(&lock, name, call)
+        }
         _ => call(),
     }
 }
@@ -382,78 +377,6 @@ pub fn open_process(pid: u32) -> std::io::Result<(OwnedHandle, u64)> {
     Ok((process, created))
 }
 
-/// The process that serves UIA for the window `hwnd`: its owner by
-/// `GetWindowThreadProcessId`, except for a console window, whose owner by
-/// that call is the console's client while its provider is the console
-/// host. Windows names the client's thread for a console window too, so the
-/// host is read from the client instead ([`console_host_of`]). `None` for a
-/// window that no longer exists. Local calls only; a console window costs
-/// the client's lookup too.
-#[must_use]
-pub fn provider_process(hwnd: isize) -> Option<u32> {
-    let window = HWND(hwnd as *mut _);
-    let mut class = [0u16; 32];
-    // SAFETY: the buffer outlives the call, which writes at most its
-    // length; an invalid handle answers 0.
-    let length = unsafe { GetClassNameW(window, &mut class) };
-    let mut owner = 0u32;
-    // SAFETY: `owner` is a local; an invalid handle answers thread 0.
-    let thread = unsafe { GetWindowThreadProcessId(window, Some(&raw mut owner)) };
-    if thread == 0 {
-        return None;
-    }
-    let class = usize::try_from(length)
-        .ok()
-        .and_then(|length| class.get(..length))
-        .map(String::from_utf16_lossy);
-    if class.as_deref() == Some(CONSOLE_WINDOW_CLASS) {
-        return console_host_of(owner).or(Some(owner));
-    }
-    Some(owner)
-}
-
-#[link(name = "ntdll")]
-unsafe extern "system" {
-    /// `ntdll`'s `NtQueryInformationProcess`, for the one information
-    /// class the `windows` crate's features here do not reach.
-    fn NtQueryInformationProcess(
-        process: HANDLE,
-        class: u32,
-        information: *mut std::ffi::c_void,
-        length: u32,
-        returned: *mut u32,
-    ) -> i32;
-}
-
-/// `ProcessConsoleHostProcess`: the console host of a console's client.
-const PROCESS_CONSOLE_HOST_PROCESS: u32 = 49;
-
-/// The console host of the console client `client`, the process that
-/// serves its console window, or `None` when the client cannot be opened or
-/// has no console: `NtQueryInformationProcess`'s `ProcessConsoleHostProcess`,
-/// whose answer carries flags in its two low bits.
-fn console_host_of(client: u32) -> Option<u32> {
-    // SAFETY: OpenProcess with a query-only right fails safely; the handle
-    // is closed below.
-    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, client) }.ok()?;
-    let mut host = 0usize;
-    // SAFETY: `host` is a pointer-sized local, the class's answer; the
-    // handle is open with query access.
-    let status = unsafe {
-        NtQueryInformationProcess(
-            handle,
-            PROCESS_CONSOLE_HOST_PROCESS,
-            (&raw mut host).cast(),
-            u32::try_from(size_of::<usize>()).unwrap_or(0),
-            std::ptr::null_mut(),
-        )
-    };
-    // SAFETY: the handle opened above, closed once.
-    let _ = unsafe { CloseHandle(handle) };
-    let host = u32::try_from(host & !3).ok()?;
-    (status >= 0 && host != 0).then_some(host)
-}
-
 /// How a guarded call took its lock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Taken {
@@ -558,28 +481,18 @@ impl Drop for Held<'_> {
 
 #[cfg(test)]
 mod tests {
-    use std::cell::Cell;
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use windows::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
-    };
-    use windows::Win32::System::Threading::{
-        CREATE_SUSPENDED, CreateProcessW, DETACHED_PROCESS, PROCESS_INFORMATION, ResumeThread,
-        STARTF_USESHOWWINDOW, STARTUPINFOW,
-    };
-    use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DestroyWindow, DispatchMessageW, EVENT_OBJECT_NAMECHANGE, GetWindowTextW,
-        MSG, MsgWaitForMultipleObjects, OBJID_WINDOW, PM_REMOVE, PeekMessageW, QS_ALLINPUT,
-        SW_HIDE, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WS_OVERLAPPED,
+        CreateWindowExW, DestroyWindow, GetWindowThreadProcessId, WINDOW_EX_STYLE, WS_OVERLAPPED,
     };
-    use windows::core::{PWSTR, w};
+    use windows::core::w;
 
     use super::*;
+    use crate::provider_process;
+    use crate::test_console::Console;
 
     const WAIT: Duration = Duration::from_secs(10);
 
@@ -706,164 +619,5 @@ mod tests {
             locks_taken_connecting(&lock_of(std::process::id()), console.window),
             0
         );
-    }
-
-    thread_local! {
-        /// The title a console's window is waited for with, and the window
-        /// once its name changed to it.
-        static TITLE: RefCell<String> = const { RefCell::new(String::new()) };
-        static RENAMED: Cell<isize> = const { Cell::new(0) };
-    }
-
-    /// The `WinEvent` callback: notes the window whose name changed to the
-    /// title waited for.
-    unsafe extern "system" fn renamed(
-        _: HWINEVENTHOOK,
-        _: u32,
-        hwnd: HWND,
-        object: i32,
-        _: i32,
-        _: u32,
-        _: u32,
-    ) {
-        if object != OBJID_WINDOW.0 {
-            return;
-        }
-        let mut text = [0u16; 128];
-        // SAFETY: the buffer outlives the call, which writes at most its
-        // length.
-        let length = unsafe { GetWindowTextW(hwnd, &mut text) };
-        let text = String::from_utf16_lossy(&text[..usize::try_from(length).unwrap_or(0)]);
-        if TITLE.with(|title| *title.borrow() == text) {
-            RENAMED.with(|renamed| renamed.set(hwnd.0 as isize));
-        }
-    }
-
-    /// A console host the test starts, `conhost.exe` running PowerShell in
-    /// a hidden console window, in a job that ends both when dropped.
-    struct Console {
-        host: u32,
-        window: isize,
-        _job: OwnedHandle,
-    }
-
-    impl Console {
-        /// Starts the console and waits for the evidence that its client
-        /// runs in it: the window's title changed by the client, raised as a
-        /// `WinEvent` from the console host. The client is PowerShell, whose
-        /// `WindowTitle` sets the title exactly as given; `cmd.exe`'s `title`
-        /// command prefixes "Administrator: " when elevated, as GitHub's
-        /// runner is, so the title waited for never came there.
-        fn start() -> Self {
-            let title = format!("verbatim-lock-test-{}", std::process::id());
-            TITLE.with(|cell| cell.borrow_mut().clone_from(&title));
-            RENAMED.with(|renamed| renamed.set(0));
-            // SAFETY: an unnamed job with no security attributes.
-            let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }.expect("a job");
-            // SAFETY: just returned, owned by nothing else.
-            let job = unsafe { OwnedHandle::from_raw_handle(job.0) };
-            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
-            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            // SAFETY: `limits` is the structure the class names, sized.
-            unsafe {
-                SetInformationJobObject(
-                    HANDLE(job.as_raw_handle()),
-                    JobObjectExtendedLimitInformation,
-                    (&raw const limits).cast(),
-                    u32::try_from(size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>()).unwrap_or(0),
-                )
-            }
-            .expect("the job's limit");
-            let mut command: Vec<u16> = format!(
-                "conhost.exe powershell.exe -NoLogo -NoProfile -NoExit -Command \
-                 $Host.UI.RawUI.WindowTitle='{title}'"
-            )
-            .encode_utf16()
-            .chain(Some(0))
-            .collect();
-            let startup = STARTUPINFOW {
-                cb: u32::try_from(size_of::<STARTUPINFOW>()).unwrap_or(0),
-                dwFlags: STARTF_USESHOWWINDOW,
-                wShowWindow: u16::try_from(SW_HIDE.0).unwrap_or(0),
-                ..Default::default()
-            };
-            let mut info = PROCESS_INFORMATION::default();
-            // SAFETY: a writable, nul-terminated command line; no handles
-            // are inherited, no standard handles given, and no console of
-            // this process's, so the console host opens a window of its
-            // own.
-            unsafe {
-                CreateProcessW(
-                    None,
-                    Some(PWSTR(command.as_mut_ptr())),
-                    None,
-                    None,
-                    false,
-                    CREATE_SUSPENDED | DETACHED_PROCESS,
-                    None,
-                    None,
-                    &raw const startup,
-                    &raw mut info,
-                )
-            }
-            .expect("the console host starts");
-            // SAFETY: just returned, owned here.
-            let process = unsafe { OwnedHandle::from_raw_handle(info.hProcess.0) };
-            // SAFETY: just returned, owned here.
-            let thread = unsafe { OwnedHandle::from_raw_handle(info.hThread.0) };
-            // SAFETY: both handles are open.
-            unsafe {
-                AssignProcessToJobObject(
-                    HANDLE(job.as_raw_handle()),
-                    HANDLE(process.as_raw_handle()),
-                )
-            }
-            .expect("the console host joins the job");
-            // SAFETY: an out-of-context hook on this thread, for the
-            // console host's events alone; the callback is a plain function.
-            let hook = unsafe {
-                SetWinEventHook(
-                    EVENT_OBJECT_NAMECHANGE,
-                    EVENT_OBJECT_NAMECHANGE,
-                    None,
-                    Some(renamed),
-                    info.dwProcessId,
-                    0,
-                    WINEVENT_OUTOFCONTEXT,
-                )
-            };
-            // SAFETY: the suspended thread's handle, open.
-            unsafe { ResumeThread(HANDLE(thread.as_raw_handle())) };
-            let deadline = Instant::now() + WAIT;
-            while RENAMED.with(Cell::get) == 0 {
-                let left = deadline.saturating_duration_since(Instant::now());
-                assert!(
-                    !left.is_zero(),
-                    "the console's window took its client's title"
-                );
-                // SAFETY: no handles; wakes for a message or at the deadline.
-                unsafe {
-                    MsgWaitForMultipleObjects(
-                        None,
-                        false,
-                        u32::try_from(left.as_millis()).unwrap_or(u32::MAX),
-                        QS_ALLINPUT,
-                    )
-                };
-                let mut msg = MSG::default();
-                // SAFETY: `msg` is a local each call writes.
-                while unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
-                    // SAFETY: the message just retrieved.
-                    unsafe { DispatchMessageW(&raw const msg) };
-                }
-            }
-            // SAFETY: the hook set above, removed once.
-            let _ = unsafe { UnhookWinEvent(hook) };
-            Self {
-                host: info.dwProcessId,
-                window: RENAMED.with(Cell::get),
-                _job: job,
-            }
-        }
     }
 }

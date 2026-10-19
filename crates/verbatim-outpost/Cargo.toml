@@ -22,6 +22,9 @@ verbatim-uia-rops.workspace = true
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../workspace-hack" }
 
+[dev-dependencies]
+verbatim-uia = { workspace = true, features = ["test-console"] }
+
 [lints]
 workspace = true
 

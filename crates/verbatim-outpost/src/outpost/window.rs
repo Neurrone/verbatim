@@ -314,15 +314,25 @@ pub(super) fn window_text(handle: isize) -> Option<String> {
     (!text.trim().is_empty()).then_some(text)
 }
 
-/// `GetForegroundWindow()` if it belongs to `target_pid`, else `None`. Always
-/// a genuine top-level window when it returns `Some`.
+/// Whether window `handle` is `target_pid`'s, the application an outpost
+/// serves: whether that process serves the window's UIA
+/// ([`verbatim_uia::provider_process`]), so a console window is its console
+/// host's and never its client's, whom `GetWindowThreadProcessId` names
+/// (`docs/design/listener-without-connections.md`, section 4.3). Every
+/// filter below decides by it. Local calls only.
+pub(crate) fn served_by(handle: isize, target_pid: u32) -> bool {
+    verbatim_uia::provider_process(handle) == Some(target_pid)
+}
+
+/// `GetForegroundWindow()` if it is `target_pid`'s ([`served_by`]), else
+/// `None`. Always a genuine top-level window when it returns `Some`.
 pub(super) fn foreground_window_of(target_pid: u32) -> Option<isize> {
     // SAFETY: GetForegroundWindow has no preconditions.
     let window = unsafe { GetForegroundWindow() };
     if window.0.is_null() {
         return None;
     }
-    (window_owner(window.0 as isize).1 == target_pid).then_some(window.0 as isize)
+    served_by(window.0 as isize, target_pid).then_some(window.0 as isize)
 }
 
 /// The target's top-level window for a tree dump: its foreground window,
@@ -392,18 +402,13 @@ pub(crate) fn window_owner(handle: isize) -> (u32, u32) {
 }
 
 /// The focus window of `target_pid`, or `None` if the keyboard focus is not
-/// in that process.
+/// in a window of that application ([`served_by`]).
 pub(crate) fn focus_window_of(target_pid: u32) -> Option<isize> {
     let window = focus_window()?;
-    let mut pid = 0u32;
-    // SAFETY: the call fails safely on a window that has since been destroyed.
-    unsafe {
-        GetWindowThreadProcessId(hwnd(window), Some(&raw mut pid));
-    }
-    (pid == target_pid).then_some(window)
+    served_by(window, target_pid).then_some(window)
 }
 
-/// The top-level windows belonging to `target_pid`.
+/// The top-level windows of `target_pid` ([`served_by`]).
 pub(crate) fn top_level_windows(target_pid: u32) -> Vec<isize> {
     struct Search {
         target_pid: u32,
@@ -415,8 +420,7 @@ pub(crate) fn top_level_windows(target_pid: u32) -> Vec<isize> {
         // A panic here would abort the process at the callback's boundary;
         // caught, it ends the enumeration instead.
         let visited = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let (_, pid) = window_owner(window.0 as isize);
-            if pid == search.target_pid {
+            if served_by(window.0 as isize, search.target_pid) {
                 search.windows.push(window.0 as isize);
             }
         }));
@@ -528,6 +532,36 @@ mod tests {
             None,
             "a window whose owner cannot be told"
         );
+    }
+
+    #[test]
+    fn a_console_window_is_its_console_hosts_not_its_clients() {
+        let console = verbatim_uia::test_console::Console::start();
+        let (_, client) = window_owner(console.window);
+        assert_ne!(
+            client, console.host,
+            "Windows names the client as its owner"
+        );
+        assert!(served_by(console.window, console.host));
+        assert!(!served_by(console.window, client));
+        // Only their console windows: other top-level windows, such as a
+        // thread's IME window, are not at issue.
+        let consoles = |pid| {
+            top_level_windows(pid)
+                .into_iter()
+                .filter(|&window| window_class_name(window) == CONSOLE_WINDOW_CLASS)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(consoles(console.host), [console.window]);
+        assert_eq!(consoles(client), Vec::<isize>::new());
+    }
+
+    #[test]
+    fn any_other_window_is_its_owners() {
+        let window = create_window();
+        let served = served_by(window, std::process::id());
+        destroy_window(window);
+        assert!(served);
     }
 
     #[test]

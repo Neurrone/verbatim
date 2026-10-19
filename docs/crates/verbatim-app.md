@@ -298,8 +298,12 @@ knowing for review:
   enters the reducer with that application as its source, and
   `LiveOutposts` records that the outpost serves it (`reports_for`,
   `target_for`), so its queries go there and the supervisor keeps it
-  (`docs/design/focus-pipeline.md`, section 5.4). Before the console host's
-  outpost has reported for a console, the client's own outpost answers. When the supervisor reports
+  (`docs/design/focus-pipeline.md`, section 5.4). A focus-now query for a
+  console's client whose console window is in front goes to the console
+  host's outpost even before it has reported for the console: Core finds
+  the host locally (`console_host_in_front`, through
+  `verbatim_outpost::provider_process`), so the client's own outpost, which
+  serves none of the console window, is never asked for it. When the supervisor reports
   `OutpostMessage::NotWatched` (the application has exited, so no outpost
   was started for it), the wish for its focus is dropped, along with a
   status entry that was only waiting for its outpost, so nothing, the idle

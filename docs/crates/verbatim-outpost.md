@@ -195,9 +195,18 @@ event's own thread, the console host, read with `OpenThread` and
 cannot be opened, to the owner, as NVDA falls back. The console host's
 outpost marks each event in a console window with the client as its
 `application` (`OutpostToSupervisor::Event`), which Core takes as the
-event's source, and answers a focus-now query for its console window,
-which it recognizes by its UIA element's process id
-(`read::hosts_console_window`). A focus whose top-level window belongs to
+event's source, and answers a focus-now query for its console window.
+An outpost's window filters (`window::served_by`, which
+`focus_window_of`, `foreground_window_of`, `main_window_of` and
+`top_level_windows` decide by) take a window as the application's when
+the application serves its UIA (`verbatim_uia::provider_process`, local
+calls), so a console window is its console host's and never its
+client's, and `read::focused_control` reads no focused element in a
+window another process serves
+(`docs/design/listener-without-connections.md`, section 4.3). The crate
+re-exports `provider_process` and `console_host_of`, so Core routes a
+console client's focus-now query to its console host without depending
+on `verbatim-uia`. A focus whose top-level window belongs to
 another process, as the Settings app's page inside `ApplicationFrameHost`'s
 frame, reaches that window through its ancestry: the listener's read
 continues past the top-level element of the focus's own process to the

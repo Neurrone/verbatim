@@ -461,6 +461,17 @@ Public API:
   bound, but about 2.3 KB kept in the application for each of the first
   1,000 or so probes of a window (`docs/design/listener-without-connections.md`,
   risk 7).
+- `provider_process(hwnd)` and `console_host_of(client)` — the process
+  that serves a window's UIA, read with local calls: the window's owner by
+  `GetWindowThreadProcessId`, except a console window, whose owner by that
+  call is the console's client and whose provider is its console host,
+  read from the client with `NtQueryInformationProcess`'s
+  `ProcessConsoleHostProcess`. An outpost's window filters, its refusal to
+  read another application's focused element, and Core's routing of a
+  console client's focus-now query decide by it
+  (`docs/design/listener-without-connections.md`, section 4.3). The
+  `test-console` feature exposes `test_console::Console`, a hidden console
+  the tests start, to other crates' tests.
 - `console_reports_formatting(hwnd)` and `is_windows_forms(hwnd)` — the
   checks NVDA makes on a window with a provider before using it: whether a
   console's text area reports one visible range with its font (the
@@ -511,10 +522,8 @@ Public API:
   `Execute` in `verbatim-uia-rops` and `GetFocusedElementBuildCache`), and
   `guarded_window(name, hwnd, call)` for a connection by handle (the
   outposts' probe, `ElementFromHandleBuildCache` and `ElementFromHandle`), which takes the
-  lock only when the window's provider process (`provider_process`: its
-  owner, or for a console window its console host, read from the console's
-  client, the window's owner, since Windows names the client's thread for
-  a console window too) is the lock's application. `guarded_by(lock, name, call)` takes a
+  lock only when the window's provider process (`provider_process`, below)
+  is the lock's application. `guarded_by(lock, name, call)` takes a
   given lock, for the listener's classic walk step up into another
   application's window. The lock is taken immediately before the call and
   released immediately after it: a first wait with no timeout that finds
@@ -610,8 +619,8 @@ Public API:
     interface); `HelpTextRefresh` (`Description`) and `SuggestionsRefresh`
     (Text pattern availability and automation id;
     `reports_suggestions()`), what a help text and a `ControllerFor`
-    change read; `WindowLookup` (native window handle), `ProcessCheck`
-    (process id) and `FrameworkCheck` (framework id), each one property;
+    change read; `WindowLookup` (native window handle) and `FrameworkCheck`
+    (framework id), each one property;
     and `ShellButton`, what `verbatim-gui`'s list of the shell's buttons
     reads. A rectangle that does not fit reads as `None` rather than
     overflowing.

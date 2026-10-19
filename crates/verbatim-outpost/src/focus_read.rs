@@ -358,7 +358,7 @@ impl FocusReader {
     /// a local call.
     fn lock_up_into(&self, top: isize) -> Option<verbatim_uia::lock::AppLock> {
         let (own, locks) = self.locks.as_ref()?;
-        let provider = verbatim_uia::lock::provider_process(top)?;
+        let provider = verbatim_uia::provider_process(top)?;
         if provider == own.0 {
             return None;
         }

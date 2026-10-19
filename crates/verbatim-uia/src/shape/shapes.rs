@@ -689,21 +689,6 @@ uia_shape! {
 }
 
 uia_shape! {
-    /// A window's element read for the process that serves it: a console
-    /// window's is its console host's.
-    pub struct ProcessCheck {
-        gates: none;
-        groups {}
-        properties {
-            /// The owning process.
-            process_id: UIA_ProcessIdPropertyId => process_id,
-        }
-        prefetch {}
-        covers {}
-    }
-}
-
-uia_shape! {
     /// A window's element read for its UIA framework.
     pub struct FrameworkCheck {
         gates: none;

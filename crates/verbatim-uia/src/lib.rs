@@ -41,6 +41,9 @@
 //!   cached read of an element, declared together with the cache request
 //!   that fills it (`docs/design/uia-shapes.md`): the only cached reads in
 //!   the workspace.
+//! - [`provider_process`] and [`console_host_of`] — the process that
+//!   serves a window's UIA, a console window's being its console host,
+//!   read with local calls only.
 //! - [`lock`] — the lock per application around the UIA calls that
 //!   collide (`docs/design/focus-pipeline.md`, section 20): which calls
 //!   take it, and the UIA defect it works around.
@@ -65,10 +68,13 @@ pub mod lock;
 pub mod map;
 mod nearest;
 mod probe;
+mod provider;
 mod proxy;
 mod registry;
 mod shape;
 mod subscribe;
+#[cfg(any(test, feature = "test-console"))]
+pub mod test_console;
 pub mod text;
 
 pub use bounded::{BoundedClient, Unanswered};
@@ -87,12 +93,13 @@ pub use nearest::nearest_window_handle;
 pub use probe::{
     RAW_PROBE_TIMEOUT_MS, RawProbe, has_server_side_provider, raw_probe, raw_probe_verdict,
 };
+pub use provider::{console_host_of, provider_process};
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,
     ElementValue, Fill, FocusInput, FrameworkCheck, HelpTextRefresh, Kept,
-    LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, Live, Node, NodeGates, Position, ProcessCheck,
-    PropertyEvent, Request, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States,
+    LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, Live, Node, NodeGates, Position, PropertyEvent,
+    Request, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States,
     SuggestionsRefresh, TextEvent, TreeDump, Ungated, ValueSet, WindowLookup,
 };
 pub use subscribe::{

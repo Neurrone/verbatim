@@ -40,3 +40,9 @@ pub use outpost::{
     run_attach, run_pipe, set_application_lock,
 };
 pub use supervisor::{EventSink, OutpostMessage, Supervisor, Undelivered};
+/// The process that serves a window's UI Automation, and a console client's
+/// console host, read locally: re-exported so Core can route a console
+/// client's focus-now query to its console host without depending on
+/// `verbatim-uia` (`docs/design/listener-without-connections.md`, section
+/// 4.3).
+pub use verbatim_uia::{console_host_of, provider_process};
