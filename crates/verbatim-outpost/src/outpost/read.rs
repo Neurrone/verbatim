@@ -550,7 +550,9 @@ pub(super) fn uia_remote_enrichment(
         None
     } else {
         let desktop = desktop_window();
-        let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
+        // Another process's window is read through MSAA without a probe,
+        // as in the outpost's other walks.
+        let read_by_msaa = |hwnd: isize| hwnd != desktop && !own_window_uses_uia(context, hwnd);
         let is_known = |id: NodeId| previous.iter().any(|node| node.id == id);
         let (chain, crossed, mut walked) = Uia::ancestors_from(
             &ancestry.ancestors,
