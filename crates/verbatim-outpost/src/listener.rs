@@ -1339,9 +1339,12 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
     if owner == 0 {
         return;
     }
-    let pid = routed_process(&window_class_name(hwnd), owner, || {
+    let Some(pid) = routed_process(&window_class_name(hwnd), owner, || {
         process_of_thread(thread)
-    });
+    }) else {
+        log_unread_console_once(hwnd, thread);
+        return;
+    };
     if pid != owner {
         if outgoing.ignored.contains(Pid(owner)) {
             // The console of a process Verbatim ignores, whose events were
@@ -1385,14 +1388,33 @@ fn window_pid(hwnd: isize) -> u32 {
 /// 266 to 273; `UIA._get_processID`, `NVDAObjects/UIA/__init__.py` 2336 to
 /// 2346). Every event for a console window then reaches the outpost that
 /// receives its UIA events, which reports the client as the application
-/// (`docs/design/focus-pipeline.md`, section 5.4). When the host cannot be
-/// read, the owner, as NVDA falls back to the window's own thread for a
-/// console window it has seen no event from.
-fn routed_process(class: &str, owner: u32, host: impl FnOnce() -> Option<u32>) -> u32 {
+/// (`docs/design/focus-pipeline.md`, section 5.4). `None` when the host
+/// cannot be read: the event is dropped rather than sent to the client,
+/// whose outpost would otherwise take the console host's window as its
+/// application's (Dickson, 2026-10-19;
+/// `docs/design/listener-without-connections.md`, section 10, step 3).
+fn routed_process(class: &str, owner: u32, host: impl FnOnce() -> Option<u32>) -> Option<u32> {
     if class == CONSOLE_WINDOW_CLASS {
-        host().unwrap_or(owner)
+        host()
     } else {
-        owner
+        Some(owner)
+    }
+}
+
+/// Logs, at debug and once per window, that the events of the console
+/// window `hwnd` are dropped because the process of its thread `thread`,
+/// its console host, cannot be read. Called only on the `WinEvent` thread.
+fn log_unread_console_once(hwnd: isize, thread: u32) {
+    thread_local! {
+        static LOGGED: std::cell::RefCell<std::collections::HashSet<isize>> =
+            std::cell::RefCell::default();
+    }
+    if LOGGED.with_borrow_mut(|logged| logged.insert(hwnd)) {
+        tracing::debug!(
+            hwnd,
+            thread,
+            "a console window's host cannot be read; its events are dropped"
+        );
     }
 }
 
@@ -1406,13 +1428,7 @@ fn process_of_thread(thread: u32) -> Option<u32> {
     };
     // SAFETY: OpenThread has no preconditions; the handle is owned here and
     // closed below.
-    let handle = match unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread) } {
-        Ok(handle) => handle,
-        Err(error) => {
-            tracing::warn!(thread, %error, "a console window's thread could not be opened");
-            return None;
-        }
-    };
+    let handle = unsafe { OpenThread(THREAD_QUERY_LIMITED_INFORMATION, false, thread) }.ok()?;
     // SAFETY: `handle` is an open thread handle with the access the call
     // needs.
     let pid = unsafe { GetProcessIdOfThread(handle) };
@@ -1740,19 +1756,22 @@ mod tests {
     fn a_console_windows_event_goes_to_the_process_of_its_thread() {
         // Windows names the client, 20, as the console window's owner; the
         // event's thread is the console host's, in 30.
-        assert_eq!(routed_process(CONSOLE_WINDOW_CLASS, 20, || Some(30)), 30);
+        assert_eq!(
+            routed_process(CONSOLE_WINDOW_CLASS, 20, || Some(30)),
+            Some(30)
+        );
     }
 
     #[test]
-    fn a_console_windows_event_whose_thread_cannot_be_read_goes_to_its_owner() {
-        assert_eq!(routed_process(CONSOLE_WINDOW_CLASS, 20, || None), 20);
+    fn a_console_windows_event_whose_thread_cannot_be_read_goes_nowhere() {
+        assert_eq!(routed_process(CONSOLE_WINDOW_CLASS, 20, || None), None);
     }
 
     #[test]
     fn any_other_windows_event_goes_to_its_owner_without_reading_its_thread() {
         assert_eq!(
             routed_process("Notepad", 20, || panic!("the thread is not read")),
-            20
+            Some(20)
         );
     }
 

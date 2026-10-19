@@ -39,10 +39,9 @@ window to the console host's outpost, the process of the event's own
 thread (`GetProcessIdOfThread`), where its UIA events already went, and
 that outpost reports its events in a console window with the client as
 the application, so one outpost reports the window, once, with one
-name. When the event's thread cannot be opened, the event goes to the
-client's outpost, as NVDA falls back to the window's own thread; and
-before any event from a console, the client's outpost answers for it
-(at start-up, when the console is in front). A console window's
+name. Before any event from a console, the console host's outpost
+answers for it (at start-up, when the console is in front), Core
+finding the host from the client with a local call. A console window's
 foreground event comes before the window is in front, and none follows,
 and the window is read through UI Automation; NVDA drops the event on
 both counts and announces the window as the focus enters it, from the
@@ -50,6 +49,11 @@ console window element, named and with the window role, which is the
 text area's parent (`eventHandler.doPreGainFocus`). Verbatim does the
 same (`docs/parity/focus-context.md`, "Window announcement on switching
 applications"). **matched (unverified)**, pending live checks.
+Different: when the event's thread cannot be opened, NVDA falls back to
+the window's own thread, which names the client, while Verbatim drops
+the event, so that no outpost but the console host's reads its window
+(Dickson, 2026-10-19; `docs/design/listener-without-connections.md`,
+section 10, step 3).
 
 ### A control's own focus with a focused child
 

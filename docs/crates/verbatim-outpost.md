@@ -198,7 +198,9 @@ each `WinEvent` for a `ConsoleWindowClass` window to the process of the
 event's own thread, the console host, read with `OpenThread` and
 `GetProcessIdOfThread`, local calls (`listener::routed_process`, as NVDA's
 `consoleWindowsToThreadIDs` learns the real thread); when the thread
-cannot be opened, to the owner, as NVDA falls back. The console host's
+cannot be opened, the event is dropped, logged at debug once per window,
+rather than sent to the client, whose outpost would take the console
+host's window as its application's. The console host's
 outpost marks each event in a console window with the client as its
 `application` (`OutpostToSupervisor::Event`), which Core takes as the
 event's source, and answers a focus-now query for its console window.
