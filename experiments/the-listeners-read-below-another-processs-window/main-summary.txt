@@ -1,0 +1,168 @@
+== noprovider / classic / control: 10 trials
+   listener read: 4.9 to 8.3 ms (median 6.1)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 6, msaa: 0, window_messages: 1 }
+   UiaRootObjectId messages taken by P x10: N N
+   last nonzero one taken 3.5 to 6.9 ms (median 4.4) after the read began
+   x10 P hits since before the hold: [("WM_GETOBJECT", 2)]
+== noprovider / classic / queued-short: 10 trials
+   listener read: 308.9 to 327.4 ms (median 315.9)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 6, msaa: 0, window_messages: 1 }
+   released: 304.1 to 322.5 ms (median 309.5); {'at the cap': 10}
+   O op done at 309.2 to 333.5 ms (median 314.1) rel read start; results {'Ok("Embedded")': 10}
+   O op done after the release by 2.5 to 11.0 ms (median 5.2)
+   UiaRootObjectId messages taken by P x10: N N N N
+   last nonzero one taken 3.3 to 6.7 ms (median 4.1) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 3), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+== noprovider / classic / busy-short: 10 trials
+   listener read: 307.9 to 320.8 ms (median 315.8)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 6, msaa: 0, window_messages: 1 }
+   released: 303.0 to 315.3 ms (median 306.1); {'at the cap': 10}
+   UiaRootObjectId messages taken by P x10: N N
+   last nonzero one taken 3.2 to 8.7 ms (median 3.5) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 2), ("GetPropertyValue", 1)]
+== noprovider / classic / queued-long: 5 trials
+   listener read: 5007.3 to 5016.3 ms (median 5010.0)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5007.3 to 5016.4 ms (median 5010.1); {'after the read returned': 5}
+   O op done at 5009.2 to 5018.5 ms (median 5012.2) rel read start; results {'Ok("Embedded")': 5}
+   O op done after the release by 1.9 to 2.4 ms (median 2.1)
+   UiaRootObjectId messages taken by P x5: N N
+   last nonzero one taken 1.0 to 1.1 ms (median 1.1) after the release
+   x5 P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+== noprovider / classic / busy-long: 5 trials
+   listener read: 5001.9 to 5015.0 ms (median 5006.4)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5002.1 to 5015.0 ms (median 5006.5); {'after the read returned': 5}
+   UiaRootObjectId messages taken by P x5: none
+   x5 P hits since before the hold: [("GetPropertyValue", 1)]
+== noprovider / remote / control: 10 trials
+   listener read: 12.8 to 16.1 ms (median 14.1)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 3, msaa: 0, window_messages: 1 }
+   UiaRootObjectId messages taken by P x10: N N
+   last nonzero one taken 11.7 to 15.0 ms (median 12.8) after the read began
+   x10 P hits since before the hold: [("WM_GETOBJECT", 2)]
+== noprovider / remote / queued-short: 10 trials
+   listener read: 321.7 to 340.7 ms (median 332.3)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 3, msaa: 0, window_messages: 1 }
+   released: 303.0 to 316.0 ms (median 311.3); {'at the cap': 10}
+   O op done at 307.3 to 320.3 ms (median 316.1) rel read start; results {'Ok("Embedded")': 10}
+   O op done after the release by 3.2 to 5.0 ms (median 4.1)
+   UiaRootObjectId messages taken by P x10: N N N N
+   last nonzero one taken 12.2 to 37.1 ms (median 18.3) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 3), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+== noprovider / remote / busy-short: 10 trials
+   listener read: 323.2 to 335.8 ms (median 328.3)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 3, msaa: 0, window_messages: 1 }
+   released: 303.8 to 315.2 ms (median 312.5); {'at the cap': 10}
+   UiaRootObjectId messages taken by P x10: N N
+   last nonzero one taken 11.7 to 24.4 ms (median 15.1) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 2), ("GetPropertyValue", 1)]
+== noprovider / remote / queued-long: 5 trials
+   listener read: 5000.9 to 5012.4 ms (median 5004.6)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5001.0 to 5012.4 ms (median 5004.7); {'after the read returned': 5}
+   O op done at 5004.4 to 5014.8 ms (median 5009.0) rel read start; results {'Ok("Embedded")': 5}
+   O op done after the release by 2.0 to 8.0 ms (median 2.2)
+   UiaRootObjectId messages taken by P x5: N N
+   last nonzero one taken 1.1 to 1.4 ms (median 1.2) after the release
+   x5 P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+== noprovider / remote / busy-long: 5 trials
+   listener read: 5001.2 to 5015.6 ms (median 5010.4)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5001.3 to 5015.6 ms (median 5010.4); {'after the read returned': 5}
+   UiaRootObjectId messages taken by P x5: none
+   x5 P hits since before the hold: [("GetPropertyValue", 1)]
+== provider / classic / control: 10 trials
+   listener read: 6.6 to 9.5 ms (median 7.9)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 6, msaa: 0, window_messages: 1 }
+   UiaRootObjectId messages taken by P x10: N Z N Z
+   last nonzero one taken 4.6 to 6.6 ms (median 5.4) after the read began
+   x10 P hits since before the hold: [("WM_GETOBJECT", 4), ("ProviderOptions", 12), ("HostRawElementProvider", 4), ("Navigate", 4)]
+== provider / classic / queued-short: 10 trials
+   listener read: 5310.9 to 5325.7 ms (median 5319.3)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 6, msaa: 0, window_messages: 1 }
+   released: 301.3 to 311.0 ms (median 306.1); {'at the cap': 10}
+   O op done at 302.9 to 312.5 ms (median 307.8) rel read start; results {'Ok("Mockapp Events Fixture")': 10}
+   O op done after the release by 1.4 to 2.1 ms (median 1.6)
+   UiaRootObjectId messages taken by P x10: N N N Z
+   last nonzero one taken 5005.7 to 5011.3 ms (median 5007.3) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 4), ("ProviderOptions", 13), ("GetPropertyValue", 2), ("HostRawElementProvider", 5), ("Navigate", 5)]
+== provider / classic / busy-short: 10 trials
+   listener read: 311.0 to 322.6 ms (median 317.3)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 6, msaa: 0, window_messages: 1 }
+   released: 304.5 to 314.7 ms (median 310.0); {'at the cap': 10}
+   UiaRootObjectId messages taken by P x10: N Z N Z
+   last nonzero one taken 4.4 to 5.9 ms (median 4.9) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 4), ("ProviderOptions", 12), ("GetPropertyValue", 1), ("HostRawElementProvider", 4), ("Navigate", 4)]
+== provider / classic / queued-long: 5 trials
+   listener read: 5004.8 to 5014.6 ms (median 5008.3)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5004.8 to 5014.6 ms (median 5008.3); {'after the read returned': 5}
+   O op done at 5006.2 to 5015.9 ms (median 5009.7) rel read start; results {'Ok("Mockapp Events Fixture")': 5}
+   O op done after the release by 1.1 to 1.5 ms (median 1.4)
+   UiaRootObjectId messages taken by P x5: N
+   last nonzero one taken 0.4 to 0.5 ms (median 0.5) after the release
+   x5 P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+== provider / classic / busy-long: 5 trials
+   listener read: 5006.6 to 5016.4 ms (median 5011.0)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5006.7 to 5016.4 ms (median 5011.1); {'after the read returned': 5}
+   UiaRootObjectId messages taken by P x5: none
+   x5 P hits since before the hold: [("GetPropertyValue", 1)]
+== provider / remote / control: 10 trials
+   listener read: 14.6 to 19.2 ms (median 16.2)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 3, msaa: 0, window_messages: 1 }
+   UiaRootObjectId messages taken by P x10: N Z N Z
+   last nonzero one taken 13.0 to 16.6 ms (median 13.8) after the read began
+   x10 P hits since before the hold: [("WM_GETOBJECT", 4), ("ProviderOptions", 12), ("HostRawElementProvider", 4), ("Navigate", 4)]
+== provider / remote / queued-short: 10 trials
+   listener read: 5322.6 to 5344.8 ms (median 5333.3)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 3, msaa: 0, window_messages: 1 }
+   released: 301.3 to 315.1 ms (median 308.9); {'at the cap': 10}
+   O op done at 303.2 to 316.5 ms (median 310.6) rel read start; results {'Ok("Mockapp Events Fixture")': 10}
+   O op done after the release by 1.4 to 1.9 ms (median 1.6)
+   UiaRootObjectId messages taken by P x10: N N N Z
+   last nonzero one taken 5015.0 to 5028.2 ms (median 5022.0) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 4), ("ProviderOptions", 13), ("GetPropertyValue", 2), ("HostRawElementProvider", 5), ("Navigate", 5)]
+== provider / remote / busy-short: 10 trials
+   listener read: 317.4 to 339.2 ms (median 324.4)
+   outcome x10: read ancestors=Some([(Some("Settings"), 0), (Some("Mockapp Counts Fixture"), <child window>)])
+   calls x10: CallCounts { uia: 3, msaa: 0, window_messages: 1 }
+   released: 302.4 to 313.6 ms (median 307.8); {'at the cap': 10}
+   UiaRootObjectId messages taken by P x10: N Z N Z
+   last nonzero one taken 12.0 to 24.4 ms (median 13.7) after the release
+   x10 P hits since before the hold: [("WM_GETOBJECT", 4), ("ProviderOptions", 12), ("GetPropertyValue", 1), ("HostRawElementProvider", 4), ("Navigate", 4)]
+== provider / remote / queued-long: 5 trials
+   listener read: 5005.7 to 5015.2 ms (median 5011.0)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5005.8 to 5015.3 ms (median 5011.1); {'after the read returned': 5}
+   O op done at 5006.8 to 5016.7 ms (median 5012.4) rel read start; results {'Ok("Mockapp Events Fixture")': 5}
+   O op done after the release by 1.0 to 1.4 ms (median 1.3)
+   UiaRootObjectId messages taken by P x5: N
+   last nonzero one taken 0.4 to 0.5 ms (median 0.4) after the release
+   x5 P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+== provider / remote / busy-long: 5 trials
+   listener read: 5002.3 to 5016.1 ms (median 5011.9)
+   outcome x5: Dropped("it has no window above it, so NVDA makes no object for it")
+   calls x5: CallCounts { uia: 1, msaa: 0, window_messages: 0 }
+   released: 5002.4 to 5016.1 ms (median 5011.9); {'after the read returned': 5}
+   UiaRootObjectId messages taken by P x5: none
+   x5 P hits since before the hold: [("GetPropertyValue", 1)]
