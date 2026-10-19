@@ -1,6 +1,6 @@
 # Windows and processes
 
-Windows whose parts live in different processes or behave unlike ordinary controls: a window in two processes, console windows, a control's own focus, and the shell's staging windows.
+Windows whose parts live in different processes or behave unlike ordinary controls: a window in two processes, content hosted in another process's window, console windows, a control's own focus, and the shell's staging windows.
 
 ### A window and its content in two processes
 
@@ -24,6 +24,38 @@ focus does not announce the frame again, since it is the same top-level
 window with the same role and name. **matched (unverified)** (a reducer
 test feeding both orders). A console window is one application, as
 "Console windows" says.
+
+### Content hosted in another process's window
+
+A focus in content one process serves inside a window of another, such
+as WebView2 content (`msedgewebview2.exe`) in a WinUI or Win32 host's
+window, or in a top-level dialog owned by another process's window,
+which UIA's raw view puts under its owner while the owner is visible.
+NVDA's raw-view walk goes on up through the host's windows, or from the
+dialog to its owner, reading each window through UIA when it has a
+provider and through MSAA otherwise ([The UIA client](../nvda/uia.md),
+"The per-window UIA decision"). Verbatim: the focus listener stops at
+the process boundary, and the outpost of the focus's application
+continues the chain from the host or owner window through MSAA
+(`docs/design/listener-without-connections.md`, decision 7 and section
+4.4). **different** (decision 7 of that design, Dickson, 2026-10-18):
+the ancestors above the host window are read through MSAA, where NVDA
+reads those with a provider through UIA, so such a window, a WinUI
+host's "title window" among them, may be named and roled differently;
+for a host without a provider, such as Quick Assist's, both read the
+same object. Until step 7 of that design is built, the chain below a
+host or owner window that has a provider ends at the boundary, with
+nothing above the content's own window, and that step must land before
+any push. An owned dialog seen on 2026-10-19: the Windows Security
+credential dialog (`CredentialUIBroker.exe`) opened with File
+Explorer's folder window as its parent window is owned by it. NVDA
+(alpha-58022) said as it opened: "unavailable", then "Windows Security
+window", then "User name edit"; the folder window, the previous focus's
+own top-level window, is not spoken again either way, so the capture
+does not show whether NVDA's chain reaches the owner. The dialog's
+window reports UIA's Win32 framework, which suggests it has no provider
+of its own; if so, Verbatim reads it through MSAA, as NVDA does, whose
+parent is the desktop, so the owner is not read; unverified.
 
 ### Console windows
 

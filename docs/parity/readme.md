@@ -60,7 +60,7 @@ renaming its declarations.
 - [Focus events](focus-events.md): how focus events are accepted, deduplicated, and ordered: duplicate and stale focus events, event acceptance, recovery after an outpost is replaced, held objects, and when speech is cut off.
 - [Changes and selection](changes-and-selection.md): what is spoken when something changes on or near the focus: names, menus, toggles and negated states, state changes, tree item counts, selection, controlled lists, suggestions, and values.
 - [Alerts](alerts.md): speech that arrives without a focus change: UIA notifications, toasts, other alerts, live regions, and the items of the MSAA audit not yet matched.
-- [Windows and processes](windows-and-processes.md): windows whose parts live in different processes or behave unlike ordinary controls: a window in two processes, console windows, a control's own focus, and the shell's staging windows.
+- [Windows and processes](windows-and-processes.md): windows whose parts live in different processes or behave unlike ordinary controls: a window in two processes, content hosted in another process's window, console windows, a control's own focus, and the shell's staging windows.
 - [Object navigation and review](review.md): object navigation, the navigator and review cursor, and the commands that report and review objects.
 - [Backends](backends.md): how the MSAA, UIA, and other accessibility backends are read and their events taken in.
 - [Speech and audio](speech-audio.md): speech priorities, say-all, synthesizer settings, sounds, verbosity, and speech processing.
