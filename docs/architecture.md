@@ -217,13 +217,17 @@ screen reader in both rendered and source form.
   application's own outpost sends it a remote operation or connects to
   one of its windows, and an outpost connects to, probes and walks up
   into only its own application's windows, reading another process's
-  window above the focus through MSAA (section 2 of that design). So the
+  window above the focus through MSAA (section 2 of that design), but
+  for object navigation's step, which can read a neighbor in another
+  process's window through UIA before switching to MSAA, an accepted
+  exception (section 4.3 of that design). So the
   UIA defect where a new connection fails while another process's remote
   operation is queued in the application (`docs/uia-bugs.md`) cannot be
   met between Verbatim's own calls, and no lock guards them. Not covered:
   other software's UIA calls, the end-to-end agent's two UIA requests, UIA's own
   focus tracking in the listener's process, and the messages UIA's client
-  side sends a parent window when a listener call returns its child
+  side sends a parent window of another process, connecting to it when it
+  has a provider, when a listener's or an outpost's read returns its child
   window's element (decision 13 of that design). A slow or hung
   application holds only the threads that serve it.
 - **D14 — Attention follows focus; foreground is announced, not used as a

@@ -31,13 +31,13 @@ Process A sends a remote operation into an application; while that operation wai
 
 The call fails without an error. `UiaHasServerSideProvider` answers "no" after about 3 seconds; `ElementFromHandle` and `ElementFromHandleBuildCache` return UIA's window proxy, named by the window's title, after about 2 seconds, in place of the application's own element (`e1`; in `e33`'s positive control, with a 300 ms busy period, after 2,300 to 2,337 ms in 6 of 6). A caller that trusts the answer reads the window through MSAA.
 
-In Verbatim the operation was the listener's focus read and the connection an outpost's probe or lookup, or the reverse. About 3 in 100 Windows Terminal launches read the terminal's first focus through MSAA, spoken as "pane", or announced it twice, and about 1 in 25 Notepad openings did the same (`docs/design/focus-pipeline.md`, section 20.1). In one slow Windows Terminal launch the outpost's probe of the terminal's `InputSite` window waited 3,008 ms and answered "no" while the listener's focus read waited for the busy UI thread (`wt-launch-slow/` in this fault's experiments folder).
+In Verbatim the operation was the listener's focus read and the connection an outpost's probe or lookup, or the reverse. About 3 in 100 Windows Terminal launches read the terminal's first focus through MSAA, spoken as "pane", or announced it twice, and about 1 in 25 Notepad openings did the same (measured 2026-10-17, before Verbatim kept its own calls from colliding). In one slow Windows Terminal launch the outpost's probe of the terminal's `InputSite` window waited 3,008 ms and answered "no" while the listener's focus read waited for the busy UI thread (`wt-launch-slow/` in this fault's experiments folder).
 
 A related cost that is not a failure: a remote operation waiting for one busy UI thread delays every other client's call into the process, on any thread, held elements included, by the same time (`e28`, 9 of 9 delayed to the end of a 1,000 ms busy period, against under 1.1 ms in the control `e28c`).
 
 A second form needs new connections from two processes: a new connection waiting in a busy application fails when another process's new connection waits there too and a third process has a call pending (`e44`, `e50`). Two connections from two threads of one process beside a held call did not fail (`e55`, 12 of 12), nor did a connection beside another's that was waiting when its process ended (12 of 12).
 
-A call that times out leaves its request queued in the application, which processes it when it wakes, so a connection made then by another process can still collide (found while building 3782ee8d; section 20.5).
+A call that times out leaves its request queued in the application, which processes it when it wakes, so a connection made then by another process can still collide (found while building 3782ee8d).
 
 #### Not affected
 

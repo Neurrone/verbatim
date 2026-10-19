@@ -34,10 +34,11 @@
 //!   outbound messages as JSON lines to stdout, for standalone testing without
 //!   Core.
 //!
-//! Every mode also takes `--classic-uia`, which turns off UIA remote
-//! operations for the process's whole life (`uia.remote_operations = false`
-//! in `settings.toml`, which the supervisor passes on); the listener makes
-//! none whatever it is given.
+//! The outpost modes, a spare and `--attach` among them, also take
+//! `--classic-uia`, which turns off UIA remote operations for the process's
+//! whole life (`uia.remote_operations = false` in `settings.toml`, which the
+//! supervisor passes on); the listener is not given it, since it makes no
+//! remote operation.
 
 use std::process::ExitCode;
 

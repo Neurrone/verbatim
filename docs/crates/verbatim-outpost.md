@@ -849,8 +849,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   (`--hooks-in`, `listener::parse_hooks_in`), and each reading thread's
   last focus, which a replacement does without at the cost of one fuller
   ancestor read per application, so a crash respawns into full
-  capability at once. It takes `--classic-uia` as an outpost does, for
-  its reads. Range-value changes and live regions, which NVDA
+  capability at once. It makes no remote operation, so it is not given
+  `--classic-uia`. Range-value changes and live regions, which NVDA
   also registers globally, are not subscribed yet: the reducer speaks values
   only for the focus, and live regions are milestone M7's.
 
@@ -1382,7 +1382,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   window. The parents become the chain through `Uia::ancestor_chain_from`,
   with the same presentable filter, the same stop at a window read through
   MSAA and the same continuation through MSAA from there. With remote
-  operations off (`--classic-uia`, which the listener's reads follow too),
+  operations off (`--classic-uia`),
   or for a window whose element could not be imported into a program (a
   client-side proxy, marked in the context for the window's lifetime and
   forgotten when it is destroyed), the per-hop walk (`read::uia_enrichment`)
