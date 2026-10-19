@@ -90,6 +90,9 @@ NVDA says, to decide what Verbatim should say.
     audio step.
   - [focus-pipeline.md](design/focus-pipeline.md) — how events reach
     Verbatim, aligned with NVDA; adopted, stage A step 6 built.
+  - [listener-without-connections.md](design/listener-without-connections.md)
+    — removing the per-application lock: only an application's own outpost
+    connects to it or sends it a remote operation; adopted, not yet built.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
     declared with its request; adopted and built.
   - [terminal-reading.md](design/terminal-reading.md) — terminal

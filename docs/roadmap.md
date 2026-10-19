@@ -94,6 +94,14 @@ its measurements, with the corrections of
   proposed fix is that the outpost treats a caret row that differs from
   its last screen read as a change (Dickson, 2026-10-17: part of this
   redesign).
+- The two terminal scenarios the lock-free listener's first step lets
+  fail ([its design](design/listener-without-connections.md), section 10,
+  step 1; Dickson, 2026-10-19): `conhost_two_windows`, from
+  `UiaHasServerSideProvider`'s 3-second false "no" for a new console
+  window, which the outposts keep ([UIA faults](uia-bugs.md), the entry
+  for that call and a new conhost window), and
+  `windows_terminal_two_windows`, from a typed character Windows Terminal
+  occasionally does not echo (the item above).
 
 - A throwaway prototype of holding keys, as NVDA holds a key with
   a script while it reads the caret, measured, with a written analysis;
