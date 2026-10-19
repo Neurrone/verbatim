@@ -1,6 +1,6 @@
 //! The test runner for every mockapp test binary (their `Cargo.toml`
 //! entries set `harness = false`). It runs each test in a process of its own
-//! on a desktop of its own ([`run_isolated`]), in parallel, printing
+//! on a desktop it has to itself ([`run_isolated`]), in parallel, printing
 //! libtest's lines, and then ends the process without running any DLL's
 //! process-detach code.
 //!
@@ -22,7 +22,7 @@
 //! do not need, since nothing they leave behind is flushed at exit. Remove
 //! it if the fault is fixed or found to be ours.
 //!
-//! Each test runs on a desktop of its own so that nothing it does reaches
+//! Each test runs on a desktop it has to itself so that nothing it does reaches
 //! the desktop the run was started from, which may be in use: no mockapp
 //! window, and no event, appears there, and no other client on it, a
 //! screen reader or another test, calls mockapp. No mockapp test needs the
@@ -43,8 +43,8 @@ const FAILED: u32 = 101;
 
 /// Runs `tests` (name and function) with libtest's command-line filtering
 /// (name substrings, `--skip`, `--exact`, `--ignored`, `--test-threads`,
-/// `--list`) and output, each in a process of its own on a desktop of its
-/// own, which no other process uses, then ends the process with libtest's
+/// `--list`) and output, each in a process of its own on a desktop no other
+/// test's process is on while it runs, then ends the process with libtest's
 /// exit code, as explained in the module documentation.
 ///
 /// The desktop also keeps the counts of the calls `mockapp`'s providers
@@ -58,9 +58,13 @@ const FAILED: u32 = 101;
 /// every new window. A desktop isolates `mockapp` from all of them: a
 /// window, and every event about it, is seen only from its own desktop,
 /// and a process started on one, `mockapp` included, starts its children
-/// there. So each test runs as this binary again, started on a new desktop
-/// with `--isolated-test` and the test's name, and is the only client
-/// there; this process prints its result as libtest does.
+/// there. So each test runs as this binary again, with `--isolated-test`
+/// and the test's name, and is the only client on its desktop; this process
+/// prints its result as libtest does. Each worker thread makes one desktop
+/// and runs its tests there one after another, starting each once every
+/// process the one before it started has ended (`isolated::Slot`), rather
+/// than making a desktop for every test, because each desktop made puts
+/// the Desktop Window Manager behind.
 pub fn run_isolated(tests: &[(&'static str, fn())]) -> ! {
     let options = Options::parse();
     if let Some(name) = &options.isolated {
@@ -75,15 +79,20 @@ pub fn run_isolated(tests: &[(&'static str, fn())]) -> ! {
         });
     }
     crate::common::contain_children();
-    run_with(&options, tests, |name, _| isolated::run(name))
+    run_with(&options, tests, || {
+        let mut slot = isolated::Slot::new();
+        move |name, _| slot.run(name)
+    })
 }
 
-/// Runs the tests `options` selects, each with `execute`, which says
-/// whether it passed, printing libtest's lines, and ends the process.
-fn run_with(
+/// Runs the tests `options` selects, printing libtest's lines, and ends the
+/// process. Each worker thread makes its executor with `worker` once, and
+/// runs its tests with it one after another; the executor says whether a
+/// test passed, and is dropped when the thread has no tests left.
+fn run_with<W: FnMut(&'static str, fn()) -> bool>(
     options: &Options,
     tests: &[(&'static str, fn())],
-    execute: impl Fn(&'static str, fn()) -> bool + Sync,
+    worker: impl Fn() -> W + Sync,
 ) -> ! {
     let selected: Vec<(&'static str, fn())> = tests
         .iter()
@@ -106,8 +115,9 @@ fn run_with(
     let next = AtomicUsize::new(0);
     let failed = Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..options.threads.min(selected.len()).max(1) {
+        for _ in 0..options.threads.max(1).min(selected.len()) {
             scope.spawn(|| {
+                let mut execute = worker();
                 while let Some(&(name, test)) = selected.get(next.fetch_add(1, Ordering::Relaxed)) {
                     let passed = execute(name, test);
                     println!("test {name} ... {}", if passed { "ok" } else { "FAILED" });
@@ -251,15 +261,23 @@ impl Options {
     }
 }
 
-/// Running one test in a process of its own on a desktop of its own
-/// ([`run_isolated`]).
+/// Running one test in a process of its own on a desktop no other test is
+/// using ([`run_isolated`]).
 mod isolated {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use windows::Win32::Foundation::{
-        CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, GENERIC_ALL, HANDLE, WAIT_OBJECT_0,
+        CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, GENERIC_ALL, HANDLE,
+        INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+    };
+    use windows::Win32::System::IO::{
+        CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED,
+    };
+    use windows::Win32::System::JobObjects::{
+        CreateJobObjectW, JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
+        JobObjectAssociateCompletionPortInformation, SetInformationJobObject,
     };
     use windows::Win32::System::StationsAndDesktops::{
         CloseDesktop, CreateDesktopW, DESKTOP_CONTROL_FLAGS, GetProcessWindowStation,
@@ -268,10 +286,14 @@ mod isolated {
     use windows::Win32::System::Threading::{
         CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
         GetCurrentProcess, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
-        LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
-        STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+        LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+        UpdateProcThreadAttribute, WaitForSingleObject,
     };
     use windows::core::{PCWSTR, PWSTR};
+
+    /// A job message: no process in the job is running any more.
+    const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: u32 = 4;
 
     /// Numbers this process's desktops, so each is new.
     static DESKTOPS: AtomicUsize = AtomicUsize::new(0);
@@ -281,8 +303,9 @@ mod isolated {
         text.encode_wide().chain(std::iter::once(0)).collect()
     }
 
-    /// A desktop made for one test, closed once the test's process has
-    /// ended; the system destroys it when nothing uses it any more.
+    /// A desktop made for one worker thread's tests, closed once the last
+    /// of them has ended; the system destroys it when nothing uses it any
+    /// more.
     struct Desktop {
         handle: HDESK,
         /// Its name after its window station's, as a process is started on
@@ -329,6 +352,116 @@ mod isolated {
             {
                 panic!("a test's desktop could not be closed: {error}");
             }
+        }
+    }
+
+    /// A job every process a test starts is in, from the test's own process
+    /// on, since a child starts in its parent's job, with a completion port
+    /// that hears when no process in it is running any more.
+    ///
+    /// The test's process puts its children in a job of its own
+    /// ([`crate::common::contain_children`]), which ends them when that
+    /// process ends; that job is nested in this one, whose count of running
+    /// processes includes it, so this job is empty only once they have all
+    /// ended.
+    struct Job {
+        job: HANDLE,
+        port: HANDLE,
+    }
+
+    impl Job {
+        fn new() -> Self {
+            // SAFETY: no attributes and no name: a new unnamed job, whose
+            // handle is not inheritable.
+            let job = unsafe { CreateJobObjectW(None, PCWSTR::null()) }
+                .unwrap_or_else(|error| panic!("a test's job could not be made: {error}"));
+            // SAFETY: a new port, not associated with any file handle.
+            let port = unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1) }
+                .unwrap_or_else(|error| panic!("a test's job's port could not be made: {error}"));
+            let association = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+                CompletionKey: std::ptr::null_mut(),
+                CompletionPort: port,
+            };
+            // SAFETY: `association` is the structure this information class
+            // takes, passed with its size; both handles are open.
+            unsafe {
+                SetInformationJobObject(
+                    job,
+                    JobObjectAssociateCompletionPortInformation,
+                    (&raw const association).cast(),
+                    u32::try_from(size_of::<JOBOBJECT_ASSOCIATE_COMPLETION_PORT>())
+                        .expect("the structure's size fits"),
+                )
+            }
+            .unwrap_or_else(|error| panic!("a test's job could not report to its port: {error}"));
+            Self { job, port }
+        }
+
+        /// Waits until no process in the job is running any more, which the
+        /// job reports once its count of running processes reaches none.
+        /// That happens once per test: the test's process is in the job
+        /// until it ends, and by then it has ended the job its children are
+        /// in, so this waits only for their ending.
+        fn wait_until_empty(&self) {
+            loop {
+                let mut message = 0u32;
+                let mut key = 0usize;
+                let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
+                // SAFETY: the port this value owns; every out-parameter is a
+                // local of the right type.
+                unsafe {
+                    GetQueuedCompletionStatus(
+                        self.port,
+                        &raw mut message,
+                        &raw mut key,
+                        &raw mut overlapped,
+                        INFINITE,
+                    )
+                }
+                .unwrap_or_else(|error| panic!("a test's job's port could not be read: {error}"));
+                if message == JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO {
+                    return;
+                }
+            }
+        }
+    }
+
+    impl Drop for Job {
+        fn drop(&mut self) {
+            for handle in [self.job, self.port] {
+                // SAFETY: a handle `new` made, closed once.
+                let _ = unsafe { CloseHandle(handle) };
+            }
+        }
+    }
+
+    /// One worker thread's desktop and job: the desktop is made once and
+    /// used by the thread's tests one after another, each starting once
+    /// every process the one before it started has ended, so no window or
+    /// process of an earlier test is left on it. Making a desktop costs the
+    /// Desktop Window Manager about a tenth of a second of work, which it
+    /// does in turn for the whole session, so a desktop made for every test
+    /// added to its backlog, during which everything that waits on it is
+    /// late, a window's title-bar information included.
+    pub(super) struct Slot {
+        desktop: Desktop,
+        job: Job,
+    }
+
+    impl Slot {
+        pub(super) fn new() -> Self {
+            Self {
+                desktop: Desktop::new(),
+                job: Job::new(),
+            }
+        }
+
+        /// Runs the test `name` ([`run`]), waits until every process it
+        /// started has ended, and returns whether it passed.
+        pub(super) fn run(&mut self, name: &str) -> bool {
+            let passed = run(name, &self.desktop, &self.job);
+            self.job.wait_until_empty();
+            passed
         }
     }
 
@@ -404,13 +537,12 @@ mod isolated {
         }
     }
 
-    /// Runs the test `name` in a new process of this binary on a new
-    /// desktop and returns whether it passed. The process is in this
-    /// process's job ([`crate::common::contain_children`]) from its start,
-    /// as every process this one starts is, so it ends with this process
-    /// however that ends.
-    pub(super) fn run(name: &str) -> bool {
-        let desktop = Desktop::new();
+    /// Runs the test `name` in a new process of this binary on `desktop` and
+    /// returns whether it passed. The process is in `job` from its start,
+    /// and through it in this process's job
+    /// ([`crate::common::contain_children`]), as every process this one
+    /// starts is, so it ends with this process however that ends.
+    fn run(name: &str, desktop: &Desktop, job: &Job) -> bool {
         let mut desktop_path = desktop.path.clone();
         let exe = std::env::current_exe().expect("this test binary's path");
         let mut command = wide(format!("\"{}\" --isolated-test {name}", exe.display()).as_ref());
@@ -419,13 +551,13 @@ mod isolated {
         let mut size = 0usize;
         // SAFETY: this call only reports the size a list of one attribute
         // needs; its failure for the missing buffer is expected.
-        let _ = unsafe { InitializeProcThreadAttributeList(None, 1, None, &raw mut size) };
+        let _ = unsafe { InitializeProcThreadAttributeList(None, 2, None, &raw mut size) };
         // Pointer-sized units align the list for its pointer-sized fields.
         let mut buffer = vec![0usize; size.div_ceil(size_of::<usize>())];
         let attributes = LPPROC_THREAD_ATTRIBUTE_LIST(buffer.as_mut_ptr().cast());
         // SAFETY: `buffer` holds `size` bytes, aligned, and outlives every
         // use of `attributes`, which ends with the delete below.
-        unsafe { InitializeProcThreadAttributeList(Some(attributes), 1, None, &raw mut size) }
+        unsafe { InitializeProcThreadAttributeList(Some(attributes), 2, None, &raw mut size) }
             .unwrap_or_else(|error| panic!("an attribute list could not be made: {error}"));
         // SAFETY: `attributes` is initialized; the handles outlive the
         // process creation that reads them, and their size is given.
@@ -441,6 +573,20 @@ mod isolated {
             )
         }
         .unwrap_or_else(|error| panic!("the inherited handles could not be listed: {error}"));
+        let jobs = [job.job];
+        // SAFETY: as above, for `jobs`, one handle.
+        unsafe {
+            UpdateProcThreadAttribute(
+                attributes,
+                0,
+                PROC_THREAD_ATTRIBUTE_JOB_LIST as usize,
+                Some(jobs.as_ptr().cast()),
+                size_of::<HANDLE>(),
+                None,
+                None,
+            )
+        }
+        .unwrap_or_else(|error| panic!("the test's job could not be listed: {error}"));
         let mut startup = STARTUPINFOEXW::default();
         startup.StartupInfo.cb =
             u32::try_from(size_of::<STARTUPINFOEXW>()).expect("the structure's size fits");
@@ -453,7 +599,7 @@ mod isolated {
         // SAFETY: `command` and `desktop_path` are NUL-terminated, writable
         // UTF-16 buffers that outlive the call; the startup information is
         // sized and carries the attribute list, which limits the handles
-        // inherited to the two listed.
+        // inherited to the two listed and puts the process in the job.
         let created = unsafe {
             CreateProcessW(
                 PCWSTR::null(),
@@ -489,7 +635,6 @@ mod isolated {
             .unwrap_or_else(|error| panic!("the test {name}'s exit could not be read: {error}"));
         // SAFETY: the process handle, closed once.
         let _ = unsafe { CloseHandle(process.hProcess) };
-        drop(desktop);
         code == 0
     }
 }

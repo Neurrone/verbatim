@@ -435,7 +435,16 @@ running DLL detach code, because
 process that has connected to providers; the file's comment gives the
 evidence. It runs every test isolated (`harness::run_isolated`): the
 runner starts the binary again for each test, with `--isolated-test` and
-its name, on a new desktop made for it, and reports its result. A window
+its name, on a desktop no other test is using, and reports its result.
+Each of the runner's worker threads makes one desktop and one job object,
+and runs its tests on that desktop one after another, every process a
+test starts being in the job. Before the next test starts there, the
+runner waits for the job's report that no process in it is running any
+more, so nothing of the earlier test is left on the desktop. Desktops
+are not made per test because making one costs the Desktop Window
+Manager about a tenth of a second of work, done in turn for the whole
+session, and while it is behind, anything that waits on it is late, such
+as a window's title-bar information, which the MSAA proxy reads. A window
 and its events are seen only from its own desktop, and a process started
 on one, mockapp included, starts its children there, so no test puts a
 window on the desktop the run was started from, which may be in use by an
