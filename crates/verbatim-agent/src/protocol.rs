@@ -224,9 +224,9 @@ pub enum Request {
         /// How long to wait, in milliseconds.
         timeout_ms: u64,
     },
-    /// Reports the focused element as UI Automation sees it, read
-    /// independently of any screen reader: state a test fixes its
-    /// expectation from, such as the desktop's focused item. Answered by
+    /// Reports the focused object as MSAA sees it, read independently of
+    /// any screen reader: state a test fixes its expectation from, such as
+    /// the desktop's focused item. Answered by
     /// [`ReplyPayload::Focused`].
     FocusedElement,
     /// Focuses the first element of the foreground window whose UI
@@ -834,14 +834,14 @@ pub enum WindowCondition {
     AllMinimized,
 }
 
-/// The focused element as UI Automation reports it, for
+/// The focused object as MSAA reports it, for
 /// [`Request::FocusedElement`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FocusedElement {
     /// Its name.
     pub name: String,
-    /// Its position among its siblings and how many there are, counting
-    /// from one, when UI Automation reports both.
+    /// Its position in its list and how many items there are, counting
+    /// from one, when it is the focused item of a Win32 list view.
     pub position: Option<(i32, i32)>,
     /// Whether it is selected, when it can be.
     pub selected: Option<bool>,

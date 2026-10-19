@@ -111,15 +111,20 @@ Public API:
     seen to end only once the agent has answered the request it was
     making.
   - State a test fixes its expectations from, read independently of any
-    screen reader: `FocusedElement` (UI Automation's focused element: its
-    name, its position and the size of its set, counted among its parent's
-    children when UI Automation reports none, as for a Win32 list view's
-    items, and whether it is selected), `FocusByAutomationId` (focuses the
-    foreground window's element with that identifier with UI Automation's
-    `SetFocus`, injecting no input, and answers how many children it has),
-    `MisspeltWords` (the words of the focused text marked with UI
-    Automation's spelling-error annotation, read word by word), and
-    `KeyToggled` (whether a lock key is on).
+    screen reader: `FocusedElement` (the focused object through MSAA, with
+    no UI Automation connection: the focus window's client object, the
+    child its `accFocus` names, that child's name, whether it is selected
+    when it can be, and, for a Win32 list view such as the desktop's, the
+    focused item's position and the item count from the list view's own
+    messages), `FocusByAutomationId` (focuses the foreground window's
+    element with that identifier with UI Automation's `SetFocus`, injecting
+    no input, and answers how many children it has), `MisspeltWords` (the
+    words of the focused text marked with UI Automation's spelling-error
+    annotation, read word by word), and `KeyToggled` (whether a lock key
+    is on). The two requests that keep UI Automation, which need facts only
+    it has, log how long each took, at warn from two seconds, so their slow
+    answers are counted apart from Verbatim's
+    (`docs/design/listener-without-connections.md`, section 4.5).
   - Evidence: `WaitForFile` (a file appearing, checked again on each change
     notification for its folder), `CreateEvent` and `WaitForEvent` (a named
     manual-reset event a launched process sets when it reaches a point a
