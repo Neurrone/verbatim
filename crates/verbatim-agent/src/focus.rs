@@ -157,10 +157,14 @@ pub fn focused_element() -> io::Result<FocusedElement> {
         // the call fills.
         let found = unsafe { WindowFromAccessibleObject(&object, Some(&raw mut inner)) };
         hops += 1;
-        if found.is_err() || inner.is_invalid() || inner == window || hops > 4 {
+        if found.is_err() || inner.is_invalid() || inner == window {
             break (object, CHILDID_SELF.cast_signed(), focus);
         }
+        // The object is in `inner`, which its position is read from too.
         window = inner;
+        if hops > 4 {
+            break (object, CHILDID_SELF.cast_signed(), focus);
+        }
     };
     let child = VARIANT::from(child);
     // SAFETY: as above.

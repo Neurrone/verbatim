@@ -1565,7 +1565,7 @@ impl Scenario {
     /// # Errors
     ///
     /// Returns an error if the foreground is not the desktop, or the agent
-    /// cannot read the focus.
+    /// cannot read the focus or the focused item's position.
     pub fn desktop_speech(&mut self) -> io::Result<Vec<String>> {
         let info = self.agent.foreground_info()?;
         if info
@@ -1579,15 +1579,19 @@ impl Scenario {
             )));
         }
         let focus = self.agent.focused_element()?;
-        let mut speech = vec!["Desktop list".to_owned()];
-        if let Some((position, size)) = focus.position {
-            let state = match focus.selected {
-                Some(false) => " not selected",
-                _ => "",
-            };
-            speech.push(format!("{}{state} {position} of {size}", focus.name));
-        }
-        Ok(speech)
+        let Some((position, size)) = focus.position else {
+            return Err(io::Error::other(format!(
+                "the desktop item's position could not be read: {focus:?}"
+            )));
+        };
+        let state = match focus.selected {
+            Some(false) => " not selected",
+            _ => "",
+        };
+        Ok(vec![
+            "Desktop list".to_owned(),
+            format!("{}{state} {position} of {size}", focus.name),
+        ])
     }
 
     /// Has the agent focus the foreground window's element whose UI

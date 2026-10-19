@@ -106,11 +106,12 @@ configuration says.
 Every scenario then starts by asserting the startup speech exactly
 (`registry::startup_speech`): the start sound heard (Verbatim speaks no
 start message, as NVDA speaks none), then the desktop's announcement, as
-`Scenario::desktop_speech` gives it: "Program Manager", "Desktop list", and
-the focused desktop item, read independently by the agent through UI
-Automation, its name, "not selected" when it is not, and its position and
-the item count. UI Automation gives no position for a Win32 list view's
-items, so the agent counts the item's place among its parent's children.
+`Scenario::desktop_speech` gives it: "Desktop list" and the focused
+desktop item, read independently by the agent through MSAA, its name,
+"not selected" when it is not, and its position and the item count, from
+the list view's own messages. When the agent cannot read the item's
+position, `desktop_speech` returns an error rather than an expectation
+without the item.
 
 ## Speech assertions
 
