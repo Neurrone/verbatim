@@ -306,7 +306,7 @@ impl MockApp {
     }
 
     /// Waits for mockapp's next line, which must be `expected`: the
-    /// evidence of a step of a stall (`crate::held` in mockapp). When none
+    /// evidence of a step of a stall (mockapp's `stall` command). When none
     /// comes within [`WAIT_TIMEOUT`], fails with what `evidence` says, such
     /// as the logs of the processes the test started.
     pub fn expect_line(&self, expected: &str, evidence: impl FnOnce() -> String) {
