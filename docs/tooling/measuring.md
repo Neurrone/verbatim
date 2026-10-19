@@ -64,9 +64,9 @@ already holds the change.
 ### Wake-ups and processor time: cargo xtask trace scenario
 
 `cargo xtask trace scenario <name> --after <seconds> --seconds <seconds>
-[--release] [--audible] [--wakers <thread>]... [--stacks <thread>]...
-[--samples <thread>]... [--symbol-server] [--keep] [--label <label>]`
-runs one scenario,
+[--release | --verbatim-exe <path>] [--audible] [--wakers <thread>]...
+[--stacks <thread>]... [--samples <thread>]... [--symbol-server] [--keep]
+[--label <label>]` runs one scenario,
 starts a CPU trace `--after` seconds in, stops it `--seconds` later, and
 reads it with `verbatim-trace-waits` (`docs/crates/verbatim-trace-waits.md`):
 
@@ -80,8 +80,20 @@ reads it with `verbatim-trace-waits` (`docs/crates/verbatim-trace-waits.md`):
 - `samples-<thread>.txt` for each `--samples`: where their processor time
   went, by module and by function.
 
+The command chooses the build it stages: this tree's debug build, its
+release build with `--release`, or with `--verbatim-exe <path>` another
+build, such as a worktree of an older commit, to compare against. It
+passes that path to the scenario as `VERBATIM_E2E_VERBATIM_EXE`, cannot
+be combined with `--release`, and refuses to start unless the path's
+folder holds everything a run stages: `verbatim.exe`,
+`verbatim-outpost.exe`, `verbatim-synth-host.exe`, `mockapp.exe`,
+`espeak-ng-data` and `sounds`, naming each one missing. It also refuses
+to start while `VERBATIM_E2E_VERBATIM_EXE` is set in its environment,
+since it sets that variable itself.
+
 Stacks and samples name Verbatim's own functions from the build's PDBs
-(`target\debug`, or `target\release` with `--release`), and system and
+(`target\debug`, `target\release` with `--release`, or the named build's
+folder with `--verbatim-exe`), and system and
 kernel code by its exported functions. `--symbol-server` passes
 `--symbol-server` to the reader for those reports, so system and kernel
 code is named by its real functions from PDBs fetched from Microsoft's

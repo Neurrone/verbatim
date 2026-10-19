@@ -287,3 +287,9 @@ while `cargo test -p mockapp` runs its tests in parallel (up to 13 s
 measured). It matters because a test that times or tightly bounds such
 a read fails from load elsewhere in the session, not from its own code,
 so no test does (`docs/testing.md`, "Waits are for evidence").
+
+**`cargo xtask trace scenario` refuses to start while
+`VERBATIM_E2E_VERBATIM_EXE` is set.** Name the other build with
+`--verbatim-exe <path>` instead, because the command once discarded the
+variable silently, so a comparison of two builds traced the current
+build in both arms.

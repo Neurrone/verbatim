@@ -111,15 +111,37 @@ impl Drop for Agent {
 }
 
 /// How a scenario is run: which build is staged, and whether it is heard.
-#[derive(Clone, Copy)]
 struct RunOptions {
     release: bool,
     audible: bool,
+    /// Another build's `verbatim.exe` to stage instead of this tree's
+    /// (`--verbatim-exe`).
+    verbatim_exe: Option<PathBuf>,
+}
+
+/// The executables and folders a run stages from the folder of the
+/// `verbatim.exe` it is given, as `verbatim-e2e`'s staging copies them.
+const STAGED: &[&str] = &[
+    "verbatim.exe",
+    "verbatim-outpost.exe",
+    "verbatim-synth-host.exe",
+    "mockapp.exe",
+    "espeak-ng-data",
+    "sounds",
+];
+
+/// What a run stages that is missing from `folder`, in [`STAGED`]'s order.
+fn missing_from(folder: &Path) -> Vec<&'static str> {
+    STAGED
+        .iter()
+        .copied()
+        .filter(|name| !folder.join(name).exists())
+        .collect()
 }
 
 /// `cargo test` running scenario `name` against the agent, its output in
 /// `folder` as `<name>.log`.
-fn scenario(name: &str, options: RunOptions, folder: &Path) -> Result<Child, String> {
+fn scenario(name: &str, options: &RunOptions, folder: &Path) -> Result<Child, String> {
     let log = fs::File::create(folder.join(format!("{name}.log")))
         .map_err(|error| format!("could not create the scenario's log: {error}"))?;
     let errors = log
@@ -139,7 +161,9 @@ fn scenario(name: &str, options: RunOptions, folder: &Path) -> Result<Child, Str
     if options.audible {
         command.env("VERBATIM_E2E_AUDIBLE", "1");
     }
-    if options.release {
+    if let Some(exe) = &options.verbatim_exe {
+        command.env("VERBATIM_E2E_VERBATIM_EXE", exe);
+    } else if options.release {
         command.env(
             "VERBATIM_E2E_VERBATIM_EXE",
             workspace().join(r"target\release\verbatim.exe"),
@@ -195,6 +219,7 @@ fn run_measure(args: &[String]) -> Result<(), String> {
     let options = RunOptions {
         release: args.iter().any(|arg| arg == "--release"),
         audible: args.iter().any(|arg| arg == "--audible"),
+        verbatim_exe: None,
     };
     let mut names = values(args, "--scenario");
     if names.is_empty() {
@@ -211,7 +236,7 @@ fn run_measure(args: &[String]) -> Result<(), String> {
     let agent = Agent::start(&folder)?;
     let mut results = String::new();
     for name in &names {
-        let mut test = scenario(name, options, &folder)?;
+        let mut test = scenario(name, &options, &folder)?;
         let _ = test.wait();
         let ok = passed(&folder.join(format!("{name}.log")));
         let _ = writeln!(results, "{name}: {}", if ok { "passed" } else { "FAILED" });
@@ -382,7 +407,7 @@ pub(crate) fn trace_scenario(args: &[String]) -> ExitCode {
 }
 
 const TRACE_SCENARIO_USAGE: &str = "usage: cargo xtask trace scenario <name> --after <seconds> --seconds <seconds> \
-     [--release] [--audible] [--wakers <thread>]... [--stacks <thread>]... \
+     [--release | --verbatim-exe <path>] [--audible] [--wakers <thread>]... [--stacks <thread>]... \
      [--samples <thread>]... [--symbol-server] [--keep] [--label <label>]";
 
 fn run_trace_scenario(args: &[String]) -> Result<(), String> {
@@ -397,17 +422,17 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     };
     let after = seconds_of("--after")?;
     let seconds = seconds_of("--seconds")?;
-    let options = RunOptions {
-        release: args.iter().any(|arg| arg == "--release"),
-        audible: args.iter().any(|arg| arg == "--audible"),
-    };
+    let options = trace_run_options(
+        args,
+        std::env::var_os("VERBATIM_E2E_VERBATIM_EXE").is_some(),
+    )?;
     let keep = args.iter().any(|arg| arg == "--keep");
     let label = value(args, "--label").unwrap_or_else(|| format!("{name}-{}", now_label()));
     let folder = output_folder(&label)?;
     let reader = build_reader()?;
 
     let agent = Agent::start(&folder)?;
-    let mut test = scenario(name, options, &folder)?;
+    let mut test = scenario(name, &options, &folder)?;
     // The window is time inside the scenario, chosen by the caller: a
     // trace that covers a scenario's start or end can leave File Explorer
     // stuck putting the focus on the Start button (`docs/tooling/measuring.md`).
@@ -425,11 +450,14 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
         if ok { "passed" } else { "FAILED" }
     );
 
-    let symbols = workspace().join(if options.release {
-        r"target\release"
-    } else {
-        r"target\debug"
-    });
+    let symbols = match &options.verbatim_exe {
+        Some(exe) => exe.parent().unwrap_or(Path::new("")).to_path_buf(),
+        None => workspace().join(if options.release {
+            r"target\release"
+        } else {
+            r"target\debug"
+        }),
+    };
     let reports = reader_reports(args, &symbols);
     for (file, report) in &reports {
         let output = Command::new(&reader)
@@ -459,6 +487,41 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
         Err(format!("{name} failed; see its log"))
     }
 }
+
+/// `cargo xtask trace scenario`'s run options from `args`, refused when
+/// `VERBATIM_E2E_VERBATIM_EXE` was set (`variable_set`), since the command
+/// chooses the build itself; when `--verbatim-exe` is combined with
+/// `--release`; or when the named build's folder lacks anything a run
+/// stages.
+fn trace_run_options(args: &[String], variable_set: bool) -> Result<RunOptions, String> {
+    if variable_set {
+        return Err(VARIABLE_SET.to_owned());
+    }
+    let release = args.iter().any(|arg| arg == "--release");
+    let verbatim_exe = value(args, "--verbatim-exe").map(PathBuf::from);
+    if let Some(exe) = &verbatim_exe {
+        if release {
+            return Err("--verbatim-exe and --release cannot be combined".to_owned());
+        }
+        let folder = exe.parent().unwrap_or(Path::new(""));
+        let missing = missing_from(folder);
+        if !missing.is_empty() {
+            return Err(format!(
+                "{} lacks what a run stages: {}",
+                folder.display(),
+                missing.join(", ")
+            ));
+        }
+    }
+    Ok(RunOptions {
+        release,
+        audible: args.iter().any(|arg| arg == "--audible"),
+        verbatim_exe,
+    })
+}
+
+const VARIABLE_SET: &str = "VERBATIM_E2E_VERBATIM_EXE is set, but the trace command chooses \
+     the build itself; unset it, and use --verbatim-exe <path> to trace another build";
 
 /// The reports `cargo xtask trace scenario` asks the reader for, each as
 /// the file it is written to and the reader's arguments after the trace:
@@ -534,6 +597,50 @@ mod tests {
                 ]
                 .map(str::to_owned)
                 .to_vec()
+            ))
+        );
+    }
+
+    fn arguments(list: &[&str]) -> Vec<String> {
+        list.iter().map(|&arg| arg.to_owned()).collect()
+    }
+
+    #[test]
+    fn the_variable_set_is_refused() {
+        let result = trace_run_options(&arguments(&["measure_keys_text_box"]), true);
+        assert_eq!(result.err(), Some(VARIABLE_SET.to_owned()));
+    }
+
+    #[test]
+    fn another_build_with_release_is_refused() {
+        let args = arguments(&[
+            "measure_keys_text_box",
+            "--verbatim-exe",
+            r"C:\old\verbatim.exe",
+            "--release",
+        ]);
+        assert_eq!(
+            trace_run_options(&args, false).err(),
+            Some("--verbatim-exe and --release cannot be combined".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_build_folder_missing_staged_items_is_refused_naming_each() {
+        let folder = std::env::temp_dir().join(format!("xtask-perf-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(folder.join("sounds")).expect("create the folder");
+        fs::write(folder.join("verbatim.exe"), b"").expect("write verbatim.exe");
+        fs::write(folder.join("mockapp.exe"), b"").expect("write mockapp.exe");
+        let exe = folder.join("verbatim.exe").display().to_string();
+        let args = arguments(&["measure_keys_text_box", "--verbatim-exe", &exe]);
+        let result = trace_run_options(&args, false);
+        fs::remove_dir_all(&folder).expect("remove the folder");
+        assert_eq!(
+            result.err(),
+            Some(format!(
+                "{} lacks what a run stages: verbatim-outpost.exe, verbatim-synth-host.exe, espeak-ng-data",
+                folder.display()
             ))
         );
     }
