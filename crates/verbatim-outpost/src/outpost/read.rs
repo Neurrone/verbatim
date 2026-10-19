@@ -20,7 +20,7 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-use crate::arbitration::{time_limit, window_class_name};
+use crate::arbitration::{WindowClasses, time_limit, window_class_name};
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
@@ -976,12 +976,14 @@ fn resolve_uia_element(
     // Gone only when every search finished without finding it; a search
     // that failed, a timeout above all, may have missed a live element.
     // Nothing of a window's own element is read: it is searched under. A
-    // window a kept probe found to have a provider of its own is looked up
-    // under the proxy rule, and a lookup refused, as one of an application
-    // busy past the connection timeout is, is a search that failed, not one
-    // that found nothing. A verdict from the class lists or a forced one
-    // does not say the window has a provider: the taskbar's
-    // `Shell_TrayWnd` is UIA by class and served only by UIA's proxies.
+    // window a kept probe found to have a provider of its own, and whose
+    // classes do not decide it, is looked up under the proxy rule, and a
+    // lookup refused, as one of an application busy past the connection
+    // timeout is, is a search that failed, not one that found nothing. A
+    // verdict from the class lists or a forced one does not say the window
+    // has a provider: the taskbar's `Shell_TrayWnd` is UIA by class and
+    // served only by UIA's proxies, and the focus listener keeps a probe for
+    // every UIA focus it reports, those of windows UIA by class included.
     let mut failed = None;
     for hwnd in top_level_windows(context.target_pid()) {
         let root = if probe_found_provider(context, hwnd) {
@@ -1009,10 +1011,11 @@ fn resolve_uia_element(
     }))
 }
 
-/// Whether a kept probe found that `hwnd` has a UIA provider of its own,
-/// without probing it. Local.
+/// Whether a kept probe found that `hwnd` has a UIA provider of its own on
+/// a window its classes do not decide, without probing it. Local.
 fn probe_found_provider(context: &Context, hwnd: isize) -> bool {
-    context.arbitrator().probe_found_provider(hwnd)
+    let classes = WindowClasses::of(hwnd);
+    context.arbitrator().probe_found_provider(hwnd, &classes)
 }
 
 /// A UIA node's live element, filled as a node, or the error a query

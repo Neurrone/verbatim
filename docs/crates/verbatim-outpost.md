@@ -482,7 +482,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   and the listener from the event's sender, the text area or the console
   window's element, through the console check `uses_uia` is given); a provider
   that fails it is recorded with `record_excluded` and
-  is MSAA for the window's lifetime. A probe that finds a UIA
+  is MSAA for the window's lifetime. `probe_found_provider(hwnd,
+  &WindowClasses)` answers whether a kept probe found a UIA provider of
+  the window's own on a window its class lists do not decide; the
+  runtime-id search applies the proxy rule only to such a window, because
+  a window UIA by class may be served only by UIA's proxies, and the
+  focus listener keeps a probe for every UIA focus it reports. A probe that finds a UIA
   provider is kept for the window's lifetime and dropped by `forget` when
   the window is destroyed, as decision D15 specifies. A probe that finds
   none is trusted for only `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's
