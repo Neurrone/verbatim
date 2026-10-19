@@ -946,6 +946,74 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     app.quit();
 }
 
+/// A windowless UIA focus whose read's time is up once its nearest window
+/// has been looked up is still judged by NVDA's native check, from the
+/// window's verdict kept from an earlier focus's probe, with no probe made
+/// (`FocusReader::native_window`), and is reported from its event, its
+/// nearest window the one call made: no probe, which would be a window
+/// message, and nothing else once the time is up.
+fn a_focus_out_of_time_is_judged_by_its_windows_kept_verdict() {
+    let title = common::unique_title("mockapp-focus-kept-verdict");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus slider1");
+    let _ = outpost.uia_focus(&client.focused());
+    app.send("set-focus btn1");
+    // The read's first reading of the time sets its budget's end; every
+    // later one is past it.
+    outpost.run_out_of_time_after(1);
+    let (judged, calls) = outpost.listener_read(&client.focused());
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the focus: {judged:?}");
+    };
+    assert_eq!(read.snapshot.name.as_deref(), Some("Original Name"));
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (1, 0, 0),
+        "the nearest window alone: no probe, keyboard focus read, or read's call"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA menu opening compared with the current focus, which it is not,
+/// asks the read's time before it looks up its windowless sender's nearest
+/// window, the comparison having been the read's first call: once the time
+/// is up, it is dropped after the comparison alone.
+fn a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window() {
+    let title = common::unique_title("mockapp-menu-opening-out-of-time");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let _ = outpost.uia_focus(&client.focused());
+    app.send("set-focus slider1");
+    // The read's first reading of the time sets its budget's end and its
+    // second, before the comparison, is within it; every later one is past
+    // it.
+    outpost.run_out_of_time_after(2);
+    let (judged, calls) = outpost.listener_read_as(&client.focused(), FocusEvent::MenuOpened);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a menu opening out of time: {judged:?}");
+    };
+    assert_eq!(
+        reason,
+        "its read ran out of time before its window was looked up"
+    );
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (1, 0, 0),
+        "the comparison, and no nearest window"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A focus on a menu item that no pattern makes checkable reads its legacy
 /// MSAA state, where a Windows Forms menu item says it is checked, with
 /// one live read after the focus's classic read, made for an element the
@@ -1336,6 +1404,14 @@ fn main() {
         (
             "a_menu_opening_on_another_element_is_judged_by_its_own_window",
             a_menu_opening_on_another_element_is_judged_by_its_own_window,
+        ),
+        (
+            "a_focus_out_of_time_is_judged_by_its_windows_kept_verdict",
+            a_focus_out_of_time_is_judged_by_its_windows_kept_verdict,
+        ),
+        (
+            "a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window",
+            a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window,
         ),
         (
             "a_menu_items_legacy_state_is_read_with_its_focus",

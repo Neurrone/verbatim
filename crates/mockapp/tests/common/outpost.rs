@@ -19,10 +19,11 @@
 //!
 //! The outpost and the listener's reader read the time from the test too
 //! ([`Outpost::set_clock`], [`FocusReader::set_clock`]): the time stands
-//! still unless the test moves it on ([`OutpostUnderTest::pass_time`]), so a
-//! window's verdict of no UIA provider runs out, and its probe is made
-//! again, and a classic walk's time budget is spent, only where the test
-//! says, however long the test and its calls take.
+//! still unless the test moves it on ([`OutpostUnderTest::pass_time`], or
+//! [`OutpostUnderTest::run_out_of_time_after`] partway through a step), so
+//! a window's verdict of no UIA provider runs out, and its probe is made
+//! again, and a classic walk's or a focus read's time budget is spent, only
+//! where the test says, however long the test and its calls take.
 //!
 //! No window takes the foreground on the desktop a test runs on, so the
 //! outpost and the listener's reader read the foreground window from the
@@ -290,6 +291,9 @@ pub struct OutpostUnderTest {
     gate: Arc<WorkerGate>,
     /// The time the outpost and the listener's reader read.
     time: Arc<Mutex<Instant>>,
+    /// How many more reads of the time give it unchanged before it jumps an
+    /// hour on ([`Self::run_out_of_time_after`]), when set.
+    jump_after: Arc<Mutex<Option<u32>>>,
     /// The window the outpost reads as the foreground.
     foreground: Arc<AtomicIsize>,
     /// The focus listener's reader, standing in for the listener's thread
@@ -391,9 +395,21 @@ impl OutpostUnderTest {
             Outpost::with_focused_element_reader(theirs, pid, options, read_focus)
         };
         let time = Arc::new(Mutex::new(Instant::now()));
-        let clock = Arc::clone(&time);
-        let clock: verbatim_outpost::arbitration::Clock =
-            Arc::new(move || *clock.lock().unwrap_or_else(PoisonError::into_inner));
+        let jump_after = Arc::new(Mutex::new(None));
+        let (clock, jump) = (Arc::clone(&time), Arc::clone(&jump_after));
+        let clock: verbatim_outpost::arbitration::Clock = Arc::new(move || {
+            let mut jump = jump.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut time = clock.lock().unwrap_or_else(PoisonError::into_inner);
+            match *jump {
+                Some(0) => {
+                    *time += Duration::from_secs(3600);
+                    *jump = None;
+                }
+                Some(reads) => *jump = Some(reads - 1),
+                None => {}
+            }
+            *time
+        });
         outpost.set_clock(Arc::clone(&clock));
         // No window takes the foreground where these tests run: mockapp's
         // is the foreground unless the test says otherwise
@@ -434,6 +450,7 @@ impl OutpostUnderTest {
             focus_reads,
             gate,
             time,
+            jump_after,
             foreground,
             reader: RefCell::new(reader),
             last_accepted,
@@ -455,6 +472,17 @@ impl OutpostUnderTest {
     /// Moves the time the outpost and the listener's reader read on by `by`.
     pub fn pass_time(&self, by: Duration) {
         *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
+    }
+
+    /// Lets the time the outpost and the listener's reader read be read
+    /// `reads` more times unchanged, and then jump an hour on, past every
+    /// time budget, for a step whose budget runs out at a chosen call: a
+    /// focus read reads the time first to set its budget's end.
+    pub fn run_out_of_time_after(&self, reads: u32) {
+        *self
+            .jump_after
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(reads);
     }
 
     /// The outpost's next message.
