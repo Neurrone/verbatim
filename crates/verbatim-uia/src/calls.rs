@@ -39,10 +39,6 @@
 //! [`CallCounts::connections`], which the focus listener must keep at zero
 //! (`docs/design/listener-without-connections.md`, section 2).
 //!
-//! Each thread also counts the times it took an application's lock
-//! ([`crate::lock`]), one for each guarded call, beside its calls
-//! ([`take_locks`]).
-//!
 //! [`Registration`]: crate::Registration
 
 use std::cell::Cell;
@@ -65,25 +61,6 @@ thread_local! {
     /// This thread's failed cached reads since the last
     /// [`take_failed_reads`].
     static FAILED_READS: Cell<u32> = const { Cell::new(0) };
-}
-
-thread_local! {
-    /// The times this thread took an application's lock since the last
-    /// [`take_locks`] ([`crate::lock`]).
-    static LOCKS: Cell<u32> = const { Cell::new(0) };
-}
-
-/// Counts one taking of an application's lock on this thread.
-pub(crate) fn count_lock() {
-    LOCKS.with(|locks| locks.set(locks.get().saturating_add(1)));
-}
-
-/// The times this thread took an application's lock since the last take,
-/// resetting the count to zero: a guarded call's acquisitions, counted
-/// beside its calls (`docs/design/focus-pipeline.md`, section 20.6).
-#[must_use]
-pub fn take_locks() -> u32 {
-    LOCKS.with(Cell::take)
 }
 
 /// Counts one failed cached read on this thread.

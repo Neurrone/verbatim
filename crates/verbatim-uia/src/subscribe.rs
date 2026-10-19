@@ -135,10 +135,8 @@ pub enum Scope {
     Nothing,
     /// The subtree of each of these elements, such as windows' elements.
     /// The caller looks a window's element up itself, on a thread that
-    /// serves the window's application: the registration's thread makes
-    /// no connection by handle, which would take the application's lock
-    /// and could wait for it (`crate::lock`), and a registration thread
-    /// never waits for one (`docs/design/focus-pipeline.md`, section 20.5).
+    /// serves the window's application, so the registration's thread makes
+    /// no connection by handle.
     Subtrees(Vec<AgileReference<IUIAutomationElement>>),
     /// The whole desktop: the subtree of the root element.
     Desktop,

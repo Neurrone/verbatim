@@ -265,19 +265,17 @@ seconds, logged as `arbitration probed` with `probe=Raw` and, before it,
 window's answer). Two UIA faults give the outposts' slow "no"
 (`docs/uia-bugs.md`): "A new connection fails while another process's
 remote operation is queued", where the listener's focus read is the
-operation and an outpost's first connection to a launching application
-the connection, which Verbatim now makes under the
-application's lock (`verbatim_uia::lock`); and, for a conhost window
-just created, "UiaHasServerSideProvider says no for a new conhost window
-while another process has an event handler", which no lock prevents. A
-slow "no" that remains has another cause: a remote operation by other
-software, such as NVDA's, which no lock of Verbatim's covers; an
-operation of Verbatim's that timed out just before, whose request UIA
-still processes when the application wakes; or, for the Settings page's
-outpost, a connection to its frame in `ApplicationFrameHost`, whose lock
-the outpost does not hold (section 20.9). The lock's waits are logged at
-debug under `verbatim_uia::lock`, each with the call and how long it
-waited.
+operation and another process's first connection to the application
+the connection, which Verbatim's own processes cannot make, since only an
+application's outpost sends it a remote operation or connects to it
+(`docs/design/listener-without-connections.md`, section 2); and, for a
+conhost window just created, "UiaHasServerSideProvider says no for a new
+conhost window while another process has an event handler". A slow "no"
+that remains has another cause: a remote operation by other software,
+such as NVDA's, or the end-to-end agent's two UIA requests
+(`docs/crates/verbatim-agent.md`); or an operation of
+Verbatim's that timed out just before, whose request UIA still processes
+when the application wakes.
 
 **A window's title-bar information takes seconds during a parallel
 mockapp run.** On the development VM the Desktop Window Manager does

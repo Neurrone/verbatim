@@ -35,6 +35,8 @@ In Verbatim the operation was the listener's focus read and the connection an ou
 
 A related cost that is not a failure: a remote operation waiting for one busy UI thread delays every other client's call into the process, on any thread, held elements included, by the same time (`e28`, 9 of 9 delayed to the end of a 1,000 ms busy period, against under 1.1 ms in the control `e28c`).
 
+A second form needs new connections from two processes: a new connection waiting in a busy application fails when another process's new connection waits there too and a third process has a call pending (`e44`, `e50`). Two connections from two threads of one process beside a held call did not fail (`e55`, 12 of 12), nor did a connection beside another's that was waiting when its process ended (12 of 12).
+
 A call that times out leaves its request queued in the application, which processes it when it wakes, so a connection made then by another process can still collide (found while building 3782ee8d; section 20.5).
 
 #### Not affected
@@ -51,7 +53,7 @@ A call that times out leaves its request queued in the application, which proces
 
 #### Workarounds that worked
 
-- Only one process connects to an application during another process's operation. The redesign in progress removes the listener's connections to applications (`docs/design/listener-without-connections.md`, being drafted). Until it is built, Verbatim takes a lock per application process around each remote operation and each connection by handle, shared by the listener and that application's outpost (`crates/verbatim-uia/src/lock.rs`; focus pipeline sections 20.2 to 20.6). Measured before and after (section 20.12): no import of the window proxy in any run, and lock waits at an application's first sight of P50 1.5 to 8 ms by scenario, the longest 93 ms; in steady state two waits in about 800 focuses, of 0.3 and 3.5 ms. It covers only Verbatim's own processes: remote operations by other software, a request still queued after a timeout, and an outpost's walks up into a frame host in another process are not covered (section 20.9), and a review of the lock found defects in it, which the redesign answers.
+- Only one process connects to an application during another process's operation: only an application's own outpost sends it a remote operation or makes a new UIA connection to it, and the focus listener reads every focus from elements it holds (`docs/design/listener-without-connections.md`, section 2). This replaced a lock per application around each remote operation and each connection by handle, shared by the listener and that application's outpost, which the rule left nothing to guard (removed 2026-10-19). It covers only Verbatim's own processes: remote operations by other software, a request still queued after a timeout, the end-to-end agent's two UIA requests, and UIA's own focus tracking in the listener's process are not covered.
 
 #### Workarounds that didn't work
 
@@ -102,7 +104,7 @@ The outposts keep this call as their probe of their own application's windows, s
 
 - The lookup by handle as the check, judging the window native when its element's main provider is not one of UIA's proxies: it returned the MSAA proxy after about 5 seconds in 7 of 120 trials under the trigger, and it misclassifies 11 File Explorer child windows that answer the raw probe but whose element has an MSAA or non-control proxy as its main provider (`e39`).
 - Probing later: it lowers the rate but does not remove the fault, which occurred up to 77.3 ms after the window was found (`e38`); in `e39`, installing the debugging hooks first moved the probe to about 18 ms and gave no "no" in 60, which shows only a lower rate.
-- The per-application lock: it cannot prevent this, since no Verbatim call is pending when it happens (`e38`; `conhost_two_windows` failed four times in eleven runs under the lock, focus pipeline section 20.12).
+- A lock per application around Verbatim's colliding calls, since removed: it could not prevent this, since no Verbatim call is pending when it happens (`e38`; `conhost_two_windows` failed four times in eleven runs under it).
 
 #### NVDA
 

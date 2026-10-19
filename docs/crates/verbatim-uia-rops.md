@@ -177,14 +177,8 @@ read), the runtime ids the caller already knows, a depth limit, the
 shape's properties for the gates its request was built with: every gate
 on for the listener, the theme's for the outpost), an out-of-time check
 (`out_of_time`), which only the classic walk makes, between hops,
-`nearest_window`, the element's nearest window when the caller has
-already found it, which the classic walk then does not look up, and
-`lock_up_from`, which the
-classic walk asks, for each element with a window of its own, for the
-lock of another application a step up from it reaches into; the walk
-holds the first lock answered for that step and every later one
-(`docs/design/focus-pipeline.md`, section 20.3). The listener gives it,
-the outpost does not. Since the input is typed, its
+and `nearest_window`, the element's nearest window when the caller has
+already found it, which the classic walk then does not look up. Since the input is typed, its
 control type is always in its cache, and the live read of it the query
 once fell back to is gone (decision 8 of `docs/design/uia-shapes.md`).
 Both answer `FocusAncestry::NotFocused` when a

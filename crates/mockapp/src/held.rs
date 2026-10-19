@@ -1,6 +1,5 @@
-//! The stall that holds the window thread until `release`, for the tests
-//! of the lock per application (`docs/design/focus-pipeline.md`, section
-//! 20.7): with `stall-after-focus-read <n>`, the `n`th read of a node's
+//! The stall that holds the window thread until `release`, as a busy
+//! application's UI thread is held: with `stall-after-focus-read <n>`, the `n`th read of a node's
 //! `HasKeyboardFocus` property from now, once answered, posts the window a
 //! stall that lasts until `release`: the window thread takes no message
 //! meanwhile, as a busy application's UI thread does. It prints `stall

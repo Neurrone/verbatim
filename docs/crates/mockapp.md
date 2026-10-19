@@ -187,8 +187,8 @@ call is in progress and decides when it ends; acknowledged `applied`),
 `HasKeyboardFocus` from now, once answered, stalls the window thread,
 which takes no message until `release`, printing `stall started` as it
 begins and `stall message arrived` once when the first message is posted
-or sent to it meanwhile; acknowledged `applied` when armed; the lock tests'
-hold of `docs/design/focus-pipeline.md`, section 20.7),
+or sent to it meanwhile; acknowledged `applied` when armed; a busy application's UI thread, which
+no test uses at present),
 `menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
 the focus listener reads as a focus on it; an automation event, which UIA
 delivers on a desktop where no window has the keyboard focus, as it does

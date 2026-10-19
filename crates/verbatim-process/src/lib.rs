@@ -187,8 +187,7 @@ pub struct ChildEnds {
     /// The end the child writes messages to.
     pub messages: OwnedHandle,
     /// Other handles the child inherits, named on its command line by the
-    /// caller, which knows their values: an outpost's lock for its
-    /// application (`docs/design/focus-pipeline.md`, section 20.4). Each is
+    /// caller, which knows their values. Each is
     /// made inheritable for the `CreateProcessW` call alone, as the pipe ends
     /// are, and closed here once the child has inherited it.
     pub inherited: Vec<OwnedHandle>,

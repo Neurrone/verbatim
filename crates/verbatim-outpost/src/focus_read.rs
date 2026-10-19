@@ -87,11 +87,10 @@ use verbatim_uia::{
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
 use crate::ForegroundReader;
-pub(crate) use crate::app_locks::{AppLocks, Granted};
 use crate::arbitration::{Arbitrator, Clock, Probe, time_limit, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{is_shell_transition_window, top_level_of, window_is_hung};
+use crate::outpost::window::{is_shell_transition_window, window_is_hung};
 use crate::protocol::{
     DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
 };
@@ -323,11 +322,6 @@ pub struct FocusReader {
     /// check (`isNativeUIAElement`), decided as an outpost decides it
     /// ([`crate::arbitration::uses_uia`]).
     arbitrator: Mutex<Arbitrator>,
-    /// The application this reader serves and the listener's locks, for
-    /// the classic walk's steps up into another application's window,
-    /// which take that application's lock (section 20.3); `None` for a
-    /// reader that takes none.
-    locks: Option<(Pid, Arc<AppLocks>)>,
 }
 
 impl Drop for FocusReader {
@@ -355,31 +349,7 @@ impl FocusReader {
             last_accepted,
             foreground: Arc::new(crate::outpost::window::foreground_window_handle),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
-            locks: None,
         })
-    }
-
-    /// Takes the lock of another application, from `locks`, for each step
-    /// of the classic walk up into that application's window from `pid`'s,
-    /// the application this reader serves
-    /// (`docs/design/focus-pipeline.md`, section 20.3).
-    pub(crate) fn set_app_locks(&mut self, pid: Pid, locks: Arc<AppLocks>) {
-        self.locks = Some((pid, locks));
-    }
-
-    /// The lock of the application whose process serves the top-level
-    /// window `top`, when that is not this reader's own application and the
-    /// listener has its lock: what each step of a classic walk up into that
-    /// window takes. The process is opened once, to read its creation time,
-    /// a local call.
-    fn lock_up_into(&self, top: isize) -> Option<verbatim_uia::lock::AppLock> {
-        let (own, locks) = self.locks.as_ref()?;
-        let provider = verbatim_uia::provider_process(top)?;
-        if provider == own.0 {
-            return None;
-        }
-        let (_process, created) = verbatim_uia::lock::open_process(provider).ok()?;
-        locks.find(Pid(provider), created)
     }
 
     /// Reads the foreground window with `reader` from now on, in place of
@@ -456,14 +426,6 @@ impl FocusReader {
         // theme decides which details are spoken. A request that cannot be
         // built is a read that failed.
         let input = sender.narrow::<FocusInput>();
-        // A classic walk's step up from a window inside another
-        // application's top-level window, as from the Settings page's
-        // content into its frame, holds that application's lock (section
-        // 20.3); a top-level window's step reaches the desktop root.
-        let lock_up_from = |window: isize| {
-            let top = top_level_of(window);
-            (top != window).then(|| self.lock_up_into(top)).flatten()
-        };
         let clock = self.clock();
         let out_of_time = time_limit(&clock, READ_BUDGET);
         let read = self
@@ -487,7 +449,6 @@ impl FocusReader {
                     require_focus: false,
                     refresh: true,
                     nearest_window: Some(nearest),
-                    lock_up_from: Some(&lock_up_from),
                 };
                 focus_ancestry_classic(&self.uia, &query)
             });
@@ -1138,10 +1099,6 @@ struct Shared<R: Reading> {
     /// The failed cached reads the reading threads have made
     /// (`verbatim_uia::calls`).
     failed_reads: AtomicU32,
-    /// The applications' locks each thread reads with
-    /// (`docs/design/focus-pipeline.md`, section 20.4), or `None` for
-    /// readers that take none.
-    locks: Option<Arc<AppLocks>>,
 }
 
 impl<R: Reading> Shared<R> {
@@ -1157,17 +1114,13 @@ pub(crate) struct Readers<R: Reading> {
 }
 
 impl<R: Reading> Readers<R> {
-    /// Readers doing `reading`, each read abandoned past `deadline`, each
-    /// thread taking its application's lock from `locks`, when given,
-    /// before each read (`docs/design/focus-pipeline.md`, section 20.4): its
-    /// thread's lock, which the guarded UIA calls of its read take
-    /// (`verbatim_uia::lock`).
+    /// Readers doing `reading`, each read abandoned past `deadline`.
     ///
     /// # Panics
     ///
     /// Panics if the watchdog's thread cannot be spawned, which means the
     /// process is out of OS thread resources.
-    pub(crate) fn with_locks(reading: R, deadline: Duration, locks: Option<Arc<AppLocks>>) -> Self {
+    pub(crate) fn new(reading: R, deadline: Duration) -> Self {
         let shared = Arc::new(Shared {
             reading,
             deadline,
@@ -1181,7 +1134,6 @@ impl<R: Reading> Readers<R> {
             }),
             changed: Condvar::new(),
             failed_reads: AtomicU32::new(0),
-            locks,
         });
         let watched = Arc::clone(&shared);
         let watchdog = thread::Builder::new()
@@ -1315,10 +1267,6 @@ impl<R: Reading> Readers<R> {
     /// waited for, each abandoned one returning once UIA gives up on its
     /// call. Returns how many threads were waited for.
     pub(crate) fn stop(&self) -> usize {
-        // A thread waiting for its application's lock waits no more.
-        if let Some(locks) = &self.shared.locks {
-            locks.stop();
-        }
         let threads = {
             let mut state = self.shared.lock();
             state.stopping = true;
@@ -1379,24 +1327,9 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
 /// in charge of them, then releases its reader and ends.
 fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     let mut generation = generation;
-    // The application's process, held while the thread serves it so its
-    // id is not reused meanwhile, and its creation time, which with the id
-    // names the lock the thread reads with (section 20.4). A process that
-    // cannot be opened is read without a lock: Verbatim cannot give it an
-    // outpost either.
-    let identity = shared.locks.as_ref().and_then(|_| {
-        verbatim_uia::lock::open_process(pid.0)
-            .inspect_err(|error| {
-                tracing::debug!(%pid, %error, "a reading thread cannot open its application; it reads without its lock");
-            })
-            .ok()
-    });
     let mut reader = shared.reading.reader(pid);
     while let Some((mut meta, job)) = next_job(shared, pid, generation) {
-        let judged = match take_lock(shared, pid, identity.as_ref().map(|(_, created)| *created)) {
-            Some(Granted::Stopped) => Judged::Dropped("the listener is shutting down"),
-            _ => shared.reading.read(reader.as_mut(), meta, job),
-        };
+        let judged = shared.reading.read(reader.as_mut(), meta, job);
         // The reading thread's end, for the latency ledger's split of the
         // listener's handling from its queue and its write.
         meta.timing.listener_handled_at_us = now_us();
@@ -1427,36 +1360,6 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
         app.live = Some(generation);
     }
     shared.reading.finish(reader);
-    verbatim_uia::lock::set_thread_lock(None);
-    drop(identity);
-}
-
-/// Before a read on `pid`'s thread, whose process was created at
-/// `created`: makes the thread's lock its application's, the one it holds
-/// when that names the process, else the table's, waiting for it to
-/// arrive. Answers what it was given, `None` for readers or a thread that
-/// take no lock.
-fn take_lock<R: Reading>(shared: &Shared<R>, pid: Pid, created: Option<u64>) -> Option<Granted> {
-    let (locks, created) = (shared.locks.as_ref()?, created?);
-    let held = verbatim_uia::lock::thread_lock();
-    if held.as_ref().is_some_and(|lock| lock.names(pid.0, created)) {
-        return held.map(Granted::Lock);
-    }
-    let started = Instant::now();
-    let granted = locks.lock_for(held.as_ref(), pid, created);
-    let waited_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-    match &granted {
-        Granted::Lock(lock) => {
-            tracing::debug!(%pid, waited_us, "a reading thread took its application's lock");
-            verbatim_uia::lock::set_thread_lock(Some(lock.clone()));
-        }
-        Granted::Without => {
-            tracing::trace!(%pid, waited_us, "a reading thread reads without a lock: its application has no outpost");
-            verbatim_uia::lock::set_thread_lock(None);
-        }
-        Granted::Stopped => {}
-    }
-    Some(granted)
 }
 
 /// The next event for the thread `generation` to read for `pid`, waiting
@@ -1586,8 +1489,6 @@ mod tests {
         outcomes: Mutex<Sender<(Pid, u64, &'static str)>>,
         read_on: Mutex<Sender<(u64, ThreadId)>>,
         finished: Mutex<Sender<ThreadId>>,
-        /// Each read's marker and the lock its thread read with.
-        locked: Mutex<Sender<(u64, Option<verbatim_uia::lock::AppLock>)>>,
     }
 
     impl Reading for Script {
@@ -1610,11 +1511,6 @@ mod tests {
             _: Meta,
             (marker, gate, _): Self::Job,
         ) -> Judged {
-            let _ = self
-                .locked
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .send((marker, verbatim_uia::lock::thread_lock()));
             if let Some(thread) = reader {
                 let _ = self
                     .read_on
@@ -1656,184 +1552,25 @@ mod tests {
         outcomes: Receiver<(Pid, u64, &'static str)>,
         read_on: Receiver<(u64, ThreadId)>,
         finished: Receiver<ThreadId>,
-        locked: Receiver<(u64, Option<verbatim_uia::lock::AppLock>)>,
     }
 
     fn fixture(deadline: Duration) -> Fixture {
-        fixture_with(deadline, None)
-    }
-
-    fn fixture_with(deadline: Duration, locks: Option<Arc<AppLocks>>) -> Fixture {
         let (outcomes_tx, outcomes) = mpsc::channel();
         let (read_tx, read_on) = mpsc::channel();
         let (finished_tx, finished) = mpsc::channel();
-        let (locked_tx, locked) = mpsc::channel();
         Fixture {
-            readers: Readers::with_locks(
+            readers: Readers::new(
                 Script {
                     outcomes: Mutex::new(outcomes_tx),
                     read_on: Mutex::new(read_tx),
                     finished: Mutex::new(finished_tx),
-                    locked: Mutex::new(locked_tx),
                 },
                 deadline,
-                locks,
             ),
             outcomes,
             read_on,
             finished,
-            locked,
         }
-    }
-
-    /// The test's own process, which a reading thread can open, and its
-    /// creation time.
-    fn this_process() -> (Pid, u64) {
-        let (_, created) =
-            verbatim_uia::lock::open_process(std::process::id()).expect("the test's own process");
-        (Pid(std::process::id()), created)
-    }
-
-    fn app_lock((pid, created): (Pid, u64)) -> verbatim_uia::lock::AppLock {
-        verbatim_uia::lock::AppLock::new(
-            pid.0,
-            created,
-            Arc::new(verbatim_uia::lock::new_mutex().expect("a mutex")),
-        )
-    }
-
-    /// The mutex a read's lock holds, by its handle's address, or `None`
-    /// for a read without one.
-    fn mutex_of(lock: Option<&verbatim_uia::lock::AppLock>) -> Option<usize> {
-        lock.map(|lock| Arc::as_ptr(lock.mutex()) as usize)
-    }
-
-    #[test]
-    fn a_reading_thread_waits_for_its_lock_and_reads_once_it_arrives() {
-        let locks = Arc::new(AppLocks::default());
-        let fixture = fixture_with(Duration::from_secs(60), Some(Arc::clone(&locks)));
-        let process = this_process();
-        fixture
-            .readers
-            .push(process.0, meta(1), (1, None, Vec::new()));
-        locks.found_nothing(1);
-        assert!(
-            fixture.locked.try_recv().is_err(),
-            "nothing was read before the lock"
-        );
-        let lock = app_lock(process);
-        locks.add(lock.clone());
-        let (marker, read_with) = fixture.locked.recv_timeout(WAIT).expect("a read");
-        assert_eq!(
-            (marker, mutex_of(read_with.as_ref())),
-            (1, mutex_of(Some(&lock)))
-        );
-        assert_eq!(fixture.readers.stop(), 1);
-    }
-
-    #[test]
-    fn a_lock_whose_creation_time_differs_from_the_processes_is_not_taken() {
-        let locks = Arc::new(AppLocks::default());
-        let fixture = fixture_with(Duration::from_secs(60), Some(Arc::clone(&locks)));
-        let process = this_process();
-        fixture
-            .readers
-            .push(process.0, meta(1), (1, None, Vec::new()));
-        locks.found_nothing(1);
-        locks.add(app_lock((process.0, process.1 + 1)));
-        // The thread looked again and found nothing for its process.
-        locks.found_nothing(2);
-        assert!(
-            fixture.locked.try_recv().is_err(),
-            "nothing was read with the other lock"
-        );
-        let lock = app_lock(process);
-        locks.add(lock.clone());
-        let (_, read_with) = fixture.locked.recv_timeout(WAIT).expect("a read");
-        assert_eq!(mutex_of(read_with.as_ref()), mutex_of(Some(&lock)));
-        assert_eq!(fixture.readers.stop(), 1);
-    }
-
-    #[test]
-    fn an_answer_with_no_lock_and_the_processes_creation_time_lets_its_thread_read() {
-        let locks = Arc::new(AppLocks::default());
-        let fixture = fixture_with(Duration::from_secs(60), Some(Arc::clone(&locks)));
-        let process = this_process();
-        fixture
-            .readers
-            .push(process.0, meta(1), (1, None, Vec::new()));
-        locks.found_nothing(1);
-        locks.add_unlocked(process.0, Some(process.1));
-        let (_, read_with) = fixture.locked.recv_timeout(WAIT).expect("a read");
-        assert_eq!(mutex_of(read_with.as_ref()), None);
-        assert_eq!(fixture.readers.stop(), 1);
-    }
-
-    #[test]
-    fn an_answer_with_no_lock_and_no_creation_time_lets_its_thread_read() {
-        let locks = Arc::new(AppLocks::default());
-        let fixture = fixture_with(Duration::from_secs(60), Some(Arc::clone(&locks)));
-        let process = this_process();
-        fixture
-            .readers
-            .push(process.0, meta(1), (1, None, Vec::new()));
-        locks.found_nothing(1);
-        locks.add_unlocked(process.0, None);
-        let (_, read_with) = fixture.locked.recv_timeout(WAIT).expect("a read");
-        assert_eq!(mutex_of(read_with.as_ref()), None);
-        assert_eq!(fixture.readers.stop(), 1);
-    }
-
-    #[test]
-    fn a_thread_that_cannot_open_its_process_reads_without_a_lock() {
-        let locks = Arc::new(AppLocks::default());
-        let fixture = fixture_with(Duration::from_secs(60), Some(Arc::clone(&locks)));
-        // No process has this id: process ids are multiples of four.
-        let gone = Pid(u32::MAX - 2);
-        fixture.readers.push(gone, meta(1), (1, None, Vec::new()));
-        let (_, read_with) = fixture.locked.recv_timeout(WAIT).expect("a read");
-        assert_eq!(mutex_of(read_with.as_ref()), None);
-        assert_eq!(fixture.readers.stop(), 1);
-    }
-
-    #[test]
-    fn a_thread_holding_its_lock_reads_with_it_after_the_table_lets_it_go() {
-        let locks = Arc::new(AppLocks::default());
-        let fixture = fixture_with(Duration::from_secs(60), Some(Arc::clone(&locks)));
-        let process = this_process();
-        let lock = app_lock(process);
-        locks.add(lock.clone());
-        fixture
-            .readers
-            .push(process.0, meta(1), (1, None, Vec::new()));
-        let (_, first) = fixture.locked.recv_timeout(WAIT).expect("the first read");
-        locks.close(process.0, process.1);
-        fixture
-            .readers
-            .push(process.0, meta(2), (2, None, Vec::new()));
-        let (_, second) = fixture.locked.recv_timeout(WAIT).expect("the second read");
-        assert_eq!(
-            (mutex_of(first.as_ref()), mutex_of(second.as_ref())),
-            (mutex_of(Some(&lock)), mutex_of(Some(&lock)))
-        );
-        assert_eq!(fixture.readers.stop(), 1);
-    }
-
-    #[test]
-    fn the_listeners_shutdown_ends_a_thread_that_waits_for_its_lock() {
-        let locks = Arc::new(AppLocks::default());
-        let fixture = fixture_with(Duration::from_secs(60), Some(Arc::clone(&locks)));
-        let process = this_process();
-        fixture
-            .readers
-            .push(process.0, meta(1), (1, None, Vec::new()));
-        locks.found_nothing(1);
-        assert_eq!(fixture.readers.stop(), 1);
-        assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (process.0, 1, "the listener is shutting down")
-        );
-        assert!(fixture.locked.try_recv().is_err(), "nothing was read");
     }
 
     fn meta(marker: u64) -> Meta {

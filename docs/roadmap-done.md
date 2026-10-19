@@ -566,7 +566,10 @@ landed it.
 - A lock per application around the UIA calls that collide between
   processes ([focus pipeline](design/focus-pipeline.md), section 20):
   14017eb1, with its measurements af302d90 and the frame host's lock for
-  the classic walk's step up c3c89540, 2026-10-17.
+  the classic walk's step up c3c89540, 2026-10-17; removed on 2026-10-19,
+  once only an application's own outpost calls into it
+  ([the focus listener without connections](design/listener-without-connections.md),
+  section 10, step 10).
 - Say-all's caret move taken as the caret a later key starts from:
   2ec69da9 and 8a9a0c18, 2026-10-17.
 - The harness's console host launched without the foreground right,

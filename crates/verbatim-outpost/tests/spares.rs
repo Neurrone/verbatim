@@ -41,7 +41,7 @@ use crossbeam_channel::unbounded;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, LockGrant, OutpostToSupervisor, SupervisorToOutpost,
+    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
     read_message, write_message,
 };
 use verbatim_outpost::supervisor::{
@@ -93,14 +93,6 @@ const DIRECT: &str = "started for its application";
 /// What a stand-in spare whose hook fails reports, as the real outpost
 /// reports its hook's failure (`Outpost::assign`).
 const HOOK_FAULT: &str = "the WinEvent hook could not be installed: the test's failure";
-
-/// Names a file prefix: with it set, each stand-in listener writes every
-/// command it is sent but pings, its applications' locks among them, to
-/// the first `<prefix>-<n>` it can create, after a line naming its process
-/// ([`ListenerLog`]), and each stand-in outpost reports, as a fault, the
-/// lock it was given ([`lock_report`]): `docs/design/focus-pipeline.md`,
-/// section 20.4.
-const LOCK_LOG: &str = "VERBATIM_TEST_LOCK_LOG";
 
 /// Core's own outpost: the first launch after the listener's.
 const OWN: OutpostId = OutpostId(2);
@@ -290,119 +282,6 @@ fn assign(send: &impl Fn(&OutpostToSupervisor), outpost_pid: Pid, target_pid: Pi
     false
 }
 
-/// A stand-in listener's record of the commands it is sent
-/// ([`LOCK_LOG`]).
-struct ListenerLog {
-    file: std::fs::File,
-}
-
-impl ListenerLog {
-    /// The log of a stand-in `listener`, when the test asks for one.
-    fn for_listener(listener: bool) -> Option<Self> {
-        let prefix = std::env::var(LOCK_LOG).ok().filter(|_| listener)?;
-        Some(Self::create(&prefix))
-    }
-
-    /// The first `<prefix>-<n>` file this listener can create, beginning
-    /// with its process id.
-    fn create(prefix: &str) -> Self {
-        let file = (1..=100)
-            .find_map(|number| {
-                std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(format!("{prefix}-{number}"))
-                    .ok()
-            })
-            .expect("a listener's log");
-        let mut log = Self { file };
-        log.line(&format!("listener {}", std::process::id()));
-        log
-    }
-
-    fn line(&mut self, line: &str) {
-        use std::io::Write as _;
-        writeln!(self.file, "{line}").expect("the listener's log is written");
-    }
-
-    /// Notes `command`, unless it is a ping: a lock with its application,
-    /// creation time, and handle, a lock closed, an idle query, or the kind
-    /// of any other command.
-    fn note(&mut self, command: &SupervisorToOutpost) {
-        let line = match command {
-            SupervisorToOutpost::Ping { .. } => return,
-            SupervisorToOutpost::AppLock { pid, created, lock } => format!(
-                "app-lock {} {} {}",
-                pid.0,
-                created.map_or_else(|| "-".to_owned(), |created| created.to_string()),
-                lock.map_or_else(|| "-".to_owned(), |lock| lock.to_string()),
-            ),
-            SupervisorToOutpost::AppLockClosed { pid, created } => {
-                format!("app-lock-closed {} {created}", pid.0)
-            }
-            SupervisorToOutpost::IdleQuery { round } => format!("idle {round}"),
-            other => {
-                let kind = format!("{other:?}");
-                let kind = kind
-                    .split(|c: char| !c.is_alphanumeric())
-                    .next()
-                    .unwrap_or_default()
-                    .to_owned();
-                format!("command {kind}")
-            }
-        };
-        self.line(&line);
-    }
-}
-
-/// What a stand-in outpost reports of the lock it was given: `lock <handle>
-/// <created> <access>`, the handle's access as `NtQueryObject` reads it, or
-/// `lock none`. The handle is kept open for the stand-in's life.
-fn lock_report(grant: Option<LockGrant>) -> String {
-    let Some(grant) = grant else {
-        return "lock none".to_owned();
-    };
-    format!(
-        "lock {} {} {:#x}",
-        grant.handle,
-        grant.created,
-        granted_access(handle_value(grant.handle))
-    )
-}
-
-/// The handle a value of the protocol's names in this process.
-fn handle_value(value: u64) -> HANDLE {
-    HANDLE(usize::try_from(value).expect("a handle's value") as *mut _)
-}
-
-/// The access `handle`, one of this process's, was opened with.
-fn granted_access(handle: HANDLE) -> u32 {
-    /// `PUBLIC_OBJECT_BASIC_INFORMATION`.
-    #[repr(C)]
-    #[derive(Default)]
-    struct BasicInformation {
-        attributes: u32,
-        granted_access: u32,
-        handle_count: u32,
-        pointer_count: u32,
-        reserved: [u32; 10],
-    }
-    let mut information = BasicInformation::default();
-    // SAFETY: `information` is the class's structure, sized; the handle is
-    // this process's own.
-    let status = unsafe {
-        windows::Wdk::Foundation::NtQueryObject(
-            Some(handle),
-            windows::Wdk::Foundation::ObjectBasicInformation,
-            Some((&raw mut information).cast()),
-            u32::try_from(size_of::<BasicInformation>()).unwrap_or(0),
-            None,
-        )
-    };
-    assert!(status.is_ok(), "the handle's information: {status:?}");
-    information.granted_access
-}
-
 /// A stand-in child.
 fn stand_in(args: &[String]) -> ! {
     let handle = |name| {
@@ -429,8 +308,6 @@ fn stand_in(args: &[String]) -> ! {
     };
     let outpost_pid = Pid(std::process::id());
     let target = value(args, "--target-pid").map(|pid| Pid(pid.parse().expect("a pid")));
-    let lock_log = std::env::var(LOCK_LOG).ok();
-    let mut listener_log = ListenerLog::for_listener(listener);
     match target {
         Some(target_pid) => {
             send(&OutpostToSupervisor::Ready {
@@ -440,13 +317,6 @@ fn stand_in(args: &[String]) -> ! {
             send(&OutpostToSupervisor::Fault {
                 detail: DIRECT.to_owned(),
             });
-            if lock_log.is_some() {
-                let grant =
-                    value(args, LockGrant::ARG).and_then(|grant| LockGrant::parse_arg(&grant));
-                send(&OutpostToSupervisor::Fault {
-                    detail: lock_report(grant),
-                });
-            }
         }
         None if spare.is_some() => send(&OutpostToSupervisor::SpareReady { outpost_pid }),
         None => send(&OutpostToSupervisor::Ready {
@@ -461,9 +331,6 @@ fn stand_in(args: &[String]) -> ! {
     let mut commands = BufReader::new(commands);
     loop {
         let command = read_message::<_, SupervisorToOutpost>(&mut commands);
-        if let (Some(log), Ok(Some(command))) = (listener_log.as_mut(), &command) {
-            log.note(command);
-        }
         match command {
             Ok(Some(SupervisorToOutpost::Shutdown) | None) => std::process::exit(0),
             Ok(Some(_)) if mute => {}
@@ -483,12 +350,7 @@ fn stand_in(args: &[String]) -> ! {
                     detail: format!("focus queued {observed_at_ms}"),
                 });
             }
-            Ok(Some(SupervisorToOutpost::Assign { target_pid, lock })) => {
-                if lock_log.is_some() {
-                    send(&OutpostToSupervisor::Fault {
-                        detail: lock_report(lock),
-                    });
-                }
+            Ok(Some(SupervisorToOutpost::Assign { target_pid })) => {
                 mute = assign(&send, outpost_pid, target_pid);
             }
             Ok(Some(SupervisorToOutpost::DeliverFact { observed_at_ms, .. })) => {
@@ -623,20 +485,18 @@ impl Run {
 
     /// Starts Core's own outpost, as Verbatim does at its start, and waits
     /// for it: the spares start once it is ready.
-    fn start_own_outpost(&self) -> Option<String> {
+    fn start_own_outpost(&self) {
         let own = Pid(std::process::id());
         self.supervisor.ensure_spawned(own);
         assert_eq!(self.expect_started(own), OWN);
         self.expect_ready(OWN, own);
         self.expect_report(OWN, DIRECT);
-        // The lock it inherited, when the test asks for it.
-        std::env::var_os(LOCK_LOG).map(|_| self.next_report(OWN))
     }
 
     /// [`Run::start_own_outpost`], then waits for the two spares, the
     /// launches after it.
     fn keep_spares(&self) {
-        let _ = self.start_own_outpost();
+        self.start_own_outpost();
         self.expect_two_spares([3, 4]);
     }
 
@@ -1450,504 +1310,6 @@ fn a_given_spare_that_misses_its_pings_is_ended_as_killed() {
     end(first);
 }
 
-/// The stand-in listeners' logs of a test ([`LOCK_LOG`]), set for its
-/// children while it lives.
-struct LockLogs {
-    prefix: PathBuf,
-}
-
-impl LockLogs {
-    fn new() -> Self {
-        let prefix =
-            std::env::temp_dir().join(format!("verbatim-spares-test-locks-{}", std::process::id()));
-        set_env(LOCK_LOG, &prefix);
-        Self { prefix }
-    }
-
-    /// Each listener's log, in the order the listeners started: its process
-    /// id, and every command it noted.
-    fn listeners(&self) -> Vec<(Pid, Vec<String>)> {
-        (1..)
-            .map_while(|number| {
-                std::fs::read_to_string(format!("{}-{number}", self.prefix.display())).ok()
-            })
-            .map(|log| {
-                let mut lines = log.lines().map(str::to_owned);
-                let pid = lines
-                    .next()
-                    .and_then(|first| first.strip_prefix("listener ").map(str::to_owned))
-                    .and_then(|pid| pid.parse().ok())
-                    .map(Pid)
-                    .expect("a listener's log names its process");
-                (pid, lines.collect())
-            })
-            .collect()
-    }
-
-    /// The lock lines of a listener's commands, in order.
-    fn locks(lines: &[String]) -> Vec<String> {
-        lines
-            .iter()
-            .filter(|line| line.starts_with("app-lock"))
-            .cloned()
-            .collect()
-    }
-
-    fn done(self) {
-        for number in 1.. {
-            if std::fs::remove_file(format!("{}-{number}", self.prefix.display())).is_err() {
-                break;
-            }
-        }
-        clear_env(LOCK_LOG);
-    }
-}
-
-/// A lock a stand-in listener noted for `pid`, created at `created`, its
-/// handle `handle` in that listener: `app-lock <pid> <created> <handle>`.
-fn lock_line(pid: Pid, created: u64, handle: u64) -> String {
-    format!("app-lock {} {created} {handle}", pid.0)
-}
-
-/// The handle of the lock a listener's log noted for `pid`.
-fn listener_handle(lines: &[String], pid: Pid) -> u64 {
-    lines
-        .iter()
-        .find_map(|line| {
-            let fields: Vec<&str> = line.split(' ').collect();
-            match fields.as_slice() {
-                ["app-lock", noted, _, handle] if *noted == pid.0.to_string() => {
-                    handle.parse().ok()
-                }
-                _ => None,
-            }
-        })
-        .unwrap_or_else(|| panic!("the listener was sent {pid}'s lock: {lines:?}"))
-}
-
-/// `pid`'s process creation time, as the supervisor reads it.
-fn created_of(pid: Pid) -> u64 {
-    verbatim_uia::lock::open_process(pid.0)
-        .expect("the process opens")
-        .1
-}
-
-/// The handle `value` of the process `owner`, duplicated into this one.
-fn handle_of(owner: Pid, value: u64) -> HANDLE {
-    use windows::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle};
-    use windows::Win32::System::Threading::{GetCurrentProcess, PROCESS_DUP_HANDLE};
-    // SAFETY: opens a process to duplicate a handle from; closed below.
-    let process =
-        unsafe { OpenProcess(PROCESS_DUP_HANDLE, false, owner.0) }.expect("the process opens");
-    // SAFETY: the pseudo-handle of this process.
-    let this = unsafe { GetCurrentProcess() };
-    let mut copy = HANDLE::default();
-    // SAFETY: both processes are open; `copy` is a local the call writes.
-    unsafe {
-        DuplicateHandle(
-            process,
-            handle_value(value),
-            this,
-            &raw mut copy,
-            0,
-            false,
-            DUPLICATE_SAME_ACCESS,
-        )
-    }
-    .expect("the handle is duplicated");
-    close(process);
-    copy
-}
-
-/// Whether the handles `first` and `second` of this process name the same
-/// object.
-fn same_object(first: HANDLE, second: HANDLE) -> bool {
-    // SAFETY: two handles of this process's, open.
-    unsafe { windows::Win32::Foundation::CompareObjectHandles(first, second) }.as_bool()
-}
-
-/// The fields of a stand-in outpost's lock report ([`lock_report`]): the
-/// handle, the creation time, and the access.
-fn reported_lock(detail: &str) -> (u64, u64, String) {
-    let fields: Vec<&str> = detail.split(' ').collect();
-    match fields.as_slice() {
-        ["lock", handle, created, access] => (
-            handle.parse().expect("a handle"),
-            created.parse().expect("a creation time"),
-            (*access).to_owned(),
-        ),
-        _ => panic!("{detail:?} is no lock report"),
-    }
-}
-
-/// The access every holder of a lock is given: to wait and release
-/// (`SYNCHRONIZE | MUTEX_MODIFY_STATE`).
-const WAIT_AND_RELEASE: &str = "0x100001";
-
-impl Run {
-    /// The next message, a fault `outpost` sent; returns its detail.
-    fn next_report(&self, outpost: OutpostId) -> String {
-        match self.next() {
-            OutpostMessage::Event {
-                outpost: from,
-                message,
-                ..
-            } if from == outpost => match *message {
-                OutpostToSupervisor::Fault { detail } => detail,
-                other => panic!("{outpost} said {other:?}, not a report"),
-            },
-            other => panic!("the supervisor said {other:?}, not a report of {outpost}'s"),
-        }
-    }
-
-    /// The next messages, the spare `outpost`'s start for `target_pid`, its
-    /// report of the lock `Assign` carried, and its `Ready`; returns the
-    /// report and the outpost's process.
-    fn expect_given(&self, outpost: OutpostId, target_pid: Pid) -> (String, Pid) {
-        assert_eq!(self.expect_started(target_pid), outpost);
-        let report = self.next_report(outpost);
-        (report, self.expect_ready(outpost, target_pid))
-    }
-}
-
-/// A lock is made with an application's first record, whichever path
-/// starts it, Core's own outpost, a focus-now query, or a listener fact,
-/// and the listener is sent each as it is made, with its application's
-/// process creation time; the outposts are given the same applications'
-/// locks.
-fn every_way_an_application_is_first_recorded_makes_its_lock_and_tells_the_listener() {
-    let logs = LockLogs::new();
-    let (queried, queried_pid) = application_and_pid();
-    let (focused, focused_pid) = application_and_pid();
-    set_env(FACTS, format!("focus:{focused_pid}:1"));
-    let own = Pid(std::process::id());
-    let run = Run::start(&[]);
-    let own_report = run.start_own_outpost().expect("the own outpost's lock");
-    run.expect_two_spares([3, 4]);
-    run.supervisor.ensure_spawned(queried_pid);
-    let (queried_report, _) = run.expect_given(OutpostId(3), queried_pid);
-    run.expect_spare(5, 2);
-    run.supervisor.focus_queued(TraceId::mint(), 0, None);
-    let (focused_report, _) = run.expect_given(OutpostId(4), focused_pid);
-    run.expect_report(OutpostId(4), "fact 1");
-    run.expect_spare(6, 2);
-    run.finish(ShutdownSummary {
-        clean: 6,
-        exited: 0,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-
-    let listeners = logs.listeners();
-    let [(_, lines)] = listeners.as_slice() else {
-        panic!("one listener: {listeners:?}");
-    };
-    let expected: Vec<String> = [own, queried_pid, focused_pid]
-        .into_iter()
-        .map(|pid| lock_line(pid, created_of(pid), listener_handle(lines, pid)))
-        .collect();
-    assert_eq!(
-        LockLogs::locks(lines),
-        expected,
-        "the listener's locks, as made"
-    );
-    for (report, pid) in [
-        (own_report, own),
-        (queried_report, queried_pid),
-        (focused_report, focused_pid),
-    ] {
-        assert_eq!(
-            reported_lock(&report).1,
-            created_of(pid),
-            "{pid}'s lock names its process"
-        );
-    }
-    clear_env(FACTS);
-    logs.done();
-    for application in [queried, focused] {
-        end(application);
-    }
-}
-
-/// The outpost started for its application, Core's own, inherits a handle
-/// to the same mutex the listener is sent, with only the rights to wait
-/// and release, and the supervisor's own copy of it is closed once the
-/// launch returns; a spare's `Assign` carries one too.
-fn an_inherited_and_an_assigned_lock_are_the_listeners_mutex_with_wait_and_release_only() {
-    let logs = LockLogs::new();
-    let (queried, queried_pid) = application_and_pid();
-    let own = Pid(std::process::id());
-    let run = Run::start(&[]);
-    run.supervisor.ensure_spawned(own);
-    assert_eq!(run.expect_started(own), OWN);
-    let own_outpost = run.expect_ready(OWN, own);
-    run.expect_report(OWN, DIRECT);
-    let (inherited, _, inherited_access) = reported_lock(&run.next_report(OWN));
-    // The value the outpost inherited is the supervisor's copy's: in this
-    // process it names no mutex any more.
-    assert!(
-        !names_a_mutex(handle_value(inherited)),
-        "the supervisor's inheritable copy is closed"
-    );
-    run.expect_two_spares([3, 4]);
-    run.supervisor.ensure_spawned(queried_pid);
-    let (assigned_report, spare) = run.expect_given(OutpostId(3), queried_pid);
-    let (assigned, _, assigned_access) = reported_lock(&assigned_report);
-    run.expect_spare(5, 2);
-
-    let listeners = logs.listeners();
-    let [(listener, lines)] = listeners.as_slice() else {
-        panic!("one listener: {listeners:?}");
-    };
-    let own_lock = handle_of(*listener, listener_handle(lines, own));
-    let queried_lock = handle_of(*listener, listener_handle(lines, queried_pid));
-    let inherited_lock = handle_of(own_outpost, inherited);
-    let assigned_lock = handle_of(spare, assigned);
-    assert_eq!(
-        (
-            same_object(own_lock, inherited_lock),
-            same_object(queried_lock, assigned_lock),
-            same_object(own_lock, queried_lock),
-        ),
-        (true, true, false),
-        "each application's outpost and the listener hold its one mutex"
-    );
-    assert_eq!(
-        (inherited_access.as_str(), assigned_access.as_str()),
-        (WAIT_AND_RELEASE, WAIT_AND_RELEASE)
-    );
-    for handle in [own_lock, queried_lock, inherited_lock, assigned_lock] {
-        close(handle);
-    }
-    run.finish(ShutdownSummary {
-        clean: 5,
-        exited: 0,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    logs.done();
-    end(queried);
-}
-
-/// Whether `handle`, a value in this process, is an open handle to a mutex.
-fn names_a_mutex(handle: HANDLE) -> bool {
-    let mut buffer = vec![0usize; 128];
-    let length = u32::try_from(buffer.len() * size_of::<usize>()).unwrap_or(0);
-    // SAFETY: the buffer outlives the call, which writes at most `length`
-    // bytes of the type's information.
-    let status = unsafe {
-        windows::Wdk::Foundation::NtQueryObject(
-            Some(handle),
-            windows::Wdk::Foundation::OBJECT_INFORMATION_CLASS(2),
-            Some(buffer.as_mut_ptr().cast()),
-            length,
-            None,
-        )
-    };
-    if status.is_err() {
-        return false;
-    }
-    // The information begins with the type's name, a `UNICODE_STRING`:
-    // its length in bytes, then a pointer to its characters.
-    let bytes = usize::from(u16::try_from(buffer[0] & 0xFFFF).unwrap_or(0));
-    let characters = buffer[1] as *const u16;
-    // SAFETY: the name lies in the buffer the call filled, `bytes` long.
-    let name = unsafe { std::slice::from_raw_parts(characters, bytes / 2) };
-    String::from_utf16_lossy(name) == "Mutant"
-}
-
-/// A replacement listener is sent every live lock, Core's own included,
-/// before any other command.
-fn a_replacement_listener_is_sent_every_live_lock_before_any_other_command() {
-    let logs = LockLogs::new();
-    let (queried, queried_pid) = application_and_pid();
-    let own = Pid(std::process::id());
-    let run = Run::start(&[]);
-    run.keep_spares();
-    run.supervisor.ensure_spawned(queried_pid);
-    let _ = run.expect_given(OutpostId(3), queried_pid);
-    run.expect_spare(5, 2);
-    let first = logs.listeners()[0].0;
-    kill(first);
-    // Each outpost is told the ended listener's reads ended, which a
-    // stand-in reports as a fact, around the replacement's readiness.
-    let mut told = Vec::new();
-    loop {
-        match run.next() {
-            OutpostMessage::ListenerReady { replacement: true } => break,
-            OutpostMessage::Event {
-                outpost, message, ..
-            } if matches!(&*message, OutpostToSupervisor::Fault { detail } if detail.starts_with("fact ")) =>
-            {
-                told.push(outpost);
-            }
-            other => panic!("the supervisor said {other:?}, not that its listener was replaced"),
-        }
-    }
-    for _ in told.len()..2 {
-        match run.next() {
-            OutpostMessage::Event {
-                outpost, message, ..
-            } if matches!(&*message, OutpostToSupervisor::Fault { detail } if detail.starts_with("fact ")) =>
-            {
-                told.push(outpost);
-            }
-            other => panic!("the supervisor said {other:?}, not that the listener's reads ended"),
-        }
-    }
-    told.sort_unstable();
-    assert_eq!(
-        told,
-        [OWN, OutpostId(3)],
-        "the outposts told the reads ended"
-    );
-    run.finish(ShutdownSummary {
-        clean: 5,
-        exited: 1,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-
-    let listeners = logs.listeners();
-    let [_, (_, lines)] = listeners.as_slice() else {
-        panic!("two listeners: {listeners:?}");
-    };
-    let mut first_two: Vec<String> = lines.iter().take(2).cloned().collect();
-    first_two.sort_unstable();
-    let mut expected: Vec<String> = [own, queried_pid]
-        .into_iter()
-        .map(|pid| lock_line(pid, created_of(pid), listener_handle(lines, pid)))
-        .collect();
-    expected.sort_unstable();
-    assert_eq!(first_two, expected, "the replacement's first commands");
-    assert_eq!(
-        LockLogs::locks(lines).len(),
-        2,
-        "and no other lock: {lines:?}"
-    );
-    logs.done();
-    end(queried);
-}
-
-/// An outpost's replacement after its failure is given the same mutex as
-/// the outpost that failed.
-fn an_outposts_replacement_after_a_failure_gets_the_same_mutex() {
-    let logs = LockLogs::new();
-    let (application, pid) = application_and_pid();
-    let run = Run::start(&[]);
-    run.keep_spares();
-    run.supervisor.ensure_spawned(pid);
-    let (failed_report, failing) = run.expect_given(OutpostId(3), pid);
-    run.expect_spare(5, 2);
-    let listener = logs.listeners()[0].0;
-    // The failing outpost's lock, held here, before it is ended.
-    let failed_lock = handle_of(failing, reported_lock(&failed_report).0);
-    kill(failing);
-    run.expect_ended(OutpostId(3), pid, EndReason::Exited);
-    let (next_report, next) = run.expect_given(OutpostId(4), pid);
-    run.expect_spare(6, 2);
-    let next_lock = handle_of(next, reported_lock(&next_report).0);
-    assert!(
-        same_object(failed_lock, next_lock),
-        "the replacement holds the same mutex"
-    );
-    run.finish(ShutdownSummary {
-        clean: 5,
-        exited: 1,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    let listeners = logs.listeners();
-    let [(_, lines)] = listeners.as_slice() else {
-        panic!("one listener: {listeners:?}");
-    };
-    let _ = listener;
-    assert_eq!(
-        LockLogs::locks(lines)
-            .iter()
-            .filter(|line| line.starts_with(&format!("app-lock {} ", pid.0)))
-            .count(),
-        1,
-        "one lock for the application: {lines:?}"
-    );
-    for handle in [failed_lock, next_lock] {
-        close(handle);
-    }
-    logs.done();
-    end(application);
-}
-
-/// A fact for a process that has exited starts no outpost, and the
-/// listener is answered with no lock and the process's creation time,
-/// which the supervisor read from the process it could still open.
-fn a_fact_for_an_exited_process_is_answered_with_no_lock_and_its_creation_time() {
-    let logs = LockLogs::new();
-    let (mut exited, pid) = application_and_pid();
-    let created = created_of(pid);
-    drop(exited.stdin.take());
-    assert!(exited.wait().expect("the application exits").success());
-    // `exited` still holds the process open, so its id is not reused.
-    set_env(FACTS, format!("focus:{pid}:1"));
-    let run = Run::start(&[]);
-    run.supervisor.focus_queued(TraceId::mint(), 0, None);
-    match run.next() {
-        OutpostMessage::NotWatched { target_pid } if target_pid == pid => {}
-        other => panic!("the supervisor said {other:?}, not that {pid} is not watched"),
-    }
-    run.finish(ShutdownSummary {
-        clean: 1,
-        exited: 0,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    let listeners = logs.listeners();
-    let [(_, lines)] = listeners.as_slice() else {
-        panic!("one listener: {listeners:?}");
-    };
-    assert_eq!(
-        LockLogs::locks(lines),
-        [format!("app-lock {} {created} -", pid.0)]
-    );
-    clear_env(FACTS);
-    logs.done();
-    drop(exited);
-}
-
-/// An application's exit closes its lock in the supervisor and tells the
-/// listener, behind the lock it was sent.
-fn an_applications_exit_closes_its_lock_and_tells_the_listener() {
-    let logs = LockLogs::new();
-    let (application, pid) = application_and_pid();
-    let created = created_of(pid);
-    let run = Run::start(&[]);
-    run.keep_spares();
-    run.supervisor.ensure_spawned(pid);
-    let _ = run.expect_given(OutpostId(3), pid);
-    run.expect_spare(5, 2);
-    end(application);
-    run.expect_ended(OutpostId(3), pid, EndReason::TargetExited);
-    run.finish(ShutdownSummary {
-        clean: 5,
-        exited: 0,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    let listeners = logs.listeners();
-    let [(_, lines)] = listeners.as_slice() else {
-        panic!("one listener: {listeners:?}");
-    };
-    let own = Pid(std::process::id());
-    assert_eq!(
-        LockLogs::locks(lines),
-        [
-            lock_line(own, created_of(own), listener_handle(lines, own)),
-            lock_line(pid, created, listener_handle(lines, pid)),
-            format!("app-lock-closed {} {created}", pid.0),
-        ]
-    );
-    logs.done();
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == APPLICATION) {
@@ -1960,31 +1322,7 @@ fn main() {
     }
     // libtest's own options, such as a name filter, are accepted and
     // ignored: the binary runs all of its tests.
-    let tests: [(&str, fn()); 20] = [
-        (
-            "every_way_an_application_is_first_recorded_makes_its_lock_and_tells_the_listener",
-            every_way_an_application_is_first_recorded_makes_its_lock_and_tells_the_listener,
-        ),
-        (
-            "an_inherited_and_an_assigned_lock_are_the_listeners_mutex_with_wait_and_release_only",
-            an_inherited_and_an_assigned_lock_are_the_listeners_mutex_with_wait_and_release_only,
-        ),
-        (
-            "a_replacement_listener_is_sent_every_live_lock_before_any_other_command",
-            a_replacement_listener_is_sent_every_live_lock_before_any_other_command,
-        ),
-        (
-            "an_outposts_replacement_after_a_failure_gets_the_same_mutex",
-            an_outposts_replacement_after_a_failure_gets_the_same_mutex,
-        ),
-        (
-            "a_fact_for_an_exited_process_is_answered_with_no_lock_and_its_creation_time",
-            a_fact_for_an_exited_process_is_answered_with_no_lock_and_its_creation_time,
-        ),
-        (
-            "an_applications_exit_closes_its_lock_and_tells_the_listener",
-            an_applications_exit_closes_its_lock_and_tells_the_listener,
-        ),
+    let tests: [(&str, fn()); 14] = [
         (
             "a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once",
             a_start_takes_the_oldest_spare_and_its_replacement_starts_at_once,

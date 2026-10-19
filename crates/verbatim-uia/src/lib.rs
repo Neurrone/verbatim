@@ -47,9 +47,6 @@
 //!   [`parent_across_process_boundary`], the
 //!   parent window, or a top-level window's visible owner, served by
 //!   another process, where a walk up stops.
-//! - [`lock`] — the lock per application around the UIA calls that
-//!   collide (`docs/design/focus-pipeline.md`, section 20): which calls
-//!   take it, and the UIA defect it works around.
 //! - [`calls`] — the per-thread count of the cross-process calls this crate
 //!   makes, which the outpost's worker takes around each entry it handles.
 //! - [`ElementExt`] and [`WalkerExt`] — safe wrappers over an element's
@@ -68,7 +65,6 @@ mod client;
 mod com;
 mod element;
 mod focus;
-pub mod lock;
 pub mod map;
 mod nearest;
 mod probe;

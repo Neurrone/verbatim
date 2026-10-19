@@ -21,7 +21,6 @@
 //! finds a terminal's new output by an anchored diff of its text
 //! (milestone M4 item 9).
 
-mod app_locks;
 pub mod arbitration;
 pub mod dialog_text;
 mod event_thread;
@@ -37,7 +36,7 @@ pub mod text;
 pub use listener::run_listener;
 pub use outpost::{
     FocusWindowReader, FocusedElementReader, ForegroundReader, Heard, HeardObserver, Outpost,
-    OutpostOptions, run_attach, run_pipe, set_application_lock,
+    OutpostOptions, run_attach, run_pipe,
 };
 pub use supervisor::{EventSink, OutpostMessage, Supervisor, Undelivered};
 /// The process that serves a window's UI Automation, and a console client's

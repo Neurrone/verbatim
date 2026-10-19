@@ -147,19 +147,6 @@ abandoned worker's do. A dialog's text now pays one hand-over to that
 thread and back, tens of microseconds, and the first one in an outpost
 also creates the thread and its UIA client.
 
-The lock per application (`verbatim_uia::lock`;
-`docs/design/focus-pipeline.md`, section 20) adds no call: taking and
-releasing it are two kernel calls on a mutex, which never wait on the
-application, and a connection's check of its window's provider process
-reads the window manager's own state. Each taking is counted per thread
-beside the calls (`verbatim_uia::calls::take_locks`), and the ratchet pins
-the takings of the steady-state UIA focus change. Measured before and
-after it (section 20.12): key-repeat latency in three lists unchanged
-(P50 within 1.2 ms, P95 within 0.4 ms), two waits in about 800 focuses,
-of 0.3 and 3.5 ms; at first sight, waits of a few milliseconds and the
-first held fact to `Ready` unchanged; idle wake-ups and processor time
-within the runs' own spread.
-
 UIA's connection timeout is two seconds, UIA's default and NVDA's, and
 its transaction timeout five, in every Verbatim process
 (`verbatim_uia::CONNECTION_TIMEOUT` and `TRANSACTION_TIMEOUT`), set once
@@ -415,13 +402,6 @@ verdict for the focus's window rather than asking the window again.
   section 5), in the same call. The listener's one remote operation made 4 calls and
   331 provider calls; its classic read with the keyboard focus and the
   nearest window asked again made 7 (2026-10-19, section 10, step 6).
-- The application's lock (`verbatim_uia::lock`), taken around the calls
-  that collide, no call itself: none of the listener's, whose calls are
-  on held elements; the outpost's two with remote operations,
-  `focus_path::find`'s lookup of the route's window and its remote
-  operation, and one classically, the lookup, its walk being steps from
-  elements it holds. The ratchet pins both
-  (`uia_focus_changes_cost_exactly_remote` and `_classic`).
 - Target: the minimum, which the listener meets.
 
 ### A focus behind other objects' events

@@ -207,22 +207,25 @@ screen reader in both rendered and source form.
   longer reads the focused element for a focus event: it reports the
   listener's read and finds its own copy of the element afterwards, off
   the way to speech.
-  Amended 2026-10-17 (the adopted pipeline, section 12.3, and the lock per
-  application, section 20 of the same document): the listener's
-  per-application reading threads, and no other of its threads, make calls
-  into applications: the judgment and read of each UIA focus
-  (`HasKeyboardFocus`, the nearest window, the raw probe, and the classic
-  read, which makes no remote operation).
-  The listener and each outpost make every remote operation into an
-  application, and every connection by handle to a window whose provider
-  is that application, while holding that application's lock, an unnamed
-  mutex the supervisor creates and shares with them alone; the listener's
-  classic walk steps up into another application take that application's
-  lock. Not covered: other software's UIA calls, Verbatim's other UIA
-  clients (the tray dialog and the end-to-end agent), and an outpost's
-  connections and walks into a window of another application, such as the
-  Settings frame (section 20.9). A slow or hung application holds only the
-  threads that serve it.
+  Amended 2026-10-17 (the adopted pipeline, section 12.3 of the same
+  document; amended on 2026-10-19 by `docs/design/listener-without-connections.md`):
+  the listener's per-application reading threads, and no other of its
+  threads, make calls into applications: the judgment and read of each
+  UIA focus (`HasKeyboardFocus`, the nearest window, the raw probe, and
+  the classic read), every one a call on an element the listener holds,
+  with no remote operation and no connection by handle. Only an
+  application's own outpost sends it a remote operation or connects to
+  one of its windows, and an outpost connects to, probes and walks up
+  into only its own application's windows, reading another process's
+  window above the focus through MSAA (section 2 of that design). So the
+  UIA defect where a new connection fails while another process's remote
+  operation is queued in the application (`docs/uia-bugs.md`) cannot be
+  met between Verbatim's own calls, and no lock guards them. Not covered:
+  other software's UIA calls, the end-to-end agent's two UIA requests, UIA's own
+  focus tracking in the listener's process, and the messages UIA's client
+  side sends a parent window when a listener call returns its child
+  window's element (decision 13 of that design). A slow or hung
+  application holds only the threads that serve it.
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
   window that most recently received a focus fact. It replaces the earlier

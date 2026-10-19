@@ -359,9 +359,7 @@ Public API:
   whole desktop (the subtree of the root element), or exactly given
   elements. The caller looks a window's element up itself, on a thread
   that serves the window's application, so the registration's thread makes
-  no connection by handle, which would take the application's lock
-  (`lock`) and could wait for it; a registration thread never waits for
-  one (`docs/design/focus-pipeline.md`, section 20.5).
+  no connection by handle.
 - A registration registers its subscriptions as an event handler group
   (`IUIAutomationEventHandlerGroup`, from `IUIAutomation6`), as NVDA
   registers its handlers: each handler is added to the group, which is
@@ -467,8 +465,7 @@ Public API:
   and then connects (experiment `e39`, `docs/design/focus-pipeline.md`
   section 20); the raw probe sends only the second, with
   wParam 0, and nothing more. It is
-  not a UIA connection, so it neither takes nor needs the application's
-  lock, and it answers correctly where a new connection would meet
+  not a UIA connection, and it answers correctly where a new connection would meet
   another process's queued remote operation
   (`docs/design/listener-without-connections.md`, section 3, step 4).
   `raw_probe_verdict(sent, answer, last_error)` reads the outcome, a pure
@@ -549,40 +546,6 @@ Public API:
   request, lazily built the first time a given thread calls it and reused
   after that, matching `Uia`'s one-client-per-thread rule so nothing COM
   here crosses a thread boundary.
-- `lock` — the lock per application around the UIA calls that collide
-  (`docs/design/focus-pipeline.md`, section 20; decision D13). It works
-  around a defect of UIA's: from the moment a remote operation from any
-  process arrives in an application until UIA begins evaluating it there,
-  every new UIA connection another process makes to that application fails
-  without an error, `UiaHasServerSideProvider` answering "no" after about
-  three seconds and `ElementFromHandle` and `ElementFromHandleBuildCache`
-  returning UIA's client-side window proxy after about two, and so does a
-  tree walker step up into that application from an element of another.
-  `AppLock` names the application (its process id and creation time) and
-  holds a reference-counted handle to the unnamed mutex the supervisor
-  made for it. An outpost sets its process's lock once
-  (`set_process_lock`) before it installs its hook; each of the listener's
-  reading threads sets its own (`set_thread_lock`, `thread_lock`). The
-  guarded calls take the thread's lock, else the process's, and run
-  unguarded with neither, as in Core's own clients and the tests that call
-  them directly: `guarded(name, call)` for a remote operation (the one
-  `Execute` in `verbatim-uia-rops` and `GetFocusedElementBuildCache`), and
-  `guarded_window(name, hwnd, call)` for a connection by handle (the
-  outposts' probe, `ElementFromHandleBuildCache` and `ElementFromHandle`), which takes the
-  lock only when the window's provider process (`provider_process`, below)
-  is the lock's application. `guarded_by(lock, name, call)` takes a
-  given lock, for the listener's classic walk step up into another
-  application's window. The lock is taken immediately before the call and
-  released immediately after it: a first wait with no timeout that finds
-  it free costs one kernel call and wakes nobody; one that blocks is
-  logged at debug with how long it waited, and every taking at trace. A
-  mutex whose holder ended holding it is taken and logged as abandoned.
-  Each taking is counted per thread (`calls::take_locks`) and in the
-  process (`taken_in_process`, for a test that counts another thread's).
-  Its helpers for the processes that hand a lock over: `new_mutex`,
-  `duplicate_into` and `restricted_copy`, each copy with only the rights to
-  wait and release (`LOCK_RIGHTS`), `take_given` for the handle a process
-  was given, `process_created`, and `open_process`.
 - `calls` — the count of the cross-process calls this crate makes, kept
   per thread: `calls::count(kind)` counts one, and `calls::take()` returns
   this thread's `CallCounts` since the last take and resets them;

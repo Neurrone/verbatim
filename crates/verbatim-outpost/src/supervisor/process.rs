@@ -66,29 +66,13 @@ pub(super) struct Launched {
 /// listener is also told `ignored`, the pids of the processes ignored entirely,
 /// separated by commas, and `hooks_in`, the applications whose outposts
 /// have their own `WinEvent` hooks in, as `pid:outpost` pairs separated by
-/// commas, when there are any. An outpost started for its application
-/// inherits `lock`, its application's lock as a copy with only the rights
-/// to wait and release (`verbatim_uia::lock::restricted_copy`), and the
-/// application's creation time, named on its command line as
-/// `--app-lock`, as its pipes are (`docs/design/focus-pipeline.md`,
-/// section 20.4); the copy is closed once the launch returns.
+/// commas, when there are any.
 pub(super) fn launch(
     exe_path: &Path,
     role: Role,
     options: crate::OutpostOptions,
     (ignored, hooks_in): (&str, &str),
-    lock: Option<(OwnedHandle, u64)>,
 ) -> io::Result<(Launched, ChildPipes)> {
-    let app_lock = lock
-        .as_ref()
-        .map(|(handle, created)| {
-            let grant = crate::protocol::LockGrant {
-                handle: handle.as_raw_handle() as u64,
-                created: *created,
-            };
-            format!(" {} {}", crate::protocol::LockGrant::ARG, grant.to_arg())
-        })
-        .unwrap_or_default();
     let ignore = if ignored.is_empty() {
         String::new()
     } else {
@@ -112,7 +96,7 @@ pub(super) fn launch(
             },
             Box::new(move |pipe_in, pipe_out| {
                 format!(
-                    "--pipe-in {pipe_in} --pipe-out {pipe_out} --target-pid {}{app_lock}{classic_uia}",
+                    "--pipe-in {pipe_in} --pipe-out {pipe_out} --target-pid {}{classic_uia}",
                     pid.0
                 )
             }),
@@ -147,7 +131,7 @@ pub(super) fn launch(
         ChildEnds {
             commands,
             messages,
-            inherited: lock.map(|(handle, _)| handle).into_iter().collect(),
+            inherited: Vec::new(),
         },
     )?;
     let pipes = ChildPipes {
@@ -177,9 +161,8 @@ pub(super) struct Target {
 /// Why a target was not opened.
 #[derive(Debug)]
 pub(super) enum NotHeld {
-    /// No process has that id, or the one that has it has exited: with its
-    /// creation time, when it could be opened and read.
-    Exited(Option<u64>),
+    /// No process has that id, or the one that has it has exited.
+    Exited,
     /// The process could not be opened, so it cannot be held, and an
     /// outpost for it could not tell its exit from another process's start.
     Denied(windows::core::Error),
@@ -188,7 +171,7 @@ pub(super) enum NotHeld {
 impl std::fmt::Display for NotHeld {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NotHeld::Exited(_) => f.write_str("the process has exited"),
+            NotHeld::Exited => f.write_str("the process has exited"),
             NotHeld::Denied(error) => write!(f, "the process cannot be opened: {error}"),
         }
     }
@@ -199,7 +182,7 @@ impl Target {
     /// be waited on, or, when that is refused, for limited queries only;
     /// either right is enough to hold it and to tell whether it has exited.
     pub(super) fn open(pid: Pid) -> Result<Self, NotHeld> {
-        let mut opened = Err(NotHeld::Exited(None));
+        let mut opened = Err(NotHeld::Exited);
         for rights in [
             PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
             PROCESS_QUERY_LIMITED_INFORMATION,
@@ -213,7 +196,7 @@ impl Target {
                     break;
                 }
                 Err(error) if error.code() == ERROR_INVALID_PARAMETER.to_hresult() => {
-                    return Err(NotHeld::Exited(None));
+                    return Err(NotHeld::Exited);
                 }
                 Err(error) => opened = Err(NotHeld::Denied(error)),
             }
@@ -224,15 +207,9 @@ impl Target {
         let process = unsafe { OwnedHandle::from_raw_handle(handle.0 as RawHandle) };
         let target = Self { process };
         if target.has_exited() {
-            return Err(NotHeld::Exited(target.created().ok()));
+            return Err(NotHeld::Exited);
         }
         Ok(target)
-    }
-
-    /// The process's creation time (`GetProcessTimes`), which with its id
-    /// names it while it is held.
-    pub(super) fn created(&self) -> io::Result<u64> {
-        verbatim_uia::lock::process_created(&self.process)
     }
 
     /// Whether the process has exited.

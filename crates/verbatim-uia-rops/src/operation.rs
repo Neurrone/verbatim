@@ -386,13 +386,11 @@ impl Operation {
         // From its arrival in the application until UIA begins evaluating
         // it there, a remote operation makes every new UIA connection from
         // another process to the application fail without an error, a
-        // defect of UIA's (`docs/design/focus-pipeline.md`, section 20.1).
-        // So it is executed holding the application's lock, which the
-        // outpost's and the focus listener's connections to the application
-        // also take (`verbatim_uia::lock`). The imports and the support
-        // check above are local and run outside it.
-        let result = verbatim_uia::lock::guarded("Execute", || remote.Execute(&program.bytecode))
-            .map_err(Error::Execute)?;
+        // defect of UIA's (`docs/uia-bugs.md`): only the application's own
+        // outpost sends it one and connects to it, so no other Verbatim
+        // process meets it (`docs/design/listener-without-connections.md`,
+        // section 2).
+        let result = remote.Execute(&program.bytecode).map_err(Error::Execute)?;
         let outcome = Outcome { result };
         let status = Status::from_value(outcome.result.Status().map_err(Error::Execute)?.0);
         if status == Status::Success {

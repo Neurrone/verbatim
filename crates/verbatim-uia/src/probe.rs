@@ -41,14 +41,14 @@ pub fn has_server_side_provider(hwnd: isize) -> bool {
     // after about three seconds when it arrives while a remote operation
     // from another process waits to be evaluated in the window's
     // application (`docs/uia-bugs.md`, "A new connection fails while
-    // another process's remote operation is queued"): made holding that
-    // application's lock (`crate::lock`).
-    crate::lock::guarded_window("UiaHasServerSideProvider", hwnd, || {
-        // SAFETY: UiaHasServerSideProvider tolerates any window handle,
-        // returning false for invalid ones; the BOOL is converted, not
-        // assumed.
-        unsafe { UiaHasServerSideProvider(HWND(hwnd as *mut _)) }.as_bool()
-    })
+    // another process's remote operation is queued"); only the window's
+    // own application's outpost makes it, and no other Verbatim process
+    // sends that application a remote operation
+    // (`docs/design/listener-without-connections.md`, section 2).
+    // SAFETY: UiaHasServerSideProvider tolerates any window handle,
+    // returning false for invalid ones; the BOOL is converted, not
+    // assumed.
+    unsafe { UiaHasServerSideProvider(HWND(hwnd as *mut _)) }.as_bool()
 }
 
 /// How long the raw probe waits for the window to answer: the "no" UIA's
@@ -119,7 +119,7 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// `e39`, `docs/design/focus-pipeline.md` section 20); the raw probe sends
 /// only the second, with wParam 0, and nothing more. It answers correctly
 /// where a new connection would meet another process's queued remote
-/// operation, and needs no lock.
+/// operation.
 ///
 /// The message is sent with `SMTO_BLOCK`, so the caller does not re-enter
 /// while it waits; `SMTO_ABORTIFHUNG`, so a thread that has pumped nothing

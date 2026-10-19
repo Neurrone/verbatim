@@ -34,11 +34,6 @@
 //!   outbound messages as JSON lines to stdout, for standalone testing without
 //!   Core.
 //!
-//! An outpost started for its application, with `--target-pid`, is also
-//! given `--app-lock <handle>:<created>`: the application's lock
-//! (`docs/design/focus-pipeline.md`, section 20.4), a handle it inherited,
-//! which it sets as its process's lock before it installs its hook.
-//!
 //! Every mode also takes `--classic-uia`, which turns off UIA remote
 //! operations for the process's whole life (`uia.remote_operations = false`
 //! in `settings.toml`, which the supervisor passes on); the listener makes
@@ -72,17 +67,8 @@ fn main() -> ExitCode {
             pipe_in,
             pipe_out,
             target_pid,
-            lock,
             options,
         }) => {
-            if let (Some(target_pid), Some(grant)) = (target_pid, lock) {
-                // SAFETY: the supervisor names the handle it had this
-                // process inherit for the application's lock, used nowhere
-                // else.
-                unsafe {
-                    verbatim_outpost::set_application_lock(verbatim_model::Pid(target_pid), grant);
-                }
-            }
             // SAFETY: the supervisor passes the values of the overlapped
             // pipe ends it created for this process, which inherited them
             // and uses them nowhere else; `inherited_pipe_handles` checks
@@ -201,9 +187,6 @@ enum Mode {
         pipe_out: usize,
         /// The application, or `None` for a spare.
         target_pid: Option<u32>,
-        /// The application's lock it inherited, for an outpost started for
-        /// it.
-        lock: Option<verbatim_outpost::protocol::LockGrant>,
         options: OutpostOptions,
     },
     Listener {
@@ -232,7 +215,6 @@ fn parse_args(args: &[String]) -> Option<Mode> {
     let mut listener = false;
     let mut ignore_pids = String::new();
     let mut hooks_in = String::new();
-    let mut lock = None;
     let mut options = OutpostOptions::default();
     let mut index = 1;
     while index < args.len() {
@@ -244,11 +226,6 @@ fn parse_args(args: &[String]) -> Option<Mode> {
             "--attach" => attach = args.get(index + 1).and_then(|v| v.parse().ok()),
             "--ignore-pids" => ignore_pids = args.get(index + 1).cloned().unwrap_or_default(),
             "--hooks-in" => hooks_in = args.get(index + 1).cloned().unwrap_or_default(),
-            verbatim_outpost::protocol::LockGrant::ARG => {
-                lock = args
-                    .get(index + 1)
-                    .and_then(|value| verbatim_outpost::protocol::LockGrant::parse_arg(value));
-            }
             // A bare flag, not a valued option; do not consume a following arg.
             "--listener" => {
                 listener = true;
@@ -283,14 +260,12 @@ fn parse_args(args: &[String]) -> Option<Mode> {
             pipe_in,
             pipe_out,
             target_pid: Some(target_pid),
-            lock,
             options,
         }),
         (Some(pipe_in), Some(pipe_out), None, Some(_)) => Some(Mode::Pipe {
             pipe_in,
             pipe_out,
             target_pid: None,
-            lock: None,
             options,
         }),
         _ => None,
