@@ -596,8 +596,9 @@ cargo test -p verbatim-e2e --test e2e -- --ignored --exact measure_focus_explore
 ```
 
 Remove the variable (`Remove-Item Env:VERBATIM_E2E_VERBATIM_EXE`) to go
-back to debug, and before `cargo xtask trace scenario`, which refuses to
-start while it is set and takes another build as `--verbatim-exe <path>`
+back to debug, and before `cargo xtask trace scenario` or `cargo xtask
+measure`, which refuse to start while it is set and take another build as
+`--verbatim-exe <path>`
 ([measuring.md](measuring.md)). The stage is replaced file by file, so the two never mix.
 Both profiles write the same scenario folders under
 `target\e2e-artifacts`, so copy the artifacts away between a debug and a

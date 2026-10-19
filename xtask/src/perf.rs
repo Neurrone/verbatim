@@ -212,15 +212,15 @@ pub(crate) fn measure(args: &[String]) -> ExitCode {
 fn run_measure(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help") {
         println!(
-            "usage: cargo xtask measure [--release] [--audible] [--scenario <name>]... [--label <label>]"
+            "usage: cargo xtask measure [--release | --verbatim-exe <path>] [--audible] \
+             [--scenario <name>]... [--label <label>]"
         );
         return Ok(());
     }
-    let options = RunOptions {
-        release: args.iter().any(|arg| arg == "--release"),
-        audible: args.iter().any(|arg| arg == "--audible"),
-        verbatim_exe: None,
-    };
+    let options = run_options(
+        args,
+        std::env::var_os("VERBATIM_E2E_VERBATIM_EXE").is_some(),
+    )?;
     let mut names = values(args, "--scenario");
     if names.is_empty() {
         names = MEASURE_SET.iter().map(|&name| name.to_owned()).collect();
@@ -422,7 +422,7 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     };
     let after = seconds_of("--after")?;
     let seconds = seconds_of("--seconds")?;
-    let options = trace_run_options(
+    let options = run_options(
         args,
         std::env::var_os("VERBATIM_E2E_VERBATIM_EXE").is_some(),
     )?;
@@ -488,12 +488,13 @@ fn run_trace_scenario(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// `cargo xtask trace scenario`'s run options from `args`, refused when
+/// `cargo xtask trace scenario`'s and `cargo xtask measure`'s run options
+/// from `args`, refused when
 /// `VERBATIM_E2E_VERBATIM_EXE` was set (`variable_set`), since the command
 /// chooses the build itself; when `--verbatim-exe` is combined with
 /// `--release`; or when the named build's folder lacks anything a run
 /// stages.
-fn trace_run_options(args: &[String], variable_set: bool) -> Result<RunOptions, String> {
+fn run_options(args: &[String], variable_set: bool) -> Result<RunOptions, String> {
     if variable_set {
         return Err(VARIABLE_SET.to_owned());
     }
@@ -520,8 +521,8 @@ fn trace_run_options(args: &[String], variable_set: bool) -> Result<RunOptions, 
     })
 }
 
-const VARIABLE_SET: &str = "VERBATIM_E2E_VERBATIM_EXE is set, but the trace command chooses \
-     the build itself; unset it, and use --verbatim-exe <path> to trace another build";
+const VARIABLE_SET: &str = "VERBATIM_E2E_VERBATIM_EXE is set, but this command chooses \
+     the build itself; unset it, and use --verbatim-exe <path> to run another build";
 
 /// The reports `cargo xtask trace scenario` asks the reader for, each as
 /// the file it is written to and the reader's arguments after the trace:
@@ -607,7 +608,7 @@ mod tests {
 
     #[test]
     fn the_variable_set_is_refused() {
-        let result = trace_run_options(&arguments(&["measure_keys_text_box"]), true);
+        let result = run_options(&arguments(&["measure_keys_text_box"]), true);
         assert_eq!(result.err(), Some(VARIABLE_SET.to_owned()));
     }
 
@@ -620,7 +621,7 @@ mod tests {
             "--release",
         ]);
         assert_eq!(
-            trace_run_options(&args, false).err(),
+            run_options(&args, false).err(),
             Some("--verbatim-exe and --release cannot be combined".to_owned())
         );
     }
@@ -634,7 +635,7 @@ mod tests {
         fs::write(folder.join("mockapp.exe"), b"").expect("write mockapp.exe");
         let exe = folder.join("verbatim.exe").display().to_string();
         let args = arguments(&["measure_keys_text_box", "--verbatim-exe", &exe]);
-        let result = trace_run_options(&args, false);
+        let result = run_options(&args, false);
         fs::remove_dir_all(&folder).expect("remove the folder");
         assert_eq!(
             result.err(),

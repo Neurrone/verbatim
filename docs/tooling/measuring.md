@@ -32,8 +32,8 @@ figure exists. No per-process energy estimates: they are impractical.
 
 ### Latency: cargo xtask measure
 
-`cargo xtask measure [--release] [--audible] [--scenario <name>]...
-[--label <label>]` runs the measure set (the eight `measure_` scenarios a
+`cargo xtask measure [--release | --verbatim-exe <path>] [--audible]
+[--scenario <name>]... [--label <label>]` runs the measure set (the eight `measure_` scenarios a
 silent run takes; `measure_speech_real` is named with `--scenario` in an
 audible run), keeps each run's `stderr.log`, and writes `stages.txt`: for
 every stage of the latency line, over every announcement, the count, the
@@ -59,7 +59,11 @@ maximum or the 99.9th percentile that holds across runs.
 `cargo xtask measure` compiles and runs the working tree as it is,
 uncommitted edits included, so a "before" baseline is measured from a
 clean worktree of the commit being measured, never from a tree that
-already holds the change.
+already holds the change: run there, or built there and named with
+`--verbatim-exe`. It chooses the build it stages as `cargo xtask trace
+scenario` does, below: this tree's debug build, its release build with
+`--release`, or another with `--verbatim-exe <path>`, under the same
+checks, and it refuses to start while `VERBATIM_E2E_VERBATIM_EXE` is set.
 
 ### Wake-ups and processor time: cargo xtask trace scenario
 
