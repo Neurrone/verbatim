@@ -5,7 +5,6 @@
 //! behaviour.
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
-use std::time::Instant;
 
 use verbatim_uia::Uia;
 use windows::Win32::Foundation::HWND;
@@ -104,11 +103,11 @@ pub fn from(app: &common::MockApp, name: &str) -> Heard {
     }
 }
 
-/// What a handler heard: the event, when, and its sender.
-pub type Event = (Heard, Instant, AgileReference<IUIAutomationElement>);
+/// What a handler heard: the event and its sender.
+pub type Event = (Heard, AgileReference<IUIAutomationElement>);
 
 /// One handler object as each of the three handler interfaces, and what it
-/// hears, with when it heard it and the sender.
+/// hears, with the sender.
 pub struct Handler {
     pub events: IUIAutomationEventHandler,
     pub focus: IUIAutomationFocusChangedEventHandler,
@@ -128,13 +127,12 @@ impl Handler {
         }
     }
 
-    /// The next event heard, and when, waiting at most the shared wait.
-    pub fn next(&self) -> (Heard, Instant) {
-        let (heard, at, _) = self.next_with_sender();
-        (heard, at)
+    /// The next event heard, waiting at most the shared wait.
+    pub fn next(&self) -> Heard {
+        self.next_with_sender().0
     }
 
-    /// The next event heard, when, and its sender, kept as the handler
+    /// The next event heard and its sender, kept as the handler
     /// received it, waiting at most the shared wait.
     pub fn next_with_sender(&self) -> Event {
         self.heard
@@ -164,7 +162,6 @@ mod hearing {
 
     use std::sync::Mutex;
     use std::sync::mpsc::Sender;
-    use std::time::Instant;
 
     use windows::Win32::System::Variant::VARIANT;
     use windows::Win32::UI::Accessibility::{
@@ -197,7 +194,6 @@ mod hearing {
 
     impl Hearing_Impl {
         fn hear(&self, sender: &windows_core::Ref<IUIAutomationElement>) {
-            let at = Instant::now();
             let element = sender.as_ref().expect("an event's sender");
             // SAFETY: a live read of the sender, which the handler holds.
             let pid = unsafe { element.CurrentProcessId() }.expect("the sender's process id");
@@ -212,7 +208,7 @@ mod hearing {
                 .sender
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .send((heard, at, kept));
+                .send((heard, kept));
         }
     }
 

@@ -387,9 +387,9 @@ pub fn a_kept_sender_is_read_live_until_its_provider_removes_it() {
         false,
     );
     app.send("focus btn1");
-    let (_, _, button) = handler.next_with_sender();
+    let (_, button) = handler.next_with_sender();
     app.send("focus item1");
-    let (_, _, item) = handler.next_with_sender();
+    let (_, item) = handler.next_with_sender();
     let gone = Err(HRESULT(UIA_E_ELEMENTNOTAVAILABLE.cast_signed()));
     assert_eq!(
         (live_name(&button), live_name(&item)),

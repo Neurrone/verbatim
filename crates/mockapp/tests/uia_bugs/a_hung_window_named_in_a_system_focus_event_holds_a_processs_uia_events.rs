@@ -33,11 +33,11 @@ pub fn a_provider_held_raising_its_event_holds_only_its_own_events() {
     a.write("focus btn1");
     assert_eq!(a.held(), "ProviderOptions");
     b.send("focus btn1");
-    assert_eq!(on_b.next().0, support::from(&b, "Original Name"));
+    assert_eq!(on_b.next(), support::from(&b, "Original Name"));
     on_a.heard_nothing_more();
     a.release();
     a.expect_line("applied", String::new);
-    assert_eq!(on_a.next().0, support::from(&a, "Original Name"));
+    assert_eq!(on_a.next(), support::from(&a, "Original Name"));
     on_a.heard_nothing_more();
     on_b.heard_nothing_more();
     a.quit();

@@ -82,11 +82,11 @@ pub fn a_focus_event_in_a_group_on_one_window_hears_that_applications_focus_alon
     );
 
     b.send("focus btn1");
-    assert_eq!(on_b.next().0, support::from(&b, "Original Name"));
+    assert_eq!(on_b.next(), support::from(&b, "Original Name"));
     a.send("focus item1");
-    assert_eq!(on_a.next().0, support::from(&a, "First"));
+    assert_eq!(on_a.next(), support::from(&a, "First"));
     b.send("focus item2");
-    assert_eq!(on_b.next().0, support::from(&b, "Second"));
+    assert_eq!(on_b.next(), support::from(&b, "Second"));
     on_a.heard_nothing_more();
     on_b.heard_nothing_more();
     a.quit();
@@ -124,9 +124,9 @@ pub fn a_focus_event_in_a_group_on_a_proxied_window_hears_none_of_its_focus() {
     let _group = support::group_on(&client, &support::element(&client, m_hwnd), &on_m, true);
 
     m.send("focus btn1");
-    assert_eq!(desktop.next().0, support::from(&m, "Original Name"));
+    assert_eq!(desktop.next(), support::from(&m, "Original Name"));
     m.send("set-name btn1 Renamed");
-    assert_eq!(on_m.next().0, support::from(&m, "Renamed"));
+    assert_eq!(on_m.next(), support::from(&m, "Renamed"));
     on_m.heard_nothing_more();
     desktop.heard_nothing_more();
     m.quit();
