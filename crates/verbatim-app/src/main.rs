@@ -1945,8 +1945,14 @@ fn reducer_loop(
     thread.apply(Input::Settings(settings));
     thread.send_views();
     loop {
-        let next = next_command(&mut command_rx, thread.next_deadline());
-        thread.expire(Instant::now());
+        // With no deadline outstanding, or none yet passed, nothing is
+        // expired: a command costs no scan of the requests.
+        let due = thread.next_deadline();
+        let next = next_command(&mut command_rx, due);
+        let now = Instant::now();
+        if due.is_some_and(|due| now >= due) {
+            thread.expire(now);
+        }
         match next {
             Next::Command(command) => thread.on_command(command),
             Next::Woken => {}

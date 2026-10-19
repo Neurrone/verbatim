@@ -115,6 +115,9 @@ struct Entry {
 pub(crate) struct RequestTable {
     next: u64,
     entries: HashMap<RequestId, Entry>,
+    /// How many entries have a deadline, so the reducer thread's check for
+    /// one costs nothing while none is outstanding.
+    timed: usize,
 }
 
 impl RequestTable {
@@ -154,6 +157,7 @@ impl RequestTable {
     ) -> RequestId {
         self.next += 1;
         let id = RequestId(self.next);
+        self.timed += usize::from(deadline.is_some());
         self.entries.insert(
             id,
             Entry {
@@ -164,6 +168,13 @@ impl RequestTable {
             },
         );
         id
+    }
+
+    /// Removes request `id`, keeping the count of those with a deadline.
+    fn remove(&mut self, id: RequestId) -> Option<Entry> {
+        let entry = self.entries.remove(&id)?;
+        self.timed -= usize::from(entry.deadline.is_some());
+        Some(entry)
     }
 
     /// Delivers the outcome of request `id`, reported by `outpost`. Returns
@@ -183,8 +194,7 @@ impl RequestTable {
         {
             return Vec::new();
         }
-        self.entries
-            .remove(&id)
+        self.remove(id)
             .map(|entry| deliver(entry.asker, outcome))
             .unwrap_or_default()
     }
@@ -200,7 +210,7 @@ impl RequestTable {
             .collect();
         ended
             .into_iter()
-            .filter_map(|id| self.entries.remove(&id))
+            .filter_map(|id| self.remove(id))
             .flat_map(|entry| deliver(entry.asker, QueryOutcome::Gone))
             .collect()
     }
@@ -209,6 +219,9 @@ impl RequestTable {
     /// returning the reducer inputs that produces. A later answer from its
     /// outpost finds no request and is dropped.
     pub(crate) fn expire(&mut self, now: Instant) -> Vec<Input> {
+        if self.timed == 0 {
+            return Vec::new();
+        }
         let expired: Vec<RequestId> = self
             .entries
             .iter()
@@ -217,7 +230,7 @@ impl RequestTable {
             .collect();
         expired
             .into_iter()
-            .filter_map(|id| self.entries.remove(&id))
+            .filter_map(|id| self.remove(id))
             .flat_map(|entry| {
                 deliver(
                     entry.asker,
@@ -230,6 +243,9 @@ impl RequestTable {
     /// The earliest deadline of an outstanding request
     /// ([`begin_until`](Self::begin_until)).
     pub(crate) fn next_deadline(&self) -> Option<Instant> {
+        if self.timed == 0 {
+            return None;
+        }
         self.entries
             .values()
             .filter_map(|entry| entry.deadline)

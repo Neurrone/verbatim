@@ -83,6 +83,9 @@ impl ShellItemsWanted {
     /// Answers every request whose deadline is `now` or earlier with
     /// nothing.
     pub(crate) fn expire(&mut self, now: Instant) {
+        if self.waiting.is_empty() {
+            return;
+        }
         let (expired, kept): (Vec<Waiting>, Vec<Waiting>) = std::mem::take(&mut self.waiting)
             .into_iter()
             .partition(|waiting| waiting.deadline <= now);
