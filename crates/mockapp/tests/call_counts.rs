@@ -74,10 +74,13 @@ use verbatim_outpost::text::{
     Anchors, CaretSignal, TextSource, Watched, caret_report, check_caret, perform,
 };
 use verbatim_uia::{
-    Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, ListenerEvent, Live, Node,
-    NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape, Subscription, TextEvent, Uia,
+    Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
+    Live, Node, NodeIdRegistry, Part, PropertyEvent, Registration, Scope, Shape, Subscription,
+    TextEvent, Uia,
 };
-use verbatim_uia_rops::{Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry};
+use verbatim_uia_rops::{
+    Attributes, FocusAncestry, FocusQuery, TextAttribute, focus_ancestry, focus_ancestry_classic,
+};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -1663,6 +1666,81 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         app.quit();
         parent_app.quit();
     }
+}
+
+/// The classic walk from a window's own element held without its handle,
+/// runtime id `[42, window]` with no window handle in its cache, whose
+/// window is the child of another process's window, stops before any
+/// step, as the focus listener reads it, given the nearest window its
+/// checks found: the element's own window, recognized by its runtime id
+/// (`docs/design/listener-without-connections.md`, section 10, step 6).
+/// The walk makes no call and the parent receives nothing. Without that
+/// recognition the walk steps into the parent, and the check after the
+/// step drops it, so the chain is the same but the step shows: a call,
+/// and the parent's messages. The listener's own nearest-window lookup
+/// passes over an element that reports no handle, so its reader drops
+/// such a sender at its native check before the walk; the walk is called
+/// here with the nearest window given.
+fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_boundary() {
+    let (parent_app, parent) = spawn_parent("window-element", false);
+    let title = common::unique_title("mockapp-boundary-window-element");
+    let app = common::spawn_hiding_window_handle("counts.json", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    place_below(hwnd, parent, false);
+    let request = under_test
+        .uia
+        .request_fixed::<FocusInput>()
+        .expect("the focus input's cache request");
+    let window = under_test
+        .uia
+        .window_element(hwnd.0 as isize, &request)
+        .expect("mockapp's window element");
+    let input = window.read();
+    assert_eq!(
+        (input.hwnd, window.runtime_id()),
+        (0, vec![42, hwnd.0 as i32]),
+        "the window's own element, held without its handle"
+    );
+    let ancestors = under_test
+        .uia
+        .request::<Ancestor>(Ancestor::all_on())
+        .expect("the ancestors' cache request");
+    let fill = Fill::new(&ancestors);
+    common::reset_hits(parent);
+    let _ = verbatim_uia::calls::take();
+    let ancestry = focus_ancestry_classic(
+        &under_test.uia,
+        &FocusQuery {
+            element: &window,
+            known: &[],
+            previous: None,
+            depth_limit: 64,
+            fill: &fill,
+            out_of_time: None,
+            require_focus: false,
+            refresh: false,
+            nearest_window: Some(hwnd.0 as isize),
+        },
+    )
+    .expect("the walk");
+    let walk_calls = verbatim_uia::calls::take();
+    let FocusAncestry::Focused(ancestry) = ancestry else {
+        panic!("the walk required no focus");
+    };
+    assert_eq!(
+        (ancestry.ancestors.len(), ancestry.window),
+        (0, Some(hwnd.0 as isize)),
+        "the walk's ancestors and window"
+    );
+    assert_eq!(walk_calls, calls(0, 0, 0), "the walk's calls");
+    assert_eq!(
+        (common::read_hits(parent), common::read_get_objects(parent)),
+        (vec![], vec![]),
+        "the parent's calls and messages during the walk"
+    );
+    app.quit();
+    parent_app.quit();
 }
 
 /// The parent's or owner's provider calls during the boundary test's
@@ -3952,6 +4030,10 @@ fn main() {
         (
             "uia_focus_chains_stop_below_the_process_boundary",
             uia_focus_chains_stop_below_the_process_boundary,
+        ),
+        (
+            "uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_boundary",
+            uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_boundary,
         ),
         (
             "uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider",

@@ -293,7 +293,10 @@ fn uia_ancestors(
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
     let desktop = desktop_window();
-    let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
+    // Another process's window is read through MSAA without a probe: a
+    // step can still reach one, as when an owner is shown between the
+    // walk's boundary check and its step.
+    let read_by_msaa = |hwnd: isize| hwnd != desktop && !own_window_uses_uia(context, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let Ok((uia_chain, crossed, walked)) = uia.ancestors(
         (element, element_window),
@@ -407,7 +410,10 @@ pub(super) fn uia_chain_from_read(
     previous: &[NodeSnapshot],
 ) -> Option<Vec<NodeSnapshot>> {
     let desktop = desktop_window();
-    let read_by_msaa = |hwnd: isize| hwnd != desktop && !window_uses_uia(context, hwnd);
+    // Another process's window is read through MSAA without a probe: a
+    // step can still reach one, as when an owner is shown between the
+    // walk's boundary check and its step.
+    let read_by_msaa = |hwnd: isize| hwnd != desktop && !own_window_uses_uia(context, hwnd);
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     let parents: Vec<verbatim_uia::AncestorParts> = ancestors
         .iter()

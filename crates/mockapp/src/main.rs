@@ -58,6 +58,10 @@ struct Cli {
     /// so the tests that count calls leave it off.
     #[arg(long)]
     count_registrations: bool,
+    /// Has the UIA root report a window handle of 0, so a client holds the
+    /// window's own element, runtime id `[42, window]`, without its handle.
+    #[arg(long)]
+    hide_window_handle: bool,
 }
 
 /// The `--backend` values `mockapp` accepts, translated to
@@ -95,6 +99,9 @@ fn run(cli: &Cli) -> Result<(), Box<dyn std::error::Error>> {
     let tree = std::sync::Arc::new(std::sync::Mutex::new(tree::Tree::build(root)));
     if cli.count_registrations {
         uia::count_registrations();
+    }
+    if cli.hide_window_handle {
+        uia::hide_window_handle();
     }
     let backend = match cli.backend {
         BackendArg::Uia => Some(Backend::Uia),

@@ -361,6 +361,14 @@ pub fn spawn_counting_registrations(fixture: &str, title: &str) -> MockApp {
     spawn_with(fixture, "uia", title, &["--count-registrations"])
 }
 
+/// [`spawn`] on the UIA backend, its root reporting a window handle of 0
+/// (`--hide-window-handle`), so the window's own element is held without
+/// its handle.
+#[must_use]
+pub fn spawn_hiding_window_handle(fixture: &str, title: &str) -> MockApp {
+    spawn_with(fixture, "uia", title, &["--hide-window-handle"])
+}
+
 /// [`spawn`], its window shown (`--show`): an application the focus
 /// listener's acceptance test can take a focus in, with its window made
 /// topmost ([`make_topmost`]).

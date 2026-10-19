@@ -240,7 +240,11 @@ The outpost connects to, probes and walks up into only the windows its
 application serves (`read::serves`, by the window's provider process):
 its own UIA walk (`read::uia_ancestors`, for the ancestors query and a
 focus-now read's classic read) stops below the boundary and is
-continued the same way; the MSAA walk (`read::msaa_ancestors`) answers
+continued the same way, and a step that reaches another process's
+window after all, as an owner shown between the boundary check and the
+step makes it, switches to MSAA at that window without probing it
+(`read::own_window_uses_uia`, which the continuation of the listener's
+chain, `read::uia_chain_from_read`, also asks); the MSAA walk (`read::msaa_ancestors`) answers
 another process's window as read through MSAA without probing it; a
 navigation neighbor that is another process's window is kept as read
 (`read::corrected_backend`); and a focus route through another

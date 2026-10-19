@@ -23,7 +23,10 @@ answering, then processes stdin commands until `quit`. The cross-process
 tests leave the window hidden; the end-to-end suite's `spelling_errors`
 scenario shows it and drives it with real keys (`docs/crates/verbatim-e2e.md`).
 The focus starts on the first node in the `focused` state, if the fixture
-has one, as an application opens with its focus on a control.
+has one, as an application opens with its focus on a control. With
+`--hide-window-handle`, the UIA root reports a window handle of 0, so a
+client holds the window's own element, runtime id `[42, window]`, without
+its handle.
 
 Fixture format: one JSON object per node — `id` (unique string), `role` (a
 `Role` name in snake case, e.g. `check_box`), optional `name` and `value`
@@ -652,7 +655,10 @@ to a window by its handle, from the connection count
 placed below another's, as its child or owned by it, the listener's
 chain stops below the process boundary, and the parent's provider calls
 are pinned while the listener reads and during a focus-now query
-(`uia_focus_chains_stop_below_the_process_boundary`); above a parent
+(`uia_focus_chains_stop_below_the_process_boundary`), and from the
+window's own element held without its handle, the classic walk makes no
+step into the parent
+(`uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_boundary`); above a parent
 that has a UIA provider, the outpost continues the chain through MSAA
 with no UIA call into it, and UIA's client side connects to the parent
 as the outpost's read returns the child window's element, which both

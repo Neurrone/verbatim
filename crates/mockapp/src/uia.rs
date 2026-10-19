@@ -51,6 +51,16 @@ pub(crate) fn count_registrations() {
     COUNT_REGISTRATIONS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Whether the root's provider reports a window handle of 0
+/// (`--hide-window-handle`), where it reports its window's.
+static HIDE_WINDOW_HANDLE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Has the root's provider report a window handle of 0 from now on.
+pub(crate) fn hide_window_handle() {
+    HIDE_WINDOW_HANDLE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The root's provider, as a fragment: a [`RootProvider`], or a
 /// [`CountingRootProvider`] around one when registrations are counted.
 pub(crate) fn root_fragment(tree: SharedTree, hwnd: HWND) -> IRawElementProviderFragment {
@@ -743,7 +753,7 @@ mod props {
         } else if id == UIA_ProcessIdPropertyId.0 {
             i32_variant(i32::try_from(std::process::id()).unwrap_or(0))
         } else if id == UIA_NativeWindowHandlePropertyId.0 {
-            if index == 0 {
+            if index == 0 && !super::HIDE_WINDOW_HANDLE.load(std::sync::atomic::Ordering::Relaxed) {
                 i32_variant(i32::try_from(hwnd.0 as isize).unwrap_or(0))
             } else {
                 i32_variant(0)
