@@ -38,7 +38,8 @@ use crate::list_dialog::{ButtonVerdict, ListDialogButton, ListDialogSpec};
 use crate::shell_items::{ShellItem, ShellItemKind, ShellItemsHost, center_of, refind};
 
 /// Called with an item's name when the item chosen is gone by the time it
-/// would be clicked. Called on the enumeration's guard thread.
+/// would be clicked. Called on Core's reducer thread, which delivers the
+/// fresh enumeration's outcome.
 pub(crate) type OnGone = Arc<dyn Fn(String) + Send + Sync>;
 
 /// The mouse action one of the dialog's click buttons injects.

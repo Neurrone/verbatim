@@ -71,7 +71,7 @@ No test in `crates/mockapp/tests/uia_bugs/` reproduces it: a test would have to 
 
 #### Evidence
 
-[`experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](../experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` (including `e24b`, `e24c`, `e26b`, `e28c`, `e28d`, `e35b` and `e35c`), with the tool as patches, and the Notepad and Windows Terminal launches that met the fault; `docs/design/focus-pipeline.md`, sections 20.1, 20.5, 20.8, 20.9 and 20.12; commits 3782ee8d and 610c51fd.
+[`experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](../experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` (including `e24b`, `e24c`, `e26b`, `e28c`, `e28d`, `e35b` and `e35c`), with the tool as patches, and the Notepad and Windows Terminal launches that met the fault; `docs/design/focus-pipeline.md`'s section 20 on the lock as it stood before commit 1b5d3822, which removed the lock; commits 3782ee8d and 610c51fd.
 
 ### UiaHasServerSideProvider says no for a new conhost window while another process has an event handler
 

@@ -262,8 +262,6 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     identity"). Evidence is in
     `target/e2e-evidence/full-suite-2026-10-17/` and
     `target/e2e-evidence/full-suite-2026-10-17-spares-off/`.
-  - An outpost's own ancestor and navigation walks into a frame host take
-    no lock ([focus pipeline](design/focus-pipeline.md), section 20.9).
   - One UIA focus event reached the listener 5 seconds late in a console
     host run on 2026-10-17; watch for it again.
   - The trace tool's symbol lookup for ARM64X images, such as ntdll,

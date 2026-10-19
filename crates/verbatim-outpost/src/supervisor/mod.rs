@@ -479,11 +479,13 @@ impl Supervisor {
     }
 
     /// Starts an outpost for `target_pid` if none exists, without asking it
-    /// to report anything, giving it a spare when one waits. Used once at
+    /// to report anything, giving it a spare when one waits. Used at
     /// startup for Core's own process, before any spare exists, so its
     /// outpost is warm before the first gesture: a cold spawn races a real
     /// keypress sent right after Verbatim's menu opens; the spares are
-    /// started once it is ready. An application whose process has exited
+    /// started once it is ready. Also used for the taskbar's process when
+    /// the tray list dialog asks for the shell's items and that process has
+    /// no ready outpost. An application whose process has exited
     /// gets none, and the app hears
     /// [`OutpostMessage::NotWatched`].
     pub fn ensure_spawned(&self, target_pid: Pid) {

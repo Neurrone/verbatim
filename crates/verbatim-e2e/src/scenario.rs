@@ -1554,7 +1554,7 @@ impl Scenario {
     /// What Verbatim says as the desktop takes the focus, the state every
     /// scenario starts from: the desktop's list of icons, then the icon that
     /// has the focus, whose name, position, and selection the agent reads
-    /// through UI Automation, independently of Verbatim, since they belong
+    /// through MSAA, independently of Verbatim, since they belong
     /// to the machine. The desktop's window, Program Manager, is not spoken:
     /// NVDA's captures of 2026-10-11 (NVDA alpha-57645, on this project's
     /// development machine), starting with the desktop focused and after
