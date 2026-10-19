@@ -26,6 +26,7 @@
 //! cached read at all. A remote program in `verbatim-uia-rops` fills caches
 //! through a [`Fill<S>`].
 
+use std::cell::OnceCell;
 use std::marker::PhantomData;
 
 use verbatim_model::Rect;
@@ -593,6 +594,10 @@ impl Live {
 /// ([`crate::Uia::request`], [`crate::Uia::request_fixed`]).
 pub struct Request<S: Shape> {
     cache: IUIAutomationCacheRequest,
+    /// `cache` with the provider description added, for the proxy rule's
+    /// lookups, built at the first such lookup and kept
+    /// ([`described`](Self::described)).
+    described: OnceCell<IUIAutomationCacheRequest>,
     gates: S::Gates,
     shape: PhantomData<fn() -> S>,
 }
@@ -611,6 +616,7 @@ impl<S: Shape> Request<S> {
         }
         Ok(Self {
             cache,
+            described: OnceCell::new(),
             gates,
             shape: PhantomData,
         })
@@ -626,12 +632,24 @@ impl<S: Shape> Request<S> {
     pub(crate) fn parts(&self) -> (&IUIAutomationCacheRequest, S::Gates) {
         (&self.cache, self.gates)
     }
+
+    /// The cache request with the provider description added, for a lookup
+    /// the proxy rule judges (`crate::answered`): built from it once, at
+    /// the first such lookup, and kept with it. Local.
+    pub(crate) fn described(&self) -> windows::core::Result<&IUIAutomationCacheRequest> {
+        if let Some(described) = self.described.get() {
+            return Ok(described);
+        }
+        let described = crate::answered::with_description(&self.cache)?;
+        Ok(self.described.get_or_init(|| described))
+    }
 }
 
 impl<S: Shape> Clone for Request<S> {
     fn clone(&self) -> Self {
         Self {
             cache: self.cache.clone(),
+            described: self.described.clone(),
             gates: self.gates,
             shape: PhantomData,
         }

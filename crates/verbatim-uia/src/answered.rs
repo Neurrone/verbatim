@@ -17,10 +17,11 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, PoisonError};
 
-use windows::Win32::Foundation::E_FAIL;
+use windows::Win32::Foundation::{E_FAIL, HWND};
 use windows::Win32::UI::Accessibility::{
     IUIAutomationCacheRequest, IUIAutomationElement, UIA_ProviderDescriptionPropertyId,
 };
+use windows::Win32::UI::WindowsAndMessaging::IsWindow;
 
 use crate::shape::{Cached, ProviderOrigin};
 
@@ -30,7 +31,10 @@ use crate::shape::{Cached, ProviderOrigin};
 const REFUSALS_BEFORE_INFO: u32 = 3;
 
 /// Each window's refusals in a row, by handle; 0 counts the focused
-/// element's lookups, which name no window.
+/// element's lookups, which name no window. A window's entry goes when a
+/// lookup of it is answered, and, for a window destroyed while refused,
+/// at the next refusal of any window, so the table holds at most the
+/// windows that exist and were refused last.
 static REFUSALS: LazyLock<Mutex<HashMap<isize, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -50,7 +54,7 @@ pub(crate) fn served_only_by_uia_proxies(description: &str) -> bool {
 }
 
 /// A copy of `cache` that also caches the provider description, for
-/// [`checked`]. Local.
+/// [`checked`]. Local; made once per request (`Request::described`).
 pub(crate) fn with_description(
     cache: &IUIAutomationCacheRequest,
 ) -> windows::core::Result<IUIAutomationCacheRequest> {
@@ -77,18 +81,17 @@ pub(crate) fn checked(
         refusals.remove(&window);
         return Ok(element);
     }
-    let count = refusals.entry(window).or_insert(0);
-    *count += 1;
-    if *count > REFUSALS_BEFORE_INFO {
+    let count = refused(&mut refusals, window, window_exists);
+    if count > REFUSALS_BEFORE_INFO {
         tracing::info!(
             window,
-            refusals = *count,
+            refusals = count,
             "a lookup is again served only by UIA's proxies"
         );
     } else {
         tracing::debug!(
             window,
-            refusals = *count,
+            refusals = count,
             "a lookup served only by UIA's proxies is not answered"
         );
     }
@@ -98,9 +101,41 @@ pub(crate) fn checked(
     ))
 }
 
+/// Records a refusal of `window` in `refusals`, first dropping the entry
+/// of every refused window that no longer `exists`, and answers its
+/// refusals in a row.
+fn refused(
+    refusals: &mut HashMap<isize, u32>,
+    window: isize,
+    exists: impl Fn(isize) -> bool,
+) -> u32 {
+    refusals.retain(|&refused, _| refused == 0 || exists(refused));
+    let count = refusals.entry(window).or_insert(0);
+    *count += 1;
+    *count
+}
+
+/// Whether `hwnd` names a window. Local.
+fn window_exists(hwnd: isize) -> bool {
+    // SAFETY: IsWindow reads window state only; any handle is accepted.
+    unsafe { IsWindow(Some(HWND(hwnd as *mut _))) }.as_bool()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::served_only_by_uia_proxies;
+    use std::collections::HashMap;
+
+    use super::{refused, served_only_by_uia_proxies};
+
+    #[test]
+    fn a_destroyed_windows_refusals_are_dropped_at_the_next_refusal() {
+        let mut refusals = HashMap::new();
+        assert_eq!(refused(&mut refusals, 10, |_| true), 1);
+        assert_eq!(refused(&mut refusals, 0, |_| true), 1);
+        assert_eq!(refused(&mut refusals, 20, |_| true), 1);
+        assert_eq!(refused(&mut refusals, 20, |window| window != 10), 2);
+        assert_eq!(refusals, HashMap::from([(0, 1), (20, 2)]));
+    }
 
     /// Recorded descriptions, one of each kind, with the answer the rule
     /// gives (`target/e2e-evidence/listener-no-connections/

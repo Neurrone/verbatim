@@ -234,10 +234,9 @@ impl Uia {
         // A new connection to the focused application, made only by that
         // application's outpost (`docs/design/listener-without-connections.md`,
         // section 2).
-        let cache = crate::answered::with_description(cache)?;
         // SAFETY: `cache` is a live cache request from this client; the
         // call is a normal cross-process fetch.
-        let element = unsafe { self.client.GetFocusedElementBuildCache(&cache) }?;
+        let element = unsafe { self.client.GetFocusedElementBuildCache(cache) }?;
         crate::answered::checked(0, element)
     }
 
@@ -248,8 +247,10 @@ impl Uia {
     ///
     /// Returns the COM error if there is no focused element or the call fails.
     pub fn focused<S: Shape>(&self, request: &Request<S>) -> windows::core::Result<Cached<S>> {
-        let (cache, gates) = request.parts();
-        Ok(Cached::filled(self.focused_element(cache)?, gates))
+        Ok(Cached::filled(
+            self.focused_element(request.described()?)?,
+            request.gates(),
+        ))
     }
 
     /// `parent`'s children in the raw view, in order, each with its cache
@@ -322,8 +323,7 @@ impl Uia {
         hwnd: isize,
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
-        let cache = crate::answered::with_description(cache)?;
-        crate::answered::checked(hwnd, self.any_element_from_handle(hwnd, &cache)?)
+        crate::answered::checked(hwnd, self.any_element_from_handle(hwnd, cache)?)
     }
 
     /// The element for a window handle as UIA serves it, by its own proxies
@@ -361,10 +361,9 @@ impl Uia {
         hwnd: isize,
         request: &crate::Request<S>,
     ) -> windows::core::Result<crate::Cached<S>> {
-        let (cache, gates) = request.parts();
         Ok(crate::Cached::filled(
-            self.element_from_handle(hwnd, cache)?,
-            gates,
+            self.element_from_handle(hwnd, request.described()?)?,
+            request.gates(),
         ))
     }
 

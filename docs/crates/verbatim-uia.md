@@ -47,7 +47,11 @@ Public API:
   proxy rule, when only `UIAutomationCore.dll`'s own proxies serve the
   element returned, as a lookup of an application busy past the
   connection timeout returns, read from the provider description cached
-  with the lookup, an empty one counting as answered),
+  with the lookup, an empty one counting as answered; the request with
+  the description added is built once per `Request` and kept with it,
+  and the count of a window's refusals in a row, kept for the logs, is
+  dropped when a lookup of it is answered or, for a window destroyed
+  meanwhile, at the next refusal),
   `any_window_element(hwnd, request)` (the same lookup without the proxy
   rule, for a window with no provider, whose element is UIA's proxies by
   nature),
