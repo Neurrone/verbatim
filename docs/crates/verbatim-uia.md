@@ -477,10 +477,14 @@ Public API:
   `EnumThreadWindows`, which goes by the thread that created it, so a
   console host's outpost still recognizes its own console window. The
   tests' console comes from the dev-only crate `verbatim-test-console`.
-- `parent_across_process_boundary(hwnd)` — the window's parent
-  (`GetAncestor` with `GA_PARENT`) when another process owns it, by
-  `GetWindowThreadProcessId`, and `None` for a top-level window, whose
-  parent is the desktop: where the process boundary lies, at which the
+- `parent_across_process_boundary(hwnd)` — the window above `hwnd` in
+  UIA's raw view when another process serves it, by
+  `provider_process` (a console window being its console host's): its
+  parent (`GetAncestor` with `GA_PARENT`), or, for a top-level window,
+  its owner (`GetWindow` with `GW_OWNER`) while the owner is visible,
+  since UIA's raw view puts an owned window under a visible owner and
+  under the desktop otherwise; `None` for a top-level window with no
+  visible owner: where the process boundary lies, at which the
   focus listener's walks up stop and the outpost continues the chain
   through MSAA (`docs/design/listener-without-connections.md`, section
   3). Local calls only.

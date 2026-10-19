@@ -201,10 +201,10 @@ element it compares equal to still has the focus. The `Ancestry`:
   element's process: in a program, the top-level window's parent is null
   (verified), so the classic walk stops below the desktop root as well,
   and below the process boundary, at an element whose own window's
-  parent window is another process's
-  (`verbatim_uia::parent_across_process_boundary`, local calls, made
-  for each element with a window of its own), as the Settings page's
-  content is inside `ApplicationFrameHost`'s frame.
+  parent window, or visible owner for a top-level window, another
+  process serves (`verbatim_uia::parent_across_process_boundary`, local
+  calls, made for each element with a window of its own), as the
+  Settings page's content is inside `ApplicationFrameHost`'s frame.
 - `met_known`: which of the known runtime ids the last ancestor has, when
   the walk stopped there.
 - `depth_limited`: whether the walk stopped at the depth limit with

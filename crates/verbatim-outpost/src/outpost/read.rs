@@ -26,9 +26,9 @@ use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
-    desktop_window, focus_window, foreground_window_of, main_window_of, now_ms, served_by,
-    top_level_of, top_level_windows, window_belongs_to_hidden_frame, window_facts,
-    window_is_hidden_frame, window_text,
+    desktop_window, foreground_window_of, main_window_of, now_ms, served_by, top_level_of,
+    top_level_windows, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
+    window_text,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -308,8 +308,10 @@ fn uia_ancestors(
 /// NVDA switches API when its walk crosses into a window read through
 /// MSAA. A walk that stopped below the process boundary, its outermost
 /// element's own window (`outermost`) the child of another process's
-/// window, is continued from that parent window through MSAA in the same
-/// way when the parent is read through MSAA, as the Settings page's
+/// window or a top-level window another process's owns
+/// ([`verbatim_uia::parent_across_process_boundary`]), is continued from
+/// that parent or owner window through MSAA in the same way when it is
+/// read through MSAA, as the Settings page's
 /// content is continued from its frame
 /// (`docs/design/listener-without-connections.md`, section 4.2). `None`
 /// when the walk ran out of time.
@@ -797,7 +799,7 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// window this outpost would connect to
 /// (`docs/design/listener-without-connections.md`, section 4.3).
 pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<FocusedControl> {
-    let hwnd = control_window(context.target_pid(), focus_window)?;
+    let hwnd = control_window(context.target_pid(), || context.focus_window())?;
     if window_belongs_to_hidden_frame(hwnd) {
         return None;
     }

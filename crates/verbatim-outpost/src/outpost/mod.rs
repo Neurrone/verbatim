@@ -205,6 +205,9 @@ pub(crate) struct Context {
     /// How the worker reads the foreground window when it records the
     /// window a focus was reported in ([`Outpost::set_foreground_reader`]).
     foreground: Mutex<ForegroundReader>,
+    /// How a focus-now query reads the window with the keyboard focus
+    /// ([`Outpost::set_focus_window_reader`]).
+    focus_window: Mutex<FocusWindowReader>,
     /// The events application support asked for from any window of the
     /// application, whatever the foreground ([`acceptance`]).
     requested_events: acceptance::RequestedEvents,
@@ -257,6 +260,12 @@ pub type HeardObserver = Arc<dyn Fn(Heard) + Send + Sync>;
 /// foreground on the desktop it runs on supplies its own
 /// ([`Outpost::set_foreground_reader`]).
 pub type ForegroundReader = Arc<dyn Fn() -> isize + Send + Sync>;
+
+/// Reads the handle of the window with the keyboard focus, `None` when
+/// there is none. An outpost reads the system's (`GetGUIThreadInfo`); a
+/// test whose application cannot take the keyboard focus on the desktop it
+/// runs on supplies its own ([`Outpost::set_focus_window_reader`]).
+pub type FocusWindowReader = Arc<dyn Fn() -> Option<isize> + Send + Sync>;
 
 /// Reads the UIA element that has the keyboard focus, filled by the given
 /// request, with the given client, on the worker's thread, for a
@@ -315,6 +324,18 @@ impl Context {
     /// walks measure their time budgets by.
     fn clock(&self) -> crate::arbitration::Clock {
         self.arbitrator().clock()
+    }
+
+    /// The handle of the window with the keyboard focus, by the reader the
+    /// outpost was given ([`Outpost::set_focus_window_reader`]).
+    fn focus_window(&self) -> Option<isize> {
+        let reader = Arc::clone(
+            &self
+                .focus_window
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        reader()
     }
 
     /// The foreground window's handle, by the reader the outpost was given
@@ -864,6 +885,7 @@ impl Outpost {
             owed_reads: Mutex::new(HashMap::new()),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
+            focus_window: Mutex::new(Arc::new(window::focus_window)),
             requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
             // Read again as the hook is installed ([`Outpost::assign`]).
@@ -1133,6 +1155,19 @@ impl Outpost {
         *self
             .context
             .foreground
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = reader;
+    }
+
+    /// Reads the window with the keyboard focus with `reader` from now on,
+    /// in place of the system's, when answering a focus-now query, whose
+    /// focused element is read only in a window the application serves: a
+    /// test whose application runs on a desktop where no window can take
+    /// the keyboard focus says which window has it.
+    pub fn set_focus_window_reader(&self, reader: FocusWindowReader) {
+        *self
+            .context
+            .focus_window
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = reader;
     }

@@ -2,8 +2,9 @@
 //! only (`docs/design/listener-without-connections.md`, section 4.3): its
 //! owner by `GetWindowThreadProcessId`, except a console window, whose owner
 //! by that call is the console's client and whose provider is its console
-//! host. Also where a window's process ends: its parent window owned by
-//! another process ([`parent_across_process_boundary`]).
+//! host. Also where a window's process ends: its parent window, or a
+//! top-level window's visible owner, served by another process
+//! ([`parent_across_process_boundary`]).
 
 use windows::Win32::Foundation::{CloseHandle, HANDLE, HWND, LPARAM};
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -11,8 +12,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumThreadWindows, GA_PARENT, GetAncestor, GetClassNameW, GetDesktopWindow,
-    GetWindowThreadProcessId,
+    EnumThreadWindows, GA_PARENT, GW_OWNER, GetAncestor, GetClassNameW, GetDesktopWindow,
+    GetWindow, GetWindowThreadProcessId, IsWindowVisible,
 };
 use windows::core::BOOL;
 
@@ -147,33 +148,44 @@ fn threads_own_window(pid: u32, hwnd: isize) -> bool {
     search.found
 }
 
-/// The parent window of `hwnd` across the process boundary: its parent
-/// (`GetAncestor` with `GA_PARENT`, which leaves out an owner) when that
-/// parent is owned by another process than `hwnd`'s, by
-/// `GetWindowThreadProcessId`, as the Settings page's content window is a
-/// child of `ApplicationFrameHost`'s frame
+/// The window above `hwnd` across the process boundary, where UIA's raw
+/// view goes up from `hwnd`'s element: its parent (`GetAncestor` with
+/// `GA_PARENT`), as the Settings page's content window is a child of
+/// `ApplicationFrameHost`'s frame, or, for a top-level window, its owner
+/// (`GetWindow` with `GW_OWNER`) while the owner is visible, as a dialog
+/// is owned by the window that opened it; UIA's raw view puts an owned
+/// window under a visible owner and under the desktop when the owner is
+/// hidden. That window is answered when its [`provider_process`] is not
+/// `hwnd`'s, so a console window above counts as its console host's
 /// (`docs/design/listener-without-connections.md`, "The process boundary").
-/// `None` for a top-level window, whose parent is the desktop window, for
-/// a parent of the same process, and for a window that no longer exists.
-/// A walk up stops at `hwnd` when this answers a window. Local calls only.
+/// `None` for a top-level window with no visible owner, for a window above
+/// served by the same process, and for a window that no longer exists. A
+/// walk up stops at `hwnd` when this answers a window. Local calls only; a
+/// console window costs its client's lookup too.
 #[must_use]
 pub fn parent_across_process_boundary(hwnd: isize) -> Option<isize> {
     let window = HWND(hwnd as *mut _);
     // SAFETY: GetAncestor tolerates any handle, answering null for an
     // invalid one.
     let parent = unsafe { GetAncestor(window, GA_PARENT) };
-    // SAFETY: GetDesktopWindow has no preconditions.
-    if parent.0.is_null() || parent == unsafe { GetDesktopWindow() } {
+    if parent.0.is_null() {
         return None;
     }
-    let owner = |window: HWND| {
-        let mut process = 0u32;
-        // SAFETY: `process` is a local; an invalid handle answers thread 0.
-        let thread = unsafe { GetWindowThreadProcessId(window, Some(&raw mut process)) };
-        (thread != 0).then_some(process)
+    // SAFETY: GetDesktopWindow has no preconditions.
+    let above = if parent == unsafe { GetDesktopWindow() } {
+        // SAFETY: GetWindow tolerates any handle, answering an error for
+        // a window with no owner.
+        let owner = unsafe { GetWindow(window, GW_OWNER) }.ok()?;
+        // SAFETY: IsWindowVisible tolerates any handle.
+        if !unsafe { IsWindowVisible(owner) }.as_bool() {
+            return None;
+        }
+        owner
+    } else {
+        parent
     };
-    let (own, parents) = (owner(window)?, owner(parent)?);
-    (own != parents).then_some(parent.0 as isize)
+    let above = above.0 as isize;
+    (provider(hwnd)? != provider(above)?).then_some(above)
 }
 
 #[link(name = "ntdll")]

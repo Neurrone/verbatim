@@ -13,7 +13,9 @@
 //! not take from the desktop it runs on, so this outpost reads it from the
 //! test instead ([`Outpost::with_focused_element_reader`]): the test sets
 //! the element mockapp reports focused, and the outpost's read of it
-//! counts as the one call the system read is.
+//! counts as the one call the system read is. The window with the keyboard
+//! focus is the one the test reads as the foreground
+//! ([`Outpost::set_focus_window_reader`]).
 //!
 //! The outpost and the listener's reader read the time from the test too
 //! ([`Outpost::set_clock`], [`FocusReader::set_clock`]): the time stands
@@ -51,8 +53,8 @@ use verbatim_model::{
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged, LastAccepted};
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, QueryResult,
-    SupervisorToOutpost, WinEventStamp, read_message,
+    DeliveredFact, EventTiming, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
+    QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{Heard, Outpost, OutpostOptions};
 use verbatim_process::overlapped::{End, Flow, pipe};
@@ -404,6 +406,10 @@ impl OutpostUnderTest {
             worker_gate.pass();
             reader.load(Ordering::Relaxed)
         }));
+        // And the window with the keyboard focus is that window too.
+        let focus_window = Arc::clone(&foreground);
+        outpost
+            .set_focus_window_reader(Arc::new(move || Some(focus_window.load(Ordering::Relaxed))));
         let (heard_tx, heard) = mpsc::channel();
         outpost.observe_heard(Arc::new(move |event| {
             // The test may have finished with what the outpost hears.
@@ -760,6 +766,23 @@ impl OutpostUnderTest {
                 ..
             } if answered == request_id => (neighbor, timing.calls),
             other => panic!("the outpost said {other:?}, not the step's neighbor"),
+        };
+        self.settled();
+        answer
+    }
+
+    /// Asks the outpost for the focus now, as Core would at its start, and
+    /// returns its focused control; the reply must be the next thing the
+    /// outpost says, and the only thing.
+    pub fn focus_now(&mut self) -> Option<FocusedControl> {
+        let request_id = self.ask(Query::FocusNow);
+        let answer = match self.next() {
+            OutpostToSupervisor::Reply {
+                request_id: answered,
+                outcome: QueryOutcome::Done(QueryResult::Focus(now)),
+                ..
+            } if answered == request_id => now.focus,
+            other => panic!("the outpost said {other:?}, not the focus now"),
         };
         self.settled();
         answer

@@ -627,8 +627,9 @@ impl RemoteCache {
 /// lock ([`FocusQuery::lock_up_from`]). Stops where the remote program
 /// stops: at a known ancestor, at the depth limit, below the desktop
 /// root, or below the process boundary, at an element whose own window's
-/// parent window is another process's
-/// ([`verbatim_uia::parent_across_process_boundary`]); and when the
+/// parent window, or visible owner for a top-level window, another
+/// process serves ([`verbatim_uia::parent_across_process_boundary`]); and
+/// when the
 /// query's time is up. The nearest window comes from the
 /// walked ancestors' caches, or, when the walk stopped before reaching
 /// one, from one more call ([`verbatim_uia::nearest_window_handle`]).
@@ -694,9 +695,10 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         }
         // The walk stops below the process boundary: an element whose own
         // window is the child of another process's window, as the Settings
-        // page's content is of `ApplicationFrameHost`'s frame, is the last
-        // ancestor, and the outpost of its application continues the chain
-        // from that parent window through MSAA
+        // page's content is of `ApplicationFrameHost`'s frame, or a
+        // top-level window owned by another process's, as a dialog can be,
+        // is the last ancestor, and the outpost of its application
+        // continues the chain from that window through MSAA
         // (`docs/design/listener-without-connections.md`, section 3, step
         // 11, and section 4.2). A local check, made only for an element
         // with a window of its own.

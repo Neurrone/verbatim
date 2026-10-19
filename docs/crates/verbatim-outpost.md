@@ -135,7 +135,8 @@ event's own element:
   process boundary, the read goes on with classic tree walker steps up to
   the desktop root, or to an ancestor of the focus before, as NVDA's
   raw-view walk does. No walk of the listener's steps across the process
-  boundary: an element whose window's parent window is another process's
+  boundary: an element whose window's parent window, or visible owner
+  for a top-level window, another process serves
   (`verbatim_uia::parent_across_process_boundary`), as the Settings page's
   content inside `ApplicationFrameHost`'s frame, is the last ancestor it
   reads (`docs/design/listener-without-connections.md`, section 3, steps
@@ -688,7 +689,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   is not spoken as an ancestor's, as NVDA's foreground object takes its
   place (`docs/parity/focus-announcement.md`, "A top-level window's state change"), and
   mockapp's windows, on desktops where none takes the foreground, are made
-  the foreground this way. `Outpost::settle` waits until the worker has
+  the foreground this way. `Outpost::set_focus_window_reader` gives it a
+  `FocusWindowReader`, the function a focus-now query reads the window
+  with the keyboard focus with, which is otherwise `GetGUIThreadInfo`'s:
+  the focused element is read only when the application serves that
+  window, so mockapp's tests name mockapp's window. `Outpost::settle` waits until the worker has
   handled everything queued, follow-ups included, the focus-following
   subscriptions have made every move asked of them, and every message
   published has been written to the pipe: the evidence those tests wait on

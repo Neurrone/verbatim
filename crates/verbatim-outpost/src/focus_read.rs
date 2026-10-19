@@ -970,7 +970,9 @@ impl FocusReader {
     /// step 11). When the outermost ancestor is neither a top-level window
     /// nor below the boundary, the walk goes on the classic way, one tree
     /// walker step per ancestor, until the desktop root, an ancestor whose
-    /// window's parent is another process's, or an ancestor of the focus
+    /// window's parent, or visible owner, another process serves
+    /// ([`verbatim_uia::parent_across_process_boundary`]), or an ancestor
+    /// of the focus
     /// before, whose own ancestors are then reused. An outermost ancestor
     /// that is a top-level window, or below the boundary, costs no call; a
     /// windowless one, one call, which finds the root.

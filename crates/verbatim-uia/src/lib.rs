@@ -45,7 +45,8 @@
 //!   process that serves a window's UIA, a console window's being its
 //!   console host, read with local calls only;
 //!   [`parent_across_process_boundary`], the
-//!   parent window of another process where a walk up stops.
+//!   parent window, or a top-level window's visible owner, served by
+//!   another process, where a walk up stops.
 //! - [`lock`] — the lock per application around the UIA calls that
 //!   collide (`docs/design/focus-pipeline.md`, section 20): which calls
 //!   take it, and the UIA defect it works around.

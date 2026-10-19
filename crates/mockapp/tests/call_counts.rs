@@ -1477,15 +1477,22 @@ fn uia_repeated_focus_costs_exactly() {
 /// (`docs/design/listener-without-connections.md`, sections 3 and 7): one
 /// mockapp's UIA window is made the child of another mockapp's MSAA
 /// window, by `SetParent` from this process, as the Settings page's content
-/// is the child of `ApplicationFrameHost`'s frame. The listener's read of
-/// a focus in the child, by the remote program and `reach_the_top_level`
-/// and by the classic walk alike, ends its chain at the child's window and
-/// takes no step into the parent's process. The outpost then continues the
-/// chain from the parent window's client area through MSAA. With either
-/// walk's boundary check removed, its step up into the parent shows in the
-/// parent's calls: 6 `WM_GETOBJECT`, 2 `accParent`, 5 `get_accState`, 3
-/// `get_accValue`, 2 `get_accRole`, and one each of `get_accName`,
-/// `get_accHelp`, `get_accKeyboardShortcut`, and `accLocation`.
+/// is the child of `ApplicationFrameHost`'s frame; or, staying top-level,
+/// is given that window, shown, as its owner (`GWLP_HWNDPARENT`, set from
+/// this process, which `GetWindow` with `GW_OWNER` then answers), as a
+/// dialog is owned by another process's window, under which UIA's raw view
+/// puts it. The listener's read of a focus in the child, by the remote
+/// program and `reach_the_top_level` and by the classic walk alike, ends
+/// its chain at the child's window and takes no step into the other
+/// process. The outpost then continues the chain from the parent or owner
+/// window's client area through MSAA. With either walk's boundary check
+/// removed, or the owner left out of it, the classic walk's step up into
+/// the other window shows in that window's calls, and without the owner
+/// the outpost's chain ends at the child's window. A focus-now query's read
+/// (`uia_remote_enrichment` by the remote program, the outpost's own walk
+/// classically) gives the same chain, continued through MSAA from the
+/// parent or owner; without the remote read's continuation from its
+/// outermost window, it ends at the child's window.
 ///
 /// The parent still receives 2 `WM_GETOBJECT`s while the listener reads,
 /// each with `UiaRootObjectId` and a nonzero wParam, the message a UIA
@@ -1494,29 +1501,31 @@ fn uia_repeated_focus_costs_exactly() {
 /// (`NormalizeElementBuildCache`) returns the child window's element, and
 /// one when the read returns it as an ancestor. UIA's client side sends
 /// them itself whenever a call on a held element hands it an element of a
-/// window whose parent is another process's; no walk step is made.
+/// window whose parent is another process's; no walk step is made. An
+/// owner receives none.
 fn uia_focus_chains_stop_below_the_process_boundary() {
-    for remote in [true, false] {
-        let path = if remote { "remote" } else { "classic" };
-        let parent_title = common::unique_title(&format!("mockapp-boundary-parent-{path}"));
-        let parent_app = common::spawn("small.json", "msaa", &parent_title);
-        let parent = common::find_window(&parent_title);
-        let title = common::unique_title(&format!("mockapp-boundary-child-{path}"));
+    for (owned, remote) in [(false, true), (false, false), (true, true), (true, false)] {
+        let path = match (owned, remote) {
+            (false, true) => "child, remote",
+            (false, false) => "child, classic",
+            (true, true) => "owned, remote",
+            (true, false) => "owned, classic",
+        };
+        let label = path.replace(", ", "-");
+        let (parent_app, parent) = spawn_parent(&label, owned);
+        let title = common::unique_title(&format!("mockapp-boundary-child-{label}"));
         let mut app = common::spawn("counts.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let under_test = UiaUnderTest::new(hwnd);
         // Made while the child is still a top-level window, which it finds
         // by its title, and reads as the foreground window.
-        let outpost = OutpostUnderTest::with_options(
+        let mut outpost = OutpostUnderTest::with_options(
             &app,
             OutpostOptions {
                 remote_operations: remote,
             },
         );
-        // SAFETY: two live windows of other processes; the call only
-        // changes the first one's parent.
-        unsafe { windows::Win32::UI::WindowsAndMessaging::SetParent(hwnd, Some(parent)) }
-            .expect("the child window takes the other process's window as its parent");
+        place_below(hwnd, parent, owned);
         app.send("set-focus first");
         let focused = under_test.focused(hwnd);
 
@@ -1534,9 +1543,12 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             listener_calls, expected_calls,
             "the listener's calls ({path})"
         );
+        // UIA's client side sends a parent window 2 `WM_GETOBJECT`s as the
+        // child window's element is handed back, and an owner none.
+        let expected_hits: &[(&str, u32)] = if owned { &[] } else { &[("WM_GETOBJECT", 2)] };
         assert_eq!(
             common::read_hits(parent),
-            [("WM_GETOBJECT", 2)],
+            expected_hits,
             "the parent's calls while the listener read ({path})"
         );
         let verbatim_outpost::focus_read::Judged::Read(read) = &judged else {
@@ -1576,9 +1588,74 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             ],
             "the outpost's chain ({path})"
         );
+
+        // A focus-now query's own read stops at the boundary too, and is
+        // continued from the parent or owner through MSAA.
+        outpost.read_focus_as(focused.live().element());
+        let now = outpost
+            .focus_now()
+            .unwrap_or_else(|| panic!("the focus now has a focused control ({path})"));
+        assert_eq!(
+            now.ancestors
+                .iter()
+                .chain(std::iter::once(&now.node))
+                .map(|node| node.name.as_deref())
+                .collect::<Vec<_>>(),
+            [
+                Some("Mockapp Events Fixture"),
+                Some("Mockapp Counts Fixture"),
+                Some("Settings"),
+                Some("First")
+            ],
+            "the focus now's chain ({path})"
+        );
         drop(outpost);
         app.quit();
         parent_app.quit();
+    }
+}
+
+/// A mockapp MSAA window for another mockapp's window to be placed below
+/// ([`place_below`]), and its handle; shown without being activated when
+/// it is to be an owner, since UIA's raw view puts an owned window under
+/// its owner only while the owner is visible.
+fn spawn_parent(label: &str, owner: bool) -> (common::MockApp, HWND) {
+    use windows::Win32::UI::WindowsAndMessaging::{SW_SHOWNOACTIVATE, ShowWindow};
+    let title = common::unique_title(&format!("mockapp-boundary-parent-{label}"));
+    let app = common::spawn("small.json", "msaa", &title);
+    let parent = common::find_window(&title);
+    if owner {
+        // SAFETY: a live window of another process; the answer is only
+        // whether it was visible before.
+        let _ = unsafe { ShowWindow(parent, SW_SHOWNOACTIVATE) };
+    }
+    (app, parent)
+}
+
+/// Puts mockapp's top-level window `hwnd` below `parent`, another
+/// process's window, from this process: as its child (`SetParent`), or,
+/// when `owned`, still top-level with `parent` as its owner
+/// (`GWLP_HWNDPARENT`), which `GetWindow` with `GW_OWNER` then answers.
+fn place_below(hwnd: HWND, parent: HWND, owned: bool) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GW_OWNER, GWLP_HWNDPARENT, GetWindow, SetParent, SetWindowLongPtrW,
+    };
+    if owned {
+        // SAFETY: two live windows of other processes; the call changes
+        // only the first one's owner.
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, parent.0 as isize) };
+        // SAFETY: a live window; the call only reads its owner.
+        let answered = unsafe { GetWindow(hwnd, GW_OWNER) };
+        assert_eq!(
+            answered.ok(),
+            Some(parent),
+            "the child takes the other process's window as its owner"
+        );
+    } else {
+        // SAFETY: two live windows of other processes; the call only
+        // changes the first one's parent.
+        unsafe { SetParent(hwnd, Some(parent)) }
+            .expect("the child window takes the other process's window as its parent");
     }
 }
 
