@@ -20,6 +20,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
     TextPatternRangeEndpoint_Start, TextUnit_Word, TreeScope_Children, TreeScope_Descendants,
     UIA_AnnotationTypesAttributeId, UIA_AutomationIdPropertyId, UIA_TextPatternId,
+    WindowFromAccessibleObject,
 };
 use windows::Win32::UI::Controls::{LVM_GETITEMCOUNT, LVM_GETNEXTITEM, LVNI_FOCUSED};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -118,7 +119,7 @@ fn through_uia<T>(request: &str, read: impl FnOnce() -> io::Result<T>) -> io::Re
 /// through MSAA (`docs/design/listener-without-connections.md`, decision
 /// 10): the window with the keyboard focus of the thread in the foreground,
 /// its client object (`AccessibleObjectFromWindow`), and the child its
-/// `accFocus` names. The desktop's list, which every scenario reads at its
+/// `accFocus` names, followed into the window of an object it names. The desktop's list, which every scenario reads at its
 /// start, is a comctl32 list view with no UIA provider, so MSAA reads it
 /// as Verbatim does, and no UIA connection is made into File Explorer.
 ///
@@ -131,33 +132,35 @@ pub fn focused_element() -> io::Result<FocusedElement> {
     // marshaling of a cross-process `IAccessible` needs; a thread already
     // initialized in the same mode is fine.
     let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-    let window = focused_window().ok_or_else(|| io::Error::other("no window has the focus"))?;
-    let mut client: Option<IAccessible> = None;
-    // SAFETY: `client` is a local the call fills with the window's client
-    // object; the interface id matches its type.
-    unsafe {
-        AccessibleObjectFromWindow(
-            window,
-            OBJID_CLIENT.0.cast_unsigned(),
-            &IAccessible::IID,
-            (&raw mut client).cast(),
-        )
-    }
-    .map_err(io::Error::other)?;
-    let client = client.ok_or_else(|| io::Error::other("the focus window has no client"))?;
-    // SAFETY: a plain cross-process call on a live object.
-    let focus = unsafe { client.accFocus() }.unwrap_or_default();
-    let (object, child) = if focus.vt() == VT_I4 {
-        (
-            client,
-            i32::try_from(&focus).unwrap_or(CHILDID_SELF.cast_signed()),
-        )
-    } else if let Ok(object) =
-        IDispatch::try_from(&focus).and_then(|dispatch| dispatch.cast::<IAccessible>())
-    {
-        (object, CHILDID_SELF.cast_signed())
-    } else {
-        (client, CHILDID_SELF.cast_signed())
+    let mut window = focused_window().ok_or_else(|| io::Error::other("no window has the focus"))?;
+    // The focus window's client, and the object its `accFocus` names. A
+    // focus window's client can name a child object in a window of its own
+    // as its focus, as the desktop's `SHELLDLL_DefView` names its list
+    // while the keyboard focus is still on it, just after a dialog closes:
+    // that window is then read the same way, a few windows deep at most.
+    let mut hops = 0;
+    let (object, child, focus) = loop {
+        let client = client_of(window)?;
+        // SAFETY: a plain cross-process call on a live object.
+        let focus = unsafe { client.accFocus() }.unwrap_or_default();
+        if focus.vt() == VT_I4 {
+            let child = i32::try_from(&focus).unwrap_or(CHILDID_SELF.cast_signed());
+            break (client, child, focus);
+        }
+        let Ok(object) =
+            IDispatch::try_from(&focus).and_then(|dispatch| dispatch.cast::<IAccessible>())
+        else {
+            break (client, CHILDID_SELF.cast_signed(), focus);
+        };
+        let mut inner = HWND::default();
+        // SAFETY: `object` is a live accessible object; `inner` is a local
+        // the call fills.
+        let found = unsafe { WindowFromAccessibleObject(&object, Some(&raw mut inner)) };
+        hops += 1;
+        if found.is_err() || inner.is_invalid() || inner == window || hops > 4 {
+            break (object, CHILDID_SELF.cast_signed(), focus);
+        }
+        window = inner;
     };
     let child = VARIANT::from(child);
     // SAFETY: as above.
@@ -172,11 +175,49 @@ pub fn focused_element() -> io::Result<FocusedElement> {
         .unwrap_or(0);
     let selected =
         (state & STATE_SYSTEM_SELECTABLE != 0).then_some(state & STATE_SYSTEM_SELECTED != 0);
+    let position = list_view_position(window);
+    tracing::info!(
+        window = window.0 as isize,
+        class = class_name(window),
+        focus_type = focus.vt().0,
+        name,
+        ?position,
+        ?selected,
+        "the focused object, read through MSAA"
+    );
     Ok(FocusedElement {
         name,
-        position: list_view_position(window),
+        position,
         selected,
     })
+}
+
+/// `window`'s client object (`AccessibleObjectFromWindow`).
+fn client_of(window: HWND) -> io::Result<IAccessible> {
+    let mut client: Option<IAccessible> = None;
+    // SAFETY: `client` is a local the call fills with the window's client
+    // object; the interface id matches its type.
+    unsafe {
+        AccessibleObjectFromWindow(
+            window,
+            OBJID_CLIENT.0.cast_unsigned(),
+            &IAccessible::IID,
+            (&raw mut client).cast(),
+        )
+    }
+    .map_err(io::Error::other)?;
+    client.ok_or_else(|| io::Error::other("the focus window has no client"))
+}
+
+/// `window`'s class name, empty when it cannot be read. Local.
+fn class_name(window: HWND) -> String {
+    let mut class = [0u16; 64];
+    // SAFETY: `class` is a local buffer of the length passed.
+    let length = unsafe { GetClassNameW(window, &mut class) };
+    usize::try_from(length).map_or_else(
+        |_| String::new(),
+        |length| String::from_utf16_lossy(&class[..length]),
+    )
 }
 
 /// The window with the keyboard focus of the thread in the foreground,
@@ -199,11 +240,7 @@ fn focused_window() -> Option<HWND> {
 /// when `window` is not a list view, has no focused item, or does not
 /// answer within a second.
 fn list_view_position(window: HWND) -> Option<(i32, i32)> {
-    let mut class = [0u16; 64];
-    // SAFETY: `class` is a local buffer of the length passed.
-    let length = unsafe { GetClassNameW(window, &mut class) };
-    let length = usize::try_from(length).ok()?;
-    if String::from_utf16_lossy(&class[..length]) != "SysListView32" {
+    if class_name(window) != "SysListView32" {
         return None;
     }
     let ask = |message: u32, wparam: usize, lparam: isize| -> Option<isize> {
