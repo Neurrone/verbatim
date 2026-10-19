@@ -413,7 +413,7 @@ impl FocusReader {
         let hwnd = fields.role.hwnd;
         let window = if hwnd == 0 { focus_window } else { hwnd };
         let event = fields.parts(sender.runtime_id());
-        let nearest = match self.judge_before_reading(element, &fields, &event.runtime_id, kind) {
+        let nearest = match self.judge_before_reading(sender, &fields, &event.runtime_id, kind) {
             Ok(nearest) => nearest,
             Err(reason) => return Judged::Dropped(reason),
         };
@@ -725,11 +725,12 @@ impl FocusReader {
     /// accepted.
     fn judge_before_reading(
         &self,
-        element: &IUIAutomationElement,
+        held: &Cached<ListenerEvent>,
         sender: &ListenerEvent,
         runtime_id: &[i32],
         kind: FocusEvent,
     ) -> Result<isize, &'static str> {
+        let element = held.live().element();
         let hwnd = sender.role.hwnd;
         // 1. A sender whose own window, from the event's cache, the system
         // reports hung (`_shouldSkipEventForHungWindow`, `utils.py` 438):
@@ -772,13 +773,13 @@ impl FocusReader {
                         return Err("its comparison with the current focus failed");
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
-                    _ => (self.native_window(element, sender)?, element),
+                    _ => (self.native_window(held, sender)?, element),
                 }
             }
             // Only focuses and menu openings are read; a selection or a
             // notification is checked ([`Self::check_fact`]).
             FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
-                let nearest = self.native_window(element, sender)?;
+                let nearest = self.native_window(held, sender)?;
                 // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
                 // 923; section 16.3): the sender is the last focus accepted,
                 // by any of the listener's readers, as UIA compares them,
@@ -865,8 +866,8 @@ impl FocusReader {
         Ok(window)
     }
 
-    /// Step 2: whether the sender, `element`, whose event's cache is
-    /// `sender`, is native UIA (`isNativeUIAElement`, `UIAHandler/__init__.py` 1515 to
+    /// Step 2: whether the sender, `held`, whose cache reads as `sender`, is
+    /// native UIA (`isNativeUIAElement`, `UIAHandler/__init__.py` 1515 to
     /// 1575): its nearest window, its own else the nearest ancestor's
     /// (`getNearestWindowHandle`, one call), must use UIA as NVDA decides
     /// it (`isUIAWindow`: the class lists, then the window's own provider,
@@ -887,15 +888,16 @@ impl FocusReader {
     /// rather than by the window's handle, a connection
     /// (`docs/design/listener-without-connections.md`, section 3, step 5):
     /// the sender is the console's text area, known by its cached
-    /// automation id, or the console window's own element, under which the
-    /// text area is found. Any other sender in a console window, of which
+    /// automation id, whose cached Text pattern is read, or the console
+    /// window's own element, under which the text area is found. Any other sender in a console window, of which
     /// none is known, gets no answer: its focus is dropped as not native,
     /// and the window is checked again at its next focus.
     fn native_window(
         &self,
-        element: &IUIAutomationElement,
+        held: &Cached<ListenerEvent>,
         sender: &ListenerEvent,
     ) -> Result<isize, &'static str> {
+        let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let nearest = if hwnd == 0 {
             let started = Instant::now();
@@ -917,7 +919,7 @@ impl FocusReader {
         let console = || {
             (automation_id == Some(verbatim_uia::CONSOLE_TEXT_AREA) || hwnd == nearest)
                 .then(|| {
-                    verbatim_uia::held_console_reports_formatting(&self.uia, element, automation_id)
+                    verbatim_uia::held_console_reports_formatting(&self.uia, held, automation_id)
                 })
                 .flatten()
         };

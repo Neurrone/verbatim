@@ -361,9 +361,10 @@ That check, made once per console window, is made by the listener from
 the held sender, with no connection to the window (2026-10-19,
 `docs/design/listener-without-connections.md`, section 3, step 5): four
 calls from the console window's element (the text area's search, its
-text pattern, its visible ranges and the range's font) and three from
-the text area, where the check by the window's handle made five from
-either (`focus_reports.rs`, `a_console_windows_own_focus_is_never_reported`
+text pattern, its visible ranges and the range's font) and two from the
+text area, whose text pattern the event's cache holds (its visible ranges
+and the range's font), where the check by the window's handle made five
+from either (`focus_reports.rs`, `a_console_windows_own_focus_is_never_reported`
 and `a_console_text_areas_focus_is_checked_from_the_text_area`).
 Every other focus costs what it did: the outpost takes the listener's
 verdict for the focus's window rather than asking the window again.

@@ -955,7 +955,6 @@ Dialog text (`verbatim-outpost/src/dialog_text.rs`).
 - `client.rs:1065`, `walk_recursive`. Bug 2 through `read.rs:1154`; the
   mockapp tests call it with the full request. Shape: `TreeDump`.
 - `checks.rs:66`, base request, no reads. Over-fetch. No shape: `Live`.
-- `checks.rs:94`, `FrameworkId`. Covered. Shape: `FrameworkCheck`.
 - `nearest.rs:107`, `NativeWindowHandle` after a normalize with that
   property alone. Covered. Shape: `WindowLookup`.
 
@@ -1015,7 +1014,6 @@ Fetch shapes:
   `Description` group: 25 (decision 5). The dialog's own element is not a
   shape: it is a `Live`, in a root type of its own (section 5.5).
 - `WindowLookup`: `NativeWindowHandle`.
-- `FrameworkCheck`: `FrameworkId`.
 - The empty shape: no request; the fetch returns `Live`.
 - `SelectionContainer`: `Selection2FirstSelectedItem` and the Selection
   pattern.
@@ -1026,6 +1024,8 @@ Fetch shapes:
   `refreshed_for` chooses today.
 - `ShellButton`: `NativeWindowHandle`, `ControlType`, `Name`,
   `IsOffscreen`, `BoundingRectangle`.
+- `TextAreaPattern`: the Text pattern, which `ListenerEvent` prefetches
+  and covers, for the focus listener's console check of a text area.
 
 Every shape but `Node`, `Ancestor` and `TreeDump` is declared
 `gates: none`.
@@ -1315,7 +1315,7 @@ declare a shape of its own.
 
 - `verbatim-uia`'s fetches take `&Request<S>`, beside the old ones;
   `Node`, `Ancestor`, `TreeDump`, `DialogText`, `SelectionContainer`, the
-  refresh shapes, `WindowLookup`, `FrameworkCheck`,
+  refresh shapes, `WindowLookup`,
   `FocusInput`, `ShellButton` and the empty shape replace the lists at
   every site in section 5.5 but the registry's readers.
 - `verbatim-uia-rops` takes `Fill<S>`, returns the absent record (decision

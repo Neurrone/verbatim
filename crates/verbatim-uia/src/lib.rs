@@ -78,10 +78,7 @@ mod subscribe;
 pub mod text;
 
 pub use bounded::{BoundedClient, Unanswered};
-pub use checks::{
-    CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting,
-    is_windows_forms,
-};
+pub use checks::{CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting};
 pub use client::{
     AncestorParts, AncestorStops, AncestorWalk, CALL_TIMEOUT, Uia, release_mta_usage,
 };
@@ -100,10 +97,10 @@ pub use provider::{console_host_of, parent_across_process_boundary, provider_pro
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,
-    ElementValue, Fill, FocusInput, FrameworkCheck, HelpTextRefresh, Kept,
-    LEFT_OUT_WHEN_UNSUPPORTED, ListenerEvent, Live, Node, NodeGates, Position, PropertyEvent,
-    Request, RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States,
-    SuggestionsRefresh, TextEvent, TreeDump, Ungated, ValueSet, WindowLookup,
+    ElementValue, Fill, FocusInput, HelpTextRefresh, Kept, LEFT_OUT_WHEN_UNSUPPORTED,
+    ListenerEvent, Live, Node, NodeGates, Position, PropertyEvent, Request, RoleCore,
+    SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
+    TextEvent, TreeDump, Ungated, ValueSet, WindowLookup,
 };
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
@@ -111,8 +108,8 @@ pub use subscribe::{
 };
 
 /// Releases the UIA objects this crate keeps for the calling thread: the
-/// client behind [`console_reports_formatting`] and [`is_windows_forms`],
-/// and the walker behind [`nearest_window_handle`].
+/// client behind [`console_reports_formatting`], and the walker behind
+/// [`nearest_window_handle`].
 ///
 /// A thread that used any of those calls this before it exits. Otherwise
 /// the objects are released by the thread's thread-local destructors, which

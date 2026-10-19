@@ -484,18 +484,20 @@ Public API:
   focus listener's walks up stop and the outpost continues the chain
   through MSAA (`docs/design/listener-without-connections.md`, section
   3). Local calls only.
-- `console_reports_formatting(hwnd)` and `is_windows_forms(hwnd)` — the
-  checks NVDA makes on a window with a provider before using it: whether a
-  console's text area reports one visible range with its font (the
-  complete console provider of current Windows), and whether a window's
-  UIA framework is `WinForm` (an outpost's check; the focus listener reads
-  the class name instead). `held_console_reports_formatting(uia, element,
-  automation_id)` is the console check from an element the caller holds,
-  the console's text area (its automation id `CONSOLE_TEXT_AREA`) or the
-  console window's element, with no connection to the window: the focus
-  listener's. Each answers `None` when the application did
-  not answer in time, so the outpost asks again rather than keep the
-  verdict.
+- `console_reports_formatting(hwnd)` — the check NVDA makes on a console
+  window with a provider before using it: whether its text area reports
+  one visible range with its font (the complete console provider of
+  current Windows); the other such check, whether a list view comes from
+  Windows Forms, is the arbitration's, from the class name.
+  `held_console_reports_formatting(uia, sender, automation_id)` is the
+  console check from an event's sender the caller holds, with no
+  connection to the window: the focus listener's. The sender is the
+  console's text area (its automation id `CONSOLE_TEXT_AREA`), whose Text
+  pattern is read from its cache (`TextAreaPattern`), or the console
+  window's element, under which the text area is found. Each answers
+  `None` when the application did not answer in time, and the held check
+  also when its sender is gone (`UIA_E_ELEMENTNOTAVAILABLE`), so the
+  caller asks again rather than keep the verdict.
 - `nearest_window_handle(element)` — NVDA's `getNearestWindowHandle`:
   resolves the native window handle of `element` itself, or of its nearest
   ancestor that has one, in one cross-process round trip
@@ -635,8 +637,9 @@ Public API:
     interface); `HelpTextRefresh` (`Description`) and `SuggestionsRefresh`
     (Text pattern availability and automation id;
     `reports_suggestions()`), what a help text and a `ControllerFor`
-    change read; `WindowLookup` (native window handle) and `FrameworkCheck`
-    (framework id), each one property;
+    change read; `WindowLookup` (native window handle), one property;
+    `TextAreaPattern` (the Text pattern of an event's sender, which
+    `ListenerEvent` covers), the held console check's;
     and `ShellButton`, what `verbatim-gui`'s list of the shell's buttons
     reads. A rectangle that does not fit reads as `None` rather than
     overflowing.

@@ -49,9 +49,10 @@ mod shapes;
 mod tests;
 
 pub use shapes::{
-    Ancestor, AncestorGates, Description, DialogText, FocusInput, FrameworkCheck, HelpTextRefresh,
-    Kept, ListenerEvent, Node, NodeGates, Position, PropertyEvent, RoleCore, SelectionContainer,
-    ShellButton, Shortcut, States, SuggestionsRefresh, TextEvent, TreeDump, ValueSet, WindowLookup,
+    Ancestor, AncestorGates, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
+    ListenerEvent, Node, NodeGates, Position, PropertyEvent, RoleCore, SelectionContainer,
+    ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, TreeDump,
+    ValueSet, WindowLookup,
 };
 
 mod sealed {

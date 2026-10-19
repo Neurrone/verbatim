@@ -10,10 +10,10 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::IUnknown;
 
 use super::{
-    Absent, Ancestor, CachedReads, Description, DialogText, FocusInput, FrameworkCheck,
-    HelpTextRefresh, Kept, ListenerEvent, Node, Position, PropertyEvent, Reader, RoleCore,
-    SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextEvent,
-    ValueSet, WindowLookup, request_properties,
+    Absent, Ancestor, CachedReads, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
+    ListenerEvent, Node, Position, PropertyEvent, Reader, RoleCore, SelectionContainer, Shape,
+    ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern, TextEvent, ValueSet,
+    WindowLookup, request_properties,
 };
 
 /// A cache that answers every read, and records what was read.
@@ -121,8 +121,8 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         HelpTextRefresh,
         SuggestionsRefresh,
         WindowLookup,
-        FrameworkCheck,
         ShellButton,
+        TextAreaPattern,
     );
     // Four gates each: the description, shortcut and position groups and
     // the level.

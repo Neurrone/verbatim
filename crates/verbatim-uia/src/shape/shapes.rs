@@ -2,11 +2,12 @@
 
 use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationSelectionPattern, UIA_AcceleratorKeyPropertyId, UIA_AccessKeyPropertyId,
-    UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId, UIA_ClassNamePropertyId,
-    UIA_ControlTypePropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_FrameworkIdPropertyId, UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId,
-    UIA_HelpTextPropertyId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
+    IUIAutomationSelectionPattern, IUIAutomationTextPattern, UIA_AcceleratorKeyPropertyId,
+    UIA_AccessKeyPropertyId, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
+    UIA_ClassNamePropertyId, UIA_ControlTypePropertyId,
+    UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FrameworkIdPropertyId,
+    UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
+    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
     UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
     UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
     UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
@@ -219,7 +220,26 @@ uia_shape! {
             has_focus: UIA_HasKeyboardFocusPropertyId => bool,
         }
         prefetch { UIA_TextPatternId }
-        covers { Kept, FocusInput }
+        covers { Kept, FocusInput, TextAreaPattern }
+    }
+}
+
+uia_shape! {
+    /// The Text pattern a focus event's sender carries in its cache
+    /// ([`ListenerEvent`] prefetches it), read only by the focus listener's
+    /// console check of a console's text area, so the pattern costs no
+    /// call (`docs/design/listener-without-connections.md`, section 3,
+    /// step 5).
+    pub struct TextAreaPattern {
+        gates: none;
+        groups {}
+        properties {}
+        patterns {
+            /// The Text pattern, `None` when the element has none.
+            text: UIA_TextPatternId => IUIAutomationTextPattern,
+        }
+        prefetch {}
+        covers {}
     }
 }
 
@@ -682,20 +702,6 @@ uia_shape! {
         properties {
             /// The window, 0 for an element that is not one.
             hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
-        }
-        prefetch {}
-        covers {}
-    }
-}
-
-uia_shape! {
-    /// A window's element read for its UIA framework.
-    pub struct FrameworkCheck {
-        gates: none;
-        groups {}
-        properties {
-            /// The UIA framework, such as `WinForm` or `XAML`.
-            framework_id: UIA_FrameworkIdPropertyId => string,
         }
         prefetch {}
         covers {}

@@ -13,9 +13,8 @@
 //! `docs/design/listener-without-connections.md`, decision 2). A window
 //! with a provider is still set aside
 //! for MSAA when its provider is one NVDA does not use: an old console's,
-//! or a list view's outside Windows Forms ([`post_probe_check`]), which an
-//! outpost reads from the window's UIA framework and the listener from its
-//! class name.
+//! or a list view's outside Windows Forms ([`post_probe_check`]), which
+//! both read from the window's class name, a local call.
 //! Class-list checks are fast local window calls; the probe blocks on the
 //! target's message pump and runs only on a deadline-guarded worker.
 //!
@@ -346,6 +345,23 @@ fn has_windows_forms_class(raw: &str) -> bool {
     raw.starts_with("WindowsForms10.")
 }
 
+/// The answer to `check` for a window of classes `classes`: `Some(true)`
+/// when its provider is used, `Some(false)` when it is excluded, `None` when
+/// the application did not answer. A console asks `console`; a list view is
+/// answered from its class name alone, with no call into the application,
+/// by an outpost and the listener alike
+/// (`docs/design/listener-without-connections.md`, section 3, step 5).
+fn provider_usable(
+    check: PostProbeCheck,
+    classes: &WindowClasses,
+    console: impl FnOnce() -> Option<bool>,
+) -> Option<bool> {
+    match check {
+        PostProbeCheck::Console => console(),
+        PostProbeCheck::WindowsFormsListView => Some(has_windows_forms_class(&classes.raw)),
+    }
+}
+
 /// Decides window `hwnd`'s backend with `arbitrator`, as NVDA's
 /// `isUIAWindow` decides it, for an outpost's events and for the focus
 /// listener's UIA focus judgement alike: the class lists and kept verdicts first, then
@@ -406,17 +422,7 @@ pub(crate) fn uses_uia_keeping(
     );
     if is_uia && let Some(check) = post_probe_check(&classes) {
         // NVDA uses some providers only after checking them.
-        let usable = match check {
-            PostProbeCheck::Console => console(),
-            PostProbeCheck::WindowsFormsListView => match probe {
-                Probe::Uia => verbatim_uia::is_windows_forms(hwnd),
-                // The listener connects to no window, so it reads the
-                // framework from the class name, a local call
-                // (`docs/design/listener-without-connections.md`, section
-                // 3, step 5).
-                Probe::Raw => Some(has_windows_forms_class(&classes.raw)),
-            },
-        };
+        let usable = provider_usable(check, &classes, console);
         tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");
         return match usable {
             Some(true) => {
@@ -872,6 +878,42 @@ mod tests {
             "WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1"
         ));
         assert!(!has_windows_forms_class("SysListView32"));
+    }
+
+    #[test]
+    fn a_list_views_provider_is_judged_by_its_class_alone() {
+        let console_never_asked = || -> Option<bool> { panic!("a list view asked the console") };
+        let forms = WindowClasses::new("WindowsForms10.SysListView32.app.0.2bf8098_r6_ad1", "x");
+        let comctl = WindowClasses::new("SysListView32", "x");
+        assert_eq!(
+            provider_usable(
+                PostProbeCheck::WindowsFormsListView,
+                &forms,
+                console_never_asked
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            provider_usable(
+                PostProbeCheck::WindowsFormsListView,
+                &comctl,
+                console_never_asked
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn a_consoles_provider_is_judged_by_its_console_check() {
+        let classes = WindowClasses::new("ConsoleWindowClass", "ConsoleWindowClass");
+        assert_eq!(
+            provider_usable(PostProbeCheck::Console, &classes, || None),
+            None
+        );
+        assert_eq!(
+            provider_usable(PostProbeCheck::Console, &classes, || Some(false)),
+            Some(false)
+        );
     }
 
     #[test]

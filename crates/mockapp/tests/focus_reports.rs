@@ -1033,10 +1033,11 @@ fn a_console_windows_own_focus_is_never_reported() {
 /// area itself, the held sender, known by its cached automation id, with
 /// no connection to the console window
 /// (`docs/design/listener-without-connections.md`, section 3, step 5), and
-/// read: six calls, the sender's nearest window, the console check's three
-/// (the text pattern, the visible ranges and the range's font, where the
-/// check by the window's handle made five), the keyboard focus, and the
-/// read's remote operation; and one window message, the raw probe. The
+/// read: five calls, the sender's nearest window, the console check's two
+/// (the visible ranges of the text pattern the sender's cache holds, and
+/// the range's font, where the check by the window's handle made five), the
+/// keyboard focus, and the read's remote operation; and one window message,
+/// the raw probe. The
 /// outpost reports it as the console's terminal, and its caret.
 fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     let title = common::unique_title("mockapp-console-text-area");
@@ -1052,7 +1053,7 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     };
     assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
-        (6, 0, 1),
+        (5, 0, 1),
         "the probe, the console check from the text area, and the read"
     );
     outpost.deliver(judged.into_fact(0));
