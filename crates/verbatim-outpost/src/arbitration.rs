@@ -392,6 +392,13 @@ pub(crate) fn uses_uia(
     uses_uia_keeping(arbitrator, hwnd, probe, console).0
 }
 
+/// Window `hwnd`'s backend as [`uses_uia`] would decide it without a call
+/// into the application, from the class lists or a kept verdict: `None`
+/// when only the probe can decide.
+pub(crate) fn known_verdict(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> Option<bool> {
+    let classes = WindowClasses::of(hwnd);
+    lock(arbitrator).verdict(hwnd, &classes)
+}
 
 /// Which probe asks a window for its provider
 /// (`docs/design/listener-without-connections.md`, decision 2).

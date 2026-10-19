@@ -92,7 +92,9 @@ use verbatim_uia::{
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
 use crate::ForegroundReader;
-use crate::arbitration::{Arbitrator, Clock, Probe, time_limit, uses_uia, window_class_name};
+use crate::arbitration::{
+    Arbitrator, Clock, Probe, known_verdict, time_limit, uses_uia, window_class_name,
+};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{is_shell_transition_window, window_is_hung};
@@ -114,12 +116,20 @@ const MAX_ANCESTORS: u32 = 64;
 const READ_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a reading thread may take over one focus event before the
-/// watchdog abandons it: the [`READ_BUDGET`] of 2 seconds, the one call
-/// that can be under way when it passes, which UIA's transaction timeout
-/// ends after 5 seconds (the raw probe's 3 seconds is shorter), and a
-/// second to spare, 8 seconds, so only a read whose application stops
-/// answering within a call is abandoned. It also bounds how long the
-/// application's later events wait behind the read's marker.
+/// watchdog abandons it, 8 seconds: the [`READ_BUDGET`] of 2 seconds,
+/// UIA's transaction timeout of 5 seconds for the call that can be under
+/// way when the budget passes (the raw probe's 3 seconds is shorter), and
+/// a second to spare. It bounds how long the application's later events
+/// wait behind the read's marker, whatever the read's calls do. It does
+/// not bound the call under way: the transaction timeout bounds each
+/// provider call, not a UIA operation (`docs/uia-bugs.md`, "A timeout
+/// bounds each provider call, not an operation"), so one operation that
+/// makes several provider calls, as the nearest-window lookup's
+/// `NormalizeElementBuildCache` does, can run past the deadline with each
+/// of its provider calls answered within the timeout, and its read is then
+/// abandoned though the application still answers. Only a read whose last
+/// call is one provider call, or one remote operation, a single
+/// transaction, is sure to end within it.
 pub(crate) const READ_DEADLINE: Duration =
     Duration::from_secs(READ_BUDGET.as_secs() + verbatim_uia::TRANSACTION_TIMEOUT.as_secs() + 1);
 
@@ -678,8 +688,9 @@ impl FocusReader {
     /// The read's time, `out_of_time`, is asked before each call after the
     /// first: once it is up, a comparison or keyboard focus read is not
     /// made, and counts as one that failed, as NVDA lets the event through
-    /// when such a read fails, and the native check, which nothing can
-    /// stand in for, drops the event.
+    /// when such a read fails, and the native check drops the event unless
+    /// the window's verdict is known without a call
+    /// ([`native_window`](Self::native_window)).
     fn judge_before_reading(
         &self,
         held: &Cached<ListenerEvent>,
@@ -726,18 +737,22 @@ impl FocusReader {
                 // goes to it, judged with its window, and the native check
                 // is not made. NVDA catches no error from the comparison, so
                 // one that fails drops the event.
-                match (compare(), current.as_ref()) {
+                let same = compare();
+                match (&same, current.as_ref()) {
                     (Some(Err(_)), _) => {
                         return Err("its comparison with the current focus failed");
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
-                    _ => (self.native_window(held, sender, out_of_time)?, element),
+                    _ => (
+                        self.native_window(held, sender, out_of_time, same.is_some())?,
+                        element,
+                    ),
                 }
             }
             // Only focuses and menu openings are read; a selection or a
             // notification is checked ([`Self::check_fact`]).
             FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
-                let nearest = self.native_window(held, sender, out_of_time)?;
+                let nearest = self.native_window(held, sender, out_of_time, false)?;
                 // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
                 // 923; section 16.3): the sender is the last focus accepted,
                 // by any of the listener's readers, as UIA compares them,
@@ -853,15 +868,28 @@ impl FocusReader {
     /// window's own element, under which the text area is found. Any other sender in a console window, of which
     /// none is known, gets no answer: its focus is dropped as not native,
     /// and the window is checked again at its next focus.
+    ///
+    /// The read's time, `out_of_time`, is asked before each call here after
+    /// the read's first, `called` saying whether one was made before this
+    /// check. Once it is up, the window's verdict is still taken when it is
+    /// known without a call, from the class lists or a kept verdict; only a
+    /// window whose verdict needs the probe, and so perhaps the console
+    /// check, drops the focus.
     fn native_window(
         &self,
         held: &Cached<ListenerEvent>,
         sender: &ListenerEvent,
         out_of_time: &dyn Fn() -> bool,
+        mut called: bool,
     ) -> Result<isize, &'static str> {
+        const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let nearest = if hwnd == 0 {
+            if called && out_of_time() {
+                return Err("its read ran out of time before its window was looked up");
+            }
+            called = true;
             let started = Instant::now();
             let nearest = verbatim_uia::nearest_window_handle(element);
             let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -870,17 +898,19 @@ impl FocusReader {
                 window = nearest,
                 "UIA focus sender's nearest window looked up"
             );
-            let nearest =
-                nearest.ok_or("it has no window above it, so NVDA makes no object for it")?;
-            // The probe and the console check are calls into the
-            // application too.
-            if out_of_time() {
-                return Err("its read ran out of time before its window was judged");
-            }
-            nearest
+            nearest.ok_or("it has no window above it, so NVDA makes no object for it")?
         } else {
             hwnd
         };
+        // The probe and the console check are calls into the application
+        // too; a verdict already known needs neither.
+        if called && out_of_time() {
+            return match known_verdict(&self.arbitrator, nearest) {
+                Some(true) => Ok(nearest),
+                Some(false) => Err(NOT_UIA),
+                None => Err("its read ran out of time before its window was judged"),
+            };
+        }
         // The raw probe, not a connection: the listener connects to no
         // application's window (`docs/design/listener-without-connections.md`,
         // section 2).
@@ -898,7 +928,7 @@ impl FocusReader {
                 .flatten()
         };
         if !uses_uia(&self.arbitrator, nearest, Probe::Raw, console) {
-            return Err("its window does not use UIA, so its MSAA events speak for it");
+            return Err(NOT_UIA);
         }
         Ok(nearest)
     }

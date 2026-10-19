@@ -174,16 +174,22 @@ event's own element:
   call under way runs past it. Once it has passed the read makes no more
   calls: a comparison or keyboard focus read not made counts as one that
   failed, as NVDA lets the event through when such a read fails; the
-  native check, which nothing can stand in for, drops the event; and a
+  native check takes the window's verdict when it is known without a call,
+  from the class lists or a kept verdict, and drops the event only when the
+  probe, and so perhaps the console check, would be needed; and a
   focus already judged is reported with what was read, the event's cache
   giving the rest, its ancestors unknown.
 - A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 8
-  seconds: the budget, the one call that can be under way when it passes,
-  which UIA's five-second transaction timeout ends (the raw probe's three
-  seconds is shorter), and a second to spare, so only a read whose
-  application stops answering within a call is abandoned. It also bounds
-  how long the application's later events wait behind the read's marker:
-  the event is reported dropped, a
+  seconds: the budget, UIA's five-second transaction timeout for the call
+  that can be under way when it passes (the raw probe's three seconds is
+  shorter), and a second to spare. It bounds how long the application's
+  later events wait behind the read's marker, but not the call under way:
+  the transaction timeout bounds each provider call, not a UIA operation
+  (`docs/uia-bugs.md`, "A timeout bounds each provider call, not an
+  operation"), so an operation of several provider calls, such as the
+  nearest-window lookup, can run past it in an application that still
+  answers each of them, and its read is abandoned. When the watchdog
+  abandons a read, the event is reported dropped, a
   new thread takes the application's later events, and the abandoned
   thread, once its call returns, says nothing and ends. With two of an
   application's threads abandoned and still in their calls, its focus
