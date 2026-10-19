@@ -237,7 +237,14 @@ with, and connects to one with a provider, whenever the outpost's read
 returns the child window's element: an accepted limit, shared with the
 listener and with NVDA (decision 13 of that design).
 The outpost connects to, probes and walks up into only the windows its
-application serves (`read::serves`, by the window's provider process):
+application serves (`read::serves`, by the window's provider process),
+with one accepted exception: object navigation's raw-view step
+(`Uia::neighbor`, from `read.rs`'s classic navigation) can land in
+another process's window, such as the Settings frame above the page's
+content, and reads that neighbor through UIA before
+`read::corrected_backend` switches it to MSAA; it is user-initiated and
+off the per-event path, and a boundary stop before it is a follow-up
+(section 4.3 of that design). Otherwise:
 its own UIA walk (`read::uia_ancestors`, for the ancestors query and a
 focus-now read's classic read) stops below the boundary and is
 continued the same way, and a step that reaches another process's
@@ -322,7 +329,8 @@ new UIA connection to one of its windows
 (`docs/design/listener-without-connections.md`, section 2): the listener
 reads every focus from elements it holds, with no connection, and an
 outpost connects to, probes and walks up into only the windows its
-application serves. Two processes' new connections and a remote operation
+application serves, but for object navigation's step, an accepted
+exception described above. Two processes' new connections and a remote operation
 into one application cannot then come from Verbatim's own calls, so no
 lock is needed around them. The supervisor's table of applications
 (`App`) holds each application's process open from its first record until
