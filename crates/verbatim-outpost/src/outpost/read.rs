@@ -496,6 +496,7 @@ pub(super) fn uia_remote_enrichment(
         out_of_time: Some(&out_of_time),
         require_focus: true,
         refresh: false,
+        nearest_window: None,
         lock_up_from: None,
     };
     // One remote operation, one transaction, which UIA's transaction

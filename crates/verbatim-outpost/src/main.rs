@@ -41,7 +41,8 @@
 //!
 //! Every mode also takes `--classic-uia`, which turns off UIA remote
 //! operations for the process's whole life (`uia.remote_operations = false`
-//! in `settings.toml`, which the supervisor passes on).
+//! in `settings.toml`, which the supervisor passes on); the listener makes
+//! none whatever it is given.
 
 use std::process::ExitCode;
 
@@ -108,7 +109,6 @@ fn main() -> ExitCode {
             pipe_out,
             ignore_pids,
             hooks_in,
-            options,
         }) => {
             // Held before anything is installed; Core holds them too, so
             // these pids still name the processes Core was told of.
@@ -129,7 +129,7 @@ fn main() -> ExitCode {
                 }
             };
             let hooks_in = verbatim_outpost::listener::parse_hooks_in(&hooks_in);
-            match run_listener(reader, writer, ignored, &hooks_in, options) {
+            match run_listener(reader, writer, ignored, &hooks_in) {
                 Ok(()) => end_without_detach(0),
                 Err(error) => {
                     report_error!("listener pipe loop ended with error: {error}");
@@ -214,8 +214,6 @@ enum Mode {
         /// The applications whose outposts have their own hooks in, as
         /// `pid:outpost` pairs separated by commas.
         hooks_in: String,
-        /// Whether its UIA focus reads may use remote operations.
-        options: OutpostOptions,
     },
     Attach {
         pid: u32,
@@ -276,7 +274,6 @@ fn parse_args(args: &[String]) -> Option<Mode> {
                 pipe_out,
                 ignore_pids,
                 hooks_in,
-                options,
             }),
             _ => None,
         };

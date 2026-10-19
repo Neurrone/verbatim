@@ -451,6 +451,7 @@ mod tests {
                 uia: 3,
                 msaa: 0,
                 window_messages: 1,
+                connections: 0,
             }),
         };
         assert_eq!(
@@ -474,6 +475,7 @@ mod tests {
                 uia: 60,
                 msaa: 0,
                 window_messages: 0,
+                connections: 0,
             }),
         };
         assert_eq!(

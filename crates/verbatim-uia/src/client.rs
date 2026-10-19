@@ -218,6 +218,7 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
         count(CallKind::Uia);
+        crate::calls::count_connection();
         // A new connection to the focused application, which, like a
         // connection by handle, may fail while a remote operation from
         // another process waits there (one experiment of three, section
@@ -309,6 +310,7 @@ impl Uia {
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<IUIAutomationElement> {
         count(CallKind::Uia);
+        crate::calls::count_connection();
         // A new connection to the window by its handle, which returns UIA's
         // client-side window proxy in place of the application's element
         // when it arrives while a remote operation from another process
@@ -352,6 +354,7 @@ impl Uia {
     /// Returns the COM error if the handle has no UIA element or the call fails.
     pub fn window_live(&self, hwnd: isize) -> windows::core::Result<Live> {
         count(CallKind::Uia);
+        crate::calls::count_connection();
         // A new connection by handle, guarded as `element_from_handle` is.
         crate::lock::guarded_window("ElementFromHandle", hwnd, || {
             // SAFETY: HWND wraps a caller-supplied handle; ElementFromHandle

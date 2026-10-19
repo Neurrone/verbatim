@@ -187,9 +187,11 @@ Public API:
 - `GestureId` — normalized gesture identifiers, NVDA's scheme.
 - `CallKind` and `CallCounts` — how many cross-process calls a piece of
   work made, by kind: UIA calls, MSAA calls, and window messages
-  (`docs/performance.md`). `CallCounts::record` counts one call,
-  saturating rather than overflowing; `total` and `is_empty` read it, and
-  counts add. The model only names the counts: `verbatim-uia` and
+  (`docs/performance.md`), and of those, how many connected to a window
+  by its handle (`connections`, which `total` leaves out, each such call
+  being counted under its kind too). `CallCounts::record` counts one
+  call and `record_connection` one connection, saturating rather than
+  overflowing; `total` and `is_empty` read it, and counts add. The model only names the counts: `verbatim-uia` and
   `verbatim-ia2` count, the outpost sends them, and the latency ledger and
   the control plane carry them.
 

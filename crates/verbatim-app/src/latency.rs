@@ -119,6 +119,7 @@ fn calls_besides(total: CallCounts, part: CallCounts) -> CallCounts {
         uia: total.uia.saturating_sub(part.uia),
         msaa: total.msaa.saturating_sub(part.msaa),
         window_messages: total.window_messages.saturating_sub(part.window_messages),
+        connections: total.connections.saturating_sub(part.connections),
     }
 }
 
@@ -1166,6 +1167,7 @@ mod tests {
             uia: 3,
             msaa: 0,
             window_messages: 1,
+            connections: 0,
         };
         ledger.event_received(
             trace,
@@ -1264,11 +1266,13 @@ mod tests {
                     uia: 69,
                     msaa: 0,
                     window_messages: 0,
+                    connections: 0,
                 },
                 awaited_calls: CallCounts {
                     uia: 60,
                     msaa: 0,
                     window_messages: 0,
+                    connections: 0,
                 },
                 ..EventTiming::default()
             }),

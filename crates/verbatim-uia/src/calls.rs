@@ -33,6 +33,12 @@
 //! per thread into counters they own: a [`Registration`] for UIA's
 //! callback threads, the listener's reader, and the outpost's worker.
 //!
+//! Of those calls, each thread also counts the ones that connect to a
+//! window by its handle (`ElementFromHandle`, `ElementFromHandleBuildCache`,
+//! `GetFocusedElementBuildCache`, `UiaHasServerSideProvider`), in
+//! [`CallCounts::connections`], which the focus listener must keep at zero
+//! (`docs/design/listener-without-connections.md`, section 2).
+//!
 //! Each thread also counts the times it took an application's lock
 //! ([`crate::lock`]), one for each guarded call, beside its calls
 //! ([`take_locks`]).
@@ -50,6 +56,7 @@ thread_local! {
             uia: 0,
             msaa: 0,
             window_messages: 0,
+            connections: 0,
         })
     };
 }
@@ -114,6 +121,16 @@ pub fn count(kind: CallKind) {
     });
 }
 
+/// Counts, on this thread, that the call just counted under its kind
+/// connected to a window by its handle ([`CallCounts::connections`]).
+pub(crate) fn count_connection() {
+    COUNTS.with(|counts| {
+        let mut current = counts.get();
+        current.record_connection();
+        counts.set(current);
+    });
+}
+
 /// This thread's calls since the last take, resetting them to zero.
 #[must_use]
 pub fn take() -> CallCounts {
@@ -145,12 +162,14 @@ mod tests {
         let _ = take();
         count(CallKind::Uia);
         count(CallKind::WindowMessage);
+        count_connection();
         assert_eq!(
             take(),
             CallCounts {
                 uia: 1,
                 msaa: 0,
-                window_messages: 1
+                window_messages: 1,
+                connections: 1
             }
         );
         assert!(take().is_empty());

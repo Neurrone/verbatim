@@ -235,6 +235,7 @@ fn uia_calls(uia: u32) -> CallCounts {
         uia,
         msaa: 0,
         window_messages: 0,
+        connections: 0,
     }
 }
 

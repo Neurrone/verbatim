@@ -193,8 +193,10 @@ screen reader in both rendered and source form.
   E-marshal), so the listener, which receives the event, is the one
   process that can judge it by its own element, as NVDA does. Its
   callbacks, writer, and registration threads still make no cross-process
-  call; each application's reading thread makes one remote operation per
-  focus, under UIA's call timeout set once for the process, and a watchdog
+  call; each application's reading thread reads each focus with a few
+  calls on elements it holds, with no remote operation and no connection
+  to a window (`docs/design/listener-without-connections.md`, section 2),
+  each under UIA's call timeout set once for the process, and a watchdog
   abandons a thread whose read runs past its deadline. A slow or hung
   application holds only its own reading thread, except that a hung window
   named in a focus `WinEvent` holds UIA's delivery of every focus event to
@@ -208,8 +210,9 @@ screen reader in both rendered and source form.
   Amended 2026-10-17 (the adopted pipeline, section 12.3, and the lock per
   application, section 20 of the same document): the listener's
   per-application reading threads, and no other of its threads, make calls
-  into applications: the judgment and read of each UIA focus (a remote
-  operation, `HasKeyboardFocus`, the nearest window, the provider probe).
+  into applications: the judgment and read of each UIA focus
+  (`HasKeyboardFocus`, the nearest window, the raw probe, and the classic
+  read, which makes no remote operation).
   The listener and each outpost make every remote operation into an
   application, and every connection by handle to a window whose provider
   is that application, while holding that application's lock, an unnamed
@@ -633,12 +636,13 @@ sends the application's outpost a marker the moment the event arrives
 and queues the event's element for that application's reading thread,
 one per application, created on its first focus event and ended after a
 minute without one. The thread judges and reads the focus from the
-event's own element in one remote operation: the element's
-`HasKeyboardFocus` live first, a focus that has lost it dropped as NVDA
-drops it; NVDA's duplicate evidence, whether the element the thread read
-before under the same runtime id still has the keyboard focus; the
-element's value, states, and details afresh; and its ancestors up to the
-first one known from the focus before. The read, or its drop, follows
+event's own element, with calls on elements it holds only: NVDA's
+checks, the element's `HasKeyboardFocus` read plainly last, a focus that
+has lost it dropped as NVDA drops it; NVDA's duplicate evidence, whether
+the element the thread read before under the same runtime id still has
+the keyboard focus; the element's value, states, and details afresh; and
+its ancestors, one step each, up to the first one known from the focus
+before, the desktop's root, or the process boundary. The read, or its drop, follows
 the marker through verbatim.exe, the only route between the listener and
 the outposts. The outpost holds every entry that arrives after a marker
 until the read takes the marker's place, so a change raised after a

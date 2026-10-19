@@ -34,6 +34,14 @@ pub struct CallCounts {
     pub msaa: u32,
     /// Window messages.
     pub window_messages: u32,
+    /// Of the UIA calls and window messages, those that connect to a window
+    /// by its handle: `ElementFromHandle` and its cache-building form,
+    /// `GetFocusedElement`'s cache-building form, which reaches the focused
+    /// window the same way, and `UiaHasServerSideProvider`
+    /// (`docs/design/listener-without-connections.md`, terms). Each is
+    /// counted under its own kind too, so [`total`](Self::total) leaves
+    /// this count out.
+    pub connections: u32,
 }
 
 impl CallCounts {
@@ -46,6 +54,12 @@ impl CallCounts {
             CallKind::WindowMessage => &mut self.window_messages,
         };
         *count = count.saturating_add(1);
+    }
+
+    /// Counts one call that connected to a window by its handle, beside its
+    /// count under its own kind ([`connections`](Self::connections)).
+    pub fn record_connection(&mut self) {
+        self.connections = self.connections.saturating_add(1);
     }
 
     /// Every call, of whatever kind.
@@ -71,6 +85,7 @@ impl std::ops::Add for CallCounts {
             uia: self.uia.saturating_add(other.uia),
             msaa: self.msaa.saturating_add(other.msaa),
             window_messages: self.window_messages.saturating_add(other.window_messages),
+            connections: self.connections.saturating_add(other.connections),
         }
     }
 }
@@ -92,6 +107,7 @@ mod tests {
         counts.record(CallKind::Uia);
         counts.record(CallKind::Uia);
         counts.record(CallKind::WindowMessage);
+        counts.record_connection();
         let other = CallCounts {
             msaa: 3,
             ..CallCounts::default()
@@ -102,10 +118,15 @@ mod tests {
             CallCounts {
                 uia: 2,
                 msaa: 3,
-                window_messages: 1
+                window_messages: 1,
+                connections: 1
             }
         );
-        assert_eq!(sum.total(), 6);
+        assert_eq!(
+            sum.total(),
+            6,
+            "a connection is counted under its kind only"
+        );
     }
 
     #[test]

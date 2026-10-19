@@ -598,19 +598,6 @@ mockapp of its own, their elements looked up before the holds, so that
 its move makes three registrations each waiting out the call timeout, is
 abandoned and replaced when settled, once `MOVE_DEADLINE` has passed. (A
 move held at one call ends at the call timeout, within the deadline.)
-`app_lock.rs` runs the real supervisor in the test process, which starts
-the test binary as its focus listener and mockapp's outposts, each taking
-mockapp's lock from the supervisor as `verbatim-outpost.exe` does and
-sending its lock's log to the test over a loopback connection
-(`docs/design/focus-pipeline.md`, section 20.7). The listener's remote
-operation reading a menu opening in mockapp is held behind the busy
-window thread (`stall-after-focus-read 2`), once its first, which UIA's
-one-time setup inside mockapp waits for, and once a later one; the outpost the opening started is ended,
-and its replacement, which has seen none of mockapp's windows, is asked
-for mockapp's tree: its provider probe of the window, its only guarded
-call during the hold, waits for the lock and, once the hold is released,
-answers that the window has a provider, the tree is mockapp's own
-provider's, and the listener's read is reported once.
 `focus_reports.rs` runs a real outpost in the test process over
 `tests/fixtures/reuse.json` (two lists named alike, as a File Explorer
 folder and its subfolder), through `tests/common/outpost.rs`, the
@@ -649,7 +636,14 @@ finds a UIA focus's element by reading the system's keyboard focus, which
 a test must not take. Event registrations, which run on a registration's
 own thread, are pinned by the provider calls they cost mockapp: the focus
 listener's desktop-wide group and an outpost's focus-following property
-subscription. A container's selected child is pinned over
+subscription. The focus listener's real reader, on the test's thread,
+reads focuses in mockapp's window and is asserted to make no connection
+to a window by its handle, from the connection count
+(`the_listener_makes_no_connection`); and with one mockapp's window
+placed below another's, as its child or owned by it, the listener's
+chain stops below the process boundary, and the parent's provider calls
+are pinned while the listener reads and during a focus-now query
+(`uia_focus_chains_stop_below_the_process_boundary`). A container's selected child is pinned over
 `tests/fixtures/ancestry.json`, through a list's `SelectionPattern2` and
 through a tab control's `Selection` pattern, classically and in the
 focus's remote program; and so are a text focus's registration, its caret

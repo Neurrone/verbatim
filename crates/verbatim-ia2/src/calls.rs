@@ -39,6 +39,7 @@ thread_local! {
             uia: 0,
             msaa: 0,
             window_messages: 0,
+            connections: 0,
         })
     };
 }
@@ -73,7 +74,8 @@ mod tests {
             CallCounts {
                 uia: 0,
                 msaa: 2,
-                window_messages: 1
+                window_messages: 1,
+                connections: 0,
             }
         );
         assert!(take().is_empty());

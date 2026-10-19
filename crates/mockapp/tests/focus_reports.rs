@@ -74,17 +74,14 @@ impl Client {
 /// native check and acceptance test, one call; then compares the sender
 /// with the last focus it accepted and, UI Automation equating them, reads
 /// that element's keyboard focus: two calls; then the sender's own keyboard
-/// focus, read plainly as NVDA reads it, one call. Remotely, the earlier
-/// element's focus is read in the focus's one
-/// round trip; an earlier element that is gone fails the whole run before
-/// it starts, which is run again without it, one call more. Classically,
-/// the read makes five calls: the focus's keyboard focus, the earlier
-/// element's, the focus's own cache, and two hops up to an ancestor of the
-/// focus before, with its window. The repeated focus makes the nearest
-/// window, the comparison, and the keyboard focus read alone.
+/// focus, read plainly as NVDA reads it, one call. The read, the classic
+/// walk whichever way the outpost reads, makes four calls: the earlier
+/// element's keyboard focus, the focus's own cache, and two hops up to an
+/// ancestor of the focus before, with its window. The repeated focus makes
+/// the nearest window, the comparison, and the keyboard focus read alone.
 fn reused_runtime_id(remote: bool) {
     let path = if remote { "remote" } else { "classic" };
-    let gone_cost = if remote { 6 } else { 9 };
+    let gone_cost = 8;
     let title = common::unique_title(&format!("mockapp-reuse-{path}"));
     let mut app = common::spawn("reuse.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -874,9 +871,10 @@ fn a_menu_opening_is_judged_as_a_focus_on_the_menu() {
 /// since, is judged as that focus, as NVDA's automation event handler
 /// redirects it to its focus object (`docs/design/focus-pipeline.md`,
 /// section 18): with the focus's window and without NVDA's native check,
-/// so the windowless sender's nearest window is not read. Three calls: the
-/// comparison (`CompareElements`), the focus's keyboard focus, and the read
-/// (`Execute`).
+/// so the windowless sender's nearest window is not read. Five calls: the
+/// comparison (`CompareElements`), the focus's keyboard focus, and the
+/// read, which is the focus's own element again: its keyboard focus as the
+/// focus before, its cache, and one step up to its known parent.
 fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
     let title = common::unique_title("mockapp-menu-opening-focus");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -893,7 +891,7 @@ fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
     assert_eq!(read.snapshot.name.as_deref(), Some("Original Name"));
     assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
-        (3, 0, 0),
+        (5, 0, 0),
         "the comparison, the focus's keyboard focus, and the read, and no nearest window"
     );
 
@@ -902,12 +900,15 @@ fn a_menu_opening_on_the_current_focus_is_judged_as_that_focus() {
 }
 
 /// A UIA menu opening whose sender is not the current focus goes through
-/// NVDA's native check, its windowless sender's nearest window read: four
+/// NVDA's native check, its windowless sender's nearest window read: five
 /// calls, the comparison with the current focus, the nearest window, the
-/// sender's keyboard focus, and the read. Once Core has queued a focus the
-/// listener did not accept, as an MSAA focus, the current focus is no UIA
-/// element the listener holds, as NVDA's focus object is then no UIA
-/// object, and nothing is compared: three calls.
+/// sender's keyboard focus, and the read's two, its cache and one step up
+/// to its known parent. Once Core has queued a focus the listener did not
+/// accept, as an MSAA focus, the current focus is no UIA element the
+/// listener holds, as NVDA's focus object is then no UIA object, and
+/// nothing is compared: five calls, the read now also asking whether the
+/// slider it read just before, under the same runtime id, still has the
+/// keyboard focus.
 fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     let title = common::unique_title("mockapp-menu-opening-other");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -925,7 +926,7 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     assert_eq!(read.snapshot.name.as_deref(), Some("Level"));
     assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
-        (4, 0, 0),
+        (5, 0, 0),
         "the comparison, the nearest window, the keyboard focus, and the read"
     );
 
@@ -937,7 +938,7 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
     assert_eq!(read.snapshot.name.as_deref(), Some("Level"));
     assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
-        (3, 0, 0),
+        (5, 0, 0),
         "the nearest window, the keyboard focus, and the read, and no comparison"
     );
 
@@ -946,14 +947,12 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
 }
 
 /// A focus on a menu item that no pattern makes checkable reads its legacy
-/// MSAA state, where a Windows Forms menu item says it is checked, inside
-/// the focus's one remote operation, the program choosing to by the
-/// sender's cached control type: four calls, as a button's focus after
-/// another focus costs (the nearest window, the comparison, the keyboard
-/// focus, and the read), where the state's own live read made five. A
-/// Windows Forms menu item's is read the same way (`remote_ops.rs`,
-/// `a_windows_forms_menu_item_is_checked_from_the_remote_read`); a focus
-/// read the classic way still reads it live.
+/// MSAA state, where a Windows Forms menu item says it is checked, with
+/// one live read after the focus's classic read, made for an element the
+/// read maps to a menu item: seven calls, the nearest window, the
+/// comparison, the keyboard focus, the read's three (the item's cache, and
+/// steps up to the menu and to the window the focus before had), and the
+/// state.
 fn a_menu_items_legacy_state_is_read_with_its_focus() {
     let title = common::unique_title("mockapp-menu-item-focus");
     let mut app = common::spawn("modal_owner.json", "uia", &title);
@@ -974,8 +973,8 @@ fn a_menu_items_legacy_state_is_read_with_its_focus() {
             reported.calls.msaa,
             reported.calls.window_messages
         ),
-        (4, 0, 0),
-        "the nearest window, the comparison, the keyboard focus, and the read"
+        (7, 0, 0),
+        "the nearest window, the comparison, the keyboard focus, the read, and the legacy state"
     );
 
     drop(outpost);
@@ -1033,11 +1032,12 @@ fn a_console_windows_own_focus_is_never_reported() {
 /// area itself, the held sender, known by its cached automation id, with
 /// no connection to the console window
 /// (`docs/design/listener-without-connections.md`, section 3, step 5), and
-/// read: five calls, the sender's nearest window, the console check's two
+/// read: seven calls, the sender's nearest window, the console check's two
 /// (the visible ranges of the text pattern the sender's cache holds, and
 /// the range's font, where the check by the window's handle made five), the
-/// keyboard focus, and the read's remote operation; and one window message,
-/// the raw probe. The
+/// keyboard focus, and the read's three (the text area's cache, and steps
+/// up to the console window and to the desktop's root); and one window
+/// message, the raw probe. The
 /// outpost reports it as the console's terminal, and its caret.
 fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     let title = common::unique_title("mockapp-console-text-area");
@@ -1053,7 +1053,7 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     };
     assert_eq!(
         (calls.uia, calls.msaa, calls.window_messages),
-        (5, 0, 1),
+        (7, 0, 1),
         "the probe, the console check from the text area, and the read"
     );
     outpost.deliver(judged.into_fact(0));

@@ -83,7 +83,8 @@ fn controlled(
         CallCounts {
             uia: 1,
             msaa: 0,
-            window_messages: 0
+            window_messages: 0,
+            connections: 0,
         },
         "one remote operation"
     );

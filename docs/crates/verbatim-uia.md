@@ -569,7 +569,12 @@ Public API:
   `FindFirst`, `CurrentControllerFor`, pattern fetches and methods,
   `NormalizeElementBuildCache`, and the provider checks' text reads, as UIA
   calls; the arbitration probe's `UiaHasServerSideProvider`, and the raw
-  probe's `WM_GETOBJECT`, each as one window message. Cached reads, `GetRuntimeId`, and
+  probe's `WM_GETOBJECT`, each as one window message. The calls that
+  connect to a window by its handle, `ElementFromHandle`,
+  `ElementFromHandleBuildCache`, `GetFocusedElementBuildCache` and
+  `UiaHasServerSideProvider`, are also counted as connections
+  (`CallCounts::connections`), which the focus listener keeps at zero
+  (`docs/design/listener-without-connections.md`, section 2). Cached reads, `GetRuntimeId`, and
   creating clients, conditions, walkers, and cache requests are local and
   not counted, nor are event subscriptions (`docs/performance.md`, "What
   counts as a call"). The outpost's worker takes the count around each

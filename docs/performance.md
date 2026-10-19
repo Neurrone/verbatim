@@ -68,6 +68,16 @@ kinds, counted separately (`verbatim_model::CallKind`):
   a list view's or tree view's `LVM_` and `TVM_` messages, and an edit
   control's `EM_` messages and `WM_GETTEXT`.
 
+Of the UIA calls and window messages, those that connect to a window by
+its handle are also counted apart (`CallCounts::connections`): an
+`ElementFromHandle` or `ElementFromHandleBuildCache`, a
+`GetFocusedElementBuildCache`, which reaches the focused window the same
+way, and an outpost's `UiaHasServerSideProvider`. Each still counts once
+under its own kind, so a call's total is unchanged. The focus listener
+makes none (`docs/design/listener-without-connections.md`, section 2), and
+the ratchet asserts its count is zero (`call_counts.rs`,
+`the_listener_makes_no_connection`).
+
 Text (milestone M4) adds no new kind. A text pattern's methods
 (`GetSelection`, `DocumentRange`, `GetCaretRange`) and a text range's
 (`Clone`, `CompareEndpoints`, `ExpandToEnclosingUnit`, `Move`,
@@ -259,17 +269,15 @@ the ratchet beside them.
 
 One UIA read is made only for a kind of element the fixture does not
 have: a menu item that no pattern makes checkable reads its legacy MSAA
-state (NVDA 2027.1 reads it the same way, and only for menu items). For a
-focus, the remote program reads it in its one round trip, for an element
-whose cached control type is a menu item, at no extra call
-(`focus_reports.rs`, `a_menu_items_legacy_state_is_read_with_its_focus`:
-4 calls, where the live read made 5). A Windows Forms menu item, which
-says it is checked only there, is read the same way: its element can be
-imported into the program (`remote_ops.rs`,
-`a_windows_forms_menu_item_is_checked_from_the_remote_read`). A focus
-read the classic way, for a window whose elements cannot be imported or
-with remote operations off, the focus-now answer, and a navigation
-step's neighbor read it live, one more UIA call. Every other focus and step makes no such read, as the
+state (NVDA 2027.1 reads it the same way, and only for menu items). The
+focus listener's classic read, the focus-now answer, and a navigation
+step's neighbor read it live, one more UIA call (`focus_reports.rs`,
+`a_menu_items_legacy_state_is_read_with_its_focus`: 7 calls for a menu
+item two steps below the focus before's window). The outposts' remote
+program reads it in its one round trip, for an element whose cached
+control type is a menu item, at no extra call, a Windows Forms menu item
+among them (`remote_ops.rs`,
+`a_windows_forms_menu_item_is_checked_from_the_remote_read`). Every other focus and step makes no such read, as the
 ratchet's unchanged counts confirm. Caching the state for every element
 instead cost no call but roughly doubled the provider work of every focus
 change, so it is read only for menu items.
@@ -298,29 +306,26 @@ The focus listener reads a UIA focus from the event's own element
 read the focused element. The test stands in for the listener with the
 listener's own reader, counted on the test's thread, and adds its calls
 to the outpost's, so the "Today" figures in the four UIA focus sections
-below are the listener's and the outpost's together. Measured at the step's first build,
-the calls as reading the code predicted: with remote operations, one UIA
-call per focus, the listener's `Execute`, which also refreshes the
-focus's own cache, the cold focus's window message being the outpost's
-probe; classically, five calls for the cold focus (the live keyboard
-focus, the focus's cache, and three hops up to the desktop's root), four
-for the steady state and the next list item (one hop to the known
-ancestor, and the nearest window), and five into the list (one hop and
-the selected item's two). The outpost makes no UIA call before it reports
-the focus; after the report it finds its own copy of the element, one
-`ElementFromHandle` and one `Execute`, which the worker's count does not
-reach. The provider hits, which now include the listener's read, the
-outpost's walk to its own element, and both moves of the focus-following
-subscriptions, rose: with remote operations 350 cold, 305 steady, 327
-into the list, and 320 to the next item (91, 91, 129, and 91 before, the
-focused-element read excluded then as now); classically 403, 432, 401,
-and 498. The `WM_GETOBJECT` count rose most, from 1 to 10 in the steady
-state, from the outpost's `ElementFromHandle` and the listener's and the
-outpost's separate clients each connecting; this is recorded as a
-follow-up for step 11's measurements rather than changed here. The
-listener's refreshed read executes 2,190 instructions at mockapp's worst
-(2,180 without the refresh), and the outpost's walk down mockapp's
-deepest path, sixty-two levels, 1,139 (`instruction_limit.rs`,
+below are the listener's and the outpost's together. The listener reads
+every focus the classic way, with no remote operation and no connection
+(`docs/design/listener-without-connections.md`, sections 2 and 3, step
+8): after its checks, the focus's own cache refreshed
+(`BuildUpdatedCache`), a list's or tab control's selected item, and one
+`GetParentElementBuildCache` per ancestor until a known ancestor, the
+desktop's root, or the process boundary. It does not read the focus's
+keyboard focus or nearest window again, having read both in its checks.
+The outpost makes no UIA call before it reports the focus; after the
+report it finds its own copy of the element, one `ElementFromHandle` and
+one remote operation or a classic walk, which the worker's count does not
+reach. The provider hits include the listener's read, the outpost's walk
+to its own element, and both moves of the focus-following subscriptions.
+The `WM_GETOBJECT` count, 10 in the steady state, comes from the
+outpost's `ElementFromHandle` and the listener's and the outpost's
+separate clients each connecting; this is recorded as a follow-up for
+step 11's measurements rather than changed here. The outposts' refreshed
+remote read executes 2,190 instructions at mockapp's worst (2,180 without
+the refresh), and the outpost's walk down mockapp's deepest path,
+sixty-two levels, 1,139 (`instruction_limit.rs`,
 `reads_and_paths_execute_exactly`).
 
 With the listener judging a repeat and testing acceptance before it reads
@@ -344,9 +349,10 @@ focus read with a plain property read (`shouldAllowUIAFocusEvent`;
 2026-10-12, `docs/design/focus-pipeline.md`, section 16.8), every UIA
 focus that passes the acceptance test costs one call more before its
 read (`CurrentHasKeyboardFocus`), 3 provider calls in mockapp: the
-property, the host provider, and the fragment root. The remote
-operation's own check stays, for a focus that moves on while it is read
-(`call_counts.rs`, `uia_focus_changes_cost_exactly_remote` and
+property, the host provider, and the fragment root. The read does not
+check it again: a focus that moves on while it is read is followed by
+the focus event of where it went (`call_counts.rs`,
+`uia_focus_changes_cost_exactly_remote` and
 `uia_focus_changes_cost_exactly_classic`).
 
 With the listener's judgement ported from NVDA's focus handler in its order
@@ -371,11 +377,14 @@ verdict for the focus's window rather than asking the window again.
 
 ### A focus change, UIA, steady state
 
-- Minimum: 4 UIA calls for a sender without a window of its own, as
-  mockapp's are, and 3 for a sender that is a window: the calls NVDA's
+- Minimum: 5 UIA calls for a sender without a window of its own, as
+  mockapp's are, and 4 for a sender that is a window: the calls NVDA's
   focus handler makes, in its order (`docs/design/focus-pipeline.md`,
-  section 18; Dickson, 2026-10-16). The element itself costs no call: the
-  listener holds the event's sender and reads from it. The calls are:
+  section 18; Dickson, 2026-10-16), and the read, made with calls on held
+  elements only, since the listener makes no remote operation
+  (`docs/design/listener-without-connections.md`, section 2, decision 12).
+  The element itself costs no call: the listener holds the event's sender
+  and reads from it. The calls are:
   - the sender's nearest window (`NormalizeElementBuildCache`), for NVDA's
     native check and acceptance test; a sender that is a window answers
     it from the event's cache without a call. NVDA makes it before its
@@ -385,40 +394,31 @@ verdict for the focus's window rather than asking the window again.
     queued. It reaches no provider, but it is a UIA client call and is
     counted as one, as NVDA makes it;
   - the sender's keyboard focus, read plainly (`CurrentHasKeyboardFocus`),
-    NVDA's last check: read inside the program, the element is the
+    NVDA's last check: read inside a remote program, the element is the
     provider's own, which for Windows Terminal's second focus identity
     answers that it has the focus where the plain read, NVDA's, answers
     that it has not (section 16.8);
-  - one remote operations program (`Execute`), which reads
-    `HasKeyboardFocus` again first and returns early if it is false
-    (Option B, agreed on 2026-10-06), for a focus that moves on while it
-    is read, then fills the sender's cache afresh and walks the raw-view
-    parents until it meets a known runtime id, reading the nearest window
-    handle on the way.
+  - the sender's cache filled afresh (`BuildUpdatedCache`);
+  - one step up (`GetParentElementBuildCache`) to the group the previous
+    focus was in, a known ancestor, whose own ancestors are reused.
 
-  The investigation of 2026-10-15 found that neither the nearest window
-  nor the comparison can be folded into the program or answered from the
-  event's cache without reordering NVDA's checks: both come before the
-  acceptance test and the keyboard focus read, which decide whether the
-  program runs at all.
-- Today, with remote operations: 4 UIA calls, all the listener's: the
-  sender's nearest window (`NormalizeElementBuildCache`), the comparison
-  with the last focus accepted (`CompareElements`, which reaches no
-  provider), the plain keyboard focus read (`CurrentHasKeyboardFocus`),
-  and one `Execute`, which also confirms the focus and meets the group the
-  previous focus was in. 331 provider calls in all, the outpost's walk to
-  its own copy of the element and the subscriptions' moves included.
-- Today, classic: 7 UIA calls: the same three checks before the read, and
-  four for the classic read itself. 449 provider calls in all.
+  A remote program would read the cache and the walk in one call, but
+  only the application's outpost may send one into it (section 2 of the
+  same design).
+- Today: 5 UIA calls, all the listener's, whichever way the outpost walks
+  to its own copy of the element. 302 provider calls in all with the
+  outpost's remote walk, 415 with its classic walk, the subscriptions'
+  moves included. The listener's one remote operation made 4 calls and
+  331 provider calls; its classic read with the keyboard focus and the
+  nearest window asked again made 7 (2026-10-19, section 10, step 6).
 - The application's lock (`verbatim_uia::lock`), taken around the calls
-  that collide, no call itself: with remote operations, three takings,
-  one in the listener, its `Execute`, the probe being answered from the
-  kept verdict, and two in the outpost, `focus_path::find`'s lookup of the
-  route's window and its remote operation; classic, one, the outpost's
-  lookup, its walk being steps from elements it holds. The ratchet pins
-  both (`uia_focus_changes_cost_exactly_remote` and `_classic`).
-- Target: the minimum, 4 for a windowless sender and 3 for a sender that
-  is a window, which the remote path meets.
+  that collide, no call itself: none of the listener's, whose calls are
+  on held elements; the outpost's two with remote operations,
+  `focus_path::find`'s lookup of the route's window and its remote
+  operation, and one classically, the lookup, its walk being steps from
+  elements it holds. The ratchet pins both
+  (`uia_focus_changes_cost_exactly_remote` and `_classic`).
+- Target: the minimum, which the listener meets.
 
 ### A focus behind other objects' events
 
@@ -454,33 +454,27 @@ focus waits behind the events queued before it as NVDA's does.
 
 ### A focus change, UIA, cold
 
-- Minimum: 1 window message and 3 UIA calls for a sender without a window
-  of its own, as mockapp's are, and 1 window message and 2 UIA calls for a
-  sender that is a window: the calls NVDA's focus handler makes, in its
-  order (`docs/design/focus-pipeline.md`, section 18; Dickson,
-  2026-10-16). They are the sender's nearest window, for a windowless
-  sender; the window's provider, probed once in its lifetime for NVDA's
-  native check (the listener's raw probe, one `WM_GETOBJECT`); the
-  sender's keyboard focus, read plainly; and one program reading the whole
-  chain up to the top-level window. There is no comparison, since no focus
-  was accepted before.
-- Today, with remote operations: 3 UIA calls and 1 window message: the
-  sender's nearest window, its plain keyboard focus read, and one
-  `Execute`, which walks up to the process's top-level window and stops
-  there, never asking for the desktop's root, all the listener's; and the
-  listener's raw probe. There is no comparison, since no focus was
-  accepted before. 367 provider calls in all: the raw probe costs mockapp
-  one `WM_GETOBJECT`, with wParam 0, where `UiaHasServerSideProvider`
-  cost it two, first with a nonzero wParam and then with wParam 0, and
-  seven more provider calls as UIA connected (five `ProviderOptions`, one
-  `HostRawElementProvider` and one `Navigate`).
-- Today, classic: 7 UIA calls and 1 window message: the same two checks,
-  and five for the classic read (the live keyboard focus, the focus's
-  cache, and three hops up to the desktop's root), and the raw probe. 414
-  provider calls in all.
-- Target: the minimum, which the remote path meets. The classic walk
-  could still stop at the desktop's root element, which is known locally,
-  instead of asking for its parent.
+- Minimum: 1 window message and 4 UIA calls for a sender without a window
+  of its own, as mockapp's are, and 1 window message and 3 UIA calls for
+  a sender that is a window, plus one step for each ancestor up to the
+  desktop's root: the sender's nearest window, for a windowless sender;
+  the window's provider, probed once in its lifetime for NVDA's native
+  check (the listener's raw probe, one `WM_GETOBJECT`); the sender's
+  keyboard focus, read plainly; the sender's cache, refreshed; and the
+  steps. There is no comparison, since no focus was accepted before.
+- Today: 6 UIA calls and 1 window message, all the listener's: the
+  sender's nearest window, its plain keyboard focus read, its refreshed
+  cache, and three steps, to the group, to the window, and to the
+  desktop's root, where the walk stops; and the raw probe. 345 provider
+  calls in all with the outpost's remote walk, 411 with its classic walk.
+  The raw probe costs mockapp one `WM_GETOBJECT`, with wParam 0, where
+  `UiaHasServerSideProvider` cost it two, first with a nonzero wParam and
+  then with wParam 0, and seven more provider calls as UIA connected (five
+  `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`).
+  The listener's one remote operation made 3 calls and the window
+  message, 367 provider calls.
+- Target: the minimum. The walk could still stop at the desktop's root
+  element, which is known locally, instead of asking for its parent.
 
 ### A focus below the process boundary, UIA
 
@@ -494,18 +488,17 @@ child of the other's MSAA window (`call_counts.rs`,
 - Minimum: the listener's calls of a cold focus, none of them a step into
   the parent's process; the outpost's probe of the parent window and the
   MSAA calls that read its client area and the chain above it.
-- Today, with remote operations: the listener's 3 UIA calls and 1 window
-  message, as for a cold focus; its chain ends at the child's window,
-  which costs only local window calls. Classic: 6 UIA calls and 1 window
-  message, the walk's two steps ending at the child's window with no step
-  to the desktop's root. The outpost then makes 9 MSAA calls and 1 window
-  message. While the listener reads, the parent's process receives 2
-  `WM_GETOBJECT`s by either path, each with `UiaRootObjectId` and a
-  nonzero wParam, which UIA's client side sends itself when a call on a
-  held element returns the child window's element (the nearest window and
-  the read); no other call. Before the walks stopped at the boundary,
-  their step up into the parent cost it 6 `WM_GETOBJECT`s and 17 MSAA
-  calls.
+- Today: the listener's 5 UIA calls and 1 window message, as for a cold
+  focus but for the step to the desktop's root: the walk's two steps end
+  at the child's window, which costs only local window calls. The outpost
+  then makes 9 MSAA calls and 1 window message, its
+  `UiaHasServerSideProvider` probe of the parent, a connection. While the
+  listener reads, the parent's process receives 2 `WM_GETOBJECT`s, each
+  with `UiaRootObjectId` and a nonzero wParam, which UIA's client side
+  sends itself when a call on a held element returns the child window's
+  element (the nearest window and the read); no other call. Before the
+  walks stopped at the boundary, their step up into the parent cost it 6
+  `WM_GETOBJECT`s and 17 MSAA calls.
 - Target: no message to the parent from the listener, which UIA's client
   side does not allow while the listener holds the child window's element.
 
@@ -513,29 +506,26 @@ child of the other's MSAA window (`call_counts.rs`,
 
 The focus lands on the list itself, and its selected item is read with it.
 
-- Minimum: 4 UIA calls, as for a steady-state focus change on a
-  windowless element: the same program also reads the list's selection
-  and the first selected item's cached properties.
-- Today, with remote operations: 4 UIA calls, the three checks of a
-  steady-state focus change and one `Execute`. 343 provider calls in all.
-- Today, classic: 8 UIA calls: the three checks, and five for the classic
-  read, the selected item among them in two calls (`SelectionPattern2`'s
-  `FirstSelectedItem` and `BuildUpdatedCache` on it). 411 provider calls
-  in all.
-- Target: 4, as for a steady-state focus change.
+- Minimum: 7 UIA calls: the five of a steady-state focus change on a
+  windowless element, and the selected item's two (`SelectionPattern2`'s
+  `FirstSelectedItem`, fetched with the `Selection` pattern, and
+  `BuildUpdatedCache` on it).
+- Today: 7 UIA calls, all the listener's. 338 provider calls in all with
+  the outpost's remote walk, 408 with its classic walk. The listener's
+  one remote operation made 4 calls, 343 provider calls.
+- Target: the minimum.
 
 ### Arrowing through a list, UIA
 
 The focus moves from one list item to the next.
 
-- Minimum: 4 UIA calls, as for any steady-state focus change on a
+- Minimum: 5 UIA calls, as for any steady-state focus change on a
   windowless element.
-- Today, with remote operations: 4 UIA calls, the same as a steady-state
-  focus change, 346 provider calls in all; the program stops at the list,
-  which the previous chain holds.
-- Today, classic: 7 UIA calls, the same as a steady-state focus change.
-  512 provider calls in all.
-- Target: 4, as for a steady-state focus change.
+- Today: 5 UIA calls, the same as a steady-state focus change; the walk
+  stops at the list, which the previous chain holds. 317 provider calls
+  in all with the outpost's remote walk, 478 with its classic walk. The
+  listener's one remote operation made 4 calls, 346 provider calls.
+- Target: the minimum.
 
 ### An object navigation step, UIA
 

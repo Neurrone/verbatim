@@ -117,31 +117,30 @@ event's own element:
   for a selection or notification, and reads the window, class name and
   framework of its judgment and log from that cache). An event from a hung window, a shell
   window that only stages a switch, or the console window's own element
-  is dropped before any call. Then one remote operation
-  (`verbatim_uia_rops::focus_ancestry`, with `require_focus` and
-  `refresh`): the element's `HasKeyboardFocus` live first, an element
-  without it dropped as NVDA drops it; when the element has the runtime id
-  of the focus the thread read before, whether that earlier element still
-  has the keyboard focus (NVDA's duplicate evidence, sent as
+  is dropped before any call. Then the classic read
+  (`verbatim_uia_rops::focus_ancestry_classic`, with `refresh`, and with
+  the nearest window the checks found as `nearest_window`), every call on
+  an element the listener holds, with no remote operation and no
+  connection to any window (`docs/design/listener-without-connections.md`,
+  sections 2 and 3, step 8): when the element has the runtime id of the
+  focus the thread read before, whether that earlier element still has
+  the keyboard focus (NVDA's duplicate evidence, sent as
   `UiaFocusRead::same_as_last`); the element's value, states, and details
   afresh, its name and role staying the event's; a list's or tab control's
-  selected child; and its raw-view ancestors, each with its own window
-  handle, up to the first one the thread knew, the rest reused from the
-  read before. A windowless focus whose read named no window, the console
-  host's text area above all, has its window found by the classic walk,
-  and the ancestor that is that window marked with it. A remote
-  operation's walk ends at the top-level element of the focus's own
-  process; when that element is neither a top-level window nor below the
-  process boundary, the read goes on with classic tree walker steps up to
-  the desktop root, or to an ancestor of the focus before, as NVDA's
-  raw-view walk does. No walk of the listener's steps across the process
-  boundary: an element whose window's parent window, or visible owner
-  for a top-level window, another process serves
-  (`verbatim_uia::parent_across_process_boundary`), as the Settings page's
-  content inside `ApplicationFrameHost`'s frame, is the last ancestor it
-  reads (`docs/design/listener-without-connections.md`, section 3, steps
-  8 and 11). An outermost element that is a top-level window, or below
-  the boundary, costs no call. A read that fails
+  selected child; and its raw-view ancestors, one tree walker step each,
+  each with its own window handle through the client side's window proxy,
+  the console window's title included, up to the first one the thread
+  knew, the rest reused from the read before, or to the desktop root, as
+  NVDA's raw-view walk does. The element's keyboard focus and nearest
+  window, read by the checks just before, are not asked again. The walk
+  never steps across the process boundary: an element whose window's
+  parent window, or visible owner for a top-level window, another process
+  serves (`verbatim_uia::parent_across_process_boundary`), as the Settings
+  page's content inside `ApplicationFrameHost`'s frame, is the last
+  ancestor it reads, and a step that reaches another process's window, as
+  an owner shown between the check and the step makes it, is not kept
+  (section 3, step 11). A menu item's legacy MSAA state is one live read
+  after the walk. A read that fails
   reports the focus from its event, its ancestors unknown, unless the
   event said it lacked the keyboard focus, as NVDA lets a focus through
   whose read fails.
@@ -335,10 +334,9 @@ that names its process, the one it holds or the table's, waiting for it on
 the table's condition variable when it has not arrived; the wait is logged
 with its length, and the listener's shutdown ends it. A thread that cannot
 open its process reads without a lock. The thread's lock is its thread's
-(`set_thread_lock`), which the read's guarded calls take. Its classic
-walks, the focus read's own and the one that continues a remote read
-(`FocusReader::reach_the_top_level`), stop below the process boundary;
-a step from a window of the application inside another application's
+(`set_thread_lock`), which the read's guarded calls take; the read makes
+none, its calls being on held elements. Its walk stops below the process
+boundary; a step from a window of the application inside another application's
 top-level window still takes that application's lock when the listener
 holds it (`FocusQuery::lock_up_from`, `FocusReader::lock_up_into`). The
 registrations take no lock and make no connection by handle: a scope of

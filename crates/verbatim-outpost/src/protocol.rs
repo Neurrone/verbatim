@@ -1871,6 +1871,7 @@ mod tests {
                         uia: 3,
                         msaa: 0,
                         window_messages: 1,
+                        connections: 0,
                     },
                     ..EventTiming::default()
                 },

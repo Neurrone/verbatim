@@ -176,7 +176,10 @@ read), the runtime ids the caller already knows, a depth limit, the
 `verbatim_uia::Fill<Ancestor>` every returned element is filled by (the
 shape's properties for the gates its request was built with: every gate
 on for the listener, the theme's for the outpost), an out-of-time check
-(`out_of_time`), which only the classic walk makes, between hops, and `lock_up_from`, which the
+(`out_of_time`), which only the classic walk makes, between hops,
+`nearest_window`, the element's nearest window when the caller has
+already found it, which the classic walk then does not look up, and
+`lock_up_from`, which the
 classic walk asks, for each element with a window of its own, for the
 lock of another application a step up from it reaches into; the walk
 holds the first lock answered for that step and every later one
@@ -258,8 +261,9 @@ ancestor's `NativeWindowHandle` is read as the walk passes it, and a walk
 that stopped at a known ancestor or the depth limit before finding one
 goes on up, returning nothing more, until it does.
 
-The classic implementation is the reference and the fallback: the same
-live read, the selected child through `SelectionPattern2` or else the
+The classic implementation is the focus listener's read, which makes no
+remote operation (`docs/design/listener-without-connections.md`, section
+2), and the outposts' fallback: the same live read, the selected child through `SelectionPattern2` or else the
 Selection pattern
 (`Uia::selected`, which `Uia::selected_node` also
 uses), and one `GetParentElementBuildCache` round trip per ancestor over
@@ -269,7 +273,16 @@ itself is not called, because it returns filtered snapshots, not
 elements: the presentable-ancestor filter, the switch to MSAA, and the
 splice with the previous focus's chain stay with the outpost, which
 applies them to either implementation's elements with
-`Uia::ancestors_from`. Its window comes from the walked ancestors'
+`Uia::ancestors_from`. It stops below the process boundary, judged with
+local calls only: before each step, at an element whose window, its own
+or, for the nearest window's own element held without its handle (its
+runtime id `[42, window]`), the nearest window, has a parent window or
+visible owner that another process serves
+(`verbatim_uia::parent_across_process_boundary`); and after each step, a
+parent whose own window is not the nearest window and is served by
+another process, as an owner shown between the check and the step makes
+it, is not kept and ends the walk. Its window is the query's
+`nearest_window` when given; else it comes from the walked ancestors'
 caches, or, when it stopped before reaching one, from
 `nearest_window_handle`, one more call. Every call it makes goes through
 `verbatim-uia`'s safe wrappers, so it is counted, and the module has no

@@ -62,6 +62,13 @@ pub struct FocusQuery<'a> {
     /// when the focus is read, which the focus listener reports a focus
     /// with, as NVDA reads those afresh when it handles a focus event.
     pub refresh: bool,
+    /// The element's nearest window, its own or its nearest ancestor's,
+    /// when the caller has already found it, as the focus listener has for
+    /// NVDA's native check: the classic walk then makes no call to find it
+    /// ([`Ancestry::window`]), and starts from it when it judges the
+    /// process boundary. `None` leaves the walk to find it. The remote
+    /// program finds it inside its one round trip and does not read this.
+    pub nearest_window: Option<isize>,
     /// For the classic walk, the lock of the application a step up from an
     /// element reaches into, given the element's own window: `Some` when
     /// that window's top-level window is another application's and the
@@ -263,6 +270,43 @@ fn wants_legacy_state(element: &FocusInput) -> bool {
 /// A native window handle, `None` for 0, an element that is not a window.
 fn own_window(hwnd: isize) -> Option<isize> {
     Some(hwnd).filter(|&hwnd| hwnd != 0)
+}
+
+/// Whether the classic walk stops at an element below the process
+/// boundary: one whose window, its own `hwnd` or, for the nearest window's
+/// own element held without its handle, `nearest`, has a parent window or
+/// visible owner that another process serves. Local calls only.
+fn below_the_boundary(hwnd: isize, runtime_id: &[i32], nearest: Option<isize>) -> bool {
+    let window = if hwnd != 0 {
+        hwnd
+    } else {
+        nearest
+            .filter(|&nearest| is_window_element(runtime_id, nearest))
+            .unwrap_or(0)
+    };
+    window != 0 && verbatim_uia::parent_across_process_boundary(window).is_some()
+}
+
+/// Whether a step up reached a window, `hwnd`, that another process than
+/// the nearest window's serves. Local calls only.
+fn stepped_across(hwnd: isize, nearest: Option<isize>) -> bool {
+    nearest.is_some_and(|nearest| {
+        hwnd != 0
+            && hwnd != nearest
+            && verbatim_uia::provider_process(hwnd) != verbatim_uia::provider_process(nearest)
+    })
+}
+
+/// Whether the element whose runtime id is `runtime_id` is window `hwnd`'s
+/// own element: UI Automation gives a window's element the runtime id
+/// `[42, hwnd]`, the handle's low 32 bits.
+fn is_window_element(runtime_id: &[i32], hwnd: isize) -> bool {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a runtime id holds a window handle's low 32 bits"
+    )]
+    let handle = hwnd as i32;
+    runtime_id == [42, handle]
 }
 
 /// The focus ancestry in one cross-process round trip: a program that
@@ -616,23 +660,36 @@ impl RemoteCache {
     }
 }
 
-/// The focus ancestry the classic way, the fallback and the reference:
-/// a live `HasKeyboardFocus` read, the previous element's, the element's
+/// The focus ancestry the classic way, the focus listener's read and the
+/// outposts' fallback: a live `HasKeyboardFocus` read with
+/// [`FocusQuery::require_focus`], the previous element's, the element's
 /// own cache filled afresh with [`FocusQuery::refresh`]
 /// (`BuildUpdatedCache`), the selected child through the `Selection`
 /// pattern ([`Uia::selected`], as `Uia::selected_node` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
 /// the walk `Uia::ancestors` makes, every element filled by the query's
 /// fill's request, the steps up into another application holding its
-/// lock ([`FocusQuery::lock_up_from`]). Stops where the remote program
-/// stops: at a known ancestor, at the depth limit, below the desktop
-/// root, or below the process boundary, at an element whose own window's
-/// parent window, or visible owner for a top-level window, another
-/// process serves ([`verbatim_uia::parent_across_process_boundary`]); and
-/// when the
-/// query's time is up. The nearest window comes from the
-/// walked ancestors' caches, or, when the walk stopped before reaching
-/// one, from one more call ([`verbatim_uia::nearest_window_handle`]).
+/// lock ([`FocusQuery::lock_up_from`]). Stops at a known ancestor, at the
+/// depth limit, below the desktop root, below the process boundary
+/// (`docs/design/listener-without-connections.md`, terms), and when the
+/// query's time is up.
+///
+/// The boundary is judged with local calls only, twice. Before each step,
+/// an element whose window has a parent window, or a visible owner for a
+/// top-level window, that another process serves
+/// ([`verbatim_uia::parent_across_process_boundary`]) is the last
+/// ancestor; its window is its own, or, for the nearest window's own
+/// element held without its handle (runtime id `[42, window]`), that
+/// nearest window, so that such an element never steps into the other
+/// process first. After each step, a parent with a window of its own other
+/// than the nearest window so far, served by another process, as an owner
+/// shown between the check and the step makes it, is not kept, and the
+/// walk is complete.
+///
+/// The nearest window is [`FocusQuery::nearest_window`] when the caller
+/// gave it; else it comes from the walked ancestors' caches, or, when the
+/// walk stopped before reaching one, from one more call
+/// ([`verbatim_uia::nearest_window_handle`]).
 ///
 /// # Errors
 ///
@@ -678,7 +735,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         depth_limited: false,
         out_of_time: false,
         selected_child,
-        window: own_window(input.hwnd),
+        window: own_window(input.hwnd).or(query.nearest_window),
         previous_focused,
         element,
         legacy_state: None,
@@ -686,6 +743,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     let mut current = live.clone();
     let mut current_window = input.hwnd;
+    let mut current_id = query.element.runtime_id();
     let mut step_lock: Option<AppLock> = None;
     let mut complete = false;
     loop {
@@ -693,18 +751,17 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             ancestry.out_of_time = true;
             break;
         }
-        // The walk stops below the process boundary: an element whose own
+        // The walk stops below the process boundary: an element whose
         // window is the child of another process's window, as the Settings
         // page's content is of `ApplicationFrameHost`'s frame, or a
         // top-level window owned by another process's, as a dialog can be,
         // is the last ancestor, and the outpost of its application
         // continues the chain from that window through MSAA
         // (`docs/design/listener-without-connections.md`, section 3, step
-        // 11, and section 4.2). A local check, made only for an element
-        // with a window of its own.
-        if current_window != 0
-            && verbatim_uia::parent_across_process_boundary(current_window).is_some()
-        {
+        // 11, and section 4.2). A local check, made for an element with a
+        // window of its own and for the nearest window's own element held
+        // without its handle.
+        if below_the_boundary(current_window, &current_id, ancestry.window) {
             complete = true;
             break;
         }
@@ -746,12 +803,21 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             break;
         }
         current_window = parent.read().node.role.hwnd;
+        // The step reached another process's window after all, as when an
+        // owner is shown between the check above and the step: the parent
+        // is that process's, and the walk is complete below it.
+        if stepped_across(current_window, ancestry.window) {
+            complete = true;
+            break;
+        }
         if ancestry.window.is_none() {
             ancestry.window = own_window(current_window);
         }
         current = parent.live().clone();
         ancestry.ancestors.push(parent);
-        if let Some(index) = query.known.iter().position(|known| *known == runtime_id) {
+        let known = query.known.iter().position(|known| *known == runtime_id);
+        current_id = runtime_id;
+        if let Some(index) = known {
             ancestry.met_known = Some(index);
             break;
         }

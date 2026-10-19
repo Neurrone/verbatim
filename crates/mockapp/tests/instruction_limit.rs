@@ -235,6 +235,7 @@ fn focus_and_navigation_execute_exactly() {
         out_of_time: None,
         require_focus: true,
         refresh: false,
+        nearest_window: None,
         lock_up_from: None,
     };
     let ancestry = |query: &FocusQuery<'_>| {
@@ -312,6 +313,7 @@ fn reads_and_paths_execute_exactly() {
         out_of_time: None,
         require_focus: true,
         refresh: true,
+        nearest_window: None,
         lock_up_from: None,
     };
     let read = counted(|| {

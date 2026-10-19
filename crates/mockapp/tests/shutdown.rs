@@ -213,6 +213,7 @@ fn a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down() {
                 uia: 1,
                 msaa: 0,
                 window_messages: 0,
+                connections: 0,
             },
         },
     );
@@ -230,6 +231,7 @@ fn a_classic_read_in_progress_finishes_before_the_outpost_shuts_down() {
                 uia: 9,
                 msaa: 0,
                 window_messages: 0,
+                connections: 0,
             },
         },
     );

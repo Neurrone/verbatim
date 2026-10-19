@@ -416,8 +416,8 @@ impl OutpostUnderTest {
             let _ = heard_tx.send(event);
         }));
         let last_accepted = LastAccepted::default();
-        let mut reader = FocusReader::new(options.remote_operations, last_accepted.clone())
-            .expect("a UIA client for the listener's reads");
+        let mut reader =
+            FocusReader::new(last_accepted.clone()).expect("a UIA client for the listener's reads");
         // The listener's acceptance test reads the same foreground window.
         let listener_foreground = Arc::clone(&foreground);
         reader.set_foreground_reader(Arc::new(move || {

@@ -28,11 +28,6 @@ tracing-subscriber.workspace = true
 # The test binaries that use UIA as a client run through their own runner,
 # which ends the process without running DLL detach code; the reason is in
 # tests/common/harness.rs.
-# The lock test runs itself as the listener and the outpost too.
-[[test]]
-name = "app_lock"
-harness = false
-
 [[test]]
 name = "arbitration"
 harness = false

@@ -36,6 +36,7 @@ pub fn has_server_side_provider(hwnd: isize) -> bool {
     let _ = crate::client::ensure_ready();
     // One `WM_GETOBJECT`, sent to the window.
     crate::calls::count(CallKind::WindowMessage);
+    crate::calls::count_connection();
     // A new connection to the window by its handle, which answers "no"
     // after about three seconds when it arrives while a remote operation
     // from another process waits to be evaluated in the window's

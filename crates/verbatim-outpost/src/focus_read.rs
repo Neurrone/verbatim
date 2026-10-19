@@ -30,16 +30,19 @@
 //!   handler's checks instead, the same but for the repeat, and with a
 //!   sender UI Automation counts as the current focus judged as that
 //!   focus, with its window and without the native check;
-//! - then one remote operation from the sender: its `HasKeyboardFocus`
-//!   read again first, for a focus that moves on while it is read; then,
-//!   when the sender has
-//!   the runtime id of the focus the thread read before, whether that
-//!   earlier element still has the keyboard focus, the evidence that the
-//!   runtime id still names it; then the sender's own value, states, and
-//!   details afresh, its selected child for a list or tab control, and its
-//!   ancestors up to the first one the thread knew from the focus before,
-//!   whose ancestors are reused from that read; and for a menu item, its
-//!   legacy MSAA state, where its checked state may be.
+//! - then the classic read, every call on an element the listener holds,
+//!   with no connection to any window and no remote operation
+//!   (`docs/design/listener-without-connections.md`, sections 2 and 3):
+//!   when the sender has the runtime id of the focus the thread read
+//!   before, whether that earlier element still has the keyboard focus,
+//!   the evidence that the runtime id still names it; then the sender's
+//!   own value, states, and details afresh, its selected child for a list
+//!   or tab control, and its ancestors, one step up at a time, to the
+//!   first one the thread knew from the focus before, whose ancestors are
+//!   reused from that read, or to the desktop's root, or to the process
+//!   boundary; and for a menu item, its legacy MSAA state, where its
+//!   checked state may be. The sender's keyboard focus and nearest window,
+//!   read just before, are not asked again.
 //!
 //! The result, or the drop, goes to the application's outpost through
 //! verbatim.exe like every fact; the outpost was sent a marker the moment
@@ -62,7 +65,7 @@
 //! (`docs/design/focus-pipeline.md`, section 16.6). An event that arrives
 //! after that, for an application still running, starts a new thread.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -76,18 +79,16 @@ use windows::core::AgileReference;
 use verbatim_model::{Pid, State, TraceId};
 use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
-    Ancestor, Cached, Direction, ElementExt as _, Fill, FocusInput, ListenerEvent, Live, Shape, Uia,
+    Ancestor, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Shape, Uia,
 };
-use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, Path, focus_ancestry};
+use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
 use crate::ForegroundReader;
 pub(crate) use crate::app_locks::{AppLocks, Granted};
 use crate::arbitration::{Arbitrator, Clock, Probe, time_limit, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{
-    is_shell_transition_window, top_level_of, window_is_hung, window_thread,
-};
+use crate::outpost::window::{is_shell_transition_window, top_level_of, window_is_hung};
 use crate::protocol::{
     DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
 };
@@ -95,10 +96,9 @@ use crate::protocol::{
 /// The most ancestors read for a focus, as many as the outpost walks.
 const MAX_ANCESTORS: u32 = 64;
 
-/// How long the classic ancestor walk, used where a remote operation
-/// cannot import the element, may take before the focus is reported with
-/// its ancestors unknown: checked between the walk's calls, each of which
-/// UIA ends after its call timeout.
+/// How long the classic ancestor walk may take before the focus is
+/// reported with its ancestors unknown: checked between the walk's calls,
+/// each of which UIA ends after its call timeout.
 const READ_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a reading thread may take over one focus event before the
@@ -288,11 +288,6 @@ static NEXT_READER: AtomicU64 = AtomicU64::new(1);
 /// it read last. Lives on one reading thread.
 pub struct FocusReader {
     uia: Uia,
-    remote: bool,
-    /// Windows whose elements could not be imported into a remote
-    /// operation (client-side proxies), with the thread that owned each,
-    /// read the classic way from then on.
-    classic_windows: HashSet<(isize, u32)>,
     last: Option<LastFocus>,
     /// This reader's number among the listener's readers.
     number: u64,
@@ -321,19 +316,18 @@ impl Drop for FocusReader {
 
 impl FocusReader {
     /// A reader with a UIA client of its own, made on the calling thread,
-    /// which joins COM's multithreaded apartment. With `remote` off, every
-    /// read is the classic walk (`uia.remote_operations` in
-    /// `settings.toml`). `last_accepted` is the last focus any of the
-    /// listener's readers accepted, which this one shares.
+    /// which joins COM's multithreaded apartment. Every read is the classic
+    /// walk, which makes no remote operation
+    /// (`docs/design/listener-without-connections.md`, section 2).
+    /// `last_accepted` is the last focus any of the listener's readers
+    /// accepted, which this one shares.
     ///
     /// # Errors
     ///
     /// The COM error when the client cannot be made.
-    pub fn new(remote: bool, last_accepted: LastAccepted) -> windows::core::Result<Self> {
+    pub fn new(last_accepted: LastAccepted) -> windows::core::Result<Self> {
         Ok(Self {
             uia: Uia::new()?,
-            remote,
-            classic_windows: HashSet::new(),
             last: None,
             number: NEXT_READER.fetch_add(1, Ordering::Relaxed),
             last_accepted,
@@ -411,7 +405,6 @@ impl FocusReader {
         let fields = sender.read();
         let element = sender.live().element();
         let hwnd = fields.role.hwnd;
-        let window = if hwnd == 0 { focus_window } else { hwnd };
         let event = fields.parts(sender.runtime_id());
         let nearest = match self.judge_before_reading(sender, &fields, &event.runtime_id, kind) {
             Ok(nearest) => nearest,
@@ -437,8 +430,6 @@ impl FocusReader {
                     .collect()
             })
             .unwrap_or_default();
-        let classic_key = (window, window_thread(window));
-        let remote = self.remote && !self.classic_windows.contains(&classic_key);
         // Every detail: the listener reads for every application, whatever
         // theme decides which details are spoken. A request that cannot be
         // built is a read that failed.
@@ -459,6 +450,11 @@ impl FocusReader {
             .map_err(verbatim_uia_rops::Error::Uia)
             .and_then(|request| {
                 let fill = Fill::new(&request);
+                // The sender's keyboard focus was read plainly just now, as
+                // NVDA's last check, and its nearest window found for NVDA's
+                // native check, so the read asks neither again
+                // (`docs/design/listener-without-connections.md`, section 3,
+                // step 8).
                 let query = FocusQuery {
                     element: &input,
                     known: &known,
@@ -466,31 +462,24 @@ impl FocusReader {
                     depth_limit: MAX_ANCESTORS,
                     fill: &fill,
                     out_of_time: Some(&out_of_time),
-                    require_focus: true,
+                    require_focus: false,
                     refresh: true,
+                    nearest_window: Some(nearest),
                     lock_up_from: Some(&lock_up_from),
                 };
-                focus_ancestry(&self.uia, &query, remote)
+                focus_ancestry_classic(&self.uia, &query)
             });
         match read {
-            Ok((FocusAncestry::NotFocused, _)) => {
+            Ok(FocusAncestry::NotFocused) => {
                 Judged::Dropped("its element no longer has the keyboard focus")
             }
-            Ok((FocusAncestry::Focused(ancestry), path)) => {
-                if let Path::Fallback(error) = &path {
-                    tracing::warn!(window, %error, "a remote operation failed; read the classic way");
-                    if matches!(error, verbatim_uia_rops::Error::Import(_)) && window != 0 {
-                        self.classic_windows.insert(classic_key);
-                    }
-                }
-                self.focused(
-                    element,
-                    (hwnd, focus_window, nearest),
-                    event,
-                    (&ancestry, path.name()),
-                    arrival,
-                )
-            }
+            Ok(FocusAncestry::Focused(ancestry)) => self.focused(
+                element,
+                (hwnd, focus_window, nearest),
+                event,
+                &ancestry,
+                arrival,
+            ),
             Err(error) => {
                 // NVDA lets a focus event through when its sender's keyboard
                 // focus cannot be read (`shouldAllowUIAFocusEvent` answers
@@ -596,9 +585,10 @@ impl FocusReader {
         element: &IUIAutomationElement,
         (hwnd, focus_window, nearest): (isize, isize, isize),
         event: CachedUiaParts,
-        (ancestry, path): (&Ancestry, &'static str),
+        ancestry: &Ancestry,
         arrival: Arrival,
     ) -> Judged {
+        let path = "classic";
         let live = ancestry
             .element
             .as_ref()
@@ -620,19 +610,15 @@ impl FocusReader {
         };
         if wants_legacy_checked_state(snapshot.role, snapshot.states) {
             // A menu item without the Toggle pattern: its checked state may
-            // be only in its legacy MSAA state, which the remote program
-            // read with the focus. The classic walk, which a window whose
-            // elements cannot be imported into a program is read with, left
-            // it to this one live call.
-            let legacy = ancestry.legacy_state.unwrap_or_else(|| {
-                element
-                    .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
-                    .ok()
-                    .flatten()
-            });
+            // be only in its legacy MSAA state, which the classic walk
+            // leaves to this one live call.
+            let legacy = element
+                .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
+                .ok()
+                .flatten();
             add_legacy_checked_state(&mut snapshot.states, legacy);
         }
-        let mut ancestors = (!ancestry.out_of_time).then(|| {
+        let ancestors = (!ancestry.out_of_time).then(|| {
             let tail = match (ancestry.met_known, &self.last) {
                 (Some(met), Some(last)) => reused_ancestors(&last.ancestors, met),
                 _ => Vec::new(),
@@ -656,33 +642,12 @@ impl FocusReader {
         if let Some(facts) = &ancestors {
             log_ancestor_facts(path, facts);
         }
-        // The console host's provider answers no native window handle for
-        // its window inside a remote operation (only the client side's
-        // window proxy supplies it), so for a windowless element whose read
-        // named no window, the nearest window found for the acceptance test
-        // stands (3f4dbb4), and the ancestor that is that window is given
-        // its handle, which the outpost finds its own copy of the element
-        // from.
-        let mut window = ancestry.window;
-        if window.is_none() && hwnd == 0 {
-            window = Some(nearest);
-            if let (Some(found), Some(ancestors)) = (window, ancestors.as_mut()) {
-                self.mark_window(found, ancestors);
-            }
-        }
-        if ancestry.met_known.is_none()
-            && !ancestry.depth_limited
-            && let Some(facts) = ancestors.as_mut()
-        {
-            let outermost = ancestry.ancestors.last().map_or_else(
-                || Live::new(element.clone()),
-                |outermost| outermost.live().clone(),
-            );
-            self.reach_the_top_level(&outermost, hwnd, facts);
-        }
-        if let Some(facts) = &ancestors {
-            log_ancestor_facts("sent", facts);
-        }
+        // The classic walk's steps go through the client side, whose window
+        // proxy gives a window's element its handle and title, the console
+        // window's included (16.4), and it walks to the desktop's root or
+        // the process boundary itself; the window is the nearest window
+        // found for the acceptance test when the walk named none.
+        let window = ancestry.window.or(Some(nearest));
         self.last = Some(LastFocus {
             runtime_id: snapshot.runtime_id.clone(),
             element: element.clone(),
@@ -856,10 +821,12 @@ impl FocusReader {
         // usual identity; that NVDA, alpha-57645, read the event's cached
         // value, and NVDA has read it plainly since its #20764, as here,
         // sections 16.8 and 16.9); the listener took them and "terminal"
-        // was said twice. So the check must be this plain read,
-        // here, before the read; the remote operation keeps its own check,
-        // for a focus that moves on while it is read
-        // (`docs/design/focus-pipeline.md`, section 16.8).
+        // was said twice (`docs/design/focus-pipeline.md`, section 16.8).
+        // So the check must be this plain read, here, before the read,
+        // which does not make it again: a focus that moves on while it is
+        // read is followed by the focus event of where it went
+        // (`docs/design/listener-without-connections.md`, section 3, step
+        // 8).
         if matches!(subject.has_keyboard_focus(), Ok(false)) {
             return Err("its element no longer has the keyboard focus");
         }
@@ -955,156 +922,6 @@ impl FocusReader {
             ?same_as_current,
             "UIA focus sender"
         );
-    }
-
-    /// Completes `facts`, the ancestors a read found, nearest first, ending
-    /// at `outermost` (the focus itself, whose own window is `hwnd`, when
-    /// there are none), up to the top-level window of the focus's process,
-    /// as NVDA's raw-view walk reaches it, but never across the process
-    /// boundary. A remote operation's walk ends at the top-level element of
-    /// the focus's own process, whose parent the program reports as null;
-    /// in the Settings app that is the content's window, inside the frame
-    /// window of another process (`ApplicationFrameHost`'s), where the
-    /// chain ends, and the outpost continues it from the frame through
-    /// MSAA (`docs/design/listener-without-connections.md`, section 3,
-    /// step 11). When the outermost ancestor is neither a top-level window
-    /// nor below the boundary, the walk goes on the classic way, one tree
-    /// walker step per ancestor, until the desktop root, an ancestor whose
-    /// window's parent, or visible owner, another process serves
-    /// ([`verbatim_uia::parent_across_process_boundary`]), or an ancestor
-    /// of the focus
-    /// before, whose own ancestors are then reused. An outermost ancestor
-    /// that is a top-level window, or below the boundary, costs no call; a
-    /// windowless one, one call, which finds the root.
-    fn reach_the_top_level(&self, outermost: &Live, hwnd: isize, facts: &mut Vec<UiaAncestorFact>) {
-        let window = facts.last().map_or(hwnd, |fact| fact.hwnd);
-        if window != 0 && top_level_of(window) == window {
-            tracing::debug!(
-                window,
-                "UIA focus ancestors: the outermost is a top-level window; no classic walk"
-            );
-            return;
-        }
-        if window != 0 && verbatim_uia::parent_across_process_boundary(window).is_some() {
-            tracing::debug!(
-                window,
-                "UIA focus ancestors: the outermost is below the process boundary; no classic walk"
-            );
-            return;
-        }
-        let (Ok(request), Ok(walker), Ok(root)) = (
-            self.uia.request::<Ancestor>(Ancestor::all_on()),
-            self.uia.raw_view_walker(),
-            self.uia.root_element(),
-        ) else {
-            return;
-        };
-        let root = verbatim_uia::runtime_id(&root);
-        let known: Vec<&[i32]> = self
-            .last
-            .iter()
-            .flat_map(|last| {
-                std::iter::once(last.runtime_id.as_slice()).chain(
-                    last.ancestors
-                        .iter()
-                        .map(|ancestor| ancestor.snapshot.runtime_id.as_slice()),
-                )
-            })
-            .collect();
-        let limit = usize::try_from(MAX_ANCESTORS).unwrap_or(usize::MAX);
-        // A step up from this application's element into a window of
-        // another process, as from the Settings page's content into its
-        // frame in `ApplicationFrameHost`, returns UIA's window proxy after
-        // about two seconds when it arrives while a remote operation from
-        // another process waits to be evaluated in that process (a UIA
-        // defect, section 20.1): each step takes that process's lock, read
-        // once here from the top-level window, while the listener holds it.
-        let frame_lock = (window != 0)
-            .then(|| self.lock_up_into(top_level_of(window)))
-            .flatten();
-        let mut current = outermost.clone();
-        while facts.len() < limit {
-            // A failed step, a provider that did not answer in time
-            // included, ends the walk with what it has.
-            let step = || current.walk(&walker, Direction::Parent, &request);
-            let stepped = match &frame_lock {
-                Some(lock) => verbatim_uia::lock::guarded_by(lock, "a classic walk step up", step),
-                None => step(),
-            };
-            let parent = match stepped {
-                Ok(parent) => parent,
-                Err(error) => {
-                    tracing::debug!(%error, "UIA focus ancestors: a classic walk step failed");
-                    break;
-                }
-            };
-            let runtime_id = parent.runtime_id();
-            if runtime_id == root {
-                tracing::debug!("UIA focus ancestors: the classic walk reached the root");
-                break;
-            }
-            let fact = ancestor_fact(&parent);
-            log_ancestor_fact("classic walk", &fact);
-            let below_the_boundary =
-                fact.hwnd != 0 && verbatim_uia::parent_across_process_boundary(fact.hwnd).is_some();
-            facts.push(fact);
-            if let Some(met) = known
-                .iter()
-                .position(|known| *known == runtime_id.as_slice())
-            {
-                if let Some(last) = &self.last {
-                    facts.extend(reused_ancestors(&last.ancestors, met));
-                }
-                break;
-            }
-            if below_the_boundary {
-                tracing::debug!(
-                    "UIA focus ancestors: the classic walk reached the process boundary"
-                );
-                break;
-            }
-            current = parent.live().clone();
-        }
-    }
-
-    /// Gives the ancestor that is window `hwnd`'s own element its handle,
-    /// read as the window's element's runtime id: one call, through the
-    /// client side's window proxy, whose properties and content flag then
-    /// replace the in-provider read's (16.4: the console window's title).
-    /// Nothing changes when the window's element cannot be read or is no
-    /// ancestor read.
-    fn mark_window(&self, hwnd: isize, ancestors: &mut [UiaAncestorFact]) {
-        let Ok(request) = self.uia.request::<Ancestor>(Ancestor::all_on()) else {
-            return;
-        };
-        let Ok(window) = self.uia.window_element(hwnd, &request) else {
-            tracing::debug!(hwnd, "mark_window: the window's element could not be read");
-            return;
-        };
-        let runtime_id = window.runtime_id();
-        if let Some(ancestor) = ancestors
-            .iter_mut()
-            .find(|ancestor| ancestor.hwnd == 0 && ancestor.snapshot.runtime_id == runtime_id)
-        {
-            // What the in-provider read gave this element is not what a
-            // client sees: the console host's provider names no window, and
-            // the client side's window proxy supplies its title, as NVDA's
-            // raw-view parent read through the proxy has it
-            // (`NVDAObjects/UIA/__init__.py` 2136 to 2141). So the window's
-            // properties and standing as content are taken from this
-            // client-side read, already made.
-            let read = window.read();
-            ancestor.hwnd = hwnd;
-            ancestor.snapshot = fact_of(read.node.parts(runtime_id));
-            ancestor.content = read.is_control_and_content();
-            log_ancestor_fact("mark_window", ancestor);
-        } else {
-            tracing::debug!(
-                hwnd,
-                ?runtime_id,
-                "mark_window: no ancestor read is the window's element"
-            );
-        }
     }
 }
 

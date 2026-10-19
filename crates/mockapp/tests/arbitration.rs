@@ -73,7 +73,8 @@ fn a_busy_uia_window_is_asked_once_and_its_no_kept() {
         CallCounts {
             uia: 0,
             msaa: 0,
-            window_messages: 1
+            window_messages: 1,
+            connections: 1,
         },
         "the window is asked once"
     );

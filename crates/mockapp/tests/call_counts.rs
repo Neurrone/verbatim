@@ -106,12 +106,23 @@ const YES: usize = 3;
 /// question's description.
 const QUESTION: &str = "Remove the theme Mine? This cannot be undone. Its sounds go with it.";
 
-/// Calls by kind, in the order `CallCounts` lists them.
+/// Calls by kind, in the order `CallCounts` lists them, none of them a
+/// connection by handle.
 fn calls(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
     CallCounts {
         uia,
         msaa,
         window_messages,
+        connections: 0,
+    }
+}
+
+/// `counts`, of which `connections` connected to a window by its handle
+/// (`CallCounts::connections`).
+fn connecting(counts: CallCounts, connections: u32) -> CallCounts {
+    CallCounts {
+        connections,
+        ..counts
     }
 }
 
@@ -225,7 +236,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, cold",
         &cost,
-        calls(0, 30, 1),
+        connecting(calls(0, 30, 1), 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
@@ -338,7 +349,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the previous list item, the probe renewed",
         &cost,
-        calls(0, 33, 1),
+        connecting(calls(0, 33, 1), 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
@@ -539,7 +550,7 @@ fn msaa_state_change_costs_exactly() {
     ratchet.check(
         "MSAA state change on the focus, the probe renewed",
         &cost,
-        calls(0, 2, 1),
+        connecting(calls(0, 2, 1), 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
@@ -665,7 +676,7 @@ fn msaa_dialog_text_costs_exactly() {
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
-        calls(0, 44, 1),
+        connecting(calls(0, 44, 1), 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
@@ -1226,12 +1237,19 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// `FragmentRoot` hits, as `uia_event_registrations_cost_exactly` pins the
 /// registration alone. It makes no call the worker counts.
 ///
-/// Since stage A step 6 the focus listener reads the focus, one remote
-/// operation, and the outpost reads nothing before it reports it: its
-/// only call before the report is the first focus's probe of the window,
-/// a window message. Its walk to its own copy of the element comes after
-/// the report, where the worker's count does not reach, and is seen in
-/// the provider calls alone.
+/// The focus listener reads the focus, and the outpost reads nothing
+/// before it reports it. Its walk to its own copy of the element comes
+/// after the report, where the worker's count does not reach, and is seen
+/// in the provider calls alone; that walk is a remote operation or the
+/// classic walk as the test's `remote` says, which governs the outpost
+/// only. The listener reads every focus the classic way, with no remote
+/// operation and no connection, and without asking again for the keyboard
+/// focus and the nearest window it has just read
+/// (`docs/design/listener-without-connections.md`, section 3, step 8): the
+/// refreshed cache and one step per ancestor, so a steady-state focus
+/// costs 5 calls by both of the outpost's paths, where the listener's one
+/// remote operation made 4 and its classic read with the two repeated
+/// calls 7.
 ///
 /// Since the listener judges a repeat and tests acceptance before it reads
 /// a focus (`docs/design/focus-pipeline.md`, sections 16.2 and 16.3), each
@@ -1243,83 +1261,83 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
 /// `WM_GETOBJECT`, 14 `ProviderOptions`, 6 `GetPropertyValue`, 4
 /// `HostRawElementProvider`, 5 `Navigate`, and 1 `FragmentRoot`, and for
 /// the list's item 1, 10, 4, 3, 3, and 1: so the cold focus rose by one
-/// call and the others by two, by both read paths alike.
+/// call and the others by two.
 ///
 /// The listener's probe of the window, at the cold focus, is the raw probe
 /// (`docs/design/listener-without-connections.md`, section 3, step 4): one
 /// `WM_GETOBJECT` that mockapp answers, and no UIA connection, which as
 /// `UiaHasServerSideProvider` cost mockapp one `WM_GETOBJECT`, five
 /// `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`
-/// more, by both read paths alike.
+/// more.
 fn uia_focus_changes_cost_exactly_remote() {
     uia_focus_changes(
         true,
         &FocusCosts {
             cold: (
-                calls(3, 0, 1),
-                0,
-                &[
-                    ("WM_GETOBJECT", 13),
-                    ("ProviderOptions", 83),
-                    ("GetPatternProvider", 55),
-                    ("GetPropertyValue", 118),
-                    ("HostRawElementProvider", 36),
-                    ("Navigate", 27),
-                    ("GetRuntimeId", 13),
-                    ("BoundingRectangle", 5),
-                    ("FragmentRoot", 17),
-                ],
-            ),
-            steady: (
-                calls(4, 0, 0),
-                0,
-                &[
-                    ("WM_GETOBJECT", 11),
-                    ("ProviderOptions", 80),
-                    ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 99),
-                    ("HostRawElementProvider", 35),
-                    ("Navigate", 26),
-                    ("GetRuntimeId", 14),
-                    ("BoundingRectangle", 4),
-                    ("FragmentRoot", 18),
-                ],
-            ),
-            // The listener's `Execute`, its probe answered from the kept
-            // verdict; and the outpost's `focus_path::find`, its lookup of the
-            // route's window and its remote operation.
-            steady_locks: (1, 2),
-            // The list's first selected item through `SelectionPattern2`.
-            into_list: (
-                calls(4, 0, 0),
+                calls(6, 0, 1),
                 0,
                 &[
                     ("WM_GETOBJECT", 12),
-                    ("ProviderOptions", 72),
-                    ("GetPatternProvider", 56),
-                    ("GetPropertyValue", 115),
-                    ("HostRawElementProvider", 32),
-                    ("Navigate", 23),
+                    ("ProviderOptions", 76),
+                    ("GetPatternProvider", 55),
+                    ("GetPropertyValue", 112),
+                    ("HostRawElementProvider", 33),
+                    ("Navigate", 22),
                     ("GetRuntimeId", 11),
                     ("BoundingRectangle", 5),
-                    ("FragmentRoot", 15),
+                    ("FragmentRoot", 19),
+                ],
+            ),
+            steady: (
+                calls(5, 0, 0),
+                0,
+                &[
+                    ("WM_GETOBJECT", 10),
+                    ("ProviderOptions", 70),
+                    ("GetPatternProvider", 44),
+                    ("GetPropertyValue", 92),
+                    ("HostRawElementProvider", 31),
+                    ("Navigate", 20),
+                    ("GetRuntimeId", 12),
+                    ("BoundingRectangle", 4),
+                    ("FragmentRoot", 19),
+                ],
+            ),
+            // None of the listener's, whose read is steps from elements it
+            // holds; the outpost's `focus_path::find`, its lookup of the
+            // route's window and its remote operation.
+            steady_locks: (0, 2),
+            // The list's first selected item through `SelectionPattern2`.
+            into_list: (
+                calls(7, 0, 0),
+                0,
+                &[
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 71),
+                    ("GetPatternProvider", 57),
+                    ("GetPropertyValue", 110),
+                    ("HostRawElementProvider", 32),
+                    ("Navigate", 18),
+                    ("GetRuntimeId", 12),
+                    ("BoundingRectangle", 5),
+                    ("FragmentRoot", 20),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
-                calls(4, 0, 0),
+                calls(5, 0, 0),
                 0,
                 &[
-                    ("WM_GETOBJECT", 11),
-                    ("ProviderOptions", 86),
+                    ("WM_GETOBJECT", 10),
+                    ("ProviderOptions", 76),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 100),
-                    ("HostRawElementProvider", 37),
-                    ("Navigate", 28),
-                    ("GetRuntimeId", 15),
+                    ("GetPropertyValue", 93),
+                    ("HostRawElementProvider", 33),
+                    ("Navigate", 22),
+                    ("GetRuntimeId", 13),
                     ("BoundingRectangle", 4),
-                    ("FragmentRoot", 19),
+                    ("FragmentRoot", 20),
                     ("IsSelected", 2),
                 ],
             ),
@@ -1332,73 +1350,72 @@ fn uia_focus_changes_cost_exactly_classic() {
         false,
         &FocusCosts {
             cold: (
-                calls(7, 0, 1),
+                calls(6, 0, 1),
                 0,
                 &[
                     ("WM_GETOBJECT", 12),
                     ("ProviderOptions", 80),
                     ("GetPatternProvider", 77),
-                    ("GetPropertyValue", 150),
-                    ("HostRawElementProvider", 35),
+                    ("GetPropertyValue", 149),
+                    ("HostRawElementProvider", 34),
                     ("Navigate", 19),
                     ("GetRuntimeId", 11),
                     ("BoundingRectangle", 7),
-                    ("FragmentRoot", 23),
+                    ("FragmentRoot", 22),
                 ],
             ),
             steady: (
-                calls(7, 0, 0),
+                calls(5, 0, 0),
                 0,
                 &[
-                    ("WM_GETOBJECT", 11),
-                    ("ProviderOptions", 94),
+                    ("WM_GETOBJECT", 10),
+                    ("ProviderOptions", 80),
                     ("GetPatternProvider", 77),
-                    ("GetPropertyValue", 155),
-                    ("HostRawElementProvider", 41),
-                    ("Navigate", 22),
+                    ("GetPropertyValue", 148),
+                    ("HostRawElementProvider", 36),
+                    ("Navigate", 17),
                     ("GetRuntimeId", 14),
                     ("BoundingRectangle", 7),
-                    ("FragmentRoot", 28),
+                    ("FragmentRoot", 26),
                 ],
             ),
-            // The list's first selected item through `SelectionPattern2`'s
-            // `FirstSelectedItem`, fetched with the `Selection` pattern in
-            // one call, and its cache, one more (6 calls and 143 provider
-            // calls through the `Selection` pattern alone, before).
-            // The listener's `Execute`, its probe answered from the kept
-            // verdict, and none of the outpost's: its own copy of the element
+            // None of the listener's, and the outpost's lookup of the
+            // route's window: its own copy of the element
             // (`focus_path::find`) is a classic walk.
             steady_locks: (0, 1),
+            // The list's first selected item through `SelectionPattern2`'s
+            // `FirstSelectedItem`, fetched with the `Selection` pattern in
+            // one call, and its cache, one more.
             into_list: (
-                calls(8, 0, 0),
+                calls(7, 0, 0),
                 0,
                 &[
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 76),
                     ("GetPatternProvider", 79),
-                    ("GetPropertyValue", 148),
-                    ("HostRawElementProvider", 35),
+                    ("GetPropertyValue", 147),
+                    ("HostRawElementProvider", 34),
                     ("Navigate", 15),
                     ("GetRuntimeId", 13),
                     ("BoundingRectangle", 7),
-                    ("FragmentRoot", 25),
+                    ("FragmentRoot", 24),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
                 ],
             ),
             next_item: (
-                calls(7, 0, 0),
+                calls(5, 0, 0),
                 0,
                 &[
-                    ("WM_GETOBJECT", 11),
-                    ("ProviderOptions", 106),
+                    ("WM_GETOBJECT", 10),
+                    ("ProviderOptions", 92),
                     ("GetPatternProvider", 88),
-                    ("GetPropertyValue", 175),
-                    ("HostRawElementProvider", 47),
-                    ("Navigate", 24),
+                    ("GetPropertyValue", 168),
+                    ("HostRawElementProvider", 42),
+                    ("Navigate", 19),
                     ("GetRuntimeId", 17),
                     ("BoundingRectangle", 8),
-                    ("FragmentRoot", 33),
+                    ("FragmentRoot", 31),
                     ("IsSelected", 3),
                 ],
             ),
@@ -1473,6 +1490,48 @@ fn uia_repeated_focus_costs_exactly() {
     app.quit();
 }
 
+/// The focus listener makes no connection to an application's window
+/// (`docs/design/listener-without-connections.md`, sections 2 and 7): its
+/// real reader judges and reads a cold focus in a mockapp window, its
+/// window probed, then a steady-state focus, a focus into a list and one to
+/// a list item, and the calls it counted on this thread include no call
+/// that connects to a window by its handle (`CallCounts::connections`).
+/// The count, not the absence of a log line, is the evidence. With the
+/// window's element looked up by its handle inside the read, as the
+/// listener's `mark_window` once did, the count is 1 and the test fails.
+fn the_listener_makes_no_connection() {
+    let title = common::unique_title("mockapp-counts-listener-no-connection");
+    let mut app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    for (id, name) in [
+        ("first", "First"),
+        ("second", "Second"),
+        ("list", "Options"),
+        ("item1", "One"),
+    ] {
+        app.send(&format!("set-focus {id}"));
+        let focused = under_test.focused(hwnd);
+        assert_eq!(
+            focused.read().name.as_deref(),
+            Some(name),
+            "the element mockapp reports focused"
+        );
+        let (judged, listener_calls) = outpost.listener_read(&focused);
+        let verbatim_outpost::focus_read::Judged::Read(_) = &judged else {
+            panic!("the listener did not read the focus on {name}: {judged:?}");
+        };
+        assert_eq!(
+            listener_calls.connections, 0,
+            "the listener's connections reading the focus on {name}"
+        );
+        let _ = outpost.focus(judged.into_fact(0));
+    }
+    drop(outpost);
+    app.quit();
+}
+
 /// The listener's walks stop below the process boundary
 /// (`docs/design/listener-without-connections.md`, sections 3 and 7): one
 /// mockapp's UIA window is made the child of another mockapp's MSAA
@@ -1481,18 +1540,19 @@ fn uia_repeated_focus_costs_exactly() {
 /// is given that window, shown, as its owner (`GWLP_HWNDPARENT`, set from
 /// this process, which `GetWindow` with `GW_OWNER` then answers), as a
 /// dialog is owned by another process's window, under which UIA's raw view
-/// puts it. The listener's read of a focus in the child, by the remote
-/// program and `reach_the_top_level` and by the classic walk alike, ends
-/// its chain at the child's window and takes no step into the other
-/// process. The outpost then continues the chain from the parent or owner
-/// window's client area through MSAA. With either walk's boundary check
-/// removed, or the owner left out of it, the classic walk's step up into
-/// the other window shows in that window's calls, and without the owner
-/// the outpost's chain ends at the child's window. A focus-now query's read
-/// (`uia_remote_enrichment` by the remote program, the outpost's own walk
-/// classically) gives the same chain, continued through MSAA from the
-/// parent or owner; without the remote read's continuation from its
-/// outermost window, it ends at the child's window.
+/// puts it. The listener's read of a focus in the child, the classic walk
+/// whichever way the outpost reads, ends its chain at the child's window
+/// and takes no step into the other process. The outpost then continues
+/// the chain from the parent or owner window's client area through MSAA.
+/// With the walk's boundary check removed, or the owner left out of it,
+/// the walk's step up into the other window shows in that window's calls,
+/// and without the owner the outpost's chain ends at the child's window.
+/// A focus-now query's read (`uia_remote_enrichment` by the remote program,
+/// the outpost's own walk classically) gives the same chain, continued
+/// through MSAA from the parent or owner; without the remote read's
+/// continuation from its outermost window, it ends at the child's window.
+/// The classic focus-now read still steps up into the parent itself
+/// (`uia_ancestors`), which the parent's calls during the query show.
 ///
 /// The parent still receives 2 `WM_GETOBJECT`s while the listener reads,
 /// each with `UiaRootObjectId` and a nonzero wParam, the message a UIA
@@ -1531,16 +1591,12 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
 
         common::reset_hits(parent);
         let (judged, listener_calls) = outpost.listener_read(&focused);
-        // As a cold focus in a top-level window: the classic read takes
-        // two steps, to the group and to the child's window, and none to
-        // the desktop's root, where a top-level window's walk takes three.
-        let expected_calls = if remote {
-            calls(3, 0, 1)
-        } else {
-            calls(6, 0, 1)
-        };
+        // As a cold focus in a top-level window: the read takes two steps,
+        // to the group and to the child's window, and none to the
+        // desktop's root, where a top-level window's walk takes three.
         assert_eq!(
-            listener_calls, expected_calls,
+            listener_calls,
+            calls(5, 0, 1),
             "the listener's calls ({path})"
         );
         // UIA's client side sends a parent window 2 `WM_GETOBJECT`s as the
@@ -1571,11 +1627,11 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
 
         let reported = outpost.focus(judged.into_fact(0));
-        // The parent's probe, then its client area and the chain above it
-        // through MSAA.
+        // The parent's probe, a connection, then its client area and the
+        // chain above it through MSAA.
         assert_eq!(
             reported.calls,
-            calls(0, 9, 1),
+            connecting(calls(0, 9, 1), 1),
             "the outpost's calls ({path})"
         );
         assert_eq!(
@@ -1589,12 +1645,24 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
             "the outpost's chain ({path})"
         );
 
-        // A focus-now query's own read stops at the boundary too, and is
-        // continued from the parent or owner through MSAA.
+        // A focus-now query's own read gives the same chain, continued
+        // from the parent or owner through MSAA. The remote program stops
+        // at its process's top and is continued from there; the classic
+        // read (`uia_ancestors`) still steps up into the parent and is
+        // continued through MSAA from the parent's element, which the
+        // parent's calls show until the outposts stop below the boundary
+        // too (`docs/design/listener-without-connections.md`, section 10,
+        // step 7).
         outpost.read_focus_as(focused.live().element());
+        common::reset_hits(parent);
         let now = outpost
             .focus_now()
             .unwrap_or_else(|| panic!("the focus now has a focused control ({path})"));
+        assert_eq!(
+            common::read_hits(parent),
+            FOCUS_NOW_PARENT_HITS[usize::from(owned) * 2 + usize::from(remote)],
+            "the parent's calls during the focus-now query ({path})"
+        );
         assert_eq!(
             now.ancestors
                 .iter()
@@ -1614,6 +1682,65 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         parent_app.quit();
     }
 }
+
+/// The parent's or owner's provider calls during the boundary test's
+/// focus-now query, by case: child classic, child remote, owned classic,
+/// owned remote. The remote read is continued through MSAA from the
+/// parent's client area; the classic read steps up into the parent through
+/// UIA first (`uia_ancestors`), which costs it 4 `WM_GETOBJECT`s and more
+/// MSAA calls.
+const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 4] = [
+    &[
+        ("WM_GETOBJECT", 6),
+        ("accParent", 4),
+        ("get_accChild", 1),
+        ("get_accName", 2),
+        ("get_accValue", 4),
+        ("get_accDescription", 1),
+        ("get_accRole", 4),
+        ("get_accState", 6),
+        ("get_accHelp", 1),
+        ("get_accKeyboardShortcut", 2),
+        ("accLocation", 2),
+    ],
+    &[
+        ("WM_GETOBJECT", 2),
+        ("accParent", 2),
+        ("get_accChild", 1),
+        ("get_accName", 1),
+        ("get_accValue", 1),
+        ("get_accDescription", 1),
+        ("get_accRole", 2),
+        ("get_accState", 1),
+        ("get_accKeyboardShortcut", 1),
+        ("accLocation", 1),
+    ],
+    &[
+        ("WM_GETOBJECT", 5),
+        ("accParent", 4),
+        ("get_accChild", 1),
+        ("get_accName", 2),
+        ("get_accValue", 4),
+        ("get_accDescription", 1),
+        ("get_accRole", 4),
+        ("get_accState", 6),
+        ("get_accHelp", 1),
+        ("get_accKeyboardShortcut", 2),
+        ("accLocation", 2),
+    ],
+    &[
+        ("WM_GETOBJECT", 1),
+        ("accParent", 2),
+        ("get_accChild", 1),
+        ("get_accName", 1),
+        ("get_accValue", 1),
+        ("get_accDescription", 1),
+        ("get_accRole", 2),
+        ("get_accState", 1),
+        ("get_accKeyboardShortcut", 1),
+        ("accLocation", 1),
+    ],
+];
 
 /// A mockapp MSAA window for another mockapp's window to be placed below
 /// ([`place_below`]), and its handle; shown without being activated when
@@ -2056,6 +2183,7 @@ fn uia_selected_children_cost_exactly() {
                     out_of_time: None,
                     require_focus: true,
                     refresh: false,
+                    nearest_window: None,
                     lock_up_from: None,
                 },
                 true,
@@ -3728,6 +3856,10 @@ fn main() {
         (
             "uia_focus_chains_stop_below_the_process_boundary",
             uia_focus_chains_stop_below_the_process_boundary,
+        ),
+        (
+            "the_listener_makes_no_connection",
+            the_listener_makes_no_connection,
         ),
         (
             "uia_navigation_steps_cost_exactly",

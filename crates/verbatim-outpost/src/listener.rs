@@ -45,8 +45,8 @@
 //! that element (`docs/design/focus-pipeline.md`, section 12). The callback
 //! sends the application's outpost a marker at once and queues the element
 //! for its application's thread; the thread's read, or its drop, follows
-//! the marker by the same route. Each read is one remote operation, which
-//! UIA's call timeout ends, and a watchdog abandons a thread whose read
+//! the marker by the same route. Each read is a few calls on elements the
+//! listener holds, each of which UIA's call timeout ends, and a watchdog abandons a thread whose read
 //! runs past its deadline, so a slow or hung application holds only its
 //! own thread. One exposure is UIA's own and cannot be contained here: a
 //! hung window named in a focus `WinEvent` holds UIA's delivery of every
@@ -121,7 +121,6 @@ use verbatim_uia::map::{
 };
 use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subscription};
 
-use crate::OutpostOptions;
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
@@ -731,8 +730,6 @@ struct Listener {
 /// and read from its own element ([`FocusReader`]), and what became of it
 /// sent to its application's outpost behind its marker.
 struct UiaFocusReading {
-    /// Whether reads may use remote operations ([`OutpostOptions`]).
-    remote: bool,
     outgoing: Arc<Outgoing>,
     /// The last focus any reading thread accepted, which they share.
     last_accepted: LastAccepted,
@@ -756,7 +753,7 @@ impl Reading for UiaFocusReading {
     type Reader = FocusReader;
 
     fn reader(&self, pid: Pid) -> Option<FocusReader> {
-        match FocusReader::new(self.remote, self.last_accepted.clone()) {
+        match FocusReader::new(self.last_accepted.clone()) {
             Ok(mut reader) => {
                 reader.set_app_locks(pid, Arc::clone(&self.locks));
                 Some(reader)
@@ -832,8 +829,7 @@ impl Listener {
     /// The applications in `hooks_in` have outposts with their own hooks
     /// in already: none of their `WinEvent`s is forwarded, and each outpost
     /// is told so first, ending a hand-over the listener this one replaces
-    /// may have left unfinished. `options` says whether UIA focus reads
-    /// may use remote operations.
+    /// may have left unfinished.
     ///
     /// # Errors
     ///
@@ -842,7 +838,6 @@ impl Listener {
         sender: Sender<Waiting>,
         ignored: IgnoredProcesses,
         hooks_in: &[(Pid, OutpostId)],
-        options: OutpostOptions,
     ) -> io::Result<Self> {
         let outgoing = Arc::new(Outgoing::new(sender, ignored)?);
         // Every event this listener's hook takes in is raised after the
@@ -856,7 +851,6 @@ impl Listener {
         let locks = Arc::new(AppLocks::default());
         let readers = Arc::new(Readers::with_locks(
             UiaFocusReading {
-                remote: options.remote_operations,
                 outgoing: Arc::clone(&outgoing),
                 last_accepted: last_accepted.clone(),
                 locks: Arc::clone(&locks),
@@ -1447,8 +1441,7 @@ fn process_of_thread(thread: u32) -> Option<u32> {
 /// to shut down or its command pipe ends, after a clean shutdown that
 /// waits for every write in flight. Both ends must be overlapped.
 /// `ignored` names the processes whose facts are dropped, `hooks_in` the
-/// applications whose outposts have their own hooks in, and `options` says
-/// whether UIA focus reads may use remote operations.
+/// applications whose outposts have their own hooks in.
 ///
 /// # Errors
 ///
@@ -1459,10 +1452,9 @@ pub fn run_listener(
     pipe_out: OwnedHandle,
     ignored: IgnoredProcesses,
     hooks_in: &[(Pid, OutpostId)],
-    options: OutpostOptions,
 ) -> io::Result<()> {
     let (mut io, sender) = ChildIo::new(pipe_in, pipe_out, Waiting::default())?;
-    let listener = Listener::new(sender.clone(), ignored, hooks_in, options)?;
+    let listener = Listener::new(sender.clone(), ignored, hooks_in)?;
     // This thread is the listener's I/O thread from here on.
     prioritize_role("listener I/O", IO_PRIORITY);
     let served = io.serve(&sender, |body| {
