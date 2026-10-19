@@ -101,3 +101,33 @@ Step 6 makes the classic read the listener's only read; both paths behave alike 
 - A focus below any parent window of another process, the Settings frame included, is dropped when the parent's UI thread is busy for longer than the connection timeout.
 
 Both come from the listener holding, or being handed, the element of a window whose parent is another process's. Recommended: the listener stops its walks one step lower, at the last element below the child window's own element, and takes the nearest window from a local call (the event's window, or `GetAncestor` from it) rather than from UIA, measured with this experiment's harness and the boundary test for the parent's count of `WM_GETOBJECT`s, to be zero; if UIA still sends the messages when it hands over the event's sender itself, the alternative is accepting both effects and recording them in decision 13 and risk 14 with these figures.
+
+## The candidate fix: the listener stops below the child window's element
+
+Run on 2026-10-19 at 97f6ee2a, same machine, harness and fixtures, classic path only, Verbatim's 5-second timeouts.
+
+### The change tested
+
+`stop-below-the-window.patch` applies to 97f6ee2a on its own (it contains the earlier patch's harness, instrument and test, plus the change) and was removed from the working tree after the runs. With `VERBATIM_SCRATCH_STOP_AFTER=1` set:
+
+- `focus_ancestry_classic` stops once it has read that many ancestors, marking the walk complete, so it never steps to the child window's element and makes no nearest-window lookup.
+- The listener's reader takes the nearest window from the event's focus window (`BC_FOCUS_WINDOW`, C's handle, passed as the `focus_window` the listener reads locally), not from `NormalizeElementBuildCache`, and skips `reach_the_top_level` and `mark_window`, both of which would obtain the window's element.
+- The test's provider arms without an operation no longer wait for `stall message arrived`, since nothing reaches the stalled thread; with `BC_OUTPOST` set, after the listener's read and before the release, the test process times `window_live` on C's window (`ElementFromHandle` with a cache request), standing for the outpost of C's application continuing the chain from the window's element.
+
+The stop is a fixed depth, 1 (the `Settings` pane, whose parent is C's window element), because no UIA client call tells which element's parent is a window's element without returning that element. A probe run first found: the raw-view step from the focus to `Settings`, and reading `Settings`'s name, sent P nothing; the step from `Settings` to C's window element sent P 1 `WM_GETOBJECT` without a provider and 2 with one; `ElementFromHandle` on C's window sent the same. The runtime ids give no depth either: `[42, C, 4, 2]` for the focus, `[42, C, 4, 1]` for `Settings`, `[42, C]` for the window. So a shipping rule needs another source for where to stop; finding it is open.
+
+### Results
+
+Commands: the binary with `VERBATIM_SCRATCH_STOP_AFTER=1 BC_PATHS=classic BC_TRIALS=10 BC_ARMS=control,queued-short,busy-short,busy-long` into `fix.txt`, and with `BC_OUTPOST=1 BC_TRIALS=5 BC_ARMS=queued-short,busy-short` into `fix-outpost.txt`; `python -I fix_summary.py fix.txt fix-outpost.txt` groups them. "During the read" counts P's `WM_GETOBJECT`s timed between the read's start and its return.
+
+In every trial of both files, 90 of 90, the listener's read made 4 UIA calls and 1 window message (the raw probe, to C's window), returned the chain `Settings` alone, and P took no `WM_GETOBJECT` during the read.
+
+Case 1, the parent without a provider: control 2.0 to 2.6 ms (median 2.3); queued-short 1.8 to 3.0 ms (median 2.1); busy-short 1.9 to 2.5 ms (median 2.1); busy-long 1.9 to 2.5 ms (median 2.2). In the held arms P was still held when the read returned, and was released then (the release comes when the read returns or at 300 ms, whichever is first). P took nothing after the release in the busy arms, and 2 messages in the queued arm, O's operation's.
+
+Case 2, the parent with a provider: control 2.1 to 2.4 ms (median 2.3); queued-short 2.0 to 2.4 ms (median 2.1); busy-short 1.9 to 2.5 ms (median 2.2); busy-long 2.1 to 2.4 ms (median 2.2). P took nothing after the release in the busy arms and 1 message, O's operation's, in the queued arm; its stalled thread received no message from the listener.
+
+The outpost's read of C's window element, made while P was held (5 trials each): case 1, queued-short 299.7 to 312.3 ms and busy-short 305.1 to 314.5 ms, each ending at the release; case 2, busy-short 301.1 to 313.5 ms, ending at the release, and queued-short 5,299.8 to 5,329.2 ms (median 5,307.0), the release and then one connection timeout. The listener's reads in those trials were 1.9 to 2.6 ms.
+
+### Conclusion
+
+Pass, in mockapp: once the listener never obtains the child window's element, P takes no `WM_GETOBJECT` during its read, in both cases, and the read takes about 2 ms whether P is free, busy, busy with a remote operation queued, or busy longer than the connection timeout; it no longer drops the focus. The wait moves to whichever client obtains the window's element next: an outpost reading it waits for P's thread, and, with a provider and a queued operation, one connection timeout more, as the listener did before. The window's own element, with its name (here "Mockapp Counts Fixture"), is no longer in the listener's chain, so it would have to come from the outpost of the child's application, which then bears the wait. Not measured: the remote path, a way to find the stop without a fixed depth, and MSAA's read of the window (`AccessibleObjectFromWindow` on C's window), which might reach the name without sending P anything.

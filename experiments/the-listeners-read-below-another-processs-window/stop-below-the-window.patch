@@ -1,0 +1,725 @@
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index 32dfcbc2..445f65d1 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -33,6 +33,10 @@ tracing-subscriber.workspace = true
+ name = "app_lock"
+ harness = false
+ 
++[[test]]
++name = "boundary_collision"
++harness = false
++
+ [[test]]
+ name = "arbitration"
+ harness = false
+diff --git a/crates/mockapp/src/uia_window.rs b/crates/mockapp/src/uia_window.rs
+index 9ec0e331..0a0674f7 100644
+--- a/crates/mockapp/src/uia_window.rs
++++ b/crates/mockapp/src/uia_window.rs
+@@ -83,6 +83,7 @@ unsafe extern "system" fn wnd_proc(
+     lparam: LPARAM,
+ ) -> LRESULT {
+     if msg == WM_GETOBJECT {
++        crate::window::log_get_object("uia_window", hwnd, wparam, lparam);
+         // `idObject` is 32 bits, zero-extended into `lParam`, as the host
+         // window's procedure reads it.
+         #[expect(
+diff --git a/crates/mockapp/src/window.rs b/crates/mockapp/src/window.rs
+index 8ca7cdf3..6b45bf25 100644
+--- a/crates/mockapp/src/window.rs
++++ b/crates/mockapp/src/window.rs
+@@ -243,6 +243,26 @@ fn register_class(
+     }
+ }
+ 
++/// Experiment instrument (boundary collision, 2026-10-19): appends each
++/// `WM_GETOBJECT` this thread takes, with the time it was taken, to
++/// `getobject-<pid>.log` in `MOCKAPP_GETOBJECT_LOG_DIR`, when that is set.
++pub(crate) fn log_get_object(label: &str, hwnd: HWND, wparam: WPARAM, lparam: LPARAM) {
++    let Some(dir) = std::env::var_os("MOCKAPP_GETOBJECT_LOG_DIR") else {
++        return;
++    };
++    let path = std::path::Path::new(&dir).join(format!("getobject-{}.log", std::process::id()));
++    let us = std::time::SystemTime::now()
++        .duration_since(std::time::UNIX_EPOCH)
++        .map_or(0, |d| d.as_micros());
++    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
++        let _ = writeln!(
++            file,
++            "{us} {label} hwnd={:#x} wparam={:#x} lparam={}",
++            hwnd.0 as usize, wparam.0, lparam.0 as i32
++        );
++    }
++}
++
+ /// # Safety
+ ///
+ /// Must only be installed as a window procedure via [`RegisterClassExW`];
+@@ -255,6 +275,7 @@ unsafe extern "system" fn wnd_proc(
+ ) -> LRESULT {
+     match msg {
+         WM_GETOBJECT => {
++            log_get_object("host", hwnd, wparam, lparam);
+             hits::hit(hits::Method::GetObject);
+             // SAFETY: `GWLP_USERDATA` was set right after `CreateWindowExW`
+             // and never cleared, so any `WM_GETOBJECT` reaching this window
+diff --git a/crates/mockapp/tests/boundary_collision.rs b/crates/mockapp/tests/boundary_collision.rs
+new file mode 100644
+index 00000000..ccc2fdeb
+--- /dev/null
++++ b/crates/mockapp/tests/boundary_collision.rs
+@@ -0,0 +1,539 @@
++//! Experiment (2026-10-19), not a test: the listener's read of a focus in a
++//! child window whose parent window belongs to another process, while that
++//! process has another process's remote operation queued behind its busy
++//! UI thread, against the same read with nothing queued
++//! (`docs/design/listener-without-connections.md`, decision 13, risk 14).
++//!
++//! Roles: P, the parent mockapp; C, the child mockapp, its UIA window made
++//! P's window's child with `SetParent`; this process, the listener
++//! (`OutpostUnderTest::listener_read`); O, this binary run again with
++//! `BC_ROLE` set, a UIA client of its own that plays an outpost of P's
++//! application: it connects to P's UIA window, sets UIA up there with a
++//! first remote operation, then, in a queued trial, sends a second while
++//! P's window thread is held.
++//!
++//! Case "noprovider": P is `boundary_win32_host.json` on the `win32`
++//! backend, a top-level window with no UIA provider holding a UIA child
++//! window on the same thread, which O's operation goes into; the thread is
++//! held by mockapp's `hold` in O's plain `Name` read of that window.
++//! Case "provider": P is `small.json` on the `uia` backend; the thread is
++//! stalled by `stall-after-focus-read 1` after O's plain
++//! `HasKeyboardFocus` read, and `stall message arrived` shows O's operation
++//! reached the thread.
++//!
++//! Each queued trial releases the hold when the listener's read returns or
++//! after `CAP`, whichever is first. Output lines go to the file `BC_OUT`.
++
++mod common;
++#[path = "common/harness.rs"]
++mod harness;
++
++use std::io::{BufRead as _, BufReader, Write as _};
++use std::process::{Command, Stdio};
++use std::sync::mpsc;
++use std::time::Duration;
++
++use common::outpost::OutpostUnderTest;
++use verbatim_outpost::OutpostOptions;
++use verbatim_outpost::focus_read::Judged;
++use verbatim_uia::{Cached, ListenerEvent, Uia};
++use verbatim_uia_rops::Builder;
++use windows::Win32::Foundation::HWND;
++use windows::Win32::System::Variant::VARIANT;
++use windows::Win32::UI::Accessibility::{
++    IUIAutomationElement, TreeScope_Descendants, UIA_HasKeyboardFocusPropertyId,
++    UIA_NamePropertyId, UIA_PROPERTY_ID,
++};
++use windows::core::{AgileReference, w};
++
++const ROLE: &str = "BC_ROLE";
++const CAP: Duration = Duration::from_secs(15);
++
++fn out(line: &str) {
++    let path = std::env::var("BC_OUT").expect("BC_OUT");
++    let mut file = std::fs::OpenOptions::new()
++        .create(true)
++        .append(true)
++        .open(path)
++        .expect("the output file");
++    writeln!(file, "{line}").expect("written");
++}
++
++fn say(line: &str) {
++    let mut stdout = std::io::stdout().lock();
++    let _ = writeln!(stdout, "{line}");
++    let _ = stdout.flush();
++}
++
++fn name_op(element: &IUIAutomationElement) -> Result<String, String> {
++    let mut b = Builder::new();
++    let e = b.import_element(element);
++    let name = b.property(e, UIA_NamePropertyId.0);
++    let s = b.stringify(name);
++    let s = b.add_to_results(s);
++    let outcome = b.finish().execute().map_err(|e| format!("{e:?}"))?;
++    outcome.get(s).map_err(|e| format!("{e:?}"))
++}
++
++/// O: commands on stdin, answers on stdout.
++fn run_helper() -> ! {
++    let _ = verbatim_uia::init_mta();
++    let uia = Uia::new().expect("O's client");
++    let mut element: Option<IUIAutomationElement> = None;
++    for line in std::io::stdin().lock().lines() {
++        let Ok(line) = line else { break };
++        let mut parts = line.split_whitespace();
++        match parts.next() {
++            Some("connect") => {
++                let hwnd: isize = parts.next().unwrap().parse().unwrap();
++                let start = std::time::Instant::now();
++                let live = uia.window_live(hwnd).expect("O's lookup");
++                let e = live.element().clone();
++                // SAFETY: a live element.
++                let name = unsafe { e.CurrentName() }.map(|n| n.to_string());
++                say(&format!(
++                    "connected {:.3} {name:?}",
++                    start.elapsed().as_secs_f64() * 1000.0
++                ));
++                element = Some(e);
++            }
++            Some("op") => {
++                let e = element.as_ref().unwrap();
++                say(&format!("op sent {}", common::now_us()));
++                let start = std::time::Instant::now();
++                let result = name_op(e);
++                say(&format!(
++                    "op done {} {:.3} {result:?}",
++                    common::now_us(),
++                    start.elapsed().as_secs_f64() * 1000.0
++                ));
++            }
++            Some("plainread") => {
++                let property: i32 = parts.next().unwrap().parse().unwrap();
++                let agile = AgileReference::new(element.as_ref().unwrap()).unwrap();
++                std::thread::spawn(move || {
++                    let _ = verbatim_uia::init_mta();
++                    let e = agile.resolve().unwrap();
++                    let start = std::time::Instant::now();
++                    // SAFETY: a live element.
++                    let value = unsafe { e.GetCurrentPropertyValue(UIA_PROPERTY_ID(property)) };
++                    say(&format!(
++                        "plainread done {} {:.3} {:?}",
++                        common::now_us(),
++                        start.elapsed().as_secs_f64() * 1000.0,
++                        value.map(|v| v.to_string())
++                    ));
++                });
++            }
++            _ => {}
++        }
++    }
++    harness_exit()
++}
++
++fn harness_exit() -> ! {
++    use windows::Win32::System::Threading::{GetCurrentProcess, TerminateProcess};
++    // SAFETY: ends this process, as the harness ends its own.
++    unsafe {
++        let _ = TerminateProcess(GetCurrentProcess(), 0);
++    }
++    std::process::exit(0)
++}
++
++struct Helper {
++    child: std::process::Child,
++    stdin: std::process::ChildStdin,
++    lines: mpsc::Receiver<String>,
++}
++
++impl Helper {
++    fn spawn() -> Self {
++        let mut child = Command::new(std::env::current_exe().unwrap())
++            .env(ROLE, "o")
++            .stdin(Stdio::piped())
++            .stdout(Stdio::piped())
++            .stderr(Stdio::inherit())
++            .spawn()
++            .expect("O");
++        let stdin = child.stdin.take().unwrap();
++        let stdout = child.stdout.take().unwrap();
++        let (tx, rx) = mpsc::channel();
++        std::thread::spawn(move || {
++            for line in BufReader::new(stdout).lines() {
++                let Ok(line) = line else { return };
++                if tx.send(line.trim().to_owned()).is_err() {
++                    return;
++                }
++            }
++        });
++        Self {
++            child,
++            stdin,
++            lines: rx,
++        }
++    }
++    fn send(&mut self, line: &str) {
++        writeln!(self.stdin, "{line}").unwrap();
++        self.stdin.flush().unwrap();
++    }
++    fn next(&self, what: &str, timeout: Duration) -> String {
++        self.lines
++            .recv_timeout(timeout)
++            .unwrap_or_else(|_| panic!("O did not say {what} within {timeout:?}"))
++    }
++}
++
++impl Drop for Helper {
++    fn drop(&mut self) {
++        let _ = self.child.kill();
++        let _ = self.child.wait();
++    }
++}
++
++fn focused(uia: &Uia, hwnd: HWND) -> Cached<ListenerEvent> {
++    let root = uia.window_live(hwnd.0 as isize).expect("C's root");
++    let condition = uia
++        .property_condition(UIA_HasKeyboardFocusPropertyId, &VARIANT::from(true))
++        .expect("a condition");
++    let request = uia
++        .request_fixed::<ListenerEvent>()
++        .expect("the listener's cache request");
++    root.find_first(TreeScope_Descendants, &condition, &request)
++        .expect("the search")
++        .expect("a focused element")
++}
++
++fn place_below(hwnd: HWND, parent: HWND) {
++    use windows::Win32::UI::WindowsAndMessaging::SetParent;
++    // SAFETY: two live windows of other processes.
++    unsafe { SetParent(hwnd, Some(parent)) }.expect("SetParent");
++}
++
++fn uia_child_of(parent: HWND) -> HWND {
++    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
++    // SAFETY: a live window; finds its child of mockapp's UIA window class.
++    unsafe { FindWindowExW(Some(parent), None, w!("VerbatimMockAppUiaWindow"), None) }
++        .expect("P's UIA child window")
++}
++
++fn rel(us: u64, t0: u64) -> String {
++    format!("{:.3}", (us as f64 - t0 as f64) / 1000.0)
++}
++
++#[expect(clippy::too_many_lines, reason = "a scratch experiment")]
++struct Arm {
++    name: &'static str,
++    /// The parent's thread held or stalled.
++    held: bool,
++    /// O's operation sent into the parent's process during the hold.
++    op: bool,
++    /// The hold released this long after the read starts, or once the read
++    /// returns if that is sooner.
++    release_after: Duration,
++}
++
++fn set_connection_timeout(ms: u32) {
++    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
++    use windows::Win32::UI::Accessibility::{CUIAutomation8, IUIAutomation2};
++    // SAFETY: creates a UIA client object; the timeout is process-wide.
++    let client: IUIAutomation2 =
++        unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }.unwrap();
++    // SAFETY: a live client.
++    unsafe { client.SetConnectionTimeout(ms) }.unwrap();
++}
++
++fn trial(case: &str, remote: bool, arm: &Arm, n: usize, log_dir: &std::path::Path) {
++    let queued = arm.held;
++    let provider = case == "provider";
++    let path = if remote { "remote" } else { "classic" };
++    let label = format!("{case}-{path}-{}-{n}", arm.name);
++    let ptitle = common::unique_title(&format!("bc-parent-{label}"));
++    let mut parent_app = if provider {
++        common::spawn("small.json", "uia", &ptitle)
++    } else {
++        common::spawn("boundary_win32_host.json", "win32", &ptitle)
++    };
++    let parent = common::find_window(&ptitle);
++    let target = if provider { parent } else { uia_child_of(parent) };
++
++    let ctitle = common::unique_title(&format!("bc-child-{label}"));
++    let mut app = common::spawn("counts.json", "uia", &ctitle);
++    let hwnd = common::find_window(&ctitle);
++    let uia = Uia::new().expect("the test's client");
++    let outpost = OutpostUnderTest::with_options(
++        &app,
++        OutpostOptions {
++            remote_operations: remote,
++        },
++    );
++    place_below(hwnd, parent);
++    app.send("set-focus first");
++    let focused = focused(&uia, hwnd);
++    // Process-wide, so a whole invocation runs at one value (`BC_CTO`),
++    // set after this trial's clients are made.
++    if let Some(ms) = std::env::var("BC_CTO").ok().and_then(|v| v.parse().ok()) {
++        set_connection_timeout(ms);
++    }
++
++    let mut o = Helper::spawn();
++    o.send(&format!("connect {}", target.0 as isize));
++    let connected = o.next("connected", Duration::from_secs(30));
++    o.send("op");
++    let _ = o.next("op sent", Duration::from_secs(30));
++    let warm = o.next("op done", Duration::from_secs(30));
++    common::reset_hits(parent);
++
++    let mut evidence = Vec::new();
++    let mut op_sent = None;
++    let watchdog = if queued {
++        if provider {
++            parent_app.send("stall-after-focus-read 1");
++            o.send(&format!("plainread {}", UIA_HasKeyboardFocusPropertyId.0));
++            parent_app.expect_line("stall started", String::new);
++            evidence.push(format!("P stall started at {}", common::now_us()));
++            let line = o.next("plainread done", Duration::from_secs(30));
++            evidence.push(format!("O {line}"));
++        } else {
++            parent_app.hold();
++            o.send(&format!("plainread {}", UIA_NamePropertyId.0));
++            let held = parent_app.held();
++            evidence.push(format!("P held {held} at {}", common::now_us()));
++        }
++        if arm.op {
++            o.send("op");
++            let sent = o.next("op sent", Duration::from_secs(30));
++            op_sent = sent.strip_prefix("op sent ").and_then(|s| s.parse::<u64>().ok());
++            if provider {
++                parent_app.expect_line("stall message arrived", String::new);
++                evidence.push(format!("P stall message arrived at {}", common::now_us()));
++            }
++        }
++        let mut stdin = parent_app.stdin_clone();
++        let (tx, rx) = mpsc::channel::<()>();
++        let release_after = arm.release_after;
++        let handle = std::thread::spawn(move || {
++            let capped = rx.recv_timeout(release_after).is_err();
++            let at = common::now_us();
++            writeln!(stdin, "release").unwrap();
++            stdin.flush().unwrap();
++            (at, capped)
++        });
++        Some((tx, handle))
++    } else {
++        None
++    };
++
++    unsafe { std::env::set_var("BC_FOCUS_WINDOW", (hwnd.0 as isize).to_string()) };
++    let t0 = common::now_us();
++    let (judged, calls) = outpost.listener_read(&focused);
++    let t1 = common::now_us();
++    let mut outpost_line = None;
++    if std::env::var_os("BC_OUTPOST").is_some() && queued && arm.release_after != CAP {
++        let t2 = common::now_us();
++        let got = uia.window_live(hwnd.0 as isize).map(|_| ());
++        let t3 = common::now_us();
++        outpost_line = Some(format!(
++            "outpost window element read: started {} ms, took {:.3} ms, {got:?}",
++            rel(t2, t0),
++            (t3 - t2) as f64 / 1000.0
++        ));
++    }
++    let mut released = None;
++    if let Some((tx, handle)) = watchdog {
++        let _ = tx.send(());
++        let (at, capped) = handle.join().unwrap();
++        released = Some((at, capped));
++        if provider
++            && !arm.op
++            && (std::env::var_os("VERBATIM_SCRATCH_STOP_AFTER").is_none() || outpost_line.is_some())
++        {
++            // The first message to reach the stalled thread is then the
++            // listener's.
++            parent_app.expect_line("stall message arrived", String::new);
++            evidence.push("P stall message arrived (no operation sent)".to_owned());
++        }
++        parent_app.expect_line("applied", String::new);
++    }
++    let mut o_lines = Vec::new();
++    if queued {
++        // The held plain read (no-provider case) and the operation, in
++        // either order.
++        let answers = usize::from(!provider) + usize::from(arm.op);
++        for _ in 0..answers {
++            o_lines.push(o.next("an answer", Duration::from_secs(30)));
++        }
++    }
++    let hits = common::read_hits(parent);
++
++    let chain = match &judged {
++        Judged::Read(read) => format!(
++            "read ancestors={:?}",
++            read.ancestors.as_deref().map(|a| a
++                .iter()
++                .map(|x| (x.snapshot.name.clone(), x.hwnd))
++                .collect::<Vec<_>>())
++        ),
++        other => format!("{other:?}"),
++    };
++    let log = std::fs::read_to_string(log_dir.join(format!("getobject-{}.log", parent_app.pid())))
++        .unwrap_or_default();
++    let getobjects: Vec<String> = log
++        .lines()
++        .filter_map(|l| {
++            let (us, rest) = l.split_once(' ')?;
++            let us: u64 = us.parse().ok()?;
++            Some(format!("{} {rest}", rel(us, t0)))
++        })
++        .collect();
++
++    out(&format!("=== {label}"));
++    out(&format!("O connect: {connected}; warm-up: {warm}"));
++    for e in &evidence {
++        out(&format!("evidence: {e} (rel t0 n/a)"));
++    }
++    if let Some(sent) = op_sent {
++        out(&format!("O op sent at {} ms rel read start", rel(sent, t0)));
++    }
++    out(&format!(
++        "listener read: {:.3} ms; calls {calls:?}; {chain}",
++        (t1 - t0) as f64 / 1000.0
++    ));
++    if let Some(line) = &outpost_line {
++        out(line);
++    }
++    if let Some((at, capped)) = released {
++        out(&format!(
++            "released at {} ms rel read start ({})",
++            rel(at, t0),
++            if capped { "at the cap" } else { "after the read returned" }
++        ));
++    }
++    for line in &o_lines {
++        let shown = line
++            .split_whitespace()
++            .nth(2)
++            .and_then(|us| us.parse::<u64>().ok())
++            .map_or(String::new(), |us| format!(" [at {} ms rel read start]", rel(us, t0)));
++        out(&format!("O {line}{shown}"));
++    }
++    out(&format!("P hits since before the hold: {hits:?}"));
++    for g in &getobjects {
++        out(&format!("P WM_GETOBJECT at {g}"));
++    }
++
++    drop(o);
++    drop(outpost);
++    app.quit();
++    parent_app.quit();
++}
++
++fn boundary_collision() {
++    common::init_com();
++    let log_dir = std::path::PathBuf::from(std::env::var("BC_LOG_DIR").expect("BC_LOG_DIR"));
++    // SAFETY: set before any thread that reads the environment is started
++    // by this test; inherited by the mockapps it starts.
++    unsafe { std::env::set_var("MOCKAPP_GETOBJECT_LOG_DIR", &log_dir) };
++    if std::env::var_os("BC_PROBE").is_some() {
++        probe(&log_dir);
++        return;
++    }
++    let trials: usize = std::env::var("BC_TRIALS")
++        .ok()
++        .and_then(|t| t.parse().ok())
++        .unwrap_or(10);
++    let cases = std::env::var("BC_CASES").unwrap_or_else(|_| "noprovider,provider".to_owned());
++    let paths = std::env::var("BC_PATHS").unwrap_or_else(|_| "classic,remote".to_owned());
++    let arms = std::env::var("BC_ARMS").unwrap_or_else(|_| {
++        "control,queued-short,busy-short,queued-long,busy-long".to_owned()
++    });
++    let short = Duration::from_millis(300);
++    let all = [
++        Arm { name: "control", held: false, op: false, release_after: short },
++        Arm { name: "queued-short", held: true, op: true, release_after: short },
++        Arm { name: "busy-short", held: true, op: false, release_after: short },
++        Arm { name: "queued-long", held: true, op: true, release_after: CAP },
++        Arm { name: "busy-long", held: true, op: false, release_after: CAP },
++    ];
++    let long_trials = trials.div_ceil(2);
++    for case in cases.split(',') {
++        for path in paths.split(',') {
++            for n in 1..=trials {
++                for arm in all.iter().filter(|a| arms.split(',').any(|x| x == a.name)) {
++                    let long = arm.release_after == CAP;
++                    if long && n > long_trials {
++                        continue;
++                    }
++                    trial(case, path == "remote", arm, n, &log_dir);
++                }
++            }
++        }
++    }
++}
++
++fn main() {
++    if std::env::var_os(ROLE).is_some() {
++        run_helper();
++    }
++    harness::run_isolated(&[("boundary_collision", boundary_collision)]);
++}
++
++fn p_count(log_dir: &std::path::Path, pid: u32) -> usize {
++    std::fs::read_to_string(log_dir.join(format!("getobject-{pid}.log")))
++        .unwrap_or_default()
++        .lines()
++        .count()
++}
++
++fn probe(log_dir: &std::path::Path) {
++    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
++    use windows::Win32::UI::Accessibility::{
++        CUIAutomation8, IUIAutomation, UIA_NativeWindowHandlePropertyId, UIA_RuntimeIdPropertyId,
++    };
++    for case in ["noprovider", "provider"] {
++        let provider = case == "provider";
++        let ptitle = common::unique_title(&format!("bc-probe-parent-{case}"));
++        let parent_app = if provider {
++            common::spawn("small.json", "uia", &ptitle)
++        } else {
++            common::spawn("boundary_win32_host.json", "win32", &ptitle)
++        };
++        let parent = common::find_window(&ptitle);
++        let ctitle = common::unique_title(&format!("bc-probe-child-{case}"));
++        let mut app = common::spawn("counts.json", "uia", &ctitle);
++        let hwnd = common::find_window(&ctitle);
++        let uia = Uia::new().unwrap();
++        place_below(hwnd, parent);
++        app.send("set-focus first");
++        let pid = parent_app.pid();
++        let c0 = p_count(log_dir, pid);
++        let focused = focused(&uia, hwnd);
++        let c1 = p_count(log_dir, pid);
++        let client: IUIAutomation =
++            unsafe { CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER) }.unwrap();
++        let req = unsafe { client.CreateCacheRequest() }.unwrap();
++        unsafe { req.AddProperty(UIA_RuntimeIdPropertyId) }.unwrap();
++        unsafe { req.AddProperty(UIA_NativeWindowHandlePropertyId) }.unwrap();
++        let walker = unsafe { client.RawViewWalker() }.unwrap();
++        let first = focused.live().element().clone();
++        let settings = unsafe { walker.GetParentElementBuildCache(&first, &req) }.unwrap();
++        let c2 = p_count(log_dir, pid);
++        let sname = unsafe { settings.CurrentName() }.map(|n| n.to_string());
++        let shwnd = unsafe { settings.CachedNativeWindowHandle() }.map(|h| h.0 as isize);
++        let c3 = p_count(log_dir, pid);
++        let w = unsafe { walker.GetParentElementBuildCache(&settings, &req) }.unwrap();
++        let c4 = p_count(log_dir, pid);
++        let whwnd = unsafe { w.CachedNativeWindowHandle() }.map(|h| h.0 as isize);
++        let wname = unsafe { w.CurrentName() }.map(|n| n.to_string());
++        let c5 = p_count(log_dir, pid);
++        let wfh = unsafe { client.ElementFromHandle(HWND(hwnd.0)) };
++        let c6 = p_count(log_dir, pid);
++        let rid = |e: &IUIAutomationElement| verbatim_uia::runtime_id(e);
++        out(&format!("runtime ids: first {:?} settings {:?} w {:?}", rid(&first), rid(&settings), rid(&w)));
++        out(&format!(
++            "probe {case}: C={:#x} find_first(C root)+{}; step First->{sname:?} hwnd={shwnd:?} +{} (+{} after its name); step Settings->W hwnd={whwnd:?} name={wname:?} +{} (+{} after its name); ElementFromHandle(C) ok={} +{}",
++            hwnd.0 as usize, c1 - c0, c2 - c1, c3 - c2, { let _ = c4; c4 - c3 }, c5 - c4, wfh.is_ok(), c6 - c5
++        ));
++        app.quit();
++        parent_app.quit();
++    }
++}
+diff --git a/crates/mockapp/tests/common/mod.rs b/crates/mockapp/tests/common/mod.rs
+index 1624eb48..cdaaca09 100644
+--- a/crates/mockapp/tests/common/mod.rs
++++ b/crates/mockapp/tests/common/mod.rs
+@@ -241,6 +241,13 @@ impl MockApp {
+             .unwrap_or_else(|error| panic!("mockapp did not take {line:?}: {error}"));
+     }
+ 
++    /// Experiment: a second handle to mockapp's stdin, for writing
++    /// `release` from another thread.
++    pub fn stdin_clone(&self) -> std::fs::File {
++        use std::os::windows::io::AsHandle;
++        std::fs::File::from(self.stdin.as_handle().try_clone_to_owned().expect("a stdin clone"))
++    }
++
+     /// The title its window was given.
+     #[must_use]
+     pub fn title(&self) -> &str {
+diff --git a/crates/mockapp/tests/common/outpost.rs b/crates/mockapp/tests/common/outpost.rs
+index 51cc571a..2a7d4606 100644
+--- a/crates/mockapp/tests/common/outpost.rs
++++ b/crates/mockapp/tests/common/outpost.rs
+@@ -604,7 +604,11 @@ impl OutpostUnderTest {
+             trace: TraceId::mint(),
+             observed_at_ms: now_ms(),
+         };
+-        let judged = self.reader.borrow_mut().read(element, 0, kind, arrival);
++        let focus_window = std::env::var("BC_FOCUS_WINDOW")
++            .ok()
++            .and_then(|v| v.parse::<isize>().ok())
++            .unwrap_or(0);
++        let judged = self.reader.borrow_mut().read(element, focus_window, kind, arrival);
+         (judged, verbatim_uia::calls::take())
+     }
+ 
+diff --git a/crates/verbatim-outpost/src/focus_read.rs b/crates/verbatim-outpost/src/focus_read.rs
+index bab5611d..4e4ac784 100644
+--- a/crates/verbatim-outpost/src/focus_read.rs
++++ b/crates/verbatim-outpost/src/focus_read.rs
+@@ -412,6 +412,7 @@ impl FocusReader {
+         let element = sender.live().element();
+         let hwnd = fields.role.hwnd;
+         let window = if hwnd == 0 { focus_window } else { hwnd };
++        SCRATCH_FOCUS_WINDOW.with(|cell| cell.set(focus_window));
+         let event = fields.parts(sender.runtime_id());
+         let nearest = match self.judge_before_reading(sender, &fields, &event.runtime_id, kind) {
+             Ok(nearest) => nearest,
+@@ -664,6 +665,9 @@ impl FocusReader {
+         // its handle, which the outpost finds its own copy of the element
+         // from.
+         let mut window = ancestry.window;
++        if scratch() && window.is_none() && hwnd == 0 {
++            window = Some(nearest);
++        }
+         if window.is_none() && hwnd == 0 {
+             window = Some(nearest);
+             if let (Some(found), Some(ancestors)) = (window, ancestors.as_mut()) {
+@@ -671,6 +675,7 @@ impl FocusReader {
+             }
+         }
+         if ancestry.met_known.is_none()
++            && !scratch()
+             && !ancestry.depth_limited
+             && let Some(facts) = ancestors.as_mut()
+         {
+@@ -899,7 +904,11 @@ impl FocusReader {
+     ) -> Result<isize, &'static str> {
+         let element = held.live().element();
+         let hwnd = sender.role.hwnd;
+-        let nearest = if hwnd == 0 {
++        let scratch_window = SCRATCH_FOCUS_WINDOW.with(std::cell::Cell::get);
++        let nearest = if hwnd == 0 && scratch() && scratch_window != 0 {
++            // Scratch: the nearest window from a local call, the event's.
++            scratch_window
++        } else if hwnd == 0 {
+             let started = Instant::now();
+             let nearest = verbatim_uia::nearest_window_handle(element);
+             let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+@@ -1111,6 +1120,14 @@ impl FocusReader {
+ /// Logs, at debug, each of a focus's ancestor facts, nearest first, with
+ /// the read that produced them (`docs/design/focus-pipeline.md`, section
+ /// 16.4: where a console window element is lost).
++thread_local! {
++    static SCRATCH_FOCUS_WINDOW: std::cell::Cell<isize> = const { std::cell::Cell::new(0) };
++}
++
++fn scratch() -> bool {
++    std::env::var_os("VERBATIM_SCRATCH_STOP_AFTER").is_some()
++}
++
+ fn log_ancestor_facts(path: &str, facts: &[UiaAncestorFact]) {
+     for fact in facts {
+         log_ancestor_fact(path, fact);
+diff --git a/crates/verbatim-uia-rops/src/focus.rs b/crates/verbatim-uia-rops/src/focus.rs
+index ea6aff91..7d6fd238 100644
+--- a/crates/verbatim-uia-rops/src/focus.rs
++++ b/crates/verbatim-uia-rops/src/focus.rs
+@@ -693,6 +693,16 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
+             ancestry.out_of_time = true;
+             break;
+         }
++        // Scratch (experiment): stop at the last element below the child
++        // window's own element, never obtaining that element.
++        if let Some(n) = std::env::var("VERBATIM_SCRATCH_STOP_AFTER")
++            .ok()
++            .and_then(|v| v.parse::<usize>().ok())
++            && ancestry.ancestors.len() >= n
++        {
++            complete = true;
++            break;
++        }
+         // The walk stops below the process boundary: an element whose own
+         // window is the child of another process's window, as the Settings
+         // page's content is of `ApplicationFrameHost`'s frame, or a

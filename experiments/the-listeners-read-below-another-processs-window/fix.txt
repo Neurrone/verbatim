@@ -1,0 +1,1045 @@
+=== noprovider-classic-control-1
+O connect: connected 16.798 Ok("Embedded"); warm-up: op done 1792415799353687 10.109 Ok("Embedded")
+listener read: 2.278 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -59.115 host hwnd=0x56f07d6 wparam=0x50f87b64 lparam=-25
+P WM_GETOBJECT at -48.236 host hwnd=0x56f07d6 wparam=0x50f87b66 lparam=-25
+P WM_GETOBJECT at -19.295 uia_window hwnd=0x49b0550 wparam=0x50fff482 lparam=-25
+P WM_GETOBJECT at -11.771 uia_window hwnd=0x49b0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.142 host hwnd=0x56f07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.598 uia_window hwnd=0x49b0550 wparam=0x5102ac4d lparam=-25
+P WM_GETOBJECT at -0.926 host hwnd=0x56f07d6 wparam=0x5102ac4e lparam=-25
+=== noprovider-classic-queued-short-1
+O connect: connected 16.717 Ok("Embedded"); warm-up: op done 1792415799476582 10.120 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415799477333 (rel t0 n/a)
+O op sent at -0.105 ms rel read start
+listener read: 1.962 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.990 ms rel read start (after the read returned)
+O plainread done 1792415799479652 2.545 Ok("Embedded") [at 2.187 ms rel read start]
+O op done 1792415799481632 4.256 Ok("Embedded") [at 4.167 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -56.442 host hwnd=0x57007d6 wparam=0x50f87b68 lparam=-25
+P WM_GETOBJECT at -45.807 host hwnd=0x57007d6 wparam=0x50f87b6a lparam=-25
+P WM_GETOBJECT at -20.104 uia_window hwnd=0x7d80990 wparam=0x51129dad lparam=-25
+P WM_GETOBJECT at -12.635 uia_window hwnd=0x7d80990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.999 host hwnd=0x57007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.283 uia_window hwnd=0x7d80990 wparam=0x5115564b lparam=-25
+P WM_GETOBJECT at -1.613 host hwnd=0x57007d6 wparam=0x5115564c lparam=-25
+P WM_GETOBJECT at 2.494 uia_window hwnd=0x7d80990 wparam=0x5115564d lparam=-25
+P WM_GETOBJECT at 3.126 host hwnd=0x57007d6 wparam=0x5115564e lparam=-25
+=== noprovider-classic-busy-short-1
+O connect: connected 16.095 Ok("Embedded"); warm-up: op done 1792415799606478 9.809 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415799607176 (rel t0 n/a)
+listener read: 2.364 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.389 ms rel read start (after the read returned)
+O plainread done 1792415799609773 2.777 Ok("Embedded") [at 2.539 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -54.954 host hwnd=0x57107d6 wparam=0x50f87b6c lparam=-25
+P WM_GETOBJECT at -44.416 host hwnd=0x57107d6 wparam=0x50f87b6e lparam=-25
+P WM_GETOBJECT at -18.807 uia_window hwnd=0x49d0550 wparam=0x51268965 lparam=-25
+P WM_GETOBJECT at -11.924 uia_window hwnd=0x49d0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.344 host hwnd=0x57107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.950 uia_window hwnd=0x49d0550 wparam=0x51293837 lparam=-25
+P WM_GETOBJECT at -1.406 host hwnd=0x57107d6 wparam=0x51293838 lparam=-25
+=== noprovider-classic-busy-long-1
+O connect: connected 17.758 Ok("Embedded"); warm-up: op done 1792415799729960 11.120 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415799730639 (rel t0 n/a)
+listener read: 1.943 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.964 ms rel read start (after the read returned)
+O plainread done 1792415799732847 2.407 Ok("Embedded") [at 2.158 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -59.184 host hwnd=0x57207d6 wparam=0x50f87b70 lparam=-25
+P WM_GETOBJECT at -48.067 host hwnd=0x57207d6 wparam=0x50f87b72 lparam=-25
+P WM_GETOBJECT at -21.918 uia_window hwnd=0x7da0990 wparam=0x5138f129 lparam=-25
+P WM_GETOBJECT at -13.592 uia_window hwnd=0x7da0990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.884 host hwnd=0x57207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.915 uia_window hwnd=0x7da0990 wparam=0x513bef6b lparam=-25
+P WM_GETOBJECT at -1.349 host hwnd=0x57207d6 wparam=0x513bef6c lparam=-25
+=== noprovider-classic-control-2
+O connect: connected 15.378 Ok("Embedded"); warm-up: op done 1792415799881024 8.985 Ok("Embedded")
+listener read: 2.361 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -56.153 host hwnd=0x57307d6 wparam=0x50f87b74 lparam=-25
+P WM_GETOBJECT at -43.850 host hwnd=0x57307d6 wparam=0x50f87b76 lparam=-25
+P WM_GETOBJECT at -17.378 uia_window hwnd=0x49f0550 wparam=0x5150b0af lparam=-25
+P WM_GETOBJECT at -10.583 uia_window hwnd=0x49f0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -9.993 host hwnd=0x57307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.300 uia_window hwnd=0x49f0550 wparam=0x515319df lparam=-25
+P WM_GETOBJECT at -0.762 host hwnd=0x57307d6 wparam=0x515319e0 lparam=-25
+=== noprovider-classic-queued-short-2
+O connect: connected 15.832 Ok("Embedded"); warm-up: op done 1792415799996828 10.226 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415799997507 (rel t0 n/a)
+O op sent at -0.102 ms rel read start
+listener read: 2.151 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.183 ms rel read start (after the read returned)
+O plainread done 1792415799999964 2.649 Ok("Embedded") [at 2.331 ms rel read start]
+O op done 1792415800001899 4.357 Ok("Embedded") [at 4.266 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -53.817 host hwnd=0x57407d6 wparam=0x50f87b78 lparam=-25
+P WM_GETOBJECT at -44.262 host hwnd=0x57407d6 wparam=0x50f87b7a lparam=-25
+P WM_GETOBJECT at -19.384 uia_window hwnd=0x7dc0990 wparam=0x516223a3 lparam=-25
+P WM_GETOBJECT at -12.514 uia_window hwnd=0x7dc0990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.907 host hwnd=0x57407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.938 uia_window hwnd=0x7dc0990 wparam=0x5164db34 lparam=-25
+P WM_GETOBJECT at -1.412 host hwnd=0x57407d6 wparam=0x5164db35 lparam=-25
+P WM_GETOBJECT at 2.677 uia_window hwnd=0x7dc0990 wparam=0x5164db36 lparam=-25
+P WM_GETOBJECT at 3.156 host hwnd=0x57407d6 wparam=0x5164db37 lparam=-25
+=== noprovider-classic-busy-short-2
+O connect: connected 16.393 Ok("Embedded"); warm-up: op done 1792415800123565 9.491 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415800124235 (rel t0 n/a)
+listener read: 2.114 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.140 ms rel read start (after the read returned)
+O plainread done 1792415800126613 2.571 Ok("Embedded") [at 2.311 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -55.534 host hwnd=0x57507d6 wparam=0x50f87b7c lparam=-25
+P WM_GETOBJECT at -43.616 host hwnd=0x57507d6 wparam=0x50f87b7e lparam=-25
+P WM_GETOBJECT at -18.876 uia_window hwnd=0x4a10550 wparam=0x51756fb8 lparam=-25
+P WM_GETOBJECT at -11.690 uia_window hwnd=0x4a10550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.083 host hwnd=0x57507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.882 uia_window hwnd=0x4a10550 wparam=0x51781f71 lparam=-25
+P WM_GETOBJECT at -1.345 host hwnd=0x57507d6 wparam=0x51781f72 lparam=-25
+=== noprovider-classic-busy-long-2
+O connect: connected 15.743 Ok("Embedded"); warm-up: op done 1792415800240979 9.146 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415800241674 (rel t0 n/a)
+listener read: 2.225 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.252 ms rel read start (after the read returned)
+O plainread done 1792415800244141 2.672 Ok("Embedded") [at 2.402 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -51.567 host hwnd=0x57607d6 wparam=0x50f87b80 lparam=-25
+P WM_GETOBJECT at -42.097 host hwnd=0x57607d6 wparam=0x50f87b82 lparam=-25
+P WM_GETOBJECT at -18.260 uia_window hwnd=0x7de0990 wparam=0x51878cdd lparam=-25
+P WM_GETOBJECT at -11.430 uia_window hwnd=0x7de0990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.770 host hwnd=0x57607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.962 uia_window hwnd=0x7de0990 wparam=0x5189f5ca lparam=-25
+P WM_GETOBJECT at -1.368 host hwnd=0x57607d6 wparam=0x5189f5cb lparam=-25
+=== noprovider-classic-control-3
+O connect: connected 17.197 Ok("Embedded"); warm-up: op done 1792415800363817 10.187 Ok("Embedded")
+listener read: 2.271 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -55.914 host hwnd=0x57707d6 wparam=0x50f87b84 lparam=-25
+P WM_GETOBJECT at -45.025 host hwnd=0x57707d6 wparam=0x50f87b86 lparam=-25
+P WM_GETOBJECT at -19.821 uia_window hwnd=0x4a30550 wparam=0x5199ef80 lparam=-25
+P WM_GETOBJECT at -12.092 uia_window hwnd=0x4a30550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.356 host hwnd=0x57707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.332 uia_window hwnd=0x4a30550 wparam=0x519ca789 lparam=-25
+P WM_GETOBJECT at -0.795 host hwnd=0x57707d6 wparam=0x519ca78a lparam=-25
+=== noprovider-classic-queued-short-3
+O connect: connected 16.477 Ok("Embedded"); warm-up: op done 1792415800484111 9.320 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415800484775 (rel t0 n/a)
+O op sent at -0.089 ms rel read start
+listener read: 2.142 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.164 ms rel read start (after the read returned)
+O plainread done 1792415800487185 2.606 Ok("Embedded") [at 2.300 ms rel read start]
+O op done 1792415800489144 4.337 Ok("Embedded") [at 4.259 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -54.299 host hwnd=0x57807d6 wparam=0x50f87b88 lparam=-25
+P WM_GETOBJECT at -43.783 host hwnd=0x57807d6 wparam=0x50f87b8a lparam=-25
+P WM_GETOBJECT at -18.370 uia_window hwnd=0x7e00990 wparam=0x51aca322 lparam=-25
+P WM_GETOBJECT at -11.478 uia_window hwnd=0x7e00990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.900 host hwnd=0x57807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.989 uia_window hwnd=0x7e00990 wparam=0x51af0bfa lparam=-25
+P WM_GETOBJECT at -1.365 host hwnd=0x57807d6 wparam=0x51af0bfb lparam=-25
+P WM_GETOBJECT at 2.626 uia_window hwnd=0x7e00990 wparam=0x51af0bfc lparam=-25
+P WM_GETOBJECT at 3.233 host hwnd=0x57807d6 wparam=0x51af0bfd lparam=-25
+=== noprovider-classic-busy-short-3
+O connect: connected 15.350 Ok("Embedded"); warm-up: op done 1792415800647161 8.846 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415800647827 (rel t0 n/a)
+listener read: 2.032 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.054 ms rel read start (after the read returned)
+O plainread done 1792415800650073 2.429 Ok("Embedded") [at 2.193 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -55.877 host hwnd=0x57907d6 wparam=0x50f87b8c lparam=-25
+P WM_GETOBJECT at -46.557 host hwnd=0x57907d6 wparam=0x50f87b8e lparam=-25
+P WM_GETOBJECT at -17.860 uia_window hwnd=0x4a50550 wparam=0x51c59522 lparam=-25
+P WM_GETOBJECT at -11.232 uia_window hwnd=0x4a50550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.600 host hwnd=0x57907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.843 uia_window hwnd=0x4a50550 wparam=0x51c7fedf lparam=-25
+P WM_GETOBJECT at -1.298 host hwnd=0x57907d6 wparam=0x51c7fee0 lparam=-25
+=== noprovider-classic-busy-long-3
+O connect: connected 16.777 Ok("Embedded"); warm-up: op done 1792415800768116 9.412 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415800768772 (rel t0 n/a)
+listener read: 2.327 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.351 ms rel read start (after the read returned)
+O plainread done 1792415800771326 2.746 Ok("Embedded") [at 2.494 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -55.850 host hwnd=0x57a07d6 wparam=0x50f87b90 lparam=-25
+P WM_GETOBJECT at -44.816 host hwnd=0x57a07d6 wparam=0x50f87b92 lparam=-25
+P WM_GETOBJECT at -19.255 uia_window hwnd=0x7e20990 wparam=0x51d7b4b6 lparam=-25
+P WM_GETOBJECT at -11.648 uia_window hwnd=0x7e20990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.991 host hwnd=0x57a07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.847 uia_window hwnd=0x7e20990 wparam=0x51da6d88 lparam=-25
+P WM_GETOBJECT at -1.330 host hwnd=0x57a07d6 wparam=0x51da6d89 lparam=-25
+=== noprovider-classic-control-4
+O connect: connected 16.781 Ok("Embedded"); warm-up: op done 1792415800888975 9.379 Ok("Embedded")
+listener read: 2.241 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -57.344 host hwnd=0x57b07d6 wparam=0x50f87b94 lparam=-25
+P WM_GETOBJECT at -45.175 host hwnd=0x57b07d6 wparam=0x50f87b96 lparam=-25
+P WM_GETOBJECT at -18.348 uia_window hwnd=0x4a70550 wparam=0x51ea5e75 lparam=-25
+P WM_GETOBJECT at -11.051 uia_window hwnd=0x4a70550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.421 host hwnd=0x57b07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.281 uia_window hwnd=0x4a70550 wparam=0x51ecbebf lparam=-25
+P WM_GETOBJECT at -0.748 host hwnd=0x57b07d6 wparam=0x51ecbec0 lparam=-25
+=== noprovider-classic-queued-short-4
+O connect: connected 20.629 Ok("Embedded"); warm-up: op done 1792415801015965 10.180 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415801016677 (rel t0 n/a)
+O op sent at -0.099 ms rel read start
+listener read: 2.188 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.210 ms rel read start (after the read returned)
+O plainread done 1792415801019143 2.682 Ok("Embedded") [at 2.341 ms rel read start]
+O op done 1792415801020909 4.195 Ok("Embedded") [at 4.107 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -61.855 host hwnd=0x57c07d6 wparam=0x50f87b98 lparam=-25
+P WM_GETOBJECT at -50.129 host hwnd=0x57c07d6 wparam=0x50f87b9a lparam=-25
+P WM_GETOBJECT at -23.820 uia_window hwnd=0x7e40990 wparam=0x51fcc3d9 lparam=-25
+P WM_GETOBJECT at -12.926 uia_window hwnd=0x7e40990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.218 host hwnd=0x57c07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.122 uia_window hwnd=0x7e40990 wparam=0x520019e2 lparam=-25
+P WM_GETOBJECT at -1.594 host hwnd=0x57c07d6 wparam=0x520019e3 lparam=-25
+P WM_GETOBJECT at 2.638 uia_window hwnd=0x7e40990 wparam=0x520019e4 lparam=-25
+P WM_GETOBJECT at 3.106 host hwnd=0x57c07d6 wparam=0x520019e5 lparam=-25
+=== noprovider-classic-busy-short-4
+O connect: connected 17.549 Ok("Embedded"); warm-up: op done 1792415801141487 9.992 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415801142212 (rel t0 n/a)
+listener read: 2.286 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.308 ms rel read start (after the read returned)
+O plainread done 1792415801144737 2.746 Ok("Embedded") [at 2.466 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -58.118 host hwnd=0x57d07d6 wparam=0x50f87b9c lparam=-25
+P WM_GETOBJECT at -47.585 host hwnd=0x57d07d6 wparam=0x50f87b9e lparam=-25
+P WM_GETOBJECT at -19.669 uia_window hwnd=0x4a90550 wparam=0x5210a447 lparam=-25
+P WM_GETOBJECT at -12.416 uia_window hwnd=0x4a90550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.797 host hwnd=0x57d07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.127 uia_window hwnd=0x4a90550 wparam=0x52133f11 lparam=-25
+P WM_GETOBJECT at -1.469 host hwnd=0x57d07d6 wparam=0x52133f12 lparam=-25
+=== noprovider-classic-busy-long-4
+O connect: connected 16.353 Ok("Embedded"); warm-up: op done 1792415801261305 9.522 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415801261969 (rel t0 n/a)
+listener read: 2.118 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.139 ms rel read start (after the read returned)
+O plainread done 1792415801264287 2.508 Ok("Embedded") [at 2.258 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -54.377 host hwnd=0x57e07d6 wparam=0x50f87ba0 lparam=-25
+P WM_GETOBJECT at -43.940 host hwnd=0x57e07d6 wparam=0x50f87ba2 lparam=-25
+P WM_GETOBJECT at -19.035 uia_window hwnd=0x7e60990 wparam=0x522332a0 lparam=-25
+P WM_GETOBJECT at -11.886 uia_window hwnd=0x7e60990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.193 host hwnd=0x57e07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.874 uia_window hwnd=0x7e60990 wparam=0x52259c6d lparam=-25
+P WM_GETOBJECT at -1.314 host hwnd=0x57e07d6 wparam=0x52259c6e lparam=-25
+=== noprovider-classic-control-5
+O connect: connected 16.420 Ok("Embedded"); warm-up: op done 1792415801416587 10.227 Ok("Embedded")
+listener read: 2.603 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -56.384 host hwnd=0x57f07d6 wparam=0x50f87ba4 lparam=-25
+P WM_GETOBJECT at -44.520 host hwnd=0x57f07d6 wparam=0x50f87ba6 lparam=-25
+P WM_GETOBJECT at -19.389 uia_window hwnd=0x4ab0550 wparam=0x523a7de0 lparam=-25
+P WM_GETOBJECT at -11.936 uia_window hwnd=0x4ab0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.237 host hwnd=0x57f07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.306 uia_window hwnd=0x4ab0550 wparam=0x523d7b3a lparam=-25
+P WM_GETOBJECT at -0.777 host hwnd=0x57f07d6 wparam=0x523d7b3b lparam=-25
+=== noprovider-classic-queued-short-5
+O connect: connected 15.615 Ok("Embedded"); warm-up: op done 1792415801544662 11.247 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415801545429 (rel t0 n/a)
+O op sent at -0.111 ms rel read start
+listener read: 1.843 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.871 ms rel read start (after the read returned)
+O plainread done 1792415801547581 2.393 Ok("Embedded") [at 2.011 ms rel read start]
+O op done 1792415801549419 3.947 Ok("Embedded") [at 3.849 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -56.634 host hwnd=0x58007d6 wparam=0x50f87ba8 lparam=-25
+P WM_GETOBJECT at -45.853 host hwnd=0x58007d6 wparam=0x50f87baa lparam=-25
+P WM_GETOBJECT at -20.614 uia_window hwnd=0x7e80990 wparam=0x524e1e0a lparam=-25
+P WM_GETOBJECT at -13.771 uia_window hwnd=0x7e80990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.121 host hwnd=0x58007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.245 uia_window hwnd=0x7e80990 wparam=0x5250cc47 lparam=-25
+P WM_GETOBJECT at -1.598 host hwnd=0x58007d6 wparam=0x5250cc48 lparam=-25
+P WM_GETOBJECT at 2.324 uia_window hwnd=0x7e80990 wparam=0x5250cc49 lparam=-25
+P WM_GETOBJECT at 2.899 host hwnd=0x58007d6 wparam=0x5250cc4a lparam=-25
+=== noprovider-classic-busy-short-5
+O connect: connected 16.280 Ok("Embedded"); warm-up: op done 1792415801675914 10.056 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415801676705 (rel t0 n/a)
+listener read: 2.531 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.561 ms rel read start (after the read returned)
+O plainread done 1792415801679460 2.988 Ok("Embedded") [at 2.689 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -56.646 host hwnd=0x58107d6 wparam=0x50f87bac lparam=-25
+P WM_GETOBJECT at -44.733 host hwnd=0x58107d6 wparam=0x50f87bae lparam=-25
+P WM_GETOBJECT at -19.620 uia_window hwnd=0x4ad0550 wparam=0x52624bbd lparam=-25
+P WM_GETOBJECT at -12.545 uia_window hwnd=0x4ad0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.899 host hwnd=0x58107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.328 uia_window hwnd=0x4ad0550 wparam=0x52650484 lparam=-25
+P WM_GETOBJECT at -1.661 host hwnd=0x58107d6 wparam=0x52650485 lparam=-25
+=== noprovider-classic-busy-long-5
+O connect: connected 16.203 Ok("Embedded"); warm-up: op done 1792415801791841 9.298 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415801792601 (rel t0 n/a)
+listener read: 2.471 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.569 ms rel read start (after the read returned)
+O plainread done 1792415801795441 3.070 Ok("Embedded") [at 2.772 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -51.844 host hwnd=0x58207d6 wparam=0x50f87bb0 lparam=-25
+P WM_GETOBJECT at -42.694 host hwnd=0x58207d6 wparam=0x50f87bb2 lparam=-25
+P WM_GETOBJECT at -18.766 uia_window hwnd=0x7ea0990 wparam=0x52741d03 lparam=-25
+P WM_GETOBJECT at -11.586 uia_window hwnd=0x7ea0990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.992 host hwnd=0x58207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.998 uia_window hwnd=0x7ea0990 wparam=0x527686c6 lparam=-25
+P WM_GETOBJECT at -1.433 host hwnd=0x58207d6 wparam=0x527686c7 lparam=-25
+=== noprovider-classic-control-6
+O connect: connected 15.817 Ok("Embedded"); warm-up: op done 1792415801912188 9.274 Ok("Embedded")
+listener read: 2.207 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -53.774 host hwnd=0x58307d6 wparam=0x50f87bb4 lparam=-25
+P WM_GETOBJECT at -43.178 host hwnd=0x58307d6 wparam=0x50f87bb6 lparam=-25
+P WM_GETOBJECT at -17.580 uia_window hwnd=0x4af0550 wparam=0x528688a8 lparam=-25
+P WM_GETOBJECT at -10.832 uia_window hwnd=0x4af0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.257 host hwnd=0x58307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.281 uia_window hwnd=0x4af0550 wparam=0x5288f267 lparam=-25
+P WM_GETOBJECT at -0.767 host hwnd=0x58307d6 wparam=0x5288f268 lparam=-25
+=== noprovider-classic-queued-short-6
+O connect: connected 16.820 Ok("Embedded"); warm-up: op done 1792415802062461 9.841 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415802063193 (rel t0 n/a)
+O op sent at -0.111 ms rel read start
+listener read: 2.192 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.217 ms rel read start (after the read returned)
+O plainread done 1792415802065875 2.881 Ok("Embedded") [at 2.545 ms rel read start]
+O op done 1792415802068025 4.794 Ok("Embedded") [at 4.695 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -87.353 host hwnd=0x58407d6 wparam=0x50f87bb8 lparam=-25
+P WM_GETOBJECT at -76.567 host hwnd=0x58407d6 wparam=0x50f87bba lparam=-25
+P WM_GETOBJECT at -20.725 uia_window hwnd=0x7ec0990 wparam=0x529d193a lparam=-25
+P WM_GETOBJECT at -12.130 uia_window hwnd=0x7ec0990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.553 host hwnd=0x58407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.238 uia_window hwnd=0x7ec0990 wparam=0x529fd12b lparam=-25
+P WM_GETOBJECT at -1.577 host hwnd=0x58407d6 wparam=0x529fd12c lparam=-25
+P WM_GETOBJECT at 2.903 uia_window hwnd=0x7ec0990 wparam=0x529fd12d lparam=-25
+P WM_GETOBJECT at 3.538 host hwnd=0x58407d6 wparam=0x529fd12e lparam=-25
+=== noprovider-classic-busy-short-6
+O connect: connected 15.521 Ok("Embedded"); warm-up: op done 1792415802193101 9.376 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415802193851 (rel t0 n/a)
+listener read: 1.886 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.903 ms rel read start (after the read returned)
+O plainread done 1792415802195969 2.332 Ok("Embedded") [at 2.055 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -53.376 host hwnd=0x58507d6 wparam=0x50f87bbc lparam=-25
+P WM_GETOBJECT at -42.496 host hwnd=0x58507d6 wparam=0x50f87bbe lparam=-25
+P WM_GETOBJECT at -18.416 uia_window hwnd=0x4b10550 wparam=0x52b18005 lparam=-25
+P WM_GETOBJECT at -11.671 uia_window hwnd=0x4b10550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.050 host hwnd=0x58507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.965 uia_window hwnd=0x4b10550 wparam=0x52b3ea59 lparam=-25
+P WM_GETOBJECT at -1.446 host hwnd=0x58507d6 wparam=0x52b3ea5a lparam=-25
+=== noprovider-classic-control-7
+O connect: connected 16.754 Ok("Embedded"); warm-up: op done 1792415802319503 9.720 Ok("Embedded")
+listener read: 2.155 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -63.616 host hwnd=0x58607d6 wparam=0x50f87bc0 lparam=-25
+P WM_GETOBJECT at -50.921 host hwnd=0x58607d6 wparam=0x50f87bc2 lparam=-25
+P WM_GETOBJECT at -18.510 uia_window hwnd=0x7ee0990 wparam=0x52c48562 lparam=-25
+P WM_GETOBJECT at -11.336 uia_window hwnd=0x7ee0990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.747 host hwnd=0x58607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.513 uia_window hwnd=0x7ee0990 wparam=0x52c73d97 lparam=-25
+P WM_GETOBJECT at -0.835 host hwnd=0x58607d6 wparam=0x52c73d98 lparam=-25
+=== noprovider-classic-queued-short-7
+O connect: connected 16.174 Ok("Embedded"); warm-up: op done 1792415802440721 9.548 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415802441367 (rel t0 n/a)
+O op sent at -0.079 ms rel read start
+listener read: 1.944 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.968 ms rel read start (after the read returned)
+O plainread done 1792415802447820 6.644 Ok("Embedded") [at 6.352 ms rel read start]
+O op done 1792415802449164 7.764 Ok("Embedded") [at 7.696 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -54.418 host hwnd=0x58707d6 wparam=0x50f87bc4 lparam=-25
+P WM_GETOBJECT at -43.525 host hwnd=0x58707d6 wparam=0x50f87bc6 lparam=-25
+P WM_GETOBJECT at -18.897 uia_window hwnd=0x4b30550 wparam=0x52d6fe53 lparam=-25
+P WM_GETOBJECT at -11.777 uia_window hwnd=0x4b30550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.154 host hwnd=0x58707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.853 uia_window hwnd=0x4b30550 wparam=0x52d9b6e8 lparam=-25
+P WM_GETOBJECT at -1.333 host hwnd=0x58707d6 wparam=0x52d9b6e9 lparam=-25
+P WM_GETOBJECT at 6.036 uia_window hwnd=0x4b30550 wparam=0x52d9b6ea lparam=-25
+P WM_GETOBJECT at 6.540 host hwnd=0x58707d6 wparam=0x52d9b6eb lparam=-25
+=== noprovider-classic-busy-short-7
+O connect: connected 15.988 Ok("Embedded"); warm-up: op done 1792415802576977 9.950 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415802577769 (rel t0 n/a)
+listener read: 2.176 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.203 ms rel read start (after the read returned)
+O plainread done 1792415802580190 2.626 Ok("Embedded") [at 2.348 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -57.352 host hwnd=0x58807d6 wparam=0x50f87bc8 lparam=-25
+P WM_GETOBJECT at -45.294 host hwnd=0x58807d6 wparam=0x50f87bca lparam=-25
+P WM_GETOBJECT at -18.966 uia_window hwnd=0x7f00990 wparam=0x52ebcb76 lparam=-25
+P WM_GETOBJECT at -12.210 uia_window hwnd=0x7f00990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.632 host hwnd=0x58807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.003 uia_window hwnd=0x7f00990 wparam=0x52ee8409 lparam=-25
+P WM_GETOBJECT at -1.471 host hwnd=0x58807d6 wparam=0x52ee840a lparam=-25
+=== noprovider-classic-control-8
+O connect: connected 16.368 Ok("Embedded"); warm-up: op done 1792415802697793 9.368 Ok("Embedded")
+listener read: 2.000 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -54.779 host hwnd=0x58907d6 wparam=0x50f87bcc lparam=-25
+P WM_GETOBJECT at -43.567 host hwnd=0x58907d6 wparam=0x50f87bce lparam=-25
+P WM_GETOBJECT at -18.053 uia_window hwnd=0x4b50550 wparam=0x52fe6b25 lparam=-25
+P WM_GETOBJECT at -10.942 uia_window hwnd=0x4b50550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.349 host hwnd=0x58907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.258 uia_window hwnd=0x4b50550 wparam=0x5300d441 lparam=-25
+P WM_GETOBJECT at -0.729 host hwnd=0x58907d6 wparam=0x5300d442 lparam=-25
+=== noprovider-classic-queued-short-8
+O connect: connected 17.024 Ok("Embedded"); warm-up: op done 1792415802846668 9.710 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415802847427 (rel t0 n/a)
+O op sent at -0.125 ms rel read start
+listener read: 2.989 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 3.009 ms rel read start (after the read returned)
+O plainread done 1792415802850748 3.559 Ok("Embedded") [at 3.169 ms rel read start]
+O op done 1792415802852964 5.498 Ok("Embedded") [at 5.385 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -55.579 host hwnd=0x58a07d6 wparam=0x50f87bd0 lparam=-25
+P WM_GETOBJECT at -45.203 host hwnd=0x58a07d6 wparam=0x50f87bd2 lparam=-25
+P WM_GETOBJECT at -19.935 uia_window hwnd=0x7f20990 wparam=0x5314fac1 lparam=-25
+P WM_GETOBJECT at -12.241 uia_window hwnd=0x7f20990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.602 host hwnd=0x58a07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.102 uia_window hwnd=0x7f20990 wparam=0x5317a9bf lparam=-25
+P WM_GETOBJECT at -1.555 host hwnd=0x58a07d6 wparam=0x5317a9c0 lparam=-25
+P WM_GETOBJECT at 3.460 uia_window hwnd=0x7f20990 wparam=0x5317a9c1 lparam=-25
+P WM_GETOBJECT at 4.153 host hwnd=0x58a07d6 wparam=0x5317a9c2 lparam=-25
+=== noprovider-classic-busy-short-8
+O connect: connected 15.892 Ok("Embedded"); warm-up: op done 1792415802971327 9.613 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415802972013 (rel t0 n/a)
+listener read: 2.127 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.154 ms rel read start (after the read returned)
+O plainread done 1792415802974345 2.529 Ok("Embedded") [at 2.268 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -55.119 host hwnd=0x58b07d6 wparam=0x50f87bd4 lparam=-25
+P WM_GETOBJECT at -43.496 host hwnd=0x58b07d6 wparam=0x50f87bd6 lparam=-25
+P WM_GETOBJECT at -18.704 uia_window hwnd=0x4b70550 wparam=0x5327f300 lparam=-25
+P WM_GETOBJECT at -11.812 uia_window hwnd=0x4b70550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.204 host hwnd=0x58b07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.952 uia_window hwnd=0x4b70550 wparam=0x532aab57 lparam=-25
+P WM_GETOBJECT at -1.337 host hwnd=0x58b07d6 wparam=0x532aab58 lparam=-25
+=== noprovider-classic-control-9
+O connect: connected 16.417 Ok("Embedded"); warm-up: op done 1792415803089733 9.374 Ok("Embedded")
+listener read: 2.303 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -55.136 host hwnd=0x58c07d6 wparam=0x50f87bd8 lparam=-25
+P WM_GETOBJECT at -44.302 host hwnd=0x58c07d6 wparam=0x50f87bda lparam=-25
+P WM_GETOBJECT at -18.358 uia_window hwnd=0x7f40990 wparam=0x533a20f1 lparam=-25
+P WM_GETOBJECT at -11.155 uia_window hwnd=0x7f40990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.526 host hwnd=0x58c07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.456 uia_window hwnd=0x7f40990 wparam=0x533cbbfd lparam=-25
+P WM_GETOBJECT at -0.851 host hwnd=0x58c07d6 wparam=0x533cbbfe lparam=-25
+=== noprovider-classic-queued-short-9
+O connect: connected 15.763 Ok("Embedded"); warm-up: op done 1792415803210392 8.783 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415803211047 (rel t0 n/a)
+O op sent at -0.092 ms rel read start
+listener read: 2.394 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.456 ms rel read start (after the read returned)
+O plainread done 1792415803213847 2.986 Ok("Embedded") [at 2.682 ms rel read start]
+O op done 1792415803215836 4.750 Ok("Embedded") [at 4.671 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -54.331 host hwnd=0x58d07d6 wparam=0x50f87bdc lparam=-25
+P WM_GETOBJECT at -42.858 host hwnd=0x58d07d6 wparam=0x50f87bde lparam=-25
+P WM_GETOBJECT at -17.917 uia_window hwnd=0x4b90550 wparam=0x534cad8c lparam=-25
+P WM_GETOBJECT at -11.069 uia_window hwnd=0x4b90550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.385 host hwnd=0x58d07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.920 uia_window hwnd=0x4b90550 wparam=0x534f199c lparam=-25
+P WM_GETOBJECT at -1.393 host hwnd=0x58d07d6 wparam=0x534f199d lparam=-25
+P WM_GETOBJECT at 2.840 uia_window hwnd=0x4b90550 wparam=0x534f199e lparam=-25
+P WM_GETOBJECT at 3.499 host hwnd=0x58d07d6 wparam=0x534f199f lparam=-25
+=== noprovider-classic-busy-short-9
+O connect: connected 16.532 Ok("Embedded"); warm-up: op done 1792415803336516 9.676 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415803337180 (rel t0 n/a)
+listener read: 2.099 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.114 ms rel read start (after the read returned)
+O plainread done 1792415803339481 2.499 Ok("Embedded") [at 2.246 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -55.756 host hwnd=0x58e07d6 wparam=0x50f87be0 lparam=-25
+P WM_GETOBJECT at -44.431 host hwnd=0x58e07d6 wparam=0x50f87be2 lparam=-25
+P WM_GETOBJECT at -19.178 uia_window hwnd=0x7f60990 wparam=0x535fbb38 lparam=-25
+P WM_GETOBJECT at -12.087 uia_window hwnd=0x7f60990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.341 host hwnd=0x58e07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.842 uia_window hwnd=0x7f60990 wparam=0x53623314 lparam=-25
+P WM_GETOBJECT at -1.322 host hwnd=0x58e07d6 wparam=0x53623315 lparam=-25
+=== noprovider-classic-control-10
+O connect: connected 15.914 Ok("Embedded"); warm-up: op done 1792415803452746 9.325 Ok("Embedded")
+listener read: 2.310 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -53.464 host hwnd=0x58f07d6 wparam=0x50f87be4 lparam=-25
+P WM_GETOBJECT at -42.813 host hwnd=0x58f07d6 wparam=0x50f87be6 lparam=-25
+P WM_GETOBJECT at -17.975 uia_window hwnd=0x4bb0550 wparam=0x5371a573 lparam=-25
+P WM_GETOBJECT at -10.890 uia_window hwnd=0x4bb0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.300 host hwnd=0x58f07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.246 uia_window hwnd=0x4bb0550 wparam=0x53740ef3 lparam=-25
+P WM_GETOBJECT at -0.724 host hwnd=0x58f07d6 wparam=0x53740ef4 lparam=-25
+=== noprovider-classic-queued-short-10
+O connect: connected 16.382 Ok("Embedded"); warm-up: op done 1792415803610042 9.484 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415803610775 (rel t0 n/a)
+O op sent at -0.099 ms rel read start
+listener read: 2.042 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.067 ms rel read start (after the read returned)
+O plainread done 1792415803613112 2.512 Ok("Embedded") [at 2.216 ms rel read start]
+O op done 1792415803615204 4.396 Ok("Embedded") [at 4.308 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -55.753 host hwnd=0x59007d6 wparam=0x50f87be8 lparam=-25
+P WM_GETOBJECT at -44.654 host hwnd=0x59007d6 wparam=0x50f87bea lparam=-25
+P WM_GETOBJECT at -19.130 uia_window hwnd=0x7f80990 wparam=0x53897a22 lparam=-25
+P WM_GETOBJECT at -11.874 uia_window hwnd=0x7f80990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.258 host hwnd=0x59007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.152 uia_window hwnd=0x7f80990 wparam=0x538c342c lparam=-25
+P WM_GETOBJECT at -1.482 host hwnd=0x59007d6 wparam=0x538c342d lparam=-25
+P WM_GETOBJECT at 2.538 uia_window hwnd=0x7f80990 wparam=0x538c342e lparam=-25
+P WM_GETOBJECT at 3.120 host hwnd=0x59007d6 wparam=0x538c342f lparam=-25
+=== noprovider-classic-busy-short-10
+O connect: connected 17.087 Ok("Embedded"); warm-up: op done 1792415803739177 9.139 Ok("Embedded")
+evidence: P held GetPropertyValue at 1792415803739827 (rel t0 n/a)
+listener read: 1.907 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.926 ms rel read start (after the read returned)
+O plainread done 1792415803741953 2.302 Ok("Embedded") [at 2.070 ms rel read start]
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -55.875 host hwnd=0x59107d6 wparam=0x50f87bec lparam=-25
+P WM_GETOBJECT at -45.448 host hwnd=0x59107d6 wparam=0x50f87bee lparam=-25
+P WM_GETOBJECT at -18.814 uia_window hwnd=0x4bd0550 wparam=0x539d241b lparam=-25
+P WM_GETOBJECT at -11.300 uia_window hwnd=0x4bd0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -10.695 host hwnd=0x59107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.975 uia_window hwnd=0x4bd0550 wparam=0x539fdc4e lparam=-25
+P WM_GETOBJECT at -1.364 host hwnd=0x59107d6 wparam=0x539fdc4f lparam=-25
+=== provider-classic-control-1
+O connect: connected 10.817 Ok("Mockapp Events Fixture"); warm-up: op done 1792415803858093 9.084 Ok("Mockapp Events Fixture")
+listener read: 2.077 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -57.065 host hwnd=0x59207d6 wparam=0x50f87bf0 lparam=-25
+P WM_GETOBJECT at -50.061 host hwnd=0x59207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.583 host hwnd=0x59207d6 wparam=0x50f87bf2 lparam=-25
+P WM_GETOBJECT at -38.715 host hwnd=0x59207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.113 host hwnd=0x59207d6 wparam=0x53b0238c lparam=-25
+P WM_GETOBJECT at -10.414 host hwnd=0x59207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.014 host hwnd=0x59207d6 wparam=0x53b1f064 lparam=-25
+=== provider-classic-queued-short-1
+O connect: connected 10.168 Ok("Mockapp Events Fixture"); warm-up: op done 1792415803979013 8.659 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415803979760 (rel t0 n/a)
+evidence: O plainread done 1792415803979782 0.247 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415803980108 (rel t0 n/a)
+O op sent at -0.254 ms rel read start
+listener read: 2.135 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.162 ms rel read start (after the read returned)
+O op done 1792415803983344 3.412 Ok("Mockapp Events Fixture") [at 3.173 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -57.722 host hwnd=0x59307d6 wparam=0x50f87bf4 lparam=-25
+P WM_GETOBJECT at -49.704 host hwnd=0x59307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.939 host hwnd=0x59307d6 wparam=0x50f87bf6 lparam=-25
+P WM_GETOBJECT at -38.088 host hwnd=0x59307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.331 host hwnd=0x59307d6 wparam=0x53c2e685 lparam=-25
+P WM_GETOBJECT at -10.991 host hwnd=0x59307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.928 host hwnd=0x59307d6 wparam=0x53c464df lparam=-25
+P WM_GETOBJECT at 2.457 host hwnd=0x59307d6 wparam=0x53c464e0 lparam=-25
+=== provider-classic-busy-short-1
+O connect: connected 9.830 Ok("Mockapp Events Fixture"); warm-up: op done 1792415804106088 8.851 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415804106806 (rel t0 n/a)
+evidence: O plainread done 1792415804106822 0.274 Ok("0") (rel t0 n/a)
+listener read: 2.257 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.282 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -57.425 host hwnd=0x59407d6 wparam=0x50f87bf8 lparam=-25
+P WM_GETOBJECT at -50.875 host hwnd=0x59407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.926 host hwnd=0x59407d6 wparam=0x50f87bfa lparam=-25
+P WM_GETOBJECT at -37.937 host hwnd=0x59407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.043 host hwnd=0x59407d6 wparam=0x53d6395c lparam=-25
+P WM_GETOBJECT at -10.857 host hwnd=0x59407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.649 host hwnd=0x59407d6 wparam=0x53d7b832 lparam=-25
+=== provider-classic-busy-long-1
+O connect: connected 10.127 Ok("Mockapp Events Fixture"); warm-up: op done 1792415804229690 9.127 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415804230452 (rel t0 n/a)
+evidence: O plainread done 1792415804230463 0.272 Ok("0") (rel t0 n/a)
+listener read: 2.172 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.201 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -58.762 host hwnd=0x59507d6 wparam=0x50f87bfc lparam=-25
+P WM_GETOBJECT at -51.460 host hwnd=0x59507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.239 host hwnd=0x59507d6 wparam=0x50f87bfe lparam=-25
+P WM_GETOBJECT at -38.239 host hwnd=0x59507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.461 host hwnd=0x59507d6 wparam=0x53e92b47 lparam=-25
+P WM_GETOBJECT at -11.276 host hwnd=0x59507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.813 host hwnd=0x59507d6 wparam=0x53eab3d5 lparam=-25
+=== provider-classic-control-2
+O connect: connected 9.943 Ok("Mockapp Events Fixture"); warm-up: op done 1792415804384880 9.236 Ok("Mockapp Events Fixture")
+listener read: 2.300 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -58.170 host hwnd=0x59607d6 wparam=0x50f87c00 lparam=-25
+P WM_GETOBJECT at -50.624 host hwnd=0x59607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.527 host hwnd=0x59607d6 wparam=0x50f87c02 lparam=-25
+P WM_GETOBJECT at -37.590 host hwnd=0x59607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.865 host hwnd=0x59607d6 wparam=0x5400af41 lparam=-25
+P WM_GETOBJECT at -10.630 host hwnd=0x59607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -0.871 host hwnd=0x59607d6 wparam=0x54028620 lparam=-25
+=== provider-classic-queued-short-2
+O connect: connected 9.902 Ok("Mockapp Events Fixture"); warm-up: op done 1792415804507133 9.287 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415804507823 (rel t0 n/a)
+evidence: O plainread done 1792415804507842 0.223 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415804508196 (rel t0 n/a)
+O op sent at -0.287 ms rel read start
+listener read: 1.951 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.970 ms rel read start (after the read returned)
+O op done 1792415804511020 3.042 Ok("Mockapp Events Fixture") [at 2.764 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -57.234 host hwnd=0x59707d6 wparam=0x50f87c04 lparam=-25
+P WM_GETOBJECT at -50.371 host hwnd=0x59707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.322 host hwnd=0x59707d6 wparam=0x50f87c06 lparam=-25
+P WM_GETOBJECT at -37.390 host hwnd=0x59707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.886 host hwnd=0x59707d6 wparam=0x5413762c lparam=-25
+P WM_GETOBJECT at -11.627 host hwnd=0x59707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.927 host hwnd=0x59707d6 wparam=0x5414f466 lparam=-25
+P WM_GETOBJECT at 2.218 host hwnd=0x59707d6 wparam=0x5414f467 lparam=-25
+=== provider-classic-busy-short-2
+O connect: connected 10.611 Ok("Mockapp Events Fixture"); warm-up: op done 1792415804637144 8.700 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415804637856 (rel t0 n/a)
+evidence: O plainread done 1792415804637850 0.221 Ok("0") (rel t0 n/a)
+listener read: 2.300 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.326 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -60.731 host hwnd=0x59807d6 wparam=0x50f87c08 lparam=-25
+P WM_GETOBJECT at -51.996 host hwnd=0x59807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.965 host hwnd=0x59807d6 wparam=0x50f87c0a lparam=-25
+P WM_GETOBJECT at -38.996 host hwnd=0x59807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.353 host hwnd=0x59807d6 wparam=0x54272882 lparam=-25
+P WM_GETOBJECT at -10.809 host hwnd=0x59807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.632 host hwnd=0x59807d6 wparam=0x5428f524 lparam=-25
+=== provider-classic-busy-long-2
+O connect: connected 9.734 Ok("Mockapp Events Fixture"); warm-up: op done 1792415804761426 8.325 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415804762075 (rel t0 n/a)
+evidence: O plainread done 1792415804762076 0.208 Ok("0") (rel t0 n/a)
+listener read: 2.064 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.090 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -60.024 host hwnd=0x59907d6 wparam=0x50f87c0c lparam=-25
+P WM_GETOBJECT at -51.522 host hwnd=0x59907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.183 host hwnd=0x59907d6 wparam=0x50f87c0e lparam=-25
+P WM_GETOBJECT at -39.411 host hwnd=0x59907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.656 host hwnd=0x59907d6 wparam=0x543a2a96 lparam=-25
+P WM_GETOBJECT at -10.335 host hwnd=0x59907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.545 host hwnd=0x59907d6 wparam=0x543bf71d lparam=-25
+=== provider-classic-control-3
+O connect: connected 9.783 Ok("Mockapp Events Fixture"); warm-up: op done 1792415804889204 9.103 Ok("Mockapp Events Fixture")
+listener read: 2.174 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -61.957 host hwnd=0x59a07d6 wparam=0x50f87c10 lparam=-25
+P WM_GETOBJECT at -51.014 host hwnd=0x59a07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.692 host hwnd=0x59a07d6 wparam=0x50f87c12 lparam=-25
+P WM_GETOBJECT at -37.575 host hwnd=0x59a07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.876 host hwnd=0x59a07d6 wparam=0x544da8e1 lparam=-25
+P WM_GETOBJECT at -10.501 host hwnd=0x59a07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -0.862 host hwnd=0x59a07d6 wparam=0x544f75e2 lparam=-25
+=== provider-classic-queued-short-3
+O connect: connected 9.696 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805044996 8.574 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415805045670 (rel t0 n/a)
+evidence: O plainread done 1792415805045677 0.196 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415805046028 (rel t0 n/a)
+O op sent at -0.248 ms rel read start
+listener read: 2.101 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.128 ms rel read start (after the read returned)
+O op done 1792415805049121 3.282 Ok("Mockapp Events Fixture") [at 3.043 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -91.678 host hwnd=0x59b07d6 wparam=0x50f87c14 lparam=-25
+P WM_GETOBJECT at -84.097 host hwnd=0x59b07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -72.431 host hwnd=0x59b07d6 wparam=0x50f87c16 lparam=-25
+P WM_GETOBJECT at -71.534 host hwnd=0x59b07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.060 host hwnd=0x59b07d6 wparam=0x54657b64 lparam=-25
+P WM_GETOBJECT at -10.757 host hwnd=0x59b07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.916 host hwnd=0x59b07d6 wparam=0x5466f96f lparam=-25
+P WM_GETOBJECT at 2.450 host hwnd=0x59b07d6 wparam=0x5466f970 lparam=-25
+=== provider-classic-busy-short-3
+O connect: connected 10.530 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805172319 9.474 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415805173069 (rel t0 n/a)
+evidence: O plainread done 1792415805173098 0.260 Ok("0") (rel t0 n/a)
+listener read: 2.133 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.151 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -3041.605 host hwnd=0x68d0a1c wparam=0x50f87bbb lparam=-25
+P WM_GETOBJECT at -3033.667 host hwnd=0x68d0a1c wparam=0x0 lparam=-25
+P WM_GETOBJECT at -3031.853 host hwnd=0x68d0a1c wparam=0x1340 lparam=-5
+P WM_GETOBJECT at -3031.500 host hwnd=0x68d0a1c wparam=0x1340 lparam=-6
+P WM_GETOBJECT at -3031.183 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3030.853 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3030.471 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3029.879 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3029.550 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3029.170 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3028.276 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3027.977 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3027.727 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3027.482 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3027.172 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3026.882 host hwnd=0x68d0a1c wparam=0x1340 lparam=-1
+P WM_GETOBJECT at -3026.562 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3026.330 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3026.095 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3025.813 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3025.428 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3025.015 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3024.605 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3024.229 host hwnd=0x68d0a1c wparam=0x1340 lparam=-2
+P WM_GETOBJECT at -3023.855 host hwnd=0x68d0a1c wparam=0x1340 lparam=-3
+P WM_GETOBJECT at -3023.450 host hwnd=0x68d0a1c wparam=0x1340 lparam=-7
+P WM_GETOBJECT at -3022.984 host hwnd=0x68d0a1c wparam=0x0 lparam=-25
+P WM_GETOBJECT at -3022.539 host hwnd=0x68d0a1c wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2979.207 host hwnd=0x68d0a1c wparam=0x0 lparam=-25
+P WM_GETOBJECT at -59.073 host hwnd=0x59c07d6 wparam=0x50f87c18 lparam=-25
+P WM_GETOBJECT at -52.117 host hwnd=0x59c07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.820 host hwnd=0x59c07d6 wparam=0x50f87c1a lparam=-25
+P WM_GETOBJECT at -39.992 host hwnd=0x59c07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.986 host hwnd=0x59c07d6 wparam=0x5478c31d lparam=-25
+P WM_GETOBJECT at -11.687 host hwnd=0x59c07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.656 host hwnd=0x59c07d6 wparam=0x547a9042 lparam=-25
+=== provider-classic-busy-long-3
+O connect: connected 10.080 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805301114 9.394 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415805301862 (rel t0 n/a)
+evidence: O plainread done 1792415805301888 0.279 Ok("0") (rel t0 n/a)
+listener read: 2.373 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.395 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -58.066 host hwnd=0x59d07d6 wparam=0x50f87c1c lparam=-25
+P WM_GETOBJECT at -50.707 host hwnd=0x59d07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.082 host hwnd=0x59d07d6 wparam=0x50f87c1e lparam=-25
+P WM_GETOBJECT at -38.223 host hwnd=0x59d07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.845 host hwnd=0x59d07d6 wparam=0x548c73c2 lparam=-25
+P WM_GETOBJECT at -11.556 host hwnd=0x59d07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.715 host hwnd=0x59d07d6 wparam=0x548e410d lparam=-25
+=== provider-classic-control-4
+O connect: connected 9.859 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805422350 9.928 Ok("Mockapp Events Fixture")
+listener read: 2.266 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -58.284 host hwnd=0x59e07d6 wparam=0x50f87c20 lparam=-25
+P WM_GETOBJECT at -50.407 host hwnd=0x59e07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.616 host hwnd=0x59e07d6 wparam=0x50f87c22 lparam=-25
+P WM_GETOBJECT at -37.656 host hwnd=0x59e07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.735 host hwnd=0x59e07d6 wparam=0x549f005c lparam=-25
+P WM_GETOBJECT at -11.340 host hwnd=0x59e07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -0.957 host hwnd=0x59e07d6 wparam=0x54a088e2 lparam=-25
+=== provider-classic-queued-short-4
+O connect: connected 10.558 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805547755 10.005 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415805548503 (rel t0 n/a)
+evidence: O plainread done 1792415805548513 0.273 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415805548840 (rel t0 n/a)
+O op sent at -0.227 ms rel read start
+listener read: 2.391 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.426 ms rel read start (after the read returned)
+O op done 1792415805552199 3.523 Ok("Mockapp Events Fixture") [at 3.310 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -58.982 host hwnd=0x59f07d6 wparam=0x50f87c24 lparam=-25
+P WM_GETOBJECT at -50.812 host hwnd=0x59f07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.539 host hwnd=0x59f07d6 wparam=0x50f87c26 lparam=-25
+P WM_GETOBJECT at -38.653 host hwnd=0x59f07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.888 host hwnd=0x59f07d6 wparam=0x54b20c6f lparam=-25
+P WM_GETOBJECT at -12.525 host hwnd=0x59f07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.992 host hwnd=0x59f07d6 wparam=0x54b3d9d3 lparam=-25
+P WM_GETOBJECT at 2.670 host hwnd=0x59f07d6 wparam=0x54b3d9d4 lparam=-25
+=== provider-classic-busy-short-4
+O connect: connected 10.043 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805677461 9.259 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415805678184 (rel t0 n/a)
+evidence: O plainread done 1792415805678186 0.226 Ok("0") (rel t0 n/a)
+listener read: 1.927 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.953 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -58.282 host hwnd=0x5a007d6 wparam=0x50f87c28 lparam=-25
+P WM_GETOBJECT at -50.393 host hwnd=0x5a007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.958 host hwnd=0x5a007d6 wparam=0x50f87c2a lparam=-25
+P WM_GETOBJECT at -38.111 host hwnd=0x5a007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.657 host hwnd=0x5a007d6 wparam=0x54c6085e lparam=-25
+P WM_GETOBJECT at -11.377 host hwnd=0x5a007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.829 host hwnd=0x5a007d6 wparam=0x54c786ce lparam=-25
+=== provider-classic-busy-long-4
+O connect: connected 10.105 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805830585 9.599 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415805831324 (rel t0 n/a)
+evidence: O plainread done 1792415805831336 0.255 Ok("0") (rel t0 n/a)
+listener read: 2.202 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.233 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -58.502 host hwnd=0x5a107d6 wparam=0x50f87c2c lparam=-25
+P WM_GETOBJECT at -50.446 host hwnd=0x5a107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.057 host hwnd=0x5a107d6 wparam=0x50f87c2e lparam=-25
+P WM_GETOBJECT at -38.140 host hwnd=0x5a107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.226 host hwnd=0x5a107d6 wparam=0x54dd4b58 lparam=-25
+P WM_GETOBJECT at -11.816 host hwnd=0x5a107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.724 host hwnd=0x5a107d6 wparam=0x54df1824 lparam=-25
+=== provider-classic-control-5
+O connect: connected 10.754 Ok("Mockapp Events Fixture"); warm-up: op done 1792415805956757 10.068 Ok("Mockapp Events Fixture")
+listener read: 2.356 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -59.107 host hwnd=0x5a207d6 wparam=0x50f87c30 lparam=-25
+P WM_GETOBJECT at -51.843 host hwnd=0x5a207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.806 host hwnd=0x5a207d6 wparam=0x50f87c32 lparam=-25
+P WM_GETOBJECT at -39.863 host hwnd=0x5a207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.314 host hwnd=0x5a207d6 wparam=0x54f04ce4 lparam=-25
+P WM_GETOBJECT at -11.726 host hwnd=0x5a207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.070 host hwnd=0x5a207d6 wparam=0x54f21a69 lparam=-25
+=== provider-classic-queued-short-5
+O connect: connected 9.731 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806073228 8.506 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415806073929 (rel t0 n/a)
+evidence: O plainread done 1792415806073930 0.212 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415806074255 (rel t0 n/a)
+O op sent at -0.261 ms rel read start
+listener read: 2.063 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.082 ms rel read start (after the read returned)
+O op done 1792415806077130 3.059 Ok("Mockapp Events Fixture") [at 2.808 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -55.854 host hwnd=0x5a307d6 wparam=0x50f87c34 lparam=-25
+P WM_GETOBJECT at -49.167 host hwnd=0x5a307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -37.702 host hwnd=0x5a307d6 wparam=0x50f87c36 lparam=-25
+P WM_GETOBJECT at -36.673 host hwnd=0x5a307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.013 host hwnd=0x5a307d6 wparam=0x55027776 lparam=-25
+P WM_GETOBJECT at -10.756 host hwnd=0x5a307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.814 host hwnd=0x5a307d6 wparam=0x5503f60d lparam=-25
+P WM_GETOBJECT at 2.291 host hwnd=0x5a307d6 wparam=0x5503f60e lparam=-25
+=== provider-classic-busy-short-5
+O connect: connected 10.235 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806208743 9.140 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415806209471 (rel t0 n/a)
+evidence: O plainread done 1792415806209502 0.243 Ok("0") (rel t0 n/a)
+listener read: 2.065 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.090 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -56.865 host hwnd=0x5a407d6 wparam=0x50f87c38 lparam=-25
+P WM_GETOBJECT at -50.129 host hwnd=0x5a407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.946 host hwnd=0x5a407d6 wparam=0x50f87c3a lparam=-25
+P WM_GETOBJECT at -38.961 host hwnd=0x5a407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.438 host hwnd=0x5a407d6 wparam=0x5516f841 lparam=-25
+P WM_GETOBJECT at -11.158 host hwnd=0x5a407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.689 host hwnd=0x5a407d6 wparam=0x5518cec3 lparam=-25
+=== provider-classic-busy-long-5
+O connect: connected 10.135 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806329396 8.877 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415806330056 (rel t0 n/a)
+evidence: O plainread done 1792415806330071 0.211 Ok("0") (rel t0 n/a)
+listener read: 2.276 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.303 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -57.118 host hwnd=0x5a507d6 wparam=0x50f87c3c lparam=-25
+P WM_GETOBJECT at -49.645 host hwnd=0x5a507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -37.952 host hwnd=0x5a507d6 wparam=0x50f87c3e lparam=-25
+P WM_GETOBJECT at -37.049 host hwnd=0x5a507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.167 host hwnd=0x5a507d6 wparam=0x5529626d lparam=-25
+P WM_GETOBJECT at -10.893 host hwnd=0x5a507d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.589 host hwnd=0x5a507d6 wparam=0x552b2f00 lparam=-25
+=== provider-classic-control-6
+O connect: connected 9.733 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806481173 9.320 Ok("Mockapp Events Fixture")
+listener read: 2.128 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -87.613 host hwnd=0x5a607d6 wparam=0x50f87c40 lparam=-25
+P WM_GETOBJECT at -80.603 host hwnd=0x5a607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -69.978 host hwnd=0x5a607d6 wparam=0x50f87c42 lparam=-25
+P WM_GETOBJECT at -69.105 host hwnd=0x5a607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.882 host hwnd=0x5a607d6 wparam=0x55409a9f lparam=-25
+P WM_GETOBJECT at -10.648 host hwnd=0x5a607d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -0.960 host hwnd=0x5a607d6 wparam=0x554218de lparam=-25
+=== provider-classic-queued-short-6
+O connect: connected 9.888 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806602204 9.326 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415806602972 (rel t0 n/a)
+evidence: O plainread done 1792415806602996 0.273 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415806603422 (rel t0 n/a)
+O op sent at -0.326 ms rel read start
+listener read: 2.437 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.462 ms rel read start (after the read returned)
+O op done 1792415806606813 3.648 Ok("Mockapp Events Fixture") [at 3.333 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -2919.472 host hwnd=0x59107d6 wparam=0x50f87bec lparam=-25
+P WM_GETOBJECT at -2909.045 host hwnd=0x59107d6 wparam=0x50f87bee lparam=-25
+P WM_GETOBJECT at -2882.411 uia_window hwnd=0x4bd0550 wparam=0x539d241b lparam=-25
+P WM_GETOBJECT at -2874.897 uia_window hwnd=0x4bd0550 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2874.292 host hwnd=0x59107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2865.572 uia_window hwnd=0x4bd0550 wparam=0x539fdc4e lparam=-25
+P WM_GETOBJECT at -2864.961 host hwnd=0x59107d6 wparam=0x539fdc4f lparam=-25
+P WM_GETOBJECT at -59.029 host hwnd=0x5a707d6 wparam=0x50f87c44 lparam=-25
+P WM_GETOBJECT at -51.527 host hwnd=0x5a707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.322 host hwnd=0x5a707d6 wparam=0x50f87c46 lparam=-25
+P WM_GETOBJECT at -38.923 host hwnd=0x5a707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.972 host hwnd=0x5a707d6 wparam=0x5553004e lparam=-25
+P WM_GETOBJECT at -11.740 host hwnd=0x5a707d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.097 host hwnd=0x5a707d6 wparam=0x5554c78a lparam=-25
+P WM_GETOBJECT at 2.720 host hwnd=0x5a707d6 wparam=0x5554c78b lparam=-25
+=== provider-classic-busy-short-6
+O connect: connected 9.958 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806732059 8.871 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415806732771 (rel t0 n/a)
+evidence: O plainread done 1792415806732773 0.223 Ok("0") (rel t0 n/a)
+listener read: 2.169 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.193 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -5777.980 host hwnd=0x57c07d6 wparam=0x50f87b98 lparam=-25
+P WM_GETOBJECT at -5766.254 host hwnd=0x57c07d6 wparam=0x50f87b9a lparam=-25
+P WM_GETOBJECT at -5739.945 uia_window hwnd=0x7e40990 wparam=0x51fcc3d9 lparam=-25
+P WM_GETOBJECT at -5729.051 uia_window hwnd=0x7e40990 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -5728.343 host hwnd=0x57c07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -5718.247 uia_window hwnd=0x7e40990 wparam=0x520019e2 lparam=-25
+P WM_GETOBJECT at -5717.719 host hwnd=0x57c07d6 wparam=0x520019e3 lparam=-25
+P WM_GETOBJECT at -5713.487 uia_window hwnd=0x7e40990 wparam=0x520019e4 lparam=-25
+P WM_GETOBJECT at -5713.019 host hwnd=0x57c07d6 wparam=0x520019e5 lparam=-25
+P WM_GETOBJECT at -56.845 host hwnd=0x5a807d6 wparam=0x50f87c48 lparam=-25
+P WM_GETOBJECT at -49.399 host hwnd=0x5a807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -37.460 host hwnd=0x5a807d6 wparam=0x50f87c4a lparam=-25
+P WM_GETOBJECT at -36.559 host hwnd=0x5a807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.171 host hwnd=0x5a807d6 wparam=0x5566fdcd lparam=-25
+P WM_GETOBJECT at -10.828 host hwnd=0x5a807d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.552 host hwnd=0x5a807d6 wparam=0x55687bd6 lparam=-25
+=== provider-classic-control-7
+O connect: connected 10.443 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806857673 10.358 Ok("Mockapp Events Fixture")
+listener read: 2.392 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -57.928 host hwnd=0x5a907d6 wparam=0x50f87c4c lparam=-25
+P WM_GETOBJECT at -50.140 host hwnd=0x5a907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.007 host hwnd=0x5a907d6 wparam=0x50f87c4e lparam=-25
+P WM_GETOBJECT at -39.126 host hwnd=0x5a907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.248 host hwnd=0x5a907d6 wparam=0x5579b4da lparam=-25
+P WM_GETOBJECT at -11.783 host hwnd=0x5a907d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.218 host hwnd=0x5a907d6 wparam=0x557b8c68 lparam=-25
+=== provider-classic-queued-short-7
+O connect: connected 9.807 Ok("Mockapp Events Fixture"); warm-up: op done 1792415806976719 9.606 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415806977433 (rel t0 n/a)
+evidence: O plainread done 1792415806977436 0.234 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415806977732 (rel t0 n/a)
+O op sent at -0.233 ms rel read start
+listener read: 2.036 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.055 ms rel read start (after the read returned)
+O op done 1792415806980681 3.118 Ok("Mockapp Events Fixture") [at 2.893 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -57.541 host hwnd=0x5aa07d6 wparam=0x50f87c50 lparam=-25
+P WM_GETOBJECT at -49.768 host hwnd=0x5aa07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -39.324 host hwnd=0x5aa07d6 wparam=0x50f87c52 lparam=-25
+P WM_GETOBJECT at -38.387 host hwnd=0x5aa07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.262 host hwnd=0x5aa07d6 wparam=0x558c235b lparam=-25
+P WM_GETOBJECT at -11.916 host hwnd=0x5aa07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.952 host hwnd=0x5aa07d6 wparam=0x558df003 lparam=-25
+P WM_GETOBJECT at 2.301 host hwnd=0x5aa07d6 wparam=0x558df004 lparam=-25
+=== provider-classic-busy-short-7
+O connect: connected 10.189 Ok("Mockapp Events Fixture"); warm-up: op done 1792415807101891 8.487 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415807102545 (rel t0 n/a)
+evidence: O plainread done 1792415807102556 0.204 Ok("0") (rel t0 n/a)
+listener read: 1.954 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 1.973 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -57.652 host hwnd=0x5ab07d6 wparam=0x50f87c54 lparam=-25
+P WM_GETOBJECT at -49.913 host hwnd=0x5ab07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.030 host hwnd=0x5ab07d6 wparam=0x50f87c56 lparam=-25
+P WM_GETOBJECT at -37.260 host hwnd=0x5ab07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.962 host hwnd=0x5ab07d6 wparam=0x559f797b lparam=-25
+P WM_GETOBJECT at -10.667 host hwnd=0x5ab07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.529 host hwnd=0x5ab07d6 wparam=0x55a0f78d lparam=-25
+=== provider-classic-control-8
+O connect: connected 10.070 Ok("Mockapp Events Fixture"); warm-up: op done 1792415807253764 9.108 Ok("Mockapp Events Fixture")
+listener read: 2.329 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -55.943 host hwnd=0x5ac07d6 wparam=0x50f87c58 lparam=-25
+P WM_GETOBJECT at -48.852 host hwnd=0x5ac07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -37.963 host hwnd=0x5ac07d6 wparam=0x50f87c5a lparam=-25
+P WM_GETOBJECT at -37.070 host hwnd=0x5ac07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -11.937 host hwnd=0x5ac07d6 wparam=0x55b671bb lparam=-25
+P WM_GETOBJECT at -10.510 host hwnd=0x5ac07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -0.923 host hwnd=0x5ac07d6 wparam=0x55b80d1d lparam=-25
+=== provider-classic-queued-short-8
+O connect: connected 10.155 Ok("Mockapp Events Fixture"); warm-up: op done 1792415807371543 9.264 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415807372234 (rel t0 n/a)
+evidence: O plainread done 1792415807372242 0.219 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415807372586 (rel t0 n/a)
+O op sent at -0.248 ms rel read start
+listener read: 2.176 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.198 ms rel read start (after the read returned)
+O op done 1792415807375821 3.411 Ok("Mockapp Events Fixture") [at 3.175 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -54.959 host hwnd=0x5ad07d6 wparam=0x50f87c5c lparam=-25
+P WM_GETOBJECT at -48.409 host hwnd=0x5ad07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.044 host hwnd=0x5ad07d6 wparam=0x50f87c5e lparam=-25
+P WM_GETOBJECT at -37.105 host hwnd=0x5ad07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.860 host hwnd=0x5ad07d6 wparam=0x55c850df lparam=-25
+P WM_GETOBJECT at -11.535 host hwnd=0x5ad07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.890 host hwnd=0x5ad07d6 wparam=0x55ca1d0f lparam=-25
+P WM_GETOBJECT at 2.458 host hwnd=0x5ad07d6 wparam=0x55ca1d10 lparam=-25
+=== provider-classic-busy-short-8
+O connect: connected 10.710 Ok("Mockapp Events Fixture"); warm-up: op done 1792415807504204 9.508 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415807504983 (rel t0 n/a)
+evidence: O plainread done 1792415807504993 0.258 Ok("0") (rel t0 n/a)
+listener read: 2.486 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.513 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -59.907 host hwnd=0x5ae07d6 wparam=0x50f87c60 lparam=-25
+P WM_GETOBJECT at -52.377 host hwnd=0x5ae07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.399 host hwnd=0x5ae07d6 wparam=0x50f87c62 lparam=-25
+P WM_GETOBJECT at -39.436 host hwnd=0x5ae07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.132 host hwnd=0x5ae07d6 wparam=0x55dc84e9 lparam=-25
+P WM_GETOBJECT at -11.764 host hwnd=0x5ae07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.751 host hwnd=0x5ae07d6 wparam=0x55de5b37 lparam=-25
+=== provider-classic-control-9
+O connect: connected 10.206 Ok("Mockapp Events Fixture"); warm-up: op done 1792415807624684 9.587 Ok("Mockapp Events Fixture")
+listener read: 2.275 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -56.080 host hwnd=0x5af07d6 wparam=0x50f87c64 lparam=-25
+P WM_GETOBJECT at -49.194 host hwnd=0x5af07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -38.640 host hwnd=0x5af07d6 wparam=0x50f87c66 lparam=-25
+P WM_GETOBJECT at -37.722 host hwnd=0x5af07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.431 host hwnd=0x5af07d6 wparam=0x55eee2f7 lparam=-25
+P WM_GETOBJECT at -11.080 host hwnd=0x5af07d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.053 host hwnd=0x5af07d6 wparam=0x55f0a72b lparam=-25
+=== provider-classic-queued-short-9
+O connect: connected 11.094 Ok("Mockapp Events Fixture"); warm-up: op done 1792415807745413 8.848 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415807746069 (rel t0 n/a)
+evidence: O plainread done 1792415807746085 0.234 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415807746388 (rel t0 n/a)
+O op sent at -0.246 ms rel read start
+listener read: 2.066 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.097 ms rel read start (after the read returned)
+O op done 1792415807749511 3.299 Ok("Mockapp Events Fixture") [at 3.063 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -58.997 host hwnd=0x5b007d6 wparam=0x50f87c68 lparam=-25
+P WM_GETOBJECT at -51.386 host hwnd=0x5b007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.488 host hwnd=0x5b007d6 wparam=0x50f87c6a lparam=-25
+P WM_GETOBJECT at -39.591 host hwnd=0x5b007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.299 host hwnd=0x5b007d6 wparam=0x560195df lparam=-25
+P WM_GETOBJECT at -10.976 host hwnd=0x5b007d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.746 host hwnd=0x5b007d6 wparam=0x560314ad lparam=-25
+P WM_GETOBJECT at 2.368 host hwnd=0x5b007d6 wparam=0x560314ae lparam=-25
+=== provider-classic-busy-short-9
+O connect: connected 10.221 Ok("Mockapp Events Fixture"); warm-up: op done 1792415807871696 9.466 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415807872383 (rel t0 n/a)
+evidence: O plainread done 1792415807872391 0.229 Ok("0") (rel t0 n/a)
+listener read: 2.212 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.242 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -58.974 host hwnd=0x5b107d6 wparam=0x50f87c6c lparam=-25
+P WM_GETOBJECT at -52.433 host hwnd=0x5b107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -42.059 host hwnd=0x5b107d6 wparam=0x50f87c6e lparam=-25
+P WM_GETOBJECT at -41.174 host hwnd=0x5b107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.725 host hwnd=0x5b107d6 wparam=0x561491e5 lparam=-25
+P WM_GETOBJECT at -11.463 host hwnd=0x5b107d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.639 host hwnd=0x5b107d6 wparam=0x56165e92 lparam=-25
+=== provider-classic-control-10
+O connect: connected 10.240 Ok("Mockapp Events Fixture"); warm-up: op done 1792415808022736 9.113 Ok("Mockapp Events Fixture")
+listener read: 2.209 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+P hits since before the hold: []
+P WM_GETOBJECT at -54.360 host hwnd=0x5b207d6 wparam=0x50f87c70 lparam=-25
+P WM_GETOBJECT at -47.700 host hwnd=0x5b207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -37.692 host hwnd=0x5b207d6 wparam=0x50f87c72 lparam=-25
+P WM_GETOBJECT at -36.814 host hwnd=0x5b207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -12.020 host hwnd=0x5b207d6 wparam=0x562bccf3 lparam=-25
+P WM_GETOBJECT at -10.503 host hwnd=0x5b207d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -0.979 host hwnd=0x5b207d6 wparam=0x562d4b35 lparam=-25
+=== provider-classic-queued-short-10
+O connect: connected 10.593 Ok("Mockapp Events Fixture"); warm-up: op done 1792415808140749 9.929 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415808141549 (rel t0 n/a)
+evidence: O plainread done 1792415808141560 0.256 Ok("0") (rel t0 n/a)
+evidence: P stall message arrived at 1792415808141936 (rel t0 n/a)
+O op sent at -0.307 ms rel read start
+listener read: 2.334 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.359 ms rel read start (after the read returned)
+O op done 1792415808145447 3.739 Ok("Mockapp Events Fixture") [at 3.445 ms rel read start]
+P hits since before the hold: [("WM_GETOBJECT", 1), ("ProviderOptions", 5), ("GetPropertyValue", 2), ("HostRawElementProvider", 2), ("Navigate", 2)]
+P WM_GETOBJECT at -58.269 host hwnd=0x5b307d6 wparam=0x50f87c74 lparam=-25
+P WM_GETOBJECT at -51.034 host hwnd=0x5b307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -40.584 host hwnd=0x5b307d6 wparam=0x50f87c76 lparam=-25
+P WM_GETOBJECT at -39.654 host hwnd=0x5b307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.949 host hwnd=0x5b307d6 wparam=0x563d9b6e lparam=-25
+P WM_GETOBJECT at -12.601 host hwnd=0x5b307d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -2.222 host hwnd=0x5b307d6 wparam=0x563f6867 lparam=-25
+P WM_GETOBJECT at 2.690 host hwnd=0x5b307d6 wparam=0x563f6868 lparam=-25
+=== provider-classic-busy-short-10
+O connect: connected 11.213 Ok("Mockapp Events Fixture"); warm-up: op done 1792415808270528 9.708 Ok("Mockapp Events Fixture")
+evidence: P stall started at 1792415808271354 (rel t0 n/a)
+evidence: O plainread done 1792415808271369 0.274 Ok("0") (rel t0 n/a)
+listener read: 2.417 ms; calls CallCounts { uia: 4, msaa: 0, window_messages: 1 }; read ancestors=Some([(Some("Settings"), 0)])
+released at 2.447 ms rel read start (after the read returned)
+P hits since before the hold: [("GetPropertyValue", 1)]
+P WM_GETOBJECT at -60.079 host hwnd=0x5b407d6 wparam=0x50f87c78 lparam=-25
+P WM_GETOBJECT at -52.541 host hwnd=0x5b407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -41.808 host hwnd=0x5b407d6 wparam=0x50f87c7a lparam=-25
+P WM_GETOBJECT at -40.833 host hwnd=0x5b407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -13.458 host hwnd=0x5b407d6 wparam=0x5651863b lparam=-25
+P WM_GETOBJECT at -11.962 host hwnd=0x5b407d6 wparam=0x0 lparam=-25
+P WM_GETOBJECT at -1.879 host hwnd=0x5b407d6 wparam=0x5653533b lparam=-25
