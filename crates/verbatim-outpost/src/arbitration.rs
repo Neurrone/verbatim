@@ -254,6 +254,15 @@ impl Arbitrator {
             || matches!(self.kept(hwnd), Some(Probed::Uia | Probed::Excluded));
         (self.verdict(hwnd, classes), lasting)
     }
+
+    /// Whether a kept probe found that `hwnd` has a UIA provider of its own.
+    /// A verdict from the class lists or a forced override does not say
+    /// this: a window UIA by class may be served only by UIA's proxies, as
+    /// the taskbar's `Shell_TrayWnd` is.
+    #[must_use]
+    pub fn probe_found_provider(&self, hwnd: isize) -> bool {
+        matches!(self.kept(hwnd), Some(Probed::Uia))
+    }
 }
 
 impl Arbitrator {
@@ -382,6 +391,7 @@ pub(crate) fn uses_uia(
 ) -> bool {
     uses_uia_keeping(arbitrator, hwnd, probe, console).0
 }
+
 
 /// Which probe asks a window for its provider
 /// (`docs/design/listener-without-connections.md`, decision 2).
@@ -623,6 +633,20 @@ mod tests {
         windows.forget(42);
         assert!(uia_window_known(&mut windows, &arbitrator, &reads));
         assert_eq!(reads.get(), 2, "read again once the window was destroyed");
+    }
+
+    #[test]
+    fn only_a_kept_probe_says_a_window_has_a_provider_of_its_own() {
+        let mut arb = Arbitrator::new(&[]);
+        assert_eq!(arb.verdict(1, &top("Shell_TrayWnd")), Some(true));
+        assert!(!arb.probe_found_provider(1), "a verdict from the class");
+        arb.set_forced(Some(true));
+        assert!(!arb.probe_found_provider(1), "a forced verdict");
+        arb.set_forced(None);
+        arb.record_probe(1, true);
+        assert!(arb.probe_found_provider(1));
+        arb.record_probe(2, false);
+        assert!(!arb.probe_found_provider(2), "a probe that found none");
     }
 
     #[test]
