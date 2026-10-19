@@ -60,6 +60,21 @@ impl Progress {
     }
 }
 
+/// What a wait with a timeout ([`PortQueue::recv_timeout`]) came to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Received<T> {
+    /// The next item.
+    Item(T),
+    /// The time ran out with no item; posters remain, so more may come.
+    /// A system wait can end up to a clock tick before the deadline
+    /// measured by [`Instant`], so a caller with a deadline of its own
+    /// checks it rather than taking this to mean the deadline has passed.
+    TimedOut,
+    /// Every [`Poster`] has gone and every item has been taken, or the
+    /// port can no longer be waited on: nothing more will come.
+    Closed,
+}
+
 /// What the posters and the taker share.
 struct Shared<T> {
     port: Port,
@@ -241,40 +256,46 @@ impl<T: Send> PortQueue<T> {
     /// The next item, waiting for one as long as it takes; `None` once
     /// every [`Poster`] has gone and every item has been taken.
     pub fn recv(&mut self) -> Option<T> {
-        self.next(None)
+        match self.next(None) {
+            Received::Item(item) => Some(item),
+            Received::TimedOut | Received::Closed => None,
+        }
     }
 
-    /// The next item, waiting up to `timeout` for one; `None` when none
-    /// came, or when every [`Poster`] has gone and every item has been
-    /// taken.
-    pub fn recv_timeout(&mut self, timeout: Duration) -> Option<T> {
+    /// The next item, waiting up to `timeout` for one, or what ended the
+    /// wait without one: the time running out, which leaves the queue open,
+    /// or the queue's end.
+    pub fn recv_timeout(&mut self, timeout: Duration) -> Received<T> {
         self.next(Some(Instant::now() + timeout))
     }
 
     /// The next item if one is already on the port, without waiting: a
     /// zero-timeout dequeue.
     pub fn try_recv(&mut self) -> Option<T> {
-        self.next(Some(Instant::now()))
+        match self.next(Some(Instant::now())) {
+            Received::Item(item) => Some(item),
+            Received::TimedOut | Received::Closed => None,
+        }
     }
 
     /// The next item, waiting until `deadline`, or for ever when `None`.
-    fn next(&mut self, deadline: Option<Instant>) -> Option<T> {
+    fn next(&mut self, deadline: Option<Instant>) -> Received<T> {
         loop {
             if let Some(item) = self.ready.pop_front() {
                 self.shared.taken.fetch_add(1, Ordering::SeqCst);
-                return Some(item);
+                return Received::Item(item);
             }
             if self.closed {
-                return None;
+                return Received::Closed;
             }
             let timeout =
                 deadline.map(|deadline| deadline.saturating_duration_since(Instant::now()));
             match self.shared.port.wait(&mut self.completions, timeout) {
-                Ok(0) => return None,
+                Ok(0) => return Received::TimedOut,
                 Ok(_) => self.take_completions(),
                 Err(error) => {
                     tracing::error!(%error, "a queue's port could not be waited on");
-                    return None;
+                    return Received::Closed;
                 }
             }
         }
@@ -316,7 +337,10 @@ mod tests {
             .expect("the thread ends");
         poster.send("third".to_owned()).expect("posted");
         let taken: Vec<String> = (0..3)
-            .map(|_| queue.recv_timeout(BOUND).expect("an item"))
+            .map(|_| match queue.recv_timeout(BOUND) {
+                Received::Item(item) => item,
+                other => panic!("no item came: {other:?}"),
+            })
             .collect();
         assert_eq!(taken, ["first", "second", "third"]);
         assert_eq!(queue.try_recv(), None);
@@ -349,6 +373,14 @@ mod tests {
         drop(poster);
         assert_eq!(queue.recv(), Some(7));
         assert_eq!(queue.recv(), None);
+    }
+
+    #[test]
+    fn a_wait_that_runs_out_is_told_from_the_queue_ending() {
+        let (poster, mut queue) = port_queue::<u32>().expect("a queue");
+        assert_eq!(queue.recv_timeout(Duration::ZERO), Received::TimedOut);
+        drop(poster);
+        assert_eq!(queue.recv_timeout(Duration::ZERO), Received::Closed);
     }
 
     #[test]

@@ -53,7 +53,7 @@ use verbatim_outpost::protocol::{
 };
 use verbatim_outpost::supervisor::{EndReason, Frames};
 use verbatim_outpost::{OutpostMessage, OutpostOptions, Supervisor};
-use verbatim_process::port_queue::{PortQueue, Poster, port_queue};
+use verbatim_process::port_queue::{PortQueue, Poster, Received, port_queue};
 use verbatim_speech::hosting::synth_ids;
 use verbatim_speech::{
     SettingId, SettingValue, SpeechManager, SpeechManagerConfig, SpeechSettingsHost, SynthId,
@@ -1945,25 +1945,41 @@ fn reducer_loop(
     thread.apply(Input::Settings(settings));
     thread.send_views();
     loop {
-        // A shell items request's deadline wakes the thread; with none
-        // outstanding it waits for its next command alone.
-        let (command, due) = match thread.next_deadline() {
-            Some(due) => (
-                command_rx.recv_timeout(due.saturating_duration_since(Instant::now())),
-                Some(due),
-            ),
-            None => (command_rx.recv(), None),
-        };
+        let next = next_command(&mut command_rx, thread.next_deadline());
         thread.expire(Instant::now());
-        match command {
-            Some(command) => thread.on_command(command),
-            // The deadline passed with no command.
-            None if due.is_some_and(|due| Instant::now() >= due) => {}
-            // Every poster has gone.
-            None => break,
+        match next {
+            Next::Command(command) => thread.on_command(command),
+            Next::Woken => {}
+            Next::Closed => break,
         }
         thread.send_views();
         thread.advance_idle_barrier(&mut command_rx);
+    }
+}
+
+/// What the reducer thread's wait for its next command came to.
+enum Next {
+    /// A command to handle.
+    Command(ShellCommand),
+    /// No command came before the wait ended: a deadline is due, or nearly
+    /// so, and the thread checks its deadlines and waits again.
+    Woken,
+    /// Every poster has gone: the thread ends.
+    Closed,
+}
+
+/// Waits for the reducer thread's next command, or until `due`, the
+/// earliest shell items request's deadline, when one is outstanding. Only
+/// the queue's end ends the thread: a wait that ran out, even a clock tick
+/// before `due`, as a system wait may, wakes it to check its deadlines.
+fn next_command(command_rx: &mut PortQueue<ShellCommand>, due: Option<Instant>) -> Next {
+    match due {
+        Some(due) => match command_rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
+            Received::Item(command) => Next::Command(command),
+            Received::TimedOut => Next::Woken,
+            Received::Closed => Next::Closed,
+        },
+        None => command_rx.recv().map_or(Next::Closed, Next::Command),
     }
 }
 
@@ -2391,6 +2407,24 @@ mod tests {
     #[test]
     fn a_double_press_lists_the_taskbar() {
         assert_eq!(shell_list_kind(&tray_list_press(1)), ShellItemKind::Taskbar);
+    }
+
+    /// A wait for a deadline that runs out with no command wakes the
+    /// reducer thread to check its deadlines rather than ending it, however
+    /// the time compares with the deadline; only the queue's end ends it.
+    #[test]
+    fn a_wait_that_runs_out_wakes_the_reducer_thread_and_only_the_end_stops_it() {
+        let (command_tx, mut command_rx) = port_queue().expect("a port");
+        let due = Instant::now();
+        assert!(matches!(
+            next_command(&mut command_rx, Some(due)),
+            Next::Woken
+        ));
+        drop(command_tx);
+        assert!(matches!(
+            next_command(&mut command_rx, Some(due)),
+            Next::Closed
+        ));
     }
 
     /// The supervisor's messages and the reducer's other inputs share one

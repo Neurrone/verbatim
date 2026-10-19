@@ -113,7 +113,10 @@ Public API:
   `PortQueue::recv`, `recv_timeout` and `try_recv` (a zero-timeout
   dequeue) take the items in the order the port received them, which is
   first in, first out across every poster, up to 64 per wait; `recv`
-  answers `None` once every poster has gone and every item is taken.
+  answers `None` once every poster has gone and every item is taken,
+  and `recv_timeout` answers a `Received`: `Item`, `TimedOut` while
+  posters remain, or `Closed` at that end, so a caller with a deadline of
+  its own never takes a wait that ran out for the queue's end.
   `Poster::progress()` gives the counts posted and taken (`Progress`,
   with `waiting()`), which the supervisor's relay reads to watch the
   reducer. Items still on the port when everything is dropped are

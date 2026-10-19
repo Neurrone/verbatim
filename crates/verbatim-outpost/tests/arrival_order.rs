@@ -38,7 +38,7 @@ use verbatim_outpost::protocol::{
 use verbatim_outpost::supervisor::{
     EventSink, Frames, LARGE_FRAME_BYTES, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
 };
-use verbatim_process::port_queue::{PortQueue, port_queue};
+use verbatim_process::port_queue::{PortQueue, Received, port_queue};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForSingleObject};
@@ -339,10 +339,9 @@ impl Reducer {
     fn take(&mut self, count: usize) -> Vec<String> {
         let mut handled = Vec::new();
         while handled.len() < count {
-            let input = self
-                .queue
-                .recv_timeout(WAIT)
-                .unwrap_or_else(|| panic!("nothing more came after {handled:?}"));
+            let Received::Item(input) = self.queue.recv_timeout(WAIT) else {
+                panic!("nothing more came after {handled:?}");
+            };
             match input {
                 Input::Key(number) => handled.push(format!("key {number}")),
                 Input::Outpost(message) => {

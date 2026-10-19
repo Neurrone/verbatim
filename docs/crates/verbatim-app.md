@@ -469,7 +469,9 @@ knowing for review:
   request table's, recorded with its deadline (`RequestTable::begin_until`),
   so a late answer is dropped. The reducer thread waits for its next
   command only until the earliest such deadline (`recv_timeout`), and
-  waits without one when none is outstanding. The GUI event thread speaks `GuiEvent::ShellItemGone`
+  waits without one when none is outstanding; only the queue's end
+  (`Received::Closed`) ends it, since a system wait can run out a clock
+  tick before the deadline. The GUI event thread speaks `GuiEvent::ShellItemGone`
   as queued text, when the list dialog finds its chosen item gone. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and shuts the outposts and the listener down cleanly through
