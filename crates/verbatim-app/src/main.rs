@@ -2016,7 +2016,7 @@ fn router_loop(
             ScriptAction::SpeakTime => speak_time_or_date(manager, emitted.repeat),
             ScriptAction::ShowTrayList => send_gui_command(
                 gui_handle,
-                GuiCommand::OpenShellItemList(shell_list_kind(emitted.repeat + 1)),
+                GuiCommand::OpenShellItemList(shell_list_kind(&emitted)),
             ),
             other => {
                 if let Some(command) = other.review_command() {
@@ -2141,11 +2141,11 @@ fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
     });
 }
 
-/// The shell surface Verbatim+F11 lists: the system tray on a single press
-/// (`repeat` 0), the taskbar on a double press, counted as for
-/// [`speak_time_or_date`]. Pure, and unit tested below.
-fn shell_list_kind(repeat: u8) -> ShellItemKind {
-    if repeat == 0 {
+/// The shell surface Verbatim+F11 lists for the press the router received:
+/// the system tray on a single press (`repeat` 0), the taskbar on a double
+/// press, counted as for [`speak_time_or_date`]. Pure, and unit tested below.
+fn shell_list_kind(emitted: &EmittedGesture) -> ShellItemKind {
+    if emitted.repeat == 0 {
         ShellItemKind::SystemTray
     } else {
         ShellItemKind::Taskbar
@@ -2336,16 +2336,26 @@ fn request_dump_tree(command_tx: &Commands) -> DumpTreeResult {
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_single_press_lists_the_system_tray() {
-        assert_eq!(shell_list_kind(0), ShellItemKind::SystemTray);
+    /// The Verbatim+F11 press the router receives, with its repeat count.
+    fn tray_list_press(repeat: u8) -> EmittedGesture {
+        EmittedGesture {
+            trace_id: TraceId::mint(),
+            gesture: GestureId::parse("kb:verbatim+f11").expect("valid binding"),
+            repeat,
+        }
     }
 
     #[test]
-    fn a_repeated_press_lists_the_taskbar() {
-        // Any repeat selects the taskbar list.
-        assert_eq!(shell_list_kind(1), ShellItemKind::Taskbar);
-        assert_eq!(shell_list_kind(3), ShellItemKind::Taskbar);
+    fn a_single_press_lists_the_system_tray() {
+        assert_eq!(
+            shell_list_kind(&tray_list_press(0)),
+            ShellItemKind::SystemTray
+        );
+    }
+
+    #[test]
+    fn a_double_press_lists_the_taskbar() {
+        assert_eq!(shell_list_kind(&tray_list_press(1)), ShellItemKind::Taskbar);
     }
 
     /// The supervisor's messages and the reducer's other inputs share one
