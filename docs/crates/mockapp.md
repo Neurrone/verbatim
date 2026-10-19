@@ -439,8 +439,13 @@ its name, on a desktop no other test is using, and reports its result.
 Each of the runner's worker threads makes one desktop and one job object,
 and runs its tests on that desktop one after another, every process a
 test starts being in the job. Before the next test starts there, the
-runner waits for the job's report that no process in it is running any
-more, so nothing of the earlier test is left on the desktop. Desktops
+runner waits until the job's count of running processes, which includes
+those of the job nested in it, is none, so nothing of the earlier test
+is left on the desktop. The job's completion port only wakes that wait,
+because Windows does not guarantee to deliver its message that the count
+reached none, and the port cannot tell that message from a nested job's;
+if processes are still running a minute after the test ended, the run
+fails naming the test. Desktops
 are not made per test because making one costs the Desktop Window
 Manager about a tenth of a second of work, done in turn for the whole
 session, and while it is behind, anything that waits on it is late, such

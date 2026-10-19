@@ -278,3 +278,14 @@ outpost, a connection to its frame in `ApplicationFrameHost`, whose lock
 the outpost does not hold (section 20.9). The lock's waits are logged at
 debug under `verbatim_uia::lock`, each with the call and how long it
 waited.
+
+**A window's title-bar information takes seconds during a parallel
+mockapp run.** On the development VM the Desktop Window Manager does
+about 30 ms of work for every hidden top-level window, and about 200 ms
+for every visible one, made or destroyed anywhere in the session, on any
+desktop, and does it in turn, so anything that waits on it, such as
+`WM_GETTITLEBARINFOEX`, which the MSAA proxy sends, can wait seconds
+while `cargo test -p mockapp` runs its tests in parallel (up to 13 s
+measured). It matters because a test that times or tightly bounds such
+a read fails from load elsewhere in the session, not from its own code,
+so no test does (`docs/testing.md`, "Waits are for evidence").

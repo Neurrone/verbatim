@@ -267,17 +267,19 @@ mod isolated {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::io::AsRawHandle;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
 
     use windows::Win32::Foundation::{
         CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, GENERIC_ALL, HANDLE,
-        INVALID_HANDLE_VALUE, WAIT_OBJECT_0,
+        INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows::Win32::System::IO::{
         CreateIoCompletionPort, GetQueuedCompletionStatus, OVERLAPPED,
     };
     use windows::Win32::System::JobObjects::{
         CreateJobObjectW, JOBOBJECT_ASSOCIATE_COMPLETION_PORT,
-        JobObjectAssociateCompletionPortInformation, SetInformationJobObject,
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JobObjectAssociateCompletionPortInformation,
+        JobObjectBasicAccountingInformation, QueryInformationJobObject, SetInformationJobObject,
     };
     use windows::Win32::System::StationsAndDesktops::{
         CloseDesktop, CreateDesktopW, DESKTOP_CONTROL_FLAGS, GetProcessWindowStation,
@@ -290,10 +292,12 @@ mod isolated {
         PROC_THREAD_ATTRIBUTE_JOB_LIST, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
         UpdateProcThreadAttribute, WaitForSingleObject,
     };
-    use windows::core::{PCWSTR, PWSTR};
+    use windows::core::{HRESULT, PCWSTR, PWSTR};
 
-    /// A job message: no process in the job is running any more.
-    const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: u32 = 4;
+    /// How long a test's processes may go on running after it has ended
+    /// before the run fails: far longer than any of them takes to end
+    /// once the test's process has ended the job they are in.
+    const EMPTY_WITHIN: Duration = Duration::from_secs(60);
 
     /// Numbers this process's desktops, so each is new.
     static DESKTOPS: AtomicUsize = AtomicUsize::new(0);
@@ -357,7 +361,7 @@ mod isolated {
 
     /// A job every process a test starts is in, from the test's own process
     /// on, since a child starts in its parent's job, with a completion port
-    /// that hears when no process in it is running any more.
+    /// that hears of the processes in it starting and ending.
     ///
     /// The test's process puts its children in a job of its own
     /// ([`crate::common::contain_children`]), which ends them when that
@@ -397,30 +401,68 @@ mod isolated {
             Self { job, port }
         }
 
-        /// Waits until no process in the job is running any more, which the
-        /// job reports once its count of running processes reaches none.
-        /// That happens once per test: the test's process is in the job
-        /// until it ends, and by then it has ended the job its children are
-        /// in, so this waits only for their ending.
-        fn wait_until_empty(&self) {
+        /// The number of processes in the job that are running, those of
+        /// the jobs nested in it included.
+        fn active_processes(&self) -> u32 {
+            let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+            // SAFETY: `accounting` is the structure this information class
+            // fills, passed with its size; the job handle is open.
+            unsafe {
+                QueryInformationJobObject(
+                    Some(self.job),
+                    JobObjectBasicAccountingInformation,
+                    (&raw mut accounting).cast(),
+                    u32::try_from(size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>())
+                        .expect("the structure's size fits"),
+                    None,
+                )
+            }
+            .unwrap_or_else(|error| panic!("a test's job could not be read: {error}"));
+            accounting.ActiveProcesses
+        }
+
+        /// Waits until no process in the job is running any more, the test
+        /// `name`'s having been the last started in it, and panics naming
+        /// it if some are still running after [`EMPTY_WITHIN`].
+        ///
+        /// The job's count of running processes decides; the port only
+        /// wakes this wait. The port's messages are not that evidence:
+        /// Windows does not guarantee to deliver the one saying the count
+        /// reached none, and a job nested in this one sends its own, which
+        /// the port cannot tell apart from this job's. Any message, a stale
+        /// one from an earlier test included, is a reason to read the count
+        /// again.
+        fn wait_until_empty(&self, name: &str) {
+            let deadline = Instant::now() + EMPTY_WITHIN;
             loop {
+                let running = self.active_processes();
+                if running == 0 {
+                    return;
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "{running} of the processes the test {name} started were still running {} s after it ended",
+                    EMPTY_WITHIN.as_secs()
+                );
                 let mut message = 0u32;
                 let mut key = 0usize;
                 let mut overlapped: *mut OVERLAPPED = std::ptr::null_mut();
                 // SAFETY: the port this value owns; every out-parameter is a
                 // local of the right type.
-                unsafe {
+                let waited = unsafe {
                     GetQueuedCompletionStatus(
                         self.port,
                         &raw mut message,
                         &raw mut key,
                         &raw mut overlapped,
-                        INFINITE,
+                        u32::try_from(remaining.as_millis()).unwrap_or(u32::MAX),
                     )
-                }
-                .unwrap_or_else(|error| panic!("a test's job's port could not be read: {error}"));
-                if message == JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO {
-                    return;
+                };
+                if let Err(error) = waited
+                    && error.code() != HRESULT::from_win32(WAIT_TIMEOUT.0)
+                {
+                    panic!("a test's job's port could not be read: {error}");
                 }
             }
         }
@@ -460,7 +502,7 @@ mod isolated {
         /// started has ended, and returns whether it passed.
         pub(super) fn run(&mut self, name: &str) -> bool {
             let passed = run(name, &self.desktop, &self.job);
-            self.job.wait_until_empty();
+            self.job.wait_until_empty(name);
             passed
         }
     }

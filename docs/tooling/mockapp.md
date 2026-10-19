@@ -53,8 +53,10 @@ automates, minus the automation.
 
 ## Which tests use the desktop
 
-Every `mockapp` test runs on a desktop of its own, made for it and
-closed once it ends (`tests/common/harness.rs`, `run_isolated`), so
+Every `mockapp` test runs on a desktop no other test is using
+(`tests/common/harness.rs`, `run_isolated`): each of the runner's worker
+threads makes one desktop and runs its tests there one after another,
+each starting once every process the one before it started has ended, so
 `cargo test -p mockapp` and `cargo xtask ci` put no window on the
 interactive desktop and can run while an end-to-end run has it. A window
 and its events are seen only from its own desktop, so nothing an
