@@ -1417,15 +1417,17 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   where a program cannot import the window's element), and keeps it
   under the focus's node and follows it. While the focus is one whose
   value is its selected item (`UiaFocusRead::value_from_selection`), a
-  selection the listener passes on of an item that does not have the
-  keyboard focus and is one of the focus's children, one
-  `FindFirstBuildCache` over its children, is reported as `ValueChanged`
-  on the focus with the item's name (`Worker::selection_as_value`), as
-  NVDA's list item raises a value change on such a focused parent when
-  its state changes; the focus-now answer reads such a value the same
-  way. NVDA's same rule for a `Windows.UI.Core` combo box with the
-  `Value` pattern, and for the classic .NET Framework Windows Forms combo
-  box, is not built. A repeated focus whose element
+  selection the listener passes on of one of the focus's children, found
+  by one `FindFirstBuildCache` over its children whose cache holds the
+  item's name and keyboard focus (`verbatim_uia::SelectedItem`), is
+  reported as `ValueChanged` on the focus with the item's name as found
+  (`Worker::selection_as_value`), unless the item has the keyboard focus,
+  as NVDA's list item raises a value change on such a focused parent when
+  its state changes and it does not have the focus; the focus-now answer
+  reads such a value the same way. NVDA's same rule for a
+  `Windows.UI.Core` combo box with the `Value` pattern, which no Settings
+  combo box has (`docs/parity/changes-and-selection.md`), and for the
+  classic .NET Framework Windows Forms combo box, is not built. A repeated focus whose element
   the outpost already holds, and which the listener read as still
   focused, is not looked for again. The chain is kept
   (`outpost::focus_path`) and serves whenever the outpost needs an element

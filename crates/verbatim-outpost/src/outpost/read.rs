@@ -537,6 +537,9 @@ pub(super) fn uia_remote_enrichment(
         refresh: false,
         nearest_window: None,
         before_call: None,
+        // The node's cache holds it, so the classic fallback asks nothing
+        // of a combo box for it.
+        value_available: Some(element.read().states.value_available),
     };
     // One remote operation, one transaction, which UIA's transaction
     // timeout bounds; the classic walk it falls back to checks the

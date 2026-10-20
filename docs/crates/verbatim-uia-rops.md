@@ -182,7 +182,9 @@ and `nearest_window`, the element's nearest window when the caller has
 already found it, which the classic walk then does not look up, and
 `before_call`, told the name of each of the classic walk's calls as it
 begins, so that the caller can time them (the focus listener logs one
-slower than a second). Since the input is typed, its
+slower than a second), and `value_available`, whether the element has
+the `Value` pattern when the caller's cache already says, as the
+outposts' node does, which the classic walk then asks nothing for. Since the input is typed, its
 control type is always in its cache, and the live read of it the query
 once fell back to is gone (decision 8 of `docs/design/uia-shapes.md`).
 Both answer `FocusAncestry::NotFocused` when a
@@ -219,7 +221,8 @@ element it compares equal to still has the focus. The `Ancestry`:
   (`verbatim_uia::map::value_from_selection`). The program asks the
   combo box for `IsValuePatternAvailable` itself and reads the selection
   only without the pattern; the classic walk takes the answer from the
-  element read afresh, or, without a fresh read, asks it live, one call.
+  query's `value_available`, else from the element read afresh, or,
+  without either, asks it live, one call.
 - `window`: the native window handle of the element or of its nearest
   raw-view ancestor that has one, which `verbatim_uia::nearest_window_handle`
   would find (NVDA's `getNearestWindowHandle`). The outpost needs it to

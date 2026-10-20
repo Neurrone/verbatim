@@ -694,7 +694,10 @@ Public API:
     ungated description: 25; `parts(runtime_id)`), a dialog's child;
     `SelectionContainer` (`SelectionPattern2`'s first selected item, read
     as an `ElementValue`, and the `Selection` pattern, read as its
-    interface); `HelpTextRefresh` (`Description`) and `SuggestionsRefresh`
+    interface); `SelectedItem` (name and keyboard focus, covering
+    `Kept`; `name()` without bidirectional controls), an item found among
+    a focused combo box's children as it is selected, whose name is the
+    combo box's new value; `HelpTextRefresh` (`Description`) and `SuggestionsRefresh`
     (Text pattern availability and automation id;
     `reports_suggestions()`), what a help text and a `ControllerFor`
     change read; `WindowLookup` (native window handle), one property;

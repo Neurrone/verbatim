@@ -52,8 +52,8 @@ mod tests;
 pub use shapes::{
     Ancestor, AncestorGates, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
     ListenerEvent, Node, NodeGates, Position, PropertyEvent, ProviderOrigin, RoleCore,
-    SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
-    TextEvent, TreeDump, ValueSet, WindowLookup,
+    SelectedItem, SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh,
+    TextAreaPattern, TextEvent, TreeDump, ValueSet, WindowLookup,
 };
 
 mod sealed {

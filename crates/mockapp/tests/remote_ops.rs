@@ -201,6 +201,7 @@ fn query<'a>(
         refresh: false,
         nearest_window: None,
         before_call: None,
+        value_available: None,
     }
 }
 

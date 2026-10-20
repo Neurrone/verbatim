@@ -549,22 +549,37 @@ The focus lands on the list itself, and its selected item is read with it.
 
 The focus lands on a combo box whose value is its first selected item's
 name (`verbatim_uia::map::value_from_selection`), and the item is read
-with it (`crates/mockapp/tests/combo_box.rs`).
+with it (`crates/mockapp/tests/combo_box.rs`); then another of its items
+is selected. Pinned by `crates/mockapp/tests/call_counts.rs`,
+`uia_combo_box_costs_exactly`, with the outpost's remote program and its
+classic walk.
 
-- Today: 8 UIA calls in the listener's read: the five of a steady-state
-  focus change on a windowless element and the selected item's three
-  through the `Selection` pattern (mockapp's combo box has no
-  `SelectionPattern2`), as for a tab control. A combo box with the
-  `Value` pattern reads no selected item: the listener's classic read
-  asks its fresh copy of the element, and the outpost's remote program
-  asks the element inside the provider, adding no call; the outposts'
-  classic fallback, which has no fresh copy, asks it live, one call
-  more. A looping
-  selector is read as a list is, 7 calls.
-- A selection of one of the focused combo box's items: 1 UIA call in the
-  outpost, a `FindFirstBuildCache` over the combo box's children, which
-  tells whether the item is its child; the value is the item's name from
-  the event's cache.
+- Minimum: for the focus, 7 UIA calls, a steady-state focus change's
+  five and the selected item's two, as for a list (`SelectionPattern2`'s
+  first selected item and `BuildUpdatedCache` on it); for the selection,
+  1 UIA call, the search that finds the item among the combo box's
+  children with its name and keyboard focus.
+- Today: the focus, 8 UIA calls, all the listener's, which reads every
+  focus the classic way and has no remote path: the five of a
+  steady-state focus change on a windowless element and the selected
+  item's three through the `Selection` pattern, as for a tab control,
+  since mockapp's combo box has no `SelectionPattern2`. The outpost's
+  walk to its own copy after the report adds none the worker counts,
+  remote or classic. A combo box with the `Value` pattern reads no
+  selected item and asks nothing more for it: the listener asks its fresh
+  copy of the element, the outpost's remote program asks the element
+  inside the provider, and the outpost's classic fallback takes it from
+  the node's cache (`FocusQuery::value_available`). A looping selector
+  is read as a list is, 7 calls. The selection, 2 UIA calls in the
+  outpost: the test every selection is given first, for a selection in a
+  list the focus controls, as NVDA's `event_selection` reads its focus's
+  `ControllerFor` first (one remote operation, or classically the
+  relation's read, which names nothing here), and one
+  `FindFirstBuildCache` over the combo box's children, whose cache holds
+  the item's name and keyboard focus.
+- Target: the minimum for the focus, met by a provider with
+  `SelectionPattern2`; for the selection, the controlled-list test and
+  the child search made in one remote operation, 1 call.
 
 ### Arrowing through a list, UIA
 

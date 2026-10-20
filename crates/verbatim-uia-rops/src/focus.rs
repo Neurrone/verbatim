@@ -77,6 +77,13 @@ pub struct FocusQuery<'a> {
     /// selected child's read, one call or a few, is told as one. `None`
     /// tells nobody. The remote program is one call and does not tell it.
     pub before_call: Option<&'a dyn Fn(&'static str)>,
+    /// Whether the element has the `Value` pattern, when the caller's
+    /// cache of it already says, as a node's does: the classic walk then
+    /// asks nothing of a combo box to tell whether its first selected item
+    /// is its value. `None` has the walk take it from the element read
+    /// afresh, or ask it live without one. The remote program asks it
+    /// inside the provider and does not read this.
+    pub value_available: Option<bool>,
 }
 
 /// The answer to a [`FocusQuery`].
@@ -266,16 +273,21 @@ fn wants_selected_child(element: &FocusInput) -> bool {
 
 /// Whether the classic walk reads the focused element's selected child
 /// ([`wants_selected_child`]): a combo box's only without the `Value`
-/// pattern, whose value is otherwise its own, as the element read afresh,
-/// `fresh`, says when there is one, and as `live` answers otherwise, one
-/// call, where the remote program asks it inside the provider.
+/// pattern, whose value is otherwise its own, as the caller's cache says
+/// when it holds it (`cached`, [`FocusQuery::value_available`]), as the
+/// element read afresh, `fresh`, says when there is one, and as `live`
+/// answers otherwise, one call, where the remote program asks it inside
+/// the provider.
 fn reads_selected_child(
     element: &FocusInput,
-    (live, fresh): (&verbatim_uia::Live, Option<&Cached<Ancestor>>),
+    (live, fresh, cached): (&verbatim_uia::Live, Option<&Cached<Ancestor>>, Option<bool>),
     before_call: &dyn Fn(&'static str),
 ) -> Result<bool, Error> {
     if element.control_type != Some(UIA_ComboBoxControlTypeId.0) {
         return Ok(wants_selected_child(element));
+    }
+    if let Some(value_available) = cached {
+        return Ok(!value_available);
     }
     if let Some(fresh) = fresh {
         return Ok(!fresh.read().node.states.value_available);
@@ -784,8 +796,11 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     };
     // A selection that timed out, or whose container or item is gone, has
     // not said nothing is selected: the walk fails, as a hop's would.
-    let selected_child = if reads_selected_child(&input, (live, element.as_ref()), &before_call)?
-        && !out_of_time()
+    let selected_child = if reads_selected_child(
+        &input,
+        (live, element.as_ref(), query.value_available),
+        &before_call,
+    )? && !out_of_time()
     {
         before_call("the selected child");
         uia.selected_within(live, request, &out_of_time)?

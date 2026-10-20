@@ -668,6 +668,41 @@ uia_shape! {
 }
 
 uia_shape! {
+    /// An item found among a focused combo box's children as it is
+    /// selected (`verbatim_uia::map::value_from_selection`): its name,
+    /// the combo box's new value, and whether it has the keyboard focus,
+    /// as NVDA reads both live when it handles the item's selection
+    /// (`docs/parity/changes-and-selection.md`).
+    pub struct SelectedItem {
+        gates: none;
+        groups {}
+        properties {
+            /// The element's own window, 0 for an element that is not one.
+            hwnd: UIA_NativeWindowHandlePropertyId => window_handle,
+            /// The UIA class name.
+            class_name: UIA_ClassNamePropertyId => string,
+            /// The name.
+            name: UIA_NamePropertyId => string,
+            /// Whether it has the keyboard focus.
+            has_focus: UIA_HasKeyboardFocusPropertyId => bool,
+        }
+        prefetch {}
+        covers { Kept }
+    }
+}
+
+impl SelectedItem {
+    /// The item's name, as a node's name is given: without bidirectional
+    /// control characters.
+    #[must_use]
+    pub fn name(&self) -> Option<String> {
+        let mut name = self.name.clone();
+        strip_bidi_controls([&mut name]);
+        name
+    }
+}
+
+uia_shape! {
     /// An element refreshed for a help text change, which NVDA reports as a
     /// description change.
     pub struct HelpTextRefresh {

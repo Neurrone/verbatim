@@ -223,7 +223,12 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     classic .NET Framework Windows Forms combo box rule, element-selected
     events from the `ComboLBox` window reported as the combo box's value
     change (`NVDAObjects/UIA/__init__.py`, lines 2734 to 2744 and 2779
-    to 2790). The item's live reads of the focus's property events are
+    to 2790). Not built, since no combo box it applies to was found: the
+    rule for a `Windows.UI.Core` combo box that has the `Value` pattern
+    (lines 2795 to 2798); every Settings combo box checked on 2026-10-20
+    lacks the pattern and takes the rule without it, which is built
+    (`docs/parity/changes-and-selection.md`, "A combo box's value from its
+    selected item"). The item's live reads of the focus's property events are
     struck: the ledger's "Name change on the focus" and "What an accepted
     MSAA change reads" already match NVDA.
   - Item 10, the events NVDA registers desktop-wide that Verbatim lacks,

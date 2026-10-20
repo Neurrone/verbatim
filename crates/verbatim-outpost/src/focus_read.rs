@@ -766,6 +766,8 @@ impl FocusReader {
                     refresh: true,
                     nearest_window: Some(nearest),
                     before_call: Some(&|call| budget.call(call)),
+                    // Read from the element's fresh copy.
+                    value_available: None,
                 };
                 focus_ancestry_classic(&self.uia, &query)
             });

@@ -41,7 +41,7 @@ use verbatim_model::{
     State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::{
-    Cached, ElementExt as _, Fill, HelpTextRefresh, Kept, Node, SuggestionsRefresh,
+    Cached, ElementExt as _, Fill, HelpTextRefresh, Kept, Node, SelectedItem, SuggestionsRefresh,
     nearest_window_handle,
 };
 use windows::Win32::UI::Accessibility::{
@@ -2778,8 +2778,11 @@ impl Worker<'_> {
     /// NVDA's list item, whose state change under such a focused parent
     /// raises a value change on it, read as the selected item's name
     /// (`NVDAObjects/UIA/__init__.py` 2746 to 2767 and 2786 to 2800).
-    /// The value is the item's name, from the event's cache; one call
-    /// tells whether the item is a child of the focus.
+    /// One call finds the item among the focus's children with its name
+    /// and whether it has the keyboard focus, both as they are now, as
+    /// NVDA reads the item's `hasFocus` and the combo box's value live: the
+    /// event's cache can hold no name for an item an application names
+    /// late.
     fn selection_as_value(&mut self, parts: &UiaSnapshotFact) -> Option<NormalizedEvent> {
         let focus = {
             let tracking = self.context.tracking();
@@ -2787,26 +2790,30 @@ impl Worker<'_> {
                 .focus
                 .filter(|&focus| tracking.value_from_selection == Some(focus))?
         };
-        if parts.states.contains(State::Focused) {
-            return None;
-        }
         let registry = &self.context.uia_registry;
         let focused = registry
             .element_of(focus)
             .and_then(|agile| agile.resolve().ok())?;
         let uia = self.client.uia()?;
-        let request = uia.request_fixed::<Kept>().ok()?;
-        let child = uia
+        let request = uia.request_fixed::<SelectedItem>().ok()?;
+        let Some(child) = uia
             .find_child_by_runtime_id(focused.live(), &parts.runtime_id, &request)
             .ok()
-            .flatten();
-        if child.is_none() {
+            .flatten()
+        else {
             tracing::debug!("a selection under a focus whose value it is not: not its child");
+            return None;
+        };
+        let item = child.read();
+        if item.has_focus {
+            // Its focus event says it, as NVDA's item with the focus
+            // raises no value change.
+            tracing::debug!("a selection of the focus's item that has the keyboard focus");
             return None;
         }
         Some(NormalizedEvent::ValueChanged {
             node_id: focus,
-            value: parts.name.clone(),
+            value: item.name(),
         })
     }
 

@@ -200,18 +200,35 @@ that does not have the focus changes state, or is selected, while its
 parent is such a focus, NVDA raises a value change on the focus, so the
 new item is spoken as the focus's value. Verbatim: the focus is read
 with its first selected item's name as its value, and the listener's
-selection event for an item that does not have the keyboard focus and is
-a child of such a focus is reported as a value change of the focus, the
-item's name its value, which the reducer speaks as it speaks any value
+selection event for a child of such a focus is reported as a value
+change of the focus, which the reducer speaks as it speaks any value
 change on the focus, the bare value (mockapp's `combo_box` tests). The
-value change takes the selected item's own name, where NVDA reads the
-focus's selection again; the two are the same item for a single
+one search that finds the item among the focus's children reads with it
+its name and whether it has the keyboard focus, both as they are then,
+as NVDA reads the item's focus and the combo box's value live when it
+handles the event: an item with the keyboard focus is no value change and
+is said by its focus alone, and the value is the item's name as found,
+never the event's cached name, which can be empty for an item an
+application names late. NVDA reads the combo box's selection again where
+Verbatim reads the selected item; the two are the same item for a single
 selection. NVDA also takes the items' added-to and removed-from
 selection events, which Verbatim does not subscribe to
-(`docs/parity/backends.md`, "UIA event registration"). Not built: the
-same value change for a `Windows.UI.Core` combo box that has the
-`Value` pattern, and the classic .NET Framework Windows Forms combo box
-(the roadmap's audit item 11, deferred). **matched (unverified)**: the
+(`docs/parity/backends.md`, "UIA event registration").
+
+The Settings app's combo boxes take this path: checked live on
+2026-10-20 on Windows build 26200, every combo box on its Display,
+Mouse, Date and time, Language and region, and Colors pages has no
+`Value` pattern, and arrowing the collapsed "Show additional calendars
+in the taskbar" combo box raises an element selected event on the new
+item, which Verbatim speaks as the combo box's value, "Simplified
+Chinese (Lunar)", and back, "Don't show additional calendars"
+(`target/e2e-evidence/fixes-item-11-2026-10-20/settings-combo-box-live-check.txt`).
+So NVDA's second rule, the same value change for a `Windows.UI.Core`
+combo box that has the `Value` pattern (lines 2795 to 2798, NVDA issue
+6337), is not needed for Settings and is not built: no such combo box
+was found to try it on. Not built either: the classic .NET Framework
+Windows Forms combo box (the roadmap's audit item 11, deferred).
+**matched (unverified)**: the
 expectation is from NVDA's source (`NVDAObjects/UIA/__init__.py`, lines
 1380 to 1392, 2746 to 2767 and 2786 to 2800), with no capture of a real
 such combo box or time picker yet.

@@ -237,6 +237,7 @@ fn focus_and_navigation_execute_exactly() {
         refresh: false,
         nearest_window: None,
         before_call: None,
+        value_available: None,
     };
     let ancestry = |query: &FocusQuery<'_>| {
         let answer = focus_ancestry_remote(&fixture.uia, query).expect("the program runs");
@@ -315,6 +316,7 @@ fn reads_and_paths_execute_exactly() {
         refresh: true,
         nearest_window: None,
         before_call: None,
+        value_available: None,
     };
     let read = counted(|| {
         let answer = focus_ancestry_remote(&fixture.uia, &query).expect("the program runs");

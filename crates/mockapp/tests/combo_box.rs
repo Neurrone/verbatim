@@ -4,7 +4,9 @@
 //! its value, as NVDA reads it (`ComboBoxWithoutValuePattern`,
 //! `NVDAObjects/UIA/__init__.py` 1380 to 1392 and 2746 to 2767), and an
 //! item of the focused combo box selected later is a change of its value,
-//! the item's name (2786 to 2800).
+//! the item's name as it is when found (2786 to 2800), unless the item has
+//! the keyboard focus. A selection outside the combo box, and one in a
+//! combo box with the `Value` pattern, is no change of its value.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -13,7 +15,11 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use verbatim_model::{NodeSnapshot, NormalizedEvent, Role};
+use verbatim_core::SrState;
+use verbatim_model::{
+    Backend, Effect, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
+    TraceId,
+};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
@@ -146,6 +152,159 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
     app.quit();
 }
 
+/// The listener's selection fact for mockapp's item `name`, its cached
+/// name `cached_name`, as the listener sends a selection's identity, role
+/// and name alone.
+fn selection_of(hwnd: HWND, name: &str, cached_name: Option<&str>) -> DeliveredFact {
+    DeliveredFact::UiaSelection {
+        hwnd: hwnd.0 as isize,
+        focus_window: hwnd.0 as isize,
+        snapshot: UiaSnapshotFact {
+            runtime_id: runtime_id_of(hwnd, name),
+            role: Role::ListItem,
+            name: cached_name.map(str::to_owned),
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+    }
+}
+
+/// The name of the item the outpost's next message reports selected,
+/// which must be a selection, not a change of the focus's value.
+fn selected_name(outpost: &OutpostUnderTest) -> Option<String> {
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::SelectionChanged { node },
+            ..
+        } => node.name,
+        other => panic!("the outpost said {other:?}, not a selection"),
+    }
+}
+
+/// The item's name is read as it is found, not taken from the event's
+/// cache, which can hold none for an item named late: the value is the
+/// item's own name.
+fn the_new_value_is_the_items_name_as_it_is_now() {
+    let (mut app, hwnd, outpost) = start("mockapp-combo-box-late-name");
+    let (combo, _) = focus(&mut app, &outpost, hwnd, "hour");
+    app.send("select ten");
+    outpost.deliver(selection_of(hwnd, "Ten", None));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::ValueChanged { node_id, value },
+            ..
+        } => assert_eq!((node_id, value.as_deref()), (combo.id, Some("Ten"))),
+        other => panic!("the outpost said {other:?}, not the combo box's new value"),
+    }
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// Gives Core `event`, its node ids stamped with outpost 1, and returns
+/// the content of each utterance spoken, in order. A focus's drop of
+/// expired speech is the only other effect allowed.
+fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentContent>> {
+    event.assign_outpost(OutpostId(1));
+    verbatim_core::reduce(
+        state,
+        &Input::Event {
+            trace_id: TraceId::mint(),
+            observed_at_ms: 0,
+            source: Pid(1),
+            backend: Backend::Uia,
+            window: None,
+            event,
+        },
+    )
+    .into_iter()
+    .filter_map(|effect| match effect {
+        Effect::Speak(utterance) => Some(
+            utterance
+                .segments
+                .into_iter()
+                .map(|segment| segment.content)
+                .collect(),
+        ),
+        Effect::DropExpiredSpeech(_) => None,
+        other => panic!("an event makes no {other:?}"),
+    })
+    .collect()
+}
+
+/// The outpost's next message, which must be an event, as its event.
+fn next_event(outpost: &OutpostUnderTest) -> NormalizedEvent {
+    match outpost.next() {
+        OutpostToSupervisor::Event { event, .. } => event,
+        other => panic!("the outpost said {other:?}, not an event"),
+    }
+}
+
+/// An item that has the keyboard focus as it is selected is no change of
+/// the combo box's value: its selection, reported as one, is not spoken
+/// under a combo box, and the item is said once, by its focus.
+fn an_item_with_the_keyboard_focus_is_said_once_as_the_focus() {
+    let (mut app, hwnd, outpost) = start("mockapp-combo-box-focused-item");
+    let mut state = SrState::new();
+    app.send("set-focus hour");
+    outpost.deliver(outpost.listener_fact(&focused(hwnd)));
+    let combo_box = next_event(&outpost);
+    outpost.settled();
+    spoken(&mut state, combo_box);
+    app.send("select ten");
+    app.send("set-focus ten");
+    outpost.deliver(selection_of(hwnd, "Ten", Some("Ten")));
+    let selection = next_event(&outpost);
+    match &selection {
+        NormalizedEvent::SelectionChanged { node } => {
+            assert_eq!(node.name.as_deref(), Some("Ten"));
+        }
+        other => panic!("the outpost reported {other:?}, not the item's selection"),
+    }
+    outpost.settled();
+    outpost.deliver(outpost.listener_fact(&focused(hwnd)));
+    let item = next_event(&outpost);
+    outpost.settled();
+    assert_eq!(
+        spoken(&mut state, selection),
+        Vec::<Vec<SegmentContent>>::new()
+    );
+    assert_eq!(
+        spoken(&mut state, item),
+        [[SegmentContent::Label("Ten".to_owned())]]
+    );
+    drop(outpost);
+    app.quit();
+}
+
+/// A selection of an item that is not one of the focused combo box's
+/// children is no change of its value.
+fn a_selection_outside_the_combo_box_is_no_value_change() {
+    let (mut app, hwnd, outpost) = start("mockapp-combo-box-elsewhere");
+    focus(&mut app, &outpost, hwnd, "hour");
+    app.send("select fifteen");
+    outpost.deliver(selection_of(hwnd, "Fifteen", Some("Fifteen")));
+    assert_eq!(selected_name(&outpost).as_deref(), Some("Fifteen"));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A combo box with the `Value` pattern has its own value, and a
+/// selection of its item is no change of it here.
+fn a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection() {
+    let (mut app, hwnd, outpost) = start("mockapp-combo-box-value-pattern");
+    let (node, _) = focus(&mut app, &outpost, hwnd, "size");
+    assert_eq!(node.value.as_deref(), Some("Large"));
+    app.send("select large");
+    outpost.deliver(selection_of(hwnd, "Large", Some("Large")));
+    assert_eq!(selected_name(&outpost).as_deref(), Some("Large"));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -160,6 +319,22 @@ fn main() {
         (
             "an_item_selected_in_the_focused_combo_box_changes_its_value",
             an_item_selected_in_the_focused_combo_box_changes_its_value,
+        ),
+        (
+            "the_new_value_is_the_items_name_as_it_is_now",
+            the_new_value_is_the_items_name_as_it_is_now,
+        ),
+        (
+            "an_item_with_the_keyboard_focus_is_said_once_as_the_focus",
+            an_item_with_the_keyboard_focus_is_said_once_as_the_focus,
+        ),
+        (
+            "a_selection_outside_the_combo_box_is_no_value_change",
+            a_selection_outside_the_combo_box_is_no_value_change,
+        ),
+        (
+            "a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection",
+            a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection,
         ),
     ]);
 }

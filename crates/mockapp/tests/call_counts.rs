@@ -1713,6 +1713,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
             refresh: false,
             nearest_window: Some(hwnd.0 as isize),
             before_call: None,
+            value_available: None,
         },
     )
     .expect("the walk");
@@ -2401,6 +2402,7 @@ fn uia_selected_children_cost_exactly() {
                     refresh: false,
                     nearest_window: None,
                     before_call: None,
+                    value_available: None,
                 },
                 true,
             )
@@ -4018,6 +4020,161 @@ fn uia_notes(hwnd: HWND) -> UiaText {
     UiaText::new(notes, pattern, pattern2, false).fetches(Theme::builtin_default().fetches())
 }
 
+/// A focus onto a combo box without the `Value` pattern, whose first
+/// selected item is its value, and the selection of another of its items,
+/// a change of that value, through an outpost reading with remote
+/// operations or the classic walk as `remote` says
+/// (`docs/performance.md`, "A focus change onto a combo box without the
+/// Value pattern, UIA"). The first focus in the window, on the combo box
+/// with the pattern, probes it for arbitration and is not measured. The
+/// listener reads the focus the classic way whatever the outpost's path:
+/// the five calls of a steady-state focus and the selected item's three
+/// through the `Selection` pattern. The selection is two calls in the
+/// outpost: the test for a selection in a list the focus controls, which
+/// every selection is given first, as NVDA's `event_selection` reads its
+/// focus's `ControllerFor` first, one remote operation or the relation's
+/// read, and one `FindFirstBuildCache` over the combo box's children.
+fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]) {
+    let path = if remote { "remote" } else { "classic" };
+    let title = common::unique_title(&format!("mockapp-counts-combo-box-{path}"));
+    let mut app = common::spawn("combo_box.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    let mut ratchet = Ratchet::default();
+    let (reported, _) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("size", "Size"));
+    assert_eq!(reported.node.value.as_deref(), Some("Large"));
+    let (reported, cost) =
+        measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("hour", "Hour"));
+    assert_eq!(reported.node.value.as_deref(), Some("Nine"));
+    assert_eq!(reported.selected_child, None);
+    let [focus, selection] = expected;
+    ratchet.check(
+        &format!("UIA focus onto a combo box without the Value pattern ({path})"),
+        &cost,
+        focus.0,
+        0,
+        focus.1,
+    );
+    app.send("select ten");
+    let item = under_test.element("Ten");
+    common::reset_hits(hwnd);
+    outpost.deliver(DeliveredFact::UiaSelection {
+        hwnd: hwnd.0 as isize,
+        focus_window: hwnd.0 as isize,
+        snapshot: verbatim_outpost::protocol::UiaSnapshotFact {
+            runtime_id: verbatim_uia::runtime_id(item),
+            role: Role::ListItem,
+            name: Some("Ten".to_owned()),
+            value: None,
+            states: verbatim_model::StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+    });
+    let calls = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::ValueChanged { value, .. },
+            timing,
+            ..
+        } => {
+            assert_eq!(value.as_deref(), Some("Ten"));
+            timing.calls
+        }
+        other => panic!("the outpost said {other:?}, not the combo box's new value"),
+    };
+    outpost.settled();
+    let cost = Cost {
+        calls,
+        hits: common::read_hits(hwnd),
+        failed_reads: outpost.take_failed_reads(),
+    };
+    ratchet.check(
+        &format!("UIA selection in a combo box without the Value pattern ({path})"),
+        &cost,
+        selection.0,
+        0,
+        selection.1,
+    );
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
+fn uia_combo_box_costs_exactly() {
+    uia_combo_box_costs(
+        true,
+        [
+            (
+                calls(8, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 65),
+                    ("GetPatternProvider", 58),
+                    ("GetPropertyValue", 110),
+                    ("HostRawElementProvider", 31),
+                    ("Navigate", 16),
+                    ("GetRuntimeId", 11),
+                    ("BoundingRectangle", 5),
+                    ("FragmentRoot", 20),
+                    ("ExpandCollapseState", 2),
+                    ("IsSelected", 1),
+                    ("GetSelection", 1),
+                ],
+            ),
+            (
+                calls(2, 0, 0),
+                &[
+                    ("ProviderOptions", 20),
+                    ("GetPropertyValue", 11),
+                    ("HostRawElementProvider", 11),
+                    ("Navigate", 5),
+                    ("GetRuntimeId", 6),
+                    ("FragmentRoot", 8),
+                ],
+            ),
+        ],
+    );
+    uia_combo_box_costs(
+        false,
+        [
+            (
+                calls(8, 0, 0),
+                &[
+                    ("WM_GETOBJECT", 11),
+                    ("ProviderOptions", 64),
+                    ("GetPatternProvider", 69),
+                    ("GetPropertyValue", 128),
+                    ("HostRawElementProvider", 29),
+                    ("Navigate", 13),
+                    ("GetRuntimeId", 10),
+                    ("BoundingRectangle", 6),
+                    ("FragmentRoot", 20),
+                    ("ExpandCollapseState", 2),
+                    ("IsSelected", 1),
+                    ("GetSelection", 1),
+                ],
+            ),
+            (
+                calls(2, 0, 0),
+                &[
+                    ("ProviderOptions", 18),
+                    ("GetPropertyValue", 10),
+                    ("HostRawElementProvider", 11),
+                    ("Navigate", 4),
+                    ("GetRuntimeId", 6),
+                    ("FragmentRoot", 9),
+                ],
+            ),
+        ],
+    );
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -4073,6 +4230,7 @@ fn main() {
             "uia_repeated_focus_costs_exactly",
             uia_repeated_focus_costs_exactly,
         ),
+        ("uia_combo_box_costs_exactly", uia_combo_box_costs_exactly),
         (
             "uia_focus_chains_stop_below_the_process_boundary",
             uia_focus_chains_stop_below_the_process_boundary,
