@@ -117,9 +117,10 @@ that is neither has no text.
     697 to 739), so NVDA handles two caret events for each move. Checked
     on 2026-10-21 with NVDA's debug log of the console opened as
     `conhost_editing` opens it, typing and arrows (both events for every
-    move in one launch; in another NVDA did not register on the text
-    area and took the system caret's alone), and a UIA probe on the
-    desktop, which heard the text area's event at every step
+    move in one launch; in two other launches NVDA did not register on
+    the text area and took the system caret's alone), and a UIA probe on
+    the desktop in the launch that registered, which heard the text
+    area's event at every step
     (`target/e2e-evidence/fixes-round-eight-2026-10-21/`,
     `nvda-debug.log` and `uia-probe-conhost.txt`). The console host raises the system caret's
     location change about 130 microseconds before its console caret

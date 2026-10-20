@@ -684,8 +684,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     handled at its own place, `ends_a_run`; `Planned::handle` dispatches
     each planned item); of
     two foreground changes of the same window waiting, the later raised
-    is kept, whichever arrived first, as NVDA's limiter, adding events in
-    raised order, keeps the newest per window; a foreground change removes
+    is kept, whichever arrived first, and one arriving after a later-raised
+    change of its window and thread was taken into a batch, until the
+    listener's "forwarding ended" is in, is dropped, as NVDA's limiter,
+    adding events in raised order, keeps the newest per window; a foreground change removes
     a focus event waiting on its window's client object from the same
     thread, raised no later than the change (at one tick, unless the focus
     is the hook's copy and the change is known to have been raised before
@@ -1931,8 +1933,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   that UIA focus has the intake dropping the system caret's events
   (`Intake::drop_system_caret`), the edit control's are dropped with
   them, so only its text selection changes answer its caret keys until
-  the next focus is reported, and a classic edit control, which raises
-  none, has its caret keys unanswered until then.
+  the next focus is reported. A classic edit control that raises none
+  while focused would have its caret keys unanswered until then; whether
+  it raises them is not known, since the measurements above cover only
+  its unfocused caret moves.
 
 ### Queries
 
@@ -1970,7 +1974,14 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   instead, carrying the focus's id, as NVDA reports a search suggestion,
   and so does one inside none of them, with the first controlled
   element's current selection as its node, logged at debug ("the first
-  one's current selection is reported"):
+  one's current selection is reported"), unless the selection is the
+  focus's own (`Worker::selection_of_focus`, from runtime ids and roles
+  in hand, with no call: the focus itself, an ancestor last reported with
+  it, or an item of a focused list or tab control), which then goes on to
+  the other selection handling, as NVDA's base selection handler falls
+  through to its state change handler; one found in none with no current
+  selection read is logged at debug ("a selection in none of the elements
+  the focus controls, and no current selection read from the first"):
   the relation is read live for each selection, as NVDA reads it, and it
   and the search for the selected element under what it names are one
   remote operation where the focus's window allows one

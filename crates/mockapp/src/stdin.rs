@@ -7,6 +7,7 @@
 //! `text-changed <id>`,
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
+//! `replace-items <id>`,
 //! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `menu-opened <id>`, `release`, and `quit`.
@@ -170,6 +171,14 @@ pub(crate) enum Command {
     /// `id` takes its runtime id, as File Explorer gives a new item the
     /// runtime id of one it destroyed. Raises no event. UIA-only.
     TakeRuntimeId(String, String),
+    /// `replace-items <id>`: every child of node `id`, with everything
+    /// under it, dies, as `take-runtime-id`'s node does, and a copy of
+    /// each, with a runtime id of its own, takes its place under the same
+    /// fixture id, keeping its states, so the copy of the selected item is
+    /// selected, as the Settings app replaces its search suggestions'
+    /// items under new runtime ids after raising a selection for one of
+    /// the old ones. Raises no event. UIA-only.
+    ReplaceItems(String),
     /// `focus-child <container> <child>`: addresses `container`'s children
     /// as numbered simple children from then on, moves the focused state to
     /// `child`, and raises `EVENT_OBJECT_FOCUS` on `container` itself and
@@ -310,6 +319,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
                 .is_none()
                 .then(|| Command::TakeRuntimeId(id.to_owned(), from.to_owned()))
         }
+        "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),
         "active-text-position" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;

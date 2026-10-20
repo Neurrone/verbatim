@@ -8,7 +8,9 @@
 //! implementation behind the same signature reads the relation and
 //! searches with `FindFirstBuildCache`, one call each. When the selected
 //! element is in none of them, the first controlled element's current
-//! selection is the answer, read in the same round trip: Settings raises
+//! selection is the answer, read in the same round trip, unless the
+//! caller reads the selection as the focus's own
+//! ([`ControlledQuery::current_instead`]): Settings raises
 //! its search suggestions' first selection for an item it has already
 //! replaced, which NVDA reaches by walking up from the event's element and
 //! a search down cannot find ("Selection in a list the focus controls" in
@@ -39,18 +41,24 @@ pub struct ControlledQuery<'a> {
     /// How the selected element's cache is filled when it is found: as a
     /// [`Node`].
     pub fill: &'a Fill<Node>,
+    /// Whether, found in none of the controlled elements, the first one's
+    /// current selection is the answer ([`Controlled::selected`]): false
+    /// for a selection the caller reads as the focus's own, which then
+    /// reads nothing more.
+    pub current_instead: bool,
 }
 
 /// What both implementations answer.
 #[derive(Debug)]
 pub struct Controlled {
     /// The selected element, filled by the query's fill, when it is a
-    /// descendant of an element the focus controls; else the first element
-    /// selected in the first controlled element, unless the selection
-    /// named that element itself. `None` when the focus controls nothing,
-    /// or the element is in none of what it controls and the first
-    /// controlled element has nothing selected. A caller tells the two
-    /// apart by the answer's runtime id.
+    /// descendant of an element the focus controls; else, when the query
+    /// asks for it ([`ControlledQuery::current_instead`]), the first
+    /// element selected in the first controlled element, unless the
+    /// selection named that element itself. `None` when the focus controls
+    /// nothing, or the element is in none of what it controls and no
+    /// current selection was read from the first controlled element. A
+    /// caller tells the two apart by the answer's runtime id.
     pub selected: Option<Cached<Node>>,
     /// The runtime ids of the elements the focus's relation names, in its
     /// order, up to the one the selected element was found in (all of them
@@ -96,9 +104,10 @@ pub fn controlled_selection(
 /// in the raw view, depth first, until one has the selected element's
 /// runtime id, whose cache is then filled inside the provider; each
 /// controlled element's runtime id comes back with it. The
-/// controlled element itself is not its own descendant. Found in none, the
-/// first controlled element's `Selection` property gives its first
-/// selected element, filled the same way. A subtree too
+/// controlled element itself is not its own descendant. Found in none, and
+/// when the query asks for it, the first controlled element's `Selection`
+/// property gives its first selected element, filled the same way. A
+/// subtree too
 /// large for one run stops it at the platform's instruction limit, and
 /// [`controlled_selection`] answers that call classically.
 ///
@@ -206,7 +215,9 @@ pub fn controlled_selection_remote(
                 );
             },
         );
-        current_selection_instead(b, &cache, (controlled, size, target), (found, found_absent));
+        if query.current_instead {
+            current_selection_instead(b, &cache, (controlled, size, target), (found, found_absent));
+        }
     });
     let outcome = b.finish().execute()?;
     let absent = absent_record(outcome.get(found_absent)?);
@@ -265,7 +276,8 @@ fn split_runtime_ids(joined: &str) -> Vec<String> {
 /// The controlled selection the classic way, the fallback and the
 /// reference: [`Uia::controlled`], the focus's `ControllerFor` read, then
 /// a search under each controlled element, one call each, and, found in
-/// none, the first controlled element's current selection.
+/// none and when the query asks for it, the first controlled element's
+/// current selection.
 ///
 /// # Errors
 ///
@@ -279,6 +291,7 @@ pub fn controlled_selection_classic(
         &Live::new(query.focused.clone()),
         query.selected,
         query.fill.request(),
+        query.current_instead,
     )?;
     Ok(Controlled {
         selected,

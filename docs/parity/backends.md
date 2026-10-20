@@ -308,7 +308,9 @@ the next other event comes; the menu event is tried last. Verbatim:
 thread it carries, whichever hook took it in; every foreground change
 of a batch is tried with the focus events of the run it is in, and of
 two changes of the same window waiting the later raised is kept,
-whichever arrived first, as NVDA's limiter, adding events in raised
+whichever arrived first, and a change arriving during a hand-over after
+a later-raised change of its window and thread was taken into a batch
+is dropped, as NVDA's limiter, adding events in raised
 order, keeps the newest per window (Dickson, 2026-10-20); a run whose events all carry the
 time Windows raised them is tried in that order, the order NVDA's one
 hook receives them in, since an outpost can receive the focus listener's

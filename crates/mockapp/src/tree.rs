@@ -14,6 +14,7 @@ use verbatim_model::{Role, State, StateSet};
 use crate::fixture::FixtureNode;
 
 /// One node's live data.
+#[derive(Clone)]
 pub(crate) struct NodeData {
     pub(crate) role: Role,
     pub(crate) name: Option<String>,
@@ -57,8 +58,9 @@ pub(crate) struct NodeData {
     /// The number the node's UIA runtime id is made from: its own index,
     /// until `take-runtime-id` gives it a dead node's.
     pub(crate) runtime_id: usize,
-    /// Whether the node has died (`take-runtime-id`): it has left the tree,
-    /// and every call on its elements fails as on an element that is gone.
+    /// Whether the node has died (`take-runtime-id`, `replace-items`): it
+    /// has left the tree, and every call on its elements fails as on an
+    /// element that is gone.
     pub(crate) dead: bool,
     /// Whether UIA counts the node as content (`IsContentElement`).
     pub(crate) content: bool,
@@ -161,6 +163,63 @@ impl Tree {
         }
         self.nodes[taker].runtime_id = self.nodes[dying].runtime_id;
         Ok(())
+    }
+
+    /// Every child of node `id`, with everything under it, dies, and a copy
+    /// of each, with a runtime id of its own, takes its place under the
+    /// same fixture id (`replace-items`): the copies keep their states, so
+    /// the copy of the selected node is the selected node, and the focus
+    /// and any `ControllerFor` relation naming a node that died move to its
+    /// copy.
+    pub(crate) fn replace_items(&mut self, id: &str) -> Result<(), String> {
+        let parent = self
+            .index_of(id)
+            .ok_or_else(|| format!("no node has the id {id}"))?;
+        if self.nodes[parent].dead {
+            return Err(format!("{id} has died"));
+        }
+        let children = self.nodes[parent].children.clone();
+        let copies = children
+            .into_iter()
+            .map(|child| self.replace(child, parent))
+            .collect();
+        self.nodes[parent].children = copies;
+        Ok(())
+    }
+
+    /// Node `index` and everything under it die, copied under `parent`
+    /// ([`Self::replace_items`]); the copy's index.
+    fn replace(&mut self, index: usize, parent: usize) -> usize {
+        let copy = self.nodes.len();
+        let mut node = self.nodes[index].clone();
+        node.parent = Some(parent);
+        node.runtime_id = copy;
+        node.children = Vec::new();
+        self.nodes.push(node);
+        self.nodes[index].dead = true;
+        for at in self.by_fixture_id.values_mut() {
+            if *at == index {
+                *at = copy;
+            }
+        }
+        for node in &mut self.nodes {
+            if node.controller_for == Some(index) {
+                node.controller_for = Some(copy);
+            }
+        }
+        if self.focused == Some(index) {
+            self.focused = Some(copy);
+        }
+        if self.selected == Some(index) {
+            self.selected = Some(copy);
+        }
+        let children = self.nodes[index].children.clone();
+        let copies = children
+            .into_iter()
+            .map(|child| self.replace(child, copy))
+            .collect();
+        self.nodes[copy].children = copies;
+        copy
     }
 
     /// The sibling one step in `offset` direction from `index` (`1` for
@@ -339,5 +398,25 @@ mod tests {
             tree.take_runtime_id("b", "b1").is_err(),
             "b1 is already dead"
         );
+    }
+
+    #[test]
+    fn replaced_items_die_and_their_copies_take_their_places_and_ids() {
+        let mut tree = Tree::build(sample());
+        let [a, b, b1] = ["a", "b", "b1"].map(|id| tree.index_of(id).unwrap());
+        tree.selected = Some(b);
+        tree.replace_items("root").unwrap();
+        let copies = ["a", "b", "b1"].map(|id| tree.index_of(id).unwrap());
+        assert_eq!(copies, [4, 5, 6], "each copy is new, depth first");
+        assert_eq!(tree.nodes[0].children, [4, 5]);
+        assert_eq!(tree.nodes[5].children, [6]);
+        assert_eq!(tree.nodes[6].parent, Some(5));
+        assert_eq!(
+            copies.map(|copy| tree.nodes[copy].runtime_id),
+            [4, 5, 6],
+            "each copy's runtime id is its own"
+        );
+        assert!([a, b, b1].iter().all(|&old| tree.nodes[old].dead));
+        assert_eq!(tree.selected, Some(5), "the selection moves to the copy");
     }
 }

@@ -824,7 +824,9 @@ the list selected (`crates/mockapp/tests/controller_for.rs`).
   found in none is answered with the first controlled element's current
   selection, read in the same operation; the classic calls take three
   more for it (the Selection pattern, its current selection, and the
-  selected item's cache).
+  selected item's cache). A selection the outpost reads as the focus's
+  own, told from runtime ids and roles it holds, reads no current
+  selection, by either path.
 
 ### An event from a window not related to the foreground window, MSAA
 
@@ -1906,10 +1908,12 @@ share of the limit in brackets:
   controlled list, 206 for the list's second child, and 229 for an item
   outside the list, all three of the list's elements walked and then the
   list's selection read, which is empty; about 35 for each element
-  passed. Of these, 6 test whether the search found the element, and an
-  element not found takes 11 more to read the first controlled element's
-  runtime id and current selection, and the selection's first element's
-  cache when it has one. Of these, 5 return the runtime ids of the
+  passed. Of these, 6 test whether the search found the element. An
+  element not found takes 11 more when the first controlled element has
+  nothing selected, to read its runtime id and current selection, plus
+  the fill of its first selected element's cache when it has one, which
+  the 229 does not include; a selection the outpost reads as the focus's
+  own reads no current selection, and takes none of the 11. Besides, 5 return the runtime ids of the
   elements the relation names, for the outpost's log of a selection
   found in none: 1 for the string that collects them and 4 for each
   controlled element (its runtime id read, written as a string, joined

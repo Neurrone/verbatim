@@ -282,7 +282,10 @@ through the focus's ControllerFor relation, which names the elements
 the focused control drives. When an element is selected (UIA's
 `ElementSelected` event), NVDA looks at the current focus's
 ControllerFor elements; if the selected element is inside one of them,
-NVDA cancels speech, moves the navigator object to the selected
+or is one of them (its test normalizes the selected element with a tree
+walker whose condition is the controlled element's runtime id, which
+answers the element itself when it meets the condition), NVDA cancels
+speech, moves the navigator object to the selected
 element, and speaks it exactly as it speaks a focus: name, role (left
 out for the roles silent on focus), states, and position, with no
 ancestors. The focus itself stays where it was, in the search box, so

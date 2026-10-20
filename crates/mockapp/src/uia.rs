@@ -285,6 +285,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take_runtime_id(&id, &from)?,
+        Command::ReplaceItems(id) => tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace_items(&id)?,
         // Handled by the window thread before dispatch.
         Command::Stall(..)
         | Command::OnActivate(_)

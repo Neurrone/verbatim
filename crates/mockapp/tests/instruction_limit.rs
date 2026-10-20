@@ -377,6 +377,7 @@ fn controlled_selections_execute_exactly() {
             focused: &search,
             selected,
             fill: &nodes,
+            current_instead: true,
         };
         controlled_selection_remote(&fixture.uia, &query)
             .expect("the program runs")

@@ -12,13 +12,20 @@
 //! that controls nothing. A selection the list does not hold, as Settings
 //! raises for a suggestion it has already replaced, is answered with the
 //! list's current selection, and so is an item outside the list while the
-//! list has one. It answers each in one remote operation, and the classic
+//! list has one, which pins a difference from NVDA, whose test finds such
+//! an item in none of the controlled elements and reports nothing of it
+//! (`docs/parity/changes-and-selection.md`, "Selection in a list the focus
+//! controls"). It answers each in one remote operation, and the classic
 //! calls behind the same signature answer the same. The focused element is passed in rather than read from
 //! the keyboard focus, so the test runs headless.
 //!
 //! Through a real outpost, a controlled selection is also reported when the
 //! element the outpost keeps for the focus came from one of its events,
 //! whose cache holds less than a focus read's, with no failed cached read.
+//! A selection raised for an item the list has since replaced (mockapp's
+//! `replace-items`) is reported as the list's current selection, the new
+//! item, with its name and position; a selection of the focus itself is
+//! reported as its own selection change, never as the list's.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -27,7 +34,7 @@ mod harness;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use verbatim_model::{CallCounts, NormalizedEvent, PropertyChange, StateSet};
+use verbatim_model::{CallCounts, NodeId, NormalizedEvent, PropertyChange, StateSet};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
@@ -77,6 +84,7 @@ fn controlled(
         focused,
         selected,
         fill: &fill,
+        current_instead: true,
     };
     let _ = verbatim_uia::calls::take();
     let (remote, path) = controlled_selection(uia, &query, true).expect("the remote program");
@@ -187,7 +195,8 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     assert_eq!(
         controlled(&uia, &search, &elsewhere),
         Some((Some("Sound settings".to_owned()), current)),
-        "so is an item outside the list while the list has a selection"
+        "so is an item outside the list while the list has a selection, a difference from NVDA \
+         (docs/parity/changes-and-selection.md)"
     );
     assert_eq!(
         controlled(&uia, &search, &verbatim_uia::runtime_id(&results)),
@@ -202,27 +211,15 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     app.quit();
 }
 
-/// The outpost keeps the element of a property change on the focus, whose
-/// cache holds the focus's property events' properties and none of its
-/// details. A selection in the list the focus controls is then checked
-/// from that element: the controller's runtime id is UIA's own, kept with
-/// the element, so nothing absent from its cache is read. Read the classic
-/// way, so every cached read is the outpost's own.
-fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
-    let title = common::unique_title("mockapp-controller-kept");
-    let mut app = common::spawn("controller.json", "uia", &title);
-    let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::with_options(
-        &app,
-        OutpostOptions {
-            remote_operations: false,
-        },
-    );
-    let uia = Uia::new().expect("Uia::new");
-    let root = uia
-        .window_live(hwnd.0 as isize)
-        .expect("mockapp's window element");
-
+/// Focuses mockapp's search box, as the listener reads and sends the
+/// focus, and returns its node once the outpost has reported it, and that
+/// it has no text, and has nothing more to say.
+fn focus_search_box(
+    app: &mut common::MockApp,
+    outpost: &OutpostUnderTest,
+    uia: &Uia,
+    root: &Live,
+) -> NodeId {
     app.send("set-focus search");
     let listener = uia
         .request_fixed::<ListenerEvent>()
@@ -255,6 +252,126 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
         "the search box has no text"
     );
     outpost.settled();
+    search
+}
+
+/// The listener's selection fact for the element `runtime_id` names, a
+/// list item named `name`, in mockapp's window `hwnd`.
+fn selection_fact(hwnd: isize, runtime_id: Vec<i32>, name: &str) -> DeliveredFact {
+    DeliveredFact::UiaSelection {
+        hwnd,
+        focus_window: hwnd,
+        snapshot: UiaSnapshotFact {
+            runtime_id,
+            role: verbatim_model::Role::ListItem,
+            name: Some(name.to_owned()),
+            value: None,
+            states: StateSet::new(),
+            details: verbatim_model::NodeDetails::default(),
+        },
+    }
+}
+
+/// Settings' replacing state, through a real outpost: the list's first
+/// item is selected, the list then replaces its items under new runtime
+/// ids, the new first item selected, and the selection of the old item
+/// is delivered after that. The outpost reports the list's current
+/// selection, the new item, as a controlled selection of the search box,
+/// with the new item's name and position, and nothing more.
+fn a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selection() {
+    let title = common::unique_title("mockapp-controller-replaced");
+    let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    let search = focus_search_box(&mut app, &outpost, &uia, &root);
+
+    app.send("select sound");
+    let replaced = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
+    app.send("replace-items suggestions");
+    let current = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
+    assert_ne!(
+        current, replaced,
+        "the new item has a runtime id of its own"
+    );
+    outpost.deliver(selection_fact(hwnd.0 as isize, replaced, "Sound settings"));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::ControlledSelection { controller, node },
+            ..
+        } => assert_eq!(
+            (
+                controller,
+                node.name.as_deref(),
+                node.details.position_in_set,
+                node.details.set_size
+            ),
+            (search, Some("Sound settings"), Some(1), Some(2))
+        ),
+        other => panic!("the outpost said {other:?}, not the controlled selection"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A selection of the focus itself, while the list it controls has a
+/// selection, is the focus's own selection change, reported as one, and
+/// nothing more, as NVDA's base selection handler, finding it in none of
+/// the controlled elements, falls through to its state change handler; it
+/// is never answered with the list's current selection.
+fn a_selection_of_the_focus_itself_is_reported_as_its_own() {
+    let title = common::unique_title("mockapp-controller-own");
+    let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    let search = focus_search_box(&mut app, &outpost, &uia, &root);
+
+    app.send("select sound");
+    let search_box = verbatim_uia::runtime_id(&find(&uia, &root, "Search box"));
+    outpost.deliver(selection_fact(hwnd.0 as isize, search_box, "Search box"));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::SelectionChanged { node },
+            ..
+        } => assert_eq!(node.id, search, "the search box's own selection"),
+        other => panic!("the outpost said {other:?}, not the search box's selection"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The outpost keeps the element of a property change on the focus, whose
+/// cache holds the focus's property events' properties and none of its
+/// details. A selection in the list the focus controls is then checked
+/// from that element: the controller's runtime id is UIA's own, kept with
+/// the element, so nothing absent from its cache is read. Read the classic
+/// way, so every cached read is the outpost's own.
+fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
+    let title = common::unique_title("mockapp-controller-kept");
+    let mut app = common::spawn("controller.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    let search = focus_search_box(&mut app, &outpost, &uia, &root);
 
     app.send("set-description search Type to search");
     outpost.heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
@@ -275,18 +392,11 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
 
     app.send("select result2");
     let result = find(&uia, &root, "Sound settings");
-    outpost.deliver(DeliveredFact::UiaSelection {
-        hwnd: hwnd.0 as isize,
-        focus_window: hwnd.0 as isize,
-        snapshot: UiaSnapshotFact {
-            runtime_id: verbatim_uia::runtime_id(&result),
-            role: verbatim_model::Role::ListItem,
-            name: Some("Sound settings".to_owned()),
-            value: None,
-            states: StateSet::new(),
-            details: verbatim_model::NodeDetails::default(),
-        },
-    });
+    outpost.deliver(selection_fact(
+        hwnd.0 as isize,
+        verbatim_uia::runtime_id(&result),
+        "Sound settings",
+    ));
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::ControlledSelection { controller, node },
@@ -314,6 +424,14 @@ fn main() {
         (
             "a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached",
             a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached,
+        ),
+        (
+            "a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selection",
+            a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selection,
+        ),
+        (
+            "a_selection_of_the_focus_itself_is_reported_as_its_own",
+            a_selection_of_the_focus_itself_is_reported_as_its_own,
         ),
     ]);
 }

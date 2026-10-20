@@ -41,6 +41,13 @@ Stdin commands, one per line, once `ready` has printed:
 - `set-name <id> <text>` and `set-value <id> <text>` update the scripted
   tree in place and raise the matching name-changed, value-changed, or
   property-changed notification.
+- `replace-items <id>` (UIA only) replaces every child of that node, with
+  everything under it, by a copy with a runtime id of its own, under the
+  same fixture id and with the same states, so the copy of the selected
+  item is selected; the old elements are gone, every call on them failing
+  with `UIA_E_ELEMENTNOTAVAILABLE`. It raises no event, as the Settings
+  app replaces its search suggestions' items after raising a selection
+  for one of the old ones.
 - `quit` exits the process.
 
 A typical by-hand session: start `mockapp` with a fixture, point a real

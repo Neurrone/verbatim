@@ -385,9 +385,14 @@ NVDA capture.
   selection](parity/changes-and-selection.md), the combo box entry;
   `nvda-expanded-combo-box-capture.txt` in
   `target/e2e-evidence/fixes-round-eight-2026-10-21`).
-- A Settings search suggestions scenario with an NVDA capture. It also
-  covers selecting inside a list the focus controls, which has no
-  scenario and was not checked live after the cheaper reads of 2026-10-10.
+- Selection inside a list the focus controls: the
+  `settings_search_suggestions` scenario covers it, compared with NVDA
+  on 2026-10-20. Left to check against a live NVDA capture are the
+  differences the parity entry records from the source alone ([changes
+  and selection](parity/changes-and-selection.md), "Selection in a list
+  the focus controls"): a stale selection after a second replacement of
+  the list, a selection in a second controlled element, and a selection
+  raised on the controlled list itself.
 - Text fields: on the classic text path `UiaText::caret_read`
   (`verbatim-outpost` `text/mod.rs` and `text/uia.rs`) answers as if it
   had read the caret, so the caret recheck added in 676d127 is skipped

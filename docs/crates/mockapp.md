@@ -170,7 +170,12 @@ character between two calls of a client's read; UIA only),
 its parent no longer lists it, and every call on its elements fails with
 `UIA_E_ELEMENTNOTAVAILABLE`, as on an element that is gone; node `id`
 takes its runtime id, as File Explorer gives a new item the runtime id of
-one it destroyed; raises no event; UIA only), `stall <ms>`
+one it destroyed; raises no event; UIA only), `replace-items <id>` (every
+child of node `id`, with everything under it, dies as `take-runtime-id`'s
+node does, and a copy of each with a runtime id of its own takes its
+place under the same fixture id, keeping its states, so the copy of the
+selected item is selected, as the Settings app replaces its search
+suggestions' items; raises no event; UIA only), `stall <ms>`
 (blocks the window thread for that long, so every cross-process call into
 the window waits, as with an application that is starting up or busy;
 the window thread prints `stall started` on stdout as it begins and

@@ -733,7 +733,10 @@ element is in none of them, and
 `selected`, a `Cached<Node>` filled by the query's fill, when the element a selection event
 named by its runtime id (`ControlledQuery::selected`) is a descendant of
 one of the elements the focus names in its `ControllerFor` relation.
-When it is in none, `selected` is the first controlled element's first
+When it is in none, and the query asks for it
+(`ControlledQuery::current_instead`, false for a selection the outpost
+reads as the focus's own, which then reads nothing more), `selected` is
+the first controlled element's first
 selected element instead, read through its `Selection` property in the
 same program and filled the same way, unless the event named that
 element itself: Settings raises its search suggestions' first selection
@@ -750,7 +753,8 @@ each one's stringified runtime id with the selected one's
 provider. The classic implementation is `Uia::controlled`: the
 relation, then a `FindFirstBuildCache` under each controlled element,
 and, found in none, the first controlled element's Selection pattern,
-its current selection, and the first selected element's cache.
+its current selection, and the first selected element's cache, when the
+query asks for it.
 There is no `FindFirst` instruction, so the program walks; each element
 it passes costs about 35 instructions, so a run reaches the instruction
 limit after about 280, and a list that large is answered classically for

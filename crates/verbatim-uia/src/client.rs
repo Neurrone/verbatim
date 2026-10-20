@@ -472,11 +472,13 @@ impl Uia {
     /// `ControllerFor` relation: NVDA's test for a selection in a list the
     /// focus controls, such as a search result while the focus stays in
     /// the search box. `None` when `focused` controls nothing or the
-    /// element is in none of what it controls and the first controlled
-    /// element has nothing selected: found in none, the answer is that
-    /// element's first selected element, unless `runtime_id` names it
-    /// itself, as `verbatim_uia_rops::controlled_selection_remote` answers
-    /// (an item Settings has already replaced, `docs/parity/changes-and-selection.md`).
+    /// element is in none of what it controls and no current selection is
+    /// read from the first controlled element: found in none, with
+    /// `current_instead`, the answer is that element's first selected
+    /// element, unless `runtime_id` names it itself, as
+    /// `verbatim_uia_rops::controlled_selection_remote` answers (an item
+    /// Settings has already replaced, `docs/parity/changes-and-selection.md`);
+    /// without it, nothing more is read.
     /// With it, the runtime ids of
     /// the elements the relation names, in its order, which a caller logs
     /// when the element is in none of them. The classic implementation
@@ -496,12 +498,16 @@ impl Uia {
         focused: &Live,
         runtime_id: &[i32],
         request: &Request<S>,
+        current_instead: bool,
     ) -> windows::core::Result<(Option<Cached<S>>, Vec<Vec<i32>>)> {
         let (cache, gates) = request.parts();
         let roots = focused.element().controller_for()?;
         let (found, controlled) = self.controlled_descendant(&roots, runtime_id, cache);
         if let Some(found) = found {
             return Ok((Some(Cached::filled(found, gates)), controlled));
+        }
+        if !current_instead {
+            return Ok((None, controlled));
         }
         let Some(root) = roots.first() else {
             return Ok((None, controlled));

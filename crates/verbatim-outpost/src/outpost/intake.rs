@@ -87,7 +87,9 @@
 //!   whichever arrived first, as NVDA's limiter, adding events in raised
 //!   order, keeps the newest foreground event per window, object and
 //!   thread: a later-raised one replaces one waiting, and an older-raised
-//!   copy arriving behind it during the hand-over is dropped. Every UIA focus
+//!   copy arriving behind it during the hand-over is dropped, whether the
+//!   later one still waits or was taken into a batch before the listener's
+//!   "forwarding ended" came. Every UIA focus
 //!   event is handled in turn at its own place, as NVDA's UIA handler
 //!   queues each one as it arrives, on a path apart from the MSAA pump: one
 //!   that arrived between two events of an MSAA run is handled before the
@@ -443,7 +445,9 @@ struct State {
 /// arrived, kept until the listener's "forwarding ended" is in
 /// ([`Intake::forwarding_ended`]): a focus on the window's client object
 /// raised before it that arrives later is dropped
-/// ([`foreground_taken_after`]).
+/// ([`foreground_taken_after`]), and so is a foreground change of the
+/// window from the same thread raised before it
+/// ([`newer_foreground_taken`]).
 enum ForegroundTaken {
     /// Kept: the hand-over can still deliver copies.
     Kept(HashMap<(isize, u32), (WinEventStamp, Option<Arrival>)>),
@@ -588,7 +592,11 @@ impl Intake {
     /// ([`foreground_taken_after`]), a difference from NVDA the module
     /// documentation gives. A foreground change raised before the change of
     /// its window waiting is dropped as it arrives
-    /// ([`newer_foreground_waits`]), so the later-raised one is kept.
+    /// ([`newer_foreground_waits`]), so the later-raised one is kept, and so
+    /// is one raised before the change of its window and thread taken into
+    /// a batch while copies can still arrive late
+    /// ([`newer_foreground_taken`]), which NVDA would never hand out after
+    /// it.
     fn push_arrived(&self, entry: Entry, arrival: Option<Arrival>) {
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
@@ -639,6 +647,8 @@ impl Intake {
         };
         if state.drops_behind_its_foreground_change(key.as_ref(), &entry.item, (thread, arrival))
             || newer_foreground_waits(&state.waiting, key.as_ref(), &entry.item, arrival)
+            || matches!(&state.foreground_taken, ForegroundTaken::Kept(record)
+                if newer_foreground_taken(record, key.as_ref(), &entry.item, (thread, arrival)))
         {
             return;
         }
@@ -1104,6 +1114,41 @@ fn newer_foreground_waits(
         );
     }
     newer
+}
+
+/// Whether `item`, with `key`, raised by `thread` and arrived as `arrival`
+/// says, is a foreground change raised before the change of the same
+/// window from the same thread last taken into a batch while copies could
+/// still arrive late ([`ForegroundTaken`]), planned or already handed out,
+/// so it is dropped as it arrives, as [`newer_foreground_waits`] drops one
+/// behind a later-raised change still waiting: NVDA's limiter, adding
+/// events in the order they were raised, never hands the older change out
+/// after the newer.
+fn newer_foreground_taken(
+    record: &HashMap<(isize, u32), (WinEventStamp, Option<Arrival>)>,
+    key: Option<&Key>,
+    item: &Item,
+    (thread, arrival): (u32, Option<Arrival>),
+) -> bool {
+    let (Some(Key::Foreground(window)), Item::Fact(_, Some(stamp))) = (key, item) else {
+        return false;
+    };
+    let Some(&(change, change_arrival)) = record.get(&(*window, thread)) else {
+        return false;
+    };
+    let older = focus_raised_first(
+        (Some(*stamp), arrival),
+        (Some(change), change_arrival),
+        false,
+    );
+    if older {
+        tracing::debug!(
+            window,
+            thread,
+            "a foreground change is dropped behind its window's later change, already taken into a batch"
+        );
+    }
+    older
 }
 
 /// Records each foreground change of `taken`, entries just taken into a
@@ -2542,6 +2587,53 @@ mod tests {
         assert_eq!(handed_out(&intake), Vec::<u64>::new());
         push_raised(&intake, CLIENT_FOCUS, 230, Arrival::Hook, 4);
         assert_eq!(handed_out(&intake), vec![4]);
+    }
+
+    /// The window's thread raises G1 at 200, before the hook went in, and
+    /// G2 at 220. The hook's copy of G2 arrives first and is handed out;
+    /// the listener's copy of G1, arriving after that, is dropped, as NVDA's
+    /// limiter, adding events in raised order, never hands G1 out after G2.
+    #[test]
+    fn an_older_foreground_change_arriving_after_a_newer_one_was_handed_out_is_dropped() {
+        let intake = Intake::default();
+        let foreground = DeliveredFact::Foreground { hwnd: 9 };
+        push_raised(&intake, foreground.clone(), 220, Arrival::Hook, 1);
+        assert_eq!(handed_out(&intake), vec![1]);
+        push_raised(&intake, foreground, 200, Arrival::ListenerBeforeHook, 2);
+        assert_eq!(handed_out(&intake), Vec::<u64>::new());
+    }
+
+    /// Two threads raise foreground changes of window 9, handed out in
+    /// turn: thread 7's at 220 and thread 8's at 200. Each is recorded for
+    /// its own thread, so thread 8's is not dropped behind thread 7's, and a
+    /// late focus on the window's client object is judged against its own
+    /// thread's change only: thread 8's raised at 210 is kept, after its
+    /// thread's change at 200, and thread 7's raised at 210 dropped, before
+    /// its thread's change at 220. Keyed by window alone, the record would
+    /// drop thread 8's change and its focus.
+    #[test]
+    fn a_foreground_change_and_a_focus_are_judged_against_their_own_threads_change_only() {
+        let intake = Intake::default();
+        let push = |fact: DeliveredFact, thread, time, observed_at_ms| {
+            intake.push_copy(
+                Entry {
+                    item: Item::Fact(fact, Some(WinEventStamp { thread, time })),
+                    trace: TraceId::mint(),
+                    observed_at_ms,
+                    timing: crate::protocol::EventTiming::default(),
+                },
+                Arrival::Listener,
+            );
+        };
+        let foreground = DeliveredFact::Foreground { hwnd: 9 };
+        push(foreground.clone(), 7, 220, 1);
+        assert_eq!(handed_out(&intake), vec![1]);
+        push(foreground, 8, 200, 2);
+        assert_eq!(handed_out(&intake), vec![2]);
+        push(CLIENT_FOCUS, 8, 210, 3);
+        assert_eq!(handed_out(&intake), vec![3]);
+        push(CLIENT_FOCUS, 7, 210, 4);
+        assert_eq!(handed_out(&intake), Vec::<u64>::new());
     }
 
     /// Two foreground changes in one run, the newer dropped, as when its

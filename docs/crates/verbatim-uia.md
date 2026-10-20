@@ -72,8 +72,9 @@ Public API:
   the fallback when no element is kept), `find_child_by_runtime_id(parent,
   runtime_id, request)` (a search of `parent`'s children only, which tells
   the outpost whether a selected item is a child of the focus) and `controlled(focused,
-  runtime_id, request)` (the selected element, when it is inside an
-  element the focus names in its ControllerFor relation, else the first
+  runtime_id, request, current_instead)` (the selected element, when it is inside an
+  element the focus names in its ControllerFor relation, else, with
+  `current_instead`, the first
   controlled element's first selected element unless `runtime_id` names
   that element; the classic
   implementation behind `verbatim_uia_rops::controlled_selection`, which

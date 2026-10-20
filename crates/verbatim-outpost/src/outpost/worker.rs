@@ -2734,13 +2734,15 @@ impl Worker<'_> {
     /// ("Selection in a list the focus controls" in `docs/nvda/events.md`).
     /// When the selected one is inside none, the first controlled element's
     /// current selection is reported in its place
-    /// (`verbatim_uia_rops::Controlled::selected`).
+    /// (`verbatim_uia_rops::Controlled::selected`), unless the selection is
+    /// the focus's own ([`Worker::selection_of_focus`]).
     fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
         // The focus this outpost last reported, as NVDA uses its focus
         // object; found by its path when its element is not known.
         let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
             return None;
         };
+        let current_instead = !self.selection_of_focus(runtime_id, &focus_id);
         let registry = &self.context.uia_registry;
         let known = registry
             .existing_id(&focus_id)
@@ -2761,6 +2763,7 @@ impl Worker<'_> {
             focused: focused.live().element(),
             selected: runtime_id,
             fill: &fill,
+            current_instead,
         };
         let remote = self.context.tries_remote(window);
         let (answer, path) = verbatim_uia_rops::controlled_selection(uia, &query, remote).ok()?;
@@ -2771,13 +2774,16 @@ impl Worker<'_> {
             }
         }
         if answer.selected.is_none() && !answer.controlled.is_empty() {
-            // The search ran and did not find the element, and the first
-            // controlled element has nothing selected: what the relation
-            // named.
+            // The search ran and did not find the element, and no current
+            // selection was read from the first controlled element: it was
+            // not asked for, the event named that element, it has no
+            // Selection pattern, or nothing is selected in it. What the
+            // relation named.
             tracing::debug!(
                 selected = ?runtime_id,
                 controlled = ?answer.controlled,
-                "a selection in none of the elements the focus controls, none of which has a selection"
+                current_instead,
+                "a selection in none of the elements the focus controls, and no current selection read from the first"
             );
         }
         let selected = answer.selected?;
@@ -2802,6 +2808,34 @@ impl Worker<'_> {
             controller: registry.id_for_element(&controller, &focused),
             node: selected.snapshot(registry),
         })
+    }
+
+    /// Whether a UIA selection of the element `runtime_id` names is one the
+    /// reducer reads as the focus's own (`reduce_selection_changed`), told
+    /// from runtime ids and roles already in hand, with no call: the focus
+    /// itself (`focus_id`), one of the ancestors last reported with it, or,
+    /// while the focus is a selection container (Core's
+    /// `is_selection_container`), one of its items. NVDA's base
+    /// `event_selection` finds such an element in none of the elements the
+    /// focus controls and falls through to its state change handler
+    /// (`NVDAObjects/__init__.py` 1314 to 1339), as the reducer's own
+    /// selection handling does, so none of these is answered with the
+    /// controlled element's current selection.
+    fn selection_of_focus(&self, runtime_id: &[i32], focus_id: &[i32]) -> bool {
+        if runtime_id == focus_id {
+            return true;
+        }
+        let tracking = self.context.tracking();
+        if tracking
+            .focus_role
+            .is_some_and(verbatim_core::is_selection_container)
+        {
+            return true;
+        }
+        self.context
+            .uia_registry
+            .existing_id(runtime_id)
+            .is_some_and(|node| tracking.chain.iter().any(|known| known.id == node))
     }
 
     /// The selection of the item `parts` names as a change of the focus's
