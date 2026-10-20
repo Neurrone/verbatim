@@ -74,7 +74,9 @@ Public API:
   the outpost whether a selected item is a child of the focus) and `controlled(focused,
   runtime_id, request)` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation; the classic
-  implementation behind `verbatim_uia_rops::controlled_selection`), plus
+  implementation behind `verbatim_uia_rops::controlled_selection`, which
+  answers with it the runtime ids of the elements the relation named),
+  plus
   the M3 node-relative operations `ancestors`, `neighbor`, and `activate`
   described below, `tree(root, request, registry, max_depth, max_nodes)`
   (a tree dump), and the local helpers

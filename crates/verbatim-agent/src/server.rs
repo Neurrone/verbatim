@@ -349,6 +349,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         request @ (Request::FocusedElement
         | Request::FocusByAutomationId { .. }
         | Request::MisspeltWords
+        | Request::ControlledItems { .. }
         | Request::KeyToggled { .. }) => state_request(id, request),
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
@@ -526,6 +527,13 @@ fn state_request(id: u64, request: Request) -> Frame {
             Ok(words) => Frame::Reply {
                 to: id,
                 payload: ReplyPayload::Words { words },
+            },
+            Err(error) => error_frame(id, &error),
+        },
+        Request::ControlledItems { names } => match focus::controlled_items(names) {
+            Ok((count, names)) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::ControlledItems { count, names },
             },
             Err(error) => error_frame(id, &error),
         },

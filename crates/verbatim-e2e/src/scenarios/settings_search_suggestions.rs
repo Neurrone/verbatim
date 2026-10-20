@@ -6,10 +6,15 @@
 //!
 //! Read-only, so it changes no setting. `ms-settings:system` opens the
 //! System page with the keyboard focus in its search box, as its opening
-//! speech asserts. Typing "sound" opens the suggestions, of which the
-//! Settings app selects the first itself and announces that suggestions
-//! are available; Down Arrow twice and Up Arrow then move the selection,
-//! the focus staying in the box.
+//! speech asserts. "sound" is typed in one injection, all five characters
+//! before Settings' search delay, so the suggestions open once, after the
+//! last; Settings selects the first itself and announces that suggestions
+//! are available. Down Arrow twice and Up Arrow then move the selection,
+//! the focus staying in the box. How many suggestions there are, and
+//! what they are called, comes from Settings' search index, which differs
+//! between editions and builds, so the agent reads the list's size and its
+//! first three names through UI Automation, independently of Verbatim,
+//! once the list is open and before the scenario fixes what it expects.
 
 use std::io;
 
@@ -31,32 +36,47 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         "Search box, Find a setting edit",
         "blank",
     ]);
-    for character in ["s", "o", "u", "n"] {
-        scenario.type_text(character).expect("types a character");
-        scenario.speech().expect(&[character]);
-    }
-    // The last character opens the suggestions: the application's
-    // notification that they are available, cut off by its selection of
-    // the first one, and the search box's suggestions relation, which
-    // plays the suggestions-opened indication.
-    scenario.type_text("d").expect("types a character");
+    // Each character's echo is cut off by the next key, the last heard in
+    // full; then the application's notification that suggestions are
+    // available, cut off by its selection of the first one.
+    scenario.type_text("sound").expect("types the query");
+    // NVDA says the first suggestion as "list item", the name its event's
+    // cache holds, which Settings has not set yet; Verbatim reads its name.
+    scenario.deviates_from_nvda(
+        "docs/parity/changes-and-selection.md",
+        "Selection in a list the focus controls",
+    );
     scenario.speech().expect_sequence(&[
+        cut_off("s"),
+        cut_off("o"),
+        cut_off("u"),
+        cut_off("n"),
         heard("d"),
         cut_off("Suggestions available"),
-        heard("Sound settings 1 of 22"),
-        heard("sound: suggestions-opened"),
     ]);
+    let (count, names) = scenario
+        .controlled_items(3)
+        .expect("the agent reads the suggestions");
+    let [first, second, third] = names.as_slice() else {
+        panic!("the agent read {names:?}, not three suggestions");
+    };
+    let said = |name: &str, position: u32| format!("{name} {position} of {count}");
+    // The search box's suggestions relation plays the suggestions-opened
+    // indication after the first suggestion is said.
+    scenario
+        .speech()
+        .expect_sequence(&[heard(&said(first, 1)), heard("sound: suggestions-opened")]);
 
     // Down Arrow, which moves no caret in the one-line box, moves the
     // selection; NVDA also says the box's line for the key, where
     // Verbatim says nothing for a caret key that moves nothing.
     for (key, said) in [
-        ("downarrow", "Sound mixer options 2 of 22"),
-        ("downarrow", "Themes and related settings 3 of 22"),
-        ("uparrow", "Sound mixer options 2 of 22"),
+        ("downarrow", said(second, 2)),
+        ("downarrow", said(third, 3)),
+        ("uparrow", said(second, 2)),
     ] {
         scenario.send_keys(&[key]).expect("sends the key");
         scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-        scenario.speech().expect(&[said]);
+        scenario.speech().expect(&[&said]);
     }
 }

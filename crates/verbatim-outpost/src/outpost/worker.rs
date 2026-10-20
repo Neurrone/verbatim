@@ -2753,14 +2753,25 @@ impl Worker<'_> {
             fill: &fill,
         };
         let remote = self.context.tries_remote(window);
-        let (selected, path) = verbatim_uia_rops::controlled_selection(uia, &query, remote).ok()?;
+        let (answer, path) = verbatim_uia_rops::controlled_selection(uia, &query, remote).ok()?;
         if let verbatim_uia_rops::Path::Fallback(error) = &path {
             tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
             if let (verbatim_uia_rops::Error::Import(_), Some(hwnd)) = (error, window) {
                 self.context.read_classically(top_level_of(hwnd));
             }
         }
-        let selected = selected?;
+        if answer.selected.is_none() && !answer.controlled.is_empty() {
+            // The search ran and did not find the element: what the
+            // relation named, for a selection Settings' search suggestions
+            // can raise for an element it has already replaced
+            // (`docs/parity/changes-and-selection.md`).
+            tracing::debug!(
+                selected = ?runtime_id,
+                controlled = ?answer.controlled,
+                "a selection in none of the elements the focus controls"
+            );
+        }
+        let selected = answer.selected?;
         let registry = &self.context.uia_registry;
         // The controller's runtime id is UIA's own, kept with the element,
         // whatever its cache holds.

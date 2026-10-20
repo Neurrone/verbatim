@@ -242,6 +242,16 @@ pub enum Request {
     /// annotation, in order, read independently of any screen reader.
     /// Answered by [`ReplyPayload::Words`].
     MisspeltWords,
+    /// Reports what the focused element controls: of the first element its
+    /// UI Automation `ControllerFor` relation names, how many children it
+    /// has and the names of the first `names` of them, read independently
+    /// of any screen reader, as a search box's suggestion list is counted
+    /// and named before a test fixes what it expects. Answered by
+    /// [`ReplyPayload::ControlledItems`].
+    ControlledItems {
+        /// How many of the children's names to report.
+        names: u32,
+    },
     /// Reports whether the lock key `key` (a key name of the control
     /// plane's vocabulary, such as `scrolllock`) is on, read independently
     /// of any screen reader. Answered by [`ReplyPayload::KeyToggled`].
@@ -617,6 +627,14 @@ pub enum ReplyPayload {
     KeyToggled {
         /// Whether the key is on.
         on: bool,
+    },
+    /// Answer to [`Request::ControlledItems`].
+    ControlledItems {
+        /// How many children the controlled element has.
+        count: u32,
+        /// The names of its first children, as many as asked for, or all
+        /// of them when it has fewer.
+        names: Vec<String>,
     },
     /// Answer to [`Request::MisspeltWords`].
     Words {

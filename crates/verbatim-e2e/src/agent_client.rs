@@ -692,6 +692,24 @@ impl AgentClient {
         }
     }
 
+    /// Of the first element the focused element controls (its UI
+    /// Automation `ControllerFor` relation), how many children it has and
+    /// the names of the first `names`, as the agent reads them through UI
+    /// Automation, independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn controlled_items(&mut self, names: u32) -> io::Result<(u32, Vec<String>)> {
+        match self.request(Request::ControlledItems { names })? {
+            Frame::Reply {
+                payload: ReplyPayload::ControlledItems { count, names },
+                ..
+            } => Ok((count, names)),
+            other => Err(unexpected("ControlledItems", &other)),
+        }
+    }
+
     /// Whether the lock key `key` (such as `scrolllock`) is on, as the
     /// agent reads it, independently of Verbatim.
     ///

@@ -725,8 +725,11 @@ that ends at once (`crates/mockapp/tests/instruction_limit.rs`).
 `controlled_selection_remote` and `controlled_selection_classic` behind it
 (`ControlledSelectionFn`), answers NVDA's test for a selection inside an
 element the focus controls (its base `event_selection` reads the focus's
-`controllerFor` live for each selection event): the selected element,
-a `Cached<Node>` filled by the query's fill, when the element a selection event
+`controllerFor` live for each selection event) with a `Controlled`: the
+runtime ids of the elements the relation names (`controlled`, as
+`runtime_id_key` writes them, up to the one the element was found in),
+which the outpost logs when the element is in none of them, and
+`selected`, a `Cached<Node>` filled by the query's fill, when the element a selection event
 named by its runtime id (`ControlledQuery::selected`) is a descendant of
 one of the elements the focus names in its `ControllerFor` relation. The
 program reads the relation, then walks each controlled element's

@@ -77,6 +77,7 @@ fn controlled(
     };
     let _ = verbatim_uia::calls::take();
     let (remote, path) = controlled_selection(uia, &query, true).expect("the remote program");
+    let (remote_ids, remote) = (remote.controlled, remote.selected);
     assert!(matches!(path, Path::Remote), "answered by {}", path.name());
     assert_eq!(
         verbatim_uia::calls::take(),
@@ -89,6 +90,11 @@ fn controlled(
         "one remote operation"
     );
     let (classic, _) = controlled_selection(uia, &query, false).expect("the classic calls");
+    assert_eq!(
+        remote_ids, classic.controlled,
+        "both ways name the same controlled elements"
+    );
+    let classic = classic.selected;
     let answer = |found: Option<Cached<Node>>| {
         found.map(|element| (element.read().name, element.runtime_id()))
     };

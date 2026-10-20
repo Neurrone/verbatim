@@ -1628,6 +1628,18 @@ impl Scenario {
         self.agent.misspelt_words()
     }
 
+    /// Of the first element the focused element controls (its UI
+    /// Automation `ControllerFor` relation), how many children it has and
+    /// the names of the first `names`, read by the agent independently of
+    /// Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn controlled_items(&mut self, names: u32) -> io::Result<(u32, Vec<String>)> {
+        self.agent.controlled_items(names)
+    }
+
     /// Whether the lock key `key` (such as `scrolllock`) is on, read by the
     /// agent independently of Verbatim.
     ///

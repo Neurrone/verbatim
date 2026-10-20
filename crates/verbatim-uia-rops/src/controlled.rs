@@ -34,12 +34,23 @@ pub struct ControlledQuery<'a> {
     pub fill: &'a Fill<Node>,
 }
 
-/// The signature both implementations share: the selected element, filled
-/// by the query's fill, when it is a descendant of an element the focus
-/// controls; `None` when the focus controls nothing or the element is in
-/// none of what it controls.
-pub type ControlledSelectionFn =
-    fn(&Uia, &ControlledQuery<'_>) -> Result<Option<Cached<Node>>, Error>;
+/// What both implementations answer.
+#[derive(Debug)]
+pub struct Controlled {
+    /// The selected element, filled by the query's fill, when it is a
+    /// descendant of an element the focus controls; `None` when the focus
+    /// controls nothing or the element is in none of what it controls.
+    pub selected: Option<Cached<Node>>,
+    /// The runtime ids of the elements the focus's relation names, in its
+    /// order, up to the one the selected element was found in, each as
+    /// [`runtime_id_key`] writes it: empty when it names none. Each was
+    /// searched, but one that is the selected element itself, which is not
+    /// its own descendant.
+    pub controlled: Vec<String>,
+}
+
+/// The signature both implementations share ([`Controlled`]).
+pub type ControlledSelectionFn = fn(&Uia, &ControlledQuery<'_>) -> Result<Controlled, Error>;
 
 /// The controlled selection, the one function call sites use: the remote
 /// program when `remote` is true, falling back to the classic calls for
@@ -55,7 +66,7 @@ pub fn controlled_selection(
     uia: &Uia,
     query: &ControlledQuery<'_>,
     remote: bool,
-) -> Result<(Option<Cached<Node>>, Path), Error> {
+) -> Result<(Controlled, Path), Error> {
     if !remote {
         return controlled_selection_classic(uia, query).map(|found| (found, Path::Classic));
     }
@@ -71,7 +82,8 @@ pub fn controlled_selection(
 /// The controlled selection in one round trip: the focus's
 /// `ControllerFor` read, then each controlled element's descendants walked
 /// in the raw view, depth first, until one has the selected element's
-/// runtime id, whose cache is then filled inside the provider. The
+/// runtime id, whose cache is then filled inside the provider; each
+/// controlled element's runtime id comes back with it. The
 /// controlled element itself is not its own descendant. A subtree too
 /// large for one run stops it at the platform's instruction limit, and
 /// [`controlled_selection`] answers that call classically.
@@ -86,9 +98,12 @@ pub fn controlled_selection(
 pub fn controlled_selection_remote(
     _uia: &Uia,
     query: &ControlledQuery<'_>,
-) -> Result<Option<Cached<Node>>, Error> {
+) -> Result<Controlled, Error> {
     if query.selected.is_empty() {
-        return Ok(None);
+        return Ok(Controlled {
+            selected: None,
+            controlled: Vec::new(),
+        });
     }
     let mut b = Builder::new();
     let focused = b.import_element(query.focused);
@@ -98,6 +113,9 @@ pub fn controlled_selection_remote(
     let found = b.add_to_results(found);
     let found_absent = b.new_int(0);
     let found_absent = b.add_to_results(found_absent);
+    // The controlled elements' runtime ids, one after another.
+    let controlled_ids = b.new_string("");
+    let controlled_ids = b.add_to_results(controlled_ids);
     let relation = b.property(focused, UIA_ControllerForPropertyId.0);
     let is_array = b.is(TypeTest::Array, relation);
     b.if_(is_array, |b| {
@@ -116,6 +134,10 @@ pub fn controlled_selection_remote(
             |b| {
                 let root = b.array_get_at(controlled, index).assume::<kind::Element>();
                 b.add_assign(index, one);
+                let root_id = b.property(root, UIA_RuntimeIdPropertyId.0);
+                let root_key = b.stringify(root_id);
+                let joined = b.concat(controlled_ids, root_key);
+                b.set(controlled_ids, joined);
                 // How far below the controlled element the walk is: back
                 // at 0, its subtree is done.
                 let depth = b.new_int(1);
@@ -173,9 +195,18 @@ pub fn controlled_selection_remote(
     });
     let outcome = b.finish().execute()?;
     let absent = absent_record(outcome.get(found_absent)?);
-    Ok(outcome
-        .get(found)?
-        .map(|found| query.fill.claim(found, absent)))
+    Ok(Controlled {
+        selected: outcome
+            .get(found)?
+            .map(|found| query.fill.claim(found, absent)),
+        controlled: split_runtime_ids(&outcome.get(controlled_ids)?),
+    })
+}
+
+/// The runtime ids the program wrote one after another, each as
+/// [`runtime_id_key`] writes it, apart.
+fn split_runtime_ids(joined: &str) -> Vec<String> {
+    joined.split_inclusive(']').map(str::to_owned).collect()
 }
 
 /// The controlled selection the classic way, the fallback and the
@@ -190,10 +221,14 @@ pub fn controlled_selection_remote(
 pub fn controlled_selection_classic(
     uia: &Uia,
     query: &ControlledQuery<'_>,
-) -> Result<Option<Cached<Node>>, Error> {
-    Ok(uia.controlled(
+) -> Result<Controlled, Error> {
+    let (selected, controlled) = uia.controlled(
         &Live::new(query.focused.clone()),
         query.selected,
         query.fill.request(),
-    )?)
+    )?;
+    Ok(Controlled {
+        selected,
+        controlled: controlled.iter().map(|id| runtime_id_key(id)).collect(),
+    })
 }

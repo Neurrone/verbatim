@@ -379,6 +379,7 @@ fn controlled_selections_execute_exactly() {
         };
         controlled_selection_remote(&fixture.uia, &query)
             .expect("the program runs")
+            .selected
             .is_some()
     };
     let grouped = selected("Display settings");
@@ -391,7 +392,7 @@ fn controlled_selections_execute_exactly() {
 
     assert_eq!(
         [deep, near, missing],
-        [163, 195, 207],
+        [168, 200, 212],
         "controlled selection inside a group, second child, not found"
     );
 }

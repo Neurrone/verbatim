@@ -414,7 +414,9 @@ and the input methods above:
 - State read independently of Verbatim, before the scenario fixes what it
   expects: `desktop_speech`, `key_toggled` (a lock key),
   `focus_by_automation_id` (focuses an element with UI Automation's
-  `SetFocus` and returns how many children it has), and `misspelt_words`
+  `SetFocus` and returns how many children it has), `controlled_items`
+  (of the first element the focused element controls, how many children
+  it has and the names of the first ones), and `misspelt_words`
   (the words of the focused text marked with UI Automation's
   spelling-error annotation).
 - `verbatim_children`, `end_verbatim_process(pid)` (ending one of

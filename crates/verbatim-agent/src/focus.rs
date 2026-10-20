@@ -2,10 +2,10 @@
 //! [`Request::FocusedElement`](crate::protocol::Request::FocusedElement):
 //! state a test reads independently of the screen reader under test, such
 //! as which item of the desktop has the focus, to fix what it expects the
-//! screen reader to say before it says it. Two requests need facts only UI
-//! Automation has and keep it: [`focus_by_automation_id`] and
-//! [`misspelt_words`] (`docs/design/listener-without-connections.md`,
-//! section 4.5).
+//! screen reader to say before it says it. Three requests need facts only
+//! UI Automation has and keep it: [`focus_by_automation_id`],
+//! [`controlled_items`], and [`misspelt_words`]
+//! (`docs/design/listener-without-connections.md`, section 4.5).
 
 use std::io;
 
@@ -82,12 +82,61 @@ fn focus_through_uia(automation_id: &str) -> io::Result<u32> {
     u32::try_from(count).map_err(io::Error::other)
 }
 
+/// Of the first element the focused element's UI Automation
+/// `ControllerFor` relation names, how many children it has and the names
+/// of the first `names` of them.
+///
+/// # Errors
+///
+/// Returns an error if UI Automation cannot be reached, nothing has the
+/// focus, or the focused element controls nothing.
+pub fn controlled_items(names: u32) -> io::Result<(u32, Vec<String>)> {
+    through_uia("ControlledItems", || controlled_through_uia(names))
+}
+
+/// [`controlled_items`]' UI Automation calls.
+fn controlled_through_uia(names: u32) -> io::Result<(u32, Vec<String>)> {
+    // SAFETY: as in `focused_element`.
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    // SAFETY: as in `focused_element`.
+    let automation: IUIAutomation =
+        unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
+            .map_err(io::Error::other)?;
+    // SAFETY: plain COM calls on live interfaces.
+    let focus = unsafe { automation.GetFocusedElement() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let controlled = unsafe { focus.CurrentControllerFor() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let length = unsafe { controlled.Length() }.map_err(io::Error::other)?;
+    if length == 0 {
+        return Err(io::Error::other("the focused element controls nothing"));
+    }
+    // SAFETY: as above, with an index inside the array.
+    let list = unsafe { controlled.GetElement(0) }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let any = unsafe { automation.CreateTrueCondition() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let children = unsafe { list.FindAll(TreeScope_Children, &any) }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let count = unsafe { children.Length() }.map_err(io::Error::other)?;
+    let shown = count.min(i32::try_from(names).map_err(io::Error::other)?);
+    let mut read = Vec::new();
+    for index in 0..shown {
+        // SAFETY: as above, with an index inside the array.
+        let child = unsafe { children.GetElement(index) }.map_err(io::Error::other)?;
+        // SAFETY: as above.
+        let name = unsafe { child.CurrentName() }.map_err(io::Error::other)?;
+        read.push(name.to_string());
+    }
+    Ok((u32::try_from(count).map_err(io::Error::other)?, read))
+}
+
 /// How long one of the agent's UI Automation requests may take before it
 /// is logged as slow: UIA's default connection timeout, which these
 /// requests' client leaves as it is.
 const SLOW_UIA_REQUEST: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Runs `read`, one of the two requests that keep UI Automation, and logs
+/// Runs `read`, one of the requests that keep UI Automation, and logs
 /// how long it took, at warn when it took [`SLOW_UIA_REQUEST`] or longer,
 /// so the scenarios that use them can count the agent's slow answers apart
 /// from Verbatim's (`docs/design/listener-without-connections.md`, section

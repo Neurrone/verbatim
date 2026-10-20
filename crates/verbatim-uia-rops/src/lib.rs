@@ -64,8 +64,8 @@ pub use caret::{
     caret_read_remote,
 };
 pub use controlled::{
-    ControlledQuery, ControlledSelectionFn, controlled_selection, controlled_selection_classic,
-    controlled_selection_remote,
+    Controlled, ControlledQuery, ControlledSelectionFn, controlled_selection,
+    controlled_selection_classic, controlled_selection_remote,
 };
 pub use error::{Error, Failure};
 pub use focus::{

@@ -118,10 +118,13 @@ Public API:
     focused item's position and the item count from the list view's own
     messages), `FocusByAutomationId` (focuses the foreground window's
     element with that identifier with UI Automation's `SetFocus`, injecting
-    no input, and answers how many children it has), `MisspeltWords` (the
+    no input, and answers how many children it has), `ControlledItems`
+    (of the first element the focused element's `ControllerFor` relation
+    names, how many children it has and the names of the first ones asked
+    for, as a search box's suggestions), `MisspeltWords` (the
     words of the focused text marked with UI Automation's spelling-error
     annotation, read word by word), and `KeyToggled` (whether a lock key
-    is on). The two requests that keep UI Automation, which need facts only
+    is on). The three requests that keep UI Automation, which need facts only
     it has, log how long each took, at warn from two seconds, so their slow
     answers are counted apart from Verbatim's
     (`docs/design/listener-without-connections.md`, section 4.5).
