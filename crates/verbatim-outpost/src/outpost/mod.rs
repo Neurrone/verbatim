@@ -756,7 +756,7 @@ impl Context {
             return true;
         };
         let mut handover = self.handover();
-        let Some(arrival) = handover.admit(source, key, stamp) else {
+        let Some(arrival) = handover.admit(source, key, stamp, std::time::Instant::now) else {
             return false;
         };
         self.intake.push_copy(entry(), arrival);
@@ -1288,7 +1288,9 @@ impl Outpost {
                 },
             ),
             SupervisorToOutpost::ForwardingEnded { through } => {
-                context.handover().forwarding_ended(*through);
+                context
+                    .handover()
+                    .forwarding_ended(*through, std::time::Instant::now());
                 context.intake.forwarding_ended();
             }
             SupervisorToOutpost::Query {

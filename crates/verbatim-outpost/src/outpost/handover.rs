@@ -33,8 +33,17 @@
 //!   reached the outpost before the "forwarding ended". Once that message
 //!   is in, only an event raised between the hook's reading and the
 //!   listener's can have copies from both sources still to meet, so only
-//!   those are counted from then on, for as long as the outpost runs: a
-//!   handful of events, raised in the few milliseconds of the hand-over.
+//!   those are counted from then on: a handful of events, raised in the
+//!   few milliseconds of the hand-over.
+//! - Those are counted for [`TWIN_BOUND`], 15 seconds, after the
+//!   "forwarding ended" arrived, the longest a late copy can trail it, as
+//!   the constant's documentation shows. Once that has passed, the counts
+//!   are dropped and no copy is counted again, so every copy is handled.
+//!   Measuring this on the outpost's own monotonic clock, not by raise
+//!   times, keeps the comparison of raise times, which wraps once two
+//!   ticks are 2^31 ms (about 24.8 days) apart, to copies raised within
+//!   seconds of the tick "forwarding ended" names, so an outpost that
+//!   runs for weeks never counts its hook's copies as raised before it.
 //!
 //! The hand-over also tells which of the listener's copies it handles were
 //! raised before the hook went in ([`Arrival::ListenerBeforeHook`]), so
@@ -103,8 +112,26 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::protocol::{FactKey, WinEventStamp, tick_is_after};
+
+/// How long after the listener's "forwarding ended" reaches the outpost a
+/// copy can still meet its twin: the longest a late copy can trail that
+/// message. A listener copy arrives after it only when the listener's hook
+/// thread received the event after the listener read its tick; that copy
+/// then passes the listener's backlog and the supervisor's relay. The hook
+/// thread makes no cross-process call, and delivered every event within
+/// one tick of its raise (at most 16 ms in the 578 hook deliveries logged
+/// in the end-to-end evidence of fixes rounds three to seven, where a twin
+/// trailed its first copy by at most 6.3 ms). The relay's maximum
+/// measured is 146 ms (`docs/design/focus-pipeline.md`, section 12.4). A
+/// write stalled in the listener's backlog holds its pongs too, and the
+/// supervisor replaces a listener that has answered no ping for three
+/// intervals of 3 seconds, checked at each ping, so within 12 seconds,
+/// after which nothing more comes from it. 15 seconds covers those with a
+/// margin. A copy that came later still would be handled a second time.
+pub(super) const TWIN_BOUND: Duration = Duration::from_secs(15);
 
 /// Where a copy of a `WinEvent` came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,9 +166,14 @@ pub(super) struct Handover {
     /// The clock just before the outpost installed its hook: no event
     /// raised before it reached the hook.
     hook_from: u32,
-    /// The tick the listener's "forwarding ended" named, once it is in:
-    /// the listener forwards nothing raised after it.
-    forwarded_through: Option<u32>,
+    /// The tick the listener's "forwarding ended" named, and when that
+    /// message reached the outpost, once it is in: the listener forwards
+    /// nothing raised after the tick.
+    forwarded_through: Option<(u32, Instant)>,
+    /// Whether the hand-over is over: [`TWIN_BOUND`] has passed since
+    /// "forwarding ended" came, or no listener forwards to the outpost, so
+    /// no copy is counted and nothing is kept.
+    over: bool,
     /// The unmatched copies from the listener, by identity.
     listener: HashMap<Identity, usize>,
     /// The unmatched copies from the hook, by identity.
@@ -155,6 +187,7 @@ impl Handover {
         Self {
             hook_from,
             forwarded_through: None,
+            over: false,
             listener: HashMap::new(),
             hook: HashMap::new(),
         }
@@ -166,19 +199,23 @@ impl Handover {
     /// listener's copy is known to have been raised before the hook went in
     /// when it was raised before the clock reading, or when it has no twin
     /// while the hook has an unmatched copy raised in the same tick (the
-    /// module's documentation says why).
+    /// module's documentation says why). `now` reads the outpost's
+    /// monotonic clock, and is called only after "forwarding ended" and
+    /// until [`TWIN_BOUND`] has passed, so nothing is read once the
+    /// hand-over is over.
     pub(super) fn admit(
         &mut self,
         source: Source,
         key: FactKey,
         stamp: WinEventStamp,
+        now: impl FnOnce() -> Instant,
     ) -> Option<Arrival> {
         let arrival = match source {
             Source::Hook => Arrival::Hook,
             Source::Listener if stamp.raised_before(self.hook_from) => Arrival::ListenerBeforeHook,
             Source::Listener => Arrival::Listener,
         };
-        if !self.may_have_twin(source, stamp) {
+        if !self.may_have_twin(source, stamp, now) {
             return Some(arrival);
         }
         // Asked before the twin is looked for: a twin is the same event,
@@ -214,36 +251,67 @@ impl Handover {
         })
     }
 
-    /// The listener's "forwarding ended": it forwards nothing raised after
-    /// `through`. Only the copies of events raised at or before it can meet
-    /// their twins from now on; the others are forgotten. A second one, from
-    /// a listener that replaced the first and forwards nothing for this
-    /// application, keeps the earlier of the two ticks.
-    pub(super) fn forwarding_ended(&mut self, through: u32) {
-        let through = match self.forwarded_through {
-            Some(earlier) if tick_is_after(through, earlier) => earlier,
-            _ => through,
+    /// The listener's "forwarding ended", which reached the outpost at
+    /// `at`: it forwards nothing raised after `through`. Only the copies of
+    /// events raised at or before it can meet their twins from now on, for
+    /// [`TWIN_BOUND`] after `at`; the others are forgotten. A second one,
+    /// from a listener that replaced the first and forwards nothing for
+    /// this application, keeps the earlier of the two ticks and the time
+    /// the first came.
+    pub(super) fn forwarding_ended(&mut self, through: u32, at: Instant) {
+        if self.over {
+            return;
+        }
+        let ended = match self.forwarded_through {
+            Some((earlier, came)) if tick_is_after(through, earlier) => (earlier, came),
+            Some((_, came)) => (through, came),
+            None => (through, at),
         };
-        self.forwarded_through = Some(through);
+        self.forwarded_through = Some(ended);
         for counts in [&mut self.listener, &mut self.hook] {
-            counts.retain(|(_, stamp), _| !stamp.raised_after(through));
+            counts.retain(|(_, stamp), _| !stamp.raised_after(ended.0));
         }
     }
 
     /// Ends the hand-over at once, for an outpost no listener forwards to:
-    /// every copy is handled.
+    /// every copy is handled, and none is counted.
     pub(super) fn without_listener(&mut self) {
-        self.forwarding_ended(self.hook_from.wrapping_sub(1));
+        self.end();
     }
 
     /// Whether a copy from `source` raised as `stamp` says can have a twin
-    /// from the other source, now or later.
-    fn may_have_twin(&self, source: Source, stamp: WinEventStamp) -> bool {
-        if source == Source::Listener && stamp.raised_before(self.hook_from) {
+    /// from the other source, now or later; ends the hand-over once
+    /// [`TWIN_BOUND`] has passed since "forwarding ended" came, by the
+    /// clock `now` reads.
+    fn may_have_twin(
+        &mut self,
+        source: Source,
+        stamp: WinEventStamp,
+        now: impl FnOnce() -> Instant,
+    ) -> bool {
+        if self.over || source == Source::Listener && stamp.raised_before(self.hook_from) {
             return false;
         }
-        self.forwarded_through
-            .is_none_or(|through| !stamp.raised_after(through))
+        let Some((through, came)) = self.forwarded_through else {
+            return true;
+        };
+        if now().saturating_duration_since(came) > TWIN_BOUND {
+            self.end();
+            return false;
+        }
+        !stamp.raised_after(through)
+    }
+
+    /// The hand-over is over: the counts are dropped, and no copy is
+    /// counted from now on.
+    fn end(&mut self) {
+        tracing::debug!(
+            unmatched = self.listener.len() + self.hook.len(),
+            "the MSAA hand-over is over; no copy is counted from now on"
+        );
+        self.over = true;
+        self.listener = HashMap::new();
+        self.hook = HashMap::new();
     }
 
     /// How many unmatched copies are counted, from both sources.
@@ -258,6 +326,14 @@ mod tests {
     use super::*;
 
     use Source::{Hook, Listener};
+
+    /// The stand-in clock's one reading: every copy is admitted, and every
+    /// "forwarding ended" comes, at this instant, unless a test reads it
+    /// later.
+    fn start() -> Instant {
+        static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+        *START.get_or_init(Instant::now)
+    }
 
     /// A focus on child 1 of window 7, raised by thread 3 at `time`.
     fn focus(time: u32) -> (FactKey, WinEventStamp) {
@@ -274,7 +350,7 @@ mod tests {
             .iter()
             .map(|&(source, time)| {
                 let (key, stamp) = focus(time);
-                handover.admit(source, key, stamp).is_some()
+                handover.admit(source, key, stamp, start).is_some()
             })
             .collect()
     }
@@ -328,7 +404,7 @@ mod tests {
         assert_eq!(handover.counted(), 0);
         // During the overlap, each source's first copy is handled.
         assert_eq!(judge(&mut handover, &[(Hook, 150)]), [true]);
-        handover.forwarding_ended(160);
+        handover.forwarding_ended(160, start());
         // Raised after the listener stopped: only the hook has it, and it
         // is not counted either. The copy above, raised during the
         // hand-over, is still counted, for a late twin.
@@ -346,7 +422,7 @@ mod tests {
             judge(&mut handover, &[(Hook, 150), (Hook, 170)]),
             [true, true]
         );
-        handover.forwarding_ended(160);
+        handover.forwarding_ended(160, start());
         assert_eq!(handover.counted(), 1, "only the copy raised at 150");
     }
 
@@ -356,11 +432,11 @@ mod tests {
         // at once and the listener only after its "forwarding ended".
         let mut handover = Handover::new(100);
         assert_eq!(judge(&mut handover, &[(Hook, 150)]), [true]);
-        handover.forwarding_ended(160);
+        handover.forwarding_ended(160, start());
         assert_eq!(judge(&mut handover, &[(Listener, 150)]), [false]);
         // And the other way round.
         let mut handover = Handover::new(100);
-        handover.forwarding_ended(160);
+        handover.forwarding_ended(160, start());
         assert_eq!(
             judge(&mut handover, &[(Listener, 150), (Hook, 150)]),
             [true, false]
@@ -370,10 +446,10 @@ mod tests {
     #[test]
     fn a_replacement_listeners_forwarding_ended_keeps_the_earlier_tick() {
         let mut handover = Handover::new(100);
-        handover.forwarding_ended(160);
+        handover.forwarding_ended(160, start());
         // A listener that replaced the first, long after, forwards nothing
         // for this application: a hook copy raised later is not counted.
-        handover.forwarding_ended(5000);
+        handover.forwarding_ended(5000, start());
         assert_eq!(judge(&mut handover, &[(Hook, 4000)]), [true]);
         assert_eq!(handover.counted(), 0);
     }
@@ -391,20 +467,23 @@ mod tests {
         let stamp = |time| WinEventStamp { thread: 3, time };
         let foreground = FactKey::Foreground(8);
         assert_eq!(
-            handover.admit(Hook, focus(150).0, stamp(150)),
+            handover.admit(Hook, focus(150).0, stamp(150), start),
             Some(Arrival::Hook)
         );
         assert_eq!(
-            handover.admit(Listener, foreground.clone(), stamp(150)),
+            handover.admit(Listener, foreground.clone(), stamp(150), start),
             Some(Arrival::ListenerBeforeHook)
         );
-        assert_eq!(handover.admit(Listener, focus(150).0, stamp(150)), None);
         assert_eq!(
-            handover.admit(Listener, foreground.clone(), stamp(166)),
+            handover.admit(Listener, focus(150).0, stamp(150), start),
+            None
+        );
+        assert_eq!(
+            handover.admit(Listener, foreground.clone(), stamp(166), start),
             Some(Arrival::Listener)
         );
         assert_eq!(
-            handover.admit(Listener, foreground, stamp(99)),
+            handover.admit(Listener, foreground, stamp(99), start),
             Some(Arrival::ListenerBeforeHook)
         );
     }
@@ -417,14 +496,39 @@ mod tests {
         let mut handover = Handover::new(100);
         let stamp = |time| WinEventStamp { thread: 3, time };
         assert_eq!(
-            handover.admit(Hook, focus(150).0, stamp(150)),
+            handover.admit(Hook, focus(150).0, stamp(150), start),
             Some(Arrival::Hook)
         );
-        assert_eq!(handover.admit(Listener, focus(150).0, stamp(150)), None);
         assert_eq!(
-            handover.admit(Listener, FactKey::Foreground(8), stamp(150)),
+            handover.admit(Listener, focus(150).0, stamp(150), start),
+            None
+        );
+        assert_eq!(
+            handover.admit(Listener, FactKey::Foreground(8), stamp(150), start),
             Some(Arrival::Listener)
         );
+    }
+
+    /// Once [`TWIN_BOUND`] has passed since "forwarding ended" came, the
+    /// copy counted during the hand-over is dropped, and a hook copy raised
+    /// 2^31 ms after the tick that message named, which the wrapping tick
+    /// comparison takes as raised before it, is handled and not counted.
+    #[test]
+    fn past_the_bound_after_forwarding_ended_no_copy_is_counted_and_nothing_is_kept() {
+        let mut handover = Handover::new(100);
+        assert_eq!(judge(&mut handover, &[(Hook, 150)]), [true]);
+        handover.forwarding_ended(160, start());
+        assert_eq!(handover.counted(), 1, "the copy raised at 150");
+        let past = || start() + TWIN_BOUND + Duration::from_millis(1);
+        let (key, stamp) = focus(160u32.wrapping_add(1 << 31));
+        for _ in 0..2 {
+            assert_eq!(
+                handover.admit(Hook, key.clone(), stamp, past),
+                Some(Arrival::Hook)
+            );
+        }
+        assert_eq!(handover.counted(), 0);
+        assert!(handover.listener.is_empty() && handover.hook.is_empty());
     }
 
     #[test]

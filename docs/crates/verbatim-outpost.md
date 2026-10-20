@@ -65,8 +65,12 @@ hand-over, step by step:
   hook drops an event whose window has no owner, as the listener does
   (`hooked_fact`). A listener copy raised before the outpost's first clock reading
   has no twin and is not counted; after `ForwardingEnded`, only copies
-  raised between the two readings are counted, for as long as the outpost
-  runs, a handful at most.
+  raised between the two readings are counted, a handful at most, and
+  only for `handover::TWIN_BOUND` (15 seconds, the longest a late copy can
+  trail that message) after it arrived, measured on the outpost's
+  monotonic clock: then the counts are dropped and nothing is counted
+  again, so the comparison of raise times, which wraps at 2^31 ms, is
+  never made across weeks.
 - When an application's ready outpost ends, for any reason, the
   supervisor sends the listener `SupervisorToOutpost::HookRemoved`, and the
   listener forwards that application's events again. A listener that
