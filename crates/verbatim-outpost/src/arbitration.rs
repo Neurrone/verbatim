@@ -400,11 +400,15 @@ pub(crate) fn uses_uia(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Connect {
     /// The listener's: it connects to no application's window
-    /// (`docs/design/listener-without-connections.md`, section 2).
+    /// (`docs/design/listener-without-connections.md`, section 2). Also an
+    /// outpost's where its caller connects to the window itself at once
+    /// (`outpost::read`'s window snapshot and focused control), so that the
+    /// window gets one connection, not two.
     Never,
     /// An outpost's, on its own application's window: connected at once,
     /// unless the console check that follows the probe connects by the
-    /// window's handle itself. A new File Explorer window that no process
+    /// window's handle itself, or the list view check, from the class name
+    /// alone, excludes the provider. A new File Explorer window that no process
     /// connects to early delivers its first UIA focus events in one burst
     /// after their senders are gone (decision 2, measured on 2026-10-20).
     AfterYes,
@@ -442,7 +446,15 @@ pub(crate) fn uses_uia_keeping(
         "arbitration probed"
     );
     let check = post_probe_check(&classes);
-    if is_uia && connect == Connect::AfterYes && check != Some(PostProbeCheck::Console) {
+    // A list view's check is its class name alone, known before any call,
+    // so a list view it excludes is never connected to; a console's check
+    // connects by the window's handle itself.
+    let connects = match check {
+        None => true,
+        Some(PostProbeCheck::WindowsFormsListView) => has_windows_forms_class(&classes.raw),
+        Some(PostProbeCheck::Console) => false,
+    };
+    if is_uia && connect == Connect::AfterYes && connects {
         let started = std::time::Instant::now();
         let connected = verbatim_uia::connect_to_window(hwnd);
         tracing::debug!(

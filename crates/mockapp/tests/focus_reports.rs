@@ -1046,12 +1046,14 @@ fn a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped(
 }
 
 /// A UIA focus whose live keyboard focus read fails by UIA's transaction
-/// timeout, Verbatim's and shorter than NVDA's, is judged by its event's
-/// cache as a focus out of time is: a sender whose event says it lacked the
-/// keyboard focus is dropped. The sender is mockapp's window element, whose
-/// window's verdict an earlier focus kept, so that the live read is the
-/// read's first provider call, which mockapp holds past the timeout.
-fn a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event() {
+/// timeout is let through, as NVDA lets any COM error of that read through
+/// (`shouldAllowUIAFocusEvent`), though its event's cache says it lacked the
+/// keyboard focus, and is reported from its event, as the focus with its
+/// ancestors unknown, once its read, still held, fails too. The sender is
+/// mockapp's window element, whose window's verdict an earlier focus kept,
+/// so that the live read is the read's first provider call, which mockapp
+/// holds past the timeout.
+fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
     const TIMEOUT_MS: u32 = 300;
     let title = common::unique_title("mockapp-focus-read-timed-out");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -1086,13 +1088,20 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event() {
     unsafe { timeouts.SetTransactionTimeout(usual) }.expect("the timeout restored");
     assert_eq!(app.held(), "GetPropertyValue");
     app.release();
-    let Judged::Dropped(reason) = judged else {
-        panic!("the listener read a focus whose event said it was not focused: {judged:?}");
+    let Judged::Read(read) = judged else {
+        panic!(
+            "the listener did not report a focus whose keyboard focus read timed out: {judged:?}"
+        );
     };
     assert_eq!(
-        reason,
-        "its event says it did not have the keyboard focus, and its live read timed out"
+        read.snapshot.name.as_deref(),
+        Some("Mockapp Events Fixture")
     );
+    assert_eq!(
+        read.snapshot.states,
+        [State::Focused].into_iter().collect::<StateSet>()
+    );
+    assert!(read.ancestors.is_none(), "its ancestors are unknown");
 
     drop(outpost);
     app.quit();
@@ -1615,8 +1624,8 @@ fn main() {
             a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped,
         ),
         (
-            "a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event",
-            a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event,
+            "a_focus_whose_keyboard_focus_read_times_out_is_reported",
+            a_focus_whose_keyboard_focus_read_times_out_is_reported,
         ),
         (
             "a_repeated_focus_out_of_time_is_reported",

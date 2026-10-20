@@ -62,22 +62,30 @@
 //! probe's wait, and the one call that can be under way when the budget
 //! passes, and, as NVDA's watchdog cancels a slow call once the user has
 //! moved on (`docs/nvda/main-loop-and-watchdog.md`, "The watchdog:
-//! detection"), a thread whose read has taken [`MOVED_ON_GRACE`](crate::outpost::window::MOVED_ON_GRACE) while the
+//! detection"), a thread whose read of a focus has taken
+//! [`MOVED_ON_GRACE`](crate::outpost::window::MOVED_ON_GRACE) while the
 //! window in front belongs to the read's application on another UI thread
-//! than the window being read ([`WatchedRead`]), judged on each foreground
+//! than the window being read ([`WatchedRead`]). A read is judged so only
+//! once its window is known, from the event's cached window handle or from
+//! the sender's nearest window once the read has found it, and a selection
+//! or a notification is never judged so. It is judged on each foreground
 //! event the listener's hook delivers once the grace has ended
 //! ([`Readers::foreground_changed`]), and when the grace ends if a
-//! foreground event has come since the read's event arrived: one process
-//! can own windows on several UI threads, as File Explorer's folder
-//! windows, the taskbar and the Alt+Tab switcher are all `explorer.exe`'s,
-//! and the application's focus on another thread must not wait behind a
-//! slow read of the first. Either way its event is dropped, a new thread
-//! takes the application's later events, and the abandoned thread, once
-//! UIA gives up, says nothing more, accepts no focus, and ends. An
-//! application whose abandoned threads reach [`ABANDONED_LIMIT`] gets no
-//! new thread until one returns: its events wait, a newer event of an
-//! element replacing its waiting one, and the first abandoned thread whose
-//! call returns reads them.
+//! foreground event has come since the read's event arrived, or if the
+//! window in front was already another thread's when the read's window
+//! became known: one process can own windows on several UI threads, as
+//! File Explorer's folder windows, the taskbar and the Alt+Tab switcher
+//! are all `explorer.exe`'s, and the application's focus on another thread
+//! must not wait behind a slow read of the first. Either way its event is
+//! dropped, a new thread takes the application's later events, and the
+//! abandoned thread, once UIA gives up, says nothing more, accepts no
+//! focus, and ends. An application whose abandoned threads reach
+//! [`ABANDONED_LIMIT`] gets no new thread until one returns: its events
+//! wait, a newer event of an element replacing its waiting one, and the
+//! first abandoned thread whose call returns reads them, unless an event
+//! has waited [`READ_DEADLINE`] since it was queued, when the watchdog
+//! drops it; an event waiting so is not a pending focus
+//! ([`Readers::focus_pending`]).
 //!
 //! A thread keeps its focus before, NVDA's duplicate evidence, for as long
 //! as its application has an outpost: it ends, once it has read every event
@@ -133,7 +141,9 @@ const MAX_ANCESTORS: u32 = 64;
 const READ_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a reading thread may take over one focus event before the
-/// watchdog abandons it, 11 seconds: the [`READ_BUDGET`] of 2 seconds,
+/// watchdog abandons it, and how long an event may wait for a thread while
+/// its application's abandoned threads are at [`ABANDONED_LIMIT`] before
+/// the watchdog drops it, 11 seconds: the [`READ_BUDGET`] of 2 seconds,
 /// the raw probe's wait of up to 3 seconds
 /// ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]), which the budget does not
 /// count, UIA's transaction timeout of 5 seconds for the call that can be
@@ -262,47 +272,88 @@ const NOT_IN_TIME: &str = "its read did not return in time";
 /// user moved on from its window, as an outpost's watchdog says it.
 const MOVED_ON: &str = "the user moved on from a slow window";
 
+/// Why an event is dropped that waited [`READ_DEADLINE`] for a thread while
+/// its application's abandoned threads were at [`ABANDONED_LIMIT`].
+const WAITED_TOO_LONG: &str = "it waited too long behind its application's abandoned reads";
+
+/// What a read does once its window becomes known
+/// ([`WatchedRead::learn`]): judges, as the watchdog would, whether the
+/// window in front is already another thread's, and wakes the watchdog if
+/// it is.
+type OnLearn = Box<dyn Fn(&WatchedRead) + Send + Sync>;
+
 /// One read as the reading threads' watchdog watches it, shared by the read
 /// and the watchdog. Each read has its own, so an abandoned read that finds
 /// its window later changes nothing the watchdog judges.
 ///
 /// The window it is of, for the judgement of whether the user has moved on
 /// from it ([`MOVED_ON_GRACE`](crate::outpost::window::MOVED_ON_GRACE)): the
-/// window the event says it is of as the read starts ([`Reading::window`],
-/// [`event_window`]), and the sender's nearest window once the read has
-/// found it ([`learn`](Self::learn)); 0 while neither is known, when the
-/// user cannot be judged to have moved on.
+/// sender's own window from the event's cache as the read starts, for a
+/// focus ([`Reading::window`]), and the sender's nearest window once the
+/// read of a focus whose sender is not a window has found it
+/// ([`learn`](Self::learn)); 0 while neither is known, and always for a
+/// selection or a notification, when the user cannot be judged to have
+/// moved on.
+///
+/// Whether the window in front was another thread of the application than
+/// the read's window when that became known ([`judge_front`](Self::judge_front)),
+/// which has the watchdog check the read when its grace ends, as a
+/// foreground event since its event does.
 ///
 /// And whether the watchdog has abandoned it ([`abandon`](Self::abandon)):
 /// a read that returns after that makes no focus the last one accepted
 /// ([`LastAccepted`]), so it cannot overwrite a newer focus accepted while
 /// it was held.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub(crate) struct WatchedRead(Arc<Watched>);
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct Watched {
     window: AtomicIsize,
     abandoned: AtomicBool,
+    /// Whether the window in front has been judged against the read's
+    /// window since that became known.
+    front_judged: AtomicBool,
+    /// Whether it was then another thread's of the read's application.
+    front_elsewhere: AtomicBool,
+    on_learn: Option<OnLearn>,
 }
 
 impl WatchedRead {
-    /// A read of window `hwnd`, 0 for one not yet known.
-    fn new(hwnd: isize) -> Self {
+    /// A read of window `hwnd`, 0 for one not yet known, which does
+    /// `on_learn` once it learns its window.
+    fn new(hwnd: isize, on_learn: Option<OnLearn>) -> Self {
         Self(Arc::new(Watched {
             window: AtomicIsize::new(hwnd),
-            abandoned: AtomicBool::new(false),
+            on_learn,
+            ..Watched::default()
         }))
     }
 
     /// The read has found that it is of window `hwnd`.
     pub(crate) fn learn(&self, hwnd: isize) {
-        self.0.window.store(hwnd, Ordering::Relaxed);
+        self.0.window.store(hwnd, Ordering::SeqCst);
+        if let Some(on_learn) = &self.0.on_learn {
+            on_learn(self);
+        }
     }
 
     /// The window the read is of, 0 for none known yet.
     fn window(&self) -> isize {
-        self.0.window.load(Ordering::Relaxed)
+        self.0.window.load(Ordering::SeqCst)
+    }
+
+    /// Whether the window in front was another thread of the read's
+    /// application than the read's window when that became known, as
+    /// `moved_on` says: asked once, by the watchdog or by the read's
+    /// [`learn`](Self::learn), whichever comes first once the window is
+    /// known, and `false` while it is not.
+    fn judge_front(&self, moved_on: impl FnOnce(isize) -> bool) -> bool {
+        let window = self.window();
+        if window != 0 && !self.0.front_judged.swap(true, Ordering::SeqCst) && moved_on(window) {
+            self.0.front_elsewhere.store(true, Ordering::SeqCst);
+        }
+        self.0.front_elsewhere.load(Ordering::SeqCst)
     }
 
     /// The watchdog has abandoned the read.
@@ -314,16 +365,6 @@ impl WatchedRead {
     fn abandoned(&self) -> bool {
         self.0.abandoned.load(Ordering::SeqCst)
     }
-}
-
-/// The window a focus event is of as far as the event says, for the
-/// watchdog's judgement before its read finds the sender's nearest window
-/// ([`WatchedRead`]): the sender's own window, `hwnd`, from the event's
-/// cache, or, for a sender that is not a window, `focus_window`, its
-/// application's keyboard focus window when the event arrived, which the
-/// sender of a focus is in. 0 when neither is known.
-pub(crate) fn event_window(hwnd: isize, focus_window: isize) -> isize {
-    if hwnd == 0 { focus_window } else { hwnd }
 }
 
 /// The kind of UIA event a reading thread takes.
@@ -500,6 +541,26 @@ impl LastAccepted {
         }
     }
 
+    /// The watchdog has abandoned the read of the event traced `trace`,
+    /// whose drop Core is told of: a focus that read accepted just before
+    /// is no current focus and no repeat's evidence, since Core never
+    /// received it. Called under the readers' lock after the read is marked
+    /// abandoned, so this covers an accept made before the mark, and the
+    /// mark one made after ([`accept`](Self::accept)). The element is kept
+    /// for its reader to release, on its own thread in COM's apartment.
+    pub(crate) fn abandoned(&self, trace: TraceId) {
+        let mut slot = self.lock();
+        if let Some(accepted) = slot.as_mut()
+            && accepted.arrival.trace == trace
+        {
+            tracing::debug!(
+                ?trace,
+                "an abandoned read's focus was accepted; it is no repeat's evidence"
+            );
+            accepted.superseded = true;
+        }
+    }
+
     /// Forgets the last focus accepted if reader `reader` accepted it, so
     /// it is released on the thread that ends with that reader, while the
     /// thread is still in COM's apartment.
@@ -536,7 +597,7 @@ pub struct FocusReader {
     /// ([`crate::arbitration::uses_uia`]).
     arbitrator: Mutex<Arbitrator>,
     /// The read under way as the reading threads' watchdog watches it,
-    /// told the sender's nearest window once the read finds it, and asked
+    /// told a focus's sender's nearest window once the read finds it, and asked
     /// whether it was abandoned before its focus is accepted
     /// ([`judge_watched`](Self::judge_watched)).
     window: WatchedRead,
@@ -604,9 +665,9 @@ impl FocusReader {
     /// [`read`](Self::read), or for a selection or a notification, whose
     /// captured `fact` is given, [`check_fact`](Self::check_fact), in the
     /// read `watched`, which the reading threads' watchdog watches
-    /// ([`WatchedRead`]): it is told the sender's nearest window once the
-    /// read has found it, and a read the watchdog has abandoned accepts no
-    /// focus.
+    /// ([`WatchedRead`]): a focus's read tells it the sender's nearest
+    /// window once it has found it, and a read the watchdog has abandoned
+    /// accepts no focus.
     pub(crate) fn judge_watched(
         &mut self,
         sender: &Cached<ListenerEvent>,
@@ -713,10 +774,9 @@ impl FocusReader {
                 // true on a COM error): reported as the event's cache gives
                 // it, its ancestors unknown, whatever that cache says of its
                 // keyboard focus. Step 6 has already judged that: a live
-                // read that answered true, or failed other than by timing
-                // out, lets the focus through in NVDA too, and a cache that
-                // said no has already dropped it, out of time or after a
-                // live read that timed out.
+                // read that answered true, or failed, lets the focus through
+                // in NVDA too, and a cache that said no has already dropped
+                // it out of time.
                 tracing::debug!(%error, "a UIA focus could not be read; reported from its event");
                 self.last = Some(LastFocus {
                     runtime_id: event.runtime_id.clone(),
@@ -755,7 +815,9 @@ impl FocusReader {
     /// `appModuleHandler.py` 842 to 845), unless it is the shell's window
     /// snap results, which File Explorer's app module lets through
     /// (`appModules/explorer.py` 519 to 535). A sender that is a window
-    /// takes no call.
+    /// takes no call. The check is never judged by the moved-on rule: NVDA
+    /// makes it on UIA's callback thread, whose calls its watchdog never
+    /// cancels, so a slow check is passed on late rather than dropped.
     pub fn check_fact(&mut self, sender: &Cached<ListenerEvent>, fact: DeliveredFact) -> Judged {
         let element = sender.live().element();
         match fact {
@@ -766,10 +828,7 @@ impl FocusReader {
             } => {
                 let nearest = if hwnd == 0 {
                     match verbatim_uia::nearest_window_handle(element) {
-                        Some(nearest) => {
-                            self.window.learn(nearest);
-                            nearest
-                        }
+                        Some(nearest) => nearest,
                         None => {
                             return Judged::Dropped(
                                 "it has no window above it, so NVDA makes no object for it",
@@ -792,11 +851,11 @@ impl FocusReader {
             } => {
                 let snap_results = notification.activity_id.as_deref()
                     == Some(verbatim_core::SNAP_RESULTS_ACTIVITY);
-                if hwnd == 0 && !snap_results {
-                    let Some(nearest) = verbatim_uia::nearest_window_handle(element) else {
-                        return Judged::Dropped("its sender has no window above it");
-                    };
-                    self.window.learn(nearest);
+                if hwnd == 0
+                    && !snap_results
+                    && verbatim_uia::nearest_window_handle(element).is_none()
+                {
+                    return Judged::Dropped("its sender has no window above it");
                 }
                 Judged::Passed(Box::new(DeliveredFact::UiaNotification {
                     hwnd,
@@ -1089,10 +1148,9 @@ impl FocusReader {
         // Out of time, the live read is not made, and the sender's keyboard
         // focus is taken from the event's cache instead, as it stood when
         // the event was raised: a sender that did not have it then is
-        // dropped. A live read that fails by UIA's transaction timeout is
-        // taken the same way, since its 5 seconds are Verbatim's, where
-        // NVDA's 20 would usually have had the answer; any other failure
-        // lets the focus through, as NVDA's does. A menu opening
+        // dropped. A live read that fails, by UIA's transaction timeout or
+        // otherwise, lets the focus through, as NVDA's `except COMError:
+        // return True` does (Dickson, 2026-10-20). A menu opening
         // redirected to the current focus is judged by the focus's
         // element, whose keyboard focus no cache of this event holds, so
         // it is let through.
@@ -1106,14 +1164,8 @@ impl FocusReader {
             }
         } else {
             budget.call("the keyboard focus");
-            match subject.has_keyboard_focus() {
-                Ok(false) => return Err("its element no longer has the keyboard focus"),
-                Err(error) if verbatim_uia::timed_out(&error) && lacked_by_its_event() => {
-                    return Err(
-                        "its event says it did not have the keyboard focus, and its live read timed out",
-                    );
-                }
-                Ok(true) | Err(_) => {}
+            if let Ok(false) = subject.has_keyboard_focus() {
+                return Err("its element no longer has the keyboard focus");
             }
         }
         Ok(window)
@@ -1339,12 +1391,17 @@ pub(crate) trait Reading: Send + Sync + 'static {
         job: Self::Job,
         watched: &WatchedRead,
     ) -> Judged;
-    /// The window `job`'s event is of as far as the event says
-    /// ([`event_window`]), for the watchdog's judgement of whether the user
-    /// has moved on from it ([`WatchedRead`]); 0, the default, for none.
+    /// The window `job`'s event is of as far as the event says, for the
+    /// watchdog's judgement of whether the user has moved on from it
+    /// ([`WatchedRead`]); 0, the default, for none, and for an event that
+    /// is never judged so.
     fn window(&self, _job: &Self::Job) -> isize {
         0
     }
+    /// The watchdog has abandoned the read of the event `meta` describes:
+    /// called under the readers' lock once the read is marked abandoned
+    /// and before its drop is sent. Nothing, the default.
+    fn abandoned(&self, _meta: &Meta) {}
     /// Whether the user has moved on from `window`, which a slow read is
     /// of, to a window of the same application on another UI thread
     /// ([`front_is_another_thread_of_its_application`], local calls only,
@@ -1375,6 +1432,9 @@ struct Queued<J> {
     /// How many foreground events the listener's hook had delivered when
     /// it was queued ([`ReadersState::foregrounds`]).
     foregrounds: u64,
+    /// When it was queued, which bounds its wait while no thread can read
+    /// it ([`WAITED_TOO_LONG`]).
+    since: Instant,
     meta: Meta,
     job: J,
 }
@@ -1552,7 +1612,8 @@ impl<R: Reading> Readers<R> {
     /// Queues `job`, a focus event of `pid`'s whose marker `meta` names,
     /// for `pid`'s reading thread, starting one if it has none, unless
     /// [`ABANDONED_LIMIT`] of its threads are abandoned and still in their
-    /// calls: the event then waits for the first of them to return. Never
+    /// calls: the event then waits for the first of them to return, or for
+    /// the watchdog to drop it once it has waited [`READ_DEADLINE`]. Never
     /// waits on a read.
     pub(crate) fn push(&self, pid: Pid, meta: Meta, job: R::Job) {
         let shared = &self.shared;
@@ -1591,6 +1652,7 @@ impl<R: Reading> Readers<R> {
         let queued = Queued {
             place: state.queued,
             foregrounds: state.foregrounds,
+            since: Instant::now(),
             meta,
             job,
         };
@@ -1606,6 +1668,8 @@ impl<R: Reading> Readers<R> {
                 waiting = app.queue.len(),
                 "a UIA focus waits: its application's reads have not returned"
             );
+            // The watchdog bounds its wait.
+            shared.changed.notify_all();
         } else {
             start(shared, &mut state, pid);
         }
@@ -1615,7 +1679,10 @@ impl<R: Reading> Readers<R> {
     /// being read: NVDA drops a menu opening that arrives while a focus is
     /// pending (`isPendingEvents("gainFocus")`, `UIAHandler/__init__.py`
     /// 772 to 777), and here a focus still to be judged stands for one
-    /// NVDA has queued and not yet run.
+    /// NVDA has queued and not yet run. A focus of an application whose
+    /// abandoned threads are at [`ABANDONED_LIMIT`], waiting with no thread
+    /// to read it, is not counted, so a hung application cannot have every
+    /// other application's menu openings dropped while it waits.
     pub(crate) fn focus_pending(&self) -> bool {
         let shared = &self.shared;
         let state = shared.lock();
@@ -1623,12 +1690,13 @@ impl<R: Reading> Readers<R> {
             app.running
                 .as_ref()
                 .is_some_and(|running| running.kind == FocusEvent::Focus)
-                || app.queue.iter().any(|queued| {
-                    shared
-                        .reading
-                        .key(&queued.job)
-                        .is_some_and(|(kind, _)| kind == FocusEvent::Focus)
-                })
+                || app.live.is_some()
+                    && app.queue.iter().any(|queued| {
+                        shared
+                            .reading
+                            .key(&queued.job)
+                            .is_some_and(|(kind, _)| kind == FocusEvent::Focus)
+                    })
         })
     }
 
@@ -1790,7 +1858,7 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
 /// stopping, or the application's outpost has ended and no event is
 /// waiting ([`Readers::outpost_ended`]).
 fn next_job<R: Reading>(
-    shared: &Shared<R>,
+    shared: &Arc<Shared<R>>,
     pid: Pid,
     generation: u64,
 ) -> Option<(Meta, R::Job, WatchedRead)> {
@@ -1808,13 +1876,14 @@ fn next_job<R: Reading>(
             foregrounds,
             meta,
             job,
+            ..
         }) = app.queue.pop_front()
         {
             let kind = shared
                 .reading
                 .key(&job)
                 .map_or(FocusEvent::Focus, |(kind, _)| kind);
-            let watched = WatchedRead::new(shared.reading.window(&job));
+            let watched = WatchedRead::new(shared.reading.window(&job), Some(on_learn(shared)));
             app.running = Some(Running {
                 started: Instant::now(),
                 meta,
@@ -1836,6 +1905,25 @@ fn next_job<R: Reading>(
         let wake = Arc::clone(&app.wake);
         state = wake.wait(state).unwrap_or_else(PoisonError::into_inner);
     }
+}
+
+/// What a read does once it learns its window ([`WatchedRead::learn`]):
+/// judges whether the window in front is already another thread of its
+/// application, with the local calls the watchdog's judgement makes
+/// ([`Reading::moved_on`]), and only if it is, wakes the watchdog to check
+/// the read when its grace ends. A read whose window is the front's own
+/// thread costs no wake-up. Never waits on a read.
+fn on_learn<R: Reading>(shared: &Arc<Shared<R>>) -> OnLearn {
+    let shared = Arc::downgrade(shared);
+    Box::new(move |read: &WatchedRead| {
+        let Some(shared) = shared.upgrade() else {
+            return;
+        };
+        if !read.abandoned() && read.judge_front(|window| shared.reading.moved_on(window)) {
+            let _state = shared.lock();
+            shared.changed.notify_all();
+        }
+    })
 }
 
 /// Why the watchdog abandons a read at `now`, if it does: the read, of
@@ -1860,17 +1948,23 @@ fn abandon_reason(
 /// The watchdog: abandons a thread whose read has run past the deadline,
 /// or past its grace once the user has moved on from its window, reports
 /// its event dropped, and gives the application's later events to a new
-/// thread, unless too many of its threads are abandoned already.
+/// thread, unless too many of its threads are abandoned already; and drops
+/// an event that has waited the deadline since it was queued while its
+/// application had no thread to read it.
 ///
-/// Whether the user has moved on is judged only once a foreground event
-/// has come since the read's event was queued, the evidence that the user
-/// may have left its window. The watchdog wakes when a read starts and at
-/// its deadline; at the end of its grace only once such a foreground event
-/// has come; and, while a read is under way that is past its grace, or
-/// within it and not yet set to be checked when its grace ends, on each
-/// foreground event ([`Readers::foreground_changed`]). So a read with no
-/// foreground event since its event costs the watchdog no wake-up besides
-/// its start's.
+/// Whether the user has moved on is judged once the read's window is
+/// known, and at the end of its grace only once a foreground event has
+/// come since the read's event was queued, or the window in front was
+/// already another thread's when the read's window became known
+/// ([`WatchedRead::judge_front`]): the evidence that the user may have
+/// left its window. The watchdog wakes when a read starts and at its
+/// deadline; at the end of its grace only with that evidence; when a read
+/// learns its window and the window in front is another thread's
+/// ([`on_learn`]); while an event waits with no thread, at the end of its
+/// wait; and, while a read is under way that is past its grace, or within
+/// it and not yet set to be checked when its grace ends, on each foreground
+/// event ([`Readers::foreground_changed`]). So a read with no such evidence
+/// costs the watchdog no wake-up besides its start's.
 fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
     let mut state = shared.lock();
     loop {
@@ -1882,22 +1976,39 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
         let mut due: Option<Instant> = None;
         let mut wake_on_foreground = false;
         let mut abandoned = Vec::new();
+        let mut waited = Vec::new();
         for (pid, app) in &state.apps {
             let Some(running) = &app.running else {
+                // An event waiting with no thread to read it, as when the
+                // application's abandoned threads are at the limit, is
+                // dropped once it has waited the deadline.
+                if app.live.is_none()
+                    && let Some(oldest) = app.queue.front()
+                {
+                    let end = oldest.since + shared.deadline;
+                    if now >= end {
+                        waited.push(*pid);
+                    } else {
+                        due = Some(due.map_or(end, |due| due.min(end)));
+                    }
+                }
                 continue;
             };
             let grace_end = running.started + shared.grace;
             let deadline = running.started + shared.deadline;
-            let foreground_since = running.foregrounds != foregrounds;
+            let front_elsewhere = running
+                .watched
+                .judge_front(|window| shared.reading.moved_on(window));
+            let armed = running.foregrounds != foregrounds || front_elsewhere;
             let window = running.watched.window();
             let reason = abandon_reason(now, (grace_end, deadline), window, |window| {
-                foreground_since && shared.reading.moved_on(window)
+                armed && shared.reading.moved_on(window)
             });
             if let Some(reason) = reason {
                 abandoned.push((*pid, window, reason));
                 continue;
             }
-            let next = if now < grace_end && foreground_since {
+            let next = if now < grace_end && armed {
                 grace_end
             } else {
                 wake_on_foreground = true;
@@ -1905,9 +2016,12 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
             };
             due = Some(due.map_or(next, |due| due.min(next)));
         }
-        if !abandoned.is_empty() {
+        if !abandoned.is_empty() || !waited.is_empty() {
             for (pid, window, reason) in abandoned {
                 abandon(shared, &mut state, pid, window, reason);
+            }
+            for pid in waited {
+                drop_waiting(shared, &mut state, pid);
             }
             continue;
         }
@@ -1926,6 +2040,33 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
                 .unwrap_or_else(PoisonError::into_inner),
         };
     }
+}
+
+/// Drops `pid`'s oldest waiting event, which has waited the deadline with
+/// no thread to read it, as its application's abandoned threads are at
+/// [`ABANDONED_LIMIT`]: its drop resolves its marker, so the application's
+/// later events in its outpost are not held behind it without bound. The
+/// events behind it keep their places.
+fn drop_waiting<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, pid: Pid) {
+    let Some(app) = state.apps.get_mut(&pid) else {
+        return;
+    };
+    if app.live.is_some() {
+        return;
+    }
+    let Some(oldest) = app.queue.pop_front() else {
+        return;
+    };
+    tracing::warn!(
+        %pid,
+        abandoned = app.abandoned,
+        waiting = app.queue.len(),
+        "a UIA focus waited too long behind its application's abandoned reads; it is dropped"
+    );
+    shared
+        .reading
+        .outcome(pid, oldest.meta, Judged::Dropped(WAITED_TOO_LONG));
+    state.wake_idle_waiters();
 }
 
 /// Abandons the thread reading `pid`'s event, of `window`, for `reason`:
@@ -1949,6 +2090,7 @@ fn abandon<R: Reading>(
         return;
     };
     running.watched.abandon();
+    shared.reading.abandoned(&running.meta);
     app.live = None;
     app.abandoned += 1;
     let abandoned = app.abandoned;
@@ -1993,10 +2135,6 @@ mod tests {
     /// its senders are not windows.
     const WINDOW: isize = 0x5150;
 
-    /// The keyboard focus window of every stand-in event's application
-    /// when the event arrived.
-    const FOCUS_WINDOW: isize = 0x6160;
-
     /// The nearest window a stand-in read finds, when a test has it find
     /// one.
     const NEAREST: isize = 0x7170;
@@ -2005,11 +2143,11 @@ mod tests {
     /// has one, and every outcome is sent to the test with the thread that
     /// read the event and the reason, as is each thread that ends, and each
     /// read as it returns. Every event's sender is window `hwnd`, 0 for a
-    /// sender that is not a window, whose application's keyboard focus
-    /// window was [`FOCUS_WINDOW`]; each read finds the sender's nearest
+    /// sender that is not a window; each read finds the sender's nearest
     /// window to be `nearest` before it is held, 0 for none. Whether the
     /// user has moved on from a window is what `moved_on` says, each
-    /// judgement sent to the test.
+    /// judgement sent to the test. A read the watchdog abandons is told to
+    /// `last_accepted`, as the listener's reading tells its own.
     struct Script {
         outcomes: Mutex<Sender<(Pid, u64, &'static str)>>,
         read_on: Mutex<Sender<(u64, ThreadId)>>,
@@ -2019,6 +2157,7 @@ mod tests {
         asked: Mutex<Sender<isize>>,
         hwnd: isize,
         nearest: isize,
+        last_accepted: LastAccepted,
     }
 
     impl Reading for Script {
@@ -2065,16 +2204,23 @@ mod tests {
         }
 
         fn window(&self, _: &Self::Job) -> isize {
-            event_window(self.hwnd, FOCUS_WINDOW)
+            self.hwnd
+        }
+
+        fn abandoned(&self, meta: &Meta) {
+            self.last_accepted.abandoned(meta.trace);
         }
 
         fn moved_on(&self, window: isize) -> bool {
+            // Read before the judgement is sent, so a test that changes the
+            // answer once it has seen a judgement changes only later ones.
+            let moved_on = self.moved_on.load(Ordering::SeqCst);
             let _ = self
                 .asked
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .send(window);
-            self.moved_on.load(Ordering::SeqCst)
+            moved_on
         }
 
         fn finish(&self, reader: Option<ThreadId>) {
@@ -2153,6 +2299,7 @@ mod tests {
                     asked: Mutex::new(asked_tx),
                     hwnd,
                     nearest,
+                    last_accepted: LastAccepted::default(),
                 },
                 deadline,
                 grace,
@@ -2402,7 +2549,8 @@ mod tests {
     /// again on a foreground change after the grace's own check, which a
     /// foreground change since the read's event called for, found the user
     /// had not; its event is dropped for that, and a new thread reads the
-    /// application's next event.
+    /// application's next event. The read's start judged the window in
+    /// front against the read's window first.
     #[test]
     fn a_held_read_is_abandoned_once_the_user_moves_on_past_its_grace() {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
@@ -2411,6 +2559,14 @@ mod tests {
             .readers
             .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        assert_eq!(
+            fixture
+                .asked
+                .recv_timeout(WAIT)
+                .expect("the start's judgement"),
+            WINDOW,
+            "the read's start judges the window in front against the read's window"
+        );
         fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
         fixture.readers.foreground_changed();
         assert_eq!(
@@ -2437,8 +2593,9 @@ mod tests {
     }
 
     /// Within its grace a held read is left alone though the user has
-    /// moved on and a foreground change says so: the user is not asked
-    /// about, and the read's own outcome is sent once it returns.
+    /// moved on, its start found so, and a foreground change says so:
+    /// nothing is asked after the start's judgement, and the read's own
+    /// outcome is sent once it returns.
     #[test]
     fn a_held_read_within_its_grace_is_left_alone_though_the_user_moved_on() {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_secs(60));
@@ -2448,6 +2605,13 @@ mod tests {
             .readers
             .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        assert_eq!(
+            fixture
+                .asked
+                .recv_timeout(WAIT)
+                .expect("the start's judgement"),
+            WINDOW
+        );
         fixture.readers.foreground_changed();
         open.send(()).expect("the held read waits");
         assert_eq!(
@@ -2458,7 +2622,7 @@ mod tests {
         assert_eq!(
             fixture.asked.try_recv(),
             Err(mpsc::TryRecvError::Empty),
-            "nothing asked within the grace"
+            "nothing more asked within the grace"
         );
     }
 
@@ -2476,6 +2640,13 @@ mod tests {
             .readers
             .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         let (_, read_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        assert_eq!(
+            fixture
+                .asked
+                .recv_timeout(WAIT)
+                .expect("the start's judgement"),
+            WINDOW
+        );
         fixture.readers.foreground_changed();
         assert_eq!(
             fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
@@ -2503,12 +2674,16 @@ mod tests {
     }
 
     /// A read held past its grace whose sender is not a window, before the
-    /// read has found the sender's nearest window, is judged by its
-    /// application's keyboard focus window when its event arrived, and is
-    /// abandoned once the user has moved on from that window.
+    /// read has found the sender's nearest window, is not judged, though
+    /// the user has moved on and a foreground change says so: only its
+    /// deadline abandons it, and nothing is asked.
     #[test]
-    fn a_windowless_sender_s_read_is_judged_by_its_application_s_focus_window() {
-        let fixture = fixture_of(Duration::from_secs(60), Duration::from_millis(50), (0, 0));
+    fn a_windowless_sender_s_read_is_not_judged_before_its_window_is_known() {
+        let fixture = fixture_of(
+            Duration::from_millis(300),
+            Duration::from_millis(50),
+            (0, 0),
+        );
         fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
         fixture
@@ -2518,16 +2693,19 @@ mod tests {
         fixture.readers.foreground_changed();
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "the user moved on from a slow window")
+            (Pid(5), 1, "its read did not return in time")
         );
-        assert_eq!(fixture.asked.try_recv(), Ok(FOCUS_WINDOW));
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
+        assert_eq!(fixture.asked.try_recv(), Err(mpsc::TryRecvError::Empty));
     }
 
     /// Once a read whose sender is not a window has found the sender's
-    /// nearest window, the read is judged by that window in place of its
-    /// application's keyboard focus window.
+    /// nearest window, the read is judged by that window: the window in
+    /// front, already another thread's when it was found, has the read
+    /// checked when its grace ends with no foreground event, and abandoned.
+    /// That window is asked about twice, when it is found and when the
+    /// grace ends, and nothing else is asked.
     #[test]
     fn a_read_that_found_its_sender_s_nearest_window_is_judged_by_it() {
         let fixture = fixture_of(
@@ -2541,22 +2719,68 @@ mod tests {
             .readers
             .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
-        fixture.readers.foreground_changed();
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "the user moved on from a slow window")
         );
-        assert_eq!(fixture.asked.try_recv(), Ok(NEAREST));
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 1);
+        let asked: Vec<isize> = fixture.asked.try_iter().collect();
+        assert_eq!(asked, [NEAREST, NEAREST]);
+    }
+
+    /// An event queued after a foreground event, behind a read abandoned as
+    /// the user moved on, is checked at its own grace end with no further
+    /// foreground event, since the window in front was already another
+    /// thread's when its read began, and is abandoned as moved on too.
+    #[test]
+    fn a_read_begun_with_the_front_on_another_thread_is_judged_at_its_grace_end() {
+        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        let (open_first, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        assert_eq!(
+            fixture
+                .asked
+                .recv_timeout(WAIT)
+                .expect("the start's judgement"),
+            WINDOW
+        );
+        fixture.set_moved_on(true);
+        fixture.readers.foreground_changed();
+        let (open_second, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "the user moved on from a slow window")
+        );
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 2, "the user moved on from a slow window")
+        );
+        open_first.send(()).expect("the first held read waits");
+        open_second.send(()).expect("the second held read waits");
+        assert_eq!(fixture.readers.stop(), 2);
+        assert_eq!(fixture.outcomes.try_recv().ok(), None);
+        // The first read's grace check, then the second's start judgement
+        // and grace check.
+        let asked: Vec<isize> = fixture.asked.try_iter().collect();
+        assert_eq!(asked, [WINDOW, WINDOW, WINDOW]);
     }
 
     /// With [`ABANDONED_LIMIT`] of an application's threads abandoned and
-    /// still in their calls, its next event is not dropped: it waits, and
-    /// the first abandoned thread whose call returns reads it.
+    /// still in their calls, its next event is not dropped: it waits, as no
+    /// pending focus, and the first abandoned thread whose call returns
+    /// reads it.
     #[test]
     fn an_event_at_the_abandoned_limit_waits_for_a_thread_that_returns() {
-        let fixture = fixture(Duration::from_millis(50));
+        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        fixture.set_moved_on(true);
         let (open_first, gate) = mpsc::channel();
         fixture
             .readers
@@ -2564,7 +2788,7 @@ mod tests {
         let (_, first) = fixture.read_on.recv_timeout(WAIT).expect("a read");
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 1, "its read did not return in time")
+            (Pid(5), 1, "the user moved on from a slow window")
         );
         let (open_second, gate) = mpsc::channel();
         fixture
@@ -2573,14 +2797,21 @@ mod tests {
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 2);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 2, "its read did not return in time")
+            (Pid(5), 2, "the user moved on from a slow window")
         );
-        fixture.readers.push(Pid(5), meta(3), (3, None, Vec::new()));
+        fixture
+            .readers
+            .push(Pid(5), meta(3), (3, None, vec![42, 3]));
         assert_eq!(
             fixture.outcomes.try_recv(),
             Err(mpsc::TryRecvError::Empty),
             "event 3 waits"
         );
+        assert!(
+            !fixture.readers.focus_pending(),
+            "a focus waiting with no thread to read it is not pending"
+        );
+        fixture.set_moved_on(false);
         open_first.send(()).expect("the first held read waits");
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
@@ -2596,21 +2827,94 @@ mod tests {
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
     }
 
-    /// A read that returns after the watchdog abandoned it does not make
-    /// its focus the last one accepted, so a newer focus accepted while it
-    /// was held stays the last.
+    /// An event waiting at [`ABANDONED_LIMIT`] while none of its
+    /// application's abandoned threads returns is dropped once it has
+    /// waited the deadline since it was queued, which resolves its marker,
+    /// and is never read.
     #[test]
-    fn a_read_returning_after_it_was_abandoned_accepts_no_focus() {
-        const NEWER_WINDOW: isize = 0x8180;
+    fn an_event_waiting_at_the_abandoned_limit_is_dropped_at_its_deadline() {
         let fixture = fixture(Duration::from_millis(50));
-        let (open, gate) = mpsc::channel();
+        let (open_first, gate) = mpsc::channel();
         fixture
             .readers
             .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
-        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "its read did not return in time")
+        );
+        let (open_second, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(2), (2, Some(gate), Vec::new()));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 2, "its read did not return in time")
+        );
+        fixture.readers.push(Pid(5), meta(3), (3, None, Vec::new()));
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (
+                Pid(5),
+                3,
+                "it waited too long behind its application's abandoned reads"
+            )
+        );
+        open_first.send(()).expect("the first held read waits");
+        open_second.send(()).expect("the second held read waits");
+        assert_eq!(fixture.readers.stop(), 2);
+        assert_eq!(fixture.outcomes.try_recv().ok(), None);
+        let read: Vec<u64> = fixture
+            .read_on
+            .try_iter()
+            .map(|(marker, _)| marker)
+            .collect();
+        assert_eq!(read, [1, 2], "event 3 was never read");
+    }
+
+    /// A focus a read accepted just before the watchdog abandoned it is no
+    /// current focus once the watchdog has, since Core was told the event
+    /// was dropped; and a read that returns after it was abandoned does not
+    /// make its focus the last one accepted, so a newer focus accepted
+    /// while it was held stays the last.
+    #[test]
+    fn a_read_returning_after_it_was_abandoned_accepts_no_focus() {
+        const NEWER_WINDOW: isize = 0x8180;
+        let uia = Uia::new().expect("a UIA client");
+        let element = uia.root_element().expect("the desktop's root element");
+        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        let last_accepted = fixture.readers.shared.reading.last_accepted.clone();
+        let first = meta(1);
+        let arrival = Arrival {
+            trace: first.trace,
+            observed_at_ms: 0,
+        };
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), first, (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        assert_eq!(
+            fixture
+                .asked
+                .recv_timeout(WAIT)
+                .expect("the start's judgement"),
+            WINDOW
+        );
+        // The read accepts its focus while it is not yet abandoned.
+        last_accepted.accept(1, &element, (WINDOW, arrival), &WatchedRead::default());
+        assert_eq!(
+            last_accepted.current().map(|(_, window)| window),
+            Some(WINDOW)
+        );
+        fixture.set_moved_on(true);
+        fixture.readers.foreground_changed();
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "the user moved on from a slow window")
+        );
+        assert!(
+            last_accepted.current().is_none(),
+            "the abandoned read's focus is no current focus"
         );
         open.send(()).expect("the held read waits");
         let (marker, abandoned) = fixture
@@ -2618,18 +2922,15 @@ mod tests {
             .recv_timeout(WAIT)
             .expect("the read returns");
         assert_eq!(marker, 1);
-        let uia = Uia::new().expect("a UIA client");
-        let element = uia.root_element().expect("the desktop's root element");
-        let arrival = Arrival {
+        let newer = Arrival {
             trace: TraceId::mint(),
             observed_at_ms: 0,
         };
-        let last_accepted = LastAccepted::default();
         last_accepted.accept(
             2,
             &element,
-            (NEWER_WINDOW, arrival),
-            &WatchedRead::new(NEWER_WINDOW),
+            (NEWER_WINDOW, newer),
+            &WatchedRead::new(NEWER_WINDOW, None),
         );
         last_accepted.accept(1, &element, (WINDOW, arrival), &abandoned);
         assert_eq!(
@@ -2639,18 +2940,26 @@ mod tests {
         assert_eq!(fixture.readers.stop(), 1);
     }
 
-    /// A read with no foreground event since its event is not judged when
-    /// its grace ends, though the user has moved on: only its deadline
-    /// abandons it, and the watchdog asks nothing.
+    /// A read with no foreground event since its event, whose start found
+    /// the window in front on its window's own thread, is not judged when
+    /// its grace ends though the user has moved on since: only its
+    /// deadline abandons it, and nothing is asked after its start.
     #[test]
     fn a_read_with_no_foreground_event_since_its_event_is_not_judged_at_its_grace_end() {
         let fixture = fixture_with_grace(Duration::from_millis(300), Duration::from_millis(50));
-        fixture.set_moved_on(true);
         let (open, gate) = mpsc::channel();
         fixture
             .readers
             .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
         assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        assert_eq!(
+            fixture
+                .asked
+                .recv_timeout(WAIT)
+                .expect("the start's judgement"),
+            WINDOW
+        );
+        fixture.set_moved_on(true);
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "its read did not return in time")

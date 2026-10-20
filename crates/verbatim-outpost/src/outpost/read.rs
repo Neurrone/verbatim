@@ -129,12 +129,23 @@ impl Client {
 /// its probe finds a provider ([`crate::arbitration::Connect::AfterYes`]).
 /// Returns `true` for UIA.
 pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
-    let (uia, kept) = crate::arbitration::uses_uia_keeping(
-        &context.arbitrator,
-        hwnd,
-        crate::arbitration::Connect::AfterYes,
-        || verbatim_uia::console_reports_formatting(hwnd),
-    );
+    decide_window(context, hwnd, crate::arbitration::Connect::AfterYes)
+}
+
+/// [`window_uses_uia`] without its connection after the probe
+/// ([`crate::arbitration::Connect::Never`]), for a caller that connects to
+/// the window itself at once when it uses UIA, so that a new window gets
+/// one connection, the caller's, not two.
+fn window_uses_uia_caller_connects(context: &Context, hwnd: isize) -> bool {
+    decide_window(context, hwnd, crate::arbitration::Connect::Never)
+}
+
+/// Window `hwnd`'s backend, connecting after the probe as `connect` says.
+fn decide_window(context: &Context, hwnd: isize, connect: crate::arbitration::Connect) -> bool {
+    let (uia, kept) =
+        crate::arbitration::uses_uia_keeping(&context.arbitrator, hwnd, connect, || {
+            verbatim_uia::console_reports_formatting(hwnd)
+        });
     if kept {
         // The event thread may narrow its hook now that it knows.
         context.nudge_event_thread(super::narrowing::Nudge::Decide);
@@ -197,7 +208,8 @@ fn window_snapshot(
         )?;
         return Some((Backend::Msaa, node));
     }
-    if window_uses_uia(context, hwnd) {
+    // The window's element is the connection to it.
+    if window_uses_uia_caller_connects(context, hwnd) {
         let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
         let element = uia.window_element(hwnd, &nodes).ok()?;
         let node = element.snapshot(&context.uia_registry);
@@ -833,7 +845,8 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
     if window_belongs_to_hidden_frame(hwnd) {
         return None;
     }
-    if window_uses_uia(context, hwnd) {
+    // The focused element is read from the window's provider at once.
+    if window_uses_uia_caller_connects(context, hwnd) {
         let (uia, nodes) = client.uia_with(context, Context::node_request).ok()?;
         let ancestor_request = context.ancestor_request(uia).ok()?;
         let element = (context.focused_element)(uia, &nodes).ok()?;

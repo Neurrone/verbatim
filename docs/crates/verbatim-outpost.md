@@ -215,30 +215,43 @@ event's own element:
   calls, which an outpost's worker shares): File Explorer's folder
   windows, the taskbar and the Alt+Tab switcher are one process on
   several threads, and a focus on one must not wait behind a slow read
-  of another. The window being read (`focus_read::WatchedRead`, the
-  read as the watchdog watches it) is, until the read's nearest-window
-  lookup finds the sender's nearest window, the event's cached window
-  handle, or for a sender that is not a window its application's
-  keyboard focus window when the event arrived, which the listener's
-  callback captured (`focus_read::event_window`); a selection's or a
-  notification's check learns its sender's nearest window the same way.
-  The user is judged only once a foreground event the listener's own
-  hook delivers (`Readers::foreground_changed`, called after the event
-  is forwarded, so its observation time is taken first) has come since
-  the read's event was queued: then when the grace ends, and on each
-  later foreground event, until the deadline. A read with no foreground
-  event since its event costs the watchdog no wake-up besides its
+  of another. Only a focus's or a menu opening's read is judged so, and
+  only once the window being read (`focus_read::WatchedRead`, the read
+  as the watchdog watches it) is known: the event's cached window
+  handle, or for a sender that is not a window the nearest window once
+  the read's lookup has returned (`WatchedRead::learn`); a selection's
+  or a notification's check is never judged so, as NVDA makes those
+  checks on its callback threads, whose calls its watchdog never
+  cancels. The user is judged at the end of the grace only with
+  evidence that the user may have left the window: a foreground event
+  the listener's own hook delivers (`Readers::foreground_changed`,
+  called after the event is forwarded, so its observation time is taken
+  first) since the read's event was queued, or the window in front
+  already on another thread of the application when the read's window
+  became known, judged once then with the same local calls
+  (`WatchedRead::judge_front`: by the watchdog as the read starts for a
+  cached window handle, by the read's `learn` for a nearest window,
+  which wakes the watchdog only when the front is elsewhere). Past the
+  grace it is judged on each foreground event, until the deadline. A
+  read with no such evidence costs the watchdog no wake-up besides its
   start's. The event is dropped with the reason "the user moved on from
   a slow window" and the abandonment logged at warn. When the watchdog
   abandons a read, either way, it marks the read abandoned, so that a
-  read that returns later makes no focus the last one accepted, the event
-  is reported dropped, a new thread takes the application's later
-  events, and the abandoned thread, once its call returns, lowers the
-  application's count of abandoned threads, says nothing and ends. With
-  two of an application's threads abandoned and still in their calls
-  (`ABANDONED_LIMIT`), it gets no new thread: its focus events wait,
-  a newer event of an element replacing its waiting one, and the first
-  abandoned thread whose call returns reads them.
+  read that returns later makes no focus the last one accepted, and a
+  focus the read accepted just before is no longer the current focus or
+  a repeat's evidence (`Reading::abandoned`,
+  `LastAccepted::abandoned`); the event is reported dropped, a new
+  thread takes the application's later events, and the abandoned
+  thread, once its call returns, lowers the application's count of
+  abandoned threads, says nothing and ends. With two of an
+  application's threads abandoned and still in their calls
+  (`ABANDONED_LIMIT`), it gets no new thread: its focus events wait, a
+  newer event of an element replacing its waiting one, and the first
+  abandoned thread whose call returns reads them; an event that has
+  waited `READ_DEADLINE` since it was queued is dropped by the
+  watchdog with the reason "it waited too long behind its
+  application's abandoned reads", which resolves its marker, and a
+  focus waiting so does not count for `Readers::focus_pending`.
 - When the listener is replaced, the supervisor tells every outpost,
   ready or starting, that its reads have ended
   (`DeliveredFact::UiaFocusReadsEnded`), so none waits on a marker the old
@@ -518,8 +531,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `record_probe`. An outpost whose probe finds a provider then connects
   to the window once by its handle (`arbitration::Connect::AfterYes`,
   `verbatim_uia::connect_to_window`), unless the console check that
-  follows connects by the handle itself; the listener never does
-  (`Connect::Never`). A new File Explorer window that no process connects
+  follows connects by the handle itself, or the list view check, decided
+  from the class name alone before any connection, excludes the
+  provider; the listener never does (`Connect::Never`), nor does an
+  outpost caller that connects to the window at once itself (the window
+  snapshot and the focused control's read in `outpost::read`), so that
+  the window gets one connection, not two. A new File Explorer window that no process connects
   to that early delivers its first UIA focus events in one burst after
   their senders are gone (the listener design's decision 2). `WindowClasses::of(hwnd)`
   reads the window's raw class, its class normalized as NVDA normalizes it

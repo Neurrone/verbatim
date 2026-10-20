@@ -35,8 +35,10 @@ File Explorer windows
 (`docs/design/listener-without-connections.md`, decision 2; the
 outposts' probe decided by Dickson on 2026-10-20). An outpost whose probe
 finds a provider then connects to the window once, which NVDA's probe
-does as part of it, so a new File Explorer window is connected to as
-early as NVDA connects to it.
+does as part of it, so a new File Explorer window gets the same kind of
+call at its first sight as NVDA makes; whether it comes as early as
+NVDA's is not measured. A list view whose provider the Windows Forms
+check excludes, from its class name alone, is not connected to.
 
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA
@@ -98,15 +100,13 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   always as the focus, with the focused state, as every focus the
   listener reads is reported.
   When the read's time budget has passed before the keyboard focus
-  is read, or the live read of it fails by UIA's transaction timeout,
-  whose 5 seconds are Verbatim's where NVDA's 20 would usually have had
-  the answer, the event's cached `HasKeyboardFocus` stands in for NVDA's
+  is read, the event's cached `HasKeyboardFocus` stands in for NVDA's
   live read, and a focus whose event does not say it had the focus is
   dropped (mockapp's
-  `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`
-  and `a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event`);
-  any other failure of the live read lets the focus through, as NVDA's
-  does. A provider that answers the property empty, or whose answer
+  `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`);
+  a live read that fails, by UIA's transaction timeout or otherwise, lets
+  the focus through, as NVDA's does (Dickson, 2026-10-20; mockapp's
+  `a_focus_whose_keyboard_focus_read_times_out_is_reported`). A provider that answers the property empty, or whose answer
   fails, leaves UIA's default, `false`, in the event's cache, the same
   for both (mockapp's events test
   `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`),

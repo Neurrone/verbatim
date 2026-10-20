@@ -73,12 +73,24 @@ counted apart (`CallCounts::connections`): an `ElementFromHandle` or
 reaches the focused window the same way; the probe is not one, but an
 outpost whose probe finds a provider follows it with one
 `ElementFromHandle`, once in the window's lifetime, since the "yes" is
-kept (`call_counts.rs`,
+kept, unless the console check follows, which connects itself, the list
+view check excludes the provider from its class name alone, or the
+caller connects to the window at once itself, as the foreground
+window's snapshot (`ElementFromHandleBuildCache`) and the focused
+control's read (`GetFocusedElementBuildCache`) do, which are then the
+window's one connection rather than the second of two
+(`call_counts.rs`,
 `an_outposts_probe_that_finds_a_provider_connects_once`: the probe costs
 mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
 `HostRawElementProvider` and one `Navigate`, and the connection two
 `WM_GETOBJECT`s, seven `ProviderOptions`, two `HostRawElementProvider`
-and two `Navigate`). Each still counts once
+and two `Navigate`). That connection runs on the outpost's worker and
+took 250 to 454 ms for the first window of each new File Explorer
+folder window and 200 to 230 ms for a second, against 33 to 45 ms for
+the probe alone (2026-10-20, the `vard-*` logs under
+`target/e2e-evidence/review-fixes-2026-10-20/`); its result is not kept,
+so a connection that fails is not made again
+(`docs/design/listener-without-connections.md`, risk 11). Each still counts once
 under its own kind, so a call's total is unchanged. The focus listener
 makes none (`docs/design/listener-without-connections.md`, section 2), and
 the ratchet asserts its count is zero (`call_counts.rs`,

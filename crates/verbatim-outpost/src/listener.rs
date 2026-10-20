@@ -127,7 +127,7 @@ use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
     Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
-    WatchedRead, event_window,
+    WatchedRead,
 };
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
@@ -786,8 +786,22 @@ impl Reading for UiaFocusReading {
         }
     }
 
-    fn window(&self, (_, hwnd, focus_window, _, _, _): &Self::Job) -> isize {
-        event_window(*hwnd, *focus_window)
+    /// A focus's or a menu opening's sender's own window, from the event's
+    /// cache: the moved-on rule judges the read of a focus once its window
+    /// is known, here or from the nearest-window lookup, and never a
+    /// selection's or a notification's check, which NVDA makes on UIA's
+    /// callback thread, whose calls its watchdog never cancels
+    /// (`docs/parity/focus-events.md`, "A slow read the user has moved on
+    /// from").
+    fn window(&self, (_, hwnd, _, _, kind, _): &Self::Job) -> isize {
+        match kind {
+            FocusEvent::Focus | FocusEvent::MenuOpened => *hwnd,
+            FocusEvent::Selection | FocusEvent::Notification => 0,
+        }
+    }
+
+    fn abandoned(&self, meta: &Meta) {
+        self.last_accepted.abandoned(meta.trace);
     }
 
     fn key<'a>(

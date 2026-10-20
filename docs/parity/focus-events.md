@@ -58,22 +58,26 @@ difference when a read's time is up.
   are made where no call is needed
   (`docs/design/listener-without-connections.md`, section 5), and the
   sender's keyboard focus, which NVDA reads live, is taken from the
-  event's cache, as it is when the live read fails by UIA's transaction
-  timeout, Verbatim's 5 seconds where NVDA's 20 would usually have had
-  the answer: anything but a cached `true` drops the focus. A provider
+  event's cache: anything but a cached `true` drops the focus. A provider
   that answers the property empty, or whose answer fails, leaves UIA's
   default, `false`, in the cache, the same for both, and NVDA's live read
-  of such a provider gets the same `false` and drops the focus too. Any
-  other failure of the live read lets the focus through, as NVDA's does.
+  of such a provider gets the same `false` and drops the focus too.
   Mockapp's `a_repeated_focus_out_of_time_is_reported` pins the skipped
   repeat test, mockapp's
   `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`
-  and `a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event`
   the drop from the cache, mockapp's events test
   `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`
   what UIA stores for an empty or failed answer, and `verbatim-uia`'s
   `a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true` the
   reading of it.
+- Matched (Dickson, 2026-10-20): within the budget, a live read of the
+  sender's keyboard focus that fails, by UIA's transaction timeout or
+  otherwise, lets the focus through, as NVDA's
+  `except COMError: return True` does
+  (`nvda/source/NVDAObjects/UIA/__init__.py`, lines 1632 to 1637); the
+  event's cache judges the focus only when the budget is out before the
+  live read is made. Mockapp's
+  `a_focus_whose_keyboard_focus_read_times_out_is_reported` pins it.
 - Each outpost makes NVDA's MSAA test, by the address of the last focus
   it reported, a whole object rather than a child by id. That focus
   stops counting after a foreground change the outpost reports, and once
@@ -310,31 +314,66 @@ focus being read is then dropped
 ([Main loop and watchdog](../nvda/main-loop-and-watchdog.md), "The
 watchdog: detection" and "What a live capture shows").
 
-Verbatim: **matched (unverified)**; unit tests of the outposts' worker
-and of the listener's reading threads pin the rule, and no end-to-end
-scenario makes an application slow enough to show it. An outpost's
-worker and the focus listener's reading thread for an application each
-abandon a call that has taken half a second (`MOVED_ON_GRACE`) once the
-window in front belongs to the same application on another UI thread
-than the window being handled or read, until their own deadlines (10
-seconds for the worker, `READ_DEADLINE`, 11 seconds, for a reading
-thread). The worker judges when the half second ends and again on each
-foreground event; a reading thread judges only once a foreground event
-has come since its event arrived, then when the half second ends and on
-each later foreground event. The window a reading thread's read is of is
-the sender's own window, or for a sender that is not a window its
-application's keyboard focus window when the event arrived, until the
-read finds the sender's nearest window. The event being handled or read
-is dropped, and a new worker or reading thread takes the application's
-later events. The rule is narrower than NVDA's by design: NVDA's one
-main thread serves every application, so a move to any other window
-frees it, while each of Verbatim's applications has its own worker and
-its own reading thread, so a move to another application's window is
-never held up; only the same application's windows on other threads,
-such as File Explorer's folder windows, taskbar and Alt+Tab switcher,
-wait behind a slow one. NVDA's other triggers, no focused window and an
-unacknowledged system menu, are not ported, and nor is its allowlist of
-window classes that always get the long wait (`safeWindowClassSet`).
+Verbatim: **matched for the read after a focus's judgement; different,
+deliberately, for the judgement's calls once the read's window is known;
+not judged for the rest (Dickson, 2026-10-20)**; unit tests of the
+outposts' worker and of the listener's reading threads pin the rule, and
+no end-to-end scenario makes an application slow enough to show it. An
+outpost's worker and the focus listener's reading thread for an
+application each abandon a call that has taken half a second
+(`MOVED_ON_GRACE`) once the window in front belongs to the same
+application on another UI thread than the window being handled or read,
+until their own deadlines (10 seconds for the worker, `READ_DEADLINE`, 11
+seconds, for a reading thread). The event being handled or read is
+dropped, and a new worker or reading thread takes the application's later
+events.
+
+A reading thread judges only the reads of focuses and menu openings, and
+only once the read's window is known: the sender's own window from the
+event's cache, or, for a sender that is not a window, its nearest window
+once the lookup has returned. NVDA's watchdog cancels only its main
+thread's call (`nvda/source/watchdog.py`, `_recoverAttempt`, line 237):
+
+- Matched: the read of a focus after its judgement, the calls NVDA's
+  main thread makes once the focus handler has queued the focus.
+- Different, deliberately: the judgement's own calls once the read's
+  window is known, the probe, the console check, the comparisons and the
+  live keyboard focus read, which NVDA makes in its focus handler on
+  UIA's callback thread and never cancels, are judged too, so a slow one
+  can drop a focus NVDA would speak late.
+- Not judged, as in NVDA: a windowless focus's nearest-window lookup
+  (`nvda/source/UIAHandler/__init__.py`, line 924), during which its
+  window is not yet known, and the whole check of a selection or a
+  notification (line 1114 for a notification's lookup), which NVDA makes
+  on its callback thread, so a slow selection or notification is passed
+  on late rather than dropped.
+
+The worker judges when the half second ends and again on each foreground
+event. A reading thread judges on each foreground event once the half
+second has ended, and when it ends if a foreground event has come since
+the read's event arrived, or if the window in front was already another
+thread's when the read's window became known, judged then with the same
+local calls; a read whose window is the front's own thread when it
+becomes known, with no foreground event since, costs no check at the end
+of the half second.
+
+An application with two abandoned reading threads still in their calls
+gets no new thread until one returns: its events wait, and an event that
+has waited `READ_DEADLINE` since it was queued is dropped, so its
+outpost's later events are not held without bound; a focus waiting so
+is not a pending focus for NVDA's rule that drops a menu opening while a
+focus is pending (Dickson, 2026-10-20). The limit is Verbatim's own,
+since NVDA has no reading threads to abandon.
+
+The rule is narrower than NVDA's by design: NVDA's one main thread serves
+every application, so a move to any other window frees it, while each of
+Verbatim's applications has its own worker and its own reading thread, so
+a move to another application's window is never held up; only the same
+application's windows on other threads, such as File Explorer's folder
+windows, taskbar and Alt+Tab switcher, wait behind a slow one. NVDA's
+other triggers, no focused window and an unacknowledged system menu, are
+not ported, and nor is its allowlist of window classes that always get
+the long wait (`safeWindowClassSet`).
 
 Other differences:
 
@@ -342,14 +381,7 @@ Other differences:
   accepted (`nvda/source/watchdog.py`, lines 224 to 232), so when the
   user moves to another thread's window and that window's own focus read
   is slow, NVDA cancels it; Verbatim deliberately does not, judging
-  against the window being read, which for a windowless sender starts as
-  the application's keyboard focus window at the event's arrival
-  (Dickson, 2026-10-20).
-- NVDA's rule covers only its main thread's work: its native check, the
-  probe and the nearest-window lookup, runs in the UIA focus handler on
-  its UIA thread (`nvda/source/UIAHandler/__init__.py`, line 887), where
-  `cancellableExecute` simply runs the call (`watchdog.py`, lines 417 to
-  420), while Verbatim's covers every call of the reading threads.
+  against the window being read (Dickson, 2026-10-20).
 - NVDA judges again every half second while it waits
   (`_waitUntilNormalCoreAliveTimeout`, lines 133 to 148); Verbatim judges
   when the half second ends and on foreground events, so a move of the
