@@ -230,6 +230,25 @@ screen reader in both rendered and source form.
   has a provider, when a listener's or an outpost's read returns its child
   window's element (decision 13 of that design). A slow or hung
   application holds only the threads that serve it.
+  Amended 2026-10-20 (Dickson, declining one UIA host process beside
+  Core with a thread per application): the listener stays a process of
+  its own, apart from the outposts, which stay one process per
+  application (D9), because UIA's focus tracking runs on the one
+  event-delivery thread of whichever process holds a focus registration
+  and nothing short of a process boundary isolates it
+  (`docs/uia-bugs.md`, "A hung window named in a system focus event
+  holds a process's UIA events", whose
+  "Workarounds that didn't work" lists what was tried), so one host
+  process would hold every application's UIA events, terminal output
+  included, for up to 4 seconds per focus event naming a hung window.
+  The measured facts behind it are in the same entry's "Not affected":
+  a thread hung in one application does not delay the process's other
+  threads' calls into other applications, which kept answering in 1 ms,
+  nor UIA's event-delivery thread, since a provider held while raising
+  its own event holds only its own events. What the split costs, two
+  Verbatim processes calling into one application and colliding there,
+  is prevented by the rule of `docs/design/listener-without-connections.md`,
+  section 2, not by a lock.
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
   window that most recently received a focus fact. It replaces the earlier

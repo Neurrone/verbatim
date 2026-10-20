@@ -193,15 +193,42 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   which must never lose a key.
 - `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
   "Time limits that hold".
-- The audits' items 8 to 11 (deferred by Dickson, 2026-10-12, until after
-  the queue): one duplicate test and one acceptance test per focus, as
-  NVDA makes them; foreground events in the focus run as NVDA's `pumpAll`
-  takes them; the events NVDA registers desktop-wide that Verbatim lacks
-  (live regions, selection added and removed, progress values, window
-  opened, layout invalidated, system alerts, drag and drop); and the
-  smaller ones (the MSAA caret in UIA windows, the staging windows' focus,
-  live reads of the focus's property events, NVDA's Windows Forms and UWP
-  combo box rules, the controlled selection's route).
+- What remains of the audits' items 9 to 11 (Dickson, 2026-10-20; item 8
+  is done, `docs/roadmap-done.md`):
+  - Item 9: foreground events in the focus run as NVDA's `pumpAll` takes
+    them: a run of consecutive focus and foreground WinEvents tried
+    newest first until one is processed
+    (`nvda/source/IAccessibleHandler/__init__.py`, lines 1061 to 1075).
+    Verbatim's intake tries runs of MSAA focus events only and handles a
+    foreground change at its own place
+    (`crates/verbatim-outpost/src/outpost/intake.rs`, module doc).
+  - Item 11, in three changes. First, MSAA caret events (`OBJID_CARET`
+    location change and show) mapped to a caret event on a UIA focus, as
+    NVDA maps them (`IAccessibleHandler/__init__.py`, lines 636 to 668).
+    Second, the UIA combo box without the Value pattern and the looping
+    selector, whose value is the selected item's name and whose item's
+    state change is the combo box's value change
+    (`NVDAObjects/UIA/__init__.py`, lines 1380 to 1392 and 2746 to 2800).
+    Third, an end-to-end scenario pinning selection in a list the focus
+    controls, Settings' search suggestions
+    (`docs/parity/changes-and-selection.md`, "Selection in a list the
+    focus controls"). Also left from the item: the staging windows'
+    focus, dropped where NVDA makes it the focus without speaking it
+    (`docs/parity/windows-and-processes.md`, "The shell's staging
+    windows"). Deferred until Verbatim reads such a combo box in an
+    application, because no .NET Framework application is in the suite
+    and expectations come only from captures (Dickson, 2026-10-20): the
+    classic .NET Framework Windows Forms combo box rule, element-selected
+    events from the `ComboLBox` window reported as the combo box's value
+    change (`NVDAObjects/UIA/__init__.py`, lines 2734 to 2744 and 2779
+    to 2790). The item's live reads of the focus's property events are
+    struck: the ledger's "Name change on the focus" and "What an accepted
+    MSAA change reads" already match NVDA.
+  - Item 10, the events NVDA registers desktop-wide that Verbatim lacks,
+    is deferred until each event is supported (Dickson, 2026-10-20);
+    `docs/parity/backends.md`, "UIA event registration", records the gap,
+    and its pieces have homes: a foreground UIA progress bar that is not
+    the focus in M4.2, background progress bars in M4.3.
 - The OneCore synthesizer host once failed to become ready within 10
   seconds on GitHub's runner, where it is otherwise ready in about a
   second. Its start is logged step by step (3baec60): if it recurs,
@@ -220,13 +247,18 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   local run, since neither reproduces here.
 
 - The focus pipeline's follow-ups (2026-10-17):
-  - `conhost_two_windows` fails about 1 run in 20, its cause found and
-    its fix awaiting Dickson's decision: see `docs/uia-bugs.md`,
-    "UiaHasServerSideProvider says no for a new conhost window while
-    another process has an event handler". The fix, the raw
-    `WM_GETOBJECT` probe, replaces the call NVDA makes
-    (`crates/verbatim-uia/src/probe.rs` and its callers), so it waits for
-    Dickson.
+  - `conhost_two_windows` fails about 1 run in 20, its cause found: see
+    `docs/uia-bugs.md`, "UiaHasServerSideProvider says no for a new
+    conhost window while another process has an event handler". The
+    outposts take the raw `WM_GETOBJECT` probe the listener already
+    sends, in place of `UiaHasServerSideProvider` (Dickson, 2026-10-20),
+    as the next change.
+  - The listener's reading threads gain NVDA's watchdog rule that a read
+    is abandoned 0.5 seconds after the user has moved on to a window of
+    the same application on another UI thread, as the outposts' worker
+    already has (`MOVED_ON_GRACE`,
+    `crates/verbatim-outpost/src/outpost/worker.rs`), decided by Dickson
+    on 2026-10-20, as the change after the raw probe.
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,

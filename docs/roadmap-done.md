@@ -523,6 +523,17 @@ landed it.
   validity cad5a7a3; the MSAA duplicate test 006883a5; comments corrected
   32133bbe; UIA menu openings, selections and notifications through the
   reading threads b772abd8, b370a7a5 and 0eaf540e.
+- The audits' item 8, one duplicate test and one acceptance test per
+  focus as NVDA makes them: verified with no change, 2026-10-20. The
+  acceptance test is `crates/verbatim-outpost/src/outpost/acceptance.rs`;
+  a UIA focus's is the listener's and an MSAA focus's the outposts'; the
+  duplicate tests are NVDA's per backend plus Core's own node-id rule
+  across backends ([parity](parity/focus-events.md), "Duplicate focus
+  suppression" and "Event acceptance"). The rest of the item is
+  scheduled elsewhere: the tooltip setting and background progress bars
+  in M4.3, the `requestEvents` opt-in table with extensions in M5,
+  NVDA's Chromium rule in M7, and a per-source cap on background events
+  unscheduled.
 - Step 9, the relay: replaced by the communication migration, below.
 - Step 10, the harness's idle barrier through every child: communication
   step 6a, 10f01254, 2026-10-14.

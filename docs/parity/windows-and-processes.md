@@ -43,10 +43,12 @@ the ancestors above the host window are read through MSAA, where NVDA
 reads those with a provider through UIA, so such a window, a WinUI
 host's "title window" among them, may be named and roled differently;
 for a host without a provider, such as Quick Assist's, both read the
-same object. An owned dialog seen on 2026-10-19: the Windows Security
-credential dialog (`CredentialUIBroker.exe`) opened with File
-Explorer's folder window as its parent window is owned by it. NVDA
-(alpha-58022) said as it opened: "unavailable", then "Windows Security
+same object. Reading them through the host window's own outpost by UIA
+is reconsidered if an NVDA capture of entering such a host differs from
+Verbatim's announcement (Dickson, 2026-10-20). An owned dialog seen on
+2026-10-19: the Windows Security credential dialog
+(`CredentialUIBroker.exe`) opened with File Explorer's folder window
+as its parent window is owned by it. NVDA (alpha-58022) said as it opened: "unavailable", then "Windows Security
 window", then "User name edit"; the folder window, the previous focus's
 own top-level window, is not spoken again either way, so the capture
 does not show whether NVDA's chain reaches the owner. The dialog's

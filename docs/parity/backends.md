@@ -44,9 +44,10 @@ inside the screen reader's process that outposts cannot have.
 Application modules' own good and bad windows wait for extensions,
 except the Explorer shell rule above, which is core policy.
 
-Different (`docs/design/focus-pipeline.md`, section 6.1): Verbatim's UIA
-client waits five seconds for a provider, where NVDA keeps UIA's default
-of two.
+Different (`docs/design/listener-without-connections.md`, section 5):
+Verbatim's UIA connection timeout is UIA's default of 2 seconds, as
+NVDA's is, but its transaction timeout is 5 seconds, where NVDA leaves
+UIA's default of 20.
 
 ### How an outpost turns events into focus reports
 
