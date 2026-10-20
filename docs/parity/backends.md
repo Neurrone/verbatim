@@ -82,7 +82,11 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   listener's read fails (its application does not answer within the
   call timeout), the focus is reported from its event with its ancestors
   unknown, as NVDA lets a focus through whose `HasKeyboardFocus` read
-  fails.
+  fails. When the read's time budget has passed before the keyboard focus
+  is read, the event's cached `HasKeyboardFocus` stands in for NVDA's live
+  read, and a focus whose event says it did not have the focus is dropped
+  (mockapp's
+  `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`).
 - The console host's window element never gives the focus, whatever it
   reports, as NVDA's `consoleUIAWindow` refuses its focus events
   (`NVDAObjects/UIA/winConsoleUIA.py` 356 to 358 and 446 to 447): one

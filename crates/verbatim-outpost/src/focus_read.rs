@@ -738,11 +738,26 @@ impl FocusReader {
     /// accepted.
     ///
     /// The read's time, `budget`, is asked before each call after the
-    /// first: once it is up, a comparison or keyboard focus read is not
-    /// made, and counts as one that failed, as NVDA lets the event through
-    /// when such a read fails, and the native check drops the event unless
-    /// the window's verdict is known without a call
-    /// ([`native_window`](Self::native_window)).
+    /// first. Once it is up, a focus whose window's verdict is known is
+    /// still spoken (Dickson, 2026-10-20): every check of NVDA's focus
+    /// handler and of `shouldAllowUIAFocusEvent`
+    /// (`NVDAObjects/UIA/__init__.py`) that needs no call into the
+    /// application is made, and one that needs a call is skipped and lets
+    /// the focus through, as NVDA lets it through when such a read fails
+    /// (`docs/design/listener-without-connections.md`, section 5). Made:
+    /// the hung window (step 1), from the event's cached window; the native
+    /// check (step 2) from the window's verdict when it is known without a
+    /// call, the event dropped when only the probe could decide it
+    /// ([`native_window`](Self::native_window)); the acceptance test and
+    /// the refusals (steps 4 and 5), local calls; and the sender's keyboard
+    /// focus (step 6) from the event's cached `HasKeyboardFocus` in place
+    /// of NVDA's live read, a sender whose event says it did not have the
+    /// focus being dropped. Skipped, a deliberate divergence from NVDA: the
+    /// repeat check (step 3), whose comparison the runtime ids could answer
+    /// but which drops a repeat only while the last focus still has the
+    /// keyboard focus, read live from that element, which no cache holds;
+    /// a repeat out of time is spoken. A menu opening's comparison is its
+    /// read's first call, made within the budget.
     fn judge_before_reading(
         &self,
         held: &Cached<ListenerEvent>,
@@ -813,7 +828,8 @@ impl FocusReader {
                 // A comparison that fails is no duplicate, as NVDA lets the
                 // event through on a COM error, and so is a keyboard focus
                 // read that fails: the earlier element is gone. Two calls,
-                // the second only for an element UIA equates.
+                // the second only for an element UIA equates. Out of time,
+                // neither is made, and the focus is no repeat.
                 if let (Some(Ok(true)), Some((last, _))) = (compare(), current.as_ref())
                     && kind == FocusEvent::Focus
                     && !out_of_time()
@@ -889,7 +905,20 @@ impl FocusReader {
         // read is followed by the focus event of where it went
         // (`docs/design/listener-without-connections.md`, section 3, step
         // 8).
-        if !out_of_time() && matches!(subject.has_keyboard_focus(), Ok(false)) {
+        //
+        // Out of time, the live read is not made, and the sender's keyboard
+        // focus is taken from the event's cache instead, as it stood when
+        // the event was raised: a sender that did not have it then is
+        // dropped. A menu opening redirected to the current focus is judged
+        // by the focus's element, whose keyboard focus no cache of this
+        // event holds, so it is let through.
+        if out_of_time() {
+            if std::ptr::eq(subject, element) && !sender.has_focus {
+                return Err(
+                    "its event says it did not have the keyboard focus, and its read's time was up",
+                );
+            }
+        } else if matches!(subject.has_keyboard_focus(), Ok(false)) {
             return Err("its element no longer has the keyboard focus");
         }
         Ok(window)

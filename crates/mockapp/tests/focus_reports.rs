@@ -55,6 +55,34 @@ impl Client {
     fn focused(&self) -> Cached<ListenerEvent> {
         common::listener_focus(&self.uia, self.hwnd.0 as isize)
     }
+
+    /// The element of mockapp's named `name`, built with the listener's
+    /// cache request, as a focus event's element would arrive at this
+    /// moment, whether or not it has the keyboard focus.
+    fn named(&self, name: &str) -> Cached<ListenerEvent> {
+        let root = self
+            .uia
+            .window_live(self.hwnd.0 as isize)
+            .expect("mockapp's window element");
+        let condition = self
+            .uia
+            .property_condition(
+                UIA_NamePropertyId,
+                &windows::Win32::System::Variant::VARIANT::from(name),
+            )
+            .expect("a condition");
+        let request = self
+            .uia
+            .request_fixed::<ListenerEvent>()
+            .expect("the listener's cache request");
+        root.find_first(
+            windows::Win32::UI::Accessibility::TreeScope_Descendants,
+            &condition,
+            &request,
+        )
+        .expect("the search")
+        .expect("mockapp has the element")
+    }
 }
 
 /// File Explorer, going back from a subfolder, gave the parent folder's
@@ -949,9 +977,10 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
 /// A windowless UIA focus whose read's time is up once its nearest window
 /// has been looked up is still judged by NVDA's native check, from the
 /// window's verdict kept from an earlier focus's probe, with no probe made
-/// (`FocusReader::native_window`), and is reported from its event, its
-/// nearest window the one call made: no probe, which would be a window
-/// message, and nothing else once the time is up.
+/// (`FocusReader::native_window`), its keyboard focus taken from its
+/// event's cache, and is reported from its event, its nearest window the
+/// one call made: no probe, which would be a window message, and nothing
+/// else once the time is up.
 fn a_focus_out_of_time_is_judged_by_its_windows_kept_verdict() {
     let title = common::unique_title("mockapp-focus-kept-verdict");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -973,6 +1002,72 @@ fn a_focus_out_of_time_is_judged_by_its_windows_kept_verdict() {
         (calls.uia, calls.msaa, calls.window_messages),
         (1, 0, 0),
         "the nearest window alone: no probe, keyboard focus read, or read's call"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA focus out of time whose event's cache says its element did not
+/// have the keyboard focus is dropped, the cache standing in for NVDA's
+/// live read of it (`shouldAllowUIAFocusEvent`), which the time no longer
+/// allows: the nearest window is the one call made.
+fn a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped() {
+    let title = common::unique_title("mockapp-focus-out-of-time-unfocused");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus slider1");
+    let _ = outpost.uia_focus(&client.focused());
+    let button = client.named("Original Name");
+    // The read's first reading of the time sets its budget's end; every
+    // later one is past it.
+    outpost.run_out_of_time_after(1);
+    let (judged, calls) = outpost.listener_read(&button);
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a focus its event said was not focused: {judged:?}");
+    };
+    assert_eq!(
+        reason,
+        "its event says it did not have the keyboard focus, and its read's time was up"
+    );
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (1, 0, 0),
+        "the nearest window alone"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A UIA focus repeated on the last focus accepted, which still has the
+/// keyboard focus, is reported when its read's time is up once its
+/// nearest window has been looked up: NVDA's repeat check needs that
+/// element's keyboard focus read live, which the time no longer allows, so
+/// it is not made, a deliberate divergence from NVDA, which would drop it
+/// (`docs/parity/focus-events.md`, "Duplicate focus suppression").
+fn a_repeated_focus_out_of_time_is_reported() {
+    let title = common::unique_title("mockapp-repeat-out-of-time");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let _ = outpost.uia_focus(&client.focused());
+    // The read's first reading of the time sets its budget's end; every
+    // later one is past it.
+    outpost.run_out_of_time_after(1);
+    let (judged, calls) = outpost.listener_read(&client.focused());
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the repeated focus: {judged:?}");
+    };
+    assert_eq!(read.snapshot.name.as_deref(), Some("Original Name"));
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (1, 0, 0),
+        "the nearest window alone: no comparison or keyboard focus read"
     );
 
     drop(outpost);
@@ -1408,6 +1503,14 @@ fn main() {
         (
             "a_focus_out_of_time_is_judged_by_its_windows_kept_verdict",
             a_focus_out_of_time_is_judged_by_its_windows_kept_verdict,
+        ),
+        (
+            "a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped",
+            a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped,
+        ),
+        (
+            "a_repeated_focus_out_of_time_is_reported",
+            a_repeated_focus_out_of_time_is_reported,
         ),
         (
             "a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window",

@@ -174,14 +174,18 @@ event's own element:
   call under way runs past it. The raw probe's wait, up to 3 seconds, is
   not counted (`Budget`): the budget's end moves on by the time the
   window's verdict took, so for a sender with a window of its own the
-  budget starts once the probe has answered. Once it has passed the read makes no more
-  calls: a comparison or keyboard focus read not made counts as one that
-  failed, as NVDA lets the event through when such a read fails; the
-  native check takes the window's verdict when it is known without a call,
-  from the class lists or a kept verdict, and drops the event only when the
-  probe, and so perhaps the console check, would be needed; and a
-  focus already judged is reported with what was read, the event's cache
-  giving the rest, its ancestors unknown.
+  budget starts once the probe has answered. Once it has passed the read
+  makes no more calls, but still makes every one of NVDA's checks that
+  needs none: the native check takes the window's verdict when it is
+  known without a call, from the class lists or a kept verdict, and drops
+  the event only when the probe, and so perhaps the console check, would
+  be needed; the acceptance test and the refusals are local; and the
+  sender's keyboard focus is taken from the event's cached
+  `HasKeyboardFocus`, a sender that did not have it being dropped. The
+  repeat check, which needs the last focus's keyboard focus read live, is
+  skipped, so a repeat out of time is reported, a deliberate divergence
+  from NVDA. A focus so judged is reported with what was read, the
+  event's cache giving the rest, its ancestors unknown.
 - A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 11
   seconds: the budget, the raw probe's three seconds it does not count,
   UIA's five-second transaction timeout for the call that can be under

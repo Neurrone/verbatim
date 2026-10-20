@@ -14,7 +14,8 @@ has no test for a foreground or menu focus
 ([Event handling](../nvda/events.md),
 [The UIA client](../nvda/uia.md)).
 
-Verbatim: **matched (verified)**, with one rule of its own.
+Verbatim: **matched (verified)**, with one rule of its own and one
+difference when a read's time is up.
 
 - Core drops a focus on the node of the live focus it holds, which is
   the last focus it queued, before the stale and foreground checks, so it
@@ -49,6 +50,14 @@ Verbatim: **matched (verified)**, with one rule of its own.
   `a_focus_is_no_repeat_once_another_focus_was_queued`, and
   `a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus` pin
   it.
+- Different, deliberately (Dickson, 2026-10-20): once the listener's
+  read of a focus has used its time budget, 2 seconds, it makes no more
+  calls into the application, and the repeat test is skipped, since it
+  needs the last focus's keyboard focus read live; a repeat in an
+  application that slow is spoken where NVDA drops it. Its other checks
+  are made where no call is needed
+  (`docs/design/listener-without-connections.md`, section 5). Mockapp's
+  `a_repeated_focus_out_of_time_is_reported` pins it.
 - Each outpost makes NVDA's MSAA test, by the address of the last focus
   it reported, a whole object rather than a child by id. That focus
   stops counting after a foreground change the outpost reports, and once
