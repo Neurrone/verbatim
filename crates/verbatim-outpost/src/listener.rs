@@ -81,9 +81,10 @@
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind (for a notification, per
-//! element, kind, processing, and activity id; for a `WinEvent`'s fact,
-//! per window or address and the thread that raised it, as NVDA's
-//! `WinEvent` limiter keys them), a newer one replacing it
+//! element, kind, processing, and activity id; for a `WinEvent`'s fact
+//! other than a menu opening, per window or address and the thread that
+//! raised it, as NVDA's `WinEvent` limiter keys them), a newer one
+//! replacing it
 //! and moving to the back, so a flood from one busy process cannot pass through
 //! the listener and Core unthrottled. A UIA focus's marker, read, and drop
 //! are never replaced, since an outpost waits on the marker until its read
@@ -187,10 +188,11 @@ impl Default for Clock {
 }
 
 /// What waits while a write to Core is in flight: urgent messages first,
-/// then facts, coalesced one per element and kind, then a menu or switcher
-/// end. The backlog of the listener's [`Sender`], which every message
-/// passes through, so the rules for "forwarding ended" are judged under
-/// the lock every fact is sent under.
+/// then facts, coalesced one per element and kind, and for an MSAA event
+/// other than a menu opening per thread that raised it, then a menu or
+/// switcher end. The backlog of the listener's [`Sender`], which every
+/// message passes through, so the rules for "forwarding ended" are judged
+/// under the lock every fact is sent under.
 #[derive(Default)]
 struct Waiting {
     urgent: VecDeque<OutpostToSupervisor>,

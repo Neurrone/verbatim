@@ -164,7 +164,8 @@ screen reader in both rendered and source form.
   asks the attention application for its current focus once instead. The
   listener also holds the alert hook and desktop-wide UIA subscriptions
   for selection, menu opening, and notifications, coalesces its facts
-  with NVDA's limiter rule (one waiting fact per element and kind), and
+  with NVDA's limiter rule (one waiting fact per element and kind, and for
+  an MSAA event other than a menu opening per thread that raised it), and
   may start an outpost only for focus, foreground, menu, notification, and
   alert facts (amended 2026-10-10: of the notifications, only the shell's
   window-snap results, the one Core speaks from an application without
@@ -492,8 +493,9 @@ waiting messages are merged by object and kind, a terminal's output
 combined under the flood policy, while answers to Core's requests keep
 their order. Intake callbacks
 only add entries to one queue, which applies NVDA's limiter rules (one
-waiting entry per object and event kind, and for an MSAA event per thread
-that raised it too, and per batch the newest four
+waiting entry per object and event kind, and for an MSAA event other than
+the console host's or a menu opening, per thread that raised it too, of
+menu openings only the newest, and per batch the newest four
 focus events and ten other events per UI thread). One worker thread takes
 the entries in order and is the only thread that calls into the
 application, so events and query replies leave the outpost in the order

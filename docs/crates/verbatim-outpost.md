@@ -706,14 +706,25 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     leaving only a listener copy the listener's hook receives after it
     read the tick that message names (`Intake::forwarding_ended`) to
     arrive so after it, which, when the later change of its window and
-    thread still waits, replaces it by key, so the older change is handed
-    out in its place and removes waiting client focuses by its own, older
-    raise time, the window reported being the same; NVDA pumps a focus at
+    thread still waits, replaces it by key and takes its place at the
+    back, so the older change is handed out instead and removes waiting
+    client focuses by its own, older raise time: the window is the same,
+    but a focus raised between the two that waits after the later change
+    is then the newest of their run and is reported in place of the window
+    (rare, as it needs two late listener copies, the focus's and the older
+    change's), and the foreground report can come after the speech of an
+    event that ends a run and arrived after the later change; NVDA pumps a focus at
     once and then says exactly one of the two: the change only when its
-    pump filters or refuses the focus (`shouldAcceptEvent` accepts it only
-    when its window is the foreground window or descends from it, has the
+    pump filters or refuses the focus (`shouldAcceptEvent`,
+    `eventHandler.py` 481 to 599, accepts it, among other cases, when its
+    window is the foreground window or descends from it, has the
     foreground window's root owner, or is topmost or has a topmost root,
-    and the focused-state and SDM tests can still refuse it), which the
+    and also for an event an app module registered through
+    `requestEvents`, the desktop window, a `Windows.UI.Core` window that
+    descends from the active window, and a Chromium document under the
+    focused Chrome window; an accepted focus can still be refused, as by
+    `winEventToNVDAEvent` failing, the focused-state test, which app
+    modules override, or the SDM test), which the
     drop matches, and the focus otherwise, as
     `processForegroundWinEvent`'s descendant and address tests drop the
     change, where the drop differs by ending on the window's object and
@@ -981,10 +992,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are
   coalesced with NVDA's UIA limiter rule, one waiting fact per element and
   kind (`DeliveredFact::key`, which takes the event's stamp, so that a
-  `WinEvent`'s fact (a foreground change, an MSAA focus, a menu opening, an
-  alert, or a tooltip shown) is keyed by the thread that raised it too, as
-  NVDA's `WinEvent` limiter keys it (for the menu opening, alert and
-  tooltip, Fable, 2026-10-21, pending Dickson's acceptance); notifications
+  `WinEvent`'s fact other than a menu opening (a foreground change, an MSAA
+  focus, an alert, or a tooltip shown) is keyed by the thread that raised
+  it too, as NVDA's `WinEvent` limiter keys it (for the alert and tooltip,
+  Fable, 2026-10-21, pending Dickson's acceptance); a menu opening is
+  keyed by its address alone, since NVDA's limiter keeps only its most
+  recent menu event, whatever its address or thread, and the outpost's
+  intake handles only a batch's newest; notifications
   and a focus's
   marker, read, and drop are never merged), with pongs
   and `Ready` first, while a write is in flight; this backlog of the
@@ -1158,13 +1172,16 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     or any part of a UIA focus's read, which keeps its place behind
     everything queued before it and is never merged or dropped
     (`Outgoing::delivered`); a routed fact replaces any waiting fact for
-    the same object and kind (or the oldest waiting fact makes room), and
+    the same object and kind, and for an MSAA event other than a menu
+    opening the same thread that raised it (or the oldest waiting fact makes room), and
     anything else, a query above all, fails at once. The supervisor's
     thread count is the relay, plus the helper parsing large frames once
     one has come.
   - Facts that arrive while an outpost is starting are held in arrival
-    order, a newer fact for the same object and kind replacing the older one
-    and moving to the back (NVDA's limiter rule), and released in that order
+    order, a newer fact for the same object and kind, and for an MSAA event
+    other than a menu opening the same thread that raised it, replacing
+    the older one and moving to the back (NVDA's limiter rule), and
+    released in that order
     on `Ready` (the pure `HeldFacts`); then the listener is told the
     outpost's hook is in (`HookInstalled`), and when a ready outpost's
     record goes, that it is not (`HookRemoved`), through
@@ -2075,8 +2092,10 @@ the relay hands every frame on through the app's sink, which never
 waits, and the
 maps of writers are locked only to look one up, never across a push or a
 write. The focus listener writes the same way, each fact by the thread
-that produced it, and its backlog merges its facts by element and kind
-and never waits either.
+that produced it, and its backlog merges its facts by element and kind,
+and for an MSAA event other than a menu opening by the thread that raised
+it too, and never waits
+either.
 
 ## The idle barrier
 

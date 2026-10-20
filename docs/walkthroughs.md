@@ -97,8 +97,10 @@ releases Alt. Notepad has no outpost yet.
      thread that captured it writes it at once as a `FocusFact` frame (a
      `Content-Length` header and JSON) up the listener's pipe to Core
      (`Outgoing::fact`). Only while an earlier write is still in flight
-     does it wait, coalesced: a newer fact for the same element and kind
-     replaces a waiting one, pongs and `Ready` go first, and the
+     does it wait, coalesced: a newer fact for the same element and kind,
+     and for an MSAA event other than a menu opening the same thread that
+     raised it, replaces a
+     waiting one, pongs and `Ready` go first, and the
      listener's I/O thread writes what waits once that write completes.
 4. **Core routes the facts and starts an outpost.** The lifecycle owner
    thread, the relay, reads the listener's pipe itself on its completion
@@ -115,7 +117,8 @@ releases Alt. Notepad has no outpost yet.
    contained from its first instruction), makes its writer on the relay's port, sends the app `OutpostMessage::Started`, and
    only then starts its reader, so the reducer thread hears of an
    incarnation before any of its messages. Facts arriving meanwhile are
-   held in arrival order, one per object and kind (`HeldFacts`). On the
+   held in arrival order, one per object and kind, and for an MSAA event
+   other than a menu opening per thread that raised it (`HeldFacts`). On the
    outpost's `Ready`, `Owner::on_ready` releases them in that order onto
    the outpost's writer as `SupervisorToOutpost::DeliverFact`, each
    written to the pipe at once unless a write is still in flight. Had
@@ -126,7 +129,9 @@ releases Alt. Notepad has no outpost yet.
    `crates/verbatim-outpost/src/outpost/mod.rs`) only pushes each fact onto
    the intake queue (`Intake::push` in `outpost/intake.rs`) and returns.
    The queue applies NVDA's limiter rules to MSAA events: one waiting
-   entry per object, kind and thread that raised it; a batch is everything that accumulated
+   entry per object, kind and thread that raised it, the console host's
+   events merging per window and kind whatever the thread, and a menu
+   opening per address alone, of which a batch handles only the newest; a batch is everything that accumulated
    while the worker handled the previous batch, in the order it arrived;
    per batch the newest 4 MSAA focus events and 10 other MSAA events per
    thread that raised them, with the focused object's other events always

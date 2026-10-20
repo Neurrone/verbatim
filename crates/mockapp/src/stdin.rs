@@ -2,15 +2,18 @@
 //!
 //! Commands are one per line: `focus <id>`, `set-focus <id>`,
 //! `set-name <id> <text>`, `set-value <id> <text>`,
-//! `set-description <id> <text>`, `set-states <id> <state>...`, `select <id>`,
-//! `caret <id> <start> [<end>]`, `caret-event <id>`, `set-text <id> <text>`,
-//! `text-changed <id>`,
-//! `notify <text>`,
-//! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
-//! `replace-items <id>`,
-//! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
-//! `answer-property <property id> <fail|empty|usual>`, `release`, and
-//! `quit`.
+//! `set-description <id> <text>`, `set-controller-for <id> [<controlled>]`,
+//! `set-states <id> <state>...`, `select <id>`,
+//! `caret <id> <start> [<end>]`, `caret-event <id>`,
+//! `console-caret <column> <row>`, `system-caret [show]`,
+//! `set-text <id> <text>`, `write-on-read <id> <text>`, `text-changed <id>`,
+//! `screen <id> <rows>`, `active-text-position <id> <start> <end>`,
+//! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
+//! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
+//! `answer-property <property id> <fail|empty|usual>`,
+//! `take-runtime-id <id> <from>`, `replace-items <id>`,
+//! `focus-child <container> <child>`, `client-name <text>`,
+//! `client-identity`, `disable-client`, `hold`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted

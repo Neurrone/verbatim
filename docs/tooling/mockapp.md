@@ -48,6 +48,14 @@ Stdin commands, one per line, once `ready` has printed:
   with `UIA_E_ELEMENTNOTAVAILABLE`. It raises no event, as the Settings
   app replaces its search suggestions' items after raising a selection
   for one of the old ones.
+- `console-caret <column> <row>` raises `EVENT_CONSOLE_CARET` from the
+  window, its cursor visible at that cell, as the console host raises it
+  for its console window.
+- `slow-patterns <ms>` answers every pattern request
+  (`GetPatternProvider`) that many milliseconds late from then on, as
+  `slow <ms>` does for every provider call; filling an element's cache
+  makes such requests and a walk to its nearest window does not. 0
+  answers them at once again.
 - `quit` exits the process.
 
 A typical by-hand session: start `mockapp` with a fixture, point a real

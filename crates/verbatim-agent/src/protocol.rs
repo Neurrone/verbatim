@@ -56,11 +56,13 @@ use serde::{Deserialize, Serialize};
 /// handle; version 21 refuses [`Request::CloseWindow`] for a window in
 /// the connection's baseline ([`Request::RecordWindows`]), since every
 /// File Explorer folder window shares one process and class, so a reused
-/// handle could otherwise close the owner's own folder window. A test
+/// handle could otherwise close the owner's own folder window; version 22
+/// removed `WindowCondition::NotForeground` and `Request::ProcessStatus`,
+/// which no client sent. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 21;
+pub const AGENT_PROTOCOL_VERSION: u32 = 22;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -421,11 +423,6 @@ pub enum Request {
         /// Path to the folder, agent-local.
         path: String,
     },
-    /// Asks whether a process is still running.
-    ProcessStatus {
-        /// The OS process id.
-        pid: u32,
-    },
     /// Asks for the agent's own session diagnostics: session id, whether
     /// its window station is interactive, and the input desktop's name
     /// when it can be opened. Exists so a screen reader test that can
@@ -656,7 +653,7 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::WaitForEvent`].
     EventWait(EventOutcome),
-    /// Answer to [`Request::ProcessStatus`].
+    /// Answer to [`Request::WaitForExit`].
     ProcessStatus(ProcessState),
     /// Answer to [`Request::SetForeground`]: whether the window is the
     /// foreground window.
@@ -750,7 +747,7 @@ pub enum KillOutcome {
     AlreadyExited,
 }
 
-/// Answer to [`Request::ProcessStatus`].
+/// Answer to [`Request::WaitForExit`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProcessState {
     /// The process is still running.

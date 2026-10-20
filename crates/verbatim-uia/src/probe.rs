@@ -84,7 +84,8 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// "no", kept as any "no" is.
 /// `UiaHasServerSideProvider`, which NVDA calls, sends two `WM_GETOBJECT`s, first with a
 /// nonzero wParam and then with wParam 0, and then connects (experiment
-/// `e39`, `docs/design/focus-pipeline.md` section 20); the raw probe sends
+/// `e39`; `docs/design/listener-without-connections.md`, the raw probe
+/// in its terms); the raw probe sends
 /// only the second, with wParam 0, and nothing more. It answers correctly
 /// where a new connection would meet another process's queued remote
 /// operation.

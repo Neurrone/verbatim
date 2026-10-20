@@ -158,7 +158,9 @@ pub(super) struct HeldFact {
 
 /// Facts that arrive while an outpost is starting, held in arrival order and
 /// released in that order once it is ready. A newer fact for the same object
-/// and kind replaces the older one and takes its place at the back, NVDA's
+/// and kind, and for an MSAA event other than a menu opening the same
+/// thread that raised it (`DeliveredFact::key`), replaces the older one and takes its place at
+/// the back, NVDA's
 /// limiter rule, so the release order is the order in which the surviving
 /// facts last happened.
 #[derive(Debug, Default)]
@@ -169,7 +171,9 @@ pub(super) struct HeldFacts {
 }
 
 impl HeldFacts {
-    /// Holds `fact`, replacing any older fact for the same object and kind.
+    /// Holds `fact`, replacing any older fact for the same object and kind
+    /// and, for an MSAA event other than a menu opening, the same thread
+    /// that raised it.
     pub(super) fn hold(&mut self, fact: HeldFact) {
         if let Some(key) = fact.fact.key(fact.win_event) {
             self.facts

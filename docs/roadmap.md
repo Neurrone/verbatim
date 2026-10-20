@@ -341,9 +341,9 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     (`capture-logs-3/outpost-spare-5.log`, 20:17:20.462788 and
     20:17:20.479817; `capture-logs-1-2/outpost-spare-5.log` lines 93 and
     94; `capture-logs-1-2/outpost-spare-7.log` lines 84 and 85), and the
-    marker crossed a process boundary first, so Settings raised the change
-    after the focus event; it is handled after the combo box was reported
-    as the focus because it waits behind the marker, as the intake's rule
+    marker crossed a process boundary first, so the listener received the
+    focus event before the outpost received the change; it is handled
+    after the combo box was reported as the focus because it waits behind the marker, as the intake's rule
     has it. NVDA's source at the pin plays the sound for both, if its UIA
     handler receives the second. Its property change handler has no focus filter: it redirects a change of
     the focus's element to the focus object and otherwise builds an object
@@ -365,9 +365,9 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     (`NVDAObjects/UIA/__init__.py` 1623 to 1630, `UIAHandler/__init__.py`
     697 to 756). Whether NVDA still receives the second change is a race
     the source does not settle: it does unless, within those milliseconds,
-    its main thread has handled the combo box's focus, run the box's
-    `event_loseFocus`, and its UIA thread has removed the box's local
-    registration (`NVDAObjects/UIA/__init__.py` 1627 to 1630,
+    its main thread has handled the combo box's focus, run the search
+    box's `event_loseFocus`, and its UIA thread has removed the search
+    box's local registration (`NVDAObjects/UIA/__init__.py` 1627 to 1630,
     `UIAHandler/__init__.py` 743 to 756). The transcript records no
     sounds, so nothing about the sound is matched yet; an NVDA debug log
     with UIA event logging on would settle it.
@@ -475,7 +475,8 @@ NVDA capture.
   control"; `docs/design/focus-pipeline.md`, section 5.2). Capture it with
   NVDA when a scenario or a report reproduces the order; the candidate
   remedy is to handle the focus instead of dropping it when its window has
-  the foreground window's root owner (Dickson, 2026-10-21).
+  the foreground window's root owner (Fable, 2026-10-21, pending Dickson's
+  acceptance).
 
 - Three differences the first compare-mode runs found on 2026-10-15,
   each to be captured, decided and recorded as a parity entry: NVDA leaves

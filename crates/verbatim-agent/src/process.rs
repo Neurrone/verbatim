@@ -608,7 +608,7 @@ fn job_has_processes(job: &OwnedHandle) -> bool {
 }
 
 /// Reports whether `pid` is running, and its exit code when it is not and
-/// the code can be read.
+/// the code can be read: [`wait_for_exit`]'s answer once its wait ends.
 ///
 /// A child [`launch`] started is answered from its kept handle, so its exit
 /// code is reported for as long as the entry is kept (a later launch drops
@@ -624,7 +624,7 @@ fn job_has_processes(job: &OwnedHandle) -> bool {
 ///
 /// Returns an error if the process can be opened but its exit code cannot
 /// be read.
-pub fn status(pid: u32) -> io::Result<ProcessState> {
+fn status(pid: u32) -> io::Result<ProcessState> {
     {
         let launched = LAUNCHED.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(entry) = launched.get(&pid) {

@@ -252,8 +252,12 @@ provider answers with a positive count is counted as negative
 text range move"). Verbatim: **matched (verified)** on both paths: the
 classic reads correct every such count
 (`verbatim_uia::text::signed_move`), and the remote programs correct
-the counts whose sign they use (a units read's movement, a terminal's
-tail); tested with mockapp's `backward_moves.json`.
+the one count whose sign they use, a units read's movement
+(`emit_backward_count` in `verbatim-uia-rops`); the terminal reading's
+program uses no backward move's count but to test whether the move went,
+which a wrong sign does not change. Tested with mockapp's
+`backward_moves.json` (`a_backward_move_is_counted_backward_both_ways` in
+`crates/mockapp/tests/text.rs`, remotely and classically).
 
 ### Synth isolation
 

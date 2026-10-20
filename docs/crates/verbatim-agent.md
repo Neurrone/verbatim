@@ -38,8 +38,9 @@ Public API:
     `WaitForJobEmpty` (a wait, on the job's own messages, until no process
     in a launched child's job runs, answered with every exit in the job:
     how a test checks that Verbatim left none of its processes behind and
-    how each ended), `WaitForExit` (on the process handle), and
-    `ProcessStatus`.
+    how each ended), and `WaitForExit` (on the process handle, answered
+    with whether the process still runs and, once it has exited, its exit
+    code).
   - The desktop: `ForegroundInfo` (the foreground window and the visible
     top-level windows, each with its handle, owning pid, title, class,
     program, whether it is cloaked or minimized, whether Windows judges it not responding, `hung`, and whether it has `WS_EX_NOACTIVATE`, so Windows never brings it to the foreground, `no_activate`), `SetForeground`
@@ -244,13 +245,13 @@ Nothing polls or sleeps.
 Lookup and termination act on raw pids via `OpenProcess`,
 `TerminateProcess`, and `GetExitCodeProcess`, so a test can manage a
 process it did not itself spawn. The agent also keeps the handle of every
-child it launched until `ProcessStatus` reports that child's exit, and
-answers `ProcessStatus` for such a child from that handle: without a
-handle, an exited process's object, and with it the exit code, is gone the
-moment it exits, so the exit code is now reported however long after the
-child exited it is asked for. The first report of the exit releases the
-handle. This is what lets the recording read ffmpeg's exit code after
-muxing.
+child it launched, and `WaitForExit` reads such a child's exit code from
+that handle: without a handle, an exited process's object, and with it the
+exit code, is gone the moment it exits, so the exit code is reported
+however long after the child exited it is asked for, until a launch made
+five minutes or more after one that found the child, and everything in
+its job, finished drops the handle. This is what lets the recording read
+ffmpeg's exit code after muxing, through `wait_for_exit`.
 Each launched child also runs in a job object of its own: it is created
 suspended, assigned to the job, and only then resumed, so everything it
 starts is in the job from the start. `KillProcess` on a launched child

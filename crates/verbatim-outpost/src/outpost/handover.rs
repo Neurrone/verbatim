@@ -70,8 +70,9 @@
 //!   drops an invalid window, but the two sources can still lose different
 //!   copies of one event:
 //!   - the listener's backlog replaces a waiting fact with a newer one of
-//!     the same element and kind while a write to Core is in flight, which
-//!     loses the listener's copy;
+//!     the same element and kind, and for an MSAA event other than a menu
+//!     opening of the same raising thread, while a write to Core is in flight, which loses the
+//!     listener's copy;
 //!   - the listener drops an event when it finds no process to route it
 //!     to, as for a console window whose console host it cannot find,
 //!     which loses the listener's copy;
@@ -98,8 +99,11 @@
 //!   the listener's "forwarding ended" is in, after which the intake drops
 //!   nothing behind a later change (`Intake::forwarding_ended`), while such
 //!   a copy can still be judged until [`TWIN_BOUND`] runs out: the focus is
-//!   then kept, and only its order among the events of that tick can be
-//!   wrong. For example, the
+//!   then kept but ordered before the change in their run, which is tried
+//!   newest first, so while the change waits the change is tried first and,
+//!   when it is reported, the focus is not, the same outcome as the drop,
+//!   where NVDA tries the focus first; only when the change was already
+//!   handed out is the focus reported, after it. For example, the
 //!   window's thread raises foreground changes G1 and G2 of the window and
 //!   then the focus, in one tick; the listener's backlog replaces G1's
 //!   copy with G2's; G2's copies meet, and G1's hook copy stays unmatched;

@@ -489,11 +489,15 @@ impl DeliveredFact {
     /// notification, its element, kind, processing, and activity id, not
     /// its text, as NVDA's UIA limiter keys one (`eventRecord.h`), so a
     /// newer notification of the same activity replaces one still waiting.
-    /// A `WinEvent`'s fact (a foreground change, an MSAA focus, a menu
-    /// opening, an alert, or a tooltip shown) is keyed by the thread that
-    /// raised it too, from `win_event` (0 without it), as NVDA's `WinEvent`
-    /// limiter keys every event (`orderedWinEventLimiter.py` 63 to 79), so
-    /// the facts of one address from two threads are not merged.
+    /// A `WinEvent`'s fact other than a menu opening (a foreground change,
+    /// an MSAA focus, an alert, or a tooltip shown) is keyed by the thread
+    /// that raised it too, from `win_event` (0 without it), as NVDA's
+    /// `WinEvent` limiter keys those events (`orderedWinEventLimiter.py` 63
+    /// to 75 and 79), so the facts of one address from two threads are not
+    /// merged. A menu opening is keyed by its address alone: NVDA's limiter
+    /// keeps only its most recent menu event, whatever its address or
+    /// thread (76 to 78), which the outpost's intake follows by handling
+    /// only a batch's newest menu opening.
     /// `None` for the parts of a UIA focus's read, which are never replaced
     /// on the way: the outpost coalesces a read only where it takes its
     /// marker's place.
@@ -526,7 +530,7 @@ impl DeliveredFact {
                 hwnd,
                 id_object,
                 id_child,
-            } => FactKey::MenuPopup(*hwnd, *id_object, *id_child, thread),
+            } => FactKey::MenuPopup(*hwnd, *id_object, *id_child),
             DeliveredFact::UiaSelection { snapshot, .. } => {
                 FactKey::UiaSelection(snapshot.runtime_id.clone())
             }
@@ -551,8 +555,8 @@ pub enum FactKey {
     Foreground(isize, u32),
     /// An MSAA focus at this address, raised by this thread.
     MsaaFocus(isize, i32, i32, u32),
-    /// An MSAA menu opening at this address, raised by this thread.
-    MenuPopup(isize, i32, i32, u32),
+    /// An MSAA menu opening at this address, whatever thread raised it.
+    MenuPopup(isize, i32, i32),
     /// A UIA selection of this runtime id.
     UiaSelection(Vec<i32>),
     /// A UIA notification of this runtime id, with this kind, processing,

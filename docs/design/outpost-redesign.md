@@ -169,7 +169,10 @@ these parts.
    (`nvda/source/IAccessibleHandler/orderedWinEventLimiter.py` and the UIA
    limiter):
    - one waiting entry per object and event kind, and for an MSAA event
-     per thread that raised it, as NVDA's limiter keys it; a newer one
+     other than the console host's or a menu opening, per thread that
+     raised it, as NVDA's limiter keys it (the console host's events merge
+     per window and kind whatever the thread, and a batch handles only its
+     newest menu opening, as NVDA keeps only its most recent menu event); a newer one
      replaces it and takes its place at the back;
    - a batch is everything that accumulated while the worker handled the
      previous batch;

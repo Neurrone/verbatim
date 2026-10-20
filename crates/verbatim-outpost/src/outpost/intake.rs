@@ -5,11 +5,13 @@
 //! `IAccessibleHandler`; `docs/design/focus-pipeline.md` section 5).
 //!
 //! - One waiting entry per object and event kind, and, for an MSAA focus,
-//!   foreground change or other MSAA event, per thread that raised it, as
-//!   NVDA's limiter keys its focus and other events
-//!   (`orderedWinEventLimiter.py` 63 to 79), so two threads' events of one
-//!   address both wait: a newer one replaces it and takes its place at
-//!   the back. The console host's events, which NVDA hooks apart, merge
+//!   foreground change or other MSAA event but a menu opening, per thread
+//!   that raised it, as NVDA's limiter keys its focus and other events
+//!   (`orderedWinEventLimiter.py` 63 to 75 and 79), so two threads' events
+//!   of one address both wait: a newer one replaces it and takes its place
+//!   at the back. A menu opening waits per address alone, and a batch
+//!   handles only its newest, whatever its address or thread, as NVDA's
+//!   limiter keeps only its most recent menu event (76 to 78). The console host's events, which NVDA hooks apart, merge
 //!   per window and kind whatever the thread. UIA events are limited by this alone, as
 //!   NVDA's UIA event limiter keeps one event per element and kind and
 //!   counts nothing.
@@ -55,12 +57,21 @@
 //!   and then says exactly one of the two, never both. It says the
 //!   foreground change only when its pump filters or refuses the focus,
 //!   and the drop matches that case: `eventHandler.shouldAcceptEvent`
-//!   (`eventHandler.py` 544 to 566, from `IAccessibleHandler/__init__.py`
-//!   1056) accepts the focus only when its window is the foreground
-//!   window or descends from it, has the foreground window's root owner,
-//!   or is topmost or has a topmost root, and an accepted focus is still
-//!   refused by the focused-state test (`processFocusNVDAEvent`) or the
-//!   SDM test (`processFocusWinEvent`, 710 to 720). Otherwise NVDA says the
+//!   (`eventHandler.py` 481 to 599, from `IAccessibleHandler/__init__.py`
+//!   1056) accepts the focus, among other cases, when its window is the
+//!   foreground window or descends from it, has the foreground window's
+//!   root owner, or is topmost or has a topmost root (544 to 566); the
+//!   other cases are an event an app module registered through
+//!   `requestEvents` (497 to 498), the desktop window (529 to 531), a
+//!   `Windows.UI.Core` window that descends from the active window (535 to
+//!   538), and a Chromium document under the focused Chrome window (569 to
+//!   598). An accepted focus can still be refused, as by
+//!   `winEventToNVDAEvent` failing (`IAccessibleHandler/__init__.py` 737
+//!   to 739), by the focused-state test (`processFocusNVDAEvent`'s
+//!   `shouldAllowIAccessibleFocusEvent`, whose base is at
+//!   `NVDAObjects/IAccessible/__init__.py` 874 to 892 and which app
+//!   modules override), or by the SDM test (`processFocusWinEvent`, 710 to
+//!   720). Otherwise NVDA says the
 //!   focus only, as `processForegroundWinEvent`'s descendant and address
 //!   tests (845 to 867) then drop the change, and there the drop differs:
 //!   NVDA ends on the focus's object and Verbatim on the window's. A dialog
@@ -989,11 +1000,16 @@ impl Intake {
     /// waiting or taken: the one case this leaves, which needs the
     /// listener's hook to receive an event later than the outpost's hook
     /// receives a later one. When the later change of its window and thread
-    /// still waits, such a late copy of an older change replaces it by key,
-    /// so the older change is handed out in its place, and its
-    /// `remove_client_focus` runs with the older raise time, no longer
-    /// removing a focus waiting that was raised between the two; the window
-    /// reported is the same.
+    /// still waits, such a late copy of an older change replaces it by key
+    /// and takes its place at the back, so the older change is handed out
+    /// instead, and its `remove_client_focus` runs with the older raise
+    /// time, no longer removing a focus waiting that was raised between the
+    /// two. The window is the same, but a focus raised between the two that
+    /// waits after the later change is then the newest of their run and is
+    /// reported in place of the window; this needs two late listener
+    /// copies, the focus's and the older change's, so it is rare. And the
+    /// foreground report can come after the speech of an event that ends a
+    /// run and arrived after the later change.
     pub(super) fn forwarding_ended(&self) {
         self.lock().foreground_taken = ForegroundTaken::Ended;
     }

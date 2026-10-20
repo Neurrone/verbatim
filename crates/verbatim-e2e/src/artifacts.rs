@@ -92,8 +92,7 @@ pub struct ScenarioSummary {
     /// The worst event-to-queue latency (milliseconds) across the timelines,
     /// or `None` when there were no timelines or the fetch failed. This is
     /// the deterministic pipeline latency — event observed to speech
-    /// queued — independent of the synthesizer, so it is the M3 capture-synth
-    /// budget's measured quantity.
+    /// queued — independent of the synthesizer.
     pub max_event_to_queue_ms: Option<u64>,
     /// The worst event-to-audio latency (milliseconds) across the timelines
     /// that reached audio, or `None` when none did. Under the capture synth's

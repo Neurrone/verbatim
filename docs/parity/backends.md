@@ -330,7 +330,8 @@ can lose different copies of one event, and the order can then be
 wrong for events of that tick. The listener loses its copy, leaving the
 hook's unmatched so that a later listener copy of the tick is taken as
 raised before the hook, when its backlog replaces a waiting fact with a
-newer one of the same element and kind while a write is in flight, or
+newer one of the same element and kind, and of the same raising thread
+for an MSAA event other than a menu opening, while a write is in flight, or
 when it finds no process to route the event to. A window destroyed
 between the two callbacks' reads of its owner loses a copy in either
 direction: when the outpost's hook reads first, the listener drops its
@@ -356,20 +357,33 @@ sees, is dropped as it arrives against the same record, whether the
 change waits, is planned or was handed out; the one case left is a
 listener copy the listener's hook receives only after it read the tick
 that message names; when the later change of its window and thread
-still waits, such a late copy of an older change replaces it by key, so
-the older change is handed out in its place and removes waiting client
-focuses by its own, older raise time, the window reported being the
-same. NVDA pumps a focus event at once
+still waits, such a late copy of an older change replaces it by key and
+takes its place at the back, so the older change is handed out instead
+and removes waiting client focuses by its own, older raise time. The
+window is the same, but a focus raised between the two that waits after
+the later change is then the newest of their run and is reported in
+place of the window; this needs two late listener copies, the focus's
+and the older change's, so it is rare. And the foreground report can
+come after the speech of an event that ends a run and arrived after the
+later change. NVDA pumps a focus event at once
 (`IAccessibleHandler/internalWinEventHandler.py` 193; `core.py`,
 `requestPump` and `processRequest`) and then says exactly one of the
 two, never both. NVDA says the foreground change only when its pump
 filters or refuses the focus, and the drop matches that case:
-`eventHandler.shouldAcceptEvent` (`eventHandler.py` 544 to 566, from
-`IAccessibleHandler/__init__.py` 1056) accepts the focus only when its
-window is the foreground window or descends from it, has the foreground
-window's root owner, or is topmost or has a topmost root, and an
-accepted focus is still refused by the focused-state test
-(`processFocusNVDAEvent`) or the SDM test (`processFocusWinEvent`,
+`eventHandler.shouldAcceptEvent` (`eventHandler.py` 481 to 599, from
+`IAccessibleHandler/__init__.py` 1056) accepts the focus, among other
+cases, when its window is the foreground window or descends from it, has
+the foreground window's root owner, or is topmost or has a topmost root
+(544 to 566); the other cases are an event an app module registered
+through `requestEvents` (497 to 498), the desktop window (529 to 531), a
+`Windows.UI.Core` window that descends from the active window (535 to
+538), and a Chromium document under the focused Chrome window (569 to
+598). An accepted focus can still be refused, as by
+`winEventToNVDAEvent` failing (`IAccessibleHandler/__init__.py` 737 to
+739), by the focused-state test (`processFocusNVDAEvent`'s
+`shouldAllowIAccessibleFocusEvent`, whose base is at
+`NVDAObjects/IAccessible/__init__.py` 874 to 892 and which app modules
+override), or by the SDM test (`processFocusWinEvent`,
 `IAccessibleHandler/__init__.py` 710 to 720). Otherwise NVDA says the
 focus only, as `processForegroundWinEvent`'s descendant and address
 tests then drop the change (`IAccessibleHandler/__init__.py` 845 to

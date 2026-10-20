@@ -1513,16 +1513,16 @@ impl Scenario {
     }
 
     /// [`Scenario::foreground_report`] for the record taken after cleanup,
-    /// with Windows' prelaunch of the Settings app named apart rather than
-    /// among the visible windows: a `SystemSettings.exe` whose only window
-    /// is cloaked and which the scenario did not start
-    /// ([`settings_prelaunch`]).
+    /// with a suspended Settings app named apart rather than among the
+    /// visible windows: a `SystemSettings.exe` whose every window is
+    /// cloaked ([`settings_prelaunch`]). The cloaked frame of
+    /// `ApplicationFrameHost.exe` that hosts it stays listed.
     pub fn cleanup_report(&mut self) -> String {
         let mut info = match self.agent.foreground_info() {
             Ok(info) => info,
             Err(error) => return format!("the foreground could not be read: {error}"),
         };
-        let prelaunch = settings_prelaunch(&info.windows, &self.started);
+        let prelaunch = settings_prelaunch(&info.windows);
         if prelaunch.is_empty() {
             return describe_foreground(&info);
         }
@@ -1536,7 +1536,8 @@ impl Scenario {
             .map(|window| format!("pid {} ({:?}, cloaked)", window.pid, window.title))
             .collect();
         format!(
-            "{}; Windows' prelaunch of the Settings app, which the scenario did not start: {}",
+            "{}; the Settings app suspended with every window cloaked, Windows' prelaunch or the \
+             scenario's own Settings left suspended: {}",
             describe_foreground(&info),
             named.join(", ")
         )
@@ -2973,17 +2974,20 @@ fn minimize_failure(
     None
 }
 
-/// The processes among `windows` that are Windows' prelaunch of the
-/// Settings app: a `SystemSettings.exe` none of `started` names, whose
-/// every window listed is cloaked. Windows starts the app ahead of use and
-/// keeps it suspended with its window cloaked, so it is no window a
-/// scenario left (`docs/tooling/e2e.md`, on `foreground.txt`).
-fn settings_prelaunch(windows: &[WindowInfo], started: &[u32]) -> Vec<u32> {
+/// The processes among `windows` that are a suspended Settings app: a
+/// `SystemSettings.exe` whose every window listed is cloaked. Windows
+/// starts the app ahead of use and keeps it suspended with its window
+/// cloaked, and keeps the Settings a scenario opened so once its window
+/// closes, so it is no window a scenario left (`docs/tooling/e2e.md`, on
+/// `foreground.txt`). Which of the two it is cannot be told: a scenario
+/// opens Settings through `explorer.exe`, and the window it waits for is
+/// the frame host's, so no `SystemSettings.exe` is among the processes it
+/// records as started.
+fn settings_prelaunch(windows: &[WindowInfo]) -> Vec<u32> {
     let mut pids: Vec<u32> = windows
         .iter()
         .filter(|window| window.image.eq_ignore_ascii_case("SystemSettings.exe"))
         .map(|window| window.pid)
-        .filter(|pid| !started.contains(pid))
         .collect();
     pids.sort_unstable();
     pids.dedup();
@@ -3130,10 +3134,10 @@ mod minimize_tests {
         }
     }
 
-    /// Only a `SystemSettings.exe` the scenario did not start, with every
-    /// window cloaked, is taken for Windows' prelaunch.
+    /// Only a `SystemSettings.exe` with every window cloaked is taken for a
+    /// suspended Settings app; the frame host's cloaked frame is not.
     #[test]
-    fn only_a_settings_app_not_started_with_every_window_cloaked_is_the_prelaunch() {
+    fn only_a_settings_app_with_every_window_cloaked_is_taken_as_suspended() {
         let cloaked = |pid| WindowInfo {
             cloaked: true,
             ..window("Settings", "SystemSettings.exe", pid)
@@ -3149,7 +3153,7 @@ mod minimize_tests {
                 ..window("Settings", "ApplicationFrameHost.exe", 14)
             },
         ];
-        assert_eq!(settings_prelaunch(&windows, &[11]), [10]);
+        assert_eq!(settings_prelaunch(&windows), [10, 11]);
     }
 
     #[test]

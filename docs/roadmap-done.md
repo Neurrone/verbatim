@@ -410,8 +410,8 @@ and the D9 outpost generalization — were finished early, at the end of M2
   capture synthesizer (deterministic, measures everything except
   synthesis), plus an end-to-end OneCore smoke number with a looser
   threshold. Landed, then amended by a recorded decision: the pipeline
-  budget (`verbatim_e2e::latency::PIPELINE_BUDGET_MS`, the deterministic
-  event-observed-to-speech-queued latency, synth-independent) is
+  budget (then a constant in the end-to-end crate's latency module, on the
+  deterministic event-observed-to-speech-queued latency, synth-independent) is
   *reported, never asserted* — a prominent warning on a breach, plus every
   run summary's measured per-scenario maxima. It began as a hard
   per-scenario assertion, and flaked twice for the same non-code reason: a

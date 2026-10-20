@@ -12,8 +12,8 @@
 //!   get a healthy outpost killed, and so does the shutdown message, the
 //!   last command a child is sent;
 //! - a routed fact replaces any older fact still waiting for the same object
-//!   and kind, and for a `WinEvent`'s fact from the same thread
-//!   (`DeliveredFact::key`); if there is none, the oldest waiting fact is dropped to make
+//!   and kind, and for a `WinEvent`'s fact other than a menu opening from
+//!   the same thread (`DeliveredFact::key`); if there is none, the oldest waiting fact is dropped to make
 //!   room, so the newest facts survive;
 //! - a message of the MSAA hand-over between the listener and an outpost
 //!   (`docs/design/focus-pipeline.md`, section 12.4) always gets through,
@@ -68,9 +68,11 @@ pub(super) enum Outgoing {
     Ping(SupervisorToOutpost),
     /// The shutdown message, [`SupervisorToOutpost::Shutdown`].
     Shutdown,
-    /// A routed fact, keyed by the object and kind it concerns (`None` for
-    /// a notification, which nothing replaces), with when verbatim.exe read
-    /// it from the listener.
+    /// A routed fact, keyed by the object and kind it concerns and, for an
+    /// MSAA event other than a menu opening, the thread that raised it
+    /// (`None` for a notification,
+    /// which nothing replaces), with when verbatim.exe read it from the
+    /// listener.
     Fact(Option<FactKey>, SupervisorToOutpost, Received),
     /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
     /// `HookInstalled` or `HookRemoved` to the listener; and `FocusQueued`
@@ -93,7 +95,8 @@ impl Outgoing {
     /// A routed fact for an outpost: a part of a UIA focus's read, which an
     /// outpost waits on in order, gets through as a hand-over message does
     /// and is never merged; any other fact is keyed by the object and kind
-    /// it concerns.
+    /// it concerns and, for an MSAA event other than a menu opening, the
+    /// thread that raised it.
     pub(super) fn delivered(held: super::policy::HeldFact) -> Self {
         let key = held.fact.key(held.win_event);
         let focus_read = held.fact.is_focus_read();
@@ -754,23 +757,17 @@ mod tests {
         );
     }
 
-    /// A menu opening, an alert and a tooltip shown are keyed by the
-    /// thread that raised them too, as NVDA's limiter keys every
-    /// `WinEvent`: one of an address from another thread waits beside the
-    /// one waiting, and a newer one from the same thread replaces it and
-    /// moves to the back.
+    /// An alert and a tooltip shown are keyed by the thread that raised
+    /// them too, as NVDA's limiter keys those `WinEvent`s: one of an
+    /// address from another thread waits beside the one waiting, and a
+    /// newer one from the same thread replaces it and moves to the back.
     #[test]
-    fn a_menu_opening_alert_or_tooltip_replaces_only_the_one_its_thread_raised() {
+    fn an_alert_or_tooltip_replaces_only_the_one_its_thread_raised() {
         let raised = |fact, thread, time| {
             Outgoing::delivered(HeldFact {
                 win_event: Some(crate::protocol::WinEventStamp { thread, time }),
                 ..held(fact)
             })
-        };
-        let menu = || DeliveredFact::MenuPopup {
-            hwnd: 8,
-            id_object: -4,
-            id_child: 0,
         };
         let alert = || DeliveredFact::Alert {
             hwnd: 8,
@@ -784,13 +781,10 @@ mod tests {
         };
         let mut queue = Queue::default();
         for (fact, thread, time) in [
-            (menu(), 7, 100),
             (alert(), 7, 101),
             (shown(), 7, 102),
-            (menu(), 9, 110),
             (alert(), 9, 111),
             (shown(), 9, 112),
-            (menu(), 7, 120),
             (alert(), 7, 121),
             (shown(), 7, 122),
         ] {
@@ -809,10 +803,8 @@ mod tests {
         assert_eq!(
             order,
             [
-                "MenuPopup { hwnd: 8, id_object: -4, id_child: 0 } thread 9 at 110",
                 "Alert { hwnd: 8, id_object: -4, id_child: 0 } thread 9 at 111",
                 "Show { hwnd: 8, id_object: -4, id_child: 0 } thread 9 at 112",
-                "MenuPopup { hwnd: 8, id_object: -4, id_child: 0 } thread 7 at 120",
                 "Alert { hwnd: 8, id_object: -4, id_child: 0 } thread 7 at 121",
                 "Show { hwnd: 8, id_object: -4, id_child: 0 } thread 7 at 122",
             ]

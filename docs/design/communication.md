@@ -115,7 +115,7 @@ So: a frame costs one encode, one `WriteFile` and no wake-up on the sending side
 
 The policies are today's, moved into each `Sender`'s backlog. They act only when a write is in flight, which is exactly when merging matters.
 
-- Listener to verbatim.exe: urgent messages (pongs, `Ready`) ahead of facts; facts merged one per element and kind, a newer one replacing the waiting one and going to the back (`listener.rs` module documentation, NVDA's limiter rule); the menu-end message after facts.
+- Listener to verbatim.exe: urgent messages (pongs, `Ready`) ahead of facts; facts merged one per element and kind, and for an MSAA event other than a menu opening per thread that raised it, a newer one replacing the waiting one and going to the back (`listener.rs` module documentation, NVDA's limiter rule); the menu-end message after facts.
 - verbatim.exe to an outpost or the listener: today's `Queue` (`writer.rs:99-140`): at most 64 waiting; a fact replaces a waiting fact with the same key; past the bound the oldest fact is dropped; `NodesHeld` replaces a waiting `NodesHeld`; ping, shutdown and hand-over messages always get in.
 - An outpost to verbatim.exe: today's outbound rules (`outbound.rs:1-27`): pongs, `Ready` and `TargetExited` first; events merged by object and kind; terminal output combined under the flood policy; replies, notifications and faults never merged and kept in order. Message positions for `NodesHeld` are numbered in the order frames are written, as today.
 - verbatim.exe to a host: a `Speak`, a `Cancel` or a setting at a time; nothing accumulates.

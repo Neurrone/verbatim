@@ -392,7 +392,8 @@ test Windows 11 Notepad, which GitHub's Windows Server runner lacks (it
 has classic Notepad, a Win32 edit control), and their names start with
 `notepad_`; editing behaviour is also covered in the harness's Windows
 Forms text box, which runs everywhere. `settings_search_suggestions` is
-local-only by a decision of its own (2026-10-21), for two reasons: the
+local-only by a decision of its own (Fable, 2026-10-21, pending
+Dickson's acceptance), for two reasons: the
 Settings app's search index is untested on the runner, and in some
 launches Settings replaces its suggestion list's items as the list
 opens, a state of Settings' own that decides how Verbatim finds the
@@ -439,11 +440,18 @@ the same directory the interleaved timeline
 (`timeline.txt`, whole, where a failure prints its earlier steps shortened),
 what held the foreground before setup and after teardown (`foreground.txt`,
 so a failure can be read against the desktop it started from; after
-teardown, a `SystemSettings.exe` the scenario did not start, whose every
-window is cloaked, is named as Windows' prelaunch of the Settings app
-rather than listed among the visible windows, since Windows starts that
-app ahead of use and keeps it suspended with its window cloaked, so it is
-nothing a scenario left; Fable, 2026-10-21, pending Dickson's
+teardown, a `SystemSettings.exe` whose every window is cloaked is named
+as the Settings app suspended, Windows' prelaunch or the scenario's own
+Settings left suspended, rather than listed among the visible windows,
+since Windows starts that app ahead of use and keeps it suspended with its
+window cloaked, and keeps the Settings a scenario opened so once its
+window closes, so it is nothing a scenario left; which of the two it is
+cannot be told, since a scenario opens Settings through `explorer.exe`
+and records the frame host's process, not `SystemSettings.exe`. The
+cloaked "Settings" frame of `ApplicationFrameHost.exe`
+(`ApplicationFrameWindow`) that hosts it stays listed among the visible
+windows, as cloaked, since the agent's window list does not say which
+application a frame hosts; Fable, 2026-10-21, pending Dickson's
 acceptance),
 Verbatim's captured stderr log (`stderr.log`), the per-process outpost,
 listener, and synthesizer host logs that each spawned process's stderr was

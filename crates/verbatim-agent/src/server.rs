@@ -303,13 +303,6 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::WaitForFile { .. }
         | Request::CreateEvent { .. }
         | Request::WaitForEvent { .. }) => process_request(id, request),
-        Request::ProcessStatus { pid } => match process::status(pid) {
-            Ok(state) => Frame::Reply {
-                to: id,
-                payload: ReplyPayload::ProcessStatus(state),
-            },
-            Err(error) => error_frame(id, &error),
-        },
         Request::SessionInfo => match session::current() {
             Ok(info) => Frame::Reply {
                 to: id,
@@ -914,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn launch_status_kill_wait_lifecycle_over_the_wire() {
+    fn launch_kill_wait_lifecycle_over_the_wire() {
         let _launching = crate::process::LAUNCHING
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -946,20 +939,11 @@ mod tests {
             panic!("expected a Launched reply, got {launch_reply:?}");
         };
 
-        let status_reply = client.request(Request::ProcessStatus { pid });
-        assert_eq!(
-            status_reply,
-            Frame::Reply {
-                to: 3,
-                payload: ReplyPayload::ProcessStatus(ProcessState::Running),
-            }
-        );
-
         let kill_reply = client.request(Request::KillProcess { pid });
         assert_eq!(
             kill_reply,
             Frame::Reply {
-                to: 4,
+                to: 3,
                 payload: ReplyPayload::Killed(KillOutcome::Terminated),
             }
         );
@@ -971,7 +955,7 @@ mod tests {
         assert_eq!(
             wait_reply,
             Frame::Reply {
-                to: 5,
+                to: 4,
                 payload: ReplyPayload::ProcessStatus(ProcessState::Exited { exit_code: Some(1) }),
             }
         );
