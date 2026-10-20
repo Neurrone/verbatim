@@ -183,6 +183,10 @@ pub(crate) struct Context {
     /// in microseconds: a caret event observed before it changes nothing
     /// the read did not see.
     caret_read: Mutex<CaretRead>,
+    /// The UIA node, by number, that last raised a UIA caret event of its
+    /// own: the system caret's events add nothing for it but a second read
+    /// of the same move ([`Self::raises_uia_caret_events`]).
+    uia_caret_source: Mutex<Option<u64>>,
     /// The details the active theme wants read for each node
     /// ([`SupervisorToOutpost::Fetches`]); everything until Core says
     /// otherwise. UIA reads leave the properties of the others out of
@@ -472,6 +476,24 @@ impl Context {
             .covers(node.number(), observed_us)
     }
 
+    /// Notes that the UIA node `node` raised a UIA caret event.
+    fn uia_caret_event_from(&self, node: NodeId) {
+        *self
+            .uia_caret_source
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(node.number());
+    }
+
+    /// Whether `node` is the UIA node that last raised a UIA caret event,
+    /// so that it reports its caret moves itself.
+    fn raises_uia_caret_events(&self, node: NodeId) -> bool {
+        *self
+            .uia_caret_source
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            == Some(node.number())
+    }
+
     /// Whether a UIA read for an element of `hwnd` should try a remote
     /// operation: the setting allows it and no import for the window has
     /// failed.
@@ -590,8 +612,8 @@ impl Context {
     /// is dropped here instead, and the worker is not woken for it. NVDA
     /// drops a `WinEvent` from a UIA window the same way, and a console
     /// flood raises them by the thousand. A console's update or caret
-    /// event and a destroyed window are kept: the worker
-    /// uses them for UIA windows too. Whether a window is known to be read through UIA is
+    /// event, the system caret's event, and a destroyed window are kept:
+    /// the worker uses them for UIA windows too. Whether a window is known to be read through UIA is
     /// asked of `windows`, the event thread's own record, so a flood from
     /// one window costs one read of its classes.
     fn take_in_win_event(&self, event: WinEvent, timing: EventTiming, windows: &mut EventWindows) {
@@ -612,9 +634,14 @@ impl Context {
                 | WinEventKind::Alert
                 | WinEventKind::Show
         ) {
+            // The system caret's events are a UIA focus's caret events
+            // too, and are kept for the worker.
             if !matches!(
                 kind,
-                WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret | WinEventKind::Destroy
+                WinEventKind::ConsoleUpdate
+                    | WinEventKind::ConsoleCaret
+                    | WinEventKind::Destroy
+                    | WinEventKind::Caret
             ) && windows.known_to_use_uia(
                 (
                     &self.arbitrator,
@@ -909,6 +936,7 @@ impl Outpost {
             patterns: Mutex::new(HashMap::new()),
             text_support: Mutex::new(HashMap::new()),
             caret_read: Mutex::new(CaretRead::default()),
+            uia_caret_source: Mutex::new(None),
             fetches: Mutex::new(Fetches::default()),
             terminals: Mutex::new(HashMap::new()),
             owed_reads: Mutex::new(HashMap::new()),

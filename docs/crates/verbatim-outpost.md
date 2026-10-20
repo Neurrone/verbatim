@@ -1346,14 +1346,15 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `docs/design/wake-ups.md`, "Narrowing the outpost's hook"): while the
   application's focus window and foreground window are both known to be
   read through UIA, it unhooks the value, state, name, description,
-  selection, text selection and caret location events
+  selection and text selection events
   (`narrowing::NARROWED`, with `verbatim_ia2::suspend_kinds`), which it
   would drop for those windows anyway, nearly all of them UI Automation's
   own copies of its events, and it hooks them again as soon as the focus,
   a menu opening, or the foreground is in a window read through MSAA or
   not yet decided. Focus, foreground, menu opening, alert, tooltip, window
-  shown, window destroyed, and the console's updates and caret stay hooked
-  for the outpost's life, since the worker uses them for UIA windows too.
+  shown, the system caret's location changes, window destroyed, and the
+  console's updates and caret stay hooked for the outpost's life, since
+  the worker uses them for UIA windows too.
   The focus and foreground windows are those of the hook's own focus,
   menu-opening and foreground events, decided again before each is
   queued; until the hook delivers one, those of the facts the listener
@@ -1770,10 +1771,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     or not, which the hooks report; the classic edit control raises
     nothing for an unfocused caret move and, focused, only the system
     caret's hide and show (`EVENT_OBJECT_HIDE` and `EVENT_OBJECT_SHOW` on
-    `OBJID_CARET`), which the outpost does not subscribe to, so its caret
-    keys are silent. Windows 11 Notepad, Windows Terminal, and the console
-    host, whose caret events come on their own schedule, need a live
-    check.
+    `OBJID_CARET`), and the hook reports the show as a caret event, as it
+    reports the system caret's location change. Windows 11 Notepad,
+    Windows Terminal, and the console host, whose caret events come on
+    their own schedule, need a live check.
   - Reads move first when asked: from the start of the unit containing the
     point, by whole units, never past the text's ends, saying how far they
     went; a document movement goes to the start or the end. A unit the
@@ -1832,9 +1833,20 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   minted for it, no call), and dropped when its element is not a node the
   outpost knows or it carries no range, as NVDA's handler drops it; the
   intake keeps the newest one per element. For an edit control, the hooks' caret
-  (`EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET`) and text selection
-  events are reported as `CaretMoved`, and its value change as
-  `TextChanged` without reading the control's whole text as its MSAA value.
+  (`EVENT_OBJECT_LOCATIONCHANGE` or `EVENT_OBJECT_SHOW` on `OBJID_CARET`)
+  and text selection events are reported as `CaretMoved`, and its value
+  change as `TextChanged` without reading the control's whole text as its
+  MSAA value. For a UIA focus, the hooks' caret event from the focus's
+  window is the focus's caret event, handled as its UIA caret event is
+  (`Worker::system_caret_of_uia_focus`), as NVDA handles the system
+  caret's events on any focus, since some UIA documents, such as Visual
+  Studio's, raise no UIA caret event. Once the focus has raised a UIA
+  caret event of its own (`Context::raises_uia_caret_events`), its system
+  caret's events are not used: Windows 11 Notepad raises both for every
+  move, the system caret's first, so each read the caret a second time.
+  NVDA's exceptions are not built:
+  an IAccessible2 focus, not read before milestone M7, and Word's UIA
+  document, Word's own rule for the app-module track.
   The intake keeps one waiting caret report per node, and a caret event
   observed before the worker last read that node's caret (a caret key's
   check reads it after the event) is dropped. A caret event of a focused

@@ -1088,7 +1088,8 @@ On Verbatim's side, other than the desktop-wide group:
 
 ## Narrowing the outpost's hook (2026-10-14)
 
-Approved by Dickson. An outpost hooked its application for a fixed set of
+Approved by Dickson; amended on 2026-10-20, when the system caret's
+location change left the narrowed kinds. An outpost hooked its application for a fixed set of
 `WinEvent` kinds for the process's life. The event thread already dropped
 every value, state, name, description, selection, text selection and
 caret location event of a window known to be read through UIA, but only
@@ -1099,14 +1100,31 @@ Automation raises those copies only while some client hooks them.
 
 The change (`crates/verbatim-outpost/src/outpost/narrowing.rs`): while the
 application's focus window and foreground window are both known to be read
-through UIA, those seven kinds are unhooked
+through UIA, the value, state, name, description, selection and text
+selection events are unhooked
 (`verbatim_ia2::suspend_kinds`, one raw event at a time within the one
 hook set, as the keyboard hook thread hooks the console's events); as soon
 as the focus, a menu opening, or the foreground is in a window read
 through MSAA, or not yet decided, they are hooked again, before that event
-is queued. Focus, foreground, menu opening, alert, tooltip, window
-destroyed and the console's updates and caret stay hooked: the
-worker uses them for UIA windows too. The event thread takes the focus
+is queued. Focus, foreground, menu opening, alert, tooltip, the system
+caret's location change, window destroyed and the console's updates and
+caret stay hooked: the worker uses them for UIA windows too, the system
+caret's events as a caret event on a UIA focus, as NVDA handles them.
+That costs the event thread a wake-up for every location change of the
+application's objects, not only the caret's, which the hook drops at
+once. Measured on 2026-10-20 with a separate hook on every location
+change and show desktop-wide, over one run each: `notepad_editing`, 81
+location changes from Notepad (14 of them the caret's) and 33 caret
+shows, which were hooked already; `conhost_flood`, 28 location changes
+from the console window (22 of them the caret's); `windows_terminal_flood`,
+9 from Windows Terminal, none the caret's; `settings_system_page`, 4 from
+the Settings app and 11 from its frame host. The caret's events wake
+the worker too. Handled for every UIA focus, they doubled the caret
+reads of `notepad_editing`, 31 against 16, since Notepad raises the
+system caret's events before its UIA caret event for each move and each
+read the caret; so a focus that has raised a UIA caret event of its own
+has the system caret's events dropped by the worker, and only a focus
+that raises none reads them. The event thread takes the focus
 and foreground windows from its own hook's events, and from the
 listener's routed facts until its hook delivers one; the worker nudges it
 to decide again when it keeps a UIA verdict, and the reader when Core

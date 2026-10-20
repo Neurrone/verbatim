@@ -21,9 +21,11 @@ Public API:
   (`EVENT_OBJECT_SELECTION` is `WinEventKind::Selection`; the selection add,
   remove, and within events are reported as `WinEventKind::StateChange`, as
   NVDA handles them), and since milestone M4 the caret
-  (`WinEventKind::Caret`: `EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET`,
-  the system caret NVDA follows in edit controls; every other object's
-  location change, which windows raise constantly, is dropped at the hook)
+  (`WinEventKind::Caret`: `EVENT_OBJECT_LOCATIONCHANGE` or
+  `EVENT_OBJECT_SHOW` on `OBJID_CARET`, the system caret, which NVDA
+  handles as a caret event on its focus; every other object's location
+  change, which windows raise constantly, is dropped at the hook, and a
+  caret's show is never `WinEventKind::Show`)
   and text selection changes (`WinEventKind::TextSelectionChange`,
   `EVENT_OBJECT_TEXTSELECTIONCHANGED`); and
   `LISTENER_SUBSCRIPTIONS`, what the focus listener installs

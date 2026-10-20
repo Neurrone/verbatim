@@ -235,6 +235,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::ConsoleCaret(column, row) => {
             crate::msaa::raise_console_caret(hwnd, column, row);
         }
+        Command::SystemCaret => crate::msaa::raise_system_caret(hwnd),
         Command::Caret(id, start, end) => {
             let mut guard = tree
                 .lock()

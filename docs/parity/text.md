@@ -75,6 +75,20 @@ that is neither has no text.
   title. The console host's text area is announced as "terminal"
   without its English-only name, "Text Area", as NVDA's console class
   drops it (the terminal scenarios assert it).
+- The system caret's location change and show (`OBJID_CARET`) are a
+  caret event on the focus, as NVDA handles them, whether the focus is
+  an edit control read through MSAA or a UIA node in the window that
+  raised them: some UIA documents, such as Visual Studio's, raise no
+  UIA caret event of their own (mockapp's
+  `the_system_carets_move_is_the_uia_focuss_caret_event`). Different:
+  once a UIA focus has raised a UIA caret event of its own, Verbatim no
+  longer uses the system caret's events for it, where NVDA handles both,
+  since each would read the caret again for a move its UIA event
+  reports, which says nothing new. NVDA's two
+  exceptions are not built: a focus read through IAccessible2, which
+  Verbatim does not read before milestone M7, and Word's UIA document,
+  which Chinese input methods flood with these events, a rule of Word's
+  own support (the roadmap's app-module track, tier D).
 - NVDA's `caretMovementFailed` event is not offered.
 
 Differences:
@@ -90,11 +104,11 @@ Differences:
   late. A watch that ends without evidence, because the next key
   replaced it, the focus moved, or it reached its ten-second bound, says
   nothing. The same holds for a key whose application moves the caret
-  without reporting it: a classic edit control reports a caret move
-  only by the system caret's hide and show events, which Verbatim does
-  not hear, where NVDA's polling finds the move; a Common Controls
+  without reporting it at all, where NVDA's polling finds the move. A
+  classic edit control reports a caret move by the system caret's show
+  event, which Verbatim hears as a caret event; a Common Controls
   version 6 edit control, such as a Windows Forms text box with visual
-  styles, reports it with its text selection event. An application
+  styles, reports it with its text selection event too. An application
   whose Up Arrow on the first line, or Down Arrow on the last, moves the
   caret to the line's start or end has that move spoken as the key's
   answer, as NVDA speaks it.

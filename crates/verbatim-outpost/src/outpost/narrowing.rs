@@ -3,8 +3,8 @@
 //!
 //! An out-of-context hook wakes the event thread for every event it is
 //! subscribed to, before anything can drop it. The value, state, name,
-//! description, selection, text selection and caret location events of a
-//! window read through UIA are dropped on arrival ([`super::Context`]'s
+//! description, selection and text selection events of a window read
+//! through UIA are dropped on arrival ([`super::Context`]'s
 //! `take_in_win_event`), and the worker drops them too: in a console
 //! flood they are most of the console host's events, nearly all of them UI
 //! Automation's own MSAA copies of its events. So while the application's
@@ -13,8 +13,10 @@
 //! moves to a window that is read through MSAA, or whose backend is not
 //! yet decided, they are hooked again. Everything else stays hooked for
 //! the outpost's life, since the worker uses it for UIA windows too: focus,
-//! foreground, a menu opening, alerts, tooltips, a window destroyed, and
-//! the console host's updates and caret.
+//! foreground, a menu opening, alerts, tooltips, the system caret's
+//! location changes and shows (a caret event on a UIA focus, as NVDA
+//! handles them), a window destroyed, and the console host's updates and
+//! caret.
 //!
 //! The decision is the event thread's own, on the thread that owns the
 //! hooks: its focus and foreground windows are those of the focus,
@@ -49,7 +51,6 @@ pub(super) const NARROWED: &[WinEventKind] = &[
     WinEventKind::NameChange,
     WinEventKind::DescriptionChange,
     WinEventKind::Selection,
-    WinEventKind::Caret,
     WinEventKind::TextSelectionChange,
 ];
 

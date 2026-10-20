@@ -149,7 +149,10 @@ caret event for a text node, as an application reports its caret once it
 has moved it: UIA's text selection changed event from the node, or, on
 the MSAA backend, `EVENT_OBJECT_TEXTSELECTIONCHANGED` from the edit
 control's client object, which a Common Controls version 6 edit control
-raises whenever its caret moves), `set-text <id> <text>` (replaces a UIA
+raises whenever its caret moves), `system-caret` (raises
+`EVENT_OBJECT_LOCATIONCHANGE` on the system caret, `OBJID_CARET`, from
+the window, as Windows raises it when an application moves its caret,
+on either backend), `set-text <id> <text>` (replaces a UIA
 text node's text, with `\n` for a line feed and `\\` for a backslash,
 raising no event, as a terminal's buffer changes before a client reads it;
 the terminal tests write lines, discard the oldest, and clear the screen

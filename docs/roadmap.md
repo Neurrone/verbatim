@@ -210,14 +210,12 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   "Time limits that hold".
 - What remains of the audits' items 10 and 11 (Dickson, 2026-10-20;
   items 8 and 9 are done, `docs/roadmap-done.md`):
-  - Item 11, in three changes. First, MSAA caret events (`OBJID_CARET`
-    location change and show) mapped to a caret event on a UIA focus, as
-    NVDA maps them (`IAccessibleHandler/__init__.py`, lines 636 to 668).
-    Second, the UIA combo box without the Value pattern and the looping
+  - Item 11, in two more changes. First, the UIA combo box without the
+    Value pattern and the looping
     selector, whose value is the selected item's name and whose item's
     state change is the combo box's value change
     (`NVDAObjects/UIA/__init__.py`, lines 1380 to 1392 and 2746 to 2800).
-    Third, an end-to-end scenario pinning selection in a list the focus
+    Second, an end-to-end scenario pinning selection in a list the focus
     controls, Settings' search suggestions
     (`docs/parity/changes-and-selection.md`, "Selection in a list the
     focus controls"). Also left from the item, deferred until a capture shows
@@ -787,7 +785,11 @@ Tiers, gated by the capabilities each module needs:
   Wasm extensions cannot reach directly; this tier is gated on designing a
   capability-gated app object-model bridge in the WIT host API — the
   largest single API-growth item in the plan, and worth its own design pass
-  for both surface and security.
+  for both surface and security. Word's support takes with it NVDA's
+  rule that the system caret's events are no caret event on Word's UIA
+  document, which Chinese input methods flood with them
+  (`IAccessibleHandler/__init__.py`, lines 641 to 657); Verbatim handles
+  them as a caret event on every UIA focus until then.
 - **Tier E — after the JAB backend lands (M13)**: javaw and Eclipse.
 
 ## Ongoing tracks (every milestone)

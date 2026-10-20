@@ -60,9 +60,6 @@ each found against NVDA's source:
 - NVDA asks `accFocus` again of what `accFocus` answered, until it
   answers the same object, when it reads the focus on request; Verbatim
   asks once.
-- NVDA handles the system caret's show event as a caret event on the
-  focus; Verbatim follows the caret's location changes only, and reads
-  the caret after every focus anyway.
 - NVDA handles each focus event of a batch in order once another kind
   of event follows it, so a focus separated from a later one by other
   events is still handled; Verbatim handles a batch's newest focus

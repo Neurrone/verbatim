@@ -539,6 +539,11 @@ landed it.
   the batch's newest foreground change is tried newest first until one is
   reported, 2026-10-20 ([focus pipeline](design/focus-pipeline.md),
   section 5.2).
+- The audits' item 11, its first change: the system caret's location
+  change and show (`OBJID_CARET`) are a caret event on a UIA focus in
+  their window, as NVDA handles them, unless the focus raises UIA caret
+  events of its own, 2026-10-20 ([parity](parity/text.md),
+  "TextInfo-equivalent layer").
 - Step 9, the relay: replaced by the communication migration, below.
 - Step 10, the harness's idle barrier through every child: communication
   step 6a, 10f01254, 2026-10-14.

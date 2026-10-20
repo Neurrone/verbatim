@@ -3,7 +3,9 @@
 //! change made while a key's watch is open is handled at once, a caret move
 //! the application reports later still answers the watch, a key that
 //! moves nothing is answered by nothing at all, and a text pattern missing
-//! as the focus arrives is read once the application raises a caret event.
+//! as the focus arrives is read once the application raises a caret event,
+//! and the system caret's move is the caret event of a UIA focus that
+//! raises none of its own.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -272,6 +274,58 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
     app.quit();
 }
 
+/// A UIA text control whose application raises no UIA caret event, as
+/// some UIA documents do not, while Windows reports its system caret
+/// moving: the caret's `WinEvent` from the focus's window is the focus's
+/// caret event, and its caret is reported where it moved.
+fn the_system_carets_move_is_the_uia_focuss_caret_event() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-system-caret");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 6");
+    app.send("system-caret");
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret },
+            ..
+        } if node_id == notes => {
+            assert_eq!(
+                (caret.line.text.as_str(), caret.line.offset),
+                ("alpha beta\n", 6)
+            );
+        }
+        other => panic!("the outpost said {other:?}, not the document's caret"),
+    }
+    outpost.heard(&[Heard::Msaa(WinEventKind::Caret)]);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// Once the focus has raised a UIA caret event of its own, the system
+/// caret's events are not used for it: they would only read the caret
+/// again for a move its UIA caret event reports.
+fn a_focus_with_uia_caret_events_has_no_system_caret_events() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-both-carets");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret },
+            ..
+        } if node_id == notes => assert_eq!(caret.line.offset, 1),
+        other => panic!("the outpost said {other:?}, not the document's caret"),
+    }
+    heard_caret_event(&outpost);
+    outpost.settled();
+    app.send("caret doc 6");
+    app.send("system-caret");
+    outpost.heard(&[Heard::Msaa(WinEventKind::Caret)]);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -290,6 +344,14 @@ fn main() {
         (
             "a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event",
             a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event,
+        ),
+        (
+            "the_system_carets_move_is_the_uia_focuss_caret_event",
+            the_system_carets_move_is_the_uia_focuss_caret_event,
+        ),
+        (
+            "a_focus_with_uia_caret_events_has_no_system_caret_events",
+            a_focus_with_uia_caret_events_has_no_system_caret_events,
         ),
     ]);
 }

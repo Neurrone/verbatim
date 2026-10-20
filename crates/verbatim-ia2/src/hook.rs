@@ -87,9 +87,12 @@ pub enum WinEventKind {
     /// `EVENT_SYSTEM_ALERT` — an alert was generated; toast notifications
     /// arrive this way (decision D14).
     Alert,
-    /// `EVENT_OBJECT_LOCATIONCHANGE` on the system caret (`OBJID_CARET`):
-    /// the caret moved, as NVDA hears it for edit controls (milestone M4).
-    /// The location changes of every other object are dropped at the hook.
+    /// `EVENT_OBJECT_LOCATIONCHANGE` or `EVENT_OBJECT_SHOW` on the system
+    /// caret (`OBJID_CARET`): the caret moved, or was shown again after a
+    /// move, which NVDA handles as a caret event on its focus, whatever API
+    /// the focus is read through. The location changes of every other
+    /// object are dropped at the hook. A caret show is this kind only for
+    /// an install that asked for it, and is never [`WinEventKind::Show`].
     Caret,
     /// `EVENT_OBJECT_TEXTSELECTIONCHANGED`: a text control's selection, or
     /// its caret, changed.
@@ -511,6 +514,13 @@ fn wanted_kind(
     {
         classes.forget(hwnd);
     }
+    // The system caret's show is a caret event, as NVDA handles it, not a
+    // tooltip's show.
+    if event == EVENT_OBJECT_SHOW && id_object == OBJID_CARET.0 {
+        return kinds
+            .contains(&WinEventKind::Caret)
+            .then_some(WinEventKind::Caret);
+    }
     let mut class = || match classes.as_mut() {
         Some(classes) => {
             Rc::clone(classes.get_or_learn(hwnd, owner_of(hwnd), || Rc::from(class_of(hwnd))))
@@ -758,6 +768,27 @@ mod tests {
             OBJID_WINDOW.0,
             CHILDID_SELF
         ));
+    }
+
+    #[test]
+    fn the_carets_show_is_a_caret_event_for_an_outpost_only() {
+        let mut classes = Some(WindowCache::default());
+        let reads = Cell::new(0);
+        assert_eq!(
+            outpost_kinds(EVENT_OBJECT_SHOW, OBJID_CARET.0, &mut classes, &reads),
+            [WinEventKind::Caret]
+        );
+        assert_eq!(reads.get(), 0, "no class is read for the caret");
+        // The listener hooks shows for tooltips, not the caret.
+        assert_eq!(
+            wanted_kind(
+                (EVENT_OBJECT_SHOW, 42, OBJID_CARET.0, CHILDID_SELF),
+                LISTENER_SUBSCRIPTIONS,
+                &mut classes,
+                (|_| 7, |_| "Edit".to_owned()),
+            ),
+            None
+        );
     }
 
     #[test]
