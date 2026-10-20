@@ -73,7 +73,16 @@ Every `mockapp` test runs on a desktop no other test is using
 threads makes one desktop and runs its tests there one after another,
 each starting once every process the one before it started has ended, so
 `cargo test -p mockapp` and `cargo xtask ci` put no window on the
-interactive desktop and can run while an end-to-end run has it. A window
+interactive desktop and can run while an end-to-end run has it. A test is
+the only client on its desktop while it runs, as it was when each test
+had a desktop of its own; what differs is that the desktop has been used
+before, by tests whose processes, and so their windows, hooks and
+providers, have all ended, and no test reads anything the desktop keeps
+beyond its processes, such as its foreground window. One desktop per
+thread rather than per test spares the Desktop Window Manager about a
+tenth of a second of work for each desktop not made (169 desktops with
+12 worker threads in a full `cargo test -p mockapp`, not 219), whose
+backlog delays title-bar reads (`troubleshooting.md`). A window
 and its events are seen only from its own desktop, so nothing an
 end-to-end run's Verbatim, NVDA, or another test does reaches mockapp
 either. None of these tests needs the foreground or the keyboard focus,
