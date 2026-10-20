@@ -87,7 +87,12 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   listener's read fails (its application does not answer within the
   call timeout), the focus is reported from its event with its ancestors
   unknown, as NVDA lets a focus through whose `HasKeyboardFocus` read
-  fails. When the read's time budget has passed before the keyboard focus
+  fails, whatever the event's cached `HasKeyboardFocus` says: the
+  keyboard focus check before the read has already judged the focus, and
+  a sender whose live read said it had the focus is spoken by NVDA
+  whatever its cache said (mockapp's
+  `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`).
+  When the read's time budget has passed before the keyboard focus
   is read, the event's cached `HasKeyboardFocus` stands in for NVDA's live
   read, and a focus whose event says it did not have the focus is dropped
   (mockapp's

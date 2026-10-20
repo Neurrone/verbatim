@@ -646,14 +646,12 @@ impl FocusReader {
                 // NVDA lets a focus event through when its sender's keyboard
                 // focus cannot be read (`shouldAllowUIAFocusEvent` answers
                 // true on a COM error): reported as the event's cache gives
-                // it, its ancestors unknown, unless that cache says it did
-                // not have the keyboard focus.
+                // it, its ancestors unknown, whatever that cache says of its
+                // keyboard focus. Step 6 has already judged that: a live
+                // read that answered true or failed lets the focus through
+                // in NVDA too, and out of time a cache that said no has
+                // already dropped it.
                 tracing::debug!(%error, "a UIA focus could not be read; reported from its event");
-                if !event.states.contains(State::Focused) {
-                    return Judged::Dropped(
-                        "its event says it did not have the keyboard focus, and it could not be read",
-                    );
-                }
                 self.last = Some(LastFocus {
                     runtime_id: event.runtime_id.clone(),
                     element: element.clone(),

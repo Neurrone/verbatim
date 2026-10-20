@@ -156,6 +156,19 @@ impl Fixture {
     /// registration fills a focus event's sender.
     fn focus_delivered(&mut self, id: &str, name: &str) -> Cached<ListenerEvent> {
         self.app.send(&format!("focus {id}"));
+        let element = self.delivered(name);
+        assert_eq!(
+            element.live().element().has_keyboard_focus().ok(),
+            Some(true),
+            "{name} has the keyboard focus"
+        );
+        element
+    }
+
+    /// The element named `name`, filled as the focus listener's
+    /// registration fills a focus event's sender at this moment, whether or
+    /// not it has the keyboard focus.
+    fn delivered(&self, name: &str) -> Cached<ListenerEvent> {
         let value = VARIANT::from(BSTR::from(name));
         let condition = self
             .uia
@@ -165,16 +178,10 @@ impl Fixture {
             .uia
             .request_fixed::<ListenerEvent>()
             .expect("the listener's cache request");
-        let element = Live::new(self.root.clone())
+        Live::new(self.root.clone())
             .find_first(TreeScope_Descendants, &condition, &request)
             .unwrap_or_else(|error| panic!("no element named {name:?}: {error}"))
-            .unwrap_or_else(|| panic!("no element named {name:?}"));
-        assert_eq!(
-            element.live().element().has_keyboard_focus().ok(),
-            Some(true),
-            "{name} has the keyboard focus"
-        );
-        element
+            .unwrap_or_else(|| panic!("no element named {name:?}"))
     }
 }
 
@@ -763,6 +770,50 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
     }
 }
 
+/// A focus whose read fails is reported from its event, its containers
+/// unknown, whatever the event's cache says of its keyboard focus: NVDA's
+/// last check reads the sender's keyboard focus live
+/// (`shouldAllowUIAFocusEvent`), and once that has said it has the focus,
+/// nothing NVDA does consults the event's cached value. Here the event's
+/// cache is filled before the sender has the focus, the focus then moves to
+/// it, raising no event, so that its live read says it has it, and the read
+/// times out, every pattern request slow (`slow-patterns`) as in
+/// `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`.
+fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
+    const TIMEOUT: Duration = Duration::from_millis(300);
+    const SLOW_CALL: Duration = Duration::from_millis(40);
+    let mut fixture = Fixture::start_alone("mockapp-rops-failed-unfocused", "ancestry.json");
+    let outpost = OutpostUnderTest::new(&fixture.app);
+    let deep = fixture.delivered("Deep button");
+    assert!(
+        !deep.read().has_focus,
+        "the event's cache says the sender did not have the keyboard focus"
+    );
+    fixture.app.send("set-focus deep");
+    assert_eq!(
+        deep.live().element().has_keyboard_focus().ok(),
+        Some(true),
+        "the sender has the keyboard focus, read live"
+    );
+    let client: IUIAutomation2 = fixture.uia.client().cast().expect("IUIAutomation2");
+    let restored = ProcessTimeout::set(&client, Kind::Transaction, TIMEOUT);
+
+    fixture
+        .app
+        .send(&format!("slow-patterns {}", SLOW_CALL.as_millis()));
+    let (judged, _) = outpost.listener_read(&deep);
+    // Acknowledged once mockapp has answered the calls still queued.
+    fixture.app.send("slow-patterns 0");
+    drop(restored);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not report a focus whose read failed: {judged:?}");
+    };
+    assert_eq!(read.snapshot.name.as_deref(), Some("Deep button"));
+    assert!(read.ancestors.is_none(), "its containers are unknown");
+    drop(outpost);
+    fixture.app.quit();
+}
+
 /// Reading a list's or a tab control's selected item, the read the classic
 /// focus walk makes for a selection container (`Uia::selected`),
 /// fails when the application does not answer within UIA's transaction
@@ -1153,6 +1204,10 @@ fn main() {
         (
             "a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown",
             a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown,
+        ),
+        (
+            "a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus",
+            a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus,
         ),
         (
             "a_selection_read_that_times_out_or_finds_the_list_gone_fails",

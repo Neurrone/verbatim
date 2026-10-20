@@ -141,9 +141,10 @@ event's own element:
   an owner shown between the check and the step makes it, is not kept
   (section 3, step 11). A menu item's legacy MSAA state is one live read
   after the walk. A read that fails
-  reports the focus from its event, its ancestors unknown, unless the
-  event said it lacked the keyboard focus, as NVDA lets a focus through
-  whose read fails.
+  reports the focus from its event, its ancestors unknown, whatever the
+  event's cache says of its keyboard focus, which the checks before the
+  read have already judged, as NVDA lets a focus through whose read
+  fails.
 - The readers share the last focus any of them accepted
   (`focus_read::LastAccepted`), as NVDA keeps one last focus for the whole
   program, and judge a repeat by it before any read, as NVDA does
