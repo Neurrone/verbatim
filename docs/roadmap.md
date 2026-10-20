@@ -244,12 +244,6 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   local run, since neither reproduces here.
 
 - The focus pipeline's follow-ups (2026-10-17):
-  - The listener's reading threads gain NVDA's watchdog rule that a read
-    is abandoned 0.5 seconds after the user has moved on to a window of
-    the same application on another UI thread, as the outposts' worker
-    already has (`MOVED_ON_GRACE`,
-    `crates/verbatim-outpost/src/outpost/worker.rs`), decided by Dickson
-    on 2026-10-20, as the change after the raw probe.
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,

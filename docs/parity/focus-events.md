@@ -273,6 +273,44 @@ cases listed last are not implemented.
 - Background progress bars are not yet reported (M4.3); NVDA's are
   silent by default (Dickson, 2026-10-10).
 
+### A slow read the user has moved on from
+
+NVDA: its watchdog waits up to 10 seconds for a main thread stuck in a
+call before cancelling it, but only half a second when the evidence says
+the user has moved on: no window has the keyboard focus, a system menu
+NVDA has not caught up with is open, the active window is no longer the
+focus object's, or the window with the keyboard focus belongs to another
+thread than the focus object's window
+(`nvda/source/watchdog.py`, `MIN_CORE_ALIVE_TIMEOUT` at line 47,
+`_waitUntilNormalCoreAliveTimeout` at lines 133 to 148,
+`_shouldRecoverAfterMinTimeout` at lines 206 to 232). The call is
+cancelled, and calls that cannot be cancelled run through
+`cancellableExecute` (lines 406 to 426), whose thread is abandoned; the
+focus being read is then dropped
+([Main loop and watchdog](../nvda/main-loop-and-watchdog.md), "The
+watchdog: detection" and "What a live capture shows").
+
+Verbatim: **matched (unverified)**; unit tests of the outposts' worker
+and of the listener's reading threads pin the rule, and no end-to-end
+scenario makes an application slow enough to show it. An outpost's
+worker and the focus listener's reading thread for an application each
+abandon a call that has taken half a second (`MOVED_ON_GRACE`) once the
+window in front belongs to the same application on another UI thread
+than the window being handled or read, judged when the half second ends
+and again on each foreground event, until their own deadlines (10
+seconds for the worker, `READ_DEADLINE`, 11 seconds, for a reading
+thread). The event being handled or read is dropped, and a new worker or
+reading thread takes the application's later events. The rule is
+narrower than NVDA's by design: NVDA's one main thread serves every
+application, so a move to any other window frees it, while each of
+Verbatim's applications has its own worker and its own reading thread,
+so a move to another application's window is never held up; only the
+same application's windows on other threads, such as File Explorer's
+folder windows, taskbar and Alt+Tab switcher, wait behind a slow one.
+NVDA's other triggers, no focused window and an unacknowledged system
+menu, are not ported, and nor is its allowlist of window classes that
+always get the long wait (`safeWindowClassSet`).
+
 ### Recovery after an outpost is replaced
 
 NVDA has no equivalent: it is one process, and after an application

@@ -47,8 +47,10 @@
 //! for its application's thread; the thread's read, or its drop, follows
 //! the marker by the same route. Each read is a few calls on elements the
 //! listener holds, each of which UIA's call timeout ends, and a watchdog abandons a thread whose read
-//! runs past its deadline, so a slow or hung application holds only its
-//! own thread. One exposure is UIA's own and cannot be contained here: a
+//! runs past its deadline, or past half a second once the user has moved
+//! on to a window of the same application on another UI thread, which the
+//! listener's foreground events wake it to judge, so a slow or hung
+//! application holds only its own thread. One exposure is UIA's own and cannot be contained here: a
 //! hung window named in a focus `WinEvent` holds UIA's delivery of every
 //! focus event to the listener until it answers, as it holds NVDA's
 //! (`docs/uia-bugs.md`, "A hung window named in a system focus event holds a
@@ -124,10 +126,12 @@ use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subs
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
-    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
+    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, ReadWindow,
+    Readers, Reading,
 };
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
+use crate::outpost::window::MOVED_ON_GRACE;
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
     UiaSnapshotFact, WinEventStamp, decode_message, hop_us, now_us, put_message,
@@ -731,12 +735,14 @@ struct UiaFocusReading {
 }
 
 impl Reading for UiaFocusReading {
-    /// The event's element, its application's keyboard focus window when
-    /// it arrived, for an element that is not a window, its runtime id
-    /// from the event's cache, the kind of event, and, for a selection or a
-    /// notification, the fact captured from it.
+    /// The event's element, its own window handle from the event's cache
+    /// (0 for an element that is not a window), its application's keyboard
+    /// focus window when it arrived, for an element that is not a window,
+    /// its runtime id from the event's cache, the kind of event, and, for a
+    /// selection or a notification, the fact captured from it.
     type Job = (
         Agile<ListenerEvent>,
+        isize,
         isize,
         Vec<i32>,
         FocusEvent,
@@ -758,29 +764,37 @@ impl Reading for UiaFocusReading {
         &self,
         reader: Option<&mut FocusReader>,
         meta: Meta,
-        (element, focus_window, _, kind, fact): Self::Job,
+        (element, _, focus_window, _, kind, fact): Self::Job,
+        window: &ReadWindow,
     ) -> Judged {
         let Some(reader) = reader else {
             return Judged::Dropped("its reading thread has no UIA client");
         };
         match (element.resolve(), fact) {
             (Ok(sender), Some(fact)) => reader.check_fact(&sender, fact),
-            (Ok(sender), None) => reader.read(
+            (Ok(sender), None) => reader.read_noting_window(
                 &sender,
                 focus_window,
                 kind,
-                Arrival {
-                    trace: meta.trace,
-                    observed_at_ms: meta.observed_at_ms,
-                },
+                (
+                    Arrival {
+                        trace: meta.trace,
+                        observed_at_ms: meta.observed_at_ms,
+                    },
+                    window.clone(),
+                ),
             ),
             (Err(_), _) => Judged::Dropped("its element could not be resolved"),
         }
     }
 
+    fn window(&self, (_, hwnd, _, _, _, _): &Self::Job) -> isize {
+        *hwnd
+    }
+
     fn key<'a>(
         &self,
-        (_, _, runtime_id, kind, _): &'a Self::Job,
+        (_, _, _, runtime_id, kind, _): &'a Self::Job,
     ) -> Option<(FocusEvent, &'a [i32])> {
         // A notification is replaced only by one of the same kind,
         // processing, and activity, as the intake replaces it.
@@ -843,6 +857,7 @@ impl Listener {
                 last_accepted: last_accepted.clone(),
             },
             READ_DEADLINE,
+            MOVED_ON_GRACE,
         ));
         let registration = install_desktop_subscriptions(
             &outgoing,
@@ -858,8 +873,17 @@ impl Listener {
             let outgoing = Arc::clone(&msaa_outgoing);
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
+            let foreground_readers = Arc::clone(&readers);
             EventHandlers {
-                win_event: Box::new(move |event: WinEvent| forward_msaa_event(&outgoing, event)),
+                win_event: Box::new(move |event: WinEvent| {
+                    // A foreground change is the evidence that the user may
+                    // have moved on from a slow read's window
+                    // (`focus_read`'s watchdog).
+                    if event.kind == WinEventKind::Foreground {
+                        foreground_readers.foreground_changed();
+                    }
+                    forward_msaa_event(&outgoing, event);
+                }),
                 // The only nudge is the idle barrier's query, its round in
                 // the first word: every event delivered before it has been
                 // handled, so the reading threads are waited for next.
@@ -1127,7 +1151,18 @@ fn queue_for_reading(
         meta,
     );
     match sender.agile() {
-        Ok(agile) => readers.push(pid, meta, (agile, focus_window, runtime_id, kind, fact)),
+        Ok(agile) => readers.push(
+            pid,
+            meta,
+            (
+                agile,
+                fields.role.hwnd,
+                focus_window,
+                runtime_id,
+                kind,
+                fact,
+            ),
+        ),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
             outgoing.focus_read(

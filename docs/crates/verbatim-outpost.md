@@ -202,12 +202,29 @@ event's own element:
   (`docs/uia-bugs.md`, "A timeout bounds each provider call, not an
   operation"), so an operation of several provider calls, such as the
   nearest-window lookup, can run past it in an application that still
-  answers each of them, and its read is abandoned. When the watchdog
-  abandons a read, the event is reported dropped, a
+  answers each of them, and its read is abandoned. The watchdog also
+  abandons a read, as NVDA's watchdog cancels a slow call
+  (`_shouldRecoverAfterMinTimeout`), once it has taken `MOVED_ON_GRACE`,
+  half a second, and the window in front belongs to the read's
+  application on another UI thread than the window being read
+  (`outpost::window::front_is_another_thread_of_its_application`, local
+  calls, which an outpost's worker shares): File Explorer's folder
+  windows, the taskbar and the Alt+Tab switcher are one process on
+  several threads, and a focus on one must not wait behind a slow read
+  of another. The window being read (`focus_read::ReadWindow`) is the
+  event's cached window handle until the read's nearest-window lookup
+  finds the sender's nearest window, and none while neither is known.
+  The check is made when the grace ends and again on each foreground
+  event the listener's own hook delivers (`Readers::foreground_changed`,
+  which wakes the watchdog only while a read is past its grace), until
+  the deadline; the event is dropped with the reason "the user moved on
+  from a slow window" and the abandonment logged at warn. When the
+  watchdog abandons a read, either way, the event is reported dropped, a
   new thread takes the application's later events, and the abandoned
-  thread, once its call returns, says nothing and ends. With two of an
-  application's threads abandoned and still in their calls, its focus
-  events are dropped until one returns.
+  thread, once its call returns, lowers the application's count of
+  abandoned threads, says nothing and ends. With two of an
+  application's threads abandoned and still in their calls
+  (`ABANDONED_LIMIT`), its focus events are dropped until one returns.
 - When the listener is replaced, the supervisor tells every outpost,
   ready or starting, that its reads have ended
   (`DeliveredFact::UiaFocusReadsEnded`), so none waits on a marker the old

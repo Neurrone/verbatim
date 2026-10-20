@@ -4,6 +4,7 @@
 
 use std::ffi::c_void;
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -379,15 +380,27 @@ pub(crate) fn focus_window() -> Option<isize> {
     }
 }
 
+/// How long a slow call into an application is waited for before it is
+/// abandoned because the user has moved on to a window of the same
+/// application on another UI thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`,
+/// after which NVDA cancels a slow call once the foreground has changed.
+/// One application can own windows on several threads (File Explorer's
+/// folder windows, the taskbar, and the Alt+Tab switcher), and those must
+/// not wait behind a slow window the user has left. Both an outpost's
+/// worker and the focus listener's reading threads apply it, each judged
+/// by [`front_is_another_thread_of_its_application`].
+pub(crate) const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
+
 /// Whether the window in front belongs to the same application as `handle`
 /// but another UI thread: the user has moved on from `handle` to a window
-/// that could answer reads a slow `handle` is holding up in this outpost.
+/// that could answer reads a slow `handle` is holding up, in its outpost's
+/// worker or in its application's reading thread in the focus listener.
 /// NVDA's watchdog asks whether the user has moved on from the window it is
 /// waiting on (`_shouldRecoverAfterMinTimeout`), because its one core thread
-/// serves every application; an outpost serves one, so only that
-/// application's other threads are held up. `false` when either window's
-/// owner cannot be told.
-pub(super) fn front_is_another_thread_of_its_application(handle: isize) -> bool {
+/// serves every application; an outpost, or a reading thread, serves one,
+/// so only that application's other threads are held up. `false` when
+/// either window's owner cannot be told. Local calls only.
+pub(crate) fn front_is_another_thread_of_its_application(handle: isize) -> bool {
     focus_window().is_some_and(|front| is_another_thread_of_its_application(handle, front))
 }
 

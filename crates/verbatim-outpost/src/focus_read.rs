@@ -60,7 +60,17 @@
 //! drops the event when its window is not yet judged. A watchdog abandons
 //! a thread whose read runs past [`READ_DEADLINE`], the budget, the
 //! probe's wait, and the one call that can be under way when the budget
-//! passes: its event is dropped, a new thread takes the application's
+//! passes, and, as NVDA's watchdog cancels a slow call once the user has
+//! moved on (`docs/nvda/main-loop-and-watchdog.md`, "The watchdog:
+//! detection"), a thread whose read has taken [`MOVED_ON_GRACE`](crate::outpost::window::MOVED_ON_GRACE) while the
+//! window in front belongs to the read's application on another UI thread
+//! than the window being read ([`ReadWindow`]), judged when the grace ends
+//! and again on each foreground event the listener's hook delivers
+//! ([`Readers::foreground_changed`]): one process can own windows on
+//! several UI threads, as File Explorer's folder windows, the taskbar and
+//! the Alt+Tab switcher are all `explorer.exe`'s, and the application's
+//! focus on another thread must not wait behind a slow read of the first.
+//! Either way its event is dropped, a new thread takes the application's
 //! later events, and the abandoned thread, once UIA gives up, says nothing
 //! more and ends. An application whose abandoned threads reach
 //! [`ABANDONED_LIMIT`] gets no new thread until one returns, and its
@@ -75,7 +85,7 @@
 
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicIsize, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -96,7 +106,9 @@ use crate::ForegroundReader;
 use crate::arbitration::{Arbitrator, Clock, known_verdict, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{is_shell_transition_window, window_is_hung};
+use crate::outpost::window::{
+    front_is_another_thread_of_its_application, is_shell_transition_window, window_is_hung,
+};
 use crate::protocol::{
     DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
 };
@@ -237,6 +249,42 @@ impl Drop for Budget {
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before its focus events are dropped without a read.
 const ABANDONED_LIMIT: usize = 2;
+
+/// Why an event is dropped whose read the watchdog abandoned at the
+/// deadline.
+const NOT_IN_TIME: &str = "its read did not return in time";
+
+/// Why an event is dropped whose read the watchdog abandoned because the
+/// user moved on from its window, as an outpost's watchdog says it.
+const MOVED_ON: &str = "the user moved on from a slow window";
+
+/// The window one read is of, for the watchdog's judgement of whether the
+/// user has moved on from it ([`MOVED_ON_GRACE`](crate::outpost::window::MOVED_ON_GRACE)): the event's cached
+/// window handle as the read starts ([`Reading::window`]), and the
+/// sender's nearest window once the read has found it
+/// ([`learn`](Self::learn)); 0 while neither is known, when the user
+/// cannot be judged to have moved on. Each read has its own, so an
+/// abandoned read that finds its window later changes nothing the
+/// watchdog judges.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ReadWindow(Arc<AtomicIsize>);
+
+impl ReadWindow {
+    /// A read of window `hwnd`, 0 for one not yet known.
+    fn new(hwnd: isize) -> Self {
+        Self(Arc::new(AtomicIsize::new(hwnd)))
+    }
+
+    /// The read has found that it is of window `hwnd`.
+    pub(crate) fn learn(&self, hwnd: isize) {
+        self.0.store(hwnd, Ordering::Relaxed);
+    }
+
+    /// The window the read is of, 0 for none known yet.
+    fn get(&self) -> isize {
+        self.0.load(Ordering::Relaxed)
+    }
+}
 
 /// The kind of UIA event a reading thread takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -428,6 +476,10 @@ pub struct FocusReader {
     /// check (`isNativeUIAElement`), decided as an outpost decides it
     /// ([`crate::arbitration::uses_uia`]).
     arbitrator: Mutex<Arbitrator>,
+    /// The window the read under way is of, told the sender's nearest
+    /// window once the read finds it
+    /// ([`read_noting_window`](Self::read_noting_window)).
+    window: ReadWindow,
 }
 
 impl Drop for FocusReader {
@@ -455,6 +507,7 @@ impl FocusReader {
             last_accepted,
             foreground: Arc::new(crate::outpost::window::foreground_window_handle),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
+            window: ReadWindow::default(),
         })
     }
 
@@ -486,6 +539,22 @@ impl FocusReader {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clock()
+    }
+
+    /// [`read`](Self::read), telling `window` the sender's nearest window
+    /// once the read has found it, for the reading threads' watchdog
+    /// ([`ReadWindow`]).
+    pub(crate) fn read_noting_window(
+        &mut self,
+        sender: &Cached<ListenerEvent>,
+        focus_window: isize,
+        kind: FocusEvent,
+        (arrival, window): (Arrival, ReadWindow),
+    ) -> Judged {
+        self.window = window;
+        let judged = self.read(sender, focus_window, kind, arrival);
+        self.window = ReadWindow::default();
+        judged
     }
 
     /// Judges and reads the UIA focus event, or menu opening (`kind`),
@@ -1041,7 +1110,10 @@ impl FocusReader {
                 window = nearest,
                 "UIA focus sender's nearest window looked up"
             );
-            nearest.ok_or("it has no window above it, so NVDA makes no object for it")?
+            let nearest =
+                nearest.ok_or("it has no window above it, so NVDA makes no object for it")?;
+            self.window.learn(nearest);
+            nearest
         } else {
             hwnd
         };
@@ -1189,8 +1261,28 @@ pub(crate) trait Reading: Send + Sync + 'static {
     /// Makes a thread's reader for `pid`'s events, on that thread; `None`
     /// when it cannot be made.
     fn reader(&self, pid: Pid) -> Option<Self::Reader>;
-    /// Judges and reads one event, which `meta` describes.
-    fn read(&self, reader: Option<&mut Self::Reader>, meta: Meta, job: Self::Job) -> Judged;
+    /// Judges and reads one event, which `meta` describes, telling `window`
+    /// the window it is of once the read finds it.
+    fn read(
+        &self,
+        reader: Option<&mut Self::Reader>,
+        meta: Meta,
+        job: Self::Job,
+        window: &ReadWindow,
+    ) -> Judged;
+    /// The window `job`'s event is of as far as the event says, its cached
+    /// window handle, for the watchdog's judgement of whether the user has
+    /// moved on from it ([`ReadWindow`]); 0, the default, for none.
+    fn window(&self, _job: &Self::Job) -> isize {
+        0
+    }
+    /// Whether the user has moved on from `window`, which a slow read is
+    /// of, to a window of the same application on another UI thread
+    /// ([`front_is_another_thread_of_its_application`], local calls only,
+    /// the default).
+    fn moved_on(&self, window: isize) -> bool {
+        front_is_another_thread_of_its_application(window)
+    }
     /// The kind of event `job` is and the element it is of, by runtime id,
     /// for NVDA's UIA limiter rule: a newer event of one kind of one
     /// element replaces one still waiting ([`Readers::push`]). `None`, the
@@ -1215,8 +1307,9 @@ struct App<J> {
     /// The thread in charge of its events, by generation, if one is.
     live: Option<u64>,
     /// When the thread in charge began the event it is reading, that
-    /// event, and its kind (a focus when the job has no key).
-    running: Option<(Instant, Meta, FocusEvent)>,
+    /// event, its kind (a focus when the job has no key), and the window
+    /// it is of.
+    running: Option<(Instant, Meta, FocusEvent, ReadWindow)>,
     /// The place of the event being read in the order events were queued,
     /// while one is.
     running_place: u64,
@@ -1255,6 +1348,10 @@ struct ReadersState<J> {
     /// each with the count of events queued when it was added
     /// ([`Readers::when_idle`]), oldest first.
     idle_waiters: VecDeque<(u64, IdleWaiter)>,
+    /// Whether the watchdog waits with a read past its grace, so that a
+    /// foreground event wakes it to judge again whether the user has moved
+    /// on ([`Readers::foreground_changed`]).
+    past_grace: bool,
 }
 
 /// What [`Readers::when_idle`] runs.
@@ -1297,6 +1394,9 @@ impl<J> ReadersState<J> {
 struct Shared<R: Reading> {
     reading: R,
     deadline: Duration,
+    /// How long a read is left alone before the user's moving on abandons
+    /// it ([`MOVED_ON_GRACE`](crate::outpost::window::MOVED_ON_GRACE)).
+    grace: Duration,
     state: Mutex<ReadersState<R::Job>>,
     /// Wakes the watchdog when a read starts, and for the shutdown.
     changed: Condvar,
@@ -1318,16 +1418,19 @@ pub(crate) struct Readers<R: Reading> {
 }
 
 impl<R: Reading> Readers<R> {
-    /// Readers doing `reading`, each read abandoned past `deadline`.
+    /// Readers doing `reading`, each read abandoned past `deadline`, or
+    /// past `grace` once the user has moved on from its window
+    /// ([`Reading::moved_on`]).
     ///
     /// # Panics
     ///
     /// Panics if the watchdog's thread cannot be spawned, which means the
     /// process is out of OS thread resources.
-    pub(crate) fn new(reading: R, deadline: Duration) -> Self {
+    pub(crate) fn new(reading: R, deadline: Duration, grace: Duration) -> Self {
         let shared = Arc::new(Shared {
             reading,
             deadline,
+            grace,
             state: Mutex::new(ReadersState {
                 apps: HashMap::new(),
                 next_generation: 0,
@@ -1335,6 +1438,7 @@ impl<R: Reading> Readers<R> {
                 stopping: false,
                 queued: 0,
                 idle_waiters: VecDeque::new(),
+                past_grace: false,
             }),
             changed: Condvar::new(),
             failed_reads: AtomicU32::new(0),
@@ -1418,7 +1522,8 @@ impl<R: Reading> Readers<R> {
         let state = shared.lock();
         state.apps.values().any(|app| {
             app.running
-                .is_some_and(|(_, _, kind)| kind == FocusEvent::Focus)
+                .as_ref()
+                .is_some_and(|(_, _, kind, _)| *kind == FocusEvent::Focus)
                 || app.queue.iter().any(|(_, _, job)| {
                     shared
                         .reading
@@ -1459,6 +1564,18 @@ impl<R: Reading> Readers<R> {
         let queued = state.queued;
         state.idle_waiters.push_back((queued, waiter));
         state.wake_idle_waiters();
+    }
+
+    /// A foreground event reached the listener's hook: wakes the watchdog
+    /// to judge again whether the user has moved on from a read past its
+    /// grace, if one is under way, and otherwise does nothing, so a
+    /// foreground change wakes no thread while every read is quick. Never
+    /// waits on a read.
+    pub(crate) fn foreground_changed(&self) {
+        let state = self.shared.lock();
+        if state.past_grace {
+            self.shared.changed.notify_all();
+        }
     }
 
     /// The failed cached reads the reading threads have made so far.
@@ -1532,8 +1649,8 @@ fn start<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, 
 fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
     let mut generation = generation;
     let mut reader = shared.reading.reader(pid);
-    while let Some((mut meta, job)) = next_job(shared, pid, generation) {
-        let judged = shared.reading.read(reader.as_mut(), meta, job);
+    while let Some((mut meta, job, window)) = next_job(shared, pid, generation) {
+        let judged = shared.reading.read(reader.as_mut(), meta, job, &window);
         // The reading thread's end, for the latency ledger's split of the
         // listener's handling from its queue and its write.
         meta.timing.listener_handled_at_us = now_us();
@@ -1570,7 +1687,11 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
 /// for one; `None` when the thread is no longer in charge, the readers are
 /// stopping, or the application's outpost has ended and no event is
 /// waiting ([`Readers::outpost_ended`]).
-fn next_job<R: Reading>(shared: &Shared<R>, pid: Pid, generation: u64) -> Option<(Meta, R::Job)> {
+fn next_job<R: Reading>(
+    shared: &Shared<R>,
+    pid: Pid,
+    generation: u64,
+) -> Option<(Meta, R::Job, ReadWindow)> {
     let mut state = shared.lock();
     loop {
         if state.stopping {
@@ -1585,10 +1706,11 @@ fn next_job<R: Reading>(shared: &Shared<R>, pid: Pid, generation: u64) -> Option
                 .reading
                 .key(&job)
                 .map_or(FocusEvent::Focus, |(kind, _)| kind);
-            app.running = Some((Instant::now(), meta, kind));
+            let window = ReadWindow::new(shared.reading.window(&job));
+            app.running = Some((Instant::now(), meta, kind, window.clone()));
             app.running_place = place;
             shared.changed.notify_all();
-            return Some((meta, job));
+            return Some((meta, job, window));
         }
         if app.ending {
             app.live = None;
@@ -1602,69 +1724,116 @@ fn next_job<R: Reading>(shared: &Shared<R>, pid: Pid, generation: u64) -> Option
     }
 }
 
+/// Why the watchdog abandons a read at `now`, if it does: the read, of
+/// `window` (0 for none known), has passed its `deadline`, or has passed
+/// the end of its grace, `grace_end`, and `moved_on` says the user has
+/// left `window` for another thread of its application.
+fn abandon_reason(
+    now: Instant,
+    (grace_end, deadline): (Instant, Instant),
+    window: isize,
+    moved_on: impl FnOnce(isize) -> bool,
+) -> Option<&'static str> {
+    if now >= deadline {
+        Some(NOT_IN_TIME)
+    } else if window != 0 && now >= grace_end && moved_on(window) {
+        Some(MOVED_ON)
+    } else {
+        None
+    }
+}
+
 /// The watchdog: abandons a thread whose read has run past the deadline,
-/// reports its event dropped, and gives the application's later events to
-/// a new thread, unless too many of its threads are abandoned already.
+/// or past its grace once the user has moved on from its window, reports
+/// its event dropped, and gives the application's later events to a new
+/// thread, unless too many of its threads are abandoned already. It wakes
+/// when a read starts, when a read's grace or deadline comes, and, while a
+/// read is past its grace, on each foreground event
+/// ([`Readers::foreground_changed`]).
 fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
     let mut state = shared.lock();
     loop {
         if state.stopping {
             return;
         }
-        let due = state
-            .apps
-            .values()
-            .filter_map(|app| app.running.map(|(started, _, _)| started + shared.deadline))
-            .min();
-        let Some(due) = due else {
-            state = shared
+        let now = Instant::now();
+        let mut due: Option<Instant> = None;
+        let mut past_grace = false;
+        let mut abandoned = Vec::new();
+        for (pid, app) in &state.apps {
+            let Some((started, _, _, window)) = &app.running else {
+                continue;
+            };
+            let grace_end = *started + shared.grace;
+            let deadline = *started + shared.deadline;
+            let window = window.get();
+            let reason = abandon_reason(now, (grace_end, deadline), window, |window| {
+                shared.reading.moved_on(window)
+            });
+            if let Some(reason) = reason {
+                abandoned.push((*pid, window, reason));
+                continue;
+            }
+            let next = if now < grace_end {
+                grace_end
+            } else {
+                past_grace = true;
+                deadline
+            };
+            due = Some(due.map_or(next, |due| due.min(next)));
+        }
+        if !abandoned.is_empty() {
+            for (pid, window, reason) in abandoned {
+                abandon(shared, &mut state, pid, window, reason);
+            }
+            continue;
+        }
+        state.past_grace = past_grace;
+        state = match due {
+            Some(due) => {
+                shared
+                    .changed
+                    .wait_timeout(state, due.saturating_duration_since(now))
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .0
+            }
+            None => shared
                 .changed
                 .wait(state)
-                .unwrap_or_else(PoisonError::into_inner);
-            continue;
+                .unwrap_or_else(PoisonError::into_inner),
         };
-        let now = Instant::now();
-        if now < due {
-            state = shared
-                .changed
-                .wait_timeout(state, due - now)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-            continue;
-        }
-        let late: Vec<Pid> = state
-            .apps
-            .iter()
-            .filter(|(_, app)| {
-                app.running
-                    .is_some_and(|(started, _, _)| now >= started + shared.deadline)
-            })
-            .map(|(pid, _)| *pid)
-            .collect();
-        for pid in late {
-            abandon(shared, &mut state, pid);
-        }
     }
 }
 
-/// Abandons the thread reading `pid`'s event, which has run past the
-/// deadline.
-fn abandon<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, pid: Pid) {
+/// Abandons the thread reading `pid`'s event, of `window`, for `reason`:
+/// it has run past the deadline, or the user has moved on from its window.
+fn abandon<R: Reading>(
+    shared: &Arc<Shared<R>>,
+    state: &mut ReadersState<R::Job>,
+    pid: Pid,
+    window: isize,
+    reason: &'static str,
+) {
     let Some(app) = state.apps.get_mut(&pid) else {
         return;
     };
-    let Some((_, meta, _)) = app.running.take() else {
+    let Some((_, meta, _, _)) = app.running.take() else {
         return;
     };
     app.live = None;
     app.abandoned += 1;
     let abandoned = app.abandoned;
-    tracing::warn!(%pid, abandoned, "a UIA focus read did not return in time; its thread is abandoned");
-    shared.reading.outcome(
-        pid,
-        meta,
-        Judged::Dropped("its read did not return in time"),
-    );
+    if reason == MOVED_ON {
+        tracing::warn!(
+            %pid,
+            abandoned,
+            window,
+            "a UIA focus read was slow and the user moved on to another thread of its application; its thread is abandoned"
+        );
+    } else {
+        tracing::warn!(%pid, abandoned, "a UIA focus read did not return in time; its thread is abandoned");
+    }
+    shared.reading.outcome(pid, meta, Judged::Dropped(reason));
     if abandoned >= ABANDONED_LIMIT {
         for (_, meta, _) in app.queue.drain(..) {
             shared.reading.outcome(
@@ -1681,18 +1850,28 @@ fn abandon<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use crate::outpost::window::MOVED_ON_GRACE;
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::thread::ThreadId;
 
     use super::*;
 
+    /// The window every stand-in event is of.
+    const WINDOW: isize = 0x5150;
+
     /// A stand-in reading: each job is held until its gate opens, if it
     /// has one, and every outcome is sent to the test with the thread that
-    /// read the event and the reason, as is each thread that ends.
+    /// read the event and the reason, as is each thread that ends. Every
+    /// event is of [`WINDOW`], and whether the user has moved on from it is
+    /// what `moved_on` says, each judgement sent to the test.
     struct Script {
         outcomes: Mutex<Sender<(Pid, u64, &'static str)>>,
         read_on: Mutex<Sender<(u64, ThreadId)>>,
         finished: Mutex<Sender<ThreadId>>,
+        moved_on: AtomicBool,
+        asked: Mutex<Sender<isize>>,
     }
 
     impl Reading for Script {
@@ -1714,6 +1893,7 @@ mod tests {
             reader: Option<&mut ThreadId>,
             _: Meta,
             (marker, gate, _): Self::Job,
+            _: &ReadWindow,
         ) -> Judged {
             if let Some(thread) = reader {
                 let _ = self
@@ -1727,6 +1907,19 @@ mod tests {
                 let _ = gate.recv();
             }
             Judged::Dropped("read")
+        }
+
+        fn window(&self, _: &Self::Job) -> isize {
+            WINDOW
+        }
+
+        fn moved_on(&self, window: isize) -> bool {
+            let _ = self
+                .asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .send(window);
+            self.moved_on.load(Ordering::SeqCst)
         }
 
         fn finish(&self, reader: Option<ThreadId>) {
@@ -1756,24 +1949,47 @@ mod tests {
         outcomes: Receiver<(Pid, u64, &'static str)>,
         read_on: Receiver<(u64, ThreadId)>,
         finished: Receiver<ThreadId>,
+        asked: Receiver<isize>,
     }
 
+    impl Fixture {
+        /// Says, from now on, whether the user has moved on.
+        fn set_moved_on(&self, moved_on: bool) {
+            self.readers
+                .shared
+                .reading
+                .moved_on
+                .store(moved_on, Ordering::SeqCst);
+        }
+    }
+
+    /// Readers abandoning a read past `deadline`, with the grace the
+    /// listener uses, and a user who never moves on.
     fn fixture(deadline: Duration) -> Fixture {
+        fixture_with_grace(deadline, MOVED_ON_GRACE)
+    }
+
+    fn fixture_with_grace(deadline: Duration, grace: Duration) -> Fixture {
         let (outcomes_tx, outcomes) = mpsc::channel();
         let (read_tx, read_on) = mpsc::channel();
         let (finished_tx, finished) = mpsc::channel();
+        let (asked_tx, asked) = mpsc::channel();
         Fixture {
             readers: Readers::new(
                 Script {
                     outcomes: Mutex::new(outcomes_tx),
                     read_on: Mutex::new(read_tx),
                     finished: Mutex::new(finished_tx),
+                    moved_on: AtomicBool::new(false),
+                    asked: Mutex::new(asked_tx),
                 },
                 deadline,
+                grace,
             ),
             outcomes,
             read_on,
             finished,
+            asked,
         }
     }
 
@@ -2007,6 +2223,107 @@ mod tests {
         open.send(()).expect("the held read waits");
         assert_eq!(fixture.readers.stop(), 2);
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
+    }
+
+    /// NVDA's watchdog rule: a read held past its grace is abandoned once
+    /// the user has moved on to another thread of its application, judged
+    /// again on a foreground change after the grace's own check found the
+    /// user had not; its event is dropped for that, and a new thread reads
+    /// the application's next event.
+    #[test]
+    fn a_held_read_is_abandoned_once_the_user_moves_on_past_its_grace() {
+        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        let (_, held_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        fixture.readers.push(Pid(5), meta(2), (2, None, Vec::new()));
+        assert_eq!(
+            fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
+            WINDOW,
+            "the grace's end asks about the read's window"
+        );
+        fixture.set_moved_on(true);
+        fixture.readers.foreground_changed();
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "the user moved on from a slow window")
+        );
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 2, "read")
+        );
+        let (_, read_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        assert_ne!(read_on, held_on, "a new thread read the next event");
+        // The abandoned thread returns and says nothing more.
+        open.send(()).expect("the held read waits");
+        assert_eq!(fixture.readers.stop(), 2);
+        assert_eq!(fixture.outcomes.try_recv().ok(), None);
+    }
+
+    /// Within its grace a held read is left alone though the user has
+    /// moved on and a foreground change says so: the user is not asked
+    /// about, and the read's own outcome is sent once it returns.
+    #[test]
+    fn a_held_read_within_its_grace_is_left_alone_though_the_user_moved_on() {
+        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_secs(60));
+        fixture.set_moved_on(true);
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        fixture.readers.foreground_changed();
+        open.send(()).expect("the held read waits");
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "read")
+        );
+        assert_eq!(fixture.readers.stop(), 1);
+        assert_eq!(
+            fixture.asked.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "nothing asked within the grace"
+        );
+    }
+
+    /// Past its grace a held read is left alone while the user has not
+    /// moved on, both when the grace ends and on a foreground change, so
+    /// only the deadline can abandon it
+    /// (`a_read_past_its_deadline_is_dropped_and_a_new_thread_reads_on`):
+    /// the read's own outcome is sent once it returns.
+    #[test]
+    fn a_held_read_past_its_grace_is_left_alone_while_the_user_has_not_moved_on() {
+        let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        let (_, read_on) = fixture.read_on.recv_timeout(WAIT).expect("a read");
+        assert_eq!(
+            fixture.asked.recv_timeout(WAIT).expect("the grace's check"),
+            WINDOW
+        );
+        fixture.readers.foreground_changed();
+        assert_eq!(
+            fixture
+                .asked
+                .recv_timeout(WAIT)
+                .expect("the foreground change's check"),
+            WINDOW
+        );
+        open.send(()).expect("the held read waits");
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "read")
+        );
+        assert_eq!(fixture.readers.stop(), 1);
+        assert_eq!(
+            fixture.finished.recv_timeout(WAIT).expect("a thread ended"),
+            read_on,
+            "the thread that read it, never abandoned"
+        );
     }
 
     #[test]

@@ -63,9 +63,10 @@ use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
-    console_client, event_window_unreadable, focus_window_of, foreground_window_handle,
-    front_is_another_thread_of_its_application, is_shell_transition_window, now_ms, top_level_of,
-    window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
+    MOVED_ON_GRACE, console_client, event_window_unreadable, focus_window_of,
+    foreground_window_handle, front_is_another_thread_of_its_application,
+    is_shell_transition_window, now_ms, top_level_of, window_belongs_to_hidden_frame, window_facts,
+    window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::keys;
@@ -81,20 +82,6 @@ use crate::text::Watched;
 /// (found live in the end-to-end suite); NVDA announces the focus late, and
 /// a shorter deadline here dropped it for good.
 const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
-
-/// How long the watchdog waits on an entry before abandoning it because the
-/// user has moved on to a window of the same application on another UI
-/// thread: NVDA's `MIN_CORE_ALIVE_TIMEOUT`, after which NVDA cancels a slow
-/// call once the foreground has changed. One application can own windows on
-/// several threads (Explorer's folder windows, taskbar, and Alt+Tab
-/// switcher), and those must not wait behind a slow window the user has
-/// left. Windows of other applications have their own outposts and never
-/// wait behind this one. The check is made when the grace ends and again
-/// each time a foreground fact reaches the outpost, until the deadline:
-/// the foreground event of a window of this application, which Windows
-/// raises once the window is in front, is the evidence that the user has
-/// moved to it.
-const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
 
 /// The deadline for one navigation step or an activation.
 const STEP_DEADLINE: Duration = Duration::from_millis(400);
