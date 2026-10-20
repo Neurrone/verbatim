@@ -182,6 +182,31 @@ NVDA option off by default, is not yet built (M4.3): background
 progress bars stay silent for now, with no setting (Dickson, 2026-10-10,
 confirmed as planned for later on 2026-10-15).
 
+### A combo box's value from its selected item
+
+NVDA: a UIA combo box without the `Value` pattern, and a list whose
+class name contains `LoopingSelector` (a time picker's), has as its value
+the name of the first item its `Selection` pattern holds; when an item
+that does not have the focus changes state, or is selected, while its
+parent is such a focus, NVDA raises a value change on the focus, so the
+new item is spoken as the focus's value. Verbatim: the focus is read
+with its first selected item's name as its value, and the listener's
+selection event for an item that does not have the keyboard focus and is
+a child of such a focus is reported as a value change of the focus, the
+item's name its value, which the reducer speaks as it speaks any value
+change on the focus, the bare value (mockapp's `combo_box` tests). The
+value change takes the selected item's own name, where NVDA reads the
+focus's selection again; the two are the same item for a single
+selection. NVDA also takes the items' added-to and removed-from
+selection events, which Verbatim does not subscribe to
+(`docs/parity/backends.md`, "UIA event registration"). Not built: the
+same value change for a `Windows.UI.Core` combo box that has the
+`Value` pattern, and the classic .NET Framework Windows Forms combo box
+(the roadmap's audit item 11, deferred). **matched (unverified)**: the
+expectation is from NVDA's source (`NVDAObjects/UIA/__init__.py`, lines
+1380 to 1392, 2746 to 2767 and 2786 to 2800), with no capture of a real
+such combo box or time picker yet.
+
 ### What an accepted MSAA change reads
 
 NVDA: a name, description, value,

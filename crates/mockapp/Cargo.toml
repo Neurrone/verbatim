@@ -39,6 +39,10 @@ name = "caret_watch"
 harness = false
 
 [[test]]
+name = "combo_box"
+harness = false
+
+[[test]]
 name = "terminal_reading"
 harness = false
 

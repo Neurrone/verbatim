@@ -127,7 +127,11 @@ event's own element:
   the keyboard focus (NVDA's duplicate evidence, sent as
   `UiaFocusRead::same_as_last`); the element's value, states, and details
   afresh, its name and role staying the event's; a list's or tab control's
-  selected child; and its raw-view ancestors, one tree walker step each,
+  selected child, and a combo box's without the `Value` pattern, whose
+  first selected item, like a looping selector's (a time picker's list),
+  is sent as its value and not as a selected child, with
+  `UiaFocusRead::value_from_selection` set, as NVDA reads such a combo box's
+  value (`ComboBoxWithoutValuePattern`); and its raw-view ancestors, one tree walker step each,
   each with its own window handle through the client side's window proxy,
   the console window's title included, up to the first one the thread
   knew, the rest reused from the read before, or to the desktop root, as
@@ -1406,7 +1410,17 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `ElementFromHandle` and one remote operation
   (`verbatim_uia_rops::element_by_path`; the classic walk within a second
   where a program cannot import the window's element), and keeps it
-  under the focus's node and follows it. A repeated focus whose element
+  under the focus's node and follows it. While the focus is one whose
+  value is its selected item (`UiaFocusRead::value_from_selection`), a
+  selection the listener passes on of an item that does not have the
+  keyboard focus and is one of the focus's children, one
+  `FindFirstBuildCache` over its children, is reported as `ValueChanged`
+  on the focus with the item's name (`Worker::selection_as_value`), as
+  NVDA's list item raises a value change on such a focused parent when
+  its state changes; the focus-now answer reads such a value the same
+  way. NVDA's same rule for a `Windows.UI.Core` combo box with the
+  `Value` pattern, and for the classic .NET Framework Windows Forms combo
+  box, is not built. A repeated focus whose element
   the outpost already holds, and which the listener read as still
   focused, is not looked for again. The chain is kept
   (`outpost::focus_path`) and serves whenever the outpost needs an element

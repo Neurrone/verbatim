@@ -308,6 +308,11 @@ pub(super) struct Tracking {
     /// NVDA's foreground tests compare a foreground change with
     /// ([`foreground_repeats_focus`]).
     queued: Option<QueuedFocus>,
+    /// The UIA focus whose value is its first selected item's name, as
+    /// the listener read it (`UiaFocusRead::value_from_selection`): the
+    /// selection of one of its items is a change of its value
+    /// ([`Worker::selection_as_value`]).
+    value_from_selection: Option<NodeId>,
 }
 
 /// A focus or foreground change an outpost reported, as NVDA's
@@ -2582,6 +2587,12 @@ impl Worker<'_> {
             self.emit(trace, observed_at_ms, Backend::Uia, hwnd, selection);
             return;
         }
+        if matches!(event.kind, UiaKind::Selection)
+            && let Some(change) = self.selection_as_value(&event.parts)
+        {
+            self.emit(trace, observed_at_ms, Backend::Uia, hwnd, change);
+            return;
+        }
         // A text focus's caret and text: the subscription follows only the
         // focus, so these are the focus's.
         match event.kind {
@@ -2728,6 +2739,45 @@ impl Worker<'_> {
         Some(NormalizedEvent::ControlledSelection {
             controller: registry.id_for_element(&controller, &focused),
             node: selected.snapshot(registry),
+        })
+    }
+
+    /// The selection of the item `parts` names as a change of the focus's
+    /// value, when the focus's value is its first selected item's name
+    /// (`verbatim_uia::map::value_from_selection`) and the item, which
+    /// does not have the keyboard focus, is one of the focus's children:
+    /// NVDA's list item, whose state change under such a focused parent
+    /// raises a value change on it, read as the selected item's name
+    /// (`NVDAObjects/UIA/__init__.py` 2746 to 2767 and 2786 to 2800).
+    /// The value is the item's name, from the event's cache; one call
+    /// tells whether the item is a child of the focus.
+    fn selection_as_value(&mut self, parts: &UiaSnapshotFact) -> Option<NormalizedEvent> {
+        let focus = {
+            let tracking = self.context.tracking();
+            tracking
+                .focus
+                .filter(|&focus| tracking.value_from_selection == Some(focus))?
+        };
+        if parts.states.contains(State::Focused) {
+            return None;
+        }
+        let registry = &self.context.uia_registry;
+        let focused = registry
+            .element_of(focus)
+            .and_then(|agile| agile.resolve().ok())?;
+        let uia = self.client.uia()?;
+        let request = uia.request_fixed::<Kept>().ok()?;
+        let child = uia
+            .find_child_by_runtime_id(focused.live(), &parts.runtime_id, &request)
+            .ok()
+            .flatten();
+        if child.is_none() {
+            tracing::debug!("a selection under a focus whose value it is not: not its child");
+            return None;
+        }
+        Some(NormalizedEvent::ValueChanged {
+            node_id: focus,
+            value: parts.name.clone(),
         })
     }
 
@@ -3262,6 +3312,7 @@ impl Worker<'_> {
         // to the element after one in another application.
         let found =
             read.same_as_last == Some(true) && context.uia_registry.element_of(node.id).is_some();
+        context.tracking().value_from_selection = read.value_from_selection.then_some(node.id);
         self.emit_focus(
             trace,
             observed_at_ms,

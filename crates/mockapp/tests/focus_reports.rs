@@ -1111,6 +1111,7 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
             },
             ancestors: None,
             selected_child: None,
+            value_from_selection: false,
             window: Some(hwnd.0 as isize),
             same_as_last: None,
         }

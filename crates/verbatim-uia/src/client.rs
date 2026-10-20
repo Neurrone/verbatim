@@ -15,7 +15,7 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-    TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
+    TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
     UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
 };
 
@@ -445,6 +445,27 @@ impl Uia {
             .map(|found| Cached::filled(found, gates)))
     }
 
+    /// The child of `parent` that `runtime_id` names, its cache filled by
+    /// `request`, or `Ok(None)` when no child of it has that runtime id:
+    /// one search of `parent`'s children. Cross-process; the outpost's
+    /// worker only, guarded by the caller's deadline.
+    ///
+    /// # Errors
+    ///
+    /// Returns the COM error if the condition cannot be made or the search
+    /// fails.
+    pub fn find_child_by_runtime_id<S: Shape>(
+        &self,
+        parent: &Live,
+        runtime_id: &[i32],
+        request: &Request<S>,
+    ) -> windows::core::Result<Option<Cached<S>>> {
+        let (cache, gates) = request.parts();
+        Ok(self
+            .element_by_runtime_id_within(parent.element(), runtime_id, cache, TreeScope_Children)?
+            .map(|found| Cached::filled(found, gates)))
+    }
+
     /// The element `runtime_id` names, its cache filled by `request`, when
     /// it is a descendant of one of the elements `focused` names in its UIA
     /// `ControllerFor` relation: NVDA's test for a selection in a list the
@@ -492,6 +513,17 @@ impl Uia {
         runtime_id: &[i32],
         cache: &IUIAutomationCacheRequest,
     ) -> windows::core::Result<Option<IUIAutomationElement>> {
+        self.element_by_runtime_id_within(root, runtime_id, cache, TreeScope_Subtree)
+    }
+
+    /// The element `runtime_id` names within `scope` of `root`.
+    fn element_by_runtime_id_within(
+        &self,
+        root: &IUIAutomationElement,
+        runtime_id: &[i32],
+        cache: &IUIAutomationCacheRequest,
+        scope: TreeScope,
+    ) -> windows::core::Result<Option<IUIAutomationElement>> {
         if runtime_id.is_empty() {
             return Ok(None);
         }
@@ -503,8 +535,8 @@ impl Uia {
         // to this spot under the M3 focus-enrichment query.
         let variant = unsafe { InitVariantFromInt32Array(runtime_id) }?;
         let condition = self.property_condition(UIA_RuntimeIdPropertyId, &variant)?;
-        // The search walks the subtree under the caller's `root`.
-        root.find_first_build_cache(TreeScope_Subtree, &condition, cache)
+        // The search walks `scope` under the caller's `root`.
+        root.find_first_build_cache(scope, &condition, cache)
     }
 
     /// The element `runtime_id` names, rebuilt with `cache`, when it is a

@@ -57,6 +57,14 @@ pub trait ElementExt {
         property: UIA_PROPERTY_ID,
     ) -> windows::core::Result<Option<i32>>;
 
+    /// A boolean property read live, `false` when the answer is not a
+    /// boolean, such as a pattern's availability. Cross-process.
+    ///
+    /// # Errors
+    ///
+    /// The COM error if the provider fails the read.
+    fn current_bool(&self, property: UIA_PROPERTY_ID) -> windows::core::Result<bool>;
+
     /// Whether the element has the keyboard focus, read live rather than
     /// from the cache. Cross-process.
     ///
@@ -149,6 +157,14 @@ impl ElementExt for IUIAutomationElement {
         // property id is a plain value.
         let value = unsafe { self.GetCurrentPropertyValueEx(property, true) }?;
         Ok(variant_i32(&value))
+    }
+
+    fn current_bool(&self, property: UIA_PROPERTY_ID) -> windows::core::Result<bool> {
+        count(CallKind::Uia);
+        // SAFETY: `self` is a live element (see the module comment); the
+        // property id is a plain value.
+        let value = unsafe { self.GetCurrentPropertyValue(property) }?;
+        Ok(bool::try_from(&value).unwrap_or(false))
     }
 
     fn has_keyboard_focus(&self) -> windows::core::Result<bool> {

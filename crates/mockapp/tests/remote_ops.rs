@@ -421,6 +421,34 @@ fn a_list_and_a_tab_control_report_their_selected_child() {
     fixture.app.quit();
 }
 
+/// A combo box's selected item is read, both ways alike, only when the
+/// combo box has no `Value` pattern: the remote program asks the combo
+/// box inside the provider, and the classic walk, with no fresh copy of
+/// the element, asks it live.
+fn a_combo_box_reads_its_selected_item_only_without_the_value_pattern() {
+    let timeout = TRANSACTION_TIMEOUT
+        .read()
+        .unwrap_or_else(PoisonError::into_inner);
+    let mut fixture = Fixture::with(
+        "mockapp-rops-combo-box",
+        "combo_box.json",
+        Timeout::Shared(timeout),
+    );
+    let hour = fixture.focus("hour", "Hour");
+    let ancestry = both_agree(&fixture.uia, &query(&hour, &[], &fixture.fill));
+    assert_eq!(
+        names(&[ancestry.selected_child.expect("the selected item")]),
+        ["Nine"]
+    );
+    let size = fixture.focus("size", "Size");
+    let ancestry = both_agree(&fixture.uia, &query(&size, &[], &fixture.fill));
+    assert!(
+        ancestry.selected_child.is_none(),
+        "a combo box with the Value pattern has its own value"
+    );
+    fixture.app.quit();
+}
+
 fn the_walk_stops_at_a_known_ancestor_or_the_depth_limit() {
     let mut fixture = Fixture::start("mockapp-rops-known");
     let outer = fixture.find("Outer group");
@@ -1182,6 +1210,10 @@ fn main() {
         (
             "a_list_and_a_tab_control_report_their_selected_child",
             a_list_and_a_tab_control_report_their_selected_child,
+        ),
+        (
+            "a_combo_box_reads_its_selected_item_only_without_the_value_pattern",
+            a_combo_box_reads_its_selected_item_only_without_the_value_pattern,
         ),
         (
             "the_walk_stops_at_a_known_ancestor_or_the_depth_limit",

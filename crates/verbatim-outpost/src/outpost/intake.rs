@@ -1510,6 +1510,7 @@ mod tests {
                 snapshot: snapshot(runtime_id),
                 ancestors: Some(Vec::new()),
                 selected_child: None,
+                value_from_selection: false,
                 window: Some(hwnd),
                 same_as_last: None,
             }),

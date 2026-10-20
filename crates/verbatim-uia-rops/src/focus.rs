@@ -4,7 +4,8 @@
 //! the one function callers use, which picks between them.
 
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT, UIA_HasKeyboardFocusPropertyId,
+    IUIAutomationElement, UIA_ComboBoxControlTypeId, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT,
+    UIA_HasKeyboardFocusPropertyId, UIA_IsValuePatternAvailablePropertyId,
     UIA_LegacyIAccessibleStatePropertyId, UIA_ListControlTypeId, UIA_MenuItemControlTypeId,
     UIA_NativeWindowHandlePropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
     UIA_Selection2FirstSelectedItemPropertyId, UIA_SelectionSelectionPropertyId,
@@ -106,7 +107,9 @@ pub struct Ancestry {
     /// ancestors left. Never set by the remote program.
     pub out_of_time: bool,
     /// For a list or tab control, the first selected child, filled by the
-    /// query's fill: what `verbatim_uia::Uia::selected_node` reports.
+    /// query's fill: what `verbatim_uia::Uia::selected_node` reports; for a
+    /// combo box without the `Value` pattern, its first selected item, its
+    /// value (`verbatim_uia::map::value_from_selection`).
     pub selected_child: Option<Cached<Ancestor>>,
     /// The native window handle of the element, or of its nearest raw-view
     /// ancestor that has one, as `verbatim_uia::nearest_window_handle`
@@ -246,14 +249,41 @@ pub fn runtime_id_key(runtime_id: &[i32]) -> String {
     format!("[{}]", parts.join(","))
 }
 
-/// Whether the focused element's selected child is reported with it, by
-/// its cached control type, as `wants_selected_child` decides from the
-/// mapped role. Every shape the query's element is read as holds the
-/// control type, so it is never read live.
+/// Whether the focused element's selected child is read with it, by its
+/// cached control type: a list's or a tab control's, reported with it, as
+/// `wants_selected_child` decides from the mapped role, and a combo box's,
+/// its value when it has no `Value` pattern
+/// (`verbatim_uia::map::value_from_selection`), which is asked of the
+/// element where the selection is read. Every shape the query's element is
+/// read as holds the control type, so it is never read live.
 fn wants_selected_child(element: &FocusInput) -> bool {
     element.control_type.is_some_and(|control_type| {
-        control_type == UIA_ListControlTypeId.0 || control_type == UIA_TabControlTypeId.0
+        control_type == UIA_ListControlTypeId.0
+            || control_type == UIA_TabControlTypeId.0
+            || control_type == UIA_ComboBoxControlTypeId.0
     })
+}
+
+/// Whether the classic walk reads the focused element's selected child
+/// ([`wants_selected_child`]): a combo box's only without the `Value`
+/// pattern, whose value is otherwise its own, as the element read afresh,
+/// `fresh`, says when there is one, and as `live` answers otherwise, one
+/// call, where the remote program asks it inside the provider.
+fn reads_selected_child(
+    element: &FocusInput,
+    (live, fresh): (&verbatim_uia::Live, Option<&Cached<Ancestor>>),
+    before_call: &dyn Fn(&'static str),
+) -> Result<bool, Error> {
+    if element.control_type != Some(UIA_ComboBoxControlTypeId.0) {
+        return Ok(wants_selected_child(element));
+    }
+    if let Some(fresh) = fresh {
+        return Ok(!fresh.read().node.states.value_available);
+    }
+    before_call("the combo box's Value pattern");
+    Ok(!live
+        .element()
+        .current_bool(UIA_IsValuePatternAvailablePropertyId)?)
 }
 
 /// Whether the focused element's legacy MSAA state is read with it, by its
@@ -311,7 +341,7 @@ fn is_window_element(runtime_id: &[i32], hwnd: isize) -> bool {
 /// [`FocusQuery::refresh`], fills the element's own cache afresh, then,
 /// for a menu item, reads its legacy MSAA state
 /// ([`Ancestry::legacy_state`]), then reads a list's or tab control's
-/// selected child, then walks
+/// selected child, or a combo box's when it has no `Value` pattern, then walks
 /// raw-view parents, filling each one's cache inside the provider, until
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
@@ -393,46 +423,59 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let selected_absent = b.new_int(0);
     let selected_absent = b.add_to_results(selected_absent);
     if wants_selected_child(&input) {
-        // `SelectionPattern2`'s first selected item, ignoring its default,
-        // so a provider without the pattern answers "not supported".
-        let property = b.int(UIA_Selection2FirstSelectedItemPropertyId.0);
-        let ignore_default = b.bool(true);
-        let first = b.get_property_value(element, property, ignore_default);
-        let unsupported = b.is(TypeTest::NotSupported, first);
-        b.if_else(
-            unsupported,
-            |b| {
-                // The Selection pattern has no method instructions; its
-                // `Selection` property is the same array of elements.
-                let selection = b.property(element, UIA_SelectionSelectionPropertyId.0);
-                let is_array = b.is(TypeTest::Array, selection);
-                b.if_(is_array, |b| {
-                    let selection = selection.assume::<kind::Array>();
-                    let size = b.array_size(selection);
-                    let zero = b.uint(0);
-                    let any = b.compare(size, zero, Comparison::GreaterThan);
-                    b.if_(any, |b| {
-                        let first = b.array_get_at(selection, zero).assume::<kind::Element>();
-                        let absent = cache.populate(b, first);
-                        b.set(selected_absent, absent);
-                        b.set(selected, first);
+        let read_selected = |b: &mut Builder| {
+            // `SelectionPattern2`'s first selected item, ignoring its default,
+            // so a provider without the pattern answers "not supported".
+            let property = b.int(UIA_Selection2FirstSelectedItemPropertyId.0);
+            let ignore_default = b.bool(true);
+            let first = b.get_property_value(element, property, ignore_default);
+            let unsupported = b.is(TypeTest::NotSupported, first);
+            b.if_else(
+                unsupported,
+                |b| {
+                    // The Selection pattern has no method instructions; its
+                    // `Selection` property is the same array of elements.
+                    let selection = b.property(element, UIA_SelectionSelectionPropertyId.0);
+                    let is_array = b.is(TypeTest::Array, selection);
+                    b.if_(is_array, |b| {
+                        let selection = selection.assume::<kind::Array>();
+                        let size = b.array_size(selection);
+                        let zero = b.uint(0);
+                        let any = b.compare(size, zero, Comparison::GreaterThan);
+                        b.if_(any, |b| {
+                            let first = b.array_get_at(selection, zero).assume::<kind::Element>();
+                            let absent = cache.populate(b, first);
+                            b.set(selected_absent, absent);
+                            b.set(selected, first);
+                        });
                     });
-                });
-            },
-            |b| {
-                let is_element = b.is(TypeTest::Element, first);
-                b.if_(is_element, |b| {
-                    let first = first.assume::<kind::Element>();
-                    let null = b.is_null(first);
-                    let some = b.not(null);
-                    b.if_(some, |b| {
-                        let absent = cache.populate(b, first);
-                        b.set(selected_absent, absent);
-                        b.set(selected, first);
+                },
+                |b| {
+                    let is_element = b.is(TypeTest::Element, first);
+                    b.if_(is_element, |b| {
+                        let first = first.assume::<kind::Element>();
+                        let null = b.is_null(first);
+                        let some = b.not(null);
+                        b.if_(some, |b| {
+                            let absent = cache.populate(b, first);
+                            b.set(selected_absent, absent);
+                            b.set(selected, first);
+                        });
                     });
-                });
-            },
-        );
+                },
+            );
+        };
+        if input.control_type == Some(UIA_ComboBoxControlTypeId.0) {
+            // A combo box's selected item is its value only without the
+            // `Value` pattern, which the program asks for itself.
+            let available = b
+                .property(element, UIA_IsValuePatternAvailablePropertyId.0)
+                .assume::<kind::Bool>();
+            let without = b.not(available);
+            b.if_(without, read_selected);
+        } else {
+            read_selected(&mut b);
+        }
     }
 
     let known = b.new_string_map();
@@ -703,6 +746,10 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// the selected child's read does or finds an element gone
 /// ([`Uia::selected`]); a hop that finds no parent, or fails
 /// otherwise, ends the walk.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one walk, read top to bottom as it runs, as the program is"
+)]
 pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<FocusAncestry, Error> {
     let input = query.element.read();
     let live = query.element.live();
@@ -737,7 +784,9 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     };
     // A selection that timed out, or whose container or item is gone, has
     // not said nothing is selected: the walk fails, as a hop's would.
-    let selected_child = if wants_selected_child(&input) && !out_of_time() {
+    let selected_child = if reads_selected_child(&input, (live, element.as_ref()), &before_call)?
+        && !out_of_time()
+    {
         before_call("the selected child");
         uia.selected_within(live, request, &out_of_time)?
     } else {

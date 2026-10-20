@@ -214,7 +214,12 @@ element it compares equal to still has the focus. The `Ancestry`:
   was up, with ancestors left; never set by the program.
 - `selected_child`: for a list or tab control (by the element's cached
   control type), the first selected child, a `Cached<Ancestor>` too,
-  which the outpost reports as its node.
+  which the outpost reports as its node; and for a combo box without the
+  `Value` pattern, its first selected item, which is its value
+  (`verbatim_uia::map::value_from_selection`). The program asks the
+  combo box for `IsValuePatternAvailable` itself and reads the selection
+  only without the pattern; the classic walk takes the answer from the
+  element read afresh, or, without a fresh read, asks it live, one call.
 - `window`: the native window handle of the element or of its nearest
   raw-view ancestor that has one, which `verbatim_uia::nearest_window_handle`
   would find (NVDA's `getNearestWindowHandle`). The outpost needs it to

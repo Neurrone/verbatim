@@ -172,8 +172,16 @@ pub struct UiaFocusRead {
     /// thread already knew from the focus before, and the rest as they were
     /// read then. `None` when they could not be read.
     pub ancestors: Option<Vec<UiaAncestorFact>>,
-    /// For a list or tab control, its first selected child.
+    /// For a list or tab control, its first selected child; never for a
+    /// focus whose value is its first selected item
+    /// ([`Self::value_from_selection`]).
     pub selected_child: Option<UiaSnapshotFact>,
+    /// Whether the focus's value is its first selected item's name, as
+    /// NVDA reads it for a combo box without the `Value` pattern and a
+    /// looping selector (`verbatim_uia::map::value_from_selection`): that
+    /// item is then its value, never its selected child, and a later
+    /// selection of one of its items is a change of its value.
+    pub value_from_selection: bool,
     /// The element's own window or its nearest ancestor's (NVDA's
     /// `getNearestWindowHandle`), when it was found.
     pub window: Option<isize>,
@@ -1536,6 +1544,7 @@ mod tests {
                 content: true,
             }]),
             selected_child: None,
+            value_from_selection: false,
             window: Some(0x40),
             same_as_last: Some(false),
         };

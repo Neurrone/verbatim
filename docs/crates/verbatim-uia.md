@@ -69,7 +69,9 @@ Public API:
   children, so `parent` itself is filled with nothing; a dialog's own
   text is gathered this way),
   `find_by_runtime_id(root, runtime_id, request)` (a search under `root`,
-  the fallback when no element is kept) and `controlled(focused,
+  the fallback when no element is kept), `find_child_by_runtime_id(parent,
+  runtime_id, request)` (a search of `parent`'s children only, which tells
+  the outpost whether a selected item is a child of the focus) and `controlled(focused,
   runtime_id, request)` (the selected element, when it is inside an
   element the focus names in its ControllerFor relation; the classic
   implementation behind `verbatim_uia_rops::controlled_selection`), plus
@@ -238,6 +240,11 @@ Public API:
   supported"). An ancestor adds `IsContentElement` and
   `IsControlElement` (it is focus context only when both hold).
   `runtime_id(element)` reads an element's runtime id.
+- `map::value_from_selection(role, class_name, value_available)`, and
+  `Node::value_from_selection` from a node's cache: whether a node's
+  value is its first selected item's name, as NVDA reads it, for a combo
+  box without the `Value` pattern, or a list whose class name contains
+  `LoopingSelector` (a time picker's) without it.
 - `map::with_legacy_checked_state(element, node)` — a menu item that no
   pattern makes checkable (`map::wants_legacy_checked_state`) is checkable
   and checked when its legacy MSAA state (`LegacyIAccessibleState`, read
@@ -260,7 +267,7 @@ Public API:
   an error. So each wrapper method holds one documented `unsafe` call and
   is safe to call. `ElementExt`, on `IUIAutomationElement`, has the
   live calls (`current_control_type`, `current_i32_ignoring_default`,
-  `has_keyboard_focus`,
+  `current_bool`, `has_keyboard_focus`,
   `build_updated_cache`, `current_pattern`, `controller_for`,
   `find_first`, `find_first_build_cache`), each of which counts one UIA
   call; it has no cached read, since the shape module makes every one.

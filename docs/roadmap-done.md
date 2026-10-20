@@ -544,6 +544,11 @@ landed it.
   their window, as NVDA handles them, unless the focus raises UIA caret
   events of its own, 2026-10-20 ([parity](parity/text.md),
   "TextInfo-equivalent layer").
+- The audits' item 11, its second change: a UIA combo box without the
+  `Value` pattern, and a looping selector, have their first selected
+  item's name as their value, and an item of such a focus selected is a
+  change of its value, 2026-10-20 ([parity](parity/changes-and-selection.md),
+  "A combo box's value from its selected item").
 - Step 9, the relay: replaced by the communication migration, below.
 - Step 10, the harness's idle barrier through every child: communication
   step 6a, 10f01254, 2026-10-14.

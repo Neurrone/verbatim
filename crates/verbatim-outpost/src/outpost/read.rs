@@ -252,8 +252,10 @@ fn wants_selected_child(role: Role) -> bool {
     matches!(role, Role::List | Role::TabControl)
 }
 
-/// A focused UIA element's ancestors and, for a selection container, its
-/// selected child, read from the element already in hand. The walk stops
+/// A focused UIA element's ancestors and, for a selection container or a
+/// node whose value is its first selected item
+/// (`verbatim_uia::map::value_from_selection`), its selected child, read
+/// from the element already in hand. The walk stops
 /// at a container of `previous` (the last focus's ancestors and the focus
 /// itself) and reuses the rest; within [`ENRICHMENT_BUDGET`], checked
 /// between its calls. Failures degrade to no containers or no selected
@@ -275,7 +277,7 @@ pub(super) fn uia_enrichment(
         previous,
         Some(&out_of_time),
     );
-    let selected = if wants_selected_child(role) {
+    let selected = if wants_selected_child(role) || element.read().value_from_selection() {
         match uia.selected_node(element.live(), nodes, &context.uia_registry) {
             Ok(selected) => selected,
             // The application did not answer in time, or the list is
@@ -874,6 +876,12 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
             ),
         };
         let ancestors = ancestors.unwrap_or_default();
+        // A combo box without the `Value` pattern, or a looping selector:
+        // its first selected item is its value.
+        let mut selected_child = selected_child;
+        if element.read().value_from_selection() {
+            node.value = selected_child.take().and_then(|child| child.name);
+        }
         Some(FocusedControl {
             node,
             ancestors,

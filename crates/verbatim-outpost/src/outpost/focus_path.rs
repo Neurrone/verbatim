@@ -171,6 +171,7 @@ mod tests {
                     .collect(),
             ),
             selected_child: None,
+            value_from_selection: false,
             window: None,
             same_as_last: None,
         }

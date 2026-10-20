@@ -210,12 +210,7 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   "Time limits that hold".
 - What remains of the audits' items 10 and 11 (Dickson, 2026-10-20;
   items 8 and 9 are done, `docs/roadmap-done.md`):
-  - Item 11, in two more changes. First, the UIA combo box without the
-    Value pattern and the looping
-    selector, whose value is the selected item's name and whose item's
-    state change is the combo box's value change
-    (`NVDAObjects/UIA/__init__.py`, lines 1380 to 1392 and 2746 to 2800).
-    Second, an end-to-end scenario pinning selection in a list the focus
+  - Item 11, in one more change: an end-to-end scenario pinning selection in a list the focus
     controls, Settings' search suggestions
     (`docs/parity/changes-and-selection.md`, "Selection in a list the
     focus controls"). Also left from the item, deferred until a capture shows

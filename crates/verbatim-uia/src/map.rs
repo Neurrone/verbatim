@@ -160,6 +160,21 @@ pub fn wants_legacy_checked_state(role: Role, states: StateSet) -> bool {
     role == Role::MenuItem && !states.contains(State::Checkable)
 }
 
+/// Whether a node's value is the name of its first selected item, as NVDA
+/// reads it for a combo box without the `Value` pattern and for a list
+/// whose class name contains `LoopingSelector`, a time picker's
+/// (`NVDAObjects/UIA/__init__.py` 1380 to 1392, `ComboBoxWithoutValuePattern`):
+/// a UIA combo box need not have the pattern unless it takes any text,
+/// and a looping selector has none. `role` is the node's role, `class_name`
+/// its UIA class name, and `value_available` whether it has the pattern.
+#[must_use]
+pub fn value_from_selection(role: Role, class_name: Option<&str>, value_available: bool) -> bool {
+    !value_available
+        && (role == Role::ComboBox
+            || (role == Role::List
+                && class_name.is_some_and(|class| class.contains("LoopingSelector"))))
+}
+
 /// Adds checkable and checked to `states` when the legacy MSAA state bits
 /// `legacy_state` have the checked bit. The caller has decided, with
 /// [`wants_legacy_checked_state`], that the bits are worth reading.

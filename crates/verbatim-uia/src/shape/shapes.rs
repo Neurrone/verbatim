@@ -503,6 +503,18 @@ impl Node {
             details,
         }
     }
+
+    /// Whether the node's value is its first selected item's name
+    /// ([`crate::map::value_from_selection`]): a combo box without the
+    /// `Value` pattern, or a looping selector.
+    #[must_use]
+    pub fn value_from_selection(&self) -> bool {
+        crate::map::value_from_selection(
+            self.role.role(),
+            self.role.class_name.as_deref(),
+            self.states.value_available,
+        )
+    }
 }
 
 /// `node`, read from `element`, as a snapshot, its id minted by `registry`,

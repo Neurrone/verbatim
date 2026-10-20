@@ -1,0 +1,38 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Combo Box Fixture",
+  "children": [
+    {
+      "id": "hour",
+      "role": "combo_box",
+      "name": "Hour",
+      "states": ["focusable", "collapsed"],
+      "children": [
+        { "id": "nine", "role": "list_item", "name": "Nine", "states": ["selectable", "selected"] },
+        { "id": "ten", "role": "list_item", "name": "Ten", "states": ["selectable"] }
+      ]
+    },
+    {
+      "id": "minute",
+      "role": "list",
+      "name": "Minute",
+      "class_name": "LoopingSelector",
+      "states": ["focusable"],
+      "children": [
+        { "id": "five", "role": "list_item", "name": "Five", "states": ["selectable", "selected"] },
+        { "id": "fifteen", "role": "list_item", "name": "Fifteen", "states": ["selectable"] }
+      ]
+    },
+    {
+      "id": "size",
+      "role": "combo_box",
+      "name": "Size",
+      "value": "Large",
+      "states": ["focusable", "collapsed"],
+      "children": [
+        { "id": "large", "role": "list_item", "name": "Large", "states": ["selectable", "selected"] }
+      ]
+    }
+  ]
+}

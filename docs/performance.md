@@ -543,6 +543,27 @@ The focus lands on the list itself, and its selected item is read with it.
   one remote operation made 4 calls, 343 provider calls.
 - Target: the minimum.
 
+### A focus change onto a combo box without the Value pattern, UIA
+
+The focus lands on a combo box whose value is its first selected item's
+name (`verbatim_uia::map::value_from_selection`), and the item is read
+with it (`crates/mockapp/tests/combo_box.rs`).
+
+- Today: 8 UIA calls in the listener's read: the five of a steady-state
+  focus change on a windowless element and the selected item's three
+  through the `Selection` pattern (mockapp's combo box has no
+  `SelectionPattern2`), as for a tab control. A combo box with the
+  `Value` pattern reads no selected item: the listener's classic read
+  asks its fresh copy of the element, and the outpost's remote program
+  asks the element inside the provider, adding no call; the outposts'
+  classic fallback, which has no fresh copy, asks it live, one call
+  more. A looping
+  selector is read as a list is, 7 calls.
+- A selection of one of the focused combo box's items: 1 UIA call in the
+  outpost, a `FindFirstBuildCache` over the combo box's children, which
+  tells whether the item is its child; the value is the item's name from
+  the event's cache.
+
 ### Arrowing through a list, UIA
 
 The focus moves from one list item to the next.

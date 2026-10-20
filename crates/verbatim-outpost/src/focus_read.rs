@@ -806,6 +806,7 @@ impl FocusReader {
                     snapshot,
                     ancestors: None,
                     selected_child: None,
+                    value_from_selection: false,
                     window: Some(nearest),
                     same_as_last: None,
                 }))
@@ -896,6 +897,12 @@ impl FocusReader {
             .element
             .as_ref()
             .map(|fresh| fresh.read().node.parts(fresh.runtime_id()));
+        // A combo box without the `Value` pattern, or a looping selector,
+        // read afresh: its first selected item is its value.
+        let value_from_selection = ancestry
+            .element
+            .as_ref()
+            .is_some_and(|fresh| fresh.read().node.value_from_selection());
         // The role from the fresh read too: the event's cache holds the
         // control type but not what refines it, such as the Toggle pattern
         // a toggle button has, which NVDA reads when it needs it.
@@ -960,14 +967,19 @@ impl FocusReader {
         });
         self.last_accepted
             .accept(self.number, element, (nearest, arrival), &self.window);
+        let mut selected_child = ancestry
+            .selected_child
+            .as_ref()
+            .map(|child| fact_of(child.read().node.parts(child.runtime_id())));
+        if value_from_selection {
+            snapshot.value = selected_child.take().and_then(|child| child.name);
+        }
         Judged::Read(Box::new(UiaFocusRead {
             hwnd,
             snapshot,
             ancestors,
-            selected_child: ancestry
-                .selected_child
-                .as_ref()
-                .map(|child| fact_of(child.read().node.parts(child.runtime_id()))),
+            selected_child,
+            value_from_selection,
             window,
             same_as_last: ancestry.previous_focused,
         }))

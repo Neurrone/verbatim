@@ -403,7 +403,7 @@ Implementation notes:
   or presence of a `value` for the middle two, and on its
   `selectable`/`selected` states for selection) alongside the
   `GetPropertyValue` overrides, rather than relying on the shortcut alone.
-  A list or tab control also serves an `ISelectionProvider` whose
+  A list, a tab control or a combo box also serves an `ISelectionProvider` whose
   selection is its children in the `selected` state, so a fixture's
   initial selection and the `select` command both show through the
   Selection pattern and its `Selection` property, as a real list reports
