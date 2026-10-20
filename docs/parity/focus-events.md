@@ -188,9 +188,12 @@ cases listed last are not implemented.
   hung test on the top-level window, for the batch limits, stays.
 - UIA, in NVDA's order: whether the event is the focus's, then its
   window's UIA test, then acceptance with the event's window, the
-  focus's recorded window for the focus's own events, or, for a
-  windowless element not found, its application's focus window as the
-  listener captured it, where NVDA walks to the nearest window. Property
+  focus's recorded window for the focus's own events, or the element's
+  nearest window; a windowless element whose window is not found has no
+  window to test, and is accepted, where NVDA walks to the nearest window.
+  A windowless UIA focus is never tested as hung by the intake, as NVDA's
+  hung-window test passes a UIA event whose sender's cached window is 0;
+  a focus with a window of its own is. Property
   changes, selections, and a text control's caret and text changes are
   tested, as NVDA's automation event handler tests them; a windowless
   selection is tested with its nearest window, found by the focus

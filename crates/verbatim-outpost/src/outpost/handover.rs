@@ -54,16 +54,28 @@
 //!   arrived first and matched it. And the outpost's hook receives them in
 //!   that order too, so had it received this event, raised before the one
 //!   it has, its copy would already be here as this one's twin. This rests
-//!   on every listener copy of an event raised in the tick reaching the
-//!   outpost: the listener's backlog replaces a waiting fact with a newer
-//!   one of the same element and kind while a write to Core is in flight,
-//!   so a hooked event's listener copy can be lost, its hook copy then stays
-//!   unmatched, and a later listener copy raised in the same tick is taken
-//!   as raised before the hook.
+//!   on every listener copy of a hooked event raised in the tick reaching
+//!   the outpost. The outpost's hook drops what the listener drops for
+//!   having no window or a window with no owner, as NVDA's callback drops
+//!   an invalid window, but a listener copy can still be lost three ways,
+//!   its hook copy then stays unmatched, and a later listener copy raised
+//!   in the same tick is taken as raised before the hook:
+//!   - the listener's backlog replaces a waiting fact with a newer one of
+//!     the same element and kind while a write to Core is in flight;
+//!   - the listener drops an event when it finds no process to route it
+//!     to, as for a console window whose console host it cannot find;
+//!   - the listener drops an event whose window was destroyed after the
+//!     outpost's hook took its copy and before the listener's callback
+//!     ran, each callback reading the window's owner when it runs.
+//!
+//!   In each case the order can be wrong only among the events of that
+//!   tick.
 //!
 //! Pure, so the rules are tested on their own; the outpost holds one under
-//! a lock that its hook's callback and its reader take in turn, so the
-//! order in which the copies reach it is the order they are judged in.
+//! a lock that its hook's callback and its reader take in turn, and queues
+//! each copy it admits before it releases the lock, so the order in which
+//! the copies reach it is the order they are judged in, and the order the
+//! intake receives them in too.
 
 #![forbid(unsafe_code)]
 
@@ -371,6 +383,24 @@ mod tests {
         assert_eq!(
             handover.admit(Listener, foreground, stamp(99)),
             Some(Arrival::ListenerBeforeHook)
+        );
+    }
+
+    /// A listener copy raised in a tick whose hooked copy has already met
+    /// its twin is not known to have been raised before the hook: the hook
+    /// holds no unmatched copy of that tick.
+    #[test]
+    fn a_listener_copy_in_a_tick_whose_hooked_copy_met_its_twin_is_not_before_the_hook() {
+        let mut handover = Handover::new(100);
+        let stamp = |time| WinEventStamp { thread: 3, time };
+        assert_eq!(
+            handover.admit(Hook, focus(150).0, stamp(150)),
+            Some(Arrival::Hook)
+        );
+        assert_eq!(handover.admit(Listener, focus(150).0, stamp(150)), None);
+        assert_eq!(
+            handover.admit(Listener, FactKey::Foreground(8), stamp(150)),
+            Some(Arrival::Listener)
         );
     }
 

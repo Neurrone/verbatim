@@ -60,7 +60,10 @@ hand-over, step by step:
   and any other is handled and counted. Two identical events raised by one
   thread in one tick are two copies from each source, matched pair by
   pair, so both are handled; nothing that came from one source alone is
-  dropped. A listener copy raised before the outpost's first clock reading
+  dropped. Each copy is queued under the hand-over's lock, so the intake
+  receives the copies in the order they were judged, and the outpost's
+  hook drops an event whose window has no owner, as the listener does
+  (`hooked_fact`). A listener copy raised before the outpost's first clock reading
   has no twin and is not counted; after `ForwardingEnded`, only copies
   raised between the two readings are counted, for as long as the outpost
   runs, a handful at most.
@@ -678,8 +681,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     each planned item); a
     newer foreground change of the same window replaces one waiting, as
     NVDA's limiter keeps one per window, and removes a focus event waiting
-    on its window's client object from the same thread, as NVDA's limiter
-    pops it; a run whose events all carry their raise time is tried in
+    on its window's client object from the same thread, raised no later
+    than the change (at one tick, unless the focus is the hook's copy and
+    the change is known to have been raised before the hook went in), as
+    NVDA's limiter, adding events in raised order, pops it; a run whose events all carry their raise time is tried in
     that order (`in_raised_order`), events of one clock tick ordered by
     the hand-over's `Arrival` (`outpost::handover`): a listener copy known
     to have been raised before the outpost's hook went in, and every
@@ -1441,8 +1446,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   Every UIA focus is handled in turn, oldest first, as NVDA's UIA handler
   queues each one, and Core culls the speech of those that have expired.
   A UIA selection fact
-  carries the listener's `focus_window`, the window its
-  acceptance is tested with when its element has no window of its own;
+  carries, in `focus_window`, the nearest window the listener's reading
+  thread found for an element with no window of its own, the window its
+  acceptance is tested with;
   a menu opening uses the application's focus window when it is handled,
   as before. The UIA focus, selection, menu opening, and the outpost's
   own UIA property events pass NVDA's acceptance test after the window's

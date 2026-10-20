@@ -2573,8 +2573,9 @@ impl Worker<'_> {
             {
                 return; // MSAA owns this window.
             }
-            // A windowless element with no window found is tested with its
-            // application's focus window when the listener captured it.
+            // A windowless element with no window found has no window to
+            // test (0), and is accepted: the listener's nearest window for a
+            // selection fact is already among those tried above.
             if let Some(name) = uia_event_name(&event.kind)
                 && !self.accepts(name, hwnd.unwrap_or(event.focus_window))
             {

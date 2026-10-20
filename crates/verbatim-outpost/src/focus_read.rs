@@ -1415,10 +1415,11 @@ pub(crate) trait Reading: Send + Sync + 'static {
     ) -> Judged;
     /// The window `job`'s event is of as far as the event says, for the
     /// watchdog's judgement of whether the user has moved on from it
-    /// ([`WatchedRead`]); 0, the default, for none, and for an event that
-    /// is never judged so.
-    fn window(&self, _job: &Self::Job) -> isize {
-        0
+    /// ([`WatchedRead`]): `Some(0)` for an event judged so whose window
+    /// its read is still to learn, and `None`, the default, for an event
+    /// that is never judged so.
+    fn window(&self, _job: &Self::Job) -> Option<isize> {
+        None
     }
     /// The watchdog has abandoned the read of the event `meta` describes:
     /// called under the readers' lock once the read is marked abandoned
@@ -1692,7 +1693,7 @@ impl<R: Reading> Readers<R> {
         {
             // Past the application's bound: dropped at once, behind the
             // events the watchdog has not yet dropped, in order.
-            drop_waiting(shared, &mut state, pid);
+            drop_waiting(shared, &mut state, pid, Dropping::AsPushed);
         } else if app.abandoned >= ABANDONED_LIMIT {
             tracing::warn!(
                 %pid,
@@ -1919,10 +1920,14 @@ fn next_job<R: Reading>(
                 .reading
                 .key(&job)
                 .map_or(FocusEvent::Focus, |(kind, _)| kind);
-            // Only a read whose window is not yet known learns it, so only
-            // it is given what to do then.
+            // Only a judged read whose window is not yet known learns it, so
+            // only it is given what to do then: a selection or a
+            // notification is never judged, so it is given nothing.
             let window = shared.reading.window(&job);
-            let watched = WatchedRead::new(window, (window == 0).then(|| on_learn(shared)));
+            let watched = WatchedRead::new(
+                window.unwrap_or(0),
+                (window == Some(0)).then(|| on_learn(shared)),
+            );
             app.running = Some(Running {
                 started: Instant::now(),
                 meta,
@@ -2061,7 +2066,7 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
                 abandon(shared, &mut state, pid, window, reason);
             }
             for pid in waited {
-                drop_waiting(shared, &mut state, pid);
+                drop_waiting(shared, &mut state, pid, Dropping::Waited);
             }
             continue;
         }
@@ -2082,24 +2087,48 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
     }
 }
 
+/// Who drops the waiting events ([`drop_waiting`]), for its log line.
+#[derive(Clone, Copy)]
+enum Dropping {
+    /// The watchdog, for events that waited past the bound.
+    Waited,
+    /// [`Readers::push`], for the event it pushed, which did not wait, and
+    /// any older one the watchdog has not yet dropped.
+    AsPushed,
+}
+
 /// Drops every event of `pid`'s waiting with no thread to read it, its
 /// application's abandoned threads at [`ABANDONED_LIMIT`] past its bound
 /// ([`READ_DEADLINE`]), in the order they arrived: each drop resolves its
 /// marker, so the application's later events in its outpost are not held
 /// behind them.
-fn drop_waiting<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, pid: Pid) {
+fn drop_waiting<R: Reading>(
+    shared: &Arc<Shared<R>>,
+    state: &mut ReadersState<R::Job>,
+    pid: Pid,
+    dropping: Dropping,
+) {
     let Some(app) = state.apps.get_mut(&pid) else {
         return;
     };
     if app.live.is_some() || app.queue.is_empty() {
         return;
     }
-    tracing::warn!(
-        %pid,
-        abandoned = app.abandoned,
-        dropped = app.queue.len(),
-        "UIA focuses waited past the bound behind their application's abandoned reads; they are dropped"
-    );
+    let (abandoned, dropped) = (app.abandoned, app.queue.len());
+    match dropping {
+        Dropping::Waited => tracing::warn!(
+            %pid,
+            abandoned,
+            dropped,
+            "UIA focuses waited past the bound behind their application's abandoned reads; they are dropped"
+        ),
+        Dropping::AsPushed => tracing::warn!(
+            %pid,
+            abandoned,
+            dropped,
+            "a UIA focus is dropped as it arrives: its application is past its bound behind its abandoned reads"
+        ),
+    }
     for queued in app.queue.drain(..) {
         shared
             .reading
@@ -2245,8 +2274,8 @@ mod tests {
             Judged::Dropped("read")
         }
 
-        fn window(&self, _: &Self::Job) -> isize {
-            self.hwnd
+        fn window(&self, _: &Self::Job) -> Option<isize> {
+            Some(self.hwnd)
         }
 
         fn abandoned(&self, meta: &Meta) {
@@ -2881,11 +2910,12 @@ mod tests {
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
     }
 
-    /// The bound at [`ABANDONED_LIMIT`] is the application's: the events
-    /// waiting while none of its abandoned threads returns are dropped
-    /// together, in order, once the deadline has passed since the limit was
-    /// reached, which resolves their markers, and an event pushed after
-    /// that is dropped at once, as it is pushed. None of them is read.
+    /// The bound at [`ABANDONED_LIMIT`] is the application's: events 3 and
+    /// 4, waiting while none of its abandoned threads returns, are dropped
+    /// in order, which resolves their markers, and event 5, pushed after
+    /// the bound has passed, is dropped at once, as it is pushed, which is
+    /// what shows the bound is the application's rather than each event's
+    /// own deadline after its push. None of them is read.
     #[test]
     fn events_waiting_at_the_abandoned_limit_are_dropped_at_the_applications_bound() {
         let fixture = fixture(Duration::from_millis(50));

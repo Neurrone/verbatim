@@ -430,7 +430,9 @@ verdict for the focus's window rather than asking the window again.
   the wake-up the read's start already makes; for a windowless sender,
   the same calls on the reading thread once its nearest window is found,
   and only then one boxed closure for the read, made as it starts, which
-  wakes the watchdog only when the front is another thread's. No call
+  wakes the watchdog only when the front is another thread's. The closure
+  is made only for a focus or a menu opening whose sender is windowless,
+  never for a selection or a notification, whose reads are not judged. No call
   into the application, and no wake-up beyond the start's.
 - Target: the minimum, which the listener meets.
 
@@ -623,6 +625,11 @@ window, `WindowFromAccessibleObject`).
   it reaches through `accParent`, whose COM identity therefore matches no
   kept node, and such an object has no address of its own. mockapp answered 38 provider calls, 14 of them `accParent`,
   most from `WindowFromAccessibleObject`'s own walk.
+- Beside the read, the outpost's hook reads the event's window's owner
+  (`GetWindowThreadProcessId`, local) for every focus, foreground change,
+  menu opening, alert, and tooltip it takes in, and drops the event when
+  there is none, as the focus listener does (`hooked_fact`). No call into
+  the application, and no wake-up.
 - Target: 19. Recognizing an ancestor by its address and identity string,
   as the registry already does for objects acquired at an address.
 

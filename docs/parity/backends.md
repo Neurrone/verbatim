@@ -319,10 +319,17 @@ that arrived before it, go ahead of the rest, which keep their arrival
 order. A copy is known so when it was raised before the clock reading
 taken just before the hook went in, or when it has no twin while the
 hook has an unmatched copy of an event raised in the same tick, whose
-own listener copy would otherwise have arrived first; the listener's
-backlog, which replaces a waiting fact with a newer one of the same
-element and kind while a write is in flight, can lose that listener
-copy, and the order can then be wrong for events of that tick. A
+own listener copy would otherwise have arrived first. That listener
+copy can be lost, and the order can then be wrong for events of that
+tick, three ways: the listener's backlog replaces a waiting fact with a
+newer one of the same element and kind while a write is in flight; the
+listener finds no process to route the event to; or the event's window
+is destroyed between the outpost's hook callback and the listener's.
+The outpost's hook drops an event whose window has no owner, as the
+listener does and as NVDA's callback drops an invalid window, so a
+window already gone when both callbacks run loses no copy. Each copy is
+queued under the lock it is judged under, so the intake receives the
+copies in the order they were judged. A
 foreground change removes a focus event waiting on its window's client
 object from the same thread, as NVDA's limiter pops it when the
 foreground event is added (`orderedWinEventLimiter.py`, `addEvent`); the

@@ -793,10 +793,10 @@ impl Reading for UiaFocusReading {
     /// callback thread, whose calls its watchdog never cancels
     /// (`docs/parity/focus-events.md`, "A slow read the user has moved on
     /// from").
-    fn window(&self, (_, hwnd, _, kind, _): &Self::Job) -> isize {
+    fn window(&self, (_, hwnd, _, kind, _): &Self::Job) -> Option<isize> {
         match kind {
-            FocusEvent::Focus | FocusEvent::MenuOpened => *hwnd,
-            FocusEvent::Selection | FocusEvent::Notification => 0,
+            FocusEvent::Focus | FocusEvent::MenuOpened => Some(*hwnd),
+            FocusEvent::Selection | FocusEvent::Notification => None,
         }
     }
 

@@ -74,8 +74,8 @@ use verbatim_uia::{
 use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::protocol::{
-    DeliveredFact, EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
-    UiaSnapshotFact, WinEventStamp, decode_message, now_us,
+    DeliveredFact, EventTiming, FactKey, OutpostToSupervisor, Query, QueryOutcome,
+    SupervisorToOutpost, UiaSnapshotFact, WinEventStamp, decode_message, now_us,
 };
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, HeldAnchors};
@@ -104,6 +104,48 @@ impl CaretRead {
     fn covers(self, node: u64, observed_us: u64) -> bool {
         self.0
             .is_some_and(|(read, at)| read == node && at >= observed_us)
+    }
+}
+
+/// The fact the outpost's hook takes in for a focus, foreground change,
+/// menu opening, alert, or tooltip at `address`, as the focus listener
+/// forwards one: `None` for an event with no window, or whose window has
+/// no owner, which `owner` reads (0 for none), as for a window destroyed
+/// before the callback ran. The listener drops such an event before it
+/// forwards it, and NVDA's `WinEvent` callback drops an event whose window
+/// is no longer a window (`internalWinEventHandler.py`, "Invalid window");
+/// dropping it here too keeps the hook from holding a copy the listener
+/// never sends, which the hand-over would count as unmatched
+/// ([`handover`]). One local call (`GetWindowThreadProcessId`) per such
+/// event.
+fn hooked_fact(
+    kind: WinEventKind,
+    address: (isize, i32, i32),
+    owner: impl FnOnce(isize) -> u32,
+) -> Option<DeliveredFact> {
+    let fact = DeliveredFact::from_win_event(kind, address)?;
+    (owner(address.0) != 0).then_some(fact)
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use super::{DeliveredFact, WinEventKind, hooked_fact};
+
+    /// A focus on a window with no owner, as a window destroyed before the
+    /// hook's callback ran has, is dropped, as the listener drops it; on a
+    /// window with an owner it is taken in.
+    #[test]
+    fn the_hook_drops_a_focus_on_a_window_with_no_owner() {
+        let address = (0x40, -4, 1);
+        assert_eq!(hooked_fact(WinEventKind::Focus, address, |_| 0), None);
+        assert_eq!(
+            hooked_fact(WinEventKind::Focus, address, |_| 42),
+            Some(DeliveredFact::MsaaFocus {
+                hwnd: 0x40,
+                id_object: -4,
+                id_child: 1,
+            })
+        );
     }
 }
 
@@ -387,7 +429,6 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Records that the worker is reading `node`'s caret now.
     /// The details the active theme wants read for each node.
     fn fetches(&self) -> Fetches {
         *self.fetches.lock().unwrap_or_else(PoisonError::into_inner)
@@ -452,6 +493,7 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// Records that the worker is reading `node`'s caret now.
     fn caret_read(&self, node: NodeId) {
         self.caret_read_from(node, now_us());
     }
@@ -551,25 +593,6 @@ impl Context {
         });
     }
 
-    /// Queues a copy of a `WinEvent` the hand-over admitted, with how it
-    /// arrived ([`handover::Arrival`]).
-    fn push_copy(
-        &self,
-        item: Item,
-        (trace, observed_at_ms, timing): (TraceId, u64, EventTiming),
-        arrival: handover::Arrival,
-    ) {
-        self.intake.push_copy(
-            Entry {
-                item,
-                trace,
-                observed_at_ms,
-                timing,
-            },
-            arrival,
-        );
-    }
-
     /// Queues an event one of the outpost's own handlers took in, observed
     /// now, then tells the observer, if there is one, that it was heard.
     fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
@@ -604,8 +627,9 @@ impl Context {
     /// Takes in a `WinEvent` the outpost's own hook delivered. A focus,
     /// foreground change, menu opening, alert, or tooltip becomes the fact
     /// the listener forwards for one, queued unless it is the twin of the
-    /// listener's copy, already queued ([`handover`]); one with no window
-    /// is dropped, as the listener drops it. Any other event is queued as
+    /// listener's copy, already queued ([`handover`]); one with no window,
+    /// or whose window has no owner, is dropped, as the listener drops it
+    /// ([`hooked_fact`]). Any other event is queued as
     /// it is, unless its window is already known to be read through UIA:
     /// the worker would drop it at its window's UIA test, after acceptance
     /// and the window's state, which have no effect but a log line, so it
@@ -666,20 +690,21 @@ impl Context {
             );
             return;
         }
-        let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
+        let Some(fact) = hooked_fact(kind, (hwnd, id_object, id_child), |hwnd| {
+            window::window_owner(hwnd).1
+        }) else {
             return;
         };
         let stamp = WinEventStamp { thread, time };
-        if let Some(arrival) = self.admit_win_event(handover::Source::Hook, &fact, stamp) {
-            let foreground = matches!(fact, DeliveredFact::Foreground { .. });
-            self.push_copy(
-                Item::Fact(fact, Some(stamp)),
-                (TraceId::mint(), now_ms(), timing),
-                arrival,
-            );
-            if foreground {
-                self.watch.foreground_changed();
-            }
+        let foreground = matches!(fact, DeliveredFact::Foreground { .. });
+        let queued = self.admit_and_push(handover::Source::Hook, fact.key(), stamp, || Entry {
+            item: Item::Fact(fact, Some(stamp)),
+            trace: TraceId::mint(),
+            observed_at_ms: now_ms(),
+            timing,
+        });
+        if queued && foreground {
+            self.watch.foreground_changed();
         }
         self.tell_heard(Heard::Msaa(kind));
     }
@@ -695,16 +720,20 @@ impl Context {
         observed_at_ms: u64,
         timing: EventTiming,
     ) {
-        let arrival = match win_event {
-            Some(stamp) if fact.is_win_event() => {
-                let Some(arrival) = self.admit_win_event(handover::Source::Listener, fact, stamp)
-                else {
-                    return;
-                };
-                Some(arrival)
-            }
-            _ => None,
+        let entry = || Entry {
+            item: Item::Fact(fact.clone(), win_event),
+            trace,
+            observed_at_ms,
+            timing,
         };
+        match win_event {
+            Some(stamp) if fact.is_win_event() => {
+                if !self.admit_and_push(handover::Source::Listener, fact.key(), stamp, entry) {
+                    return;
+                }
+            }
+            _ => self.intake.push(entry()),
+        }
         // The event thread takes the application's focus and foreground
         // windows from these until its own hook delivers them.
         match fact {
@@ -716,32 +745,43 @@ impl Context {
             }
             _ => {}
         }
-        let item = Item::Fact(fact.clone(), win_event);
-        match arrival {
-            Some(arrival) => self.push_copy(item, (trace, observed_at_ms, timing), arrival),
-            None => self.push(item, trace, observed_at_ms, timing),
-        }
         if matches!(fact, DeliveredFact::Foreground { .. }) {
             self.watch.foreground_changed();
         }
     }
 
-    /// How a copy of the `WinEvent` `fact` and `stamp` describe, from
-    /// `source`, arrived, when it is to be handled, or `None` when it is
-    /// dropped as the twin of a copy already handled ([`handover`]).
-    fn admit_win_event(
+    /// Judges a copy, from `source`, of the `WinEvent` that `key` and
+    /// `stamp` name, and queues `entry` with how the copy arrived
+    /// ([`handover::Arrival`]) unless it is dropped as the twin of a copy
+    /// already handled ([`handover`]); answers whether it was queued. The
+    /// copy is queued while the hand-over's lock is still held, so the
+    /// intake receives the copies of the hook's thread and the reader's in
+    /// the order the hand-over judged them, which the intake's ordering of
+    /// one tick's events relies on (`intake::in_raised_order`). That adds
+    /// no call and no wake-up: the push was made anyway, and only the lock
+    /// is held across it.
+    fn admit_and_push(
         &self,
         source: handover::Source,
-        fact: &DeliveredFact,
+        key: Option<FactKey>,
         stamp: WinEventStamp,
-    ) -> Option<handover::Arrival> {
-        let Some(key) = fact.key() else {
-            return Some(match source {
+        entry: impl FnOnce() -> Entry,
+    ) -> bool {
+        let Some(key) = key else {
+            let arrival = match source {
                 handover::Source::Hook => handover::Arrival::Hook,
                 handover::Source::Listener => handover::Arrival::Listener,
-            });
+            };
+            self.intake.push_copy(entry(), arrival);
+            return true;
         };
-        self.handover().admit(source, key, stamp)
+        let mut handover = self.handover();
+        let Some(arrival) = handover.admit(source, key, stamp) else {
+            return false;
+        };
+        self.intake.push_copy(entry(), arrival);
+        drop(handover);
+        true
     }
 
     /// The MSAA hand-over's state ([`handover`]).
