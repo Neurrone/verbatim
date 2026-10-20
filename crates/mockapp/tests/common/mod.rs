@@ -242,12 +242,6 @@ impl MockApp {
             .unwrap_or_else(|error| panic!("mockapp did not take {line:?}: {error}"));
     }
 
-    /// The title its window was given.
-    #[must_use]
-    pub fn title(&self) -> &str {
-        &self.title
-    }
-
     /// The child process id, for scoping a `WinEventHook` to this instance.
     #[must_use]
     pub fn pid(&self) -> u32 {
@@ -367,14 +361,6 @@ pub fn spawn_counting_registrations(fixture: &str, title: &str) -> MockApp {
 #[must_use]
 pub fn spawn_hiding_window_handle(fixture: &str, title: &str) -> MockApp {
     spawn_with(fixture, "uia", title, &["--hide-window-handle"])
-}
-
-/// [`spawn`], its window shown (`--show`): an application the focus
-/// listener's acceptance test can take a focus in, with its window made
-/// topmost ([`make_topmost`]).
-#[must_use]
-pub fn spawn_shown(fixture: &str, backend: &str, title: &str) -> MockApp {
-    spawn_with(fixture, backend, title, &["--show"])
 }
 
 fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> MockApp {

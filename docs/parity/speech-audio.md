@@ -253,8 +253,7 @@ text range move"). Verbatim: **matched (verified)** on both paths: the
 classic reads correct every such count
 (`verbatim_uia::text::signed_move`), and the remote programs correct
 the counts whose sign they use (a units read's movement, a terminal's
-tail); tested with mockapp's `backward_moves.json` and
-`terminal_backward_moves.json`.
+tail); tested with mockapp's `backward_moves.json`.
 
 ### Synth isolation
 

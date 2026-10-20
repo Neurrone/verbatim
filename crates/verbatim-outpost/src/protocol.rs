@@ -489,10 +489,11 @@ impl DeliveredFact {
     /// notification, its element, kind, processing, and activity id, not
     /// its text, as NVDA's UIA limiter keys one (`eventRecord.h`), so a
     /// newer notification of the same activity replaces one still waiting.
-    /// A foreground change and an MSAA focus are keyed by the thread that
-    /// raised them too, from `win_event` (0 without it), as NVDA's `WinEvent`
-    /// limiter keys them (`orderedWinEventLimiter.py` 63 to 67), so the
-    /// changes or focuses of one window from two threads are not merged.
+    /// A `WinEvent`'s fact (a foreground change, an MSAA focus, a menu
+    /// opening, an alert, or a tooltip shown) is keyed by the thread that
+    /// raised it too, from `win_event` (0 without it), as NVDA's `WinEvent`
+    /// limiter keys every event (`orderedWinEventLimiter.py` 63 to 79), so
+    /// the facts of one address from two threads are not merged.
     /// `None` for the parts of a UIA focus's read, which are never replaced
     /// on the way: the outpost coalesces a read only where it takes its
     /// marker's place.
@@ -525,7 +526,7 @@ impl DeliveredFact {
                 hwnd,
                 id_object,
                 id_child,
-            } => FactKey::MenuPopup(*hwnd, *id_object, *id_child),
+            } => FactKey::MenuPopup(*hwnd, *id_object, *id_child, thread),
             DeliveredFact::UiaSelection { snapshot, .. } => {
                 FactKey::UiaSelection(snapshot.runtime_id.clone())
             }
@@ -533,12 +534,12 @@ impl DeliveredFact {
                 hwnd,
                 id_object,
                 id_child,
-            } => FactKey::Alert(*hwnd, *id_object, *id_child),
+            } => FactKey::Alert(*hwnd, *id_object, *id_child, thread),
             DeliveredFact::Show {
                 hwnd,
                 id_object,
                 id_child,
-            } => FactKey::Show(*hwnd, *id_object, *id_child),
+            } => FactKey::Show(*hwnd, *id_object, *id_child, thread),
         })
     }
 }
@@ -550,8 +551,8 @@ pub enum FactKey {
     Foreground(isize, u32),
     /// An MSAA focus at this address, raised by this thread.
     MsaaFocus(isize, i32, i32, u32),
-    /// An MSAA menu opening at this address.
-    MenuPopup(isize, i32, i32),
+    /// An MSAA menu opening at this address, raised by this thread.
+    MenuPopup(isize, i32, i32, u32),
     /// A UIA selection of this runtime id.
     UiaSelection(Vec<i32>),
     /// A UIA notification of this runtime id, with this kind, processing,
@@ -562,10 +563,10 @@ pub enum FactKey {
         NotificationProcessing,
         Option<String>,
     ),
-    /// An MSAA alert at this address.
-    Alert(isize, i32, i32),
-    /// A tooltip shown at this address.
-    Show(isize, i32, i32),
+    /// An MSAA alert at this address, raised by this thread.
+    Alert(isize, i32, i32, u32),
+    /// A tooltip shown at this address, raised by this thread.
+    Show(isize, i32, i32, u32),
 }
 
 /// Messages from the Core-side supervisor to an outpost.

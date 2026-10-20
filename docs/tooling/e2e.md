@@ -24,8 +24,8 @@ by-hand use under this variable. `SilentDevice` plays at real-time speed
 into silence: frames leave its queue at the rate a real device would play
 them, so the mixer reports each utterance's audio start and ending at the
 moments a listener would have heard them. `LatencyLedger` therefore still
-records a complete event-to-audio timeline with nothing audible, `--last
-N`/`report_latency` assertions still have something to check, and every
+records a complete event-to-audio timeline with nothing audible, the
+latency each run records still has something to measure, and every
 utterance still takes its real duration, so a test's speech is paced
 exactly as it would be on real hardware.
 
@@ -438,7 +438,13 @@ than parsing test output. Every scenario run, pass or fail, also writes into
 the same directory the interleaved timeline
 (`timeline.txt`, whole, where a failure prints its earlier steps shortened),
 what held the foreground before setup and after teardown (`foreground.txt`,
-so a failure can be read against the desktop it started from),
+so a failure can be read against the desktop it started from; after
+teardown, a `SystemSettings.exe` the scenario did not start, whose every
+window is cloaked, is named as Windows' prelaunch of the Settings app
+rather than listed among the visible windows, since Windows starts that
+app ahead of use and keeps it suspended with its window cloaked, so it is
+nothing a scenario left; Fable, 2026-10-21, pending Dickson's
+acceptance),
 Verbatim's captured stderr log (`stderr.log`), the per-process outpost,
 listener, and synthesizer host logs that each spawned process's stderr was
 redirected into (`listener.log`, one `outpost-<image>-<pid>.log` per
@@ -669,14 +675,9 @@ Every run speaks through eSpeak NG, audible or not, so the speech
 assertions are the same in every mode. `menu_and_settings_dialog`'s
 voice-combo section expects eSpeak NG's default voice, "English (Great
 Britain)", and the voice listed after it, "English (Scotland)", both
-fixed by eSpeak NG's data — see that test's own module doc and its
-`expected_voices` helper. Only `switch_to_onecore` depends on the
-machine: it needs some Microsoft OneCore voice installed, whichever one
-is the default. `menu_and_settings_dialog`'s trailing latency check asserts that
-at least one traced utterance reached audio, audible or not: every speech
-assertion waits for its utterance to be heard in full, so a scenario that
-asserted any speech has timelines that reached audio
-(`crate::latency::report`'s doc comment).
+fixed by eSpeak NG's data — see that test's own module doc. Only
+`switch_to_onecore` depends on the machine: it needs some Microsoft
+OneCore voice installed, whichever one is the default.
 
 **How a scenario is recorded** (`crates/verbatim-e2e/src/recording.rs`).
 `Scenario::launch` starts ffmpeg through the agent before it launches

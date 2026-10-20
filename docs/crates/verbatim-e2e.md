@@ -375,7 +375,7 @@ scenario runs (see `docs/tooling/troubleshooting.md`).
 
 ## Scenario
 
-`Scenario` owns one live run. Besides `control()`, `speech()`, `status()`,
+`Scenario` owns one live run. Besides `speech()`, `status()`,
 and the input methods above:
 
 - `launch_titled(command, args, title, owner_exits)` starts a program
@@ -413,8 +413,7 @@ and the input methods above:
   events Core receives, for evidence no speech shows: a caret report, a
   focus, the end of an outpost (`Frame::OutpostEnded`).
 - `wait_for_agent_file` waits, on folder change notifications, for a file
-  a script writes; `wait_for_window_in_front` and
-  `wait_for_window_to_close` wait on window events.
+  a script writes; `wait_for_window_in_front` waits on window events.
 - State read independently of Verbatim, before the scenario fixes what it
   expects: `desktop_speech`, `key_toggled` (a lock key),
   `focus_by_automation_id` (focuses an element with UI Automation's
@@ -855,8 +854,8 @@ debug log can be larger than one read of the agent's.
 - `artifacts`: `artifacts_root`, `scenario_dir`, `ScenarioSummary` (with
   its `OutpostCrash` list), and `archive_run`, shared with `xtask vm test`
   without argument passing.
-- `latency`: `fetch` and `report` read the control plane's latency
-  timelines; budgets are reported, not enforced. Enforcing them by
+- `latency`: `fetch` reads the control plane's latency timelines; no
+  budget is enforced. Enforcing them by
   default in local runs, and only recording them on GitHub's runners, is
   decided but not yet built (`docs/testing.md`).
 - `recording`: described above.

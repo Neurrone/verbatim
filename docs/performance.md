@@ -303,7 +303,7 @@ the provider calls of that one read are missing from the hits. The hits
 are read once the outpost has settled (`Outpost::settle`), so they
 include everything it did for the focus, the move of its focus-following
 property subscription to the new focus too: 1 `HostRawElementProvider`
-and 2 `FragmentRoot` provider calls, made on the subscription's own
+and 2 `FragmentRoot` provider calls, made on the process's registering
 thread and counted as no call. A UIA focus is measured both ways the
 outpost reads it: with remote operations, the default, and with the
 classic walk (`uia.remote_operations = false` in `settings.toml`, or a

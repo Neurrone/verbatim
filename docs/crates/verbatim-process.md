@@ -49,25 +49,19 @@ Public API:
   `logs\<Verbatim's pid>` next to the executables.
 - `prepare_launch_logs(exe_dir)` — prepares that directory at startup,
   best effort (see Logs below). The outpost supervisor calls it.
-- `inherited_pipes(pipe_in, pipe_out)` — the child side: turns the two
-  handle values its command line carried into the files it reads commands
-  from and writes messages to. It checks that the two values differ and
-  that each names an open pipe handle, answering an error otherwise, so a
-  malformed command line fails the start. It is still `unsafe` because
-  each value must be an inherited pipe handle the process owns and nothing
-  else uses, which no check can prove. It makes both handles
-  non-inheritable, as they arrive inheritable, so no process the child
-  creates, or a library inside it creates, can hold Core's pipes open
-  after the child exits. `verbatim-synth-host` uses it.
-  Its ends must be synchronous: a `File` must never hold an overlapped
-  handle.
-- `inherited_pipe_handles(pipe_in, pipe_out)` — the same checks, giving
-  the two handles as `OwnedHandle`s, for a child whose ends are
-  overlapped (`launch_with_ends` over `overlapped::pipe` with
-  `End::Overlapped`), which it uses only through `overlapped`'s and
-  `transport`'s types. The outpost binary, as an outpost and as the
-  listener, uses it, its ends going to `transport::ChildIo`.
-  `inherited_pipes` is this with each handle wrapped in a `File`.
+- `inherited_pipe_handles(pipe_in, pipe_out)` — the child side: turns
+  the two handle values its command line carried into the `OwnedHandle`s
+  it reads commands from and writes messages to, whether its ends are
+  synchronous or overlapped (`launch_with_ends` over `overlapped::pipe`).
+  It checks that the two values differ and that each names an open pipe
+  handle, answering an error otherwise, so a malformed command line fails
+  the start. It is still `unsafe` because each value must be an inherited
+  pipe handle the process owns and nothing else uses, which no check can
+  prove. It makes both handles non-inheritable, as they arrive
+  inheritable, so no process the child creates, or a library inside it
+  creates, can hold Core's pipes open after the child exits. The outpost
+  binary, as an outpost and as the listener, the synthesizer host, and the
+  relay floor use it.
 - `overlapped` (`docs/design/communication.md`, sections 4 and 6) —
   `pipe(flow, buffer, other)` makes a pipe with no name, as the standard
   library makes its child pipes (`NtCreateNamedPipeFile` on the named

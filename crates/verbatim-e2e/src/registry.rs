@@ -1774,7 +1774,7 @@ fn run_compare(def: &ScenarioDef) {
     // Written to the handle itself, past the test harness's capture, so
     // the report shows for a run that passes.
     let _ = io::stdout().write_all(format!("{report}\n").as_bytes());
-    foreground.push(format!("after cleanup: {}", scenario.foreground_report()));
+    foreground.push(format!("after cleanup: {}", scenario.cleanup_report()));
     drop(scenario);
     if let Err(error) = write_foreground(&dir, &foreground) {
         problems.push(format!("could not write the foreground record: {error}"));
@@ -1972,7 +1972,7 @@ fn run(def: &ScenarioDef) {
             "could not check for Windows Terminal windows the run did not open: {error}"
         )),
     }
-    foreground.push(format!("after cleanup: {}", scenario.foreground_report()));
+    foreground.push(format!("after cleanup: {}", scenario.cleanup_report()));
     let optional_utterances: Vec<String> = scenario
         .speech()
         .optional_outcomes()

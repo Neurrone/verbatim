@@ -47,7 +47,7 @@
 //! listener's copy of an event mockapp raised.
 
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -287,8 +287,6 @@ pub struct OutpostUnderTest {
     heard: Receiver<Heard>,
     next_request: u64,
     pub focus: FocusSlot,
-    /// How many times the outpost has read the focused element.
-    focus_reads: Arc<AtomicU32>,
     /// Where the outpost's read of the foreground window waits while the
     /// test holds its worker.
     gate: Arc<WorkerGate>,
@@ -380,13 +378,10 @@ impl OutpostUnderTest {
         let messages = MessagePipe::new(BlockingReader::new(ours).expect("a reader"));
         let focus = FocusSlot::default();
         let slot = Arc::clone(&focus);
-        let focus_reads = Arc::new(AtomicU32::new(0));
-        let reads = Arc::clone(&focus_reads);
         // Stands in for `GetFocusedElementBuildCache`: one UIA call, as the
         // system read counts, the element's cache filled by the outpost's
         // request.
         let read_focus: verbatim_outpost::FocusedElementReader = Arc::new(move |_, request| {
-            reads.fetch_add(1, Ordering::Relaxed);
             let element = slot
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
@@ -461,7 +456,6 @@ impl OutpostUnderTest {
             heard,
             next_request: 1,
             focus,
-            focus_reads,
             gate,
             time,
             jump_after,
@@ -477,11 +471,6 @@ impl OutpostUnderTest {
     /// on.
     pub fn set_foreground(&self, hwnd: HWND) {
         self.foreground.store(hwnd.0 as isize, Ordering::Relaxed);
-    }
-
-    /// How many times the outpost has read the focused element so far.
-    pub fn focus_reads(&self) -> u32 {
-        self.focus_reads.load(Ordering::Relaxed)
     }
 
     /// Moves the time the outpost and the listener's reader read on by `by`.

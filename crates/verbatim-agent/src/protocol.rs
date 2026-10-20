@@ -830,12 +830,6 @@ pub enum WindowCondition {
         /// Whether the title must mark unsaved changes, or must not.
         unsaved: Option<bool>,
     },
-    /// The foreground window is not titled with `title_contains`, such as
-    /// once a dialog has closed.
-    NotForeground {
-        /// Text the title contains.
-        title_contains: String,
-    },
     /// A visible top-level window, minimized or not but not cloaked (kept
     /// by the window manager but not shown, as the Settings app keeps its
     /// closed window), is titled with `title_contains`.

@@ -52,8 +52,7 @@ Public API:
     the restore, and `SetForegroundWindow`'s answer, with whether it
     accepted the window and whether the window was then in front),
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
-    requiring the title to mark unsaved changes or not; `NotForeground`;
-    `Present`; `Absent`; `AllMinimized`), where a cloaked window, kept but
+    requiring the title to mark unsaved changes or not; `Present`; `Absent`; `AllMinimized`), where a cloaked window, kept but
     not shown, counts as not shown in every condition, as it does for
     `CloseWindows`, which neither closes nor waits for one, `MinimizeAll` (the taskbar's Minimize All command,
     waited for, then a minimize sent directly to each window still

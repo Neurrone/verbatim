@@ -9,8 +9,8 @@
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
 //! `replace-items <id>`,
 //! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
-//! `answer-property <property id> <fail|empty|usual>`,
-//! `menu-opened <id>`, `release`, and `quit`.
+//! `answer-property <property id> <fail|empty|usual>`, `release`, and
+//! `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
 //! to the window thread over a channel, woken by a lightweight posted
@@ -67,12 +67,6 @@ pub(crate) enum Command {
     /// selection notification — `SelectionItem_ElementSelected` for UIA,
     /// `EVENT_OBJECT_SELECTION` for MSAA.
     Select(String),
-    /// `menu-opened <id>`: raises UIA's `MenuOpened` event from the node,
-    /// which the focus listener reads as a focus on it, as NVDA's
-    /// automation event handler does; an automation event, delivered on a
-    /// desktop where no window has the keyboard focus, as a focus event is
-    /// not. UIA-only.
-    MenuOpened(String),
     /// `caret <id> <start> [<end>]`: selects a text node's text from `start`
     /// to `end` (UTF-16 offsets; the caret alone at `start` when `end` is
     /// left out), raising no event, as an application's caret moves before
@@ -290,7 +284,6 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "focus" if !rest.is_empty() => Some(Command::Focus(rest.to_owned())),
         "set-focus" if !rest.is_empty() => Some(Command::SetFocus(rest.to_owned())),
         "select" if !rest.is_empty() => Some(Command::Select(rest.to_owned())),
-        "menu-opened" if !rest.is_empty() => Some(Command::MenuOpened(rest.to_owned())),
         "notify" if !rest.is_empty() => Some(Command::Notify(rest.to_owned())),
         "caret-event" if !rest.is_empty() => Some(Command::CaretEvent(rest.to_owned())),
         "text-changed" if !rest.is_empty() => Some(Command::TextChanged(rest.to_owned())),

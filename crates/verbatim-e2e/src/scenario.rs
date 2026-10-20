@@ -223,6 +223,10 @@ pub struct Scenario {
     speech: SpeechCollector,
     timeline: Timeline,
     launched: Vec<Launched>,
+    /// The processes the scenario started or brought a window of forward,
+    /// as its cleanup closed them: each launch and the owners of its
+    /// windows ([`Scenario::cleanup_report`]).
+    started: Vec<u32>,
     folders: Vec<String>,
     files: Vec<String>,
     stderr_log_path: String,
@@ -441,6 +445,7 @@ impl Scenario {
                 speech,
                 timeline,
                 launched: opened,
+                started: Vec::new(),
                 folders: Vec::new(),
                 files: Vec::new(),
                 stderr_log_path: String::new(),
@@ -540,6 +545,7 @@ impl Scenario {
             speech,
             timeline,
             launched: opened,
+            started: Vec::new(),
             folders: Vec::new(),
             files: Vec::new(),
             stderr_log_path: stderr_path,
@@ -639,18 +645,6 @@ impl Scenario {
         Ok(events)
     }
 
-    /// The primary control-plane connection: status, gestures, latency,
-    /// tree dumps, and quit.
-    ///
-    /// # Panics
-    ///
-    /// Panics in compare mode, which has no Verbatim.
-    pub fn control(&mut self) -> &mut ControlClient {
-        self.control
-            .as_mut()
-            .expect("compare mode has no connection to Verbatim")
-    }
-
     /// Verbatim's status: its synthesizer, its outposts, and whether it is
     /// ready.
     ///
@@ -679,17 +673,6 @@ impl Scenario {
     #[must_use]
     pub fn timeline(&self) -> &Timeline {
         &self.timeline
-    }
-
-    /// Verbatim's process id.
-    ///
-    /// # Panics
-    ///
-    /// Panics in compare mode, which launches no Verbatim.
-    #[must_use]
-    pub fn verbatim_pid(&self) -> u32 {
-        self.verbatim_pid
-            .expect("compare mode launches no Verbatim")
     }
 
     /// Routes a gesture identifier through Verbatim's gesture router, as if
@@ -1472,28 +1455,6 @@ impl Scenario {
         }
     }
 
-    /// Waits, on window events, until no window titled with
-    /// `title_contains` is in the foreground: evidence that a dialog
-    /// closed, for a step that must not race the close.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error, with the foreground report, if the window is still
-    /// in front when `timeout` runs out.
-    pub fn wait_for_window_to_close(
-        &mut self,
-        title_contains: &str,
-        timeout: Duration,
-    ) -> io::Result<()> {
-        self.wait_for(
-            WindowCondition::NotForeground {
-                title_contains: title_contains.to_owned(),
-            },
-            timeout,
-            &format!("the window titled {title_contains:?} to leave the foreground"),
-        )
-    }
-
     /// Runs `command` with `args`, a program that hands what it is asked to
     /// a running instance of itself and exits, such as Windows Terminal's
     /// executable opening a tab in a window of the harness's running
@@ -1549,6 +1510,36 @@ impl Scenario {
             Ok(info) => describe_foreground(&info),
             Err(error) => format!("the foreground could not be read: {error}"),
         }
+    }
+
+    /// [`Scenario::foreground_report`] for the record taken after cleanup,
+    /// with Windows' prelaunch of the Settings app named apart rather than
+    /// among the visible windows: a `SystemSettings.exe` whose only window
+    /// is cloaked and which the scenario did not start
+    /// ([`settings_prelaunch`]).
+    pub fn cleanup_report(&mut self) -> String {
+        let mut info = match self.agent.foreground_info() {
+            Ok(info) => info,
+            Err(error) => return format!("the foreground could not be read: {error}"),
+        };
+        let prelaunch = settings_prelaunch(&info.windows, &self.started);
+        if prelaunch.is_empty() {
+            return describe_foreground(&info);
+        }
+        let (prelaunched, shown): (Vec<WindowInfo>, Vec<WindowInfo>) = info
+            .windows
+            .into_iter()
+            .partition(|window| prelaunch.contains(&window.pid));
+        info.windows = shown;
+        let named: Vec<String> = prelaunched
+            .iter()
+            .map(|window| format!("pid {} ({:?}, cloaked)", window.pid, window.title))
+            .collect();
+        format!(
+            "{}; Windows' prelaunch of the Settings app, which the scenario did not start: {}",
+            describe_foreground(&info),
+            named.join(", ")
+        )
     }
 
     /// What Verbatim says as the desktop takes the focus, the state every
@@ -2109,6 +2100,10 @@ impl Scenario {
     pub fn clean_up(&mut self) -> Vec<String> {
         self.cleaned_up = true;
         let mut problems = self.release_held_keys();
+        self.started
+            .extend(self.launched.iter().flat_map(|launched| {
+                std::iter::once(launched.pid).chain(launched.owners.iter().copied())
+            }));
         for launched in std::mem::take(&mut self.launched).into_iter().rev() {
             problems.extend(self.close(&launched));
         }
@@ -2978,6 +2973,29 @@ fn minimize_failure(
     None
 }
 
+/// The processes among `windows` that are Windows' prelaunch of the
+/// Settings app: a `SystemSettings.exe` none of `started` names, whose
+/// every window listed is cloaked. Windows starts the app ahead of use and
+/// keeps it suspended with its window cloaked, so it is no window a
+/// scenario left (`docs/tooling/e2e.md`, on `foreground.txt`).
+fn settings_prelaunch(windows: &[WindowInfo], started: &[u32]) -> Vec<u32> {
+    let mut pids: Vec<u32> = windows
+        .iter()
+        .filter(|window| window.image.eq_ignore_ascii_case("SystemSettings.exe"))
+        .map(|window| window.pid)
+        .filter(|pid| !started.contains(pid))
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    pids.retain(|&pid| {
+        windows
+            .iter()
+            .filter(|window| window.pid == pid)
+            .all(|window| window.cloaked)
+    });
+    pids
+}
+
 /// `info` as one line: the foreground window, then the visible windows.
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
@@ -3110,6 +3128,28 @@ mod minimize_tests {
             hung: false,
             no_activate: false,
         }
+    }
+
+    /// Only a `SystemSettings.exe` the scenario did not start, with every
+    /// window cloaked, is taken for Windows' prelaunch.
+    #[test]
+    fn only_a_settings_app_not_started_with_every_window_cloaked_is_the_prelaunch() {
+        let cloaked = |pid| WindowInfo {
+            cloaked: true,
+            ..window("Settings", "SystemSettings.exe", pid)
+        };
+        let windows = [
+            cloaked(10),
+            cloaked(11),
+            cloaked(12),
+            window("Settings", "SystemSettings.exe", 12),
+            window("Settings", "SystemSettings.exe", 13),
+            WindowInfo {
+                cloaked: true,
+                ..window("Settings", "ApplicationFrameHost.exe", 14)
+            },
+        ];
+        assert_eq!(settings_prelaunch(&windows, &[11]), [10]);
     }
 
     #[test]

@@ -125,9 +125,6 @@ pub fn holds(condition: &WindowCondition) -> bool {
                 && window.title.contains(title_contains.as_str())
                 && unsaved.is_none_or(|unsaved| window.title.starts_with('*') == unsaved)
         }),
-        WindowCondition::NotForeground { title_contains } => !foreground_info()
-            .foreground
-            .is_some_and(|window| window.title.contains(title_contains.as_str())),
         WindowCondition::Present { title_contains } => shown_top_level_windows()
             .into_iter()
             .any(|window| window_text(window).contains(title_contains.as_str())),

@@ -981,8 +981,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are
   coalesced with NVDA's UIA limiter rule, one waiting fact per element and
   kind (`DeliveredFact::key`, which takes the event's stamp, so that a
-  foreground change or an MSAA focus is keyed by the thread that raised it
-  too, as NVDA's `WinEvent` limiter keys it; notifications and a focus's
+  `WinEvent`'s fact (a foreground change, an MSAA focus, a menu opening, an
+  alert, or a tooltip shown) is keyed by the thread that raised it too, as
+  NVDA's `WinEvent` limiter keys it (for the menu opening, alert and
+  tooltip, Fable, 2026-10-21, pending Dickson's acceptance); notifications
+  and a focus's
   marker, read, and drop are never merged), with pongs
   and `Ready` first, while a write is in flight; this backlog of the
   sender's (`listener::Waiting`) also judges, under the sender's lock,
@@ -1560,7 +1563,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   one `Execute` checks the element's `HasKeyboardFocus` live, reads a list's
   or tab control's selected child, walks the raw-view parents with the
   base cache filled inside the provider, and finds the element's nearest
-  window. The parents become the chain through `Uia::ancestor_chain_from`,
+  window. The parents become the chain through `Uia::ancestor_chain_from_parts`,
   with the same presentable filter, the same stop at a window read through
   MSAA and the same continuation through MSAA from there. With remote
   operations off (`--classic-uia`),
@@ -1570,14 +1573,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   is used. A program that fails otherwise is answered by the classic walk
   for that call and logged with the failing instruction's source line. A
   UIA focus event costs the outpost no UIA call before it is reported:
-  the listener's read is one `Execute`, and the outpost's walk to its own
-  copy of the element after the report is one `ElementFromHandle` and one
-  `Execute` (`docs/performance.md`). A focused menu item's legacy MSAA
-  checked state, which a menu item that no pattern makes checkable may
-  have, is read by the listener's program at no extra call
-  (`Ancestry::legacy_state`), a Windows Forms menu item's included; read
-  the classic way, it costs the listener one call more, read live for it
-  alone, as are the focus-now answer
+  the listener's read is its classic walk (`focus_ancestry_classic`), and
+  the outpost's walk to its own copy of the element after the report is
+  one `ElementFromHandle` and one `Execute` (`docs/performance.md`). A
+  focused menu item's legacy MSAA checked state, which a menu item that no
+  pattern makes checkable may have, costs the listener's read one call
+  more, read live for it alone, as are the focus-now answer
   (`verbatim_uia::map::with_legacy_checked_state`) and a navigation step's
   neighbor.
 - A UIA object-navigation step (`read::uia_remote_step`) is one remote

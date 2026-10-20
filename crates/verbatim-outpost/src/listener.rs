@@ -81,9 +81,9 @@
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind (for a notification, per
-//! element, kind, processing, and activity id; for a foreground change or
-//! an MSAA focus, per window or address and the thread that raised it, as
-//! NVDA's `WinEvent` limiter keys them), a newer one replacing it
+//! element, kind, processing, and activity id; for a `WinEvent`'s fact,
+//! per window or address and the thread that raised it, as NVDA's
+//! `WinEvent` limiter keys them), a newer one replacing it
 //! and moving to the back, so a flood from one busy process cannot pass through
 //! the listener and Core unthrottled. A UIA focus's marker, read, and drop
 //! are never replaced, since an outpost waits on the marker until its read

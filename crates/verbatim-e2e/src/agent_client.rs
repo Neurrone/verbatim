@@ -1027,21 +1027,6 @@ impl AgentClient {
         }
     }
 
-    /// Asks whether `pid` is still running on the guest.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub fn process_status(&mut self, pid: u32) -> io::Result<ProcessState> {
-        match self.request(Request::ProcessStatus { pid })? {
-            Frame::Reply {
-                payload: ReplyPayload::ProcessStatus(state),
-                ..
-            } => Ok(state),
-            other => Err(unexpected("ProcessStatus", &other)),
-        }
-    }
-
     /// Asks the agent for its own session diagnostics — whether it is
     /// running in an interactive window station, the classic "session 0"
     /// check.

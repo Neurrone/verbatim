@@ -32,7 +32,6 @@ pub mod session;
 pub mod transport;
 
 use std::ffi::c_void;
-use std::fs::File;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, IntoRawHandle, OwnedHandle, RawHandle};
 use std::path::{Path, PathBuf};
@@ -525,25 +524,6 @@ fn child_log_handle(exe_path: &Path, file_stem: &str) -> Option<HANDLE> {
             None
         }
     }
-}
-
-/// Turns the raw values of a child's two inherited pipe handles, as its
-/// command line passed them, into the files it reads commands from and
-/// writes messages to: [`inherited_pipe_handles`], each wrapped in a
-/// [`File`]. For synchronous ends only: a `File` must never be given an
-/// overlapped handle.
-///
-/// # Errors
-///
-/// As [`inherited_pipe_handles`].
-///
-/// # Safety
-///
-/// As [`inherited_pipe_handles`].
-pub unsafe fn inherited_pipes(pipe_in: usize, pipe_out: usize) -> io::Result<(File, File)> {
-    // SAFETY: the caller's guarantee, passed on.
-    let (reader, writer) = unsafe { inherited_pipe_handles(pipe_in, pipe_out) }?;
-    Ok((File::from(reader), File::from(writer)))
 }
 
 /// Turns the raw values of a child's two inherited pipe handles, as its

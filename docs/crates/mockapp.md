@@ -205,10 +205,7 @@ the event has arrived), `hold` (the next
 provider call, whichever client makes it, prints `held <method>` on
 stdout as it begins and waits until `release`, so a test knows a client's
 call is in progress and decides when it ends; acknowledged `applied`),
-`menu-opened <id>` (raises UIA's `MenuOpened` event from the node, which
-the focus listener reads as a focus on it; an automation event, which UIA
-delivers on a desktop where no window has the keyboard focus, as it does
-not deliver a focus event; UIA-only), `release` (lets the held call go on; applied and acknowledged `applied` by the stdin thread
+`release` (lets the held call go on; applied and acknowledged `applied` by the stdin thread
 itself, since the window thread is the one held), and `quit`.
 
 Every other command is acknowledged on stdout by the window thread once it
@@ -289,9 +286,7 @@ its crate-internal modules are the reviewable surface:
   Terminal's has (`tests/fixtures/terminal_find_fails.json`), and one with
   `backward_moves_positive` set answers a backward `Move` or
   `MoveEndpointByUnit` with a positive count, as some providers do
-  (`tests/fixtures/backward_moves.json`, and a terminal's text in
-  `terminal_backward_moves.json`, whose tail `terminal.rs` reads both
-  ways). A range
+  (`tests/fixtures/backward_moves.json`). A range
   handed back by a client
   (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
   offsets are read from its implementation. `FindText` matches the text
@@ -431,8 +426,7 @@ Implementation notes:
 The cross-process integration tests in `tests/` spawn the compiled binary
 via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 `tests/fixtures/`, and a shared `tests/common/mod.rs` harness
-(`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
-`wait_until` with a generous timeout). Before it starts its first
+(`MockApp`, killed on drop; `find_window` by exact, per-test-unique title). Before it starts its first
 `mockapp`, a test process puts itself in a kill-on-close job of its own
 (`contain_children`), so every `mockapp` it starts ends with it however it
 ends: a panic in a callback the system calls aborts the process without
@@ -516,7 +510,7 @@ variant when none is selected.
 `arbitration.rs` asserts that the raw probe (`verbatim_uia::raw_probe`),
 the outposts' and the listener's, answers `0x10000` for a `uia`-backend
 window and the default window procedure's 0 for a `msaa`-backend one,
-that `verbatim_outpost::Arbitrator` resolves each to the matching backend,
+that `verbatim_outpost::arbitration::Arbitrator` resolves each to the matching backend,
 and that a window too busy to answer is asked once, with one window
 message and no connection, and its timed-out "no" kept. `events.rs` asserts that
 `set-name`/`set-value` commands are observed by a property
@@ -656,8 +650,8 @@ does, reading the calls from the event's or reply's timing. The UIA ones
 run on the test's own thread, making the same `verbatim-uia` calls in the
 same order as the outpost's worker once it has the element: the outpost
 finds a UIA focus's element by reading the system's keyboard focus, which
-a test must not take. Event registrations, which run on a registration's
-own thread, are pinned by the provider calls they cost mockapp: the focus
+a test must not take. Event registrations, which run on the process's one
+registering thread, are pinned by the provider calls they cost mockapp: the focus
 listener's desktop-wide group and an outpost's focus-following property
 subscription. The focus listener's real reader, on the test's thread,
 reads focuses in mockapp's window and is asserted to make no connection

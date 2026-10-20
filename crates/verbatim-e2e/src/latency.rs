@@ -10,61 +10,18 @@
 //! What that does *not* mean is that every timeline completes. Focus
 //! announcements are spoken at `Interrupt` priority, so each new focus
 //! change cancels whatever is still speaking; an utterance cancelled before
-//! its first frame plays never gets an audio-start time. So this module
-//! requires that speech reached audio *at all*, and reports every timeline,
-//! rather than demanding that none of them were interrupted.
+//! its first frame plays never gets an audio-start time.
 
 use std::io;
 
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
 use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request};
 
-/// The M3 pipeline latency budget in milliseconds: the deterministic
-/// event-observed-to-speech-queued latency, synth-independent (it ends
-/// where synthesis begins). A breach is *reported* by the scenario runner —
-/// a prominent warning line plus the per-scenario summary's measured
-/// maxima — and never asserted.
-///
-/// Report-only was a recorded decision, made after two rounds of evidence
-/// that a wall-clock assertion inside a shared, variably loaded VM measures
-/// the host's scheduling, not Verbatim's code. An initial 50 ms budget (set
-/// from lightly loaded runs measuring 1 to 8 ms) flaked at 58 ms on a
-/// loaded run; raised to 200 ms, it flaked again at 277 ms during a full
-/// audible suite run — and a dedicated rerun of the identical build
-/// measured 3 ms. A real pipeline regression (a reducer accidentally doing
-/// blocking I/O, say) still shows up unmistakably in the always-reported
-/// maxima. Enforcement is decided but not yet built (Dickson, 2026-10-08,
-/// reaffirmed 2026-10-09; `docs/testing.md`, "Waits are for evidence"):
-/// each step's budget is to be enforced by default in local runs, and
-/// recorded but not enforced on GitHub's runners, through an explicit
-/// setting. Until then this budget is reported only. The end-to-end
-/// `OneCore` smoke number the roadmap also mentions is likewise not
-/// enforced: observed audio latency ranges past 1300 ms for a long
-/// utterance (synthesis time scales with text), too variable for any
-/// stable threshold.
-pub const PIPELINE_BUDGET_MS: u64 = 200;
-
-/// The worst event-to-queue (pipeline) latency across `records`, or `None`
-/// when no timeline recorded a queue time.
-#[must_use]
-pub fn max_event_to_queue_ms(records: &[LatencyRecord]) -> Option<u64> {
-    records
-        .iter()
-        .filter_map(|record| {
-            record
-                .speech_queued_at_ms
-                .map(|queued| queued.saturating_sub(record.event_observed_at_ms))
-        })
-        .max()
-}
-
 /// Fetches the most recent `last_n` latency timelines with no printing and
-/// no assertion — the raw building block [`report`] wraps, and what
-/// [`crate::scenario::Scenario::latency_snapshot`] calls for the registry's
-/// generic, best-effort per-scenario summary (`crate::registry`'s own doc
-/// comment): every scenario's run summary carries latency counts this way,
-/// not just scenarios (like `menu_and_settings_dialog`) that call [`report`]
-/// themselves as part of what they assert.
+/// no assertion: what [`crate::scenario::Scenario::latency_snapshot`] calls
+/// for the registry's generic, best-effort per-scenario summary
+/// (`crate::registry`'s own doc comment), so every scenario's run summary
+/// carries latency counts.
 ///
 /// # Errors
 ///
@@ -81,59 +38,5 @@ pub fn fetch(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<Latency
             "unexpected reply to Latency: {frame:?}"
         )));
     };
-    Ok(records)
-}
-
-/// Fetches the most recent `last_n` latency timelines ([`fetch`]), prints
-/// one fact per line (trace id, event-to-queue and event-to-audio
-/// milliseconds, and whether the utterance was interrupted before audio
-/// began), and asserts that at least one timeline reached audio — proof the
-/// whole path from an observed event to a playing utterance works end to
-/// end.
-///
-/// # Errors
-///
-/// Returns an error if the request fails or the reply is not a `Latency`
-/// reply.
-///
-/// # Panics
-///
-/// Panics if no returned record reached audio at all, which would mean
-/// speech never made it out of the pipeline. Every speech assertion waits
-/// for its utterance to be heard in full, so a scenario that asserted any
-/// speech has timelines that reached audio, audible or not.
-pub fn report(control: &mut ControlClient, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
-    let records = fetch(control, last_n)?;
-
-    let mut reached_audio = 0usize;
-    for record in &records {
-        let to_queue = record
-            .speech_queued_at_ms
-            .map(|queued| queued.saturating_sub(record.event_observed_at_ms));
-        let to_audio = record
-            .audio_started_at_ms
-            .map(|audio| audio.saturating_sub(record.event_observed_at_ms));
-        if to_audio.is_some() {
-            reached_audio += 1;
-        }
-        println!(
-            "latency trace {} event-to-queue {} ms event-to-audio {}",
-            record.trace_id,
-            to_queue.map_or_else(|| "?".to_owned(), |ms| ms.to_string()),
-            to_audio.map_or_else(
-                || "(interrupted before audio)".to_owned(),
-                |ms| format!("{ms} ms")
-            ),
-        );
-    }
-    println!(
-        "latency: {reached_audio} of {} timelines reached audio; the rest were interrupted by a later announcement",
-        records.len()
-    );
-    assert!(
-        reached_audio > 0 || records.is_empty(),
-        "no utterance reached audio in {} timelines; speech never left the pipeline",
-        records.len()
-    );
     Ok(records)
 }
