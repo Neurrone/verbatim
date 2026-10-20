@@ -126,8 +126,8 @@ use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subs
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
-    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, ReadWindow,
-    Readers, Reading,
+    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
+    WatchedRead, event_window,
 };
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
@@ -765,31 +765,29 @@ impl Reading for UiaFocusReading {
         reader: Option<&mut FocusReader>,
         meta: Meta,
         (element, _, focus_window, _, kind, fact): Self::Job,
-        window: &ReadWindow,
+        watched: &WatchedRead,
     ) -> Judged {
         let Some(reader) = reader else {
             return Judged::Dropped("its reading thread has no UIA client");
         };
-        match (element.resolve(), fact) {
-            (Ok(sender), Some(fact)) => reader.check_fact(&sender, fact),
-            (Ok(sender), None) => reader.read_noting_window(
+        match element.resolve() {
+            Ok(sender) => reader.judge_watched(
                 &sender,
-                focus_window,
-                kind,
+                (focus_window, kind, fact),
                 (
                     Arrival {
                         trace: meta.trace,
                         observed_at_ms: meta.observed_at_ms,
                     },
-                    window.clone(),
+                    watched.clone(),
                 ),
             ),
-            (Err(_), _) => Judged::Dropped("its element could not be resolved"),
+            Err(_) => Judged::Dropped("its element could not be resolved"),
         }
     }
 
-    fn window(&self, (_, hwnd, _, _, _, _): &Self::Job) -> isize {
-        *hwnd
+    fn window(&self, (_, hwnd, focus_window, _, _, _): &Self::Job) -> isize {
+        event_window(*hwnd, *focus_window)
     }
 
     fn key<'a>(
@@ -876,13 +874,16 @@ impl Listener {
             let foreground_readers = Arc::clone(&readers);
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
+                    let foreground = event.kind == WinEventKind::Foreground;
+                    // Forwarded first, so the event's observation time is
+                    // taken before anything else the callback does.
+                    forward_msaa_event(&outgoing, event);
                     // A foreground change is the evidence that the user may
                     // have moved on from a slow read's window
                     // (`focus_read`'s watchdog).
-                    if event.kind == WinEventKind::Foreground {
+                    if foreground {
                         foreground_readers.foreground_changed();
                     }
-                    forward_msaa_event(&outgoing, event);
                 }),
                 // The only nudge is the idle barrier's query, its round in
                 // the first word: every event delivered before it has been

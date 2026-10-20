@@ -212,20 +212,30 @@ event's own element:
   calls, which an outpost's worker shares): File Explorer's folder
   windows, the taskbar and the Alt+Tab switcher are one process on
   several threads, and a focus on one must not wait behind a slow read
-  of another. The window being read (`focus_read::ReadWindow`) is the
-  event's cached window handle until the read's nearest-window lookup
-  finds the sender's nearest window, and none while neither is known.
-  The check is made when the grace ends and again on each foreground
-  event the listener's own hook delivers (`Readers::foreground_changed`,
-  which wakes the watchdog only while a read is past its grace), until
-  the deadline; the event is dropped with the reason "the user moved on
-  from a slow window" and the abandonment logged at warn. When the
-  watchdog abandons a read, either way, the event is reported dropped, a
-  new thread takes the application's later events, and the abandoned
-  thread, once its call returns, lowers the application's count of
-  abandoned threads, says nothing and ends. With two of an
-  application's threads abandoned and still in their calls
-  (`ABANDONED_LIMIT`), its focus events are dropped until one returns.
+  of another. The window being read (`focus_read::WatchedRead`, the
+  read as the watchdog watches it) is, until the read's nearest-window
+  lookup finds the sender's nearest window, the event's cached window
+  handle, or for a sender that is not a window its application's
+  keyboard focus window when the event arrived, which the listener's
+  callback captured (`focus_read::event_window`); a selection's or a
+  notification's check learns its sender's nearest window the same way.
+  The user is judged only once a foreground event the listener's own
+  hook delivers (`Readers::foreground_changed`, called after the event
+  is forwarded, so its observation time is taken first) has come since
+  the read's event was queued: then when the grace ends, and on each
+  later foreground event, until the deadline. A read with no foreground
+  event since its event costs the watchdog no wake-up besides its
+  start's. The event is dropped with the reason "the user moved on from
+  a slow window" and the abandonment logged at warn. When the watchdog
+  abandons a read, either way, it marks the read abandoned, so that a
+  read that returns later makes no focus the last one accepted, the event
+  is reported dropped, a new thread takes the application's later
+  events, and the abandoned thread, once its call returns, lowers the
+  application's count of abandoned threads, says nothing and ends. With
+  two of an application's threads abandoned and still in their calls
+  (`ABANDONED_LIMIT`), it gets no new thread: its focus events wait,
+  a newer event of an element replacing its waiting one, and the first
+  abandoned thread whose call returns reads them.
 - When the listener is replaced, the supervisor tells every outpost,
   ready or starting, that its reads have ended
   (`DeliveredFact::UiaFocusReadsEnded`), so none waits on a marker the old

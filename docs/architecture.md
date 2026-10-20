@@ -682,8 +682,8 @@ element read are gone from the focus path; a focus-now query after a
 restart still reads the focused element. Each reading thread has a
 watchdog: a read past its deadline is reported dropped, a new thread
 takes the application's later events, and an application whose
-abandoned threads reach a small cap has its focus events dropped until
-one returns. When the listener is replaced, the supervisor tells every
+abandoned threads reach a small cap gets no new thread: its focus
+events wait for the first of them to return. When the listener is replaced, the supervisor tells every
 outpost to wait on none of its markers.
 
 ### Why one process per app
