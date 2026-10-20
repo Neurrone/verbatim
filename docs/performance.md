@@ -1028,7 +1028,9 @@ from the outposts' logs on 2026-10-20 over three runs each of
   NVDA's acceptance test as a location change, local calls only (the
   window's class name and process, its root owner and the foreground's,
   `IsChild`, its extended style, and `GetGUIThreadInfo` for a
-  `Windows.UI.Core` window), and then reads the caret as a caret report
+  `Windows.UI.Core` window), then the window's readability check, local
+  calls too (`IsWindow`, `GhostWindowFromHungWindow` where user32 has
+  it, and `IsHungAppWindow`), and then reads the caret as a caret report
   does, unless a read since the event covers it. In `notepad_editing`
   the hook delivered 47 to 52 per run, 34 to 39 of them shows, and 3
   woke the worker, each a caret read: those before the document's first

@@ -8,6 +8,13 @@
 //! the keyboard focus. A selection outside the combo box, and one in a
 //! combo box with the `Value` pattern, is no change of its value.
 //!
+//! Each selection is mockapp's own `ElementSelected` event, raised by its
+//! `select` command and caught by a subscription shaped as the focus
+//! listener's, its element passed on as the listener's selection fact,
+//! except for the item named late: its event's cached name must be empty,
+//! which mockapp's event for a named item cannot carry, so that fact is
+//! built by hand.
+//!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
 
@@ -15,16 +22,21 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::sync::Arc;
+use std::sync::mpsc;
+
 use verbatim_core::SrState;
 use verbatim_model::{
     Backend, Effect, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
     TraceId,
 };
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
-use verbatim_uia::{Cached, ListenerEvent, Uia};
+use verbatim_uia::{Cached, ListenerEvent, Part, Registration, Subscription, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
-use windows::Win32::UI::Accessibility::{TreeScope_Descendants, UIA_NamePropertyId};
+use windows::Win32::UI::Accessibility::{
+    TreeScope_Descendants, UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId,
+};
 use windows::core::BSTR;
 
 use common::outpost::OutpostUnderTest;
@@ -127,19 +139,9 @@ fn a_looping_selector_has_its_selected_item_as_its_value() {
 fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-selection");
     let (combo, _) = focus(&mut app, &outpost, hwnd, "hour");
+    let selections = Selections::new(hwnd);
     app.send("select ten");
-    outpost.deliver(DeliveredFact::UiaSelection {
-        hwnd: hwnd.0 as isize,
-        focus_window: hwnd.0 as isize,
-        snapshot: UiaSnapshotFact {
-            runtime_id: runtime_id_of(hwnd, "Ten"),
-            role: Role::ListItem,
-            name: Some("Ten".to_owned()),
-            value: None,
-            states: verbatim_model::StateSet::new(),
-            details: verbatim_model::NodeDetails::default(),
-        },
-    });
+    outpost.deliver(selections.next("Ten"));
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::ValueChanged { node_id, value },
@@ -150,6 +152,65 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
     outpost.settled();
     drop(outpost);
     app.quit();
+}
+
+/// mockapp's element selected events under its window, subscribed to with
+/// the focus listener's cache request, each passed on as the listener's
+/// selection fact: the element's identity, role, name and keyboard focus
+/// from the event's cache, and nothing read live.
+struct Selections {
+    _registration: Registration,
+    facts: mpsc::Receiver<DeliveredFact>,
+}
+
+impl Selections {
+    fn new(hwnd: HWND) -> Self {
+        let window = hwnd.0 as isize;
+        let (sent, facts) = mpsc::channel();
+        let registration = Registration::with_parts(
+            vec![Part::shaped::<ListenerEvent>(Subscription::Event {
+                event: UIA_SelectionItem_ElementSelectedEventId,
+                callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+                    let parts = element.read().parts(element.runtime_id());
+                    // The test may have finished.
+                    let _ = sent.send(DeliveredFact::UiaSelection {
+                        hwnd: window,
+                        focus_window: window,
+                        snapshot: UiaSnapshotFact {
+                            runtime_id: parts.runtime_id,
+                            role: parts.role,
+                            name: parts.name,
+                            value: parts.value,
+                            states: parts.states,
+                            details: parts.details,
+                        },
+                    });
+                }),
+            })],
+            common::window_subtree(window),
+        )
+        .expect("a subscription to element selected events");
+        Self {
+            _registration: registration,
+            facts,
+        }
+    }
+
+    /// The fact for the next selection event, which must be of the item
+    /// named `name`.
+    fn next(&self, name: &str) -> DeliveredFact {
+        let fact = self
+            .facts
+            .recv_timeout(common::WAIT_TIMEOUT)
+            .unwrap_or_else(|_| panic!("no element selected event for {name}"));
+        match &fact {
+            DeliveredFact::UiaSelection { snapshot, .. } => {
+                assert_eq!(snapshot.name.as_deref(), Some(name), "the selected item");
+            }
+            other => panic!("{other:?} is no selection"),
+        }
+        fact
+    }
 }
 
 /// The listener's selection fact for mockapp's item `name`, its cached
@@ -202,10 +263,18 @@ fn the_new_value_is_the_items_name_as_it_is_now() {
     app.quit();
 }
 
+/// What Core does for an event here: speak an utterance, given by its
+/// segments' content, or, for a focus, drop the speech it makes expire.
+#[derive(Debug, PartialEq)]
+enum Said {
+    Speech(Vec<SegmentContent>),
+    DropExpiredSpeech,
+}
+
 /// Gives Core `event`, its node ids stamped with outpost 1, and returns
-/// the content of each utterance spoken, in order. A focus's drop of
-/// expired speech is the only other effect allowed.
-fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentContent>> {
+/// every effect, in order; any effect but speech and a focus's drop of
+/// expired speech fails the test.
+fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
     event.assign_outpost(OutpostId(1));
     verbatim_core::reduce(
         state,
@@ -219,15 +288,15 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentCon
         },
     )
     .into_iter()
-    .filter_map(|effect| match effect {
-        Effect::Speak(utterance) => Some(
+    .map(|effect| match effect {
+        Effect::Speak(utterance) => Said::Speech(
             utterance
                 .segments
                 .into_iter()
                 .map(|segment| segment.content)
                 .collect(),
         ),
-        Effect::DropExpiredSpeech(_) => None,
+        Effect::DropExpiredSpeech(_) => Said::DropExpiredSpeech,
         other => panic!("an event makes no {other:?}"),
     })
     .collect()
@@ -251,10 +320,29 @@ fn an_item_with_the_keyboard_focus_is_said_once_as_the_focus() {
     outpost.deliver(outpost.listener_fact(&focused(hwnd)));
     let combo_box = next_event(&outpost);
     outpost.settled();
-    spoken(&mut state, combo_box);
+    assert_eq!(
+        spoken(&mut state, combo_box),
+        [
+            Said::DropExpiredSpeech,
+            Said::Speech(vec![
+                SegmentContent::Label("Mockapp Combo Box Fixture".to_owned()),
+                SegmentContent::Role(Role::Window)
+            ]),
+            Said::Speech(vec![
+                SegmentContent::Label("Hour".to_owned()),
+                SegmentContent::Role(Role::ComboBox),
+                SegmentContent::Value("Nine".to_owned()),
+                SegmentContent::State(verbatim_model::State::Collapsed)
+            ])
+        ]
+    );
+    let selections = Selections::new(hwnd);
     app.send("select ten");
+    // The event's cache is filled before the item takes the focus, as
+    // the item is selected on its way to the focus.
+    let selected = selections.next("Ten");
     app.send("set-focus ten");
-    outpost.deliver(selection_of(hwnd, "Ten", Some("Ten")));
+    outpost.deliver(selected);
     let selection = next_event(&outpost);
     match &selection {
         NormalizedEvent::SelectionChanged { node } => {
@@ -266,13 +354,13 @@ fn an_item_with_the_keyboard_focus_is_said_once_as_the_focus() {
     outpost.deliver(outpost.listener_fact(&focused(hwnd)));
     let item = next_event(&outpost);
     outpost.settled();
-    assert_eq!(
-        spoken(&mut state, selection),
-        Vec::<Vec<SegmentContent>>::new()
-    );
+    assert_eq!(spoken(&mut state, selection), []);
     assert_eq!(
         spoken(&mut state, item),
-        [[SegmentContent::Label("Ten".to_owned())]]
+        [
+            Said::DropExpiredSpeech,
+            Said::Speech(vec![SegmentContent::Label("Ten".to_owned())])
+        ]
     );
     drop(outpost);
     app.quit();
@@ -283,8 +371,9 @@ fn an_item_with_the_keyboard_focus_is_said_once_as_the_focus() {
 fn a_selection_outside_the_combo_box_is_no_value_change() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-elsewhere");
     focus(&mut app, &outpost, hwnd, "hour");
+    let selections = Selections::new(hwnd);
     app.send("select fifteen");
-    outpost.deliver(selection_of(hwnd, "Fifteen", Some("Fifteen")));
+    outpost.deliver(selections.next("Fifteen"));
     assert_eq!(selected_name(&outpost).as_deref(), Some("Fifteen"));
     outpost.settled();
     drop(outpost);
@@ -297,8 +386,9 @@ fn a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection() {
     let (mut app, hwnd, outpost) = start("mockapp-combo-box-value-pattern");
     let (node, _) = focus(&mut app, &outpost, hwnd, "size");
     assert_eq!(node.value.as_deref(), Some("Large"));
+    let selections = Selections::new(hwnd);
     app.send("select large");
-    outpost.deliver(selection_of(hwnd, "Large", Some("Large")));
+    outpost.deliver(selections.next("Large"));
     assert_eq!(selected_name(&outpost).as_deref(), Some("Large"));
     outpost.settled();
     drop(outpost);

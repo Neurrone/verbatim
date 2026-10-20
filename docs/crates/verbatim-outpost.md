@@ -1900,7 +1900,14 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   and text changes followed too (the subscription moved to it, and an
   edit control's caret events checked against a watch on it), since Core
   takes it as its focus and its caret keys are answered by those events;
-  it gets no caret report and no property subscription.
+  it gets no caret report and no property subscription. The watch is
+  checked before a system caret event is taken as the caret event of a
+  UIA focus this outpost last reported, at the cost of the watch's lock
+  for each such event, and the registry's while a watch is open; while
+  that UIA focus has the intake dropping the system caret's events
+  (`Intake::drop_system_caret`), the edit control's are dropped with
+  them, so only its text selection changes answer its caret keys until
+  the next focus is reported.
 
 ### Queries
 

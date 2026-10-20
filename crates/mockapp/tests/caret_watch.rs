@@ -368,9 +368,11 @@ fn a_new_focus_uses_the_system_caret_again() {
     app.quit();
 }
 
-/// A classic edit control, read through MSAA, reports its caret's move
-/// only by the system caret's hide and show: the show from the focused
-/// control is its caret event, and its caret is reported where it moved.
+/// A system caret's show from the focused classic edit control, read
+/// through MSAA, is its caret event, and its caret is reported where it
+/// moved. The show is raised by mockapp: on a desktop of its own the
+/// control cannot take the keyboard focus, so it raises nothing for the
+/// move, and what a focused one raises is not checked here.
 fn a_classic_edit_controls_caret_show_is_its_caret_event() {
     common::init_com();
     let title = common::unique_title("mockapp-caret-watch-edit-show");
@@ -412,8 +414,8 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
     }
     outpost.settled();
     app.send("caret doc 6");
-    // Unfocused on this desktop, the control raises nothing for the move;
-    // focused, it would show its caret again, as mockapp now does.
+    // Unfocused on this desktop, the control raises nothing for the move,
+    // so mockapp raises the show.
     app.send("system-caret show");
     match outpost.next() {
         OutpostToSupervisor::Event {

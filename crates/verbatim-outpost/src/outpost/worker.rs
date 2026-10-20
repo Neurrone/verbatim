@@ -2170,11 +2170,18 @@ impl Worker<'_> {
         }
         // The system caret's event is a caret event on the focus, from
         // whichever window it comes, as NVDA maps it onto its last queued
-        // focus.
+        // focus. An edit control Core took as its focus from a focus-now
+        // answer, with a caret key's watch open on it, is Core's focus
+        // rather than the UIA focus this outpost last reported, so its
+        // caret events check the watch first.
         if kind == WinEventKind::Caret
             && let Some(Object::Uia(runtime_id)) = self.context.intake.focused()
         {
-            self.system_caret_of_uia_focus(&runtime_id, trace, observed_at_ms);
+            if let Some(node_id) = self.watched_edit(hwnd) {
+                self.check_open_watch(node_id, true);
+            } else {
+                self.system_caret_of_uia_focus(&runtime_id, trace, observed_at_ms);
+            }
             return;
         }
         if read::window_uses_uia(self.context, hwnd) {

@@ -2120,7 +2120,7 @@ fn drop_waiting<R: Reading>(
             %pid,
             abandoned,
             dropped,
-            "UIA focuses waited past the bound behind their application's abandoned reads; they are dropped"
+            "every waiting UIA event of the application, of whatever kind, waited past its bound behind its abandoned reads; they are dropped"
         ),
         Dropping::AsPushed => tracing::warn!(
             %pid,

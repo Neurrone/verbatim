@@ -242,9 +242,14 @@ as NVDA reads the item's focus and the combo box's value live when it
 handles the event: an item with the keyboard focus is no value change and
 is said by its focus alone, and the value is the item's name as found,
 never the event's cached name, which can be empty for an item an
-application names late. NVDA reads the combo box's selection again where
-Verbatim reads the selected item; the two are the same item for a single
-selection. NVDA also takes the items' added-to and removed-from
+application names late. Different: the value is the event's item, where
+NVDA reads the combo box's current selection when it handles the event
+(`ComboBoxWithoutValuePattern._get_value`, `NVDAObjects/UIA/__init__.py`
+2762 to 2767). The two differ when the selection moves again before the
+event is handled: when two quick arrows on a collapsed combo box select
+A and then B before A's event is handled, NVDA says B for both events
+and Verbatim says A, then B. Verbatim keeps the event's item, so that each item the
+user passed is said, as each arrow's answer. NVDA also takes the items' added-to and removed-from
 selection events, which Verbatim does not subscribe to
 (`docs/parity/backends.md`, "UIA event registration").
 
@@ -254,8 +259,11 @@ Mouse, Date and time, Language and region, and Colors pages has no
 `Value` pattern, and arrowing the collapsed "Show additional calendars
 in the taskbar" combo box raises an element selected event on the new
 item, which Verbatim speaks as the combo box's value, "Simplified
-Chinese (Lunar)", and back, "Don't show additional calendars"
-(`target/e2e-evidence/fixes-item-11-2026-10-20/settings-combo-box-live-check.txt`).
+Chinese (Lunar)", and back, "Don't show additional calendars". Expanded
+with Alt+Down Arrow on 2026-10-21, its items take the keyboard focus as
+they are arrowed, and each is said once, by its focus ("Simplified
+Chinese (Lunar) not selected 2 of 3"), with no value change
+(`target/e2e-evidence/fixes-round-six-2026-10-21/settings-combo-box-live-check.txt`).
 So NVDA's second rule, the same value change for a `Windows.UI.Core`
 combo box that has the `Value` pattern (lines 2795 to 2798, NVDA issue
 6337), is not needed for Settings and is not built: no such combo box

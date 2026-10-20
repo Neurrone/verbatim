@@ -80,15 +80,15 @@ that is neither has no text.
   an edit control read through MSAA or a UIA node: some UIA documents,
   such as Visual Studio's, raise no UIA caret event of their own
   (mockapp's `the_system_carets_move_is_the_uia_focuss_caret_event`),
-  and a classic edit control reports a move only by the caret's hide and
-  show (`a_classic_edit_controls_caret_show_is_its_caret_event`). For a
+  and a caret show from the focused classic edit control is its caret
+  event (`a_classic_edit_controls_caret_show_is_its_caret_event`). For a
   UIA focus they are taken from any window NVDA's acceptance test takes a
   location change from (the foreground application's windows, those
   sharing its root owner, and the rest of `docs/parity/focus-events.md`,
   "Event acceptance"), not only from the focus's own window. The caret's
   show from a classic edit control comes with every repaint, since
   painting hides and shows the caret, so each repaint reads the caret,
-  as in NVDA. Different, each to save a second read of the same move:
+  as in NVDA. Different:
   - Once a UIA focus has raised a UIA caret event of its own, Verbatim
     drops the system caret's events until the next focus is reported,
     where NVDA handles both. The ones that come before that first UIA
@@ -102,18 +102,30 @@ that is neither has no text.
     next focus (`a_new_focus_uses_the_system_caret_again`).
   - In a focused console host terminal, the system caret's events are
     never used: the console's caret event (`EVENT_CONSOLE_CARET`) is its
-    caret event (`docs/crates/verbatim-outpost.md`, "Terminals"), and the
-    console host raises the system caret's location change about 130
-    microseconds before it, at the same blink tick, for the same move.
-    NVDA's console handler (`winConsoleHandler.py`, 169) queues the
-    console's caret event only when no caret event is pending for the
-    console, so for each such pair it handles one caret event, the system
-    caret's; Verbatim keeps the console's, which also comes for a move of
-    a selection's end and is what its terminal reading is built on, so
-    each move is read once by design rather than by the two arriving
-    before the read began (`conhost_editing`: 7 console caret events and
-    8 caret reads, none from the system caret's 7 events;
+    caret event (`docs/crates/verbatim-outpost.md`, "Terminals"). NVDA
+    does the reverse on this build. Windows 11's console host is
+    FORMATTED, so NVDA's default console setting ("auto") reads it as
+    its UIA console (`_shouldUseUIAConsole`, `UIAHandler/utils.py` 337
+    to 347), whose focus is a UIA object; the system caret's location
+    change is mapped onto that focus as its caret event
+    (`IAccessibleHandler/__init__.py` 636 to 668), and NVDA's console
+    handler (`winConsoleHandler.py`), which only its legacy console
+    connects, does not run. The console host raises the system caret's
+    location change about 130 microseconds before its console caret
+    event, at the same blink tick, for the same move. Verbatim keeps the
+    console's event, because it also comes for a move of a selection's
+    end and Verbatim's terminal reading is built on it, so each move is
+    read once (`conhost_editing`: 7 console caret events and 8 caret
+    reads, none from the system caret's 7 events;
     `the_console_hosts_system_caret_is_not_its_caret_event`).
+  - The event's window is checked as readable before the caret event is
+    mapped onto the focus: it must be a window, have no ghost window
+    standing in for it, and belong to an application that is responding.
+    NVDA maps the caret event onto its focus first and makes these checks
+    only for other events (`IAccessibleHandler/__init__.py`, 549 to 576
+    against 636 to 668). Verbatim checks first so that a hung
+    application's caret event never leads to a read of its caret that
+    would wait on it.
   - A caret show is tested for acceptance as a location change is; NVDA
     skips the test for it and asks only its focus's
     `shouldAcceptShowHideCaretEvent`. The two differ only for a show from
@@ -146,8 +158,8 @@ Differences:
   replaced it, the focus moved, or it reached its ten-second bound, says
   nothing. The same holds for a key whose application moves the caret
   without reporting it at all, where NVDA's polling finds the move. A
-  classic edit control reports a caret move by the system caret's show
-  event, which Verbatim hears as a caret event; a Common Controls
+  focused classic edit control's system caret location change and show
+  are caret events to Verbatim; a Common Controls
   version 6 edit control, such as a Windows Forms text box with visual
   styles, reports it with its text selection event too. An application
   whose Up Arrow on the first line, or Down Arrow on the last, moves the
