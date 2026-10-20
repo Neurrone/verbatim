@@ -182,15 +182,17 @@ fn a_held_subscription_move_returns_at_the_connection_timeout() {
     held_app.quit();
     next_app.quit();
 }
-/// Two registrations of one process share its registering thread, which
-/// makes their commands in the order they were asked for: a second
-/// registration's move, asked for while the first registration's move onto
-/// a window whose provider holds its call is held, is made only after that
-/// move has returned at UIA's connection timeout, so the second
-/// registration's settle returns no sooner than one connection timeout
-/// after the first move was asked for, and its move has then registered on
-/// the other application's window, as that application counts it.
-fn two_registrations_moves_are_made_in_the_order_asked() {
+/// Two registrations of one process share its registering thread, so a
+/// second registration's commands wait behind the first's: its move and
+/// settle, asked for while the first registration's move onto a window
+/// whose provider holds its call is held, wait until that move has returned
+/// at UIA's connection timeout, so the second's settle returns no sooner
+/// than one connection timeout after the first move was asked for, and
+/// before two; and its move has then registered on the other application's
+/// window, as that application counts it. Whether the second move was made
+/// after the held one rather than before it is not shown: the settle waits
+/// for both either way.
+fn a_second_registrations_commands_wait_behind_the_firsts_held_move() {
     common::init_com();
     let held_title = common::unique_title("mockapp-held-first");
     let mut held_app = common::spawn("small.json", "uia", &held_title);
@@ -231,7 +233,7 @@ fn two_registrations_moves_are_made_in_the_order_asked() {
     );
     assert!(
         elapsed >= CONNECTION_TIMEOUT && elapsed < CONNECTION_TIMEOUT * 2,
-        "the second registration's move was made after the first's returned: {elapsed:?}"
+        "the second registration's settle waited behind the first's held move: {elapsed:?}"
     );
     assert_eq!(
         advised(),
@@ -261,8 +263,8 @@ fn main() {
             a_held_subscription_move_returns_at_the_connection_timeout,
         ),
         (
-            "two_registrations_moves_are_made_in_the_order_asked",
-            two_registrations_moves_are_made_in_the_order_asked,
+            "a_second_registrations_commands_wait_behind_the_firsts_held_move",
+            a_second_registrations_commands_wait_behind_the_firsts_held_move,
         ),
     ]);
 }

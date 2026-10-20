@@ -45,7 +45,9 @@
 //! the same registration queued behind it makes it unneeded, that it was
 //! skipped and for which move; and each call a move or a close makes with
 //! its result and the time it took, at warn level when that passed UIA's
-//! connection timeout ([`crate::CONNECTION_TIMEOUT`]).
+//! connection timeout ([`crate::CONNECTION_TIMEOUT`]) or when a removal
+//! failed, whatever its time, since what it leaves live goes on
+//! delivering.
 //! [`Registration::settle`] waits for every move asked for so far to be
 //! made, for a caller that measures what the moves cost the application.
 //! Closing or dropping a registration removes what it registered, each
@@ -53,7 +55,11 @@
 //! move or in the close, stays recorded as live, and a group a move
 //! failed to remove is tried again at the close, but one whose removal
 //! fails at the close stays live on the shared client, still calling the
-//! closed registration's callbacks, until the registering thread ends.
+//! closed registration's callbacks, until the registering thread ends, as
+//! does a focus handler of a registration whose setting up failed after
+//! it was added, if its removal fails. Whether the close's second try at a
+//! group can succeed is not tested (`docs/uia-bugs.md`, "A registration
+//! that times out reports success").
 //! `RemoveAllEventHandlers` is called only then, once the process has
 //! finished with UIA ([`crate::release_mta_usage`]), and removes it.
 //!
@@ -888,7 +894,8 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
                         followers.push(follower);
                         let _ = ready.send(Ok(()));
                     }
-                    Err(error) => {
+                    Err((error, live)) => {
+                        unremoved.extend(live.map(|live| *live));
                         let _ = ready.send(Err(error));
                     }
                 },
@@ -947,12 +954,14 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
 
 /// Logs one registration call into an application, `call` on `element`,
 /// with its result and how long it took: at debug level, or at warn level
-/// when it took longer than UIA's connection timeout. The element is named
-/// by its runtime id, which is local; its window would take a cached read
-/// the caller's element is not known to hold, or a call into the
-/// application that has just failed to answer.
+/// when it took longer than UIA's connection timeout, or when it is a
+/// removal (`removal`) that failed, whatever its time, since the group it
+/// leaves live goes on delivering. The element is named by its runtime id,
+/// which is local; its window would take a cached read the caller's
+/// element is not known to hold, or a call into the application that has
+/// just failed to answer.
 fn log_call(
-    call: &str,
+    (call, removal): (&str, bool),
     registration: u64,
     element: &IUIAutomationElement,
     result: &windows::core::Result<()>,
@@ -969,6 +978,15 @@ fn log_call(
             elapsed_ms,
             "{call} took longer than UIA's connection timeout"
         );
+    } else if removal && result.is_err() {
+        let runtime_id = crate::com::runtime_id(element);
+        tracing::warn!(
+            registration,
+            ?runtime_id,
+            ?result,
+            elapsed_ms,
+            "{call} failed; the group stays live"
+        );
     } else if tracing::enabled!(tracing::Level::DEBUG) {
         let runtime_id = crate::com::runtime_id(element);
         tracing::debug!(registration, ?runtime_id, ?result, elapsed_ms, "{call}");
@@ -979,14 +997,17 @@ impl Follower {
     /// Sets registration `id` up on the registering thread: each part's
     /// handler with its cache request, and any focus handler registered on
     /// the client in NVDA's order (the desktop's root fetched first, for a
-    /// desktop registration), before any group is.
+    /// desktop registration), before any group is. On an error, what it
+    /// had registered is removed, and the registration is answered with
+    /// the error when a removal failed, holding only what is still live,
+    /// for the registering thread to keep until it ends.
     fn set_up(
         client: &Client,
         id: u64,
         parts: Vec<Part>,
         target: &Target,
         failed_reads: &Arc<AtomicU32>,
-    ) -> windows::core::Result<Self> {
+    ) -> Result<Self, (windows::core::Error, Option<Box<Self>>)> {
         let uia = &client.uia;
         // Parts asking for the same properties share one cache request, as
         // every one of NVDA's global handlers carries its one base cache
@@ -1021,7 +1042,8 @@ impl Follower {
                     text_events: part.text_events,
                 })
             })
-            .collect::<windows::core::Result<Vec<_>>>()?;
+            .collect::<windows::core::Result<Vec<_>>>()
+            .map_err(|error| (error, None))?;
         // NVDA's order (`UIAHandler/__init__.py` 547 to 593): the desktop's
         // root element is fetched first, then the focus handler goes on the
         // client, and only then is the group registered, on that root. A
@@ -1036,7 +1058,10 @@ impl Follower {
             (Scope::Desktop, Some(first)) if has_focus => {
                 // SAFETY: the cache request is live and owned by this
                 // thread's client.
-                Some(unsafe { uia.client().GetRootElementBuildCache(&first.cache) }?)
+                Some(
+                    unsafe { uia.client().GetRootElementBuildCache(&first.cache) }
+                        .map_err(|error| (error, None))?,
+                )
             }
             _ => None,
         };
@@ -1080,9 +1105,9 @@ impl Follower {
             }
             if let Err(error) = added {
                 // What this registration added before is removed; it has
-                // no groups yet.
-                drop(follower.close(client));
-                return Err(error);
+                // no groups yet. A focus handler whose removal failed is
+                // kept, as a closed registration's is.
+                return Err((error, follower.close(client).map(Box::new)));
             }
             follower.focus_handlers.push(handler);
         }
@@ -1141,7 +1166,7 @@ impl Follower {
                 // thread's client.
                 let added = unsafe { client.client.AddEventHandlerGroup(&element, &handlers) };
                 log_call(
-                    "AddEventHandlerGroup",
+                    ("AddEventHandlerGroup", false),
                     self.id,
                     &element,
                     &added,
@@ -1181,7 +1206,7 @@ impl Follower {
                     .RemoveEventHandlerGroup(&registered.element, &registered.handlers)
             };
             log_call(
-                "RemoveEventHandlerGroup",
+                ("RemoveEventHandlerGroup", true),
                 self.id,
                 &registered.element,
                 &removed,
@@ -1217,6 +1242,13 @@ impl Follower {
                     result = ?removed,
                     elapsed_ms,
                     "RemoveFocusChangedEventHandler took longer than UIA's connection timeout"
+                );
+            } else if removed.is_err() {
+                tracing::warn!(
+                    registration = self.id,
+                    result = ?removed,
+                    elapsed_ms,
+                    "RemoveFocusChangedEventHandler failed; the handler stays live"
                 );
             } else {
                 tracing::debug!(

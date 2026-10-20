@@ -365,8 +365,11 @@ Public API:
   progress, and releases its objects; moving or settling a closed
   registration does nothing, and dropping one closes it. Each removal is
   tried once: a group a move failed to remove is tried again at the
-  close, and a group or focus handler whose removal fails at the close
-  stays live on the registering thread's client, calling the closed
+  close, with an outcome no test shows (`docs/uia-bugs.md`, "A
+  registration that times out reports success"), and a group or focus
+  handler whose removal fails at the close, or when a registration's
+  setting up fails after its focus handler was added, stays live on the
+  registering thread's client, calling the closed
   registration's callbacks, until the thread ends and
   `RemoveAllEventHandlers` removes it. A `close()` made on the
   registering thread itself, as when a registration's owner is dropped
@@ -431,8 +434,8 @@ Public API:
   wait on any registration's moves. The thread adds the
   group to each element of the new scope that does not already have it,
   then removes from each element no longer in the scope the group it added
-  there (`RemoveEventHandlerGroup`), and forgets that element whatever the
-  result, as NVDA adds its local group to a new focus and removes it from
+  there (`RemoveEventHandlerGroup`), keeping one whose removal failed for
+  the close to try again, as NVDA adds its local group to a new focus and removes it from
   the old one (`UIAHandler/__init__.py` 642 to 756). An element that
   already has the same group, the same element by `CompareElements`, keeps
   it, and no call is made for it, so a move to the element already
@@ -448,7 +451,7 @@ Public API:
   `RemoveEventHandlerGroup`, `AddFocusChangedEventHandler`,
   `RemoveFocusChangedEventHandler`) with its result and its elapsed
   milliseconds, at warn level when the call took longer than
-  `CONNECTION_TIMEOUT`, naming the element by runtime id, which is read
+  `CONNECTION_TIMEOUT` or was a removal that failed, naming the element by runtime id, which is read
   only when the line is written; the first
   registration `with_parts` makes is logged the same way. The element's
   window is not named: it would take a cached read the caller's element
