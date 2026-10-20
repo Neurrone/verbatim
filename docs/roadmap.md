@@ -151,6 +151,11 @@ with the item.
   cancelling an utterance cancels both. The latency ledger stops counting
   the tail of earlier speech as "mixer and device". Each is measured with
   the device stages of the communication design's section 10.1.
+- In the 28 verification runs of 2026-10-20, every passing run logged 1
+  to 10 warnings "the device ran dry in the middle of an utterance: an
+  audible gap" from `verbatim::audio` (debug build). They are not caused
+  by the focus work and were not compared with older runs; they are to
+  be looked at with the audio step.
 
 ### Deferred
 
@@ -209,8 +214,11 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     Third, an end-to-end scenario pinning selection in a list the focus
     controls, Settings' search suggestions
     (`docs/parity/changes-and-selection.md`, "Selection in a list the
-    focus controls"). Also left from the item: the staging windows'
-    focus, dropped where NVDA makes it the focus without speaking it
+    focus controls"). Also left from the item, deferred until a capture shows
+    speech that should have been cut (Dickson, 2026-10-20), since the
+    spoken words already match: the staging windows' focus, which
+    Verbatim drops, so speech is not cut at the staging window, where
+    NVDA makes it the focus without speaking it and cuts speech
     (`docs/parity/windows-and-processes.md`, "The shell's staging
     windows"). Deferred until Verbatim reads such a combo box in an
     application, because no .NET Framework application is in the suite
@@ -244,6 +252,20 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   local run, since neither reproduces here.
 
 - The focus pipeline's follow-ups (2026-10-17):
+  - UIA's late delivery of a newly started File Explorer process's focus
+    events (risk 2 of [the listener design](design/listener-without-connections.md)),
+    fixed by decision 11's remaining step: when a WinEvent focus in a UIA
+    window has no UIA focus event following it, Core asks that
+    application's outpost for its focus. On 2026-10-20 the same fault was
+    seen in Settings: in `settings_system_page` (1 failure in 3 runs,
+    evidence
+    `target/e2e-evidence/verify-head-2026-10-20/settings_system_page-2026-10-20T07-31-34.755Z-fail/`),
+    the listener received the MSAA focus WinEvents for
+    `SystemSettings.exe`'s `CoreWindow` (object ids -4 and 205) and no
+    UIA focus event followed within 14.5 seconds, where the passing runs
+    had it within 1 to 35 ms; the window answered the outpost's probe in
+    37 ms and kept raising name changes, so it was not hung. Decision
+    11's step covers it, since the listener had the WinEvents.
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,
