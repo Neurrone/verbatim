@@ -261,6 +261,7 @@ Dependency-ordered, smallest step first; each step builds, passes `cargo xtask c
 - The `window_element` lookups (the foreground read, `dump_tree`, and `focus_path::find`) still apply the proxy rule by the window's verdict, so a window UIA only by class whose lookup returns UIA's proxies is refused there; whether they should require a kept probe, as the runtime-id search does, is Dickson's question.
 - Object navigation's step into another process's window (section 4.3): stop before a step across the process boundary, judged with local calls as the walks judge it, and continue through MSAA from there, so that navigation too makes no call into another application.
 - After Escape closed Verbatim's Settings dialog in one `rapid_tabbing_in_settings` run, Windows gave the foreground to Core's hidden frame rather than back to the desktop, so nothing was spoken; the outpost drops a focus on that frame by design, and the listener played no part (`counts-failures/rapid_tabbing_in_settings-2/`, `outpost-verbatim-15132.log`). Where the foreground goes when the dialog closes is Core's to fix, separately from this design.
+- A double press of Verbatim+F11 opens the system tray list, as a single press does, instead of the taskbar list; it has done so since the lists were added in July 2026. Recommended: a second press switches to the taskbar list.
 
 ## The review's findings, and where each is answered
 
