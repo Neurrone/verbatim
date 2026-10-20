@@ -21,6 +21,8 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::time::Duration;
+
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
     Fetches, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet,
@@ -28,7 +30,7 @@ use verbatim_model::{
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::{Heard, OutpostOptions};
-use verbatim_uia::{Cached, ListenerEvent, Uia};
+use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
@@ -1074,6 +1076,56 @@ fn a_repeated_focus_out_of_time_is_reported() {
     app.quit();
 }
 
+/// The raw probe's wait does not count against a focus read's time budget
+/// (`Budget`, 2 seconds): a sender with a window of its own, whose
+/// window's verdict is not yet known, has the probe as its read's first
+/// call, and with mockapp's window stalled for longer than the budget but
+/// less than the probe's wait (`RAW_PROBE_TIMEOUT_MS`), the probe alone
+/// outlasts the budget. The read still has its whole budget after it, so
+/// the sender's keyboard focus is read live and the focus is read with its
+/// ancestors: the probe, the keyboard focus, and the read's two calls (the
+/// window's cache, and the step up to the desktop's root, where its
+/// ancestors end). The time is the system's, so that the stall spends it.
+fn a_focus_whose_windows_probe_outlasts_the_read_budget_is_read_in_time() {
+    const STALL: Duration = Duration::from_millis(2_500);
+    assert!(STALL < Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS)));
+    let title = common::unique_title("mockapp-probe-outlasts-budget");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.follow_the_system_clock();
+
+    app.send("set-focus root");
+    let listener = client
+        .uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
+    let window = client
+        .uia
+        .window_element(hwnd.0 as isize, &listener)
+        .expect("mockapp's root element");
+    app.stall(STALL);
+    let (judged, calls) = outpost.listener_read(&window);
+    let _ = app.stall_ended(STALL);
+    let Judged::Read(read) = judged else {
+        panic!("the listener did not read the focus: {judged:?}");
+    };
+    assert_eq!(
+        read.snapshot.name.as_deref(),
+        Some("Mockapp Events Fixture")
+    );
+    assert_eq!(read.ancestors, Some(Vec::new()), "its ancestors were read");
+    assert_eq!(
+        (calls.uia, calls.msaa, calls.window_messages),
+        (3, 0, 1),
+        "the probe, the keyboard focus, and the read"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A UIA menu opening compared with the current focus, which it is not,
 /// asks the read's time before it looks up its windowless sender's nearest
 /// window, the comparison having been the read's first call: once the time
@@ -1511,6 +1563,10 @@ fn main() {
         (
             "a_repeated_focus_out_of_time_is_reported",
             a_repeated_focus_out_of_time_is_reported,
+        ),
+        (
+            "a_focus_whose_windows_probe_outlasts_the_read_budget_is_read_in_time",
+            a_focus_whose_windows_probe_outlasts_the_read_budget_is_read_in_time,
         ),
         (
             "a_menu_opening_out_of_time_after_its_comparison_is_dropped_before_its_window",

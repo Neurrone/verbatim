@@ -23,7 +23,10 @@
 //! [`OutpostUnderTest::run_out_of_time_after`] partway through a step), so
 //! a window's verdict of no UIA provider runs out, and its probe is made
 //! again, and a classic walk's or a focus read's time budget is spent, only
-//! where the test says, however long the test and its calls take.
+//! where the test says, however long the test and its calls take. A test
+//! whose budget a real wait must spend, as a stalled window's raw probe
+//! spends it, makes the time the system's instead
+//! ([`OutpostUnderTest::follow_the_system_clock`]).
 //!
 //! No window takes the foreground on the desktop a test runs on, so the
 //! outpost and the listener's reader read the foreground window from the
@@ -44,7 +47,7 @@
 //! listener's copy of an event mockapp raised.
 
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
@@ -294,6 +297,9 @@ pub struct OutpostUnderTest {
     /// How many more reads of the time give it unchanged before it jumps an
     /// hour on ([`Self::run_out_of_time_after`]), when set.
     jump_after: Arc<Mutex<Option<u32>>>,
+    /// Whether the time read is the system's
+    /// ([`Self::follow_the_system_clock`]).
+    system_time: Arc<AtomicBool>,
     /// The window the outpost reads as the foreground.
     foreground: Arc<AtomicIsize>,
     /// The focus listener's reader, standing in for the listener's thread
@@ -396,8 +402,16 @@ impl OutpostUnderTest {
         };
         let time = Arc::new(Mutex::new(Instant::now()));
         let jump_after = Arc::new(Mutex::new(None));
-        let (clock, jump) = (Arc::clone(&time), Arc::clone(&jump_after));
+        let system_time = Arc::new(AtomicBool::new(false));
+        let (clock, jump, system) = (
+            Arc::clone(&time),
+            Arc::clone(&jump_after),
+            Arc::clone(&system_time),
+        );
         let clock: verbatim_outpost::arbitration::Clock = Arc::new(move || {
+            if system.load(Ordering::Relaxed) {
+                return Instant::now();
+            }
             let mut jump = jump.lock().unwrap_or_else(PoisonError::into_inner);
             let mut time = clock.lock().unwrap_or_else(PoisonError::into_inner);
             match *jump {
@@ -451,6 +465,7 @@ impl OutpostUnderTest {
             gate,
             time,
             jump_after,
+            system_time,
             foreground,
             reader: RefCell::new(reader),
             last_accepted,
@@ -483,6 +498,13 @@ impl OutpostUnderTest {
             .jump_after
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(reads);
+    }
+
+    /// Makes the time the outpost and the listener's reader read the
+    /// system's from now on, for a step whose time budget a real wait must
+    /// spend, as a stalled window's raw probe spends it.
+    pub fn follow_the_system_clock(&self) {
+        self.system_time.store(true, Ordering::Relaxed);
     }
 
     /// The outpost's next message.
