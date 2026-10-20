@@ -19,8 +19,8 @@ use windows::Win32::UI::Accessibility::{
     AccessibleObjectFromWindow, AnnotationType_SpellingError, CUIAutomation, IAccessible,
     IUIAutomation, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
     TextPatternRangeEndpoint_Start, TextUnit_Word, TreeScope_Children, TreeScope_Descendants,
-    UIA_AnnotationTypesAttributeId, UIA_AutomationIdPropertyId, UIA_TextPatternId,
-    WindowFromAccessibleObject,
+    UIA_AnnotationTypesAttributeId, UIA_AutomationIdPropertyId, UIA_SizeOfSetPropertyId,
+    UIA_TextPatternId, WindowFromAccessibleObject,
 };
 use windows::Win32::UI::Controls::{LVM_GETITEMCOUNT, LVM_GETNEXTITEM, LVNI_FOCUSED};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -83,13 +83,15 @@ fn focus_through_uia(automation_id: &str) -> io::Result<u32> {
 }
 
 /// Of the first element the focused element's UI Automation
-/// `ControllerFor` relation names, how many children it has and the names
-/// of the first `names` of them.
+/// `ControllerFor` relation names, the size of the set its first child
+/// reports (its `SizeOfSet` property, the count a screen reader says "of
+/// N" from) and the names of its first `names` children.
 ///
 /// # Errors
 ///
 /// Returns an error if UI Automation cannot be reached, nothing has the
-/// focus, or the focused element controls nothing.
+/// focus, the focused element controls nothing, or the controlled
+/// element's first child reports no set size.
 pub fn controlled_items(names: u32) -> io::Result<(u32, Vec<String>)> {
     through_uia("ControlledItems", || controlled_through_uia(names))
 }
@@ -118,8 +120,23 @@ fn controlled_through_uia(names: u32) -> io::Result<(u32, Vec<String>)> {
     // SAFETY: as above.
     let children = unsafe { list.FindAll(TreeScope_Children, &any) }.map_err(io::Error::other)?;
     // SAFETY: as above.
-    let count = unsafe { children.Length() }.map_err(io::Error::other)?;
-    let shown = count.min(i32::try_from(names).map_err(io::Error::other)?);
+    let realized = unsafe { children.Length() }.map_err(io::Error::other)?;
+    if realized == 0 {
+        return Err(io::Error::other("the controlled element has no children"));
+    }
+    // SAFETY: as above, with an index inside the array.
+    let first = unsafe { children.GetElement(0) }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let size = unsafe { first.GetCurrentPropertyValue(UIA_SizeOfSetPropertyId) }
+        .map_err(io::Error::other)?;
+    let count = i32::try_from(&size)
+        .ok()
+        .and_then(|size| u32::try_from(size).ok())
+        .filter(|&size| size > 0)
+        .ok_or_else(|| {
+            io::Error::other("the controlled element's first child reports no set size")
+        })?;
+    let shown = realized.min(i32::try_from(names).map_err(io::Error::other)?);
     let mut read = Vec::new();
     for index in 0..shown {
         // SAFETY: as above, with an index inside the array.
@@ -128,7 +145,7 @@ fn controlled_through_uia(names: u32) -> io::Result<(u32, Vec<String>)> {
         let name = unsafe { child.CurrentName() }.map_err(io::Error::other)?;
         read.push(name.to_string());
     }
-    Ok((u32::try_from(count).map_err(io::Error::other)?, read))
+    Ok((count, read))
 }
 
 /// How long one of the agent's UI Automation requests may take before it

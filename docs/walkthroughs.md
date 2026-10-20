@@ -751,8 +751,8 @@ same suite on GitHub's runner or against a Hyper-V guest
    `windows-latest`, whose jobs run in an interactive session, installs
    ffmpeg, starts the agent in the same step as the suite (the runner ends
    a step's processes when the step finishes), runs every scenario but the
-   demonstrations, the measure set and the local-only Windows 11 Notepad ones
-   (`--ignored --skip demo_ --skip measure_ --skip notepad_`), and uploads the artifacts
+   demonstrations, the measure set and the local-only ones
+   (`--ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions`), and uploads the artifacts
    and videos for passing and failing runs alike.
 9. **Against a Hyper-V guest.** `cargo xtask vm test` builds first,
    copies changed binaries into the guest (`xtask/src/vm/deploy.rs`),

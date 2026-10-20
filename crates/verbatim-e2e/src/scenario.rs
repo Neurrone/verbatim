@@ -1629,8 +1629,8 @@ impl Scenario {
     }
 
     /// Of the first element the focused element controls (its UI
-    /// Automation `ControllerFor` relation), how many children it has and
-    /// the names of the first `names`, read by the agent independently of
+    /// Automation `ControllerFor` relation), the set size its first child
+    /// reports (`SizeOfSet`) and the names of its first `names` children, read by the agent independently of
     /// Verbatim.
     ///
     /// # Errors

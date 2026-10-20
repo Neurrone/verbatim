@@ -120,8 +120,8 @@ Public API:
     element with that identifier with UI Automation's `SetFocus`, injecting
     no input, and answers how many children it has), `ControlledItems`
     (of the first element the focused element's `ControllerFor` relation
-    names, how many children it has and the names of the first ones asked
-    for, as a search box's suggestions), `MisspeltWords` (the
+    names, the set size its first child reports, `SizeOfSet`, and the
+    names of the first children asked for, as a search box's suggestions), `MisspeltWords` (the
     words of the focused text marked with UI Automation's spelling-error
     annotation, read word by word), and `KeyToggled` (whether a lock key
     is on). The three requests that keep UI Automation, which need facts only

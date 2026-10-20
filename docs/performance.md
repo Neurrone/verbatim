@@ -1898,11 +1898,16 @@ share of the limit in brackets:
 - The navigation step: 870 (9 percent) from an item sixty-two levels
   below its window, 139 from right under it, about 12 for each level
   walked.
-- The controlled selection: 163 for a result inside a group of the
-  controlled list, 195 for the list's second child, and 207 for an item
+- The controlled selection: 168 for a result inside a group of the
+  controlled list, 200 for the list's second child, and 212 for an item
   outside the list, all three of the list's elements walked; about 35 for
-  each element passed, so about 140 elements fit under half the limit and
-  about 280 under the limit, past which the call is answered classically.
+  each element passed. Of these, 5 return the runtime ids of the
+  elements the relation names, for the outpost's log of a selection
+  found in none: 1 for the string that collects them and 4 for each
+  controlled element (its runtime id read, written as a string, joined
+  on, and stored), so each further controlled element adds 4. About 140
+  elements passed fit under half the limit and about 280 under the
+  limit, past which the call is answered classically.
   The walk is bounded by the controlled list, not by the query, the one
   program whose worst case is the application's to set; the Settings
   app's search suggestions, checked live on 2026-10-03, were 25.

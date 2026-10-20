@@ -22,16 +22,18 @@ and how to read a failure.
   `#[ignore]`d with the reason "live", so a workspace test run (and
   `cargo xtask ci`) lists them as ignored rather than reporting them as
   passed. The end-to-end job runs them with
-  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1`.
+  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --test-threads=1`.
 - `endpoint()` reads `ENDPOINT_ENV` (`VERBATIM_E2E_ENDPOINT`). A live test
   run without it fails: a scenario that cannot reach an agent has not
   passed. `session_info`, the precondition check that the agent runs in an
   interactive session on the `Default` input desktop, is a plain ignored
   `#[test]` outside the registry and fails the same way.
 - Local-only scenarios test Windows 11 Notepad, which GitHub's Windows
-  Server runner lacks. Their names, and only theirs, start with
-  `LOCAL_ONLY_PREFIX` (`notepad_`), so a run without Windows 11 Notepad
-  deselects them with `--skip notepad_`. A run with `SKIP_LOCAL_ONLY_ENV`
+  Server runner lacks, or, for `settings_search_suggestions`, the
+  Settings app's search index, untested there. Their names, and only
+  theirs, start with one of `LOCAL_ONLY_FILTERS` (`notepad_` and
+  `settings_search_suggestions`), so a run off a Windows 11 desktop
+  deselects them with a `--skip` for each. A run with `SKIP_LOCAL_ONLY_ENV`
   (`VERBATIM_E2E_SKIP_LOCAL_ONLY`) set to `1` that runs one anyway fails.
   `skips` validates the variable: unset, empty, `0`, or `1`, anything else
   an error. Nothing detects the machine.
@@ -415,8 +417,8 @@ and the input methods above:
   expects: `desktop_speech`, `key_toggled` (a lock key),
   `focus_by_automation_id` (focuses an element with UI Automation's
   `SetFocus` and returns how many children it has), `controlled_items`
-  (of the first element the focused element controls, how many children
-  it has and the names of the first ones), and `misspelt_words`
+  (of the first element the focused element controls, the set size its
+  first child reports and the names of the first children), and `misspelt_words`
   (the words of the focused text marked with UI Automation's
   spelling-error annotation).
 - `verbatim_children`, `end_verbatim_process(pid)` (ending one of

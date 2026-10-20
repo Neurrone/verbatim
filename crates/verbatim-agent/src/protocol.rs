@@ -243,8 +243,9 @@ pub enum Request {
     /// Answered by [`ReplyPayload::Words`].
     MisspeltWords,
     /// Reports what the focused element controls: of the first element its
-    /// UI Automation `ControllerFor` relation names, how many children it
-    /// has and the names of the first `names` of them, read independently
+    /// UI Automation `ControllerFor` relation names, the set size its first
+    /// child reports (`SizeOfSet`) and the names of its first `names`
+    /// children, read independently
     /// of any screen reader, as a search box's suggestion list is counted
     /// and named before a test fixes what it expects. Answered by
     /// [`ReplyPayload::ControlledItems`].
@@ -630,7 +631,8 @@ pub enum ReplyPayload {
     },
     /// Answer to [`Request::ControlledItems`].
     ControlledItems {
-        /// How many children the controlled element has.
+        /// The size of the set the controlled element's first child
+        /// reports (its `SizeOfSet` property).
         count: u32,
         /// The names of its first children, as many as asked for, or all
         /// of them when it has fewer.

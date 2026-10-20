@@ -121,11 +121,12 @@
 //!   collected without being asserted ([`SpeechCollector::collect_only`](crate::speech::SpeechCollector::collect_only));
 //!   `docs/tooling/e2e.md` says how to run them.
 //!
-//! A scenario marked [`ScenarioDef::local_only`] tests Windows 11 Notepad,
-//! which GitHub's Windows Server runner, with classic Notepad, lacks; its
-//! name starts with [`LOCAL_ONLY_PREFIX`]. Every local and VM run includes
-//! it; GitHub's `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`] and deselects it by
-//! name (`--skip notepad_`), and [`run_named`] fails a local-only scenario
+//! A scenario marked [`ScenarioDef::local_only`] needs what GitHub's
+//! Windows Server runner lacks or is untested on: Windows 11 Notepad, or
+//! the Settings app's search index; its name starts with one of
+//! [`LOCAL_ONLY_FILTERS`]. Every local and VM run includes it; GitHub's
+//! `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`] and deselects it by name (one
+//! `--skip` per filter), and [`run_named`] fails a local-only scenario
 //! that runs anyway with the variable set, so a skip is never reported as
 //! a pass. The skip comes from that setting alone, never from detecting
 //! the machine.
@@ -162,18 +163,32 @@ use crate::scenarios::{
 };
 use crate::speech::SpeechFailure;
 
-/// Environment variable that, set to `1`, says the run has no Windows 11
-/// Notepad, so the local-only scenarios ([`ScenarioDef::local_only`]) must
-/// not run: GitHub's `e2e` job sets it and deselects them by name
-/// (`--skip notepad_`), and one that runs anyway fails rather than
+/// Environment variable that, set to `1`, says the run is not on a Windows
+/// 11 desktop, so the local-only scenarios ([`ScenarioDef::local_only`])
+/// must not run: GitHub's `e2e` job sets it and deselects them by name
+/// (one `--skip` per [`LOCAL_ONLY_FILTERS`] entry), and one that runs anyway fails rather than
 /// reporting a pass. Unset, empty, or `0` runs them. Nothing detects the
 /// machine.
 pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
 
-/// What the name of every local-only scenario starts with, and no other
-/// scenario's: the `--skip` filter a run without Windows 11 Notepad
-/// deselects them by. Every local-only scenario tests Windows 11 Notepad.
-pub const LOCAL_ONLY_PREFIX: &str = "notepad_";
+/// The `--skip` filters a run off a Windows 11 desktop deselects the
+/// local-only scenarios by: every local-only scenario's name starts with
+/// one, and no other scenario's does (a demonstration's `demo_` name can
+/// contain one, and is deselected with `--skip demo_`). `notepad_` begins every scenario that
+/// tests Windows 11 Notepad; `settings_search_suggestions` depends on the
+/// Settings app's search index, untested on GitHub's runner, and fails in
+/// a state Settings is sometimes in (`docs/parity/changes-and-selection.md`,
+/// "Selection in a list the focus controls").
+pub const LOCAL_ONLY_FILTERS: &[&str] = &["notepad_", "settings_search_suggestions"];
+
+/// Whether `name` starts with one of [`LOCAL_ONLY_FILTERS`], so libtest's
+/// `--skip`, which matches anywhere in a test's name, deselects it.
+#[must_use]
+pub fn named_local_only(name: &str) -> bool {
+    LOCAL_ONLY_FILTERS
+        .iter()
+        .any(|filter| name.starts_with(filter))
+}
 
 /// Whether `def` is skipped on a run whose [`SKIP_LOCAL_ONLY_ENV`] holds
 /// `setting` (`None` when it is unset): only a local-only scenario is ever
@@ -315,7 +330,8 @@ pub struct ScenarioDef {
     pub settings: Option<fn(&mut Settings)>,
     /// Whether this scenario needs something only a Windows 11 desktop
     /// has, such as Windows 11 Notepad's spell checker, so that it cannot
-    /// hold on GitHub's Windows Server runner. Every local run and every
+    /// hold on GitHub's Windows Server runner, or something not shown to
+    /// hold there, with the reason beside its entry. Every local run and every
     /// VM run includes it; a run with [`SKIP_LOCAL_ONLY_ENV`] set to `1`,
     /// as GitHub's `e2e` job sets it, skips it ([`skips`]).
     pub local_only: bool,
@@ -505,7 +521,12 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_search_suggestions",
         group: Group::Shell,
         settings: None,
-        local_only: false,
+        // Settings' search index is untested on GitHub's runner, and the
+        // first suggestion goes unsaid in a state Settings is sometimes
+        // in, where it replaces the list's items as it opens
+        // (`docs/parity/changes-and-selection.md`, "Selection in a list
+        // the focus controls").
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: settings_search_suggestions::setup,
@@ -1617,7 +1638,7 @@ pub fn startup_speech() -> [crate::speech::Expected; 1] {
 /// since a live scenario that cannot reach an agent has not passed; if the
 /// scenario is local-only and [`SKIP_LOCAL_ONLY_ENV`] is `1`, since such a
 /// run deselects it by name instead (a local-only scenario's name starts
-/// with [`LOCAL_ONLY_PREFIX`]); if the scenario is disabled
+/// with one of [`LOCAL_ONLY_FILTERS`]); if the scenario is disabled
 /// ([`DISABLED`]), giving why; if [`compare::ENV`] names another scenario,
 /// as a harness error naming both ([`compare::selects`]); and if the
 /// scenario itself fails.
@@ -1638,7 +1659,7 @@ pub fn run_named(name: &str) {
     let setting = std::env::var(SKIP_LOCAL_ONLY_ENV).ok();
     match skips(def, setting.as_deref()) {
         Ok(true) => panic!(
-            "{name:?} runs only on a Windows 11 desktop, and {SKIP_LOCAL_ONLY_ENV} is 1: a run without Windows 11 Notepad deselects the local-only scenarios with --skip {LOCAL_ONLY_PREFIX} rather than running them"
+            "{name:?} runs only on a Windows 11 desktop, and {SKIP_LOCAL_ONLY_ENV} is 1: such a run deselects the local-only scenarios with a --skip for each of {LOCAL_ONLY_FILTERS:?} rather than running them"
         ),
         Ok(false) => {}
         Err(error) => panic!("{error}"),
@@ -2278,8 +2299,8 @@ mod tests {
         for def in SCENARIOS {
             assert_eq!(
                 def.local_only,
-                def.name.starts_with(LOCAL_ONLY_PREFIX),
-                "{}: a local-only scenario, and only one, is named with {LOCAL_ONLY_PREFIX:?}, which a run without Windows 11 Notepad skips",
+                named_local_only(def.name),
+                "{}: a local-only scenario, and only one, has a name starting with one of {LOCAL_ONLY_FILTERS:?}, which a run off a Windows 11 desktop skips",
                 def.name
             );
         }

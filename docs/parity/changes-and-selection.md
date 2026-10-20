@@ -132,16 +132,21 @@ names in its UIA ControllerFor relation, NVDA reports that item as it
 reports a focus, without moving focus; this is how it reads the Start
 menu's search results and the Settings app's search suggestions as
 the user types and arrows ("Selection in a list the focus controls"
-in [Event handling](../nvda/events.md)). Verbatim: **partial**.
-**matched (verified)** for UIA suggestions, with reducer tests and the
+in [Event handling](../nvda/events.md)). Verbatim: **partial**. For
+UIA suggestions, **matched (verified)** for the arrows and **matched
+(unverified)** for the first suggestion, with reducer tests and the
 `settings_search_suggestions` scenario: "sound" typed in one injection
 gives each character's echo, "Suggestions available" cut off by the
 first suggestion, and the suggestions as Down Arrow twice and Up Arrow
 move through them, what NVDA says in the scenario's comparison of
 2026-10-20 (NVDA alpha-58022, the pin), apart from two recorded
-differences below. The scenario's expectations take the list's size and
-its first three names from the agent, read through UI Automation once
-the list is open, since Settings' search index differs between editions.
+differences below. The first suggestion is unverified because of the
+replacing state described below, in which NVDA says it and Verbatim does
+not. The scenario is local-only for that reason and because Settings'
+search index on GitHub's runner is untested. The scenario's expectations take the list's size, as
+its first item's set size (`SizeOfSet`, the property Verbatim's "of N"
+comes from), and its first three names from the agent, read through UI
+Automation once the list is open, since Settings' search index differs between editions.
 An earlier comparison that typed one character a step, with compare
 mode's second of quiet after each, had Settings open its suggestions
 after every character, NVDA saying them each time; that came from the
@@ -160,24 +165,36 @@ Different, each a deliberate difference:
   leaves unsaid for a caret key that moves nothing ([text](text.md),
   "TextInfo-equivalent layer").
 
-The first suggestion can go unsaid, by Verbatim as by NVDA's test: in
-some launches, about one in four in the runs of 2026-10-20 and always
-those whose search box had a runtime id ending in 146 rather than in 3
-or 4, Settings replaces the list's item elements within about 60 ms of
-raising the first item's element selected event, and raises no event for
-the replacement. The selection reaches the outpost 60 to 80 ms after the
-event, since Settings' UI thread, busy rebuilding the list, answers no
-call until it is done, the focus listener's acceptance read of the
-notification before it included; by then the selected element is in no
-subtree of the window, the relation names a list whose children carry
-new runtime ids, and the search finds nothing (logged at debug as "a
-selection in none of the elements the focus controls", with the
-relation's runtime ids). NVDA's test, which walks up from the event's
-element to an element the relation names (`isDescendantOf`), can reach
-nothing from an element no longer in the tree either. The scenario
-passed 10 of 10 runs on 2026-10-20 after typing in one injection, none
-of them in that state; in two by-hand recordings that day Verbatim said
-"Suggestions available" with no suggestion after it, as in that state.
+The first suggestion goes unsaid by Verbatim, where NVDA says it, in
+some launches, of a frequency not known: 2 of about 36 scenario runs on
+2026-10-20, and 5 of 6 launches by `cargo xtask nvda capture --verbatim
+--launch explorer.exe --arg ms-settings:system` on 2026-10-21. No runtime
+id of the search box marks these launches. In them Settings replaces the
+list's item elements within about 60 ms of raising the first item's
+element selected event, and raises no event for the replacement. Every
+call into Settings then waits until it has rebuilt the list, 60 to 80 ms
+after the event; by then the relation names a list whose children carry
+new runtime ids, so Verbatim's search down from it finds nothing (logged
+at debug as "a selection in none of the elements the focus controls",
+with the relation's runtime ids). NVDA's test walks up instead, from the
+event's own element to an element the relation names (`isDescendantOf`,
+`NVDAObjects/UIA/__init__.py` 2444 to 2463), and in that state it
+reaches the list: the replaced item still names the list as its parent,
+one step, which NVDA's walk took 199 to 260 microseconds to find once
+the relation's read had waited for Settings, in all four launches tried
+(`target/e2e-evidence/fixes-round-six-2026-10-21/finding1-walk.txt`).
+NVDA said "list item 1 of 22" in every capture taken in the same mode.
+Porting the walk needs the event's element or its ancestors' runtime
+ids, which only the focus listener holds, so it needs one more call per
+selection event; it is not built, pending Dickson's decision.
+
+The first suggestion comes before the suggestions-opened sound only
+because the selection's place in the outpost's queue arrives before
+Settings' second change of the search box's relation, by about 50 ms in
+the runs of 2026-10-20; anything that delays the listener's handling of
+the selection by that much puts the sound first, as temporary
+diagnostics in the listener's callback did in two runs that day
+(`target/e2e-evidence/fixes-item-11-2026-10-20/finding1-diagnosis.txt`).
 The ControllerFor relation is read live for each selection event,
 as NVDA reads it (Dickson, 2026-10-10), in one remote operation with
 the search for the selected element. Not yet built: Start's results

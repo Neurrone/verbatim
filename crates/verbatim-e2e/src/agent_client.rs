@@ -693,8 +693,8 @@ impl AgentClient {
     }
 
     /// Of the first element the focused element controls (its UI
-    /// Automation `ControllerFor` relation), how many children it has and
-    /// the names of the first `names`, as the agent reads them through UI
+    /// Automation `ControllerFor` relation), the set size its first child
+    /// reports (`SizeOfSet`) and the names of its first `names` children, as the agent reads them through UI
     /// Automation, independently of Verbatim.
     ///
     /// # Errors
