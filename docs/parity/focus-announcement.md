@@ -131,7 +131,9 @@ Matched:
   Shift+Tab into Settings' search box holding "sound", NVDA says "Search
   box, Find a setting edit sound" and then the suggestion "Sound
   settings 1 of 22"; Verbatim says the box without its line, the
-  suggestion, and then "sound"; both cancel it all at the next focus
+  suggestion, and then "sound"; in both readers the suggestion's speech
+  cuts off the box's, so the difference the user hears is Verbatim's
+  separate "sound" after the suggestion; both cancel it all at the next focus
   (the rapid-Tab captures `rapid-tab-nvda-1.txt`, `rapid-tab-nvda-2.txt`,
   `rapid-tab-verbatim-1.txt` and `rapid-tab-verbatim-2.txt` in
   `target/e2e-evidence/fixes-round-six-2026-10-21`; listed in the roadmap's M4.2).

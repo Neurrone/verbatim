@@ -678,20 +678,28 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     at the place of the run's newest, as NVDA's `pumpAll` does (only an
     MSAA event NVDA's pump receives ends a run, and every other entry is
     handled at its own place, `ends_a_run`; `Planned::handle` dispatches
-    each planned item); a
-    newer foreground change of the same window replaces one waiting, as
-    NVDA's limiter keeps one per window, and removes a focus event waiting
-    on its window's client object from the same thread, raised no later
-    than the change (at one tick, unless the focus is the hook's copy and
-    the change is known to have been raised before the hook went in), and
-    such a focus that arrives after a foreground change of its window and
-    thread raised after it is dropped as it arrives (at one tick, only when
-    the focus is known to have been raised before the hook went in and the
-    change is the hook's copy), whether the change still waits or, until
-    the listener's "forwarding ended" is in (`Intake::forwarding_ended`),
-    was already taken into a batch, as NVDA's limiter, adding
-    events in raised order, removes every such focus raised before the
-    change; a run whose events all carry their raise time is tried in
+    each planned item); of
+    two foreground changes of the same window waiting, the later raised
+    is kept, whichever arrived first, as NVDA's limiter, adding events in
+    raised order, keeps the newest per window; a foreground change removes
+    a focus event waiting on its window's client object from the same
+    thread, raised no later than the change (at one tick, unless the focus
+    is the hook's copy and the change is known to have been raised before
+    the hook went in), as NVDA's limiter removes a waiting focus when it
+    adds the change; such a focus that arrives after a foreground change
+    of its window and thread raised after it is dropped as it arrives (at
+    one tick, only when the focus is known to have been raised before the
+    hook went in and the change is the hook's copy), whether the change
+    still waits or, until the listener's "forwarding ended" is in
+    (`Intake::forwarding_ended`), was already taken into a batch, leaving
+    only a listener copy the listener's hook receives after it read the
+    tick that message names to arrive so after it; that drop is a
+    difference from NVDA, which removes the focus only while no pump has
+    flushed it and pumps at once on a focus, so an idle NVDA says the
+    focus and then the change, and it is chosen because handling the
+    focus after the change would reverse NVDA's order, while dropping it
+    leaves the change last and loses only the client area's
+    announcement, which the window's covers; a run whose events all carry their raise time is tried in
     that order (`in_raised_order`), events of one clock tick ordered by
     the hand-over's `Arrival` (`outpost::handover`): a listener copy known
     to have been raised before the outpost's hook went in, and every

@@ -268,12 +268,14 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     had it within 1 to 35 ms; the window answered the outpost's probe in
     37 ms and kept raising name changes, so it was not hung. Decision
     11's step covers it, since the listener had the WinEvents. Two
-    by-hand capture launches of Settings on 2026-10-21 showed it again:
+    by-hand capture launches of Settings on 2026-10-21, local time
+    (Singapore, UTC+8), showed it again:
     the listener dropped the UIA focus on Settings' frame as "its window
     does not use UIA" and no UIA focus on the page followed, while the
     search box's suggestion selection event still came
     (`target/e2e-evidence/fixes-round-six-2026-10-21/walk-logs/listener.log`, 17:46:49 and
-    17:46:53 UTC on 2026-10-20, and `walk-capture-2.txt` and
+    17:46:53 UTC on 2026-10-20, the log's UTC times for those local
+    launches, and `walk-capture-2.txt` and
     `walk-capture-3.txt` beside it, which hold no speech).
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role

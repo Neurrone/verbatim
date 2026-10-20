@@ -306,9 +306,10 @@ the next other event comes; the menu event is tried last. Verbatim:
 [verbatim-outpost](../crates/verbatim-outpost.md), the queue under
 `Outpost`), in each outpost's intake. Every MSAA event is counted by the
 thread it carries, whichever hook took it in; every foreground change
-of a batch is tried with the focus events of the run it is in, a newer
-one of the same window replacing one waiting, as NVDA's limiter keeps
-one per window (Dickson, 2026-10-20); a run whose events all carry the
+of a batch is tried with the focus events of the run it is in, and of
+two changes of the same window waiting the later raised is kept,
+whichever arrived first, as NVDA's limiter, adding events in raised
+order, keeps the newest per window (Dickson, 2026-10-20); a run whose events all carry the
 time Windows raised them is tried in that order, the order NVDA's one
 hook receives them in, since an outpost can receive the focus listener's
 copy of an event after its own hook's copy of a later one during a
@@ -341,16 +342,23 @@ queued under the lock it is judged under, so the intake receives the
 copies in the order they were judged. NVDA's limiter removes a
 waiting focus event on a window's client object from the same thread
 when it adds the window's foreground event (`orderedWinEventLimiter.py`,
-`addEvent`), and since its one hook adds events in the order they were
-raised, it removes every such focus raised before the change, whichever
-copy reaches Verbatim first. The outpost compares raise times in both
-arrival orders: a foreground change removes such a focus waiting from
-the same thread raised no later than the change, and such a focus that
-arrives after a foreground change of its window and thread raised after
-it is dropped as it arrives, whether the change still waits or, until
-the listener's "forwarding ended" reaches the outpost, was already taken
-into a batch; the one case left is a listener copy the listener's hook
-receives only after it read the tick that message names. Within one tick the copy that
+`addEvent`, 65 to 67), and the outpost matches that exactly: a
+foreground change removes such a focus waiting from the same thread
+raised no later than the change, comparing raise times in either
+arrival order. Such a focus that arrives after a foreground change of
+its window and thread raised after it, an order NVDA's one hook never
+sees, is dropped as it arrives, whether the change still waits or,
+until the listener's "forwarding ended" reaches the outpost, was
+already taken into a batch; the one case left is a listener copy the
+listener's hook receives only after it read the tick that message
+names. That drop is a difference from NVDA: NVDA removes the focus only
+while no pump has flushed it, and it asks for a pump at once on every
+focus event (`IAccessibleHandler/internalWinEventHandler.py` 193;
+`core.py`, `requestPump` and `processRequest`), so an idle NVDA says the
+focus and then the change. Once the focus arrives after the change,
+neither choice reproduces NVDA: handling it would reverse NVDA's order,
+while dropping it leaves the change last, as NVDA does, and loses only
+the client area's announcement, which the window's covers. Within one tick the copy that
 arrived first counts as raised first, except that a hook copy was
 raised after a listener copy known to have been raised before the hook
 went in. The hook takes an event on a window object as the client object, as NVDA's
