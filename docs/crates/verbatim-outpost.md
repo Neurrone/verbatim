@@ -705,14 +705,24 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     record, whether the change waits, is planned or was handed out,
     leaving only a listener copy the listener's hook receives after it
     read the tick that message names (`Intake::forwarding_ended`) to
-    arrive so after it; NVDA pumps a focus at once and then says exactly
-    one of the two: the change only when the window is not yet in front,
-    as `shouldAcceptEvent` rejects the focus, which the drop matches, and
-    the focus only when the window is already in front, as
+    arrive so after it, which, when the later change of its window and
+    thread still waits, replaces it by key, so the older change is handed
+    out in its place and removes waiting client focuses by its own, older
+    raise time, the window reported being the same; NVDA pumps a focus at
+    once and then says exactly one of the two: the change only when its
+    pump filters or refuses the focus (`shouldAcceptEvent` accepts it only
+    when its window is the foreground window or descends from it, has the
+    foreground window's root owner, or is topmost or has a topmost root,
+    and the focused-state and SDM tests can still refuse it), which the
+    drop matches, and the focus otherwise, as
     `processForegroundWinEvent`'s descendant and address tests drop the
     change, where the drop differs by ending on the window's object and
-    not the focus's, and loses a focused child that
-    `redirect_focus_to_child` would have reached from the client focus; a run whose events all carry their raise time is tried in
+    not the focus's (a dialog the window in front owns falls here; the
+    roadmap's M4.2 records the capture to take), and, only for a window
+    read through MSAA, loses a focused child in the two cases
+    `redirect_focus_to_child` reaches (the window's client is a list or a
+    `SysListView32` window's client, or its `accFocus` answers a child id
+    whose child has the focused state); a run whose events all carry their raise time is tried in
     that order (`in_raised_order`), events of one clock tick ordered by
     the hand-over's `Arrival` (`outpost::handover`): a listener copy known
     to have been raised before the outpost's hook went in, and every
@@ -970,8 +980,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   it actually becomes the foreground window, so the check waits for the
   outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are
   coalesced with NVDA's UIA limiter rule, one waiting fact per element and
-  kind (`DeliveredFact::key`; notifications and a focus's marker, read, and
-  drop are never merged), with pongs
+  kind (`DeliveredFact::key`, which takes the event's stamp, so that a
+  foreground change or an MSAA focus is keyed by the thread that raised it
+  too, as NVDA's `WinEvent` limiter keys it; notifications and a focus's
+  marker, read, and drop are never merged), with pongs
   and `Ready` first, while a write is in flight; this backlog of the
   sender's (`listener::Waiting`) also judges, under the sender's lock,
   whether a `WinEvent`'s fact was raised after its outpost's hook went in,

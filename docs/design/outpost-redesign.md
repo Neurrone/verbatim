@@ -168,8 +168,9 @@ these parts.
    queries from Core, with NVDA's limiter rules
    (`nvda/source/IAccessibleHandler/orderedWinEventLimiter.py` and the UIA
    limiter):
-   - one waiting entry per object and event kind; a newer one replaces it
-     and takes its place at the back;
+   - one waiting entry per object and event kind, and for an MSAA event
+     per thread that raised it, as NVDA's limiter keys it; a newer one
+     replaces it and takes its place at the back;
    - a batch is everything that accumulated while the worker handled the
      previous batch;
    - per batch, keep the newest 4 focus events and the newest 10 other

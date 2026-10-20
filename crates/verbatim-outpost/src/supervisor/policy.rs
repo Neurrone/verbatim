@@ -171,9 +171,9 @@ pub(super) struct HeldFacts {
 impl HeldFacts {
     /// Holds `fact`, replacing any older fact for the same object and kind.
     pub(super) fn hold(&mut self, fact: HeldFact) {
-        if let Some(key) = fact.fact.key() {
+        if let Some(key) = fact.fact.key(fact.win_event) {
             self.facts
-                .retain(|held| held.fact.key().as_ref() != Some(&key));
+                .retain(|held| held.fact.key(held.win_event).as_ref() != Some(&key));
         }
         self.first_held_at.get_or_insert_with(Instant::now);
         self.facts.push(fact);

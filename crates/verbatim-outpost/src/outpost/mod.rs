@@ -677,12 +677,15 @@ impl Context {
         };
         let stamp = WinEventStamp { thread, time };
         let foreground = matches!(fact, DeliveredFact::Foreground { .. });
-        let queued = self.admit_and_push(handover::Source::Hook, fact.key(), stamp, || Entry {
-            item: Item::Fact(fact, Some(stamp)),
-            trace: TraceId::mint(),
-            observed_at_ms: now_ms(),
-            timing,
-        });
+        let queued =
+            self.admit_and_push(handover::Source::Hook, fact.key(Some(stamp)), stamp, || {
+                Entry {
+                    item: Item::Fact(fact, Some(stamp)),
+                    trace: TraceId::mint(),
+                    observed_at_ms: now_ms(),
+                    timing,
+                }
+            });
         if queued && foreground {
             self.watch.foreground_changed();
         }
@@ -708,7 +711,12 @@ impl Context {
         };
         match win_event {
             Some(stamp) if fact.is_win_event() => {
-                if !self.admit_and_push(handover::Source::Listener, fact.key(), stamp, entry) {
+                if !self.admit_and_push(
+                    handover::Source::Listener,
+                    fact.key(win_event),
+                    stamp,
+                    entry,
+                ) {
                     return;
                 }
             }

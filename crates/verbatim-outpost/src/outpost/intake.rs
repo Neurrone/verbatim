@@ -52,20 +52,32 @@
 //!   ([`ForegroundTaken`]; [`Intake::forwarding_ended`] names the late
 //!   listener copies that can still arrive after it). NVDA pumps a focus
 //!   event at once (`IAccessibleHandler/internalWinEventHandler.py` 193),
-//!   and then says exactly one of the two, never both: when the window is
-//!   not yet in front, `shouldAcceptEvent` rejects the focus and NVDA says
-//!   the foreground change only, which the drop matches; when the window
-//!   is already in front, the focus is accepted and the change is then
-//!   dropped by `processForegroundWinEvent`'s descendant and address tests
-//!   (`IAccessibleHandler/__init__.py` 845 to 867), so NVDA says the focus
-//!   only, and there the drop differs: NVDA ends on the focus's object and
-//!   Verbatim on the window's. That loses a focused child: a client focus
-//!   the worker would have sent on to the child `accFocus` names
-//!   (`verbatim_ia2`'s `redirect_focus_to_child`) is dropped with it, and
-//!   the foreground report is the window's node only. A
+//!   and then says exactly one of the two, never both. It says the
+//!   foreground change only when its pump filters or refuses the focus,
+//!   and the drop matches that case: `eventHandler.shouldAcceptEvent`
+//!   (`eventHandler.py` 544 to 566, from `IAccessibleHandler/__init__.py`
+//!   1056) accepts the focus only when its window is the foreground
+//!   window or descends from it, has the foreground window's root owner,
+//!   or is topmost or has a topmost root, and an accepted focus is still
+//!   refused by the focused-state test (`processFocusNVDAEvent`) or the
+//!   SDM test (`processFocusWinEvent`, 710 to 720). Otherwise NVDA says the
+//!   focus only, as `processForegroundWinEvent`'s descendant and address
+//!   tests (845 to 867) then drop the change, and there the drop differs:
+//!   NVDA ends on the focus's object and Verbatim on the window's. A dialog
+//!   the window in front owns, as an application's own dialog is, falls in
+//!   this second case, since the root-owner test accepts its focus before
+//!   it comes to the front (`docs/roadmap.md`, M4.2, records the capture to
+//!   take). The drop also loses a focused child, only for a window read
+//!   through MSAA and only in the two cases `verbatim_ia2`'s
+//!   `redirect_focus_to_child` reaches: the window's client is a list or a
+//!   `SysListView32` window's client, or its `accFocus` answers a child id
+//!   whose child has the focused state. A client focus the worker would
+//!   have sent on to that child is dropped with it, and the foreground
+//!   report is the window's node only. A
 //!   run of focus events and foreground changes can so hold the 4
 //!   newest of them and, besides, every older foreground change of another
-//!   window that its thread's limit keeps.
+//!   window, or of the same window from another thread, that its thread's
+//!   limit keeps.
 //! - UIA events from a window the system reports as hung are dropped
 //!   before any read; an MSAA event from one is counted and kept, and the
 //!   worker drops it before it reads anything, as NVDA's limiter counts it
@@ -976,7 +988,12 @@ impl Intake {
     /// the tick, can still come, and is not dropped behind a later change,
     /// waiting or taken: the one case this leaves, which needs the
     /// listener's hook to receive an event later than the outpost's hook
-    /// receives a later one.
+    /// receives a later one. When the later change of its window and thread
+    /// still waits, such a late copy of an older change replaces it by key,
+    /// so the older change is handed out in its place, and its
+    /// `remove_client_focus` runs with the older raise time, no longer
+    /// removing a focus waiting that was raised between the two; the window
+    /// reported is the same.
     pub(super) fn forwarding_ended(&self) {
         self.lock().foreground_taken = ForegroundTaken::Ended;
     }
@@ -1102,7 +1119,10 @@ fn focus_behind_its_foreground_change(
 /// thread it names, raised and arrived as `stamp` and `arrival` say, was
 /// raised before the one `record` holds for that window and thread
 /// ([`focus_raised_first`], which compares any two copies by when they
-/// were raised; in one tick the one arriving later counts as raised later),
+/// were raised; in one tick the one arriving later counts as raised later,
+/// except that a hook copy was raised after a listener copy known to have
+/// been raised before the hook went in, [`Arrival::ListenerBeforeHook`],
+/// whichever arrived first),
 /// so it is dropped as it arrives: NVDA's limiter adds events in the order
 /// they were raised, so the newer change replaced the older there, and
 /// never hands the older out after it. A change not dropped is recorded in
@@ -2518,6 +2538,20 @@ mod tests {
             push_raised(&intake, foreground, time, Arrival::Hook, 2);
             assert_eq!(handed_out(&intake), vec![2], "G2 raised at {time}");
         }
+    }
+
+    /// The hook's copy of G1, raised at 200, waits, and the listener's copy
+    /// of G2, raised in the same tick and known to have been raised before
+    /// the hook went in, arrives behind it: G2 was raised first, so it is
+    /// dropped and G1 is handed out, as NVDA's limiter, adding events in
+    /// raised order, keeps G1.
+    #[test]
+    fn a_change_raised_before_the_hook_in_a_waiting_changes_tick_is_dropped_behind_it() {
+        let intake = Intake::default();
+        let foreground = DeliveredFact::Foreground { hwnd: 9 };
+        push_raised(&intake, foreground.clone(), 200, Arrival::Hook, 1);
+        push_raised(&intake, foreground, 200, Arrival::ListenerBeforeHook, 2);
+        assert_eq!(handed_out(&intake), vec![1]);
     }
 
     /// One hook's order with the change already handed out: the hook's copy

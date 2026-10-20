@@ -355,29 +355,42 @@ its window and thread raised after it, an order NVDA's one hook never
 sees, is dropped as it arrives against the same record, whether the
 change waits, is planned or was handed out; the one case left is a
 listener copy the listener's hook receives only after it read the tick
-that message names. NVDA pumps a focus event at once
+that message names; when the later change of its window and thread
+still waits, such a late copy of an older change replaces it by key, so
+the older change is handed out in its place and removes waiting client
+focuses by its own, older raise time, the window reported being the
+same. NVDA pumps a focus event at once
 (`IAccessibleHandler/internalWinEventHandler.py` 193; `core.py`,
 `requestPump` and `processRequest`) and then says exactly one of the
-two, never both. When the window is not yet in front,
-`eventHandler.shouldAcceptEvent` rejects the focus
-(`IAccessibleHandler/__init__.py` 1056) and NVDA says the foreground
-change only; the drop matches this case. When the window is already in
-front, the focus is accepted, and the change is then dropped by
-`processForegroundWinEvent`'s descendant and address tests
-(`IAccessibleHandler/__init__.py` 845 to 867), so NVDA says the focus
-only; here the drop differs, since NVDA ends on the focus's object and
-Verbatim on the window's. The known loss: a client focus that
-`verbatim-ia2`'s `redirect_focus_to_child` would have sent on to the
-focused child `accFocus` names is lost with it, where the foreground
-report is the window's node only; this is revisited if a capture shows
-it. Within one tick the copy that
+two, never both. NVDA says the foreground change only when its pump
+filters or refuses the focus, and the drop matches that case:
+`eventHandler.shouldAcceptEvent` (`eventHandler.py` 544 to 566, from
+`IAccessibleHandler/__init__.py` 1056) accepts the focus only when its
+window is the foreground window or descends from it, has the foreground
+window's root owner, or is topmost or has a topmost root, and an
+accepted focus is still refused by the focused-state test
+(`processFocusNVDAEvent`) or the SDM test (`processFocusWinEvent`,
+`IAccessibleHandler/__init__.py` 710 to 720). Otherwise NVDA says the
+focus only, as `processForegroundWinEvent`'s descendant and address
+tests then drop the change (`IAccessibleHandler/__init__.py` 845 to
+867), and here the drop differs, since NVDA ends on the focus's object
+and Verbatim on the window's. A dialog the window in front owns, as an
+application's own dialog is, falls in this second case, since the
+root-owner test accepts its focus before it comes to the front;
+`docs/roadmap.md`, M4.2, records the capture to take. The drop also
+loses a focused child, only for a window read through MSAA and only in
+the two cases `verbatim-ia2`'s `redirect_focus_to_child` reaches: the
+window's client is a list or a `SysListView32` window's client, or its
+`accFocus` answers a child id whose child has the focused state. A
+client focus that would have been sent on to that child is lost with
+it, where the foreground report is the window's node only. Within one tick the copy that
 arrived first counts as raised first, except that a hook copy was
 raised after a listener copy known to have been raised before the hook
 went in. The hook takes an event on a window object as the client object, as NVDA's
 callback does, so that is the address NVDA's foreground event has.
 The limiter so keeps, in one run, the newest 4 focus and foreground
-events and every older foreground change of another window that its
-thread's limit of 10 keeps. The outpost's foreground handling
+events and every older foreground change of another window, or of the
+same window from another thread, that its thread's limit of 10 keeps. The outpost's foreground handling
 makes NVDA's two tests against the last focus queued, after its
 in-front test and before any read, and a change they drop lets the
 run's next older event be tried (`processForegroundWinEvent`, lines 842

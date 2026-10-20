@@ -94,7 +94,12 @@
 //!   after a hook copy of its window's foreground change from the same
 //!   thread in that tick, is dropped, not reordered, since the intake drops
 //!   a focus raised before its window's change (`intake::focus_behind_its_foreground_change`),
-//!   and its hook copy is then dropped as its twin. For example, the
+//!   and its hook copy is then dropped as its twin. That holds only until
+//!   the listener's "forwarding ended" is in, after which the intake drops
+//!   nothing behind a later change (`Intake::forwarding_ended`), while such
+//!   a copy can still be judged until [`TWIN_BOUND`] runs out: the focus is
+//!   then kept, and only its order among the events of that tick can be
+//!   wrong. For example, the
 //!   window's thread raises foreground changes G1 and G2 of the window and
 //!   then the focus, in one tick; the listener's backlog replaces G1's
 //!   copy with G2's; G2's copies meet, and G1's hook copy stays unmatched;
@@ -338,7 +343,7 @@ mod tests {
     /// A focus on child 1 of window 7, raised by thread 3 at `time`.
     fn focus(time: u32) -> (FactKey, WinEventStamp) {
         (
-            FactKey::MsaaFocus(7, -4, 1),
+            FactKey::MsaaFocus(7, -4, 1, 3),
             WinEventStamp { thread: 3, time },
         )
     }
@@ -465,7 +470,7 @@ mod tests {
     fn a_listener_copy_ahead_of_a_hooked_events_twin_in_its_tick_was_raised_before_the_hook() {
         let mut handover = Handover::new(100);
         let stamp = |time| WinEventStamp { thread: 3, time };
-        let foreground = FactKey::Foreground(8);
+        let foreground = FactKey::Foreground(8, 3);
         assert_eq!(
             handover.admit(Hook, focus(150).0, stamp(150), start),
             Some(Arrival::Hook)
@@ -504,7 +509,7 @@ mod tests {
             None
         );
         assert_eq!(
-            handover.admit(Listener, FactKey::Foreground(8), stamp(150), start),
+            handover.admit(Listener, FactKey::Foreground(8, 3), stamp(150), start),
             Some(Arrival::Listener)
         );
     }

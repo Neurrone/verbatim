@@ -492,7 +492,8 @@ waiting messages are merged by object and kind, a terminal's output
 combined under the flood policy, while answers to Core's requests keep
 their order. Intake callbacks
 only add entries to one queue, which applies NVDA's limiter rules (one
-waiting entry per object and event kind, and per batch the newest four
+waiting entry per object and event kind, and for an MSAA event per thread
+that raised it too, and per batch the newest four
 focus events and ten other events per UI thread). One worker thread takes
 the entries in order and is the only thread that calls into the
 application, so events and query replies leave the outpost in the order

@@ -12,7 +12,8 @@
 //!   get a healthy outpost killed, and so does the shutdown message, the
 //!   last command a child is sent;
 //! - a routed fact replaces any older fact still waiting for the same object
-//!   and kind; if there is none, the oldest waiting fact is dropped to make
+//!   and kind, and for a foreground change or an MSAA focus from the same
+//!   thread (`DeliveredFact::key`); if there is none, the oldest waiting fact is dropped to make
 //!   room, so the newest facts survive;
 //! - a message of the MSAA hand-over between the listener and an outpost
 //!   (`docs/design/focus-pipeline.md`, section 12.4) always gets through,
@@ -94,7 +95,7 @@ impl Outgoing {
     /// and is never merged; any other fact is keyed by the object and kind
     /// it concerns.
     pub(super) fn delivered(held: super::policy::HeldFact) -> Self {
-        let key = held.fact.key();
+        let key = held.fact.key(held.win_event);
         let focus_read = held.fact.is_focus_read();
         let command = SupervisorToOutpost::DeliverFact {
             trace_id: held.trace_id,
@@ -417,7 +418,7 @@ mod tests {
 
     fn fact(hwnd: isize) -> Outgoing {
         Outgoing::Fact(
-            Some(FactKey::Foreground(hwnd)),
+            Some(FactKey::Foreground(hwnd, 1)),
             SupervisorToOutpost::Ping {
                 seq: hwnd.cast_unsigned() as u64,
                 sent_at_us: 0,
@@ -701,6 +702,56 @@ mod tests {
             .push(selection(2, "newer"), 2)
             .expect("replaces the waiting one");
         assert_eq!(routed(&mut queue), ["marker 7", "selection [2] newer"]);
+    }
+
+    /// A foreground change and an MSAA focus are keyed by the thread that
+    /// raised them, as NVDA's limiter keys them: the change or focus of one
+    /// window from another thread waits beside the one waiting, and a newer
+    /// one from the same thread replaces it and moves to the back.
+    #[test]
+    fn a_foreground_change_or_msaa_focus_replaces_only_the_one_its_thread_raised() {
+        let raised = |fact, thread, time| {
+            Outgoing::delivered(HeldFact {
+                win_event: Some(crate::protocol::WinEventStamp { thread, time }),
+                ..held(fact)
+            })
+        };
+        let foreground = || DeliveredFact::Foreground { hwnd: 8 };
+        let focus = || DeliveredFact::MsaaFocus {
+            hwnd: 8,
+            id_object: -4,
+            id_child: 0,
+        };
+        let mut queue = Queue::default();
+        for (fact, thread, time) in [
+            (foreground(), 7, 100),
+            (focus(), 7, 101),
+            (foreground(), 9, 110),
+            (focus(), 9, 111),
+            (foreground(), 7, 120),
+            (focus(), 7, 121),
+        ] {
+            queue.push(raised(fact, thread, time), 8).expect("queued");
+        }
+        let order: Vec<String> = std::iter::from_fn(|| queue.pop())
+            .map(|item| match item.command() {
+                SupervisorToOutpost::DeliverFact {
+                    fact,
+                    win_event: Some(stamp),
+                    ..
+                } => format!("{fact:?} thread {} at {}", stamp.thread, stamp.time),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "Foreground { hwnd: 8 } thread 9 at 110",
+                "MsaaFocus { hwnd: 8, id_object: -4, id_child: 0 } thread 9 at 111",
+                "Foreground { hwnd: 8 } thread 7 at 120",
+                "MsaaFocus { hwnd: 8, id_object: -4, id_child: 0 } thread 7 at 121",
+            ]
+        );
     }
 
     #[test]

@@ -81,7 +81,9 @@
 //!
 //! Outgoing facts are coalesced with NVDA's UIA limiter rule before they are
 //! sent: one waiting fact per element and kind (for a notification, per
-//! element, kind, processing, and activity id), a newer one replacing it
+//! element, kind, processing, and activity id; for a foreground change or
+//! an MSAA focus, per window or address and the thread that raised it, as
+//! NVDA's `WinEvent` limiter keys them), a newer one replacing it
 //! and moving to the back, so a flood from one busy process cannot pass through
 //! the listener and Core unthrottled. A UIA focus's marker, read, and drop
 //! are never replaced, since an outpost waits on the marker until its read
@@ -628,7 +630,7 @@ impl Outgoing {
         if timing.listener_handled_at_us == 0 {
             timing.listener_handled_at_us = self.now();
         }
-        let key = fact.key().map(|key| (pid, key));
+        let key = fact.key(win_event).map(|key| (pid, key));
         let message = OutpostToSupervisor::FocusFact {
             trace_id,
             observed_at_ms,
@@ -1557,8 +1559,10 @@ mod tests {
         let kinds: Vec<String> = sent(&outgoing, &mut reader)
             .into_iter()
             .map(|message| match message {
-                OutpostToSupervisor::FocusFact { fact, .. } => {
-                    format!("{} {:?}", fact.pid.0, fact.fact.key())
+                OutpostToSupervisor::FocusFact {
+                    fact, win_event, ..
+                } => {
+                    format!("{} {:?}", fact.pid.0, fact.fact.key(win_event))
                 }
                 OutpostToSupervisor::ForwardingEnded {
                     pid,
@@ -1571,10 +1575,10 @@ mod tests {
         assert_eq!(
             kinds,
             [
-                "5 Some(MsaaFocus(1, -4, 0))",
+                "5 Some(MsaaFocus(1, -4, 0, 9))",
                 "ended 5 3 100",
-                "5 Some(Foreground(1))",
-                "6 Some(MsaaFocus(1, -4, 0))",
+                "5 Some(Foreground(1, 9))",
+                "6 Some(MsaaFocus(1, -4, 0, 9))",
                 "5 Some(UiaSelection([42]))",
             ],
             "the fact sent first goes ahead of forwarding ended"

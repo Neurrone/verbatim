@@ -489,18 +489,23 @@ impl DeliveredFact {
     /// notification, its element, kind, processing, and activity id, not
     /// its text, as NVDA's UIA limiter keys one (`eventRecord.h`), so a
     /// newer notification of the same activity replaces one still waiting.
+    /// A foreground change and an MSAA focus are keyed by the thread that
+    /// raised them too, from `win_event` (0 without it), as NVDA's `WinEvent`
+    /// limiter keys them (`orderedWinEventLimiter.py` 63 to 67), so the
+    /// changes or focuses of one window from two threads are not merged.
     /// `None` for the parts of a UIA focus's read, which are never replaced
     /// on the way: the outpost coalesces a read only where it takes its
     /// marker's place.
     #[must_use]
-    pub fn key(&self) -> Option<FactKey> {
+    pub fn key(&self, win_event: Option<WinEventStamp>) -> Option<FactKey> {
+        let thread = win_event.map_or(0, |stamp| stamp.thread);
         Some(match self {
-            DeliveredFact::Foreground { hwnd } => FactKey::Foreground(*hwnd),
+            DeliveredFact::Foreground { hwnd } => FactKey::Foreground(*hwnd, thread),
             DeliveredFact::MsaaFocus {
                 hwnd,
                 id_object,
                 id_child,
-            } => FactKey::MsaaFocus(*hwnd, *id_object, *id_child),
+            } => FactKey::MsaaFocus(*hwnd, *id_object, *id_child, thread),
             DeliveredFact::UiaFocusMarker { .. }
             | DeliveredFact::UiaFocusRead { .. }
             | DeliveredFact::UiaFocusDropped { .. }
@@ -541,10 +546,10 @@ impl DeliveredFact {
 /// The object and kind a [`DeliveredFact`] concerns.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FactKey {
-    /// A foreground change to this window.
-    Foreground(isize),
-    /// An MSAA focus at this address.
-    MsaaFocus(isize, i32, i32),
+    /// A foreground change to this window, raised by this thread.
+    Foreground(isize, u32),
+    /// An MSAA focus at this address, raised by this thread.
+    MsaaFocus(isize, i32, i32, u32),
     /// An MSAA menu opening at this address.
     MenuPopup(isize, i32, i32),
     /// A UIA selection of this runtime id.

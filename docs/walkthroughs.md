@@ -126,7 +126,7 @@ releases Alt. Notepad has no outpost yet.
    `crates/verbatim-outpost/src/outpost/mod.rs`) only pushes each fact onto
    the intake queue (`Intake::push` in `outpost/intake.rs`) and returns.
    The queue applies NVDA's limiter rules to MSAA events: one waiting
-   entry per object and kind; a batch is everything that accumulated
+   entry per object, kind and thread that raised it; a batch is everything that accumulated
    while the worker handled the previous batch, in the order it arrived;
    per batch the newest 4 MSAA focus events and 10 other MSAA events per
    thread that raised them, with the focused object's other events always

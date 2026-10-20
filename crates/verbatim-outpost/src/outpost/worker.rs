@@ -832,7 +832,7 @@ fn describe(item: &Item) -> String {
         Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => {
             format!("UIA focus read {marker}")
         }
-        Item::Fact(fact, _) => format!("fact {:?}", fact.key()),
+        Item::Fact(fact, stamp) => format!("fact {:?}", fact.key(*stamp)),
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
         Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
