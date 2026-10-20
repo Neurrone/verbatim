@@ -186,6 +186,12 @@ event's own element:
   skipped, so a repeat out of time is reported, a deliberate divergence
   from NVDA. A focus so judged is reported with what was read, the
   event's cache giving the rest, its ancestors unknown.
+- Each call of a read is timed by the system's clock, one reading at the
+  start of each call, which ends the call before it
+  (`FocusQuery::before_call` names the classic walk's), and a call that
+  took longer than a second is logged at info with its name and its
+  elapsed milliseconds, so the slowest calls behind `READ_DEADLINE` can be
+  seen.
 - A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 11
   seconds: the budget, the raw probe's three seconds it does not count,
   UIA's five-second transaction timeout for the call that can be under

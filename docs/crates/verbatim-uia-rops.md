@@ -179,7 +179,10 @@ on for the listener, the theme's for the outpost), an out-of-time check
 (`out_of_time`), which only the classic walk makes, before each of its
 calls after the first, what a skipped call would have read then unknown,
 and `nearest_window`, the element's nearest window when the caller has
-already found it, which the classic walk then does not look up. Since the input is typed, its
+already found it, which the classic walk then does not look up, and
+`before_call`, told the name of each of the classic walk's calls as it
+begins, so that the caller can time them (the focus listener logs one
+slower than a second). Since the input is typed, its
 control type is always in its cache, and the live read of it the query
 once fell back to is gone (decision 8 of `docs/design/uia-shapes.md`).
 Both answer `FocusAncestry::NotFocused` when a

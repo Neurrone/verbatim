@@ -148,13 +148,26 @@ pub(crate) const READ_DEADLINE: Duration = READ_BUDGET
 /// probe ([`FocusReader::native_window`]), so that for a sender with a
 /// window of its own, whose probe is the read's first call, the budget
 /// starts once the probe has answered.
+///
+/// It also times each of the read's calls, by the system's clock whatever
+/// the reader's: a call that takes longer than [`SLOW_CALL`] is logged at
+/// info with its name and how long it took, so the slowest calls behind
+/// [`READ_DEADLINE`] can be seen (Dickson, 2026-10-20). Each call costs one
+/// clock reading, at its start, which is also the end of the call before
+/// it; the last ends when the budget is dropped, at the read's end.
 struct Budget {
     clock: Clock,
     /// When the time is up.
     end: Cell<Instant>,
     /// When the window's verdict began to be decided, until it is.
     verdict_began: Cell<Option<Instant>>,
+    /// The call under way, by name, and when it began, by the system's
+    /// clock.
+    call: Cell<Option<(&'static str, Instant)>>,
 }
+
+/// How long one call of a focus read may take before it is logged at info.
+const SLOW_CALL: Duration = Duration::from_secs(1);
 
 impl Budget {
     /// A budget from now, by `clock`.
@@ -164,6 +177,29 @@ impl Budget {
             clock,
             end: Cell::new(end),
             verdict_began: Cell::new(None),
+            call: Cell::new(None),
+        }
+    }
+
+    /// The call named `name` begins, and the one before it, if any, has
+    /// ended.
+    fn call(&self, name: &'static str) {
+        let now = Instant::now();
+        self.call_ended(now);
+        self.call.set(Some((name, now)));
+    }
+
+    /// The call under way, if any, ended at `now`: logged if it was slow.
+    fn call_ended(&self, now: Instant) {
+        if let Some((call, began)) = self.call.take() {
+            let elapsed = now.saturating_duration_since(began);
+            if elapsed > SLOW_CALL {
+                tracing::info!(
+                    call,
+                    elapsed_ms = elapsed.as_millis(),
+                    "a call of a UIA focus read took longer than a second"
+                );
+            }
         }
     }
 
@@ -185,6 +221,15 @@ impl Budget {
         if let Some(began) = self.verdict_began.take() {
             let waited = (self.clock)().saturating_duration_since(began);
             self.end.set(self.end.get() + waited);
+        }
+    }
+}
+
+impl Drop for Budget {
+    /// The read has ended, and with it its last call.
+    fn drop(&mut self) {
+        if self.call.get().is_some() {
+            self.call_ended(Instant::now());
         }
     }
 }
@@ -513,6 +558,7 @@ impl FocusReader {
                     require_focus: false,
                     refresh: true,
                     nearest_window: Some(nearest),
+                    before_call: Some(&|call| budget.call(call)),
                 };
                 focus_ancestry_classic(&self.uia, &query)
             });
@@ -525,7 +571,7 @@ impl FocusReader {
                 (hwnd, focus_window, nearest),
                 event,
                 &ancestry,
-                (arrival, &out_of_time),
+                (arrival, &budget),
             ),
             Err(error) => {
                 // NVDA lets a focus event through when its sender's keyboard
@@ -633,7 +679,7 @@ impl FocusReader {
         (hwnd, focus_window, nearest): (isize, isize, isize),
         event: CachedUiaParts,
         ancestry: &Ancestry,
-        (arrival, out_of_time): (Arrival, &dyn Fn() -> bool),
+        (arrival, budget): (Arrival, &Budget),
     ) -> Judged {
         let path = "classic";
         let live = ancestry
@@ -655,11 +701,12 @@ impl FocusReader {
             states: states.with(State::Focused),
             details,
         };
-        if wants_legacy_checked_state(snapshot.role, snapshot.states) && !out_of_time() {
+        if wants_legacy_checked_state(snapshot.role, snapshot.states) && !budget.out_of_time() {
             // A menu item without the Toggle pattern: its checked state may
             // be only in its legacy MSAA state, which the classic walk
             // leaves to this one live call, made while the read's time
             // lasts.
+            budget.call("the legacy MSAA state");
             let legacy = element
                 .current_i32_ignoring_default(UIA_LegacyIAccessibleStatePropertyId)
                 .ok()
@@ -787,7 +834,10 @@ impl FocusReader {
             let same = current
                 .as_ref()
                 .filter(|_| !out_of_time())
-                .map(|(focus, _)| self.uia.compare_elements(element, focus));
+                .map(|(focus, _)| {
+                    budget.call("the comparison with the current focus");
+                    self.uia.compare_elements(element, focus)
+                });
             if tracing::enabled!(tracing::Level::DEBUG) {
                 Self::log_sender(sender, runtime_id, same.as_ref());
             }
@@ -833,7 +883,10 @@ impl FocusReader {
                 if let (Some(Ok(true)), Some((last, _))) = (compare(), current.as_ref())
                     && kind == FocusEvent::Focus
                     && !out_of_time()
-                    && last.has_keyboard_focus().unwrap_or(false)
+                    && {
+                        budget.call("the last focus's keyboard focus");
+                        last.has_keyboard_focus().unwrap_or(false)
+                    }
                 {
                     return Err("a repeat of the last focus, which still has the keyboard focus");
                 }
@@ -846,6 +899,8 @@ impl FocusReader {
         // that fails is dropped and never becomes the last accepted, so the
         // same element's focus once its window is in front, as a console's
         // text area's comes, is no repeat.
+        // Local calls, timed apart from the call before them.
+        budget.call("the acceptance test and the window checks");
         let windows = SystemWindows {
             foreground: (self.foreground)(),
         };
@@ -918,7 +973,10 @@ impl FocusReader {
                     "its event says it did not have the keyboard focus, and its read's time was up",
                 );
             }
-        } else if matches!(subject.has_keyboard_focus(), Ok(false)) {
+        } else if {
+            budget.call("the keyboard focus");
+            matches!(subject.has_keyboard_focus(), Ok(false))
+        } {
             return Err("its element no longer has the keyboard focus");
         }
         Ok(window)
@@ -974,6 +1032,7 @@ impl FocusReader {
                 return Err("its read ran out of time before its window was looked up");
             }
             called = true;
+            budget.call("the nearest window");
             let started = Instant::now();
             let nearest = verbatim_uia::nearest_window_handle(element);
             let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -1002,6 +1061,7 @@ impl FocusReader {
         // The console check follows the probe, and its time counts.
         let console = || {
             budget.probe_ended();
+            budget.call("the console check");
             (automation_id == Some(verbatim_uia::CONSOLE_TEXT_AREA) || hwnd == nearest)
                 .then(|| {
                     verbatim_uia::held_console_reports_formatting(
@@ -1014,6 +1074,7 @@ impl FocusReader {
                 .flatten()
         };
         budget.verdict_begins();
+        budget.call("the window's verdict, by the raw probe if it is not known");
         let uia = uses_uia(&self.arbitrator, nearest, Probe::Raw, console);
         budget.probe_ended();
         if !uia {

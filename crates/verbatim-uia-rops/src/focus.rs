@@ -70,6 +70,12 @@ pub struct FocusQuery<'a> {
     /// process boundary. `None` leaves the walk to find it. The remote
     /// program finds it inside its one round trip and does not read this.
     pub nearest_window: Option<isize>,
+    /// Told the name of each of the classic walk's calls as it begins,
+    /// such as `"a step to the parent"`, so the caller can time them; a
+    /// call ends where the next begins, or where the walk returns. The
+    /// selected child's read, one call or a few, is told as one. `None`
+    /// tells nobody. The remote program is one call and does not tell it.
+    pub before_call: Option<&'a dyn Fn(&'static str)>,
 }
 
 /// The answer to a [`FocusQuery`].
@@ -650,6 +656,14 @@ impl RemoteCache {
     }
 }
 
+/// Tells `before_call`, if there is one, that the call `call` begins
+/// ([`FocusQuery::before_call`]).
+fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
+    if let Some(before_call) = before_call {
+        before_call(call);
+    }
+}
+
 /// The focus ancestry the classic way, the focus listener's read and the
 /// outposts' fallback: a live `HasKeyboardFocus` read with
 /// [`FocusQuery::require_focus`], the previous element's, the element's
@@ -696,16 +710,19 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     // so at most the call under way runs past it; what the calls skipped
     // would have read is unknown, and the walk then reads no ancestor.
     let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
-    if query.require_focus && !live.element().has_keyboard_focus()? {
+    let before_call = |call| tell(query.before_call, call);
+    if query.require_focus && {
+        before_call("the focus's keyboard focus");
+        !live.element().has_keyboard_focus()?
+    } {
         return Ok(FocusAncestry::NotFocused);
     }
     // A failed read is an element that is gone, but a provider that did
     // not answer in time has said nothing about it.
-    let previous_focused = match query
-        .previous
-        .filter(|_| !out_of_time())
-        .map(ElementExt::has_keyboard_focus)
-    {
+    let previous_focused = match query.previous.filter(|_| !out_of_time()).map(|previous| {
+        before_call("the previous focus's keyboard focus");
+        previous.has_keyboard_focus()
+    }) {
         None => None,
         Some(Ok(focused)) => Some(focused),
         Some(Err(error)) if timed_out(&error) => return Err(Error::Uia(error)),
@@ -713,6 +730,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     };
     let request = query.fill.request();
     let element = if query.refresh && !out_of_time() {
+        before_call("the focus's fresh cache");
         Some(live.refresh(request)?)
     } else {
         None
@@ -720,11 +738,13 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     // A selection that timed out, or whose container or item is gone, has
     // not said nothing is selected: the walk fails, as a hop's would.
     let selected_child = if wants_selected_child(&input) && !out_of_time() {
+        before_call("the selected child");
         uia.selected_within(live, request, &out_of_time)?
     } else {
         None
     };
     // The desktop root is served in this process, so reading it is local.
+    before_call("the desktop root and the tree walker");
     let root = verbatim_uia::runtime_id(&uia.root_element()?);
     let walker = uia.raw_view_walker()?;
     let mut ancestry = Ancestry {
@@ -761,6 +781,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             complete = true;
             break;
         }
+        before_call("a step to the parent");
         let parent = match current.walk(&walker, Direction::Parent, request) {
             Ok(parent) => parent,
             // A provider that did not answer in time has not said there is
@@ -803,6 +824,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         }
     }
     if ancestry.window.is_none() && !complete && !ancestry.out_of_time && !out_of_time() {
+        before_call("the nearest window");
         ancestry.window = verbatim_uia::nearest_window_handle(live.element());
     }
     Ok(FocusAncestry::Focused(ancestry))

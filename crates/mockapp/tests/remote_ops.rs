@@ -193,6 +193,7 @@ fn query<'a>(
         require_focus: true,
         refresh: false,
         nearest_window: None,
+        before_call: None,
     }
 }
 
@@ -361,6 +362,7 @@ fn a_remotely_read_element_without_validity_reads_valid_with_no_failed_read() {
     let refreshed = FocusQuery {
         refresh: true,
         nearest_window: None,
+        before_call: None,
         ..query(&deep, &[], &fixture.fill)
     };
     let ancestry = focused(focus_ancestry_remote(&fixture.uia, &refreshed), "remote");
