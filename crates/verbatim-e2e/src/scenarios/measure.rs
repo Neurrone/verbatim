@@ -34,6 +34,7 @@ use super::text_box::{self, BOX_NAME};
 use crate::artifacts;
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
+use crate::speech::STEP_TIMEOUT;
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -99,6 +100,35 @@ impl Truth {
             .into_iter()
             .map(|heard| heard.text)
             .collect();
+        self.write(&serde_json::json!({ "step": step, "heard": heard }));
+    }
+
+    /// Waits for the utterance `until`, the announcement a step's input or
+    /// window causes, then takes it, everything queued before it, and
+    /// everything else queued once Verbatim is idle after the last input
+    /// ([`Truth::drain`]), and writes them with `step`, unasserted. For a
+    /// step whose announcement comes from an application event that
+    /// Verbatim cannot count as part of an input, such as a new window's
+    /// first focus or the focus a key moves in File Explorer, which can
+    /// arrive after Verbatim is idle: the wait is for that evidence.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `until` is not queued, or nothing is queued for
+    /// [`STEP_TIMEOUT`] before it.
+    fn drain_until(&self, scenario: &mut Scenario, step: &str, until: &str) {
+        let mut heard: Vec<String> = scenario
+            .speech()
+            .take_until(until, STEP_TIMEOUT)
+            .into_iter()
+            .map(|heard| heard.text)
+            .collect();
+        heard.extend(
+            scenario
+                .take_all_queued()
+                .into_iter()
+                .map(|heard| heard.text),
+        );
         self.write(&serde_json::json!({ "step": step, "heard": heard }));
     }
 }
@@ -274,7 +304,12 @@ pub(crate) fn setup_focus_explorer(scenario: &mut Scenario) -> io::Result<Scenar
 }
 
 /// `measure_focus_explorer`: moving in a File Explorer folder window, and
-/// into its subfolder and back.
+/// into its subfolder and back. Each new window is closed only once its
+/// first item has been announced, and each key is followed by a wait for
+/// the item it moves to, as `explorer_folder_window` asserts them, so
+/// every sample carries its announcement: neither a new window's first
+/// focus nor the focus a key moves is part of an input Verbatim can report
+/// handled, and both can come after Verbatim is idle.
 pub(crate) fn body_focus_explorer(scenario: &mut Scenario, state: &mut ScenarioState) {
     let truth = Truth {
         name: "measure_focus_explorer",
@@ -283,32 +318,32 @@ pub(crate) fn body_focus_explorer(scenario: &mut Scenario, state: &mut ScenarioS
         panic!("setup opens the folder");
     };
     let title = title.clone();
-    truth.drain(scenario, "opened");
+    truth.drain_until(scenario, "opened", "Inner not selected 1 of 4");
     // The first focus in a new File Explorer window, each closed again.
     for index in 0..NEW_EXPLORER_WINDOWS {
         let opened = scenario
             .open_folder(&format!("m-new-folder-{index}"), &["one", "two"])
             .expect("opens another folder window");
         truth.write(&serde_json::json!({ "step": "explorer_window", "title": opened }));
-        truth.drain(scenario, "after opening");
+        truth.drain_until(scenario, "after opening", "one not selected 1 of 2");
         scenario
             .close_windows_titled(&opened)
             .expect("closes the folder window");
         truth.drain(scenario, "after closing");
     }
     for _ in 0..REPEATS {
-        for (key, front) in [
-            ("downarrow", title.as_str()),
-            ("downarrow", title.as_str()),
-            ("uparrow", title.as_str()),
-            ("uparrow", title.as_str()),
-            ("enter", title.as_str()),
-            ("backspace", "Inner - File Explorer"),
+        for (key, front, said) in [
+            ("downarrow", title.as_str(), "alpha 2 of 4"),
+            ("downarrow", title.as_str(), "beta 3 of 4"),
+            ("uparrow", title.as_str(), "alpha 2 of 4"),
+            ("uparrow", title.as_str(), "Inner 1 of 4"),
+            ("enter", title.as_str(), "delta not selected 1 of 1"),
+            ("backspace", "Inner - File Explorer", "Inner 1 of 4"),
         ] {
             ready(scenario, &truth, front);
             scenario.send_keys(&[key]).expect("sends the key");
             truth.write(&serde_json::json!({ "step": "explorer", "key": key }));
-            truth.drain(scenario, "after key");
+            truth.drain_until(scenario, "after key", said);
         }
     }
 }

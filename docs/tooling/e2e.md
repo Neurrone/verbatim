@@ -554,8 +554,13 @@ The eight scenarios, all named `measure_`:
 - `measure_focus_windows_terminal_tabs`: two tabs of one Windows Terminal
   window, 20 switches with Control+Tab and Control+Shift+Tab.
 - `measure_focus_explorer`: 10 new File Explorer windows, each opened and
-  closed (the first focus in a new window), then 20 rounds of arrows,
-  Enter into a subfolder and Backspace back.
+  closed once its first item is announced (the first focus in a new
+  window), then 20 rounds of arrows, Enter into a subfolder and Backspace
+  back, each key followed by a wait for the item it moves to. Neither a
+  new window's first focus nor the focus a key moves is part of an input
+  Verbatim reports handled, and either can come after Verbatim is idle,
+  so the scenario waits for the announcement itself, as
+  `explorer_folder_window` does.
 - `measure_focus_text_box`: two Windows Forms text boxes, brought forward
   20 times by turns.
 - `measure_focus_new_application`: 12 newly started applications, each

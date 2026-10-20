@@ -123,7 +123,7 @@ File Explorer clears it. A scenario's length is in its log
 (`finished in`); the windows the 2026-10-13 baseline used, debug build:
 
 - `measure_keys_text_box` (39 seconds): `--after 15 --seconds 8`.
-- `measure_focus_explorer` (17 seconds): `--after 10 --seconds 8`.
+- `measure_focus_explorer` (about 40 seconds, its ten new windows from about 4 to 30 seconds in and the keys after them): `--after 10 --seconds 8`, inside the new windows.
 - `conhost_flood` (115 seconds): `--after 8 --seconds 6`.
 - `measure_speech_real` (43 seconds, `--audible`): `--after 20 --seconds 8`.
 - `measure_focus_text_box` is over in 5 seconds and has no room for one.

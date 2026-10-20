@@ -186,20 +186,7 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
 - An audit of every end-to-end scenario for timing races (2026-10-11),
   each race fixed by waiting for evidence, not a longer bound; and the
   agent's bring-forward, which always takes its slowest path (once 1.4
-  seconds), its cause open. One race is known (2026-10-20):
-  `measure_focus_explorer` closes each of its ten new folder windows
-  after a `drain` that waits for nothing, since opening a window sets no
-  last input and `take_all_queued`'s idle check is then satisfied at
-  once, about 290 ms after the first item's focus WinEvent, while a new
-  File Explorer process's first UIA focus event reaches the listener 250
-  to 290 ms after that WinEvent (measured in the runs kept under
-  `target/e2e-evidence/review-fixes-2026-10-20/`, the
-  `measure_focus_explorer` run of 08:08:51 that day and the
-  `explorer_folder_window` run of 08:06:40). So its new-window samples
-  carry no announcement, and the kept 2026-10-16 run shows the same. The
-  fix is to wait for the window's announcement before closing it, as
-  `explorer_folder_window` does; its "after key" drains in the
-  steady-state part have the same defect.
+  seconds), its cause open.
 - Scheduled for later (Dickson, 2026-10-11, from the communication
   design): the mixer's retry after a failed audio device open is a timed
   deadline, to be replaced by waiting for evidence such as a device
