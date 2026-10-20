@@ -178,7 +178,8 @@ pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
 /// tests Windows 11 Notepad; `settings_search_suggestions` depends on the
 /// Settings app's search index, untested on GitHub's runner, and fails in
 /// a state Settings is sometimes in (`docs/parity/changes-and-selection.md`,
-/// "Selection in a list the focus controls").
+/// "Selection in a list the focus controls"). A unit test checks CI's
+/// `e2e` job's skips against this list.
 pub const LOCAL_ONLY_FILTERS: &[&str] = &["notepad_", "settings_search_suggestions"];
 
 /// Whether `name` starts with one of [`LOCAL_ONLY_FILTERS`], so libtest's
@@ -2308,6 +2309,58 @@ mod tests {
         assert!(
             selected.iter().any(|def| def.local_only),
             "a run with no filters includes the local-only scenarios"
+        );
+    }
+
+    /// CI's `e2e` job skips the demonstrations, the measure set, and
+    /// exactly [`LOCAL_ONLY_FILTERS`], in order, and since libtest's
+    /// `--skip` matches anywhere in a name, no other scenario's name
+    /// contains a local-only filter unless one of the job's other skips
+    /// deselects it too.
+    #[test]
+    fn ci_skips_exactly_the_local_only_filters_and_no_other_scenario() {
+        const OTHER_SKIPS: [&str; 2] = ["demo_", "measure_"];
+        let workflow = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../.github/workflows/ci.yml"
+        ))
+        .expect("the workflow");
+        let suite: Vec<&str> = workflow
+            .lines()
+            .filter(|line| line.contains("cargo test -p verbatim-e2e --no-fail-fast"))
+            .collect();
+        assert_eq!(
+            suite.len(),
+            1,
+            "one suite command in the workflow: {suite:?}"
+        );
+        let words: Vec<&str> = suite[0].split_whitespace().collect();
+        let skips: Vec<&str> = words
+            .windows(2)
+            .filter(|pair| pair[0] == "--skip")
+            .map(|pair| pair[1])
+            .collect();
+        let expected: Vec<&str> = OTHER_SKIPS
+            .iter()
+            .chain(LOCAL_ONLY_FILTERS)
+            .copied()
+            .collect();
+        assert_eq!(skips, expected, "the e2e job's skips");
+        let also_skipped: Vec<&str> = SCENARIOS
+            .iter()
+            .filter(|def| !def.local_only)
+            .map(|def| def.name)
+            .filter(|name| {
+                LOCAL_ONLY_FILTERS
+                    .iter()
+                    .any(|filter| name.contains(filter))
+            })
+            .filter(|name| !OTHER_SKIPS.iter().any(|skip| name.contains(skip)))
+            .collect();
+        assert_eq!(
+            also_skipped,
+            Vec::<&str>::new(),
+            "scenarios CI would skip as local-only that are not"
         );
     }
 

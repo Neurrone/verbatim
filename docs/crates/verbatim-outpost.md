@@ -975,6 +975,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `--classic-uia`. Range-value changes and live regions, which NVDA
   also registers globally, are not subscribed yet: the reducer speaks values
   only for the focus, and live regions are milestone M7's.
+- `listener::capture` — what the listener's UIA callbacks capture from an
+  event's element: its cached window handle and snapshot parts, nothing
+  read live. Public so that mockapp's tests make a selection's fact from
+  mockapp's own event as the listener does (`tests/combo_box.rs`).
 
 ### The supervisor
 
@@ -1915,7 +1919,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   that UIA focus has the intake dropping the system caret's events
   (`Intake::drop_system_caret`), the edit control's are dropped with
   them, so only its text selection changes answer its caret keys until
-  the next focus is reported.
+  the next focus is reported, and a classic edit control, which raises
+  none, has its caret keys unanswered until then.
 
 ### Queries
 

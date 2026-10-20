@@ -33,7 +33,9 @@ and how to read a failure.
   Settings app's search index, untested there. Their names, and only
   theirs, start with one of `LOCAL_ONLY_FILTERS` (`notepad_` and
   `settings_search_suggestions`), so a run off a Windows 11 desktop
-  deselects them with a `--skip` for each. A run with `SKIP_LOCAL_ONLY_ENV`
+  deselects them with a `--skip` for each; a unit test checks that CI's
+  `e2e` job skips exactly these, and that no other scenario's name
+  contains one. A run with `SKIP_LOCAL_ONLY_ENV`
   (`VERBATIM_E2E_SKIP_LOCAL_ONLY`) set to `1` that runs one anyway fails.
   `skips` validates the variable: unset, empty, `0`, or `1`, anything else
   an error. Nothing detects the machine.

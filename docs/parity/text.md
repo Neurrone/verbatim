@@ -110,7 +110,18 @@ that is neither has no text.
     change is mapped onto that focus as its caret event
     (`IAccessibleHandler/__init__.py` 636 to 668), and NVDA's console
     handler (`winConsoleHandler.py`), which only its legacy console
-    connects, does not run. The console host raises the system caret's
+    connects, does not run. The console host also raises UIA's text
+    selection changed on its text area for each move, which NVDA takes
+    as a caret event too once it has registered its focus's local event
+    handlers on the text area (`UIAHandler/__init__.py` 278 to 287 and
+    697 to 739), so NVDA handles two caret events for each move. Checked
+    on 2026-10-21 with NVDA's debug log of the console opened as
+    `conhost_editing` opens it, typing and arrows (both events for every
+    move in one launch; in another NVDA did not register on the text
+    area and took the system caret's alone), and a UIA probe on the
+    desktop, which heard the text area's event at every step
+    (`target/e2e-evidence/fixes-round-eight-2026-10-21/`,
+    `nvda-debug.log` and `uia-probe-conhost.txt`). The console host raises the system caret's
     location change about 130 microseconds before its console caret
     event, at the same blink tick, for the same move. Verbatim keeps the
     console's event, because it also comes for a move of a selection's
@@ -121,9 +132,12 @@ that is neither has no text.
   - The event's window is checked as readable before the caret event is
     mapped onto the focus: it must be a window, have no ghost window
     standing in for it, and belong to an application that is responding.
-    NVDA maps the caret event onto its focus first and makes these checks
-    only for other events (`IAccessibleHandler/__init__.py`, 549 to 576
-    against 636 to 668). Verbatim checks first so that a hung
+    NVDA checks that the event's window exists for every event, the
+    caret's included, as its hook receives it
+    (`IAccessibleHandler/internalWinEventHandler.py` 113 to 133), then
+    maps the caret event onto its focus and makes the ghost window and
+    hung application checks only for other events
+    (`IAccessibleHandler/__init__.py`, 549 to 576 against 636 to 668). Verbatim checks first so that a hung
     application's caret event never leads to a read of its caret that
     would wait on it.
   - A caret show is tested for acceptance as a location change is; NVDA

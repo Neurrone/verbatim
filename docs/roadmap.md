@@ -377,10 +377,12 @@ NVDA capture.
   `rapid-tab-nvda-1.txt`, `-nvda-2.txt`, `-verbatim-1.txt` and
   `-verbatim-2.txt` captures in
   `target/e2e-evidence/fixes-round-six-2026-10-21`).
-- Verbatim says "not selected" for each unselected item of an expanded
-  Settings combo box ("Simplified Chinese (Lunar) not selected 2 of 3");
-  capture NVDA's wording, which is not yet captured, and match it
-  (`target/e2e-evidence/fixes-round-six-2026-10-21/expanded-combo-box-capture.txt`).
+- NVDA says "expanded" when Alt+Down Arrow expands a Settings combo box,
+  before its first item, and Verbatim does not; both say the items alike,
+  "not selected" included ([changes and
+  selection](parity/changes-and-selection.md), the combo box entry;
+  `nvda-expanded-combo-box-capture.txt` in
+  `target/e2e-evidence/fixes-round-eight-2026-10-21`).
 - A Settings search suggestions scenario with an NVDA capture. It also
   covers selecting inside a list the focus controls, which has no
   scenario and was not checked live after the cheaper reads of 2026-10-10.

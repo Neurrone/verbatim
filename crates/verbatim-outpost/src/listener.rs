@@ -1035,8 +1035,10 @@ fn answer_when_reads_are_done(
 
 /// What a UIA callback captures from an event's element, `sender`, read
 /// as `fields`: its cached window handle and snapshot parts. `None` for an
-/// element with no owning process.
-fn capture(
+/// element with no owning process. Public so that mockapp's tests make a
+/// selection's fact from mockapp's own event as the listener makes it.
+#[must_use]
+pub fn capture(
     sender: &Cached<ListenerEvent>,
     fields: &ListenerEvent,
 ) -> Option<(isize, UiaSnapshotFact)> {

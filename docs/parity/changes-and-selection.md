@@ -133,17 +133,24 @@ reports a focus, without moving focus; this is how it reads the Start
 menu's search results and the Settings app's search suggestions as
 the user types and arrows ("Selection in a list the focus controls"
 in [Event handling](../nvda/events.md)). Verbatim: **partial**. For
-UIA suggestions, **matched (verified)** for the arrows and **matched
-(unverified)** for the first suggestion, with reducer tests and the
-`settings_search_suggestions` scenario: "sound" typed in one injection
+UIA suggestions, **matched (verified)** for the arrows, and for the
+first suggestion when Settings keeps the list's items as it opens it
+(the `settings_search_suggestions` scenario, 5 of 5 runs and, earlier on
+2026-10-20, 10 of 10); **not yet matched** for the first suggestion when
+Settings replaces the items as the list opens, the replacing state
+below, because NVDA's walk up from the event's element is not ported
+(`target/e2e-evidence/fixes-round-six-2026-10-21/finding1-walk.txt`).
+With reducer tests, the scenario checks: "sound" typed in one injection
 gives each character's echo, "Suggestions available" cut off by the
 first suggestion, and the suggestions as Down Arrow twice and Up Arrow
 move through them, what NVDA says in the scenario's comparison of
 2026-10-20 (NVDA alpha-58022, the pin), apart from two recorded
-differences below. The first suggestion is unverified because of the
-replacing state described below, in which NVDA says it and Verbatim does
-not. The scenario is local-only for that reason and because Settings'
-search index on GitHub's runner is untested. The scenario's expectations take the list's size, as
+differences below. The scenario is local-only for the replacing state
+and because Settings' search index on GitHub's runner is untested
+([the end-to-end guide](../tooling/e2e.md), the local-only scenarios);
+a failure of it at the first suggestion with "a selection in none of
+the elements the focus controls" in the outpost's log is this known
+gap, not a regression. The scenario's expectations take the list's size, as
 its first item's set size (`SizeOfSet`, the property Verbatim's "of N"
 comes from), and its first three names from the agent, read through UI
 Automation once the list is open, since Settings' search index differs between editions.
@@ -167,9 +174,12 @@ Different, each a deliberate difference:
 
 The first suggestion goes unsaid by Verbatim, where NVDA says it, in
 some launches, of a frequency not known: 2 of about 36 scenario runs on
-2026-10-20, and 5 of 6 launches by `cargo xtask nvda capture --verbatim
---launch explorer.exe --arg ms-settings:system` on 2026-10-21. No runtime
-id of the search box marks these launches. In them Settings replaces the
+2026-10-20, and, of 6 launches by `cargo xtask nvda capture --verbatim
+--launch explorer.exe --arg ms-settings:system` on 2026-10-21, 2
+confirmed in the replacing state by the outpost's log (captures 1 and
+4), 1 by its symptom alone, 2 whose state is unknown because the
+outpost took no focus in Settings and made no search, and 1 not in it.
+No runtime id of the search box marks these launches. In them Settings replaces the
 list's item elements within about 60 ms of raising the first item's
 element selected event, and raises no event for the replacement. Every
 call into Settings then waits until it has rebuilt the list, 60 to 80 ms
@@ -181,7 +191,8 @@ event's own element to an element the relation names (`isDescendantOf`,
 `NVDAObjects/UIA/__init__.py` 2444 to 2463), and in that state it
 reaches the list: the replaced item still names the list as its parent,
 one step, which NVDA's walk took 199 to 260 microseconds to find once
-the relation's read had waited for Settings, in all four launches tried
+the relation's read had waited for Settings, in the two launches
+confirmed in the replacing state, and in the two whose state is unknown
 (`target/e2e-evidence/fixes-round-six-2026-10-21/finding1-walk.txt`).
 NVDA said "list item 1 of 22" in every capture taken in the same mode.
 Porting the walk needs the event's element or its ancestors' runtime
@@ -281,6 +292,12 @@ with Alt+Down Arrow on 2026-10-21, its items take the keyboard focus as
 they are arrowed, and each is said once, by its focus ("Simplified
 Chinese (Lunar) not selected 2 of 3"), with no value change
 (`target/e2e-evidence/fixes-round-six-2026-10-21/settings-combo-box-live-check.txt`).
+NVDA, captured with the same keys on 2026-10-21 (NVDA alpha-58022, the
+pin), says each item in the same words, "not selected" included, and
+says "expanded" at Alt+Down Arrow before the first item, which Verbatim
+does not say, a difference on the roadmap (M4.2)
+(`target/e2e-evidence/fixes-round-eight-2026-10-21/nvda-expanded-combo-box-capture.txt`,
+beside Verbatim's `target/e2e-evidence/fixes-round-six-2026-10-21/expanded-combo-box-capture.txt`).
 So NVDA's second rule, the same value change for a `Windows.UI.Core`
 combo box that has the `Value` pattern (lines 2795 to 2798, NVDA issue
 6337), is not needed for Settings and is not built: no such combo box

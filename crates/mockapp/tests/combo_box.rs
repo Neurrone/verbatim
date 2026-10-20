@@ -10,10 +10,14 @@
 //!
 //! Each selection is mockapp's own `ElementSelected` event, raised by its
 //! `select` command and caught by a subscription shaped as the focus
-//! listener's, its element passed on as the listener's selection fact,
-//! except for the item named late: its event's cached name must be empty,
-//! which mockapp's event for a named item cannot carry, so that fact is
-//! built by hand.
+//! listener's: its fact is captured from the event's element by the
+//! listener's own `capture` in the callback, and checked on the test's
+//! thread by the listener's reading thread's check (`FocusReader::check_fact`,
+//! through the harness), which finds a windowless item's nearest window, as
+//! the listener's reader does, from the element handed over in its agile
+//! form. The exception is the item named late: its event's cached name must
+//! be empty, which mockapp's event for a named item cannot carry, so that
+//! fact is built by hand.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -30,8 +34,9 @@ use verbatim_model::{
     Backend, Effect, Input, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role, SegmentContent,
     TraceId,
 };
+use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
-use verbatim_uia::{Cached, ListenerEvent, Part, Registration, Subscription, Uia};
+use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Subscription, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -141,7 +146,7 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
     let (combo, _) = focus(&mut app, &outpost, hwnd, "hour");
     let selections = Selections::new(hwnd);
     app.send("select ten");
-    outpost.deliver(selections.next("Ten"));
+    outpost.deliver(selections.next(&outpost, "Ten"));
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::ValueChanged { node_id, value },
@@ -155,36 +160,35 @@ fn an_item_selected_in_the_focused_combo_box_changes_its_value() {
 }
 
 /// mockapp's element selected events under its window, subscribed to with
-/// the focus listener's cache request, each passed on as the listener's
-/// selection fact: the element's identity, role, name and keyboard focus
-/// from the event's cache, and nothing read live.
+/// the focus listener's cache request: each event's fact as the listener's
+/// callback captures it (`verbatim_outpost::listener::capture`), with the
+/// event's element in its agile form, as the listener hands both to its
+/// reading thread.
 struct Selections {
     _registration: Registration,
-    facts: mpsc::Receiver<DeliveredFact>,
+    window: isize,
+    events: mpsc::Receiver<(Agile<ListenerEvent>, DeliveredFact)>,
 }
 
 impl Selections {
     fn new(hwnd: HWND) -> Self {
         let window = hwnd.0 as isize;
-        let (sent, facts) = mpsc::channel();
+        let (sent, events) = mpsc::channel();
         let registration = Registration::with_parts(
             vec![Part::shaped::<ListenerEvent>(Subscription::Event {
                 event: UIA_SelectionItem_ElementSelectedEventId,
                 callback: Arc::new(move |element: &Cached<ListenerEvent>| {
-                    let parts = element.read().parts(element.runtime_id());
+                    let (hwnd, snapshot) =
+                        verbatim_outpost::listener::capture(element, &element.read())
+                            .expect("mockapp's element has its process");
+                    let fact = DeliveredFact::UiaSelection {
+                        hwnd,
+                        focus_window: 0,
+                        snapshot,
+                    };
+                    let agile = element.agile().expect("an agile reference");
                     // The test may have finished.
-                    let _ = sent.send(DeliveredFact::UiaSelection {
-                        hwnd: window,
-                        focus_window: window,
-                        snapshot: UiaSnapshotFact {
-                            runtime_id: parts.runtime_id,
-                            role: parts.role,
-                            name: parts.name,
-                            value: parts.value,
-                            states: parts.states,
-                            details: parts.details,
-                        },
-                    });
+                    let _ = sent.send((agile, fact));
                 }),
             })],
             common::window_subtree(window),
@@ -192,21 +196,36 @@ impl Selections {
         .expect("a subscription to element selected events");
         Self {
             _registration: registration,
-            facts,
+            window,
+            events,
         }
     }
 
     /// The fact for the next selection event, which must be of the item
-    /// named `name`.
-    fn next(&self, name: &str) -> DeliveredFact {
-        let fact = self
-            .facts
+    /// named `name`, as the listener's reading thread passes it on
+    /// (`OutpostUnderTest::listener_check`): mockapp's item has no window of
+    /// its own, so the fact carries none, and its nearest window is
+    /// mockapp's, the window the outpost then tests it with.
+    fn next(&self, outpost: &OutpostUnderTest, name: &str) -> DeliveredFact {
+        let (agile, fact) = self
+            .events
             .recv_timeout(common::WAIT_TIMEOUT)
             .unwrap_or_else(|_| panic!("no element selected event for {name}"));
+        let element = agile.resolve().expect("the event's element");
+        let fact = match outpost.listener_check(&element, fact) {
+            Judged::Passed(fact) => *fact,
+            other => panic!("the listener's check made {other:?} of the selection of {name}"),
+        };
         match &fact {
-            DeliveredFact::UiaSelection { snapshot, .. } => {
-                assert_eq!(snapshot.name.as_deref(), Some(name), "the selected item");
-            }
+            DeliveredFact::UiaSelection {
+                hwnd,
+                focus_window,
+                snapshot,
+            } => assert_eq!(
+                (*hwnd, *focus_window, snapshot.name.as_deref()),
+                (0, self.window, Some(name)),
+                "the selected item's fact"
+            ),
             other => panic!("{other:?} is no selection"),
         }
         fact
@@ -340,7 +359,7 @@ fn an_item_with_the_keyboard_focus_is_said_once_as_the_focus() {
     app.send("select ten");
     // The event's cache is filled before the item takes the focus, as
     // the item is selected on its way to the focus.
-    let selected = selections.next("Ten");
+    let selected = selections.next(&outpost, "Ten");
     app.send("set-focus ten");
     outpost.deliver(selected);
     let selection = next_event(&outpost);
@@ -373,7 +392,7 @@ fn a_selection_outside_the_combo_box_is_no_value_change() {
     focus(&mut app, &outpost, hwnd, "hour");
     let selections = Selections::new(hwnd);
     app.send("select fifteen");
-    outpost.deliver(selections.next("Fifteen"));
+    outpost.deliver(selections.next(&outpost, "Fifteen"));
     assert_eq!(selected_name(&outpost).as_deref(), Some("Fifteen"));
     outpost.settled();
     drop(outpost);
@@ -388,7 +407,7 @@ fn a_combo_box_with_the_value_pattern_has_no_value_change_from_a_selection() {
     assert_eq!(node.value.as_deref(), Some("Large"));
     let selections = Selections::new(hwnd);
     app.send("select large");
-    outpost.deliver(selections.next("Large"));
+    outpost.deliver(selections.next(&outpost, "Large"));
     assert_eq!(selected_name(&outpost).as_deref(), Some("Large"));
     outpost.settled();
     drop(outpost);
