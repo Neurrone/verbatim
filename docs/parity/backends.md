@@ -153,8 +153,9 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   the last focus queued drop), the next older one is tried, through every
   event the limiter kept: its four focus events, and a foreground change
   kept as one of its thread's other events besides. A run is ended only
-  by an MSAA event NVDA's pump receives; UIA events and focus reads and
-  Core's queries and housekeeping keep their own places without ending
+  by an MSAA event NVDA's pump receives; UIA events and focus reads,
+  Core's queries and list of held nodes, the worker's caret follow-up
+  and the outpost's settle request keep their own places without ending
   it, with the differences "MSAA winevent flood control" records.
 - The fake focus after a menu or the Alt+Tab switcher closes is skipped
   only when a focus observed after the close was actually applied; a focus fact that
@@ -311,7 +312,25 @@ one per window (Dickson, 2026-10-20); a run whose events all carry the
 time Windows raised them is tried in that order, the order NVDA's one
 hook receives them in, since an outpost can receive the focus listener's
 copy of an event after its own hook's copy of a later one during a
-hand-over. The outpost's foreground handling
+hand-over. Events of one tick of that clock, about 15.6 ms, are ordered
+by what the hand-over knows: a listener copy known to have been raised
+before the outpost's hook went in, and every listener copy of the batch
+that arrived before it, go ahead of the rest, which keep their arrival
+order. A copy is known so when it was raised before the clock reading
+taken just before the hook went in, or when it has no twin while the
+hook has an unmatched copy of an event raised in the same tick, whose
+own listener copy would otherwise have arrived first; the listener's
+backlog, which replaces a waiting fact with a newer one of the same
+element and kind while a write is in flight, can lose that listener
+copy, and the order can then be wrong for events of that tick. A
+foreground change removes a focus event waiting on its window's client
+object from the same thread, as NVDA's limiter pops it when the
+foreground event is added (`orderedWinEventLimiter.py`, `addEvent`); the
+hook takes an event on a window object as the client object, as NVDA's
+callback does, so that is the address NVDA's foreground event has.
+The limiter so keeps, in one run, the newest 4 focus and foreground
+events and every older foreground change of another window that its
+thread's limit of 10 keeps. The outpost's foreground handling
 makes NVDA's two tests against the last focus queued, after its
 in-front test and before any read, and a change they drop lets the
 run's next older event be tried (`processForegroundWinEvent`, lines 842
@@ -329,15 +348,41 @@ Mockapp's `msaa_events` tests pin the first test and the replacement by
 another application's focus, and the worker's unit tests both tests.
 Entries NVDA's pump never receives neither join a run nor end it, and
 are handled at their own places: UIA events and UIA focus reads, Core's
-queries, its list of held nodes and its caret requests, an object
+queries and its list of held nodes, the worker's own caret follow-up
+after a focus it reported, the outpost's settle request, an object
 destroyed, the console host's events, and a text control's selection
-change (Dickson, 2026-10-20).
+change (Dickson, 2026-10-20). What is heard changes from the time a run
+was ended by any entry, in three shapes, none yet captured from NVDA:
+a focus fact and a foreground change of its window with Core's list of
+held nodes between them, after a focus in another application, now
+announce the window, as NVDA does, where the focus was reported first;
+two focuses of one window with a UIA event or Core's entry between them
+now report only the newer, as NVDA's one pump does; and when the focus
+moves twice quickly, as [focus A, the caret follow-up for the focus N
+reported before, focus B], N's caret is now read and its line or value
+spoken before B alone is reported, where A was reported and the
+follow-up found N gone. Each is closer to NVDA's one pump; the third
+puts a read of N's caret on the way to B's report, and awaits a capture
+of rapid tabbing out of an edit field.
 Different: events from a window the system reports hung are dropped
 before any read; an MSAA event the outpost's acceptance test will drop
 ends a run, where NVDA's pump filters it out before its run, since the
 test is made against the foreground window when the event is handled;
-and a menu end and a switch end, which end NVDA's run, do not end one in
-an outpost, since the focus listener takes them. Before an
+a menu end and a switch end, which end NVDA's run, do not end one in
+an outpost, since the focus listener takes them; and events NVDA's pump
+receives that never reach the intake end no run there: MSAA change
+events from a window known to be read through UIA, which the outpost
+drops at its hook or does not hook (`Outpost::take_in_win_event`), where
+NVDA drops them only after its pump's acceptance test
+(`IAccessibleHandler/__init__.py` 577, after 1056), and the events the
+outpost never subscribes to, which NVDA hooks
+(`internalWinEventHandler.py` 34 to 63): the IA2 caret, document-load,
+attribute and page events, live region changes, scrolling start, desktop
+switch, caret show and hide, and the shows NVDA accepts besides
+tooltips. For an application with an MSAA tree beside a UIA item view,
+[focus A in the tree, a name change in the item view, focus B in the
+tree] is heard "A, B" in NVDA, whose pump the name change ends a run
+in, and "B" in Verbatim. Before an
 outpost hears them, the focus
 listener coalesces its facts by the same one-per-object-and-kind rule,
 and the supervisor holds the facts that arrive while an outpost starts

@@ -529,6 +529,25 @@ impl Context {
         });
     }
 
+    /// Queues a copy of a `WinEvent` the hand-over admitted, with how it
+    /// arrived ([`handover::Arrival`]).
+    fn push_copy(
+        &self,
+        item: Item,
+        (trace, observed_at_ms, timing): (TraceId, u64, EventTiming),
+        arrival: handover::Arrival,
+    ) {
+        self.intake.push_copy(
+            Entry {
+                item,
+                trace,
+                observed_at_ms,
+                timing,
+            },
+            arrival,
+        );
+    }
+
     /// Queues an event one of the outpost's own handlers took in, observed
     /// now, then tells the observer, if there is one, that it was heard.
     fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
@@ -624,13 +643,12 @@ impl Context {
             return;
         };
         let stamp = WinEventStamp { thread, time };
-        if self.admit_win_event(handover::Source::Hook, &fact, stamp) {
+        if let Some(arrival) = self.admit_win_event(handover::Source::Hook, &fact, stamp) {
             let foreground = matches!(fact, DeliveredFact::Foreground { .. });
-            self.push(
+            self.push_copy(
                 Item::Fact(fact, Some(stamp)),
-                TraceId::mint(),
-                now_ms(),
-                timing,
+                (TraceId::mint(), now_ms(), timing),
+                arrival,
             );
             if foreground {
                 self.watch.foreground_changed();
@@ -650,12 +668,16 @@ impl Context {
         observed_at_ms: u64,
         timing: EventTiming,
     ) {
-        if let Some(stamp) = win_event
-            && fact.is_win_event()
-            && !self.admit_win_event(handover::Source::Listener, fact, stamp)
-        {
-            return;
-        }
+        let arrival = match win_event {
+            Some(stamp) if fact.is_win_event() => {
+                let Some(arrival) = self.admit_win_event(handover::Source::Listener, fact, stamp)
+                else {
+                    return;
+                };
+                Some(arrival)
+            }
+            _ => None,
+        };
         // The event thread takes the application's focus and foreground
         // windows from these until its own hook delivers them.
         match fact {
@@ -667,28 +689,30 @@ impl Context {
             }
             _ => {}
         }
-        self.push(
-            Item::Fact(fact.clone(), win_event),
-            trace,
-            observed_at_ms,
-            timing,
-        );
+        let item = Item::Fact(fact.clone(), win_event);
+        match arrival {
+            Some(arrival) => self.push_copy(item, (trace, observed_at_ms, timing), arrival),
+            None => self.push(item, trace, observed_at_ms, timing),
+        }
         if matches!(fact, DeliveredFact::Foreground { .. }) {
             self.watch.foreground_changed();
         }
     }
 
-    /// Whether a copy of the `WinEvent` `fact` and `stamp` describe, from
-    /// `source`, is to be handled, or dropped as the twin of a copy
-    /// already handled ([`handover`]).
+    /// How a copy of the `WinEvent` `fact` and `stamp` describe, from
+    /// `source`, arrived, when it is to be handled, or `None` when it is
+    /// dropped as the twin of a copy already handled ([`handover`]).
     fn admit_win_event(
         &self,
         source: handover::Source,
         fact: &DeliveredFact,
         stamp: WinEventStamp,
-    ) -> bool {
+    ) -> Option<handover::Arrival> {
         let Some(key) = fact.key() else {
-            return true;
+            return Some(match source {
+                handover::Source::Hook => handover::Arrival::Hook,
+                handover::Source::Listener => handover::Arrival::Listener,
+            });
         };
         self.handover().admit(source, key, stamp)
     }

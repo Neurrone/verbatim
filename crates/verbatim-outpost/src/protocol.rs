@@ -163,12 +163,6 @@ pub struct UiaFocusRead {
     /// The element's cached native window handle, or 0 when it is not a
     /// window in its own right.
     pub hwnd: isize,
-    /// For an element that is not a window: the keyboard focus window of
-    /// its application when the listener received the event, else 0, as
-    /// for a [`DeliveredFact::UiaSelection`]. The outpost's acceptance test
-    /// does not use it: it runs against the element's nearest window
-    /// (`docs/design/focus-pipeline.md`, section 16.2).
-    pub focus_window: isize,
     /// The focus: its name and role from the event's cache, as NVDA reads
     /// them from the event's element, and its value, states, and details
     /// read afresh.
@@ -1535,7 +1529,6 @@ mod tests {
         };
         let read = UiaFocusRead {
             hwnd: 0,
-            focus_window: 0x40,
             snapshot: snapshot.clone(),
             ancestors: Some(vec![UiaAncestorFact {
                 snapshot: snapshot.clone(),

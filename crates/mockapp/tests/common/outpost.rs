@@ -673,13 +673,11 @@ impl OutpostUnderTest {
     ) -> (Judged, CallCounts) {
         let _ = verbatim_uia::calls::take();
         let _ = verbatim_uia::calls::take_failed_reads();
-        // mockapp never has the system focus here, so the listener would
-        // find no keyboard focus window for a windowless element.
         let arrival = Arrival {
             trace: TraceId::mint(),
             observed_at_ms: now_ms(),
         };
-        let judged = self.reader.borrow_mut().read(element, 0, kind, arrival);
+        let judged = self.reader.borrow_mut().read(element, kind, arrival);
         (judged, verbatim_uia::calls::take())
     }
 

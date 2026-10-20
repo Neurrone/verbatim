@@ -82,9 +82,12 @@
 //! focus, and ends. An application whose abandoned threads reach
 //! [`ABANDONED_LIMIT`] gets no new thread until one returns: its events
 //! wait, a newer event of an element replacing its waiting one, and the
-//! first abandoned thread whose call returns reads them, unless an event
-//! has waited [`READ_DEADLINE`] since it was queued, when the watchdog
-//! drops it; an event waiting so is not a pending focus
+//! first abandoned thread whose call returns reads them, unless
+//! [`READ_DEADLINE`] has passed since the application reached the limit,
+//! when the watchdog drops every event waiting and each later one is
+//! dropped as it arrives, until a thread returns (one bound per
+//! application, which [`READ_DEADLINE`] states); an event waiting so is a
+//! pending focus for its own application's menu openings only
 //! ([`Readers::focus_pending`]).
 //!
 //! A thread keeps its focus before, NVDA's duplicate evidence, for as long
@@ -141,15 +144,25 @@ const MAX_ANCESTORS: u32 = 64;
 const READ_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a reading thread may take over one focus event before the
-/// watchdog abandons it, and how long an event may wait for a thread while
-/// its application's abandoned threads are at [`ABANDONED_LIMIT`] before
-/// the watchdog drops it, 11 seconds: the [`READ_BUDGET`] of 2 seconds,
+/// watchdog abandons it, and the bound on an application at
+/// [`ABANDONED_LIMIT`], 11 seconds: the [`READ_BUDGET`] of 2 seconds,
 /// the raw probe's wait of up to 3 seconds
 /// ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]), which the budget does not
 /// count, UIA's transaction timeout of 5 seconds for the call that can be
 /// under way when the budget passes, and a second to spare. It bounds
 /// how long the application's later events wait behind the read's marker,
-/// whatever the read's calls do. It does
+/// whatever the read's calls do.
+///
+/// The bound at the limit is one per application, not one per event: once
+/// its second abandoned thread is still in its call, its events wait for a
+/// thread until this long after that moment; then every event waiting is
+/// dropped ([`WAITED_TOO_LONG`]), and each later one is dropped as it
+/// arrives, until an abandoned thread's call returns, which ends the limit
+/// and the bound with it. So the application's outpost, whose later events
+/// wait behind each marker, runs at most this long behind the hung reads,
+/// once, however many events the application raises meanwhile.
+///
+/// It does
 /// not bound the call under way: the transaction timeout bounds each
 /// provider call, not a UIA operation (`docs/uia-bugs.md`, "A timeout
 /// bounds each provider call, not an operation"), so one operation that
@@ -261,7 +274,8 @@ impl Drop for Budget {
 
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before it gets no new thread: its focus events then wait
-/// for the first of those threads whose call returns.
+/// for the first of those threads whose call returns, within the bound
+/// [`READ_DEADLINE`] states.
 const ABANDONED_LIMIT: usize = 2;
 
 /// Why an event is dropped whose read the watchdog abandoned at the
@@ -272,8 +286,9 @@ const NOT_IN_TIME: &str = "its read did not return in time";
 /// user moved on from its window, as an outpost's watchdog says it.
 const MOVED_ON: &str = "the user moved on from a slow window";
 
-/// Why an event is dropped that waited [`READ_DEADLINE`] for a thread while
-/// its application's abandoned threads were at [`ABANDONED_LIMIT`].
+/// Why an event is dropped that waited for a thread while its application's
+/// abandoned threads were at [`ABANDONED_LIMIT`] until the bound
+/// [`READ_DEADLINE`] states, or arrived after that bound.
 const WAITED_TOO_LONG: &str = "it waited too long behind its application's abandoned reads";
 
 /// What a read does once its window becomes known
@@ -671,13 +686,13 @@ impl FocusReader {
     pub(crate) fn judge_watched(
         &mut self,
         sender: &Cached<ListenerEvent>,
-        (focus_window, kind, fact): (isize, FocusEvent, Option<DeliveredFact>),
+        (kind, fact): (FocusEvent, Option<DeliveredFact>),
         (arrival, watched): (Arrival, WatchedRead),
     ) -> Judged {
         self.window = watched;
         let judged = match fact {
             Some(fact) => self.check_fact(sender, fact),
-            None => self.read(sender, focus_window, kind, arrival),
+            None => self.read(sender, kind, arrival),
         };
         self.window = WatchedRead::default();
         judged
@@ -685,13 +700,10 @@ impl FocusReader {
 
     /// Judges and reads the UIA focus event, or menu opening (`kind`),
     /// whose sender is `sender`, as the registration delivers it, and which
-    /// came as `arrival`. `focus_window` is the keyboard focus window of
-    /// the element's application when the event arrived, for an element
-    /// that is not a window (0 otherwise).
+    /// came as `arrival`.
     pub fn read(
         &mut self,
         sender: &Cached<ListenerEvent>,
-        focus_window: isize,
         kind: FocusEvent,
         arrival: Arrival,
     ) -> Judged {
@@ -763,7 +775,7 @@ impl FocusReader {
             }
             Ok(FocusAncestry::Focused(ancestry)) => self.focused(
                 element,
-                (hwnd, focus_window, nearest),
+                (hwnd, nearest),
                 event,
                 &ancestry,
                 (arrival, &budget),
@@ -791,7 +803,6 @@ impl FocusReader {
                 snapshot.states = snapshot.states.with(State::Focused);
                 Judged::Read(Box::new(UiaFocusRead {
                     hwnd,
-                    focus_window,
                     snapshot,
                     ancestors: None,
                     selected_child: None,
@@ -875,7 +886,7 @@ impl FocusReader {
     fn focused(
         &mut self,
         element: &IUIAutomationElement,
-        (hwnd, focus_window, nearest): (isize, isize, isize),
+        (hwnd, nearest): (isize, isize),
         event: CachedUiaParts,
         ancestry: &Ancestry,
         (arrival, budget): (Arrival, &Budget),
@@ -951,7 +962,6 @@ impl FocusReader {
             .accept(self.number, element, (nearest, arrival), &self.window);
         Judged::Read(Box::new(UiaFocusRead {
             hwnd,
-            focus_window,
             snapshot,
             ancestors,
             selected_child: ancestry
@@ -1432,9 +1442,6 @@ struct Queued<J> {
     /// How many foreground events the listener's hook had delivered when
     /// it was queued ([`ReadersState::foregrounds`]).
     foregrounds: u64,
-    /// When it was queued, which bounds its wait while no thread can read
-    /// it ([`WAITED_TOO_LONG`]).
-    since: Instant,
     meta: Meta,
     job: J,
 }
@@ -1466,6 +1473,10 @@ struct App<J> {
     running_place: u64,
     /// Its threads abandoned to reads that have not returned yet.
     abandoned: usize,
+    /// When its abandoned threads reached [`ABANDONED_LIMIT`], while they
+    /// are at it: its events wait for a thread until [`READ_DEADLINE`]
+    /// after this, and are dropped from then on.
+    limit_reached: Option<Instant>,
     /// Whether its outpost has ended, so the thread in charge ends once no
     /// event is waiting.
     ending: bool,
@@ -1481,6 +1492,7 @@ impl<J> App<J> {
             running: None,
             running_place: 0,
             abandoned: 0,
+            limit_reached: None,
             ending: false,
             wake: Arc::new(Condvar::new()),
         }
@@ -1613,8 +1625,9 @@ impl<R: Reading> Readers<R> {
     /// for `pid`'s reading thread, starting one if it has none, unless
     /// [`ABANDONED_LIMIT`] of its threads are abandoned and still in their
     /// calls: the event then waits for the first of them to return, or for
-    /// the watchdog to drop it once it has waited [`READ_DEADLINE`]. Never
-    /// waits on a read.
+    /// the watchdog to drop it at the application's bound, and once that
+    /// bound has passed it is dropped at once, behind every event still
+    /// waiting ([`READ_DEADLINE`]). Never waits on a read.
     pub(crate) fn push(&self, pid: Pid, meta: Meta, job: R::Job) {
         let shared = &self.shared;
         let mut state = shared.lock();
@@ -1652,7 +1665,6 @@ impl<R: Reading> Readers<R> {
         let queued = Queued {
             place: state.queued,
             foregrounds: state.foregrounds,
-            since: Instant::now(),
             meta,
             job,
         };
@@ -1662,6 +1674,13 @@ impl<R: Reading> Readers<R> {
         app.queue.push_back(queued);
         if app.live.is_some() {
             app.wake.notify_one();
+        } else if app
+            .limit_reached
+            .is_some_and(|reached| Instant::now() >= reached + shared.deadline)
+        {
+            // Past the application's bound: dropped at once, behind the
+            // events the watchdog has not yet dropped, in order.
+            drop_waiting(shared, &mut state, pid);
         } else if app.abandoned >= ABANDONED_LIMIT {
             tracing::warn!(
                 %pid,
@@ -1675,22 +1694,23 @@ impl<R: Reading> Readers<R> {
         }
     }
 
-    /// Whether a focus event of any application is waiting for its read or
-    /// being read: NVDA drops a menu opening that arrives while a focus is
-    /// pending (`isPendingEvents("gainFocus")`, `UIAHandler/__init__.py`
-    /// 772 to 777), and here a focus still to be judged stands for one
-    /// NVDA has queued and not yet run. A focus of an application whose
-    /// abandoned threads are at [`ABANDONED_LIMIT`], waiting with no thread
-    /// to read it, is not counted, so a hung application cannot have every
-    /// other application's menu openings dropped while it waits.
-    pub(crate) fn focus_pending(&self) -> bool {
+    /// Whether a focus event is waiting for its read or being read, for a
+    /// menu opening of `pid`'s: NVDA drops a menu opening that arrives
+    /// while a focus is pending (`isPendingEvents("gainFocus")`,
+    /// `UIAHandler/__init__.py` 772 to 777), and here a focus still to be
+    /// judged stands for one NVDA has queued and not yet run. A focus of an
+    /// application whose abandoned threads are at [`ABANDONED_LIMIT`],
+    /// waiting with no thread to read it, counts for that application's own
+    /// menu openings only, so a hung application cannot have every other
+    /// application's menu openings dropped while it waits.
+    pub(crate) fn focus_pending(&self, pid: Option<Pid>) -> bool {
         let shared = &self.shared;
         let state = shared.lock();
-        state.apps.values().any(|app| {
+        state.apps.iter().any(|(owner, app)| {
             app.running
                 .as_ref()
                 .is_some_and(|running| running.kind == FocusEvent::Focus)
-                || app.live.is_some()
+                || (app.live.is_some() || Some(*owner) == pid)
                     && app.queue.iter().any(|queued| {
                         shared
                             .reading
@@ -1840,8 +1860,12 @@ fn run<R: Reading>(shared: &Arc<Shared<R>>, pid: Pid, generation: u64) {
         // Abandoned while it read: the watchdog said the event was dropped,
         // and another thread took the application's later events. With no
         // thread in charge and events waiting, as when the application's
-        // abandoned threads reached the limit, this one takes them.
+        // abandoned threads reached the limit, this one takes them. Below
+        // the limit, the application's bound ends.
         app.abandoned = app.abandoned.saturating_sub(1);
+        if app.abandoned < ABANDONED_LIMIT {
+            app.limit_reached = None;
+        }
         tracing::info!(%pid, "an abandoned UIA focus read returned; its result is discarded");
         if app.live.is_some() || app.queue.is_empty() || state.stopping {
             break;
@@ -1883,7 +1907,10 @@ fn next_job<R: Reading>(
                 .reading
                 .key(&job)
                 .map_or(FocusEvent::Focus, |(kind, _)| kind);
-            let watched = WatchedRead::new(shared.reading.window(&job), Some(on_learn(shared)));
+            // Only a read whose window is not yet known learns it, so only
+            // it is given what to do then.
+            let window = shared.reading.window(&job);
+            let watched = WatchedRead::new(window, (window == 0).then(|| on_learn(shared)));
             app.running = Some(Running {
                 started: Instant::now(),
                 meta,
@@ -1979,13 +2006,14 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
         let mut waited = Vec::new();
         for (pid, app) in &state.apps {
             let Some(running) = &app.running else {
-                // An event waiting with no thread to read it, as when the
-                // application's abandoned threads are at the limit, is
-                // dropped once it has waited the deadline.
+                // The events waiting with no thread to read them, as the
+                // application's abandoned threads are at the limit, are
+                // dropped at its bound.
                 if app.live.is_none()
-                    && let Some(oldest) = app.queue.front()
+                    && !app.queue.is_empty()
+                    && let Some(reached) = app.limit_reached
                 {
-                    let end = oldest.since + shared.deadline;
+                    let end = reached + shared.deadline;
                     if now >= end {
                         waited.push(*pid);
                     } else {
@@ -2042,30 +2070,29 @@ fn watchdog<R: Reading>(shared: &Arc<Shared<R>>) {
     }
 }
 
-/// Drops `pid`'s oldest waiting event, which has waited the deadline with
-/// no thread to read it, as its application's abandoned threads are at
-/// [`ABANDONED_LIMIT`]: its drop resolves its marker, so the application's
-/// later events in its outpost are not held behind it without bound. The
-/// events behind it keep their places.
+/// Drops every event of `pid`'s waiting with no thread to read it, its
+/// application's abandoned threads at [`ABANDONED_LIMIT`] past its bound
+/// ([`READ_DEADLINE`]), in the order they arrived: each drop resolves its
+/// marker, so the application's later events in its outpost are not held
+/// behind them.
 fn drop_waiting<R: Reading>(shared: &Arc<Shared<R>>, state: &mut ReadersState<R::Job>, pid: Pid) {
     let Some(app) = state.apps.get_mut(&pid) else {
         return;
     };
-    if app.live.is_some() {
+    if app.live.is_some() || app.queue.is_empty() {
         return;
     }
-    let Some(oldest) = app.queue.pop_front() else {
-        return;
-    };
     tracing::warn!(
         %pid,
         abandoned = app.abandoned,
-        waiting = app.queue.len(),
-        "a UIA focus waited too long behind its application's abandoned reads; it is dropped"
+        dropped = app.queue.len(),
+        "UIA focuses waited past the bound behind their application's abandoned reads; they are dropped"
     );
-    shared
-        .reading
-        .outcome(pid, oldest.meta, Judged::Dropped(WAITED_TOO_LONG));
+    for queued in app.queue.drain(..) {
+        shared
+            .reading
+            .outcome(pid, queued.meta, Judged::Dropped(WAITED_TOO_LONG));
+    }
     state.wake_idle_waiters();
 }
 
@@ -2094,6 +2121,9 @@ fn abandon<R: Reading>(
     app.live = None;
     app.abandoned += 1;
     let abandoned = app.abandoned;
+    if abandoned >= ABANDONED_LIMIT && app.limit_reached.is_none() {
+        app.limit_reached = Some(Instant::now());
+    }
     if reason == MOVED_ON {
         tracing::warn!(
             %pid,
@@ -2774,9 +2804,11 @@ mod tests {
     }
 
     /// With [`ABANDONED_LIMIT`] of an application's threads abandoned and
-    /// still in their calls, its next event is not dropped: it waits, as no
-    /// pending focus, and the first abandoned thread whose call returns
-    /// reads it.
+    /// still in their calls, its next events are not dropped: they wait,
+    /// pending focuses for the application's own menu openings and not for
+    /// another application's, and the first abandoned thread whose call
+    /// returns before the application's bound reads them in the order they
+    /// arrived.
     #[test]
     fn an_event_at_the_abandoned_limit_waits_for_a_thread_that_returns() {
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
@@ -2802,37 +2834,48 @@ mod tests {
         fixture
             .readers
             .push(Pid(5), meta(3), (3, None, vec![42, 3]));
+        fixture
+            .readers
+            .push(Pid(5), meta(4), (4, None, vec![42, 4]));
         assert_eq!(
             fixture.outcomes.try_recv(),
             Err(mpsc::TryRecvError::Empty),
-            "event 3 waits"
+            "events 3 and 4 wait"
         );
-        assert!(
-            !fixture.readers.focus_pending(),
-            "a focus waiting with no thread to read it is not pending"
+        assert_eq!(
+            (
+                fixture.readers.focus_pending(Some(Pid(5))),
+                fixture.readers.focus_pending(Some(Pid(6)))
+            ),
+            (true, false),
+            "a focus waiting with no thread to read it is pending for its own application only"
         );
         fixture.set_moved_on(false);
         open_first.send(()).expect("the first held read waits");
+        let outcomes: Vec<(Pid, u64, &str)> = (0..2)
+            .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
+            .collect();
+        assert_eq!(outcomes, [(Pid(5), 3, "read"), (Pid(5), 4, "read")]);
+        let read_on: Vec<(u64, ThreadId)> = (0..2)
+            .map(|_| fixture.read_on.recv_timeout(WAIT).expect("a read"))
+            .collect();
         assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (Pid(5), 3, "read")
-        );
-        assert_eq!(
-            fixture.read_on.recv_timeout(WAIT).expect("a read"),
-            (3, first),
-            "the first abandoned thread, returned, read it"
+            read_on,
+            [(3, first), (4, first)],
+            "the first abandoned thread, returned, read them"
         );
         open_second.send(()).expect("the second held read waits");
         assert_eq!(fixture.readers.stop(), 2);
         assert_eq!(fixture.outcomes.try_recv().ok(), None);
     }
 
-    /// An event waiting at [`ABANDONED_LIMIT`] while none of its
-    /// application's abandoned threads returns is dropped once it has
-    /// waited the deadline since it was queued, which resolves its marker,
-    /// and is never read.
+    /// The bound at [`ABANDONED_LIMIT`] is the application's: the events
+    /// waiting while none of its abandoned threads returns are dropped
+    /// together, in order, once the deadline has passed since the limit was
+    /// reached, which resolves their markers, and an event pushed after
+    /// that is dropped at once, as it is pushed. None of them is read.
     #[test]
-    fn an_event_waiting_at_the_abandoned_limit_is_dropped_at_its_deadline() {
+    fn events_waiting_at_the_abandoned_limit_are_dropped_at_the_applications_bound() {
         let fixture = fixture(Duration::from_millis(50));
         let (open_first, gate) = mpsc::channel();
         fixture
@@ -2851,13 +2894,17 @@ mod tests {
             (Pid(5), 2, "its read did not return in time")
         );
         fixture.readers.push(Pid(5), meta(3), (3, None, Vec::new()));
+        fixture.readers.push(Pid(5), meta(4), (4, None, Vec::new()));
+        let waited = "it waited too long behind its application's abandoned reads";
+        let outcomes: Vec<(Pid, u64, &str)> = (0..2)
+            .map(|_| fixture.outcomes.recv_timeout(WAIT).expect("an outcome"))
+            .collect();
+        assert_eq!(outcomes, [(Pid(5), 3, waited), (Pid(5), 4, waited)]);
+        fixture.readers.push(Pid(5), meta(5), (5, None, Vec::new()));
         assert_eq!(
-            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
-            (
-                Pid(5),
-                3,
-                "it waited too long behind its application's abandoned reads"
-            )
+            fixture.outcomes.try_recv(),
+            Ok((Pid(5), 5, waited)),
+            "dropped as it was pushed"
         );
         open_first.send(()).expect("the first held read waits");
         open_second.send(()).expect("the second held read waits");
@@ -2868,7 +2915,7 @@ mod tests {
             .try_iter()
             .map(|(marker, _)| marker)
             .collect();
-        assert_eq!(read, [1, 2], "event 3 was never read");
+        assert_eq!(read, [1, 2], "events 3, 4 and 5 were never read");
     }
 
     /// A focus a read accepted just before the watchdog abandoned it is no

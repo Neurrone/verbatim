@@ -25,10 +25,12 @@ use std::time::Duration;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    Fetches, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet,
+    Fetches, NodeDetails, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
-use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
+use verbatim_outpost::protocol::{
+    DeliveredFact, OutpostToSupervisor, SupervisorToOutpost, UiaFocusRead, UiaSnapshotFact,
+};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
 use windows::Win32::Foundation::HWND;
@@ -1093,15 +1095,26 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
             "the listener did not report a focus whose keyboard focus read timed out: {judged:?}"
         );
     };
+    // Reported whole as its event's cache gives it, with the Focused
+    // state, its ancestors unknown, in its own window.
     assert_eq!(
-        read.snapshot.name.as_deref(),
-        Some("Mockapp Events Fixture")
+        *read,
+        UiaFocusRead {
+            hwnd: hwnd.0 as isize,
+            snapshot: UiaSnapshotFact {
+                runtime_id: window.runtime_id(),
+                role: Role::Window,
+                name: Some("Mockapp Events Fixture".to_owned()),
+                value: None,
+                states: [State::Focused].into_iter().collect::<StateSet>(),
+                details: NodeDetails::default(),
+            },
+            ancestors: None,
+            selected_child: None,
+            window: Some(hwnd.0 as isize),
+            same_as_last: None,
+        }
     );
-    assert_eq!(
-        read.snapshot.states,
-        [State::Focused].into_iter().collect::<StateSet>()
-    );
-    assert!(read.ancestors.is_none(), "its ancestors are unknown");
 
     drop(outpost);
     app.quit();

@@ -683,12 +683,14 @@ nearest window in the chain, for the subscriptions, text, and review.
 The moved-on rules, the name-and-position search, and the focused
 element read are gone from the focus path; a focus-now query after a
 restart still reads the focused element. Each reading thread has a
-watchdog: a read past its deadline, or a focus's read that has taken
-half a second once the user has moved on to another thread of its
-application, is reported dropped, and a new thread takes the
-application's later events. An application whose abandoned threads
+watchdog: a read past its deadline, or a focus's or menu opening's read
+that has taken half a second once the user has moved on to another
+thread of its application, is reported dropped, and a new thread takes
+the application's later events. An application whose abandoned threads
 reach a small cap gets no new thread: its focus events wait for the
-first of them to return, each dropped once it has waited the deadline.
+first of them to return, until the deadline after the cap was reached,
+when every waiting event is dropped, and each later one as it arrives,
+until a thread returns.
 When the listener is replaced, the supervisor tells every outpost to
 wait on none of its markers.
 

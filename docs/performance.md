@@ -75,10 +75,12 @@ outpost whose probe finds a provider follows it with one
 `ElementFromHandle`, once in the window's lifetime, since the "yes" is
 kept, unless the console check follows, which connects itself, the list
 view check excludes the provider from its class name alone, or the
-caller connects to the window at once itself, as the foreground
-window's snapshot (`ElementFromHandleBuildCache`) and the focused
-control's read (`GetFocusedElementBuildCache`) do, which are then the
-window's one connection rather than the second of two
+caller connects to the window at once itself, as a focus-now query's
+window snapshot (`ElementFromHandleBuildCache`) and focused control's
+read (`GetFocusedElementBuildCache`) do, the only path that reaches them
+with a window not yet decided (the worker's foreground handling decides
+the window with its connection first), which are then the window's one
+connection rather than the second of two
 (`call_counts.rs`,
 `an_outposts_probe_that_finds_a_provider_connects_once`: the probe costs
 mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
@@ -420,6 +422,16 @@ verdict for the focus's window rather than asking the window again.
   section 5), in the same call. The listener's one remote operation made 4 calls and
   331 provider calls; its classic read with the keyboard focus and the
   nearest window asked again made 7 (2026-10-19, section 10, step 6).
+- Beside the read, the reading threads' watchdog judges once whether the
+  user has already moved on from the read's window when that becomes
+  known (0b5826cd): for a sender that is a window, as the read starts,
+  one run of the moved-on rule's local calls (`GetGUIThreadInfo` and two
+  `GetWindowThreadProcessId`) by the watchdog under the readers' lock, on
+  the wake-up the read's start already makes; for a windowless sender,
+  the same calls on the reading thread once its nearest window is found,
+  and only then one boxed closure for the read, made as it starts, which
+  wakes the watchdog only when the front is another thread's. No call
+  into the application, and no wake-up beyond the start's.
 - Target: the minimum, which the listener meets.
 
 ### A focus behind other objects' events

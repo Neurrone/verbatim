@@ -87,12 +87,9 @@ releases Alt. Notepad has no outpost yet.
      cached pid, the cached window handle, and the cached snapshot parts
      (runtime id, role, name, value, states, details) as a
      `DeliveredFact::UiaFocus`. For an element with no window of its own,
-     it also records `focus_window`: the foreground thread's keyboard focus
-     window, if the element's process serves it (`focus_window_for` in
-     `crates/verbatim-outpost/src/listener.rs`, using `GetGUIThreadInfo`
-     and `verbatim_uia::provider_process`, local reads). NVDA would walk up to the
-     element's nearest window, which is a cross-process call the listener
-     may not make.
+     the application's reading thread finds its nearest window, as NVDA
+     walks up to it, a cross-process call made there and never on UIA's
+     callback thread, and the read carries it as its `window`.
    - The switcher's end is noted and a threadpool timer set; 50 ms later
      its callback sends `MenuOrSwitchEnded` with the time it ended
      (step 12), behind any fact still waiting.
@@ -176,7 +173,7 @@ releases Alt. Notepad has no outpost yet.
      event, a focus, a selection, a property change, or a caret or text
      change, supplies its element, for navigation and property changes.
    - The window it is reported with is the event's own window, else the
-     live element's nearest window, else the listener's `focus_window`.
+     element's nearest window, which the listener's read found.
    - Arbitration decides which backend owns that window
      (`read::window_uses_uia` and `Arbitrator`; NVDA's class lists, then
      the raw probe, one `WM_GETOBJECT`, a positive verdict kept for the
@@ -293,10 +290,6 @@ The full suite then passed 6 of 6 runs.
 
 Not yet, or known limitations:
 
-- For a late event in an application with several windows, the
-  listener's `focus_window` can name another of its windows. Focus speech
-  for it is still cancelled when the newer focus arrives (walkthrough 3),
-  as in NVDA.
 - A window nameless when focus enters it is not announced later, as in
   NVDA. A window that takes the foreground well after Windows announces
   it (about 600 ms, seen under load) is not announced either; NVDA

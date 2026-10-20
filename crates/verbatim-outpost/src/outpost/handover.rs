@@ -36,6 +36,31 @@
 //!   those are counted from then on, for as long as the outpost runs: a
 //!   handful of events, raised in the few milliseconds of the hand-over.
 //!
+//! The hand-over also tells which of the listener's copies it handles were
+//! raised before the hook went in ([`Arrival::ListenerBeforeHook`]), so
+//! that the intake can order a run of events raised in one tick of the
+//! clock as they were raised (`intake::in_raised_order`): an outpost can
+//! receive the listener's copy of an event after its own hook's copy of a
+//! later one raised in the same tick, and the tick alone cannot order the
+//! two. It is known in two cases:
+//!
+//! - The event was raised before the clock reading taken just before the
+//!   hook went in.
+//! - The copy has no twin while the hook has an unmatched copy of an event
+//!   raised in the same tick. The listener's hook receives an
+//!   application's events in the order they were raised, the listener
+//!   sends them in that order and the supervisor relays them in order, so
+//!   had the hooked event been raised first, its listener copy would have
+//!   arrived first and matched it. And the outpost's hook receives them in
+//!   that order too, so had it received this event, raised before the one
+//!   it has, its copy would already be here as this one's twin. This rests
+//!   on every listener copy of an event raised in the tick reaching the
+//!   outpost: the listener's backlog replaces a waiting fact with a newer
+//!   one of the same element and kind while a write to Core is in flight,
+//!   so a hooked event's listener copy can be lost, its hook copy then stays
+//!   unmatched, and a later listener copy raised in the same tick is taken
+//!   as raised before the hook.
+//!
 //! Pure, so the rules are tested on their own; the outpost holds one under
 //! a lock that its hook's callback and its reader take in turn, so the
 //! order in which the copies reach it is the order they are judged in.
@@ -53,6 +78,20 @@ pub(super) enum Source {
     Listener,
     /// Taken in by the outpost's own hook.
     Hook,
+}
+
+/// How a copy the hand-over has the outpost handle reached it, which
+/// orders the events of a run raised in one tick (`intake::in_raised_order`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Arrival {
+    /// Through the outpost's own hook.
+    Hook,
+    /// Forwarded by the focus listener, not known to have been raised
+    /// before the hook went in.
+    Listener,
+    /// Forwarded by the focus listener, and known to have been raised
+    /// before the hook went in, so before every event the hook received.
+    ListenerBeforeHook,
 }
 
 /// What names one `WinEvent`: its kind and address, which the fact's key
@@ -87,12 +126,33 @@ impl Handover {
     }
 
     /// Judges one copy of the event `key` names, raised as `stamp` says,
-    /// from `source`: whether it is to be handled, or dropped as the twin
-    /// of a copy already handled.
-    pub(super) fn admit(&mut self, source: Source, key: FactKey, stamp: WinEventStamp) -> bool {
+    /// from `source`: how it arrived, when it is to be handled, or `None`
+    /// when it is dropped as the twin of a copy already handled. A
+    /// listener's copy is known to have been raised before the hook went in
+    /// when it was raised before the clock reading, or when it has no twin
+    /// while the hook has an unmatched copy raised in the same tick (the
+    /// module's documentation says why).
+    pub(super) fn admit(
+        &mut self,
+        source: Source,
+        key: FactKey,
+        stamp: WinEventStamp,
+    ) -> Option<Arrival> {
+        let arrival = match source {
+            Source::Hook => Arrival::Hook,
+            Source::Listener if stamp.raised_before(self.hook_from) => Arrival::ListenerBeforeHook,
+            Source::Listener => Arrival::Listener,
+        };
         if !self.may_have_twin(source, stamp) {
-            return true;
+            return Some(arrival);
         }
+        // Asked before the twin is looked for: a twin is the same event,
+        // so it only matters when there is none.
+        let hooked_in_its_tick = arrival == Arrival::Listener
+            && self
+                .hook
+                .keys()
+                .any(|(_, hooked)| hooked.time == stamp.time);
         let identity = (key, stamp);
         let (own, other) = match source {
             Source::Listener => (&mut self.listener, &mut self.hook),
@@ -109,10 +169,14 @@ impl Handover {
                 ?stamp,
                 "a WinEvent's second copy is dropped"
             );
-            return false;
+            return None;
         }
         *own.entry(identity).or_default() += 1;
-        true
+        Some(if hooked_in_its_tick {
+            Arrival::ListenerBeforeHook
+        } else {
+            arrival
+        })
     }
 
     /// The listener's "forwarding ended": it forwards nothing raised after
@@ -175,7 +239,7 @@ mod tests {
             .iter()
             .map(|&(source, time)| {
                 let (key, stamp) = focus(time);
-                handover.admit(source, key, stamp)
+                handover.admit(source, key, stamp).is_some()
             })
             .collect()
     }
@@ -277,6 +341,37 @@ mod tests {
         handover.forwarding_ended(5000);
         assert_eq!(judge(&mut handover, &[(Hook, 4000)]), [true]);
         assert_eq!(handover.counted(), 0);
+    }
+
+    /// The `return_after_retirement` failure's hand-over: the hook's copy of
+    /// a focus raised at 150, then the listener's copy of a foreground
+    /// change raised in the same tick, then the listener's copy of the
+    /// focus. The change is known to have been raised before the hook went
+    /// in, since its copy came before the focus's listener copy and the
+    /// hook has none of it; a listener copy with no hooked event in its
+    /// tick is not, and one raised before the clock reading is.
+    #[test]
+    fn a_listener_copy_ahead_of_a_hooked_events_twin_in_its_tick_was_raised_before_the_hook() {
+        let mut handover = Handover::new(100);
+        let stamp = |time| WinEventStamp { thread: 3, time };
+        let foreground = FactKey::Foreground(8);
+        assert_eq!(
+            handover.admit(Hook, focus(150).0, stamp(150)),
+            Some(Arrival::Hook)
+        );
+        assert_eq!(
+            handover.admit(Listener, foreground.clone(), stamp(150)),
+            Some(Arrival::ListenerBeforeHook)
+        );
+        assert_eq!(handover.admit(Listener, focus(150).0, stamp(150)), None);
+        assert_eq!(
+            handover.admit(Listener, foreground.clone(), stamp(166)),
+            Some(Arrival::Listener)
+        );
+        assert_eq!(
+            handover.admit(Listener, foreground, stamp(99)),
+            Some(Arrival::ListenerBeforeHook)
+        );
     }
 
     #[test]

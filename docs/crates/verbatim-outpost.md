@@ -247,11 +247,16 @@ event's own element:
   application's threads abandoned and still in their calls
   (`ABANDONED_LIMIT`), it gets no new thread: its focus events wait, a
   newer event of an element replacing its waiting one, and the first
-  abandoned thread whose call returns reads them; an event that has
-  waited `READ_DEADLINE` since it was queued is dropped by the
-  watchdog with the reason "it waited too long behind its
-  application's abandoned reads", which resolves its marker, and a
-  focus waiting so does not count for `Readers::focus_pending`.
+  abandoned thread whose call returns reads them. The bound is one per
+  application (`App::limit_reached`): `READ_DEADLINE` after its second
+  thread was abandoned, the watchdog drops every event waiting with the
+  reason "it waited too long behind its application's abandoned reads",
+  which resolves their markers, and each later event is dropped with it
+  as it is pushed, until an abandoned thread's call returns, which ends
+  the bound; so its outpost runs at most `READ_DEADLINE` behind the hung
+  reads, once. A focus waiting so counts for `Readers::focus_pending`
+  only when the menu opening asked about is its own application's (the
+  callback passes the opening's cached process id, no call).
 - When the listener is replaced, the supervisor tells every outpost,
   ready or starting, that its reads have ended
   (`DeliveredFact::UiaFocusReadsEnded`), so none waits on a marker the old
@@ -668,7 +673,14 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     handled at its own place, `ends_a_run`; `Planned::handle` dispatches
     each planned item); a
     newer foreground change of the same window replaces one waiting, as
-    NVDA's limiter keeps one per window;
+    NVDA's limiter keeps one per window, and removes a focus event waiting
+    on its window's client object from the same thread, as NVDA's limiter
+    pops it; a run whose events all carry their raise time is tried in
+    that order (`in_raised_order`), events of one clock tick ordered by
+    the hand-over's `Arrival` (`outpost::handover`): a listener copy known
+    to have been raised before the outpost's hook went in, and every
+    listener copy of the batch that arrived before it, go ahead of the
+    rest, which keep their arrival order;
     every UIA focus event is handled at its own place; and the newest menu
     opening from each backend is handled last. A UIA
     focus's marker holds its place: nothing that arrives after it is

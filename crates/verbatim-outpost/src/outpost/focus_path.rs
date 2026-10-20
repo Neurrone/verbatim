@@ -159,7 +159,6 @@ mod tests {
     fn read(own: isize, windows: [isize; 3]) -> UiaFocusRead {
         UiaFocusRead {
             hwnd: own,
-            focus_window: 0,
             snapshot: snapshot(1),
             ancestors: Some(
                 (2..=4)

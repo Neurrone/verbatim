@@ -402,8 +402,9 @@ pub(crate) enum Connect {
     /// The listener's: it connects to no application's window
     /// (`docs/design/listener-without-connections.md`, section 2). Also an
     /// outpost's where its caller connects to the window itself at once
-    /// (`outpost::read`'s window snapshot and focused control), so that the
-    /// window gets one connection, not two.
+    /// (`outpost::read`'s window snapshot and focused control, which only
+    /// a focus-now query reaches with a window not yet decided), so that
+    /// the window gets one connection, not two.
     Never,
     /// An outpost's, on its own application's window: connected at once,
     /// unless the console check that follows the probe connects by the

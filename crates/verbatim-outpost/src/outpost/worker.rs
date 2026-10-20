@@ -3185,8 +3185,7 @@ impl Worker<'_> {
         // NVDA's acceptance test against the foreground window was made by
         // the listener, before it read the focus, as NVDA makes it before
         // it queues one (`docs/design/focus-pipeline.md`, section 16.2).
-        let Ok(reported) = self.uia_focus_window((read.hwnd, read.focus_window), read.window)
-        else {
+        let Ok(reported) = self.uia_focus_window(read.hwnd, read.window) else {
             return;
         };
         // The listener took the focus only because its window uses UIA
@@ -3294,20 +3293,18 @@ impl Worker<'_> {
     /// section 18), and is not decided again here.
     fn uia_focus_window(
         &self,
-        (fact_hwnd, focus_window): (isize, isize),
+        fact_hwnd: isize,
         remote_window: Option<isize>,
     ) -> Result<Option<isize>, Dropped> {
         // The event's own window; else the element's nearest, which the
-        // listener's read found with its ancestors; else this application's
-        // keyboard focus window when the listener received the event, which
-        // hosts the element when the event is current but, in an
-        // application with several windows, may be another of its windows
-        // when the event is late; else, for deciding the backend only, this
-        // application's focus window now, which is never reported.
+        // listener's read found with its ancestors and sends with every
+        // read; else, for a read without one, which only a test makes, and
+        // for judging Core's hidden frame only, this application's focus
+        // window now, which is never reported.
         let reported = if fact_hwnd != 0 {
             Some(fact_hwnd)
         } else {
-            remote_window.or((focus_window != 0).then_some(focus_window))
+            remote_window
         };
         let judged = reported.or_else(|| focus_window_of(self.context.target_pid()));
         if judged.is_some_and(window_belongs_to_hidden_frame) {

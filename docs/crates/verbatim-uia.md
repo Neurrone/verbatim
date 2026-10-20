@@ -371,7 +371,11 @@ Public API:
   `RemoveAllEventHandlers` removes it. A `close()` made on the
   registering thread itself, as when a registration's owner is dropped
   there with another registration's callbacks, is queued and does not
-  wait. An outpost closes its registration when it shuts down. The
+  wait. An outpost closes its registration when it shuts down. No test
+  shows a focus handler removed by `close()`: the shutdown tests' counts
+  cover groups only, and on mockapp's isolated desktop a desktop-wide
+  focus handler receives no focus event and the provider is told of no
+  focus advise, so no fixed target can show it. The
   `Scope` is nothing yet, the subtrees of given elements (`Subtrees`), the
   whole desktop (the subtree of the root element), or exactly given
   elements. The caller looks a window's element up itself, on a thread

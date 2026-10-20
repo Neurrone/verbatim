@@ -738,13 +738,11 @@ struct UiaFocusReading {
 
 impl Reading for UiaFocusReading {
     /// The event's element, its own window handle from the event's cache
-    /// (0 for an element that is not a window), its application's keyboard
-    /// focus window when it arrived, for an element that is not a window,
-    /// its runtime id from the event's cache, the kind of event, and, for a
-    /// selection or a notification, the fact captured from it.
+    /// (0 for an element that is not a window), its runtime id from the
+    /// event's cache, the kind of event, and, for a selection or a
+    /// notification, the fact captured from it.
     type Job = (
         Agile<ListenerEvent>,
-        isize,
         isize,
         Vec<i32>,
         FocusEvent,
@@ -766,7 +764,7 @@ impl Reading for UiaFocusReading {
         &self,
         reader: Option<&mut FocusReader>,
         meta: Meta,
-        (element, _, focus_window, _, kind, fact): Self::Job,
+        (element, _, _, kind, fact): Self::Job,
         watched: &WatchedRead,
     ) -> Judged {
         let Some(reader) = reader else {
@@ -775,7 +773,7 @@ impl Reading for UiaFocusReading {
         match element.resolve() {
             Ok(sender) => reader.judge_watched(
                 &sender,
-                (focus_window, kind, fact),
+                (kind, fact),
                 (
                     Arrival {
                         trace: meta.trace,
@@ -795,7 +793,7 @@ impl Reading for UiaFocusReading {
     /// callback thread, whose calls its watchdog never cancels
     /// (`docs/parity/focus-events.md`, "A slow read the user has moved on
     /// from").
-    fn window(&self, (_, hwnd, _, _, kind, _): &Self::Job) -> isize {
+    fn window(&self, (_, hwnd, _, kind, _): &Self::Job) -> isize {
         match kind {
             FocusEvent::Focus | FocusEvent::MenuOpened => *hwnd,
             FocusEvent::Selection | FocusEvent::Notification => 0,
@@ -808,7 +806,7 @@ impl Reading for UiaFocusReading {
 
     fn key<'a>(
         &self,
-        (_, _, _, runtime_id, kind, _): &'a Self::Job,
+        (_, _, runtime_id, kind, _): &'a Self::Job,
     ) -> Option<(FocusEvent, &'a [i32])> {
         // A notification is replaced only by one of the same kind,
         // processing, and activity, as the intake replaces it.
@@ -1053,30 +1051,6 @@ fn capture(
     ))
 }
 
-/// The window that stands in for a windowless element's own: for a
-/// selection, in the outpost's acceptance test against the foreground
-/// window; for a focus, in the reading thread's checks before its read and
-/// as the window the outpost reports the focus in when the read found
-/// none, its acceptance test running against the nearest window the read
-/// found. The keyboard focus window now, when the element's cached window
-/// handle `hwnd` is 0 and the element's process `pid` serves that window
-/// ([`verbatim_uia::provider_process`]: a console window is its console
-/// host's); else 0. Local calls on UIA's callback thread: the focus window,
-/// its class and owner, and for a console window its host, read from the
-/// client. A console window whose host cannot be read is no process's here,
-/// without the thread search an outpost makes for its own console window
-/// ([`verbatim_uia::served_by`]), which costs a snapshot of the system's
-/// threads.
-fn focus_window_for(pid: Pid, hwnd: isize) -> isize {
-    if hwnd == 0 {
-        crate::outpost::window::focus_window()
-            .filter(|&window| verbatim_uia::provider_process(window) == Some(pid.0))
-            .unwrap_or(0)
-    } else {
-        0
-    }
-}
-
 /// The desktop-wide UIA focus subscription. Its callback makes no call: it
 /// sends the application's outpost a marker for the event at once and
 /// queues the event's element for the application's reading thread
@@ -1114,7 +1088,10 @@ fn menu_subscription(
     Subscription::Event {
         event: UIA_MenuOpenedEventId,
         callback: Arc::new(move |sender: &Cached<ListenerEvent>| {
-            if readers.focus_pending() {
+            let fields = sender.read();
+            // The event's process from its cache, the pid its focuses are
+            // read under: no call.
+            if readers.focus_pending(fields.process_id.map(Pid)) {
                 tracing::debug!("UIA menu opening dropped: a focus is pending");
                 return;
             }
@@ -1122,7 +1099,7 @@ fn menu_subscription(
                 &outgoing,
                 &readers,
                 sender,
-                &sender.read(),
+                &fields,
                 FocusEvent::MenuOpened,
                 None,
             );
@@ -1145,7 +1122,6 @@ fn queue_for_reading(
     let Some(pid) = outgoing.uia_event_process(fields.process_id) else {
         return;
     };
-    let focus_window = focus_window_for(pid, fields.role.hwnd);
     let meta = Meta {
         marker: outgoing.next_marker(),
         trace: TraceId::mint(),
@@ -1168,18 +1144,7 @@ fn queue_for_reading(
         meta,
     );
     match sender.agile() {
-        Ok(agile) => readers.push(
-            pid,
-            meta,
-            (
-                agile,
-                fields.role.hwnd,
-                focus_window,
-                runtime_id,
-                kind,
-                fact,
-            ),
-        ),
+        Ok(agile) => readers.push(pid, meta, (agile, fields.role.hwnd, runtime_id, kind, fact)),
         Err(error) => {
             tracing::warn!(%error, "a UIA focus's element could not be kept for its read");
             outgoing.focus_read(

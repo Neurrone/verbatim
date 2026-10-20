@@ -31,7 +31,11 @@
 //!   from the outpost's own hook or from the listener's, which counted by
 //!   it the same. UIA events, menu openings, queries and housekeeping
 //!   entries are not counted. A newer list of the nodes Core holds replaces
-//!   a waiting one.
+//!   a waiting one. A foreground change removes a focus event waiting on
+//!   its window's client object from the same thread, as NVDA's limiter
+//!   does. A run of focus events and foreground changes can so hold the 4
+//!   newest of them and, besides, every older foreground change of another
+//!   window that its thread's limit keeps.
 //! - UIA events from a window the system reports as hung are dropped
 //!   before any read; an MSAA event from one is counted and kept, and the
 //!   worker drops it before it reads anything, as NVDA's limiter counts it
@@ -44,8 +48,9 @@
 //!   menu openings among them; entries its pump never receives neither
 //!   join a run nor end it, and are handled at their own places, before
 //!   the run when they arrived before its newest: UIA events and focus
-//!   reads, Core's queries and housekeeping, an object destroyed, and the
-//!   console host's events and a text control's selection change, which
+//!   reads, Core's queries and list of held nodes, the worker's caret
+//!   follow-up and the outpost's settle request, an object destroyed, and
+//!   the console host's events and a text control's selection change, which
 //!   NVDA hooks apart or not at all (`ends_a_run`). An MSAA event the
 //!   worker's acceptance test will drop still ends a run, where NVDA's pump
 //!   filters it out first, since that test is made against the foreground
@@ -54,7 +59,9 @@
 //!   all carry the time Windows raised them is tried in that order, which
 //!   is the order NVDA's one hook receives them in, since an outpost can
 //!   receive the listener's copy of an event after its own hook's copy of
-//!   a later one (`in_raised_order`). Every foreground
+//!   a later one (`in_raised_order`); events of one tick of the clock are
+//!   ordered by what the hand-over knows of which copies were raised
+//!   before the outpost's hook went in. Every foreground
 //!   change of the batch is tried in its run, as NVDA tries each; a newer
 //!   one of the same window replaces one waiting, as NVDA's limiter keeps
 //!   one foreground event per window, object and thread. Every UIA focus
@@ -106,6 +113,12 @@ use windows::core::AgileReference;
 use verbatim_uia::{Agile, Cached, Kept, PropertyEvent, TextEvent};
 
 use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact, WinEventStamp};
+
+use super::handover::Arrival;
+
+/// The object id of a window's client area (`OBJID_CLIENT`), which the
+/// hook gives an event on a window object, as NVDA's event callback does.
+const OBJID_CLIENT: i32 = windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0;
 
 /// How many MSAA focus events a batch keeps (NVDA's limiter's
 /// `maxFocusItems`).
@@ -308,6 +321,10 @@ struct Waiting {
     /// For a UIA focus's marker still waiting for its read, the marker:
     /// nothing at or after it is planned.
     marker: Option<u64>,
+    /// For a copy of a `WinEvent` the hand-over admitted, how it arrived
+    /// ([`Arrival`]), which orders a run's events raised in one tick
+    /// ([`in_raised_order`]); `None` for anything else.
+    arrival: Option<Arrival>,
     entry: Entry,
 }
 
@@ -391,6 +408,35 @@ struct State {
     absorbed: Option<isize>,
 }
 
+/// What the debug log says of an entry pushed, with what is queued around
+/// it, so an entry that waits long in the intake can be told from one that
+/// arrived late: its raise time, for a `WinEvent`'s copy, and how that copy
+/// arrived.
+struct Pushed {
+    trace: TraceId,
+    key: Option<Key>,
+    raised: Option<u32>,
+    arrival: Option<Arrival>,
+    waiting: usize,
+    in_batch: usize,
+    batch: u64,
+}
+
+impl Pushed {
+    fn log(self) {
+        let Self {
+            trace,
+            key,
+            raised,
+            arrival,
+            waiting,
+            in_batch,
+            batch,
+        } = self;
+        tracing::debug!(%trace, ?key, ?raised, ?arrival, waiting, in_batch, batch, "intake pushed");
+    }
+}
+
 /// The queue the worker draws from.
 #[derive(Default)]
 pub(super) struct Intake {
@@ -423,6 +469,23 @@ impl Intake {
     /// waits between them (`docs/design/communication.md`, section 6.7):
     /// the older entry then keeps its place ahead of the query.
     pub(super) fn push(&self, entry: Entry) {
+        self.push_arrived(entry, None);
+    }
+
+    /// [`push`](Self::push) for a copy of a `WinEvent` the hand-over
+    /// admitted, which arrived as `arrival`.
+    pub(super) fn push_copy(&self, entry: Entry, arrival: Arrival) {
+        self.push_arrived(entry, Some(arrival));
+    }
+
+    /// [`push`](Self::push), with how a `WinEvent`'s copy arrived. A
+    /// foreground change also removes a focus waiting on its window's
+    /// client object from the same thread, as NVDA's limiter removes it
+    /// when the window's foreground event is added
+    /// (`orderedWinEventLimiter.py`, `addEvent`): the hook gives an event on
+    /// a window object as its client object, as NVDA's callback does, so
+    /// that is the address NVDA's foreground event has.
+    fn push_arrived(&self, entry: Entry, arrival: Option<Arrival>) {
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
             Item::Fact(DeliveredFact::UiaMarked { marker, fact }, stamp) => (
@@ -494,18 +557,24 @@ impl Intake {
             {
                 *place -= 1;
             }
+            if let Key::Foreground(window) = key {
+                remove_client_focus(&mut state.waiting, *window, thread);
+            }
         }
         // Logged, with what is queued around it, so an entry that waits
         // long in the intake can be told from one that arrived late; once
         // the lock is released, so the worker never waits on the log.
-        let logged = tracing::enabled!(tracing::Level::DEBUG).then(|| {
-            (
-                entry.trace,
-                key.clone(),
-                state.waiting.len() + 1,
-                state.batch.len(),
-                state.batch_number,
-            )
+        let logged = tracing::enabled!(tracing::Level::DEBUG).then(|| Pushed {
+            trace: entry.trace,
+            key: key.clone(),
+            raised: match &entry.item {
+                Item::Fact(_, Some(stamp)) => Some(stamp.time),
+                _ => None,
+            },
+            arrival,
+            waiting: state.waiting.len() + 1,
+            in_batch: state.batch.len(),
+            batch: state.batch_number,
         });
         let waiting = Waiting {
             key,
@@ -513,6 +582,7 @@ impl Intake {
             hwnd,
             thread,
             marker,
+            arrival,
             entry,
         };
         match place {
@@ -521,8 +591,8 @@ impl Intake {
         }
         drop(state);
         self.ready.notify_one();
-        if let Some((trace, key, waiting, in_batch, batch)) = logged {
-            tracing::debug!(%trace, ?key, waiting, in_batch, batch, "intake pushed");
+        if let Some(pushed) = logged {
+            pushed.log();
         }
     }
 
@@ -704,6 +774,7 @@ impl Intake {
                     hwnd,
                     thread,
                     marker: None,
+                    arrival: None,
                     entry,
                 },
             );
@@ -788,19 +859,48 @@ impl Intake {
 /// splits what waits into stretches, each holding at most one entry per
 /// key, so the first found is the only one.
 fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option<usize> {
+    remove_waiting(waiting, at, |waiting| waiting.key.as_ref() == Some(key))
+}
+
+/// Removes the focus event waiting on window `window`'s client object
+/// from thread `thread`, among those no idle query divides from the back,
+/// for a foreground change of the window ([`Intake::push`]).
+fn remove_client_focus(waiting: &mut VecDeque<Waiting>, window: isize, thread: u32) {
+    let client = Some(Key::MsaaFocus(window, OBJID_CLIENT, 0));
+    let at = waiting.len();
+    if remove_waiting(waiting, at, |waiting| {
+        waiting.key == client && waiting.thread == thread
+    })
+    .is_some()
+    {
+        tracing::debug!(
+            window,
+            thread,
+            "a focus on the window's client object is removed by its foreground change"
+        );
+    }
+}
+
+/// Removes the first entry for which `matches` holds among those around
+/// index `at` that no idle query divides from it, nearest before `at`
+/// first, and returns its index.
+fn remove_waiting(
+    waiting: &mut VecDeque<Waiting>,
+    at: usize,
+    matches: impl Fn(&Waiting) -> bool,
+) -> Option<usize> {
     let is_query = |waiting: &Waiting| matches!(waiting.entry.item, Item::IdleQuery { .. });
-    let matches = |waiting: &Waiting| waiting.key.as_ref() == Some(key);
     let found = waiting
         .range(..at)
         .rev()
         .take_while(|waiting| !is_query(waiting))
-        .position(matches)
+        .position(&matches)
         .map(|back| at - 1 - back)
         .or_else(|| {
             waiting
                 .range(at..)
                 .take_while(|waiting| !is_query(waiting))
-                .position(matches)
+                .position(&matches)
                 .map(|ahead| at + ahead)
         })?;
     waiting.remove(found);
@@ -982,11 +1082,16 @@ fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
             Category::Focus,
             *hwnd,
         ),
+        // Its own window, or for an element that is not a window, the
+        // window the read found it in (its nearest window unless the walk
+        // named one), which the listener sends with every read; a read
+        // without one, which only a test makes, has window 0, so it is
+        // never tested as hung.
         DeliveredFact::UiaFocusRead { read, .. } => (
             Some(Key::UiaFocus(read.snapshot.runtime_id.clone())),
             Category::Uncounted,
             if read.hwnd == 0 {
-                read.focus_window
+                read.window.unwrap_or(0)
             } else {
                 read.hwnd
             },
@@ -1203,7 +1308,9 @@ fn plan(
 /// foreground event ends its run. Entries NVDA's pump never receives
 /// neither join a run nor end it, and are handled at their own places:
 /// UIA events and focus reads, which NVDA's UIA handler queues on its own
-/// path; Core's queries and housekeeping, which have no counterpart; an
+/// path; Core's queries and list of held nodes, the worker's caret
+/// follow-up after a focus it reported, and the outpost's settle request,
+/// which have no counterpart; an
 /// object destroyed, which NVDA's event callback handles as it arrives;
 /// the console host's updates and caret, which NVDA's console support
 /// hooks apart; and a text control's selection change, which NVDA does not
@@ -1231,6 +1338,18 @@ fn ends_a_run(key: Option<&Key>) -> bool {
 /// given an application, when the listener still forwards the foreground
 /// change the system raised just before the focus. The sort is stable, and
 /// a run with an event of unknown time keeps the order it arrived in.
+///
+/// The clock advances in ticks of about 15.6 milliseconds, so two events
+/// raised a few milliseconds apart often carry the same time. Among those,
+/// the listener's copies the hand-over knows were raised before the hook
+/// went in ([`Arrival::ListenerBeforeHook`]), and every listener copy that
+/// arrived before one of them in the batch, which the listener forwarded
+/// in the order raised, go ahead of the rest: each was raised before every event the
+/// hook received. Otherwise events of one time keep the order they arrived
+/// in, which is the order raised for two copies from one source, and for a
+/// hook copy and a later listener copy not known to be raised before the
+/// hook (the hand-over's module documentation gives the reasoning and its
+/// limit).
 fn in_raised_order(kept: &[Waiting], run: &mut [usize]) {
     let raised = |at: usize| match &kept[at].entry.item {
         Item::Fact(_, Some(stamp)) => Some(stamp.time),
@@ -1242,9 +1361,46 @@ fn in_raised_order(kept: &[Waiting], run: &mut [usize]) {
     if run.iter().any(|&at| raised(at).is_none()) {
         return;
     }
+    let from_listener = |at: usize| {
+        matches!(
+            kept[at].arrival,
+            Some(Arrival::Listener | Arrival::ListenerBeforeHook)
+        )
+    };
+    // Whether the listener's copy at `at` was raised before the hook went
+    // in: it, or a listener copy of the batch raised in its tick that
+    // arrived after it, is known to have been.
+    let before_hook = |at: usize| {
+        from_listener(at)
+            && (at..kept.len()).any(|other| {
+                kept[other].arrival == Some(Arrival::ListenerBeforeHook)
+                    && raised(other) == raised(at)
+            })
+    };
+    // Kept for the log line only.
+    let arrived = tracing::enabled!(tracing::Level::DEBUG).then(|| run.to_vec());
     // Relative to the first, so the clock's wrap after 49.7 days orders
     // a run raised across it.
-    run.sort_by_key(|&at| raised(at).map_or(0, |time| time.wrapping_sub(first).cast_signed()));
+    run.sort_by_key(|&at| {
+        (
+            raised(at).map_or(0, |time| time.wrapping_sub(first).cast_signed()),
+            !before_hook(at),
+        )
+    });
+    if let Some(arrived) = arrived
+        && *run != *arrived
+    {
+        let traces = |run: &[usize]| {
+            run.iter()
+                .map(|&at| kept[at].entry.trace.to_string())
+                .collect::<Vec<_>>()
+        };
+        tracing::debug!(
+            arrived = ?traces(&arrived),
+            raised = ?traces(run),
+            "a focus run is put in the order its events were raised"
+        );
+    }
 }
 
 /// Handles a focus group's entries ([`Planned::Focus`]), newest first,
@@ -1286,6 +1442,7 @@ mod tests {
             hwnd,
             thread: thread_of(&item),
             marker: None,
+            arrival: None,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -1309,6 +1466,7 @@ mod tests {
             hwnd,
             thread: 1,
             marker: None,
+            arrival: None,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -1349,7 +1507,6 @@ mod tests {
             marker,
             read: Box::new(crate::protocol::UiaFocusRead {
                 hwnd,
-                focus_window: 0,
                 snapshot: snapshot(runtime_id),
                 ancestors: Some(Vec::new()),
                 selected_child: None,
@@ -1371,6 +1528,7 @@ mod tests {
             hwnd,
             thread: 0,
             marker: None,
+            arrival: None,
             entry: Entry {
                 item,
                 trace: TraceId::mint(),
@@ -1722,6 +1880,88 @@ mod tests {
         assert_eq!(observed(&planned), vec![1, 2, 30]);
     }
 
+    /// `waiting` raised at `time` by thread 1, as a copy that arrived as
+    /// `arrival`.
+    fn copy(mut waiting: Waiting, time: u32, arrival: Arrival) -> Waiting {
+        if let Item::Fact(_, stamp) = &mut waiting.entry.item {
+            *stamp = Some(WinEventStamp { thread: 1, time });
+        }
+        waiting.arrival = Some(arrival);
+        waiting
+    }
+
+    /// The `return_after_retirement` failure's batch, its two events raised
+    /// in one tick: a spare just given its application takes the edit's
+    /// value change and focus through its own hook, then the listener's
+    /// copy of the foreground change raised before the hook went in, as
+    /// the hand-over knows. The change is the older, so the focus is tried
+    /// first.
+    #[test]
+    fn a_listener_copy_raised_before_the_hook_goes_ahead_of_the_hooks_copies_of_its_tick() {
+        let waiting = vec![
+            msaa(WinEventKind::ValueChange, 9, 30),
+            copy(msaa_focus(0, 1), 200, Arrival::Hook),
+            copy(
+                fact(DeliveredFact::Foreground { hwnd: 8 }, 2),
+                200,
+                Arrival::ListenerBeforeHook,
+            ),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![1, 2]]);
+        assert_eq!(observed(&planned), vec![30, 1, 2]);
+    }
+
+    /// A listener copy that arrived before the hook's copy, in the same
+    /// tick as a later listener copy known to be raised before the hook,
+    /// was raised before that one, so before the hook too: both go ahead of
+    /// the hook's copy, in the order they arrived.
+    #[test]
+    fn a_listener_copy_ahead_of_one_raised_before_the_hook_goes_ahead_with_it() {
+        let waiting = vec![
+            copy(
+                fact(DeliveredFact::Foreground { hwnd: 8 }, 1),
+                200,
+                Arrival::Listener,
+            ),
+            copy(msaa_focus(2, 2), 200, Arrival::Hook),
+            copy(msaa_focus(3, 3), 200, Arrival::ListenerBeforeHook),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![2, 3, 1]]);
+    }
+
+    /// NVDA's limiter removes a waiting focus event on a window's client
+    /// object, from the same thread, when the window's foreground event is
+    /// added: the focus is gone, and the foreground change stays.
+    #[test]
+    fn a_foreground_change_removes_a_waiting_focus_on_its_windows_client_object() {
+        let intake = Intake::default();
+        let stamp = Some(WinEventStamp {
+            thread: 7,
+            time: 200,
+        });
+        push_item(
+            &intake,
+            Item::Fact(
+                DeliveredFact::MsaaFocus {
+                    hwnd: 9,
+                    id_object: OBJID_CLIENT,
+                    id_child: 0,
+                },
+                stamp,
+            ),
+            1,
+        );
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::Foreground { hwnd: 9 }, stamp),
+            2,
+        );
+        assert_eq!(handed_out(&intake), vec![2]);
+    }
+
     /// Two foreground changes in one run, the newer dropped, as when its
     /// window is not yet in front as it is handled: the older is tried
     /// next, and once reported ends the run's tries.
@@ -1803,6 +2043,7 @@ mod tests {
             hwnd,
             thread: 0,
             marker: None,
+            arrival: None,
             entry: Entry {
                 item: held,
                 trace: TraceId::mint(),
@@ -1861,8 +2102,8 @@ mod tests {
 
     /// The MSAA events NVDA's pump never receives neither join nor end a
     /// run: an object destroyed, which NVDA's callback handles as it
-    /// arrives, the console host's update, which its console support hooks
-    /// apart, and a text control's selection change, which it does not
+    /// arrives, the console host's update and caret, which its console
+    /// support hooks apart, and a text control's selection change, which it does not
     /// hook.
     #[test]
     fn msaa_events_outside_nvdas_pump_neither_join_nor_end_a_run() {
@@ -1871,12 +2112,13 @@ mod tests {
             msaa(WinEventKind::Destroy, 3, 20),
             msaa(WinEventKind::ConsoleUpdate, 4, 21),
             msaa(WinEventKind::TextSelectionChange, 5, 22),
+            msaa(WinEventKind::ConsoleCaret, 6, 23),
             msaa_focus(3, 3),
             msaa(WinEventKind::NameChange, 3, 30),
         ];
         let planned = plan(waiting, None, never_hung);
         assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
-        assert_eq!(observed(&planned), vec![20, 21, 22, 3, 1, 30]);
+        assert_eq!(observed(&planned), vec![20, 21, 22, 23, 3, 1, 30]);
     }
 
     /// An MSAA event of NVDA's pump that is neither a focus nor a

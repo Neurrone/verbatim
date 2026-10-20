@@ -334,8 +334,10 @@ event's cache, or, for a sender that is not a window, its nearest window
 once the lookup has returned. NVDA's watchdog cancels only its main
 thread's call (`nvda/source/watchdog.py`, `_recoverAttempt`, line 237):
 
-- Matched: the read of a focus after its judgement, the calls NVDA's
-  main thread makes once the focus handler has queued the focus.
+- Matched: the read of a focus, or of a menu opening, which NVDA maps
+  to a focus (`nvda/source/UIAHandler/__init__.py`, line 261), after its
+  judgement: the calls NVDA's main thread makes once the handler has
+  queued the focus.
 - Different, deliberately: the judgement's own calls once the read's
   window is known, the probe, the console check, the comparisons and the
   live keyboard focus read, which NVDA makes in its focus handler on
@@ -358,12 +360,26 @@ becomes known, with no foreground event since, costs no check at the end
 of the half second.
 
 An application with two abandoned reading threads still in their calls
-gets no new thread until one returns: its events wait, and an event that
-has waited `READ_DEADLINE` since it was queued is dropped, so its
-outpost's later events are not held without bound; a focus waiting so
-is not a pending focus for NVDA's rule that drops a menu opening while a
-focus is pending (Dickson, 2026-10-20). The limit is Verbatim's own,
-since NVDA has no reading threads to abandon.
+gets no new thread until one returns: its events wait, until
+`READ_DEADLINE` after its second thread was abandoned. Then every event
+waiting is dropped, and each later one is dropped as it arrives, until an
+abandoned thread's call returns and takes the queue, which ends the
+bound. The bound is one per application, not one per event, so the
+application's outpost, whose later events wait behind each focus's
+marker, runs at most `READ_DEADLINE` behind the hung reads, once, and a
+stream of events from the application cannot keep it behind (Dickson,
+2026-10-20). The limit is Verbatim's own, since NVDA has no reading
+threads to abandon.
+
+A focus waiting so is a pending focus, for NVDA's rule that drops a
+UIA menu opening while a focus is pending, for its own application's
+menu openings only. NVDA's rule is global
+(`isPendingEvents("gainFocus")`, `nvda/source/UIAHandler/__init__.py`,
+lines 772 to 777): any queued focus drops any application's menu
+opening. Verbatim's is per application for a waiting focus, so that a
+hung window cannot silence every other application's menus while its
+reads stay stuck; a focus being read, or waiting for a live thread,
+still counts for every application, as in NVDA (Dickson, 2026-10-20).
 
 The rule is narrower than NVDA's by design: NVDA's one main thread serves
 every application, so a move to any other window frees it, while each of
