@@ -70,7 +70,8 @@ hand-over, step by step:
   trail that message) after it arrived, measured on the outpost's
   monotonic clock: then the counts are dropped and nothing is counted
   again, so the comparison of raise times, which wraps at 2^31 ms, is
-  never made across weeks.
+  never made across weeks. A late copy that trails the message by more
+  than that bound is handled a second time.
 - When an application's ready outpost ends, for any reason, the
   supervisor sends the listener `SupervisorToOutpost::HookRemoved`, and the
   listener forwards that application's events again. A listener that
@@ -683,11 +684,14 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     MSAA event NVDA's pump receives ends a run, and every other entry is
     handled at its own place, `ends_a_run`; `Planned::handle` dispatches
     each planned item); of
-    two foreground changes of the same window waiting, the later raised
-    is kept, whichever arrived first, and one arriving after a later-raised
-    change of its window and thread was taken into a batch, until the
-    listener's "forwarding ended" is in, is dropped, as NVDA's limiter,
-    adding events in raised order, keeps the newest per window; a foreground change removes
+    two foreground changes of the same window from the same thread
+    (`Key::Foreground` names both), the later raised is kept, whichever
+    arrived first: until the listener's "forwarding ended" is in, the
+    intake records, as each change arrives, the newest raised per window
+    and thread (`ForegroundTaken`), whether it then waits, is planned or
+    is handed out, and one arriving after a later-raised change recorded
+    is dropped by one lookup, as NVDA's limiter, adding events in raised
+    order, keeps the newest per window, object and thread; a foreground change removes
     a focus event waiting on its window's client object from the same
     thread, raised no later than the change (at one tick, unless the focus
     is the hook's copy and the change is known to have been raised before
@@ -695,17 +699,18 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     adds the change; such a focus that arrives after a foreground change
     of its window and thread raised after it is dropped as it arrives (at
     one tick, only when the focus is known to have been raised before the
-    hook went in and the change is the hook's copy), whether the change
-    still waits or, until the listener's "forwarding ended" is in
-    (`Intake::forwarding_ended`), was already taken into a batch, leaving
-    only a listener copy the listener's hook receives after it read the
-    tick that message names to arrive so after it; that drop is a
-    difference from NVDA, which removes the focus only while no pump has
-    flushed it and pumps at once on a focus, so an idle NVDA says the
-    focus and then the change, and it is chosen because handling the
-    focus after the change would reverse NVDA's order, while dropping it
-    leaves the change last and loses only the client area's
-    announcement, which the window's covers; a run whose events all carry their raise time is tried in
+    hook went in and the change is the hook's copy), against the same
+    record, whether the change waits, is planned or was handed out,
+    leaving only a listener copy the listener's hook receives after it
+    read the tick that message names (`Intake::forwarding_ended`) to
+    arrive so after it; NVDA pumps a focus at once and then says exactly
+    one of the two: the change only when the window is not yet in front,
+    as `shouldAcceptEvent` rejects the focus, which the drop matches, and
+    the focus only when the window is already in front, as
+    `processForegroundWinEvent`'s descendant and address tests drop the
+    change, where the drop differs by ending on the window's object and
+    not the focus's, and loses a focused child that
+    `redirect_focus_to_child` would have reached from the client focus; a run whose events all carry their raise time is tried in
     that order (`in_raised_order`), events of one clock tick ordered by
     the hand-over's `Arrival` (`outpost::handover`): a listener copy known
     to have been raised before the outpost's hook went in, and every

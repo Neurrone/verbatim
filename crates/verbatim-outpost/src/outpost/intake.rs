@@ -42,17 +42,22 @@
 //!   the change, as NVDA's limiter removes a waiting focus when it adds the
 //!   window's foreground event. Such a focus that arrives after a change of
 //!   its window and thread raised after it, which NVDA's one hook never
-//!   sees, is dropped as it arrives, after a change still waiting or one
-//!   already taken into a batch, planned or handed out, until the
-//!   listener's "forwarding ended" is in ([`Intake::forwarding_ended`],
-//!   which names the late listener copies that can still arrive so after
-//!   it). That drop is a difference from NVDA: NVDA removes the focus only
-//!   while no pump has flushed it, and it asks for a pump at once on every
-//!   focus event, so an idle NVDA says the focus and then the change. Once
-//!   the focus arrives after the change, neither choice reproduces that;
-//!   handling it would reverse NVDA's order, and dropping it leaves the
-//!   change last, as in NVDA, and loses only the client area's
-//!   announcement, which the window's covers. A
+//!   sees, is dropped as it arrives, against the record of foreground
+//!   changes kept until the listener's "forwarding ended" is in
+//!   ([`ForegroundTaken`]; [`Intake::forwarding_ended`] names the late
+//!   listener copies that can still arrive after it). NVDA pumps a focus
+//!   event at once (`IAccessibleHandler/internalWinEventHandler.py` 193),
+//!   and then says exactly one of the two, never both: when the window is
+//!   not yet in front, `shouldAcceptEvent` rejects the focus and NVDA says
+//!   the foreground change only, which the drop matches; when the window
+//!   is already in front, the focus is accepted and the change is then
+//!   dropped by `processForegroundWinEvent`'s descendant and address tests
+//!   (`IAccessibleHandler/__init__.py` 845 to 867), so NVDA says the focus
+//!   only, and there the drop differs: NVDA ends on the focus's object and
+//!   Verbatim on the window's. That loses a focused child: a client focus
+//!   the worker would have sent on to the child `accFocus` names
+//!   (`verbatim_ia2`'s `redirect_focus_to_child`) is dropped with it, and
+//!   the foreground report is the window's node only. A
 //!   run of focus events and foreground changes can so hold the 4
 //!   newest of them and, besides, every older foreground change of another
 //!   window that its thread's limit keeps.
@@ -83,13 +88,13 @@
 //!   ordered by what the hand-over knows of which copies were raised
 //!   before the outpost's hook went in. Every foreground
 //!   change of the batch is tried in its run, as NVDA tries each; of two
-//!   changes of the same window waiting, the one raised later is kept,
-//!   whichever arrived first, as NVDA's limiter, adding events in raised
-//!   order, keeps the newest foreground event per window, object and
-//!   thread: a later-raised one replaces one waiting, and an older-raised
-//!   copy arriving behind it during the hand-over is dropped, whether the
-//!   later one still waits or was taken into a batch before the listener's
-//!   "forwarding ended" came. Every UIA focus
+//!   changes of the same window from the same thread, the one raised later
+//!   is kept, whichever arrived first, as NVDA's limiter, adding events in
+//!   raised order, keeps the newest foreground event per window, object
+//!   and thread: a later-raised one replaces one waiting, and an
+//!   older-raised copy arriving after it during the hand-over is dropped
+//!   against the record, whether the later one waits, is planned or was
+//!   handed out. Every UIA focus
 //!   event is handled in turn at its own place, as NVDA's UIA handler
 //!   queues each one as it arrives, on a path apart from the MSAA pump: one
 //!   that arrived between two events of an MSAA run is handled before the
@@ -281,7 +286,9 @@ pub(super) struct Entry {
 pub(super) enum Key {
     Msaa(u8, isize, i32, i32),
     Uia(u8, i32, Vec<i32>),
-    Foreground(isize),
+    /// A window's foreground change, by the window and the thread that
+    /// raised it, as NVDA's limiter keys it.
+    Foreground(isize, u32),
     MsaaFocus(isize, i32, i32),
     UiaFocus(Vec<i32>),
     MenuPopup(isize, i32, i32),
@@ -306,7 +313,7 @@ impl Key {
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
             | Key::UiaNotification(runtime_id, ..) => Some(Object::Uia(runtime_id.clone())),
-            Key::Foreground(_) | Key::NodesHeld | Key::CaretOf(_) => None,
+            Key::Foreground(..) | Key::NodesHeld | Key::CaretOf(_) => None,
         }
     }
 }
@@ -435,22 +442,24 @@ struct State {
     /// the focus last reported has caret events of its own
     /// ([`Intake::drop_system_caret`]).
     system_caret_unused: bool,
-    /// The foreground changes taken into a batch while the hand-over can
-    /// still deliver copies ([`ForegroundTaken`]).
+    /// The foreground changes pushed while the hand-over can still deliver
+    /// copies ([`ForegroundTaken`]).
     foreground_taken: ForegroundTaken,
 }
 
-/// The newest raised foreground change taken into a batch, by its window
+/// The record: the newest raised foreground change pushed, by its window
 /// and the thread that raised it, with its raise time and how its copy
-/// arrived, kept until the listener's "forwarding ended" is in
-/// ([`Intake::forwarding_ended`]): a focus on the window's client object
-/// raised before it that arrives later is dropped
-/// ([`foreground_taken_after`]), and so is a foreground change of the
-/// window from the same thread raised before it
-/// ([`newer_foreground_taken`]).
+/// arrived, written as each change that carries its raise time is pushed
+/// and kept until the listener's "forwarding ended" is in
+/// ([`Intake::forwarding_ended`]). It so covers a change waiting, planned
+/// or handed out alike. A focus on the window's client object raised
+/// before the recorded change that arrives later is dropped
+/// ([`focus_behind_its_foreground_change`]), and so is a foreground change
+/// of the window from the same thread raised before it
+/// ([`older_foreground_change`]), each by one lookup.
 enum ForegroundTaken {
     /// Kept: the hand-over can still deliver copies.
-    Kept(HashMap<(isize, u32), (WinEventStamp, Option<Arrival>)>),
+    Kept(Record),
     /// The listener's "forwarding ended" is in: nothing is kept.
     Ended,
 }
@@ -484,20 +493,31 @@ impl State {
     }
 
     /// Whether `item`, with `key`, raised by `thread` and arrived as
-    /// `arrival` says, is a focus on a window's client object raised before
-    /// a foreground change of that window from the same thread that still
-    /// waits ([`foreground_waits_after`]) or was taken into a batch while
-    /// the hand-over could still deliver copies
-    /// ([`foreground_taken_after`]), and so is dropped as it arrives.
-    fn drops_behind_its_foreground_change(
-        &self,
+    /// `arrival` says, is dropped as it arrives behind a later-raised
+    /// foreground change of its window from the same thread that the
+    /// record holds ([`ForegroundTaken`]): a focus on the window's client
+    /// object ([`focus_behind_its_foreground_change`]), or an older change
+    /// of the window ([`older_foreground_change`]), which records a change
+    /// it does not drop. Once "forwarding ended" is in, nothing is dropped
+    /// or recorded.
+    fn drops_behind_a_later_foreground_change(
+        &mut self,
         key: Option<&Key>,
         item: &Item,
-        copy: (u32, Option<Arrival>),
+        (thread, arrival): (u32, Option<Arrival>),
     ) -> bool {
-        foreground_waits_after(&self.waiting, key, item, copy)
-            || matches!(&self.foreground_taken, ForegroundTaken::Kept(record)
-                if foreground_taken_after(record, key, item, copy))
+        let ForegroundTaken::Kept(record) = &mut self.foreground_taken else {
+            return false;
+        };
+        match (key, item) {
+            (Some(Key::MsaaFocus(window, OBJID_CLIENT, 0)), Item::Fact(_, Some(stamp))) => {
+                focus_behind_its_foreground_change(record, (*window, thread), (*stamp, arrival))
+            }
+            (Some(Key::Foreground(window, thread)), Item::Fact(_, Some(stamp))) => {
+                older_foreground_change(record, (*window, *thread), (*stamp, arrival))
+            }
+            _ => false,
+        }
     }
 }
 
@@ -586,17 +606,13 @@ impl Intake {
     /// raised earlier, so the two are compared by when they were raised
     /// ([`focus_raised_first`]): a waiting focus raised no later than the
     /// change is removed, and a focus that arrives after a change of its
-    /// window and thread raised after it is dropped as it arrives, whether
-    /// the change still waits ([`foreground_waits_after`]) or was taken into
-    /// a batch before the listener's "forwarding ended" came
-    /// ([`foreground_taken_after`]), a difference from NVDA the module
-    /// documentation gives. A foreground change raised before the change of
-    /// its window waiting is dropped as it arrives
-    /// ([`newer_foreground_waits`]), so the later-raised one is kept, and so
-    /// is one raised before the change of its window and thread taken into
-    /// a batch while copies can still arrive late
-    /// ([`newer_foreground_taken`]), which NVDA would never hand out after
-    /// it.
+    /// window and thread raised after it, while the hand-over can still
+    /// deliver copies, is dropped as it arrives against the record
+    /// ([`ForegroundTaken`]), whether the change waits, is planned or was
+    /// handed out, as the module documentation gives. So is a foreground
+    /// change raised before the one recorded for its window and thread,
+    /// which NVDA would never hand out after it; one not dropped takes the
+    /// recorded one's place.
     fn push_arrived(&self, entry: Entry, arrival: Option<Arrival>) {
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
@@ -645,11 +661,11 @@ impl Intake {
             Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => Some(*marker),
             _ => resolved_by_read,
         };
-        if state.drops_behind_its_foreground_change(key.as_ref(), &entry.item, (thread, arrival))
-            || newer_foreground_waits(&state.waiting, key.as_ref(), &entry.item, arrival)
-            || matches!(&state.foreground_taken, ForegroundTaken::Kept(record)
-                if newer_foreground_taken(record, key.as_ref(), &entry.item, (thread, arrival)))
-        {
+        if state.drops_behind_a_later_foreground_change(
+            key.as_ref(),
+            &entry.item,
+            (thread, arrival),
+        ) {
             return;
         }
         let mut place = resolves.and_then(|resolves| {
@@ -668,8 +684,8 @@ impl Intake {
             {
                 *place -= 1;
             }
-            if let (Key::Foreground(window), Item::Fact(_, stamp)) = (key, &entry.item) {
-                remove_client_focus(&mut state.waiting, *window, thread, (*stamp, arrival));
+            if let (Key::Foreground(window, thread), Item::Fact(_, stamp)) = (key, &entry.item) {
+                remove_client_focus(&mut state.waiting, *window, *thread, (*stamp, arrival));
             }
         }
         // Logged, with what is queued around it, so an entry that waits
@@ -740,9 +756,6 @@ impl Intake {
             if ready > 0 {
                 let mut waiting: Vec<Waiting> = state.waiting.drain(..ready).collect();
                 let taken = waiting.len();
-                if let ForegroundTaken::Kept(record) = &mut state.foreground_taken {
-                    record_foreground_taken(record, &waiting);
-                }
                 let focused = state.focused.clone();
                 caret_after_update(&mut waiting, focused.as_ref(), state.terminal);
                 let batch = plan(waiting, focused.as_ref(), super::window::window_is_hung);
@@ -940,18 +953,19 @@ impl Intake {
         self.lock().system_caret_unused
     }
 
-    /// The listener's "forwarding ended" is in: the foreground changes
-    /// taken into a batch are forgotten, and none is recorded from now on
-    /// ([`foreground_taken_after`]), so outside the hand-over nothing is
-    /// kept. Until then, a copy of a focus can reach the outpost after a
-    /// copy of its window's foreground change raised after it was taken into
-    /// a batch. The listener queues "forwarding ended" behind every fact it
-    /// has queued, so once it is in, every listener copy its hook had
-    /// received when it read its tick has arrived. A listener copy its hook
-    /// receives only after that, raised at or before the tick, can still
-    /// come, and is not dropped behind a change already taken: the one case
-    /// this leaves, which needs the listener's hook to receive an event
-    /// later than the outpost's hook receives a later one.
+    /// The listener's "forwarding ended" is in: the recorded foreground
+    /// changes are forgotten, and none is recorded or dropped against from
+    /// now on ([`ForegroundTaken`]), so outside the hand-over nothing is
+    /// kept or looked up. Until then, a copy of a focus or of a foreground
+    /// change can reach the outpost after a copy of its window's foreground
+    /// change raised after it. The listener queues "forwarding ended"
+    /// behind every fact it has queued, so once it is in, every listener
+    /// copy its hook had received when it read its tick has arrived. A
+    /// listener copy its hook receives only after that, raised at or before
+    /// the tick, can still come, and is not dropped behind a later change,
+    /// waiting or taken: the one case this leaves, which needs the
+    /// listener's hook to receive an event later than the outpost's hook
+    /// receives a later one.
     pub(super) fn forwarding_ended(&self) {
         self.lock().foreground_taken = ForegroundTaken::Ended;
     }
@@ -1038,174 +1052,73 @@ fn remove_client_focus(
     }
 }
 
-/// Whether `item`, with `key`, raised by `thread` and arrived as
-/// `arrival` says, is a focus on a window's client object behind which a
-/// foreground change of that window from the same thread waits, among the
-/// entries no idle query divides from the back, that was raised after it
-/// ([`focus_raised_first`]), so it is dropped as it arrives: NVDA's one
-/// hook never receives a focus after a later-raised change, and dropping
-/// it leaves the change last, as in NVDA (the module documentation gives
-/// this difference from NVDA).
-fn foreground_waits_after(
-    waiting: &VecDeque<Waiting>,
-    key: Option<&Key>,
-    item: &Item,
-    (thread, arrival): (u32, Option<Arrival>),
+/// The record's contents ([`ForegroundTaken`]): per window and thread that
+/// raised it, the newest raised foreground change pushed, with its raise
+/// time and how its copy arrived.
+type Record = HashMap<(isize, u32), (WinEventStamp, Option<Arrival>)>;
+
+/// Whether a focus on the client object of the window `change` names,
+/// raised by the thread it names and raised and arrived as `focus` says,
+/// was raised before the foreground change `record` holds for that window
+/// and thread ([`focus_raised_first`]), so it is dropped as it arrives:
+/// NVDA's one hook never receives a focus after a later-raised change of
+/// its window, whose limiter would have removed it as it added the change
+/// (the module documentation gives what NVDA then says).
+fn focus_behind_its_foreground_change(
+    record: &Record,
+    change: (isize, u32),
+    (stamp, arrival): (WinEventStamp, Option<Arrival>),
 ) -> bool {
-    let (Some(Key::MsaaFocus(window, OBJID_CLIENT, 0)), Item::Fact(_, stamp)) = (key, item) else {
+    let Some(&(recorded, recorded_arrival)) = record.get(&change) else {
         return false;
     };
-    let change = Some(Key::Foreground(*window));
-    let waits = waiting
-        .iter()
-        .rev()
-        .take_while(|waiting| !matches!(waiting.entry.item, Item::IdleQuery { .. }))
-        .any(|waiting| {
-            waiting.key == change
-                && waiting.thread == thread
-                && focus_raised_first(
-                    (*stamp, arrival),
-                    (stamp_of(waiting), waiting.arrival),
-                    false,
-                )
-        });
-    if waits {
+    let behind = focus_raised_first(
+        (Some(stamp), arrival),
+        (Some(recorded), recorded_arrival),
+        false,
+    );
+    if behind {
+        let (window, thread) = change;
         tracing::debug!(
             window,
             thread,
             "a focus on the window's client object is dropped behind its later foreground change"
         );
     }
-    waits
+    behind
 }
 
-/// Whether `item`, with `key`, arrived as `arrival` says, is a foreground
-/// change raised before the change of the same window waiting, among the
-/// entries no idle query divides from the back ([`focus_raised_first`],
-/// which compares any two copies by when they were raised): NVDA's
-/// limiter adds events in the order they were raised, so the newer change
-/// replaced the older there, and the older copy, which reached the outpost
-/// later during the hand-over, is dropped as it arrives.
-fn newer_foreground_waits(
-    waiting: &VecDeque<Waiting>,
-    key: Option<&Key>,
-    item: &Item,
-    arrival: Option<Arrival>,
+/// Whether a foreground change of the window `change` names, from the
+/// thread it names, raised and arrived as `stamp` and `arrival` say, was
+/// raised before the one `record` holds for that window and thread
+/// ([`focus_raised_first`], which compares any two copies by when they
+/// were raised; in one tick the one arriving later counts as raised later),
+/// so it is dropped as it arrives: NVDA's limiter adds events in the order
+/// they were raised, so the newer change replaced the older there, and
+/// never hands the older out after it. A change not dropped is recorded in
+/// place of the one recorded.
+fn older_foreground_change(
+    record: &mut Record,
+    change: (isize, u32),
+    (stamp, arrival): (WinEventStamp, Option<Arrival>),
 ) -> bool {
-    let (Some(Key::Foreground(window)), Item::Fact(_, Some(stamp))) = (key, item) else {
-        return false;
-    };
-    let newer = waiting
-        .iter()
-        .rev()
-        .take_while(|waiting| !matches!(waiting.entry.item, Item::IdleQuery { .. }))
-        .find(|waiting| waiting.key.as_ref() == key)
-        .is_some_and(|waiting| {
-            focus_raised_first(
-                (Some(*stamp), arrival),
-                (stamp_of(waiting), waiting.arrival),
-                false,
-            )
-        });
-    if newer {
-        tracing::debug!(
-            window,
-            "a foreground change is dropped behind its window's later change waiting"
-        );
-    }
-    newer
-}
-
-/// Whether `item`, with `key`, raised by `thread` and arrived as `arrival`
-/// says, is a foreground change raised before the change of the same
-/// window from the same thread last taken into a batch while copies could
-/// still arrive late ([`ForegroundTaken`]), planned or already handed out,
-/// so it is dropped as it arrives, as [`newer_foreground_waits`] drops one
-/// behind a later-raised change still waiting: NVDA's limiter, adding
-/// events in the order they were raised, never hands the older change out
-/// after the newer.
-fn newer_foreground_taken(
-    record: &HashMap<(isize, u32), (WinEventStamp, Option<Arrival>)>,
-    key: Option<&Key>,
-    item: &Item,
-    (thread, arrival): (u32, Option<Arrival>),
-) -> bool {
-    let (Some(Key::Foreground(window)), Item::Fact(_, Some(stamp))) = (key, item) else {
-        return false;
-    };
-    let Some(&(change, change_arrival)) = record.get(&(*window, thread)) else {
-        return false;
-    };
-    let older = focus_raised_first(
-        (Some(*stamp), arrival),
-        (Some(change), change_arrival),
-        false,
-    );
-    if older {
+    if let Some(&(recorded, recorded_arrival)) = record.get(&change)
+        && focus_raised_first(
+            (Some(stamp), arrival),
+            (Some(recorded), recorded_arrival),
+            false,
+        )
+    {
+        let (window, thread) = change;
         tracing::debug!(
             window,
             thread,
-            "a foreground change is dropped behind its window's later change, already taken into a batch"
+            "a foreground change is dropped behind its window's later change"
         );
+        return true;
     }
-    older
-}
-
-/// Records each foreground change of `taken`, entries just taken into a
-/// batch, that carries its raise time, in place of the one recorded for its
-/// window and thread unless that one was raised after it
-/// ([`ForegroundTaken`]).
-fn record_foreground_taken(
-    record: &mut HashMap<(isize, u32), (WinEventStamp, Option<Arrival>)>,
-    taken: &[Waiting],
-) {
-    for waiting in taken {
-        let (Some(Key::Foreground(window)), Some(stamp)) = (&waiting.key, stamp_of(waiting)) else {
-            continue;
-        };
-        let change = (stamp, waiting.arrival);
-        record
-            .entry((*window, waiting.thread))
-            .and_modify(|recorded| {
-                if focus_raised_first(
-                    (Some(recorded.0), recorded.1),
-                    (Some(stamp), waiting.arrival),
-                    true,
-                ) {
-                    *recorded = change;
-                }
-            })
-            .or_insert(change);
-    }
-}
-
-/// Whether `item`, with `key`, raised by `thread` and arrived as `arrival`
-/// says, is a focus on a window's client object raised before the
-/// foreground change of that window from the same thread last taken into a
-/// batch while copies could still arrive late ([`ForegroundTaken`]),
-/// planned or already handed out, so it is dropped as it arrives, as
-/// [`foreground_waits_after`] drops one behind a change still waiting.
-fn foreground_taken_after(
-    record: &HashMap<(isize, u32), (WinEventStamp, Option<Arrival>)>,
-    key: Option<&Key>,
-    item: &Item,
-    (thread, arrival): (u32, Option<Arrival>),
-) -> bool {
-    let (Some(Key::MsaaFocus(window, OBJID_CLIENT, 0)), Item::Fact(_, stamp)) = (key, item) else {
-        return false;
-    };
-    let Some(&(change, change_arrival)) = record.get(&(*window, thread)) else {
-        return false;
-    };
-    let after = focus_raised_first((*stamp, arrival), (Some(change), change_arrival), false);
-    if after {
-        tracing::debug!(
-            window,
-            thread,
-            "a focus on the window's client object is dropped behind its later foreground change, already taken into a batch"
-        );
-    }
-    after
+    record.insert(change, (stamp, arrival));
+    false
 }
 
 /// Whether a focus on a window's client object, raised and arrived as
@@ -1319,7 +1232,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             };
             (key, Category::Uncounted, event.hwnd)
         }
-        Item::Fact(fact, _) => classify_fact(fact),
+        Item::Fact(fact, _) => classify_fact(fact, thread_of(item)),
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
         // Only the newest caret report for a node matters, and it is never
@@ -1393,11 +1306,11 @@ fn notification_key(runtime_id: &[i32], notification: &Notification) -> Key {
 }
 
 /// The key, category, and window of a fact, from the listener or the
-/// outpost's own hook.
-fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
+/// outpost's own hook, raised by `thread` ([`thread_of`]).
+fn classify_fact(fact: &DeliveredFact, thread: u32) -> (Option<Key>, Category, isize) {
     match fact {
         // Unwrapped as it is pushed (`Intake::push`); as itself otherwise.
-        DeliveredFact::UiaMarked { fact, .. } => classify_fact(fact),
+        DeliveredFact::UiaMarked { fact, .. } => classify_fact(fact, thread),
         // Selections and notifications routed from the listener are
         // UIA events, never counted.
         DeliveredFact::UiaSelection { hwnd, snapshot, .. } => (
@@ -1434,7 +1347,7 @@ fn classify_fact(fact: &DeliveredFact) -> (Option<Key>, Category, isize) {
             (Some(key), Category::Other, *hwnd)
         }
         DeliveredFact::Foreground { hwnd } => {
-            (Some(Key::Foreground(*hwnd)), Category::Focus, *hwnd)
+            (Some(Key::Foreground(*hwnd, thread)), Category::Focus, *hwnd)
         }
         DeliveredFact::MsaaFocus {
             hwnd,
@@ -1505,7 +1418,7 @@ fn admit(
     for (index, item) in waiting.iter().enumerate().rev() {
         let msaa = matches!(
             item.key,
-            Some(Key::Msaa(..) | Key::MsaaFocus(..) | Key::Foreground(_) | Key::MenuPopup(..))
+            Some(Key::Msaa(..) | Key::MsaaFocus(..) | Key::Foreground(..) | Key::MenuPopup(..))
         );
         if !msaa
             && item.category != Category::Exempt
@@ -1523,7 +1436,7 @@ fn admit(
             Category::Focus => {
                 focus_kept += 1;
                 let among_focus = focus_kept <= FOCUS_EVENTS_PER_BATCH;
-                if matches!(item.key, Some(Key::Foreground(_))) {
+                if matches!(item.key, Some(Key::Foreground(..))) {
                     // A foreground change is also one of its thread's other
                     // events, as NVDA's limiter caches a foreground event
                     // with both its focus events and its other events
@@ -1594,7 +1507,7 @@ fn plan(
     let mut run: Vec<usize> = Vec::new();
     for (index, item) in kept.iter().enumerate() {
         match &item.key {
-            Some(Key::MsaaFocus(..) | Key::Foreground(_)) => run.push(index),
+            Some(Key::MsaaFocus(..) | Key::Foreground(..)) => run.push(index),
             key if ends_a_run(key.as_ref()) => {
                 if let Some(&last) = run.last() {
                     runs.insert(last, std::mem::take(&mut run));
@@ -1617,7 +1530,7 @@ fn plan(
     let mut planned = Vec::with_capacity(entries.len());
     let mut deferred = Vec::new();
     for (index, key) in keys.iter().enumerate() {
-        if matches!(key, Some(Key::MsaaFocus(..) | Key::Foreground(_))) {
+        if matches!(key, Some(Key::MsaaFocus(..) | Key::Foreground(..))) {
             // An older event of a run waits for its newest, where the run is
             // tried, newest first.
             if let Some(run) = runs.get(&index) {
@@ -2552,6 +2465,40 @@ mod tests {
         assert_eq!(handed_out(&intake), vec![1]);
     }
 
+    /// A focus on the window's client object raised before its window's
+    /// change waiting is dropped as it arrives even with an idle query
+    /// waiting between them, which divides only what may be replaced: the
+    /// change and the query are handed out, and the focus never.
+    #[test]
+    fn a_focus_raised_before_a_waiting_foreground_change_is_dropped_across_an_idle_query() {
+        let intake = Intake::default();
+        push_raised(
+            &intake,
+            DeliveredFact::Foreground { hwnd: 9 },
+            220,
+            Arrival::Hook,
+            1,
+        );
+        push_item(&intake, idle_query(1), 2);
+        push_raised(&intake, CLIENT_FOCUS, 210, Arrival::Listener, 3);
+        assert_eq!(handed_out(&intake), vec![1, 2]);
+    }
+
+    /// The hook's copies of G1, raised at 200, and of G2, raised at 220 or in
+    /// the same tick, both wait: G2 replaces G1 and is the one handed out,
+    /// as NVDA's limiter keeps the later-raised change. In one tick the copy
+    /// that arrived later counts as raised later, so G2 is kept there too.
+    #[test]
+    fn a_later_raised_foreground_change_arriving_behind_a_waiting_one_replaces_it() {
+        for time in [220, 200] {
+            let intake = Intake::default();
+            let foreground = DeliveredFact::Foreground { hwnd: 9 };
+            push_raised(&intake, foreground.clone(), 200, Arrival::Hook, 1);
+            push_raised(&intake, foreground, time, Arrival::Hook, 2);
+            assert_eq!(handed_out(&intake), vec![2], "G2 raised at {time}");
+        }
+    }
+
     /// One hook's order with the change already handed out: the hook's copy
     /// of a focus on the window's client object, raised in the same tick as
     /// the window's foreground change and arriving after it, was raised
@@ -2589,10 +2536,13 @@ mod tests {
         assert_eq!(handed_out(&intake), vec![4]);
     }
 
-    /// The window's thread raises G1 at 200, before the hook went in, and
-    /// G2 at 220. The hook's copy of G2 arrives first and is handed out;
-    /// the listener's copy of G1, arriving after that, is dropped, as NVDA's
-    /// limiter, adding events in raised order, never hands G1 out after G2.
+    /// The window's thread raises G1 at 200, before the hook went in, the
+    /// focus at 210 and G2 at 220. The hook's copy of G2 arrives first and
+    /// is handed out; the listener's copy of G1, arriving after that, is
+    /// dropped, as NVDA's limiter, adding events in raised order, never
+    /// hands G1 out after G2, and leaves G2 recorded, so the listener's copy
+    /// of the focus, raised before G2, is dropped behind it. Were G1
+    /// recorded in G2's place, the focus would be kept.
     #[test]
     fn an_older_foreground_change_arriving_after_a_newer_one_was_handed_out_is_dropped() {
         let intake = Intake::default();
@@ -2601,16 +2551,20 @@ mod tests {
         assert_eq!(handed_out(&intake), vec![1]);
         push_raised(&intake, foreground, 200, Arrival::ListenerBeforeHook, 2);
         assert_eq!(handed_out(&intake), Vec::<u64>::new());
+        push_raised(&intake, CLIENT_FOCUS, 210, Arrival::Listener, 3);
+        assert_eq!(handed_out(&intake), Vec::<u64>::new());
     }
 
-    /// Two threads raise foreground changes of window 9, handed out in
-    /// turn: thread 7's at 220 and thread 8's at 200. Each is recorded for
-    /// its own thread, so thread 8's is not dropped behind thread 7's, and a
+    /// Two threads raise foreground changes of window 9: thread 7's at 220
+    /// and thread 8's at 200, which wait together. Each is kept and recorded
+    /// for its own thread, so thread 8's neither replaces thread 7's nor is
+    /// dropped behind it, and both are handed out, newest raised first. A
     /// late focus on the window's client object is judged against its own
     /// thread's change only: thread 8's raised at 210 is kept, after its
     /// thread's change at 200, and thread 7's raised at 210 dropped, before
-    /// its thread's change at 220. Keyed by window alone, the record would
-    /// drop thread 8's change and its focus.
+    /// its thread's change at 220. Keyed by window alone, the waiting
+    /// change or the record would lose thread 8's change, and the record
+    /// its focus.
     #[test]
     fn a_foreground_change_and_a_focus_are_judged_against_their_own_threads_change_only() {
         let intake = Intake::default();
@@ -2627,9 +2581,8 @@ mod tests {
         };
         let foreground = DeliveredFact::Foreground { hwnd: 9 };
         push(foreground.clone(), 7, 220, 1);
-        assert_eq!(handed_out(&intake), vec![1]);
         push(foreground, 8, 200, 2);
-        assert_eq!(handed_out(&intake), vec![2]);
+        assert_eq!(handed_out(&intake), vec![1, 2]);
         push(CLIENT_FOCUS, 8, 210, 3);
         assert_eq!(handed_out(&intake), vec![3]);
         push(CLIENT_FOCUS, 7, 210, 4);

@@ -93,7 +93,7 @@
 //!   window's client object wrongly judged raised before the hook, arriving
 //!   after a hook copy of its window's foreground change from the same
 //!   thread in that tick, is dropped, not reordered, since the intake drops
-//!   a focus raised before its window's change (`intake::foreground_waits_after`),
+//!   a focus raised before its window's change (`intake::focus_behind_its_foreground_change`),
 //!   and its hook copy is then dropped as its twin. For example, the
 //!   window's thread raises foreground changes G1 and G2 of the window and
 //!   then the focus, in one tick; the listener's backlog replaces G1's
@@ -509,26 +509,42 @@ mod tests {
         );
     }
 
-    /// Once [`TWIN_BOUND`] has passed since "forwarding ended" came, the
-    /// copy counted during the hand-over is dropped, and a hook copy raised
+    /// A listener twin admitted 15 seconds after "forwarding ended" came,
+    /// the bound itself, still meets its hook copy. Once the bound has
+    /// passed, the copy still counted is dropped, and a hook copy raised
     /// 2^31 ms after the tick that message named, which the wrapping tick
-    /// comparison takes as raised before it, is handled and not counted.
+    /// comparison takes as raised before it, is handled and not counted,
+    /// and the clock is never read again.
     #[test]
     fn past_the_bound_after_forwarding_ended_no_copy_is_counted_and_nothing_is_kept() {
         let mut handover = Handover::new(100);
-        assert_eq!(judge(&mut handover, &[(Hook, 150)]), [true]);
+        assert_eq!(
+            judge(&mut handover, &[(Hook, 150), (Hook, 150)]),
+            [true, true]
+        );
         handover.forwarding_ended(160, start());
-        assert_eq!(handover.counted(), 1, "the copy raised at 150");
-        let past = || start() + TWIN_BOUND + Duration::from_millis(1);
+        assert_eq!(handover.counted(), 2, "the two copies raised at 150");
+        let (key, stamp) = focus(150);
+        assert_eq!(
+            handover.admit(Listener, key, stamp, || start() + Duration::from_secs(15)),
+            None,
+            "a twin at the bound is matched"
+        );
+        assert_eq!(handover.counted(), 1);
+        let past = || start() + Duration::from_secs(15) + Duration::from_millis(1);
         let (key, stamp) = focus(160u32.wrapping_add(1 << 31));
-        for _ in 0..2 {
-            assert_eq!(
-                handover.admit(Hook, key.clone(), stamp, past),
-                Some(Arrival::Hook)
-            );
-        }
+        assert_eq!(
+            handover.admit(Hook, key.clone(), stamp, past),
+            Some(Arrival::Hook)
+        );
         assert_eq!(handover.counted(), 0);
         assert!(handover.listener.is_empty() && handover.hook.is_empty());
+        let unread = || -> Instant { panic!("the clock is read once the hand-over is over") };
+        assert_eq!(
+            handover.admit(Hook, key, stamp, unread),
+            Some(Arrival::Hook)
+        );
+        assert_eq!(handover.counted(), 0);
     }
 
     #[test]
