@@ -202,21 +202,30 @@ element on the listener's reading thread after its nearest-window call;
 both answered "Sound settings", 1 of 22 (`diag-logs` beside it). This is
 a difference in mechanism from NVDA's test, with the same item spoken.
 A mockapp test pins the replacing state through a real outpost: an item
-selected, the list's items replaced under new runtime ids, and the old
-item's selection then delivered is reported as the new item, with its
-name and position (`crates/mockapp/tests/controller_for.rs`, mockapp's
+selected, its selection event captured and checked as the listener
+does while the item still answers, the list's items replaced under new
+runtime ids, and the old item's selection then delivered is reported as
+the new item, with its name and position (`crates/mockapp/tests/controller_for.rs`, mockapp's
 `replace-items`).
 The two differ for a selection of an element outside every element the
 relation names while the first of them has a selection: NVDA says
 nothing of it as a suggestion, and Verbatim reports the list's current
 selection (pinned as this difference in
 `crates/mockapp/tests/controller_for.rs`). Excepted is a selection of
-the focus itself, of one of the ancestors last reported with it, or,
-while the focus is a list or tab control, of one of its items: Verbatim
-reads it as the focus's own, from runtime ids and roles it already
-holds, with no call, reads no current selection, and handles it as
-other selections, as NVDA's base selection handler falls through to its
-state change handler (`NVDAObjects/__init__.py` 1314 to 1339). By-hand
+the focus itself, of one of the ancestors last reported with it, and any
+selection while the focus is a list or tab control, which the reducer
+reads as one in the focus: Verbatim reads it as the focus's own, from
+runtime ids and roles it already holds, with no call, reads no current
+selection, and handles it as other selections, as NVDA's base selection
+handler falls through to its state change handler
+(`NVDAObjects/__init__.py` 1314 to 1339); each of the three cases is
+pinned in `crates/mockapp/tests/controller_for.rs`. The last case does not ask
+whether the element is one of the focus's items, since that needs a
+call, so a focused list whose relation names another list that replaces
+its items loses the route: the stale selection of the replaced item goes
+to the other selection handling, which reads a dead element, where
+NVDA's walk up from the item reaches the controlled list and reports it
+as a suggestion. No application is known to do this. By-hand
 captures of the two Settings sequences that could take that route by
 mistake, on 2026-10-21 (NVDA alpha-58022, the pin, twice each, and
 Verbatim three times each, `target/e2e-evidence/fixes-round-ten-2026-10-21/`,
@@ -228,8 +237,8 @@ search box is still the focus, and by then the box's relation names
 nothing, so neither the search nor the route runs; both screen readers
 then say "Mouse" and "Primary mouse button combo box Left collapsed".
 Shift+Tab out of the open list ("sound" typed) gives "list" and
-"Display 1 of 19" from both. In both sequences the only difference is
-the first suggestion's name, the deliberate difference above. Porting NVDA's walk instead needs the event's
+"Display 1 of 19" from both. In both sequences the only difference in
+speech is the first suggestion's name, the deliberate difference above. Porting NVDA's walk instead needs the event's
 element, which only the focus listener holds, and a live read of the
 replaced item's name, position and set size: about 8 more wake-ups in
 the listener and 2 in the application for each selection event. When
@@ -243,7 +252,10 @@ Three more differences are known from the source and not captured:
 - NVDA tests the event's element against every element the relation
   names, and Verbatim reads only the first one's current selection, so a
   selection in a second controlled element that the search cannot find
-  is silent in Verbatim. Settings' search box names one.
+  is reported as the first controlled element's current selection when
+  it has one, and is silent otherwise, where NVDA's walk from the
+  event's element reaches the second element and reports the event's
+  element. Settings' search box names one.
 - A selection event left stale by a second replacement of the list, as a
   second burst of typing while the list is open could cause, is reported
   by Verbatim as the current list's selection, and when the new list's

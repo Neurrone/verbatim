@@ -2813,9 +2813,13 @@ impl Worker<'_> {
     /// Whether a UIA selection of the element `runtime_id` names is one the
     /// reducer reads as the focus's own (`reduce_selection_changed`), told
     /// from runtime ids and roles already in hand, with no call: the focus
-    /// itself (`focus_id`), one of the ancestors last reported with it, or,
-    /// while the focus is a selection container (Core's
-    /// `is_selection_container`), one of its items. NVDA's base
+    /// itself (`focus_id`), one of the ancestors last reported with it, or
+    /// any selection while the focus is a list or tab control (Core's
+    /// `is_selection_container`), which the reducer reads as one in the
+    /// focus, without asking whether the element is one of its items: a
+    /// focused list whose relation names another list that replaces its
+    /// items therefore loses the route, where NVDA reports the item as a
+    /// suggestion (`docs/parity/changes-and-selection.md`). NVDA's base
     /// `event_selection` finds such an element in none of the elements the
     /// focus controls and falls through to its state change handler
     /// (`NVDAObjects/__init__.py` 1314 to 1339), as the reducer's own

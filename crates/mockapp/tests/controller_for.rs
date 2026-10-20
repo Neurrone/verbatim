@@ -24,8 +24,9 @@
 //! whose cache holds less than a focus read's, with no failed cached read.
 //! A selection raised for an item the list has since replaced (mockapp's
 //! `replace-items`) is reported as the list's current selection, the new
-//! item, with its name and position; a selection of the focus itself is
-//! reported as its own selection change, never as the list's.
+//! item, with its name and position. A selection of the focus itself, of
+//! an ancestor reported with it, or of anything while the focus is a list,
+//! is reported as an ordinary selection change, never as the list's.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -34,11 +35,14 @@ mod harness;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use verbatim_model::{CallCounts, NodeId, NormalizedEvent, PropertyChange, StateSet};
+use verbatim_model::{
+    CallCounts, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, StateSet,
+};
+use verbatim_outpost::focus_read::Judged;
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
-    Cached, Fill, ListenerEvent, Live, Node, Part, Registration, Shape, Subscription, Uia,
+    Agile, Cached, Fill, ListenerEvent, Live, Node, Part, Registration, Shape, Subscription, Uia,
 };
 use verbatim_uia_rops::{ControlledQuery, Path, controlled_selection};
 use windows::Win32::System::Variant::VARIANT;
@@ -211,35 +215,50 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     app.quit();
 }
 
+/// Moves mockapp's focus to its element `id`, named `name`, has the
+/// listener read and send the focus, and returns the focus's node and the
+/// ancestors reported with it once the outpost has reported it.
+fn report_focus(
+    app: &mut common::MockApp,
+    outpost: &OutpostUnderTest,
+    (uia, root): (&Uia, &Live),
+    (id, name): (&str, &str),
+) -> (NodeSnapshot, Vec<NodeSnapshot>) {
+    app.send(&format!("set-focus {id}"));
+    let listener = uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from(name)))
+        .expect("name condition");
+    let focused = root
+        .find_first(TreeScope_Descendants, &condition, &listener)
+        .expect("the search")
+        .unwrap_or_else(|| panic!("no element named {name:?}"));
+    let (judged, _) = outpost.listener_read(&focused);
+    outpost.deliver(judged.into_fact(0));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged {
+                node, ancestors, ..
+            },
+            ..
+        } => (node, ancestors),
+        other => panic!("the outpost said {other:?}, not the focus on {name}"),
+    }
+}
+
 /// Focuses mockapp's search box, as the listener reads and sends the
-/// focus, and returns its node once the outpost has reported it, and that
-/// it has no text, and has nothing more to say.
+/// focus, and returns its node and the ancestors reported with it once the
+/// outpost has reported it, and that it has no text, and has nothing more
+/// to say.
 fn focus_search_box(
     app: &mut common::MockApp,
     outpost: &OutpostUnderTest,
     uia: &Uia,
     root: &Live,
-) -> NodeId {
-    app.send("set-focus search");
-    let listener = uia
-        .request_fixed::<ListenerEvent>()
-        .expect("the listener's cache request");
-    let condition = uia
-        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Search box")))
-        .expect("name condition");
-    let search_box = root
-        .find_first(TreeScope_Descendants, &condition, &listener)
-        .expect("the search")
-        .expect("the search box");
-    let (judged, _) = outpost.listener_read(&search_box);
-    outpost.deliver(judged.into_fact(0));
-    let search = match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
-            ..
-        } => node.id,
-        other => panic!("the outpost said {other:?}, not the search box's focus"),
-    };
+) -> (NodeId, Vec<NodeSnapshot>) {
+    let (search, ancestors) = report_focus(app, outpost, (uia, root), ("search", "Search box"));
     // The search box has no text pattern in mockapp.
     assert!(
         matches!(
@@ -252,18 +271,18 @@ fn focus_search_box(
         "the search box has no text"
     );
     outpost.settled();
-    search
+    (search.id, ancestors)
 }
 
-/// The listener's selection fact for the element `runtime_id` names, a
-/// list item named `name`, in mockapp's window `hwnd`.
-fn selection_fact(hwnd: isize, runtime_id: Vec<i32>, name: &str) -> DeliveredFact {
+/// The listener's selection fact for the element `runtime_id` names, of
+/// role `role` and named `name`, in mockapp's window `hwnd`.
+fn selection_fact(hwnd: isize, runtime_id: Vec<i32>, role: Role, name: &str) -> DeliveredFact {
     DeliveredFact::UiaSelection {
         hwnd,
         focus_window: hwnd,
         snapshot: UiaSnapshotFact {
             runtime_id,
-            role: verbatim_model::Role::ListItem,
+            role,
             name: Some(name.to_owned()),
             value: None,
             states: StateSet::new(),
@@ -272,12 +291,56 @@ fn selection_fact(hwnd: isize, runtime_id: Vec<i32>, name: &str) -> DeliveredFac
     }
 }
 
+/// mockapp's element selected events under its window `window`, each with
+/// its fact as the focus listener's callback captures it
+/// (`verbatim_outpost::listener::capture`) and its element in agile form,
+/// as the listener hands both to its reading thread. The subscription
+/// lasts as long as the registration returned.
+fn selections(
+    window: isize,
+) -> (
+    Registration,
+    mpsc::Receiver<(Agile<ListenerEvent>, DeliveredFact)>,
+) {
+    let (sent, events) = mpsc::channel();
+    let registration = Registration::with_parts(
+        vec![Part::shaped::<ListenerEvent>(Subscription::Event {
+            event: UIA_SelectionItem_ElementSelectedEventId,
+            callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+                let (hwnd, snapshot) =
+                    verbatim_outpost::listener::capture(element, &element.read())
+                        .expect("mockapp's element has its process");
+                let fact = DeliveredFact::UiaSelection {
+                    hwnd,
+                    focus_window: 0,
+                    snapshot,
+                };
+                let agile = element.agile().expect("an agile reference");
+                // The test may have finished.
+                let _ = sent.send((agile, fact));
+            }),
+        })],
+        common::window_subtree(window),
+    )
+    .expect("a subscription to element selected events");
+    (registration, events)
+}
+
 /// Settings' replacing state, through a real outpost: the list's first
 /// item is selected, the list then replaces its items under new runtime
 /// ids, the new first item selected, and the selection of the old item
 /// is delivered after that. The outpost reports the list's current
 /// selection, the new item, as a controlled selection of the search box,
-/// with the new item's name and position, and nothing more.
+/// with the new item's name and position, and nothing more. The old
+/// item's fact is the listener's own: captured in the event's callback and
+/// checked by the listener's reading thread's check
+/// (`OutpostUnderTest::listener_check`), which finds the windowless item's
+/// nearest window from its element. The check runs before the
+/// replacement, as the real listener's check precedes the outpost's
+/// handling, and as Settings' old element still answers then (the route's
+/// live firings, `docs/parity/changes-and-selection.md`); a check made
+/// after mockapp's item died would drop the event, its nearest-window call
+/// failing on the dead element.
 fn a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selection() {
     let title = common::unique_title("mockapp-controller-replaced");
     let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
@@ -287,17 +350,41 @@ fn a_selection_of_an_item_the_list_has_replaced_is_reported_as_its_current_selec
     let root = uia
         .window_live(hwnd.0 as isize)
         .expect("mockapp's window element");
-    let search = focus_search_box(&mut app, &outpost, &uia, &root);
+    let (search, _) = focus_search_box(&mut app, &outpost, &uia, &root);
+    let window = hwnd.0 as isize;
+    let (_registration, events) = selections(window);
 
     app.send("select sound");
-    let replaced = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
+    let (agile, fact) = events
+        .recv_timeout(common::WAIT_TIMEOUT)
+        .expect("an element selected event for Sound settings");
+    let element = agile.resolve().expect("the event's element");
+    let fact = match outpost.listener_check(&element, fact) {
+        Judged::Passed(fact) => *fact,
+        other => panic!("the listener's check made {other:?} of the selection"),
+    };
+    let replaced = match &fact {
+        DeliveredFact::UiaSelection {
+            hwnd,
+            focus_window,
+            snapshot,
+        } => {
+            assert_eq!(
+                (*hwnd, *focus_window, snapshot.name.as_deref()),
+                (0, window, Some("Sound settings")),
+                "the selected item's fact"
+            );
+            snapshot.runtime_id.clone()
+        }
+        other => panic!("{other:?} is no selection"),
+    };
     app.send("replace-items suggestions");
     let current = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
     assert_ne!(
         current, replaced,
         "the new item has a runtime id of its own"
     );
-    outpost.deliver(selection_fact(hwnd.0 as isize, replaced, "Sound settings"));
+    outpost.deliver(fact);
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::ControlledSelection { controller, node },
@@ -333,17 +420,108 @@ fn a_selection_of_the_focus_itself_is_reported_as_its_own() {
     let root = uia
         .window_live(hwnd.0 as isize)
         .expect("mockapp's window element");
-    let search = focus_search_box(&mut app, &outpost, &uia, &root);
+    let (search, _) = focus_search_box(&mut app, &outpost, &uia, &root);
 
     app.send("select sound");
     let search_box = verbatim_uia::runtime_id(&find(&uia, &root, "Search box"));
-    outpost.deliver(selection_fact(hwnd.0 as isize, search_box, "Search box"));
+    outpost.deliver(selection_fact(
+        hwnd.0 as isize,
+        search_box,
+        Role::EditableText,
+        "Search box",
+    ));
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::SelectionChanged { node },
             ..
         } => assert_eq!(node.id, search, "the search box's own selection"),
         other => panic!("the outpost said {other:?}, not the search box's selection"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A selection of the search box's parent, mockapp's window, the nearest
+/// of the ancestors reported with the focus, while the list the box
+/// controls has a selection, is the window's selection change, reported
+/// as one, and nothing more, as NVDA's base selection handler, finding it
+/// in none of the controlled elements, falls through to its state change
+/// handler; it is never answered with the list's current selection.
+fn a_selection_of_an_ancestor_of_the_focus_is_reported_as_its_own() {
+    let title = common::unique_title("mockapp-controller-ancestor");
+    let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    let (_, ancestors) = focus_search_box(&mut app, &outpost, &uia, &root);
+    let parent = ancestors.last().expect("the search box's parent").id;
+
+    app.send("select sound");
+    outpost.deliver(selection_fact(
+        hwnd.0 as isize,
+        verbatim_uia::runtime_id(root.element()),
+        Role::Window,
+        &title,
+    ));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::SelectionChanged { node },
+            ..
+        } => assert_eq!(node.id, parent, "the window's own selection"),
+        other => panic!("the outpost said {other:?}, not the window's selection"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A focused list whose relation names the suggestions list, while that
+/// list has a selection: a selection of the focused list's item is the
+/// item's selection change, reported as one, and nothing more, as the
+/// reducer reads any selection while the focus is a list or tab control as
+/// one in the focus; it is never answered with the controlled list's
+/// current selection.
+fn a_selection_while_the_focus_is_a_list_is_reported_as_its_own() {
+    let title = common::unique_title("mockapp-controller-list");
+    let mut app = common::spawn("replaced_suggestions.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    report_focus(
+        &mut app,
+        &outpost,
+        (&uia, &root),
+        ("categories", "Categories"),
+    );
+    outpost.settled();
+
+    app.send("select sound");
+    let general = verbatim_uia::runtime_id(&find(&uia, &root, "General"));
+    outpost.deliver(selection_fact(
+        hwnd.0 as isize,
+        general,
+        Role::ListItem,
+        "General",
+    ));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::SelectionChanged { node },
+            ..
+        } => assert_eq!(
+            (node.role, node.name.as_deref()),
+            (Role::ListItem, Some("General")),
+            "the focused list's item's selection"
+        ),
+        other => panic!("the outpost said {other:?}, not the item's selection"),
     }
     outpost.settled();
 
@@ -371,7 +549,7 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
     let root = uia
         .window_live(hwnd.0 as isize)
         .expect("mockapp's window element");
-    let search = focus_search_box(&mut app, &outpost, &uia, &root);
+    let (search, _) = focus_search_box(&mut app, &outpost, &uia, &root);
 
     app.send("set-description search Type to search");
     outpost.heard(&[Heard::UiaProperty(UIA_HelpTextPropertyId.0)]);
@@ -395,6 +573,7 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
     outpost.deliver(selection_fact(
         hwnd.0 as isize,
         verbatim_uia::runtime_id(&result),
+        Role::ListItem,
         "Sound settings",
     ));
     match outpost.next() {
@@ -432,6 +611,14 @@ fn main() {
         (
             "a_selection_of_the_focus_itself_is_reported_as_its_own",
             a_selection_of_the_focus_itself_is_reported_as_its_own,
+        ),
+        (
+            "a_selection_of_an_ancestor_of_the_focus_is_reported_as_its_own",
+            a_selection_of_an_ancestor_of_the_focus_is_reported_as_its_own,
+        ),
+        (
+            "a_selection_while_the_focus_is_a_list_is_reported_as_its_own",
+            a_selection_while_the_focus_is_a_list_is_reported_as_its_own,
         ),
     ]);
 }

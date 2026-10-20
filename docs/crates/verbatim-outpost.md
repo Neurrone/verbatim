@@ -663,7 +663,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     thread with every call it makes.
   - The queue applies NVDA's limiter rules to MSAA events only
     (`docs/design/focus-pipeline.md` section 5): one
-    waiting entry per object and kind, a newer one replacing it and moving
+    waiting entry per object and kind, and for an MSAA event per thread
+    that raised it too, as NVDA's limiter keys them (the console host's
+    events merge per window and kind), a newer one replacing it and moving
     to the back, which is all that limits UIA events; a batch is everything
     that accumulated while the worker handled the previous one, planned in
     the order it arrived, but for a focused terminal's caret event waiting
@@ -1982,7 +1984,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   one's current selection is reported"), unless the selection is the
   focus's own (`Worker::selection_of_focus`, from runtime ids and roles
   in hand, with no call: the focus itself, an ancestor last reported with
-  it, or an item of a focused list or tab control), which then goes on to
+  it, or any selection while the focus is a list or tab control, which
+  the reducer reads as one in the focus), which then goes on to
   the other selection handling, as NVDA's base selection handler falls
   through to its state change handler; one found in none with no current
   selection read is logged at debug ("a selection in none of the elements

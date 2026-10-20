@@ -328,10 +328,55 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     needs a follow-up, which can be tested only on the ARM64 runner.
   - `line_key_flood` once read a half-written line on GitHub's runner;
     repeat it there.
-  - The suggestions-closed sound once played twice for one Escape in
-    Settings' search box, 20 ms apart, in a by-hand capture on 2026-10-21
-    (`target/e2e-evidence/fixes-round-six-2026-10-21/walk-capture-4.txt`); find why if it
-    recurs.
+  - The suggestions-closed sound plays twice, 16 to 24 ms apart, after
+    Enter on a suggestion in Settings' search box: in all three Verbatim
+    captures of 2026-10-21
+    (`target/e2e-evidence/fixes-round-ten-2026-10-21/verbatim-enter-capture-*.txt`),
+    and once for one Escape (`fixes-round-six-2026-10-21/walk-capture-4.txt`).
+    The cause, from the outpost logs (`capture-logs-3/outpost-spare-5.log`
+    lines 74 to 111, and `capture-logs-1-2/outpost-spare-5.log` and
+    `-7.log`): Settings raises two ControllerFor changes on the search
+    box. The first is handled while the box is the focus. The second
+    arrives before the combo box's focus event but is handled after the
+    combo box was reported as the focus. NVDA's source at the pin plays
+    the sound for both, if its UIA handler receives the second. Its
+    property change handler has no focus filter: it redirects a change of
+    the focus's element to the focus object and otherwise builds an object
+    for the sender, after the native-element and `shouldAcceptEvent`
+    checks, which pass for the foreground application
+    (`UIAHandler/__init__.py` 960 to 1060, `eventHandler.py` 481 to 555).
+    The search box's object is a `SearchField` (automation id `TextBox`
+    or `SearchTextBox`, `NVDAObjects/UIA/__init__.py` 1420), whose
+    `event_UIA_controllerFor` (2505) calls `event_controllerForChange`
+    (`NVDAObjects/behaviors.py` 231 to 236), which plays the closed sound
+    in its `else` branch whenever the object is not the focus or the
+    relation names nothing. On Windows 11 22H2 and later NVDA registers
+    for ControllerFor changes only on the focused element
+    (`UIAHandler/utils.py` 399 to 407, `UIAHandler/__init__.py` 241 to
+    249), adding the registration at the element's gain of focus and
+    removing it at its loss of focus, both queued to the UIA thread
+    (`NVDAObjects/UIA/__init__.py` 1623 to 1630, `UIAHandler/__init__.py`
+    697 to 756). A change Settings raises before the combo box's focus
+    event, as the second one is, comes before NVDA has handled that focus
+    and removed the box's registration, so by the source NVDA receives it
+    and plays the sound twice too. The transcript records no sounds, so
+    this is unconfirmed live; an NVDA debug log with UIA event logging on
+    would settle it.
+  - In all three Enter captures of 2026-10-21, the first ControllerFor
+    change after Enter in Settings' search box took 138 to 144 ms to
+    handle (`target/e2e-evidence/fixes-round-ten-2026-10-21/`,
+    `capture-logs-3/outpost-spare-5.log` line 85,
+    `capture-logs-1-2/outpost-spare-5.log` line 96 and `-7.log` line 86),
+    with the three selection events and the new focus waiting behind it.
+    The "handled" line's `unpublished` field, 0 in all three, counts only
+    the calls made after the entry's last publish; this change's calls go
+    with the published suggestions change's timing instead, and are two:
+    the refresh of the box's cache (`refreshed_for`, one
+    `BuildUpdatedCache`) and the live read of its relation
+    (`suggestions_open`, `CurrentControllerFor`), in
+    `verbatim-outpost`'s `outpost/worker.rs`. One of them presumably waits
+    for Settings while it leaves the search; trace the stall once with
+    `cargo xtask trace scenario` when next convenient. No fix yet.
 
 Exit: a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean.

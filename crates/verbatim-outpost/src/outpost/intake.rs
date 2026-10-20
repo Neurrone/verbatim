@@ -4,8 +4,13 @@
 //! events (`orderedWinEventLimiter.py`, and `pumpAll` in NVDA's
 //! `IAccessibleHandler`; `docs/design/focus-pipeline.md` section 5).
 //!
-//! - One waiting entry per object and event kind: a newer one replaces it and
-//!   takes its place at the back. UIA events are limited by this alone, as
+//! - One waiting entry per object and event kind, and, for an MSAA focus,
+//!   foreground change or other MSAA event, per thread that raised it, as
+//!   NVDA's limiter keys its focus and other events
+//!   (`orderedWinEventLimiter.py` 63 to 79), so two threads' events of one
+//!   address both wait: a newer one replaces it and takes its place at
+//!   the back. The console host's events, which NVDA hooks apart, merge
+//!   per window and kind whatever the thread. UIA events are limited by this alone, as
 //!   NVDA's UIA event limiter keeps one event per element and kind and
 //!   counts nothing.
 //! - A batch is everything that accumulated while the worker handled the
@@ -284,12 +289,18 @@ pub(super) struct Entry {
 /// recognizing the focused object.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Key {
-    Msaa(u8, isize, i32, i32),
+    /// An MSAA event other than a focus or foreground change, by its kind,
+    /// address and the thread that raised it, as NVDA's limiter keys it;
+    /// the console host's events, which NVDA hooks apart, by kind and
+    /// window alone, with thread 0.
+    Msaa(u8, isize, i32, i32, u32),
     Uia(u8, i32, Vec<i32>),
     /// A window's foreground change, by the window and the thread that
     /// raised it, as NVDA's limiter keys it.
     Foreground(isize, u32),
-    MsaaFocus(isize, i32, i32),
+    /// An MSAA focus, by its address and the thread that raised it, as
+    /// NVDA's limiter keys it.
+    MsaaFocus(isize, i32, i32, u32),
     UiaFocus(Vec<i32>),
     MenuPopup(isize, i32, i32),
     UiaNotification(
@@ -307,8 +318,8 @@ impl Key {
     /// the event kind.
     fn object(&self) -> Option<Object> {
         match self {
-            Key::Msaa(_, hwnd, object, child)
-            | Key::MsaaFocus(hwnd, object, child)
+            Key::Msaa(_, hwnd, object, child, _)
+            | Key::MsaaFocus(hwnd, object, child, _)
             | Key::MenuPopup(hwnd, object, child) => Some(Object::Msaa(*hwnd, *object, *child)),
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
@@ -510,7 +521,7 @@ impl State {
             return false;
         };
         match (key, item) {
-            (Some(Key::MsaaFocus(window, OBJID_CLIENT, 0)), Item::Fact(_, Some(stamp))) => {
+            (Some(Key::MsaaFocus(window, OBJID_CLIENT, 0, _)), Item::Fact(_, Some(stamp))) => {
                 focus_behind_its_foreground_change(record, (*window, thread), (*stamp, arrival))
             }
             (Some(Key::Foreground(window, thread)), Item::Fact(_, Some(stamp))) => {
@@ -1035,11 +1046,10 @@ fn remove_client_focus(
     thread: u32,
     change: (Option<WinEventStamp>, Option<Arrival>),
 ) {
-    let client = Some(Key::MsaaFocus(window, OBJID_CLIENT, 0));
+    let client = Some(Key::MsaaFocus(window, OBJID_CLIENT, 0, thread));
     let at = waiting.len();
     if remove_waiting(waiting, at, |waiting| {
         waiting.key == client
-            && waiting.thread == thread
             && focus_raised_first((stamp_of(waiting), waiting.arrival), change, true)
     })
     .is_some()
@@ -1196,7 +1206,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             hwnd,
             id_object,
             id_child,
-            ..
+            thread,
         } => match kind {
             WinEventKind::Destroy => (None, Category::Exempt, *hwnd),
             // Each console update names the cells it changed, and each
@@ -1205,12 +1215,18 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
             // are read, so each kind merges into one per window while they
             // wait.
             WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret => (
-                Some(Key::Msaa(*kind as u8, *hwnd, 0, 0)),
+                Some(Key::Msaa(*kind as u8, *hwnd, 0, 0, 0)),
                 Category::Other,
                 *hwnd,
             ),
             _ => (
-                Some(Key::Msaa(*kind as u8, *hwnd, *id_object, *id_child)),
+                Some(Key::Msaa(
+                    *kind as u8,
+                    *hwnd,
+                    *id_object,
+                    *id_child,
+                    *thread,
+                )),
                 Category::Other,
                 *hwnd,
             ),
@@ -1267,7 +1283,7 @@ fn caret_after_update(
     };
     let uia_caret = Key::Uia(2, 0, runtime_id.clone());
     let console_caret =
-        (window != 0).then_some(Key::Msaa(WinEventKind::ConsoleCaret as u8, window, 0, 0));
+        (window != 0).then_some(Key::Msaa(WinEventKind::ConsoleCaret as u8, window, 0, 0, 0));
     let Some(at) = waiting.iter().position(|waiting| {
         let key = waiting.key.as_ref();
         key == Some(&uia_caret) || (key.is_some() && key == console_caret.as_ref())
@@ -1275,8 +1291,13 @@ fn caret_after_update(
         return;
     };
     let text_changed = Key::Uia(3, 0, runtime_id.clone());
-    let console_update =
-        (window != 0).then_some(Key::Msaa(WinEventKind::ConsoleUpdate as u8, window, 0, 0));
+    let console_update = (window != 0).then_some(Key::Msaa(
+        WinEventKind::ConsoleUpdate as u8,
+        window,
+        0,
+        0,
+        0,
+    ));
     let mut newest_change = None;
     for (index, later) in waiting.iter().enumerate().skip(at + 1) {
         if !matches!(later.entry.item, Item::Msaa { .. } | Item::Uia(_)) {
@@ -1343,7 +1364,7 @@ fn classify_fact(fact: &DeliveredFact, thread: u32) -> (Option<Key>, Category, i
             } else {
                 WinEventKind::Alert
             };
-            let key = Key::Msaa(kind as u8, *hwnd, *id_object, *id_child);
+            let key = Key::Msaa(kind as u8, *hwnd, *id_object, *id_child, thread);
             (Some(key), Category::Other, *hwnd)
         }
         DeliveredFact::Foreground { hwnd } => {
@@ -1354,7 +1375,7 @@ fn classify_fact(fact: &DeliveredFact, thread: u32) -> (Option<Key>, Category, i
             id_object,
             id_child,
         } => (
-            Some(Key::MsaaFocus(*hwnd, *id_object, *id_child)),
+            Some(Key::MsaaFocus(*hwnd, *id_object, *id_child, thread)),
             Category::Focus,
             *hwnd,
         ),
@@ -2851,6 +2872,64 @@ mod tests {
             }
         }
         assert_eq!(order, vec![20, 30]);
+    }
+
+    /// Value changes of one address from threads 7, 8 and 7 again: thread
+    /// 7's second replaces its first, and thread 8's, keyed by its own
+    /// thread as NVDA's limiter keys it, is neither replaced nor replaces.
+    #[test]
+    fn an_msaa_event_replaces_only_the_one_waiting_from_its_own_thread() {
+        let intake = Intake::default();
+        let push = |thread: u32, observed_at_ms: u64| {
+            intake.push(Entry {
+                item: Item::Msaa {
+                    kind: WinEventKind::ValueChange,
+                    hwnd: 9,
+                    id_object: -4,
+                    id_child: 1,
+                    thread,
+                },
+                trace: TraceId::mint(),
+                observed_at_ms,
+                timing: crate::protocol::EventTiming::default(),
+            });
+        };
+        push(7, 1);
+        push(8, 2);
+        push(7, 3);
+        assert_eq!(handed_out(&intake), vec![2, 3]);
+    }
+
+    /// Focus events on one address from threads 7, 8 and 7 again: thread
+    /// 7's second replaces its first, and thread 8's, keyed by its own
+    /// thread as NVDA's limiter keys a focus, is neither replaced nor
+    /// replaces, so both threads' focuses are tried in their run, newest
+    /// raised first.
+    #[test]
+    fn an_msaa_focus_replaces_only_the_one_waiting_from_its_own_thread() {
+        let intake = Intake::default();
+        let push = |thread: u32, observed_at_ms: u64| {
+            intake.push(Entry {
+                item: Item::Fact(
+                    DeliveredFact::MsaaFocus {
+                        hwnd: 9,
+                        id_object: -4,
+                        id_child: 1,
+                    },
+                    Some(WinEventStamp {
+                        thread,
+                        time: u32::try_from(observed_at_ms).unwrap_or(0),
+                    }),
+                ),
+                trace: TraceId::mint(),
+                observed_at_ms,
+                timing: crate::protocol::EventTiming::default(),
+            });
+        };
+        push(7, 1);
+        push(8, 2);
+        push(7, 3);
+        assert_eq!(handed_out(&intake), vec![3, 2]);
     }
 
     #[test]
