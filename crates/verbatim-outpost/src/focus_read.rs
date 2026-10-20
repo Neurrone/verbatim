@@ -1031,11 +1031,13 @@ impl FocusReader {
         // Out of time, the live read is not made, and the sender's keyboard
         // focus is taken from the event's cache instead, as it stood when
         // the event was raised: a sender that did not have it then is
-        // dropped. A menu opening redirected to the current focus is judged
+        // dropped. A cache that does not hold it, its provider having
+        // failed to supply it, lets the focus through, as a live read that
+        // fails does. A menu opening redirected to the current focus is judged
         // by the focus's element, whose keyboard focus no cache of this
         // event holds, so it is let through.
         if out_of_time() {
-            if std::ptr::eq(subject, element) && !sender.has_focus {
+            if std::ptr::eq(subject, element) && sender.lacked_keyboard_focus() {
                 return Err(
                     "its event says it did not have the keyboard focus, and its read's time was up",
                 );

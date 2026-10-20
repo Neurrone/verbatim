@@ -620,7 +620,10 @@ Public API:
     `ListenerEvent` (NVDA's thirteen base properties, `IsDialog` and
     `IsTogglePatternAvailable`, with the Text pattern prefetched;
     `parts(runtime_id)` gives its role, name and focused state, nothing
-    else), `PropertyEvent` (`RoleCore`, name, `ValueSet`, `States` and the
+    else; its cached `HasKeyboardFocus` is read as an `Option<bool>`, `None`
+    when the cache does not hold it, and `lacked_keyboard_focus()` is true
+    only for a cached `false`, for the focus listener's judgement once a
+    read's time is up), `PropertyEvent` (`RoleCore`, name, `ValueSet`, `States` and the
     process id, 24 properties; `parts(runtime_id)` gives everything but
     details), and `TextEvent` (process id, native window handle and class
     name). All three cover `Kept`, and `ListenerEvent` covers

@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId, UIA_PATTERN_ID,
-    UIA_PROPERTY_ID, UIA_SelectionPatternId, UIA_TextPatternId,
+    UIA_HasKeyboardFocusPropertyId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
+    UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionPatternId, UIA_TextPatternId,
 };
 use windows::core::IUnknown;
 
@@ -162,5 +162,54 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
     assert_eq!(
         ids(&request_properties::<Ancestor>(&Ancestor::all_on())),
         ancestor
+    );
+}
+
+/// A focus event's cache whose `HasKeyboardFocus` is the given boolean, or
+/// which does not hold it, and which holds every other property empty.
+struct KeyboardFocus(Option<bool>);
+
+impl CachedReads for KeyboardFocus {
+    fn value(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
+        if property == UIA_HasKeyboardFocusPropertyId {
+            self.0.map(VARIANT::from)
+        } else {
+            Some(VARIANT::default())
+        }
+    }
+
+    fn value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
+        self.value(property)
+    }
+
+    fn rect(&self, _: UIA_PROPERTY_ID) -> Option<RECT> {
+        None
+    }
+
+    fn pattern(&self, _: UIA_PATTERN_ID) -> Option<IUnknown> {
+        None
+    }
+}
+
+/// A focus event whose cache does not hold `HasKeyboardFocus`, its
+/// provider having failed to supply it, does not say its element lacked
+/// the keyboard focus, which the focus listener takes from the cache once
+/// its read's time is up; a cached `false` does, and a cached `true` does
+/// not.
+#[test]
+fn a_focus_event_lacks_the_keyboard_focus_only_by_a_cached_false() {
+    let lacked = |focus: Option<bool>| {
+        ListenerEvent::read_from(
+            &Reader {
+                source: &KeyboardFocus(focus),
+                absent: Absent::NONE,
+            },
+            &ListenerEvent::all_on(),
+        )
+        .lacked_keyboard_focus()
+    };
+    assert_eq!(
+        [None, Some(false), Some(true)].map(lacked),
+        [false, true, false]
     );
 }

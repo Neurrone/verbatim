@@ -786,7 +786,7 @@ fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
     let outpost = OutpostUnderTest::new(&fixture.app);
     let deep = fixture.delivered("Deep button");
     assert!(
-        !deep.read().has_focus,
+        deep.read().has_focus == Some(false),
         "the event's cache says the sender did not have the keyboard focus"
     );
     fixture.app.send("set-focus deep");

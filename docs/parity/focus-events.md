@@ -56,8 +56,16 @@ difference when a read's time is up.
   needs the last focus's keyboard focus read live; a repeat in an
   application that slow is spoken where NVDA drops it. Its other checks
   are made where no call is needed
-  (`docs/design/listener-without-connections.md`, section 5). Mockapp's
-  `a_repeated_focus_out_of_time_is_reported` pins it.
+  (`docs/design/listener-without-connections.md`, section 5), and the
+  sender's keyboard focus, which NVDA reads live, is taken from the
+  event's cache: a cached `false` drops the focus, and a cache that does
+  not hold it lets the focus through, as NVDA's live read that fails
+  does. Mockapp's `a_repeated_focus_out_of_time_is_reported` pins the
+  skipped repeat test, mockapp's
+  `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`
+  the cached `false`, and `verbatim-uia`'s
+  `a_focus_event_lacks_the_keyboard_focus_only_by_a_cached_false` the
+  cache that does not hold it.
 - Each outpost makes NVDA's MSAA test, by the address of the last focus
   it reported, a whole object rather than a child by id. That focus
   stops counting after a foreground change the outpost reports, and once

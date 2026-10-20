@@ -94,9 +94,15 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`).
   When the read's time budget has passed before the keyboard focus
   is read, the event's cached `HasKeyboardFocus` stands in for NVDA's live
-  read, and a focus whose event says it did not have the focus is dropped
-  (mockapp's
-  `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`).
+  read, and a focus whose event says it did not have the focus, a cached
+  `false`, is dropped (mockapp's
+  `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`);
+  a cache that does not hold the property, its provider having failed to
+  supply it, lets the focus through, as NVDA's live read that fails does
+  (`verbatim-uia`'s
+  `a_focus_event_lacks_the_keyboard_focus_only_by_a_cached_false`, a unit
+  test, since mockapp's provider cannot leave one property out of a
+  cache).
 - The console host's window element never gives the focus, whatever it
   reports, as NVDA's `consoleUIAWindow` refuses its focus events
   (`NVDAObjects/UIA/winConsoleUIA.py` 356 to 358 and 446 to 447): one
