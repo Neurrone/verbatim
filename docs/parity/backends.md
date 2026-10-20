@@ -71,8 +71,11 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   own element's `HasKeyboardFocus` live and drops the focus when it is
   false, as NVDA reads `currentHasKeyboardFocus` in
   `shouldAllowUIAFocusEvent`, then reads the element's states, value,
-  and details afresh and its ancestors in the same remote operation
-  (`docs/design/focus-pipeline.md`, section 12). Pinned by mockapp's
+  and details afresh with one cache-building call, and its ancestors one
+  step up at a time, every call on the element it holds and none a
+  remote operation (`docs/design/focus-pipeline.md`, section 12;
+  `docs/design/listener-without-connections.md`, sections 2 and 3).
+  Pinned by mockapp's
   `a_focus_reports_the_states_read_when_it_is_handled` and Core's
   `a_focus_read_after_its_item_was_selected_is_announced_without_the_selection`.
   A focus reported without its element, which was not found in time,

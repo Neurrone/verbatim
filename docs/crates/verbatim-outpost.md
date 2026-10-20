@@ -512,9 +512,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `Clock`, the system's unless `Arbitrator::set_clock` sets another, and
   `Arbitrator::now` reads it, for the worker's renewal of the verdicts an
   entry probed. The same clock measures the time budgets of the outpost's
-  classic walks (`PATH_BUDGET`, `ENRICHMENT_BUDGET`) and of a focus
-  reader's whole read (`READ_BUDGET`), each checked between calls through
-  `arbitration::time_limit`. `Outpost::set_clock` sets an outpost's, and
+  classic walks (`PATH_BUDGET`, `ENRICHMENT_BUDGET`), each checked
+  between calls through `arbitration::time_limit`, and of a focus
+  reader's whole read (`READ_BUDGET`), checked between calls through
+  `focus_read`'s `Budget`, which leaves out the raw probe's wait.
+  `Outpost::set_clock` sets an outpost's, and
   `FocusReader::set_clock` a focus reader's, for a test that counts calls
   and decides when a probe is made again and when a walk's time is up,
   however long its calls take. Both class lists are
