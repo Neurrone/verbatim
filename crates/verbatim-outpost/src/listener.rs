@@ -1161,6 +1161,7 @@ fn queue_for_reading(
                 pid,
                 DeliveredFact::UiaFocusDropped {
                     marker: meta.marker,
+                    no_window: false,
                 },
                 meta,
             );
@@ -1604,7 +1605,10 @@ mod tests {
         outgoing.focus_read(Pid(5), Judged::Dropped("read").into_fact(1), meta(1));
         outgoing.focus_read(
             Pid(5),
-            DeliveredFact::UiaFocusDropped { marker: 2 },
+            DeliveredFact::UiaFocusDropped {
+                marker: 2,
+                no_window: false,
+            },
             meta(2),
         );
         let facts: Vec<DeliveredFact> = sent(&outgoing, &mut reader)
@@ -1619,8 +1623,14 @@ mod tests {
             [
                 DeliveredFact::UiaFocusMarker { marker: 1 },
                 DeliveredFact::UiaFocusMarker { marker: 2 },
-                DeliveredFact::UiaFocusDropped { marker: 1 },
-                DeliveredFact::UiaFocusDropped { marker: 2 },
+                DeliveredFact::UiaFocusDropped {
+                    marker: 1,
+                    no_window: false,
+                },
+                DeliveredFact::UiaFocusDropped {
+                    marker: 2,
+                    no_window: false,
+                },
             ]
         );
     }
@@ -1995,7 +2005,14 @@ mod tests {
                 ..EventTiming::default()
             },
         };
-        outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusDropped { marker: 1 }, meta);
+        outgoing.focus_read(
+            Pid(5),
+            DeliveredFact::UiaFocusDropped {
+                marker: 1,
+                no_window: false,
+            },
+            meta,
+        );
         assert_eq!(
             timing_of_the_fact(&outgoing, &mut reader).listener_handled_at_us,
             6_500

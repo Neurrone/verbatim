@@ -433,6 +433,36 @@ and roles), and if all match, the new node ids are taken silently,
 otherwise the focus is announced as usual. The same question is asked
 after the focus listener is replaced.
 
+### A focus UIA does not deliver
+
+UI Automation sometimes delivers a newly started process's focus events
+late or not at all, while the system's `WinEvent` focus for the same
+moves still comes, and sometimes delivers them after their elements are
+gone (`docs/design/listener-without-connections.md`, risks 2 and 13).
+
+NVDA, by its source at the pin (732d1ce2): it drops every `WinEvent`
+whose window is native UIA before making any object
+(`source/IAccessibleHandler/__init__.py`, `winEventToNVDAEvent`, lines
+577 to 582), so the `WinEvent` focus is not used; and it drops a UIA
+focus whose sender has no window above it, since `getNearestWindowHandle`
+answers none for a gone element (`source/UIAHandler/__init__.py`, lines
+1437 to 1444) and `isNativeUIAElement` then finds the element not native
+(lines 1516 to 1575, its drop at 887 to 899 of the focus handler). It has
+no other path that reads the focus after a `WinEvent`, so by its source
+it loses these focuses; that is not captured.
+
+Verbatim: **different**, as a consequence of that design's decision 11
+(Fable, 2026-10-21, pending Dickson's acceptance). When no UIA focus
+follows a `WinEvent` focus in a UIA window within a second, or the UIA
+focus is dropped because its sender has no window above it, the
+application's outpost reads its focus itself, as the focus-now query
+does, and reports it, once. So where UIA delivers late, Verbatim speaks
+the same words a second after the `WinEvent`, earlier than NVDA would;
+where it never delivers, and for a burst of gone elements, Verbatim
+speaks the focus where NVDA, by its source, is silent. A late UIA focus
+for the element already read is Core's duplicate and says nothing. Tests:
+`focus_reports.rs` in `mockapp`, its three `a_winevent_focus_` tests.
+
 ### Held objects
 
 NVDA: an object lives as long as something refers to it, and an MSAA

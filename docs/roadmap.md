@@ -241,29 +241,25 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   local run, since neither reproduces here.
 
 - The focus pipeline's follow-ups (2026-10-17):
-  - UIA's late delivery of a newly started File Explorer process's focus
-    events (risk 2 of [the listener design](design/listener-without-connections.md)),
-    fixed by decision 11's remaining step: when a WinEvent focus in a UIA
-    window has no UIA focus event following it, Core asks that
-    application's outpost for its focus. On 2026-10-20 the same fault was
-    seen in Settings: in `settings_system_page` (1 failure in 3 runs,
-    evidence
-    `target/e2e-evidence/verify-head-2026-10-20/settings_system_page-2026-10-20T07-31-34.755Z-fail/`),
-    the listener received the MSAA focus WinEvents for
-    `SystemSettings.exe`'s `CoreWindow` (object ids -4 and 205) and no
-    UIA focus event followed within 14.5 seconds, where the passing runs
-    had it within 1 to 35 ms; the window answered the outpost's probe in
-    37 ms and kept raising name changes, so it was not hung. Decision
-    11's step covers it, since the listener had the WinEvents. Two
-    by-hand capture launches of Settings on 2026-10-21, local time
-    (Singapore, UTC+8), showed it again:
-    the listener dropped the UIA focus on Settings' frame as "its window
-    does not use UIA" and no UIA focus on the page followed, while the
-    search box's suggestion selection event still came
-    (`target/e2e-evidence/fixes-round-six-2026-10-21/walk-logs/listener.log`, 17:46:49 and
-    17:46:53 UTC on 2026-10-20, the log's UTC times for those local
-    launches, and `walk-capture-2.txt` and
-    `walk-capture-3.txt` beside it, which hold no speech).
+  - UIA's late or missing delivery of a new process's focus events, and
+    the burst of gone senders (risks 2 and 13 of
+    [the listener design](design/listener-without-connections.md)), are
+    recovered by decision 11's step, built on 2026-10-21 (section 10,
+    step 12). What remains: no run has met either fault live since, so
+    the recovery's speech rests on its mockapp tests; the first
+    `settings_system_page` or File Explorer run that meets it is to be
+    read for the outpost's "the focus is read and reported" line and
+    the speech after it.
+  - The early connection an outpost makes to a new window after its probe
+    finds a provider (variant d of
+    [the listener design](design/listener-without-connections.md),
+    risk 11) held the worker 2,004 to 4,230 ms, the connection timeout or
+    more, in about half the new File Explorer windows of five
+    `measure_focus_explorer` runs on 2026-10-21, against the 250 to 454 ms
+    risk 11 recorded, and delayed those windows' first focus by 1.1 to
+    3.5 seconds (`target/e2e-evidence/explorer-flakes-2026-10-21/partA/`).
+    A question for Dickson: whether the connection moves off the worker
+    or is made later; nothing is changed for it.
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,

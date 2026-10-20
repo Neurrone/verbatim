@@ -846,6 +846,14 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// window this outpost would connect to
 /// (`docs/design/listener-without-connections.md`, section 4.3).
 pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<FocusedControl> {
+    focused_control_in(context, client).map(|(_, control)| control)
+}
+
+/// [`focused_control`] with the window whose focused element it read.
+pub(super) fn focused_control_in(
+    context: &Context,
+    client: &mut Client,
+) -> Option<(isize, FocusedControl)> {
     let hwnd = control_window(context.target_pid(), || context.focus_window())?;
     if window_belongs_to_hidden_frame(hwnd) {
         return None;
@@ -885,23 +893,29 @@ pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<
         if element.read().value_from_selection() {
             node.value = selected_child.take().and_then(|child| child.name);
         }
-        Some(FocusedControl {
-            node,
-            ancestors,
-            selected_child,
-            window: Some(window_facts(hwnd)),
-        })
+        Some((
+            hwnd,
+            FocusedControl {
+                node,
+                ancestors,
+                selected_child,
+                window: Some(window_facts(hwnd)),
+            },
+        ))
     } else {
         let node =
             verbatim_ia2::acquire::focused_snapshot(context.target_pid(), &context.msaa_registry)?;
         let (ancestors, selected_child) = msaa_enrichment(context, client, &node, &[]);
         let ancestors = ancestors.unwrap_or_default();
-        Some(FocusedControl {
-            node,
-            ancestors,
-            selected_child,
-            window: Some(window_facts(hwnd)),
-        })
+        Some((
+            hwnd,
+            FocusedControl {
+                node,
+                ancestors,
+                selected_child,
+                window: Some(window_facts(hwnd)),
+            },
+        ))
     }
 }
 

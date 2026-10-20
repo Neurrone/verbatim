@@ -301,6 +301,12 @@ pub enum DeliveredFact {
     UiaFocusDropped {
         /// The marker the drop resolves.
         marker: u64,
+        /// Whether it was dropped because its sender has no window above
+        /// it, which a sender gone before its read is: the event came but
+        /// cannot be read, so an outpost waiting for a UIA focus after a
+        /// `WinEvent` focus in a UIA window reads its focus at once
+        /// (`docs/design/listener-without-connections.md`, decision 11).
+        no_window: bool,
     },
     /// The focus listener that sent the markers still waiting has ended:
     /// none of them will be resolved, so none is waited for any more. Made
@@ -1591,7 +1597,10 @@ mod tests {
         );
         for fact in [
             DeliveredFact::UiaFocusMarker { marker: 9 },
-            DeliveredFact::UiaFocusDropped { marker: 9 },
+            DeliveredFact::UiaFocusDropped {
+                marker: 9,
+                no_window: true,
+            },
             DeliveredFact::UiaFocusReadsEnded,
         ] {
             let deliver = SupervisorToOutpost::DeliverFact {
@@ -1744,7 +1753,13 @@ mod tests {
         assert!(!notification("Clipboard").may_start_outpost());
         // A focus's drop, and the end of a listener's reads, only resolve
         // markers an outpost holds.
-        assert!(!DeliveredFact::UiaFocusDropped { marker: 1 }.may_start_outpost());
+        assert!(
+            !DeliveredFact::UiaFocusDropped {
+                marker: 1,
+                no_window: false
+            }
+            .may_start_outpost()
+        );
         assert!(!DeliveredFact::UiaFocusReadsEnded.may_start_outpost());
         for fact in [
             notification(verbatim_core::SNAP_RESULTS_ACTIVITY),

@@ -400,6 +400,15 @@ pub enum FocusEvent {
     Notification,
 }
 
+/// The reason a focus or selection is dropped when its sender has no
+/// window above it, which in a new File Explorer window is a sender gone
+/// before its read (`docs/design/listener-without-connections.md`, risk 13).
+pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object for it";
+
+/// The reason a notification is dropped when its sender has no window
+/// above it.
+const NOTIFICATION_NO_WINDOW: &str = "its sender has no window above it";
+
 /// What became of one focus event.
 #[derive(Debug)]
 pub enum Judged {
@@ -418,7 +427,10 @@ impl Judged {
     pub fn into_fact(self, marker: u64) -> DeliveredFact {
         match self {
             Judged::Read(read) => DeliveredFact::UiaFocusRead { marker, read },
-            Judged::Dropped(_) => DeliveredFact::UiaFocusDropped { marker },
+            Judged::Dropped(reason) => DeliveredFact::UiaFocusDropped {
+                marker,
+                no_window: reason == NO_WINDOW || reason == NOTIFICATION_NO_WINDOW,
+            },
             Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
         }
     }
@@ -844,9 +856,7 @@ impl FocusReader {
                     match verbatim_uia::nearest_window_handle(element) {
                         Some(nearest) => nearest,
                         None => {
-                            return Judged::Dropped(
-                                "it has no window above it, so NVDA makes no object for it",
-                            );
+                            return Judged::Dropped(NO_WINDOW);
                         }
                     }
                 } else {
@@ -869,7 +879,7 @@ impl FocusReader {
                     && !snap_results
                     && verbatim_uia::nearest_window_handle(element).is_none()
                 {
-                    return Judged::Dropped("its sender has no window above it");
+                    return Judged::Dropped(NOTIFICATION_NO_WINDOW);
                 }
                 Judged::Passed(Box::new(DeliveredFact::UiaNotification {
                     hwnd,
@@ -1254,8 +1264,7 @@ impl FocusReader {
                 window = nearest,
                 "UIA focus sender's nearest window looked up"
             );
-            let nearest =
-                nearest.ok_or("it has no window above it, so NVDA makes no object for it")?;
+            let nearest = nearest.ok_or(NO_WINDOW)?;
             self.window.learn(nearest);
             nearest
         } else {

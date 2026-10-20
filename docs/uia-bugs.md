@@ -248,6 +248,40 @@ No test reproduces it yet; the experiment is P2c.
 
 [`experiments/desktop-wide-focus-handlers-in-a-second-process-deliver-late/`](../experiments/desktop-wide-focus-handlers-in-a-second-process-deliver-late/readme.md): experiment P2's delivery timings, `p2b`, `p2c` and `p2d`.
 
+### A new process's focus events reach the desktop-wide handler late or not at all
+
+#### Trigger
+
+A newly started application, a File Explorer folder window in its own process or the Settings app, moves its focus while a desktop-wide `AddFocusChangedEventHandler` is registered in another process, Verbatim's listener.
+
+#### Symptoms
+
+The listener's `WinEvent` hook sees the focus move, and UI Automation delivers the matching focus events late, or none of them: none of a new folder window's 400 items, or none of its first 50 to 130, in 3 of 6 `measure_repeat_explorer` runs one evening and in none of 19 another day (`docs/design/listener-without-connections.md`, decision 2, risk 2); in `settings_system_page`, the `CoreWindow`'s focus `WinEvent`s (object ids -4 and 205) with no UIA focus in 14.5 seconds, where passing runs had it within 1 to 35 ms (1 of 3 runs on 2026-10-20). Delivered late, the events can arrive in a burst after their elements are gone, and every call on them fails with `UIA_E_ELEMENTNOTAVAILABLE` (risk 13). The cause is not known; it resembles the registration fault below, events raised before UI Automation starts delivering a new process's events being lost, which is not established.
+
+#### Not affected
+
+Applications already running: a UIA focus follows its `WinEvent` in the same millisecond at the median in File Explorer.
+
+#### Workarounds that worked
+
+Not a workaround of the fault but a recovery from it (2026-10-21; Fable, pending Dickson's acceptance): the application's outpost, which sees the `WinEvent` focus copy, waits a second for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came with a gone element (decision 11 of the same design). No run since has met the fault live; the recovery is tested in mockapp.
+
+#### Workarounds that didn't work
+
+An early connection to the new window from another process (decision 2's `watchnew` runs) did not prevent the burst; an outpost's connection at its first sight of the window lowered its rate without removing it.
+
+#### NVDA
+
+By its source, NVDA loses these focuses: it drops a `WinEvent` focus in a native UIA window and a UIA focus whose element has no window (`docs/parity/focus-events.md`, "A focus UIA does not deliver"). Not captured.
+
+#### Reproduction test
+
+None: the fault does not reproduce reliably, and no mockapp simulation is built for such a fault (Dickson, 2026-10-19). The recovery's tests are `focus_reports.rs`'s three `a_winevent_focus_` tests.
+
+#### Evidence
+
+`target/e2e-evidence/listener-no-connections/` (`g1c/`, `g1d-ab/`, `ab2/`), `target/e2e-evidence/verify-head-2026-10-20/settings_system_page-2026-10-20T07-31-34.755Z-fail/`, and `target/e2e-evidence/fixes-round-six-2026-10-21/walk-logs/`.
+
 ### A registration that times out reports success
 
 #### Trigger

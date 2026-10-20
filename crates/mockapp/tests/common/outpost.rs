@@ -566,6 +566,13 @@ impl OutpostUnderTest {
         now - self.failed_reads_taken.replace(now)
     }
 
+    /// Lets the outpost handle everything handed to it, a wait for a UIA
+    /// focus that is due by its clock included, without asserting what it
+    /// said meanwhile.
+    pub fn settle(&self) {
+        self.outpost.settle();
+    }
+
     pub fn settled(&self) {
         self.outpost.settle();
         match self.messages.try_recv() {

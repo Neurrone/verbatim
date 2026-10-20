@@ -171,7 +171,10 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
                     id_object: -4,
                     id_child: 0,
                 },
-                "drop" => DeliveredFact::UiaFocusDropped { marker: 1 },
+                "drop" => DeliveredFact::UiaFocusDropped {
+                    marker: 1,
+                    no_window: false,
+                },
                 "foreground" => DeliveredFact::Foreground { hwnd: 1 },
                 other => panic!("no fact is called {other}"),
             };

@@ -10,8 +10,10 @@
 //! follows nothing when it has no path, until a later focus brings one;
 //! how a change raised after a focus event waits for the focus's read;
 //! that a text change raised after the focus leaves a document and returns
-//! to it is heard; and that a foreground event for a window read through
-//! UIA is dropped, the window met only among the focus's ancestors.
+//! to it is heard; that a foreground event for a window read through
+//! UIA is dropped, the window met only among the focus's ancestors; and
+//! how the outpost reads its focus itself after a `WinEvent` focus in a
+//! UIA window that no UIA focus follows.
 //!
 //! The test stands in for the listener (`common::outpost`), reading each
 //! focus with the listener's own reader on this thread; mockapp's focus
@@ -30,6 +32,7 @@ use verbatim_model::{
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{
     DeliveredFact, OutpostToSupervisor, SupervisorToOutpost, UiaFocusRead, UiaSnapshotFact,
+    WinEventStamp,
 };
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
@@ -817,6 +820,112 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
     app.quit();
 }
 
+/// The listener's copy of a `WinEvent` focus on the client object of
+/// mockapp's window, a UIA window, with no UIA focus event of its own.
+fn winevent_focus(outpost: &OutpostUnderTest, hwnd: HWND) {
+    outpost.deliver_win_event(
+        DeliveredFact::MsaaFocus {
+            hwnd: hwnd.0 as isize,
+            id_object: -4,
+            id_child: 0,
+        },
+        WinEventStamp { thread: 1, time: 1 },
+    );
+}
+
+/// A `WinEvent` focus in a UIA window that no UIA focus follows, as UI
+/// Automation sometimes leaves a new process's focus events undelivered
+/// (`docs/design/listener-without-connections.md`, risk 2): once a second
+/// has passed by the outpost's clock, the outpost reads its application's
+/// focus itself and reports it with its ancestors (decision 11), once. The
+/// outpost's clock is the test's, which nothing moves but the test.
+fn a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed() {
+    let title = common::unique_title("mockapp-unanswered-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.pass_time(Duration::from_millis(999));
+    outpost.settled();
+
+    outpost.pass_time(Duration::from_millis(1));
+    outpost.settle();
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A `WinEvent` focus in a UIA window that its UIA focus follows is
+/// reported once, from the listener's read, and nothing is read after the
+/// bound.
+fn a_winevent_focus_its_uia_focus_follows_is_reported_once() {
+    let title = common::unique_title("mockapp-answered-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    let reported = outpost.uia_focus(&client.focused());
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A `WinEvent` focus in a UIA window whose UIA focus event came but was
+/// dropped because its sender had no window above it, as a new File
+/// Explorer window's first focuses are once their senders are gone
+/// (`docs/design/listener-without-connections.md`, risk 13): the outpost
+/// reads its focus at once, without waiting for the bound, and reports it
+/// once.
+fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
+    let title = common::unique_title("mockapp-gone-sender");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 4 });
+    outpost.deliver(DeliveredFact::UiaFocusDropped {
+        marker: 4,
+        no_window: true,
+    });
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A focus event repeated on the element the listener last accepted, which
 /// still has the keyboard focus, is dropped before anything of it is read,
 /// as NVDA's duplicate rule drops it (`docs/design/focus-pipeline.md`,
@@ -1597,6 +1706,18 @@ fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed",
+            a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed,
+        ),
+        (
+            "a_winevent_focus_its_uia_focus_follows_is_reported_once",
+            a_winevent_focus_its_uia_focus_follows_is_reported_once,
+        ),
+        (
+            "a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once",
+            a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once,
+        ),
         (
             "an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off",
             an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,

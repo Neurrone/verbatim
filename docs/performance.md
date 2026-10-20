@@ -436,6 +436,34 @@ verdict for the focus's window rather than asking the window again.
   into the application, and no wake-up beyond the start's.
 - Target: the minimum, which the listener meets.
 
+### A WinEvent focus in a UIA window, and the read when no UIA focus follows
+
+- Per focus, steady state: nothing added. The outpost's worker drops a
+  `WinEvent` focus copy whose window uses UIA, as before, and records it
+  as a gap in its own state, with no lock and no call; the UIA focus read
+  from the listener closes it. The gap's time is given to the wait the
+  worker already makes for its next entry (`Intake::next_with_gap`),
+  which takes the intake's lock anyway; the UIA focus's marker wakes the
+  worker as it always did, so a gap answered within the bound sets no
+  timer of its own and costs no wake-up. The listener's drop message
+  carries one more `bool` (`no_window`). No log line is added on this
+  path: the existing debug lines gain fields (`opened_gap`,
+  `answered_gap_ms`). Not traced; by construction.
+- Per gap that comes to a read, once a second has passed with no UIA
+  focus, or at once when the UIA focus was dropped because its sender had
+  no window above it (`docs/design/listener-without-connections.md`,
+  decision 11): one wake-up of the worker at the bound, unless another
+  entry wakes it first, and the focus-now query's read
+  (`read::focused_control_in`): its local check of the focus window,
+  then, when the window is the application's and uses UIA, one
+  `GetFocusedElementBuildCache`, the enrichment by one remote operation
+  or the classic walk, and the MSAA continuation above the process
+  boundary, as a focus-now query costs (`call_counts.rs`); and one report
+  to Core. At most one read a gap. In five `measure_focus_explorer` runs
+  (2026-10-21) 1 to 6 gaps a run came to a read, every one ending at the
+  local check, since the focus had moved to another application's window.
+- Target: no cost per focus; one read per gap.
+
 ### A focus behind other objects' events
 
 Not a count of calls but of what a focus waits for. A failed

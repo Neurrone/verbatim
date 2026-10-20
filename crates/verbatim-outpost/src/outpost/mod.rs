@@ -36,6 +36,7 @@
 pub(crate) mod acceptance;
 mod alarm;
 mod focus_path;
+mod gap;
 mod handover;
 mod intake;
 mod narrowing;

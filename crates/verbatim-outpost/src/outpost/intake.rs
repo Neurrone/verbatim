@@ -479,6 +479,52 @@ struct State {
     /// The foreground changes pushed while the hand-over can still deliver
     /// copies ([`ForegroundTaken`]).
     foreground_taken: ForegroundTaken,
+    /// What became of the UIA focus markers resolved here, without a read,
+    /// since the worker last took it ([`Intake::take_marker_news`]).
+    marker_news: MarkerNews,
+}
+
+/// The markers the intake resolved without a read, which never reach the
+/// worker, for the worker's wait for a UIA focus after a `WinEvent` focus
+/// in a UIA window (`super::gap`): when the newest was dropped for another
+/// reason than its sender having no window above it, when the newest was
+/// dropped for that reason, and whether the listener's reads ended, each
+/// by the time the drop was observed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) struct MarkerNews {
+    /// The newest drop for another reason than "no window above it", or
+    /// the end of the listener's reads, by when it was observed.
+    pub(super) answered_at_ms: Option<u64>,
+    /// The newest drop because the sender has no window above it.
+    pub(super) no_window_at_ms: Option<u64>,
+}
+
+/// When [`Intake::next_with_gap`] wakes its worker for the gap.
+#[derive(Debug, PartialEq, Eq)]
+enum GapWake {
+    /// Now.
+    Now,
+    /// At this time, if nothing else comes first.
+    At(Instant),
+    /// Not for the gap.
+    Not,
+}
+
+impl MarkerNews {
+    /// A drop observed at `observed_at_ms`, for its sender having no window
+    /// above it when `no_window`, or the end of the listener's reads.
+    fn record(&mut self, no_window: bool, observed_at_ms: u64) {
+        let slot = if no_window {
+            &mut self.no_window_at_ms
+        } else {
+            &mut self.answered_at_ms
+        };
+        *slot = Some(slot.map_or(observed_at_ms, |at| at.max(observed_at_ms)));
+    }
+
+    fn is_empty(self) -> bool {
+        self == Self::default()
+    }
 }
 
 /// The record: the newest raised foreground change pushed, by its window
@@ -598,12 +644,67 @@ impl State {
             return None;
         }
         self.wake = None;
-        Some(Entry {
+        Some(Self::wake_entry())
+    }
+
+    /// Whether the worker waiting for a UIA focus until `gap` is to be
+    /// given [`Item::Wake`] at `now`, or when: never while a marker waits
+    /// for its read, whose resolution decides first; at once when a marker
+    /// was resolved without a read meanwhile, or the time has come.
+    fn gap_wake(&self, gap: Option<Instant>, now: Instant) -> GapWake {
+        let Some(at) = gap else {
+            return GapWake::Not;
+        };
+        if self.waiting.iter().any(|waiting| waiting.marker.is_some()) {
+            GapWake::Not
+        } else if now >= at || !self.marker_news.is_empty() {
+            GapWake::Now
+        } else {
+            GapWake::At(at)
+        }
+    }
+
+    /// Resolves the markers `entry` resolves without a read, a drop or the
+    /// end of the listener's reads, recording it for the worker
+    /// ([`MarkerNews`]); whether it was one.
+    fn resolves_without_read(&mut self, entry: &Entry) -> bool {
+        // A drop's observation, or the time it arrived when it carries
+        // none, which only a test's delivery does.
+        let observed_at_ms = if entry.observed_at_ms == 0 {
+            super::now_ms()
+        } else {
+            entry.observed_at_ms
+        };
+        match &entry.item {
+            Item::Fact(DeliveredFact::UiaFocusDropped { marker, no_window }, _) => {
+                tracing::debug!(
+                    marker,
+                    no_window,
+                    "a UIA focus's marker is dropped with its focus"
+                );
+                self.waiting
+                    .retain(|waiting| waiting.marker != Some(*marker));
+                self.marker_news.record(*no_window, observed_at_ms);
+                true
+            }
+            Item::Fact(DeliveredFact::UiaFocusReadsEnded, _) => {
+                tracing::debug!("the listener's reads ended; no marker is waited on");
+                self.waiting.retain(|waiting| waiting.marker.is_none());
+                self.marker_news.record(false, observed_at_ms);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// An [`Item::Wake`] entry.
+    fn wake_entry() -> Entry {
+        Entry {
             item: Item::Wake,
             trace: TraceId::mint(),
             observed_at_ms: super::now_ms(),
             timing: crate::protocol::EventTiming::default(),
-        })
+        }
     }
 }
 
@@ -671,23 +772,12 @@ impl Intake {
         if state.drops_on_arrival(&entry.item) {
             return;
         }
+        if state.resolves_without_read(&entry) {
+            drop(state);
+            self.ready.notify_one();
+            return;
+        }
         let marker = match &entry.item {
-            Item::Fact(DeliveredFact::UiaFocusDropped { marker }, _) => {
-                tracing::debug!(marker, "a UIA focus's marker is dropped with its focus");
-                state
-                    .waiting
-                    .retain(|waiting| waiting.marker != Some(*marker));
-                drop(state);
-                self.ready.notify_one();
-                return;
-            }
-            Item::Fact(DeliveredFact::UiaFocusReadsEnded, _) => {
-                tracing::debug!("the listener's reads ended; no marker is waited on");
-                state.waiting.retain(|waiting| waiting.marker.is_none());
-                drop(state);
-                self.ready.notify_one();
-                return;
-            }
             Item::Fact(DeliveredFact::UiaFocusMarker { marker }, _) => Some(*marker),
             _ => None,
         };
@@ -764,7 +854,20 @@ impl Intake {
     /// [`Item::Wake`] when the time
     /// [`wake_at`](Self::wake_at) named comes first; `None` once the queue
     /// is closed.
+    #[cfg(test)]
     pub(super) fn next(&self) -> Option<(Planned, u64)> {
+        self.next_with_gap(None)
+    }
+
+    /// [`next`](Self::next) for a worker waiting for a UIA focus after a
+    /// `WinEvent` focus in a UIA window (`super::gap`), `gap` being when
+    /// that wait's bound passes: [`Item::Wake`] comes at that time as well,
+    /// and as soon as a marker resolved without a read is news
+    /// ([`take_marker_news`](Self::take_marker_news)), but only while no
+    /// marker waits for its read, since its resolution decides first. The
+    /// time is given to the wait this already makes, so a gap whose UIA
+    /// focus comes in time costs no wake-up.
+    pub(super) fn next_with_gap(&self, gap: Option<Instant>) -> Option<(Planned, u64)> {
         let mut state = self.lock();
         loop {
             if let Some(planned) = state.batch.pop_front() {
@@ -813,7 +916,18 @@ impl Intake {
             if let Some(entry) = state.wake_due(now) {
                 return Some((Planned::Run(entry), state.batch_number));
             }
-            state = match state.wake {
+            let gap = match state.gap_wake(gap, now) {
+                GapWake::Now => {
+                    return Some((Planned::Run(State::wake_entry()), state.batch_number));
+                }
+                GapWake::At(at) => Some(at),
+                GapWake::Not => None,
+            };
+            let wake = match (state.wake, gap) {
+                (Some(wake), Some(gap)) => Some(wake.min(gap)),
+                (wake, gap) => wake.or(gap),
+            };
+            state = match wake {
                 Some(wake) => {
                     self.ready
                         .wait_timeout(state, wake - now)
@@ -852,6 +966,12 @@ impl Intake {
         drop(state);
         self.ready.notify_all();
         dropped
+    }
+
+    /// The markers resolved here without a read since the last call, which
+    /// it forgets.
+    pub(super) fn take_marker_news(&self) -> MarkerNews {
+        std::mem::take(&mut self.lock().marker_news)
     }
 
     /// Asks [`next`](Self::next) for an [`Item::Wake`] at `at` if nothing
@@ -3103,6 +3223,50 @@ mod tests {
     }
 
     #[test]
+    fn a_gap_is_not_woken_for_while_a_marker_waits_for_its_read() {
+        let intake = Intake::default();
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::UiaFocusMarker { marker: 3 }, None),
+            1,
+        );
+        let now = Instant::now();
+        assert_eq!(intake.lock().gap_wake(Some(now), now), GapWake::Not);
+    }
+
+    #[test]
+    fn a_marker_dropped_for_no_window_wakes_the_gap_at_once_with_its_news() {
+        let intake = Intake::default();
+        push_item(
+            &intake,
+            Item::Fact(DeliveredFact::UiaFocusMarker { marker: 3 }, None),
+            1,
+        );
+        push_item(
+            &intake,
+            Item::Fact(
+                DeliveredFact::UiaFocusDropped {
+                    marker: 3,
+                    no_window: true,
+                },
+                None,
+            ),
+            40,
+        );
+        let now = Instant::now();
+        let later = now + std::time::Duration::from_secs(1);
+        assert_eq!(intake.lock().gap_wake(Some(later), now), GapWake::Now);
+        assert_eq!(
+            intake.take_marker_news(),
+            MarkerNews {
+                answered_at_ms: None,
+                no_window_at_ms: Some(40),
+            }
+        );
+        assert_eq!(intake.lock().gap_wake(Some(later), now), GapWake::At(later));
+    }
+
+    #[test]
     fn what_arrives_after_a_focus_marker_waits_for_its_read_and_the_read_takes_its_place() {
         let intake = Intake::default();
         push_item(&intake, name_change(1), 1);
@@ -3161,7 +3325,13 @@ mod tests {
         assert_eq!(handed_out(&intake), Vec::<u64>::new());
         push_item(
             &intake,
-            Item::Fact(DeliveredFact::UiaFocusDropped { marker: 7 }, None),
+            Item::Fact(
+                DeliveredFact::UiaFocusDropped {
+                    marker: 7,
+                    no_window: false,
+                },
+                None,
+            ),
             4,
         );
         assert_eq!(
@@ -3171,7 +3341,13 @@ mod tests {
         );
         push_item(
             &intake,
-            Item::Fact(DeliveredFact::UiaFocusDropped { marker: 8 }, None),
+            Item::Fact(
+                DeliveredFact::UiaFocusDropped {
+                    marker: 8,
+                    no_window: false,
+                },
+                None,
+            ),
             5,
         );
         assert_eq!(handed_out(&intake), [3]);
