@@ -660,11 +660,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     events beyond the limit though they count, and a foreground change by
     either limit, since it counts among both; UIA events and menu openings
     are not counted; events from a window the system reports hung
-    (`IsHungAppWindow`) are dropped before any read. Within a batch only
-    the newest foreground change is handled; each consecutive run of MSAA
-    focus events and that foreground change is tried newest first until
-    one is reported, at the place of the run's newest, as NVDA's `pumpAll`
-    does (any other entry ends a run);
+    (`IsHungAppWindow`) are dropped before any read. Each consecutive run
+    of MSAA focus events and foreground changes, every foreground change
+    of the batch among them, is tried newest first until one is reported,
+    at the place of the run's newest, as NVDA's `pumpAll` does (any other
+    entry ends a run; `Planned::handle` dispatches each planned item); a
+    newer foreground change of the same window replaces one waiting, as
+    NVDA's limiter keeps one per window;
     every UIA focus event is handled at its own place; and the newest menu
     opening from each backend is handled last. A UIA
     focus's marker holds its place: nothing that arrives after it is
@@ -1214,8 +1216,15 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   its thread's other events as well as one of the focus events, as NVDA's
   limiter does, so the focus events an application raises after it do
   not crowd the system's event out (`docs/design/phase6-design.md`, "A foreground
-  event before its window is in front"). Otherwise a foreground fact is
-  reported at once, whether or not its window has been shown yet,
+  event before its window is in front"). A foreground fact in front is
+  dropped too, before anything is read and without counting as reported,
+  when the last focus or foreground change the outpost reported
+  (`Tracking`'s queued focus) is in its window or a child window of it
+  (`window::is_descendant_window`), or came from the fact's own event
+  address, taken as `OBJID_WINDOW` and `CHILDID_SELF`, and no focus Core
+  queued from another application has replaced it: NVDA's two tests in
+  `processForegroundWinEvent` (`worker::foreground_repeats_focus`).
+  Otherwise a foreground fact is reported at once, whether or not its window has been shown yet,
   stamped with the time its window was confirmed as the foreground, after
   its name is read, rather than the time Windows raised the event,
   named or not, as a focus on the window, since the foreground change is what

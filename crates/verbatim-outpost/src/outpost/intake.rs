@@ -36,13 +36,15 @@
 //!   before any read; an MSAA event from one is counted and kept, and the
 //!   worker drops it before it reads anything, as NVDA's limiter counts it
 //!   and `winEventToNVDAEvent` drops it.
-//! - Within a batch only the newest foreground change is handled. Each
-//!   consecutive run of MSAA focus events and that foreground change is
+//! - Each consecutive run of MSAA focus events and foreground changes is
 //!   tried newest first, until one is reported, at the place of the run's
 //!   newest, as NVDA's `pumpAll` collects a run of focus and foreground
 //!   events and tries it newest first when the next accepted event that is
 //!   neither comes; any other entry ends a run, and a foreground change
-//!   with no focus event beside it is a run of its own. Every UIA focus
+//!   with no focus event beside it is a run of its own. Every foreground
+//!   change of the batch is tried in its run, as NVDA tries each; a newer
+//!   one of the same window replaces one waiting, as NVDA's limiter keeps
+//!   one foreground event per window, object and thread. Every UIA focus
 //!   event is handled in turn at its own place, as NVDA's UIA handler queues each one (the worker's
 //!   arbitration then drops a focus whose backend does not own the window,
 //!   as NVDA's separate MSAA and UIA paths do). The newest menu opening
@@ -305,7 +307,36 @@ pub(super) enum Planned {
     Focus(Vec<Entry>),
 }
 
+/// How the worker is to handle one entry of a [`Planned`] item
+/// ([`Planned::handle`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Handling {
+    /// On its own.
+    Run,
+    /// As a menu opening, after the batch's focus events.
+    Menu,
+    /// As one entry of a focus group, which is reported or not.
+    Tried,
+}
+
 impl Planned {
+    /// Handles the planned item's entries with `handle`, told how each is
+    /// to be handled: a focus group's newest first until one is reported
+    /// ([`try_newest_first`]), `handle` answering whether it was; any
+    /// other entry once, its answer unused. `Err` stops at once.
+    pub(super) fn handle<E>(
+        self,
+        mut handle: impl FnMut(Entry, Handling) -> Result<bool, E>,
+    ) -> Result<(), E> {
+        match self {
+            Planned::Run(entry) => handle(entry, Handling::Run).map(|_| ()),
+            Planned::Menu(entry) => handle(entry, Handling::Menu).map(|_| ()),
+            Planned::Focus(entries) => {
+                try_newest_first(entries, |entry| handle(entry, Handling::Tried))
+            }
+        }
+    }
+
     /// The entries, in the order the worker may handle them.
     pub(super) fn entries(&self) -> Vec<&Entry> {
         match self {
@@ -1052,10 +1083,10 @@ fn admit(
 }
 
 /// Plans one batch from everything that was waiting, in the order it
-/// arrived: drops events from hung windows, applies the batch limits, keeps
-/// only the newest foreground change, tries each consecutive run of MSAA
-/// focus events and that foreground change newest first at the place of
-/// its newest ([`try_newest_first`]), handles each UIA focus event at its
+/// arrived: drops events from hung windows, applies the batch limits, tries
+/// each consecutive run of MSAA focus events and foreground changes newest
+/// first at the place of its newest ([`try_newest_first`]), handles each
+/// UIA focus event at its
 /// own place, and moves the newest menu opening from each backend to the
 /// end, ahead of an idle query that ends the batch.
 ///
@@ -1073,22 +1104,14 @@ fn plan(
         kept.iter()
             .rposition(|item| item.key.as_ref().is_some_and(wanted))
     };
-    let foreground = newest(|key| matches!(key, Key::Foreground(_)));
     let msaa_menu = newest(|key| matches!(key, Key::MenuPopup(..)));
-    // Each consecutive run of MSAA focus events and the newest foreground
-    // change, oldest first, by where its newest is: any entry other than an
-    // MSAA focus or a foreground change ends a run, and an older foreground
-    // change, which is not handled, neither joins nor ends one.
+    // Each consecutive run of MSAA focus events and foreground changes,
+    // oldest first, by where its newest is: any other entry ends a run.
     let mut runs: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut run: Vec<usize> = Vec::new();
     for (index, item) in kept.iter().enumerate() {
         match item.key {
-            Some(Key::MsaaFocus(..)) => run.push(index),
-            Some(Key::Foreground(_)) => {
-                if Some(index) == foreground {
-                    run.push(index);
-                }
-            }
+            Some(Key::MsaaFocus(..) | Key::Foreground(_)) => run.push(index),
             _ => {
                 if let Some(&last) = run.last() {
                     runs.insert(last, std::mem::take(&mut run));
@@ -1109,7 +1132,7 @@ fn plan(
     for (index, key) in keys.iter().enumerate() {
         if matches!(key, Some(Key::MsaaFocus(..) | Key::Foreground(_))) {
             // An older event of a run waits for its newest, where the run is
-            // tried, newest first; an older foreground change is dropped.
+            // tried, newest first.
             if let Some(run) = runs.get(&index) {
                 let group = run
                     .iter()
@@ -1569,23 +1592,52 @@ mod tests {
         assert_eq!(focus_groups(&planned), vec![vec![5, 4, 3, 2]]);
     }
 
-    /// The entries of `planned` the worker handles, in order, when only
-    /// those observed at a time `reported` names are reported: a focus
-    /// group stops at the first reported ([`try_newest_first`]).
+    /// The entries of `planned` the worker handles, in order, through
+    /// [`Planned::handle`], when only those observed at a time `reported`
+    /// names are reported: a focus group stops at the first reported.
     fn tried(planned: Vec<Planned>, reported: &[u64]) -> Vec<u64> {
         let mut order = Vec::new();
         for planned in planned {
-            let mut handle = |entry: Entry| {
-                order.push(entry.observed_at_ms);
-                Ok::<bool, ()>(reported.contains(&entry.observed_at_ms))
-            };
-            match planned {
-                Planned::Focus(entries) => try_newest_first(entries, handle),
-                Planned::Run(entry) | Planned::Menu(entry) => handle(entry).map(|_| ()),
-            }
-            .expect("never stopped");
+            planned
+                .handle(|entry, _| {
+                    order.push(entry.observed_at_ms);
+                    Ok::<bool, ()>(reported.contains(&entry.observed_at_ms))
+                })
+                .expect("never stopped");
         }
         order
+    }
+
+    /// Every foreground change of a batch joins the run it is beside, an
+    /// older one among them: a run of two focus events and two foreground
+    /// changes of different windows is one group, tried newest first.
+    #[test]
+    fn an_older_foreground_change_joins_its_run() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
+            msaa_focus(3, 3),
+            fact(DeliveredFact::Foreground { hwnd: 8 }, 4),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![4, 3, 2, 1]]);
+        assert_eq!(observed(&planned), vec![4, 3, 2, 1, 30]);
+    }
+
+    /// Two foreground changes in one run, the newer dropped, as when its
+    /// window is not yet in front as it is handled: the older is tried
+    /// next, and once reported ends the run's tries.
+    #[test]
+    fn an_older_foreground_change_is_tried_when_the_newer_is_dropped() {
+        let waiting = vec![
+            fact(DeliveredFact::Foreground { hwnd: 9 }, 1),
+            fact(DeliveredFact::Foreground { hwnd: 8 }, 2),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![2, 1]]);
+        assert_eq!(tried(planned, &[1, 30]), vec![2, 1, 30]);
     }
 
     #[test]

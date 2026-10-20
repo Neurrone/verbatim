@@ -135,9 +135,8 @@ releases Alt. Notepad has no outpost yet.
    thread that raised them, with the focused object's other events always
    kept; UIA events are not counted; events from a window the system
    reports hung (`IsHungAppWindow`) are dropped before any read. When
-   planning a batch (`plan`), only the newest foreground change is kept,
-   each consecutive run of MSAA focus events is tried newest first until
-   one is reported, each UIA focus event is handled at its own place, and
+   planning a batch (`plan`), each consecutive run of MSAA focus events
+   and foreground changes is tried newest first until one is reported, each UIA focus event is handled at its own place, and
    a menu opening is moved last.
 6. **The worker takes the batch.** The worker thread takes the batch
    (`run` in `outpost/worker.rs`) at once; nothing waits for the window to

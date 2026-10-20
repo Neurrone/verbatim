@@ -208,8 +208,8 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   which must never lose a key.
 - `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
   "Time limits that hold".
-- What remains of the audits' items 9 to 11 (Dickson, 2026-10-20; item 8
-  is done, `docs/roadmap-done.md`):
+- What remains of the audits' items 10 and 11 (Dickson, 2026-10-20;
+  items 8 and 9 are done, `docs/roadmap-done.md`):
   - Item 11, in three changes. First, MSAA caret events (`OBJID_CARET`
     location change and show) mapped to a caret event on a UIA focus, as
     NVDA maps them (`IAccessibleHandler/__init__.py`, lines 636 to 668).

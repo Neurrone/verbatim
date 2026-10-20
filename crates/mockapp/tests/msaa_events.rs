@@ -26,14 +26,54 @@ use std::sync::{Arc, Mutex, PoisonError};
 use verbatim_core::SrState;
 use verbatim_ia2::{WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{
-    Backend, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent, State, TraceId,
+    Backend, CallCounts, Earcon, Effect, Input, NormalizedEvent, OutpostId, Pid, SegmentContent,
+    State, TraceId,
 };
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, Query, WinEventStamp};
 
 use common::outpost::{OutpostUnderTest, Reported};
+use windows::Win32::Foundation::HWND;
 
 /// The counts fixture's second list item, by its index in mockapp's tree.
 const ITEM_TWO: usize = 6;
+
+/// What reporting mockapp's window as the foreground costs at the
+/// outpost's first look at the window: its name and states, eight MSAA
+/// calls, and the window's probe, one window message.
+const FIRST_FOREGROUND_REPORT_CALLS: CallCounts = CallCounts {
+    uia: 0,
+    msaa: 8,
+    window_messages: 1,
+    connections: 0,
+};
+
+/// What reporting mockapp's window as the foreground costs once the
+/// window's backend is known: its name and states, eight MSAA calls.
+const FOREGROUND_REPORT_CALLS: CallCounts = CallCounts {
+    uia: 0,
+    msaa: 8,
+    window_messages: 0,
+    connections: 0,
+};
+
+/// What reporting a list item costs at the outpost's first look at its
+/// window, a foreground change of the window dropped before it: the item
+/// and its ancestors, 30 MSAA calls, and the window's probe.
+const DROPPED_FOREGROUND_FOCUS_CALLS: CallCounts = CallCounts {
+    uia: 0,
+    msaa: 30,
+    window_messages: 1,
+    connections: 0,
+};
+
+/// What reporting a list item costs once its window's backend is known, a
+/// foreground change of the window dropped before it with no call.
+const FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS: CallCounts = CallCounts {
+    uia: 0,
+    msaa: 30,
+    window_messages: 0,
+    connections: 0,
+};
 
 /// Gives Core `event` from mockapp, its node ids stamped with outpost 1,
 /// and returns the content of each utterance spoken, in order. A focus's
@@ -748,8 +788,198 @@ fn a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported() {
     app.quit();
 }
 
+/// The counts fixture's third list item, by its index in mockapp's tree.
+const ITEM_THREE: usize = 7;
+
+/// The MSAA focus fact for mockapp's node `index` in window `hwnd`.
+fn msaa_focus_fact(hwnd: HWND, index: usize) -> DeliveredFact {
+    DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: i32::try_from(index + 1).expect("a small index"),
+        id_child: 0,
+    }
+}
+
+/// The outpost's next message, which must be a foreground report: the
+/// window's name, and the calls the outpost made for it.
+fn foreground_report(outpost: &OutpostUnderTest) -> (Option<String>, CallCounts) {
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    foreground: true,
+                    ..
+                },
+            timing,
+            ..
+        } => (node.name, timing.calls),
+        other => panic!("the outpost said {other:?}, not a foreground report"),
+    }
+}
+
+/// Hands the outpost, held, a focus on mockapp's node `index` and then a
+/// foreground change of its window, so that the two are planned as one
+/// batch, one group tried newest first, and lets the worker go on. The
+/// worker is held on a foreground change of `held_on`, which is not the
+/// foreground window and says nothing.
+fn focus_then_foreground(outpost: &OutpostUnderTest, hwnd: HWND, index: usize, held_on: HWND) {
+    outpost.hold_worker_on(held_on.0 as isize);
+    outpost.deliver(msaa_focus_fact(hwnd, index));
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    outpost.release_worker();
+}
+
+/// A focus and a foreground change of its window in one batch, the change
+/// newest, with no focus reported before: the change is tried first, is
+/// reported, as the window, and ends the group's tries, so the focus is
+/// not tried, as NVDA's `pumpAll` stops at the first event processed.
+fn a_foreground_change_newest_beside_a_focus_is_reported_and_ends_its_group() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-foreground-group");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus item2");
+    focus_then_foreground(
+        &outpost,
+        hwnd,
+        ITEM_TWO,
+        common::another_applications_window(),
+    );
+    let (name, calls) = foreground_report(&outpost);
+    assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
+    assert_eq!(calls, FIRST_FOREGROUND_REPORT_CALLS);
+    outpost.settled();
+    app.quit();
+}
+
+/// A focus and a foreground change of its window in one batch, the change
+/// newest but its window not in front: the change is dropped without
+/// counting as reported, so the focus beside it is tried next and
+/// reported. mockapp's window is topmost, so the focus passes NVDA's
+/// acceptance test though another window is the foreground.
+fn a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-dropped-foreground");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    common::make_topmost(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    outpost.set_foreground(common::another_applications_window());
+    app.send("set-focus item2");
+    focus_then_foreground(&outpost, hwnd, ITEM_TWO, hwnd);
+    let reported = outpost.reported_focus();
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    assert_eq!(reported.calls, DROPPED_FOREGROUND_FOCUS_CALLS);
+    app.quit();
+}
+
+/// NVDA's first foreground test: with the focus already in mockapp's
+/// window, a focus on another item and a foreground change of that window
+/// in one batch, the change newest, have the change dropped, since the
+/// last focus queued is in its window, and the focus beside it tried and
+/// reported, as NVDA's `processForegroundWinEvent` returns false and its
+/// `pumpAll` tries the older focus event.
+fn a_foreground_change_of_the_focus_s_window_is_dropped_for_the_focus_beside_it() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-foreground-focus-window");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus item2");
+    let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    app.send("set-focus item3");
+    focus_then_foreground(
+        &outpost,
+        hwnd,
+        ITEM_THREE,
+        common::another_applications_window(),
+    );
+    let reported = outpost.reported_focus();
+    assert_eq!(reported.chain(), [Some("Options"), Some("Three")]);
+    assert_eq!(reported.calls, FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS);
+    app.quit();
+}
+
+/// NVDA's first foreground test, by a foreground report: a second
+/// foreground change of a window the outpost has just reported as the
+/// foreground is dropped, since that window is now the last focus queued,
+/// and nothing is said.
+fn a_second_foreground_change_of_a_reported_window_is_dropped() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-second-foreground");
+    let app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let change = DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    };
+    outpost.deliver(change.clone());
+    let (name, calls) = foreground_report(&outpost);
+    assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
+    assert_eq!(calls, FIRST_FOREGROUND_REPORT_CALLS);
+    outpost.settled();
+    outpost.deliver(change);
+    outpost.settled();
+    app.quit();
+}
+
+/// A focus Core queued from another application replaces the outpost's
+/// last focus as the last focus queued, as NVDA's `lastQueuedFocusObject`
+/// is replaced by any application's focus: a foreground change of the
+/// window that focus was in is then reported.
+fn a_foreground_change_after_another_application_s_focus_is_reported() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-foreground-after-elsewhere");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus item2");
+    let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    // Observed now, after the outpost's focus.
+    outpost.focus_queued_elsewhere(0);
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    let (name, calls) = foreground_report(&outpost);
+    assert_eq!(name.as_deref(), Some("Mockapp Counts Fixture"));
+    assert_eq!(calls, FOREGROUND_REPORT_CALLS);
+    outpost.settled();
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_foreground_change_newest_beside_a_focus_is_reported_and_ends_its_group",
+            a_foreground_change_newest_beside_a_focus_is_reported_and_ends_its_group,
+        ),
+        (
+            "a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried",
+            a_dropped_foreground_change_newest_beside_a_focus_lets_the_focus_be_tried,
+        ),
+        (
+            "a_foreground_change_of_the_focus_s_window_is_dropped_for_the_focus_beside_it",
+            a_foreground_change_of_the_focus_s_window_is_dropped_for_the_focus_beside_it,
+        ),
+        (
+            "a_second_foreground_change_of_a_reported_window_is_dropped",
+            a_second_foreground_change_of_a_reported_window_is_dropped,
+        ),
+        (
+            "a_foreground_change_after_another_application_s_focus_is_reported",
+            a_foreground_change_after_another_application_s_focus_is_reported,
+        ),
         (
             "a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported",
             a_foreground_event_for_a_window_in_front_not_yet_shown_is_reported,

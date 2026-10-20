@@ -109,6 +109,14 @@ pub(crate) fn foreground_window_handle() -> isize {
     unsafe { GetForegroundWindow() }.0 as isize
 }
 
+/// Whether `child` is `parent` or one of its child windows, by the parent
+/// chain alone (`IsChild`, which follows no owner), as NVDA's
+/// `winUser.isDescendantWindow` decides it. A local call.
+pub(crate) fn is_descendant_window(parent: isize, child: isize) -> bool {
+    // SAFETY: IsChild tolerates any pair of handles.
+    parent == child || unsafe { IsChild(hwnd(parent), hwnd(child)) }.as_bool()
+}
+
 /// `handle`'s top-level window (`GetAncestor` with `GA_ROOT`), or 0 for an
 /// invalid handle.
 pub(crate) fn top_level_of(handle: isize) -> isize {

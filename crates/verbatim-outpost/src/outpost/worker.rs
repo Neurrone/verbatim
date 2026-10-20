@@ -59,12 +59,12 @@ use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
 use super::focus_path::{self, FocusPath};
-use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, try_newest_first, window_of};
+use super::intake::{Entry, Handling, Item, Object, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
     MOVED_ON_GRACE, console_client, event_window_unreadable, focus_window_of,
-    foreground_window_handle, front_is_another_thread_of_its_application,
+    foreground_window_handle, front_is_another_thread_of_its_application, is_descendant_window,
     is_shell_transition_window, now_ms, top_level_of, window_belongs_to_hidden_frame, window_facts,
     window_is_hidden_frame,
 };
@@ -304,6 +304,57 @@ pub(super) struct Tracking {
     /// window as the focus entered it: the window NVDA holds the
     /// foreground object for ([`Worker::is_foreground_window`]).
     foreground_window: Option<isize>,
+    /// The last focus or foreground change this outpost reported, which
+    /// NVDA's foreground tests compare a foreground change with
+    /// ([`foreground_repeats_focus`]).
+    queued: Option<QueuedFocus>,
+}
+
+/// A focus or foreground change an outpost reported, as NVDA's
+/// `lastQueuedFocusObject` holds it for `processForegroundWinEvent`: its
+/// own window, which may be a child window; for an MSAA focus or a
+/// foreground change, the window, object id and child id of the event it
+/// came from; and when it was observed, so that a focus Core queued from
+/// another application since replaces it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct QueuedFocus {
+    window: isize,
+    event: Option<(isize, i32, i32)>,
+    observed_at_ms: u64,
+}
+
+/// The event address a foreground change is taken to have: the system
+/// raises its foreground event with `OBJID_WINDOW` and `CHILDID_SELF`, and
+/// the fact the hook forwards carries the window alone.
+fn foreground_event(hwnd: isize) -> (isize, i32, i32) {
+    (hwnd, OBJID_WINDOW.0, CHILDID_SELF)
+}
+
+/// Why NVDA's `processForegroundWinEvent` drops a foreground change of
+/// window `hwnd` that is in front, given `last`, the last focus or
+/// foreground change this outpost reported, when no focus Core queued
+/// from another application has replaced it (`superseded`), if it does
+/// (`IAccessibleHandler/__init__.py` 842 to 867): the last focus's own
+/// window is `hwnd` or a child window of it (`is_descendant`, NVDA's
+/// `winUser.isDescendantWindow`), or the last focus came from an MSAA
+/// event with the foreground event's own window, object id and child id.
+/// The second test can be met only where the first is not, by a last focus
+/// whose window is not its event's; an outpost records an MSAA focus's
+/// event window as its window, so the first decides here.
+fn foreground_repeats_focus(
+    last: Option<QueuedFocus>,
+    superseded: bool,
+    hwnd: isize,
+    is_descendant: impl Fn(isize, isize) -> bool,
+) -> Option<&'static str> {
+    let last = last.filter(|_| !superseded)?;
+    if is_descendant(hwnd, last.window) {
+        Some("the focus is already in the window")
+    } else if last.event == Some(foreground_event(hwnd)) {
+        Some("it repeats the focus's own event")
+    } else {
+        None
+    }
 }
 
 impl Tracking {
@@ -597,15 +648,18 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
         let mut run = |entry: Entry, menu: bool| {
             run_entry(context, &mut client, generation, batch, entry, menu)
         };
-        let outcome = match planned {
-            Planned::Run(entry) => run(entry, false),
-            Planned::Menu(entry) => run(entry, true),
-            Planned::Focus(entries) => try_newest_first(entries, |entry| {
+        // A focus group's entry counts as reported when the worker reported
+        // a focus or foreground change for it, or found it the focus
+        // already; no other entry takes the tracking lock for it.
+        let outcome = planned.handle(|entry, handling| match handling {
+            Handling::Run => run(entry, false).map(|()| false),
+            Handling::Menu => run(entry, true).map(|()| false),
+            Handling::Tried => {
                 let reported = context.tracking().reported;
                 run(entry, false)?;
                 Ok(context.tracking().reported != reported)
-            }),
-        };
+            }
+        });
         if outcome.is_err() {
             return;
         }
@@ -1946,6 +2000,18 @@ impl Worker<'_> {
             tracking.batch = Some(self.batch);
             tracking.foreground_since_focus = foreground;
             tracking.reported += 1;
+            // NVDA's last queued focus, which every focus and foreground
+            // change it queues replaces; an MSAA focus adds its event's
+            // address once reported ([`Worker::msaa_focus`]).
+            tracking.queued = window.map(|window| QueuedFocus {
+                window,
+                event: foreground.then(|| foreground_event(window)),
+                observed_at_ms: if observed_at_ms == 0 {
+                    now_ms()
+                } else {
+                    observed_at_ms
+                },
+            });
             if !foreground {
                 tracking.focus_observed_at_ms = if observed_at_ms == 0 {
                     now_ms()
@@ -2903,10 +2969,19 @@ impl Worker<'_> {
     /// is read through UI Automation besides, so its title is the console
     /// window element's, the text area's parent.
     ///
+    /// A change in front is dropped too when the last focus or foreground
+    /// change this outpost reported is in its window or a child window of
+    /// it, or came from the change's own event address, and no focus Core
+    /// queued from another application has replaced it, as NVDA's two
+    /// tests against its last queued focus drop it
+    /// ([`foreground_repeats_focus`]); a focus Core took from another
+    /// outpost inside the window is left to the reducer, which ignores a
+    /// foreground change of the window the focus is already in.
+    ///
     /// Within a focus group, a change reported ends the group's tries, and
     /// one dropped lets the next older entry be tried
-    /// ([`try_newest_first`]), as NVDA's `pumpAll` stops at the first
-    /// foreground or focus event processed.
+    /// ([`super::intake::try_newest_first`]), as NVDA's `pumpAll` stops at
+    /// the first foreground or focus event processed.
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
@@ -2914,6 +2989,20 @@ impl Worker<'_> {
         }
         if !self.accepts(EventName::GainFocus, hwnd) || !self.in_front(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: not the foreground window");
+            return;
+        }
+        // NVDA's two tests against the last focus it queued, before it makes
+        // the event's object: local calls only, and the change is not
+        // counted as reported, so the group's next older entry is tried.
+        let repeats = {
+            let tracking = self.context.tracking();
+            let superseded = tracking
+                .queued
+                .is_some_and(|last| tracking.queued_elsewhere_at_ms >= last.observed_at_ms);
+            foreground_repeats_focus(tracking.queued, superseded, hwnd, is_descendant_window)
+        };
+        if let Some(reason) = repeats {
+            tracing::debug!(hwnd, reason, "foreground dropped: the focus already");
             return;
         }
         // NVDA makes the foreground's object as it makes any MSAA event's
@@ -3063,7 +3152,12 @@ impl Worker<'_> {
             enrichment,
         );
         if self.context.intake.focused() == object {
-            self.context.tracking().focus_was_simple_child = resolved_child > 0;
+            let mut tracking = self.context.tracking();
+            tracking.focus_was_simple_child = resolved_child > 0;
+            if let Some(queued) = tracking.queued.as_mut() {
+                queued.event = Some((hwnd, id_object, id_child));
+            }
+            drop(tracking);
             if redirected {
                 self.context.intake.set_focus_redirected();
             }
@@ -3435,6 +3529,71 @@ impl Worker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A last focus in window `window`, from the MSAA event `event`.
+    fn last_focus(window: isize, event: Option<(isize, i32, i32)>) -> QueuedFocus {
+        QueuedFocus {
+            window,
+            event,
+            observed_at_ms: 1,
+        }
+    }
+
+    /// NVDA's first foreground test: a change of the last focus's own
+    /// window, or of a window it is a child window of, is dropped; one of
+    /// another window is not, and nor is any once a focus from another
+    /// application replaced the last focus, or with no last focus.
+    #[test]
+    fn a_foreground_change_of_the_last_focus_s_window_or_its_parent_is_dropped() {
+        // Window 7 is a child window of 5; 6 is not related to either.
+        let is_descendant =
+            |parent: isize, child: isize| parent == child || (parent, child) == (5, 7);
+        let last = Some(last_focus(7, None));
+        assert_eq!(
+            foreground_repeats_focus(last, false, 7, is_descendant),
+            Some("the focus is already in the window")
+        );
+        assert_eq!(
+            foreground_repeats_focus(last, false, 5, is_descendant),
+            Some("the focus is already in the window")
+        );
+        assert_eq!(
+            foreground_repeats_focus(last, false, 6, is_descendant),
+            None
+        );
+        assert_eq!(foreground_repeats_focus(last, true, 7, is_descendant), None);
+        assert_eq!(
+            foreground_repeats_focus(None, false, 7, is_descendant),
+            None
+        );
+    }
+
+    /// NVDA's second foreground test: a change whose event address, the
+    /// window with `OBJID_WINDOW` and `CHILDID_SELF`, is the last focus's
+    /// own event's is dropped, though the last focus's window is not the
+    /// change's; another address is not.
+    #[test]
+    fn a_foreground_change_with_the_last_focus_s_own_event_address_is_dropped() {
+        let unrelated = |parent: isize, child: isize| parent == child;
+        assert_eq!(
+            foreground_repeats_focus(
+                Some(last_focus(8, Some((5, OBJID_WINDOW.0, CHILDID_SELF)))),
+                false,
+                5,
+                unrelated
+            ),
+            Some("it repeats the focus's own event")
+        );
+        assert_eq!(
+            foreground_repeats_focus(
+                Some(last_focus(8, Some((5, OBJID_CLIENT.0, CHILDID_SELF)))),
+                false,
+                5,
+                unrelated
+            ),
+            None
+        );
+    }
 
     /// The idle barrier's answer never waits on the terminals' lock, which
     /// a terminal's read holds across its calls into the application: a

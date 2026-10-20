@@ -145,13 +145,15 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   came after it, as NVDA compares with the last focus queued from any
   application (`docs/parity/focus-events.md`, "Duplicate focus
   suppression"). `msaa_focus_changes_cost_exactly` pins both.
-- Each consecutive run of a batch's MSAA focus events and its newest
-  foreground change is tried newest first until one is reported, as
-  NVDA's event pump tries a run of focus and foreground events: when the
-  newest cannot be reported (unreadable, destroyed, refused, or a
-  foreground change whose window is not the foreground window), the next
-  older one is tried, up to the limiter's four focus events (with the
-  difference "MSAA winevent flood control" records).
+- Each consecutive run of a batch's MSAA focus events and foreground
+  changes is tried newest first until one is reported, as NVDA's event
+  pump tries a run of focus and foreground events: when the newest cannot
+  be reported (unreadable, destroyed, refused, or a foreground change
+  whose window is not the foreground window, or that NVDA's tests against
+  the last focus queued drop), the next older one is tried, through every
+  event the limiter kept: its four focus events, and a foreground change
+  kept as one of its thread's other events besides (with the difference
+  "MSAA winevent flood control" records).
 - The fake focus after a menu or the Alt+Tab switcher closes is skipped
   only when a focus observed after the close was actually applied; a focus fact that
   is dropped or unreadable does not skip it.
@@ -300,16 +302,32 @@ the next other event comes; the menu event is tried last. Verbatim:
 **matched (unverified)** (`docs/design/focus-pipeline.md` section 5;
 [verbatim-outpost](../crates/verbatim-outpost.md), the queue under
 `Outpost`), in each outpost's intake. Every MSAA event is counted by the
-thread it carries, whichever hook took it in; the batch's newest
-foreground change is tried with the focus events of the run it is in.
+thread it carries, whichever hook took it in; every foreground change
+of a batch is tried with the focus events of the run it is in, a newer
+one of the same window replacing one waiting, as NVDA's limiter keeps
+one per window (Dickson, 2026-10-20). The outpost's foreground handling
+makes NVDA's two tests against the last focus queued, after its
+in-front test and before any read, and a change they drop lets the
+run's next older event be tried (`processForegroundWinEvent`, lines 842
+to 867): the last focus or foreground change the outpost reported, while
+no focus Core queued from another application has replaced it, is in
+the change's window or a child window of it (`isDescendantWindow`, which
+follows parents only), or came from the change's own event address. The
+fact the hook forwards carries the window alone, so the change's object
+and child ids are taken as the system raises them, `OBJID_WINDOW` and
+`CHILDID_SELF`. A last focus Core took from another outpost inside the
+window, which this outpost cannot see, is left to the reducer, which
+ignores a foreground change of the window the focus is already in.
+Mockapp's `msaa_events` tests pin the first test and the replacement by
+another application's focus, and the worker's unit tests both tests.
 Different: events from a window the system reports hung are dropped
-before any read; and the outpost's foreground handling does not make
-NVDA's two tests against the last focus queued (the focus already in the
-window or a window inside it, and the focus being the foreground event's
-own object), so a foreground change those tests would drop is reported,
-ends its run's tries, and is then ignored by Core when the focus is
-already in its window, where NVDA tries the older focus event of the
-run. Before an outpost hears them, the focus
+before any read; and, pending Dickson's decision and not built, a run
+ends on entries NVDA's run never sees, which are UIA events and UIA
+focus reads, Core's queries, its list of held nodes and its caret
+requests, and MSAA events NVDA's acceptance test filters out before its
+run, while a menu end and a switch end, which end NVDA's run, do not end
+one in an outpost, since the focus listener takes them. Before an
+outpost hears them, the focus
 listener coalesces its facts by the same one-per-object-and-kind rule,
 and the supervisor holds the facts that arrive while an outpost starts
 by that rule too, and lets a newer fact replace a waiting one when an

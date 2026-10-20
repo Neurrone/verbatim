@@ -730,10 +730,16 @@ impl OutpostUnderTest {
     /// worker waits under the change's deadline, so a step that holds it
     /// must be brief.
     pub fn hold_worker(&self) {
+        self.hold_worker_on(self.foreground.load(Ordering::Relaxed));
+    }
+
+    /// [`Self::hold_worker`] on a foreground change of window `hwnd`, for
+    /// any backend: the worker waits in that change's first read of the
+    /// foreground window. A change of a window that is not the foreground
+    /// window then says nothing.
+    pub fn hold_worker_on(&self, hwnd: isize) {
         self.gate.set_closed(true);
-        self.deliver(DeliveredFact::Foreground {
-            hwnd: self.foreground.load(Ordering::Relaxed),
-        });
+        self.deliver(DeliveredFact::Foreground { hwnd });
         self.gate.wait_for_worker();
     }
 
