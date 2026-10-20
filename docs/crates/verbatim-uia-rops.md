@@ -745,8 +745,8 @@ How the outpost chooses, per UIA focus (`uia_remote_enrichment` in its
 read and the text reads through `UiaText`, a terminal's screen, a
 navigation step):
 
-- A window without a native UIA provider (arbitration's
-  `UiaHasServerSideProvider` verdict) is read through MSAA, so its focus
+- A window without a native UIA provider (arbitration's raw probe
+  verdict) is read through MSAA, so its focus
   never reaches this choice.
 - An import that fails (`Error::Import`, a client-side proxy) marks the
   window the focus is in for its lifetime, and the outpost then reads it

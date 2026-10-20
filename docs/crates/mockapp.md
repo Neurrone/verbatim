@@ -496,11 +496,12 @@ that no cached read failed.
 tree was walked, after a scripted `select`: the MSAA provider's
 `accSelection` returns the selected child as its own object, or an empty
 variant when none is selected.
-`arbitration.rs` asserts `verbatim_uia::has_server_side_provider` and
-`verbatim_outpost::Arbitrator` resolve a `uia`-backend window to UIA and a
-`msaa`-backend one to MSAA, and that the listener's `verbatim_uia::raw_probe`
-answers `0x10000` for the first and the default window procedure's 0 for
-the second. `events.rs` asserts that
+`arbitration.rs` asserts that the raw probe (`verbatim_uia::raw_probe`),
+the outposts' and the listener's, answers `0x10000` for a `uia`-backend
+window and the default window procedure's 0 for a `msaa`-backend one,
+that `verbatim_outpost::Arbitrator` resolves each to the matching backend,
+and that a window too busy to answer is asked once, with one window
+message and no connection, and its timed-out "no" kept. `events.rs` asserts that
 `set-name`/`set-value` commands are observed by a property
 `verbatim_uia::Registration` and `verbatim_ia2::WinEventHook`,
 that `select` is observed by a selection `verbatim_uia::Registration` (with

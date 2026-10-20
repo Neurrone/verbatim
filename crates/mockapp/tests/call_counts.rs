@@ -120,15 +120,6 @@ fn calls(uia: u32, msaa: u32, window_messages: u32) -> CallCounts {
     }
 }
 
-/// `counts`, of which `connections` connected to a window by its handle
-/// (`CallCounts::connections`).
-fn connecting(counts: CallCounts, connections: u32) -> CallCounts {
-    CallCounts {
-        connections,
-        ..counts
-    }
-}
-
 /// What one operation cost: the client's calls and the providers' hits.
 struct Cost {
     calls: CallCounts,
@@ -226,7 +217,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, cold",
         &cost,
-        connecting(calls(0, 30, 1), 1),
+        calls(0, 30, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
@@ -339,7 +330,7 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the previous list item, the probe renewed",
         &cost,
-        connecting(calls(0, 33, 1), 1),
+        calls(0, 33, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
@@ -540,7 +531,7 @@ fn msaa_state_change_costs_exactly() {
     ratchet.check(
         "MSAA state change on the focus, the probe renewed",
         &cost,
-        connecting(calls(0, 2, 1), 1),
+        calls(0, 2, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
@@ -666,7 +657,7 @@ fn msaa_dialog_text_costs_exactly() {
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
-        connecting(calls(0, 44, 1), 1),
+        calls(0, 44, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),

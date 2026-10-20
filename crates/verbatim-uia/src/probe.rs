@@ -1,55 +1,18 @@
-//! The UIA arbitration probe, in its two forms: UIA's own
-//! `UiaHasServerSideProvider`, which the outposts make on their own
-//! application's windows, and the raw probe, one `WM_GETOBJECT` with
-//! `UiaRootObjectId`, which the focus listener makes
+//! The UIA arbitration probe: the raw probe, one `WM_GETOBJECT` with
+//! `UiaRootObjectId`, which the outposts make on their own application's
+//! windows and the focus listener on the windows of the focuses it reads
 //! (`docs/design/listener-without-connections.md`, decision 2).
 
 use windows::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_INVALID_WINDOW_HANDLE, ERROR_TIMEOUT, GetLastError, HWND, LPARAM,
     SetLastError, WIN32_ERROR, WPARAM,
 };
-use windows::Win32::UI::Accessibility::{UiaHasServerSideProvider, UiaRootObjectId};
+use windows::Win32::UI::Accessibility::UiaRootObjectId;
 use windows::Win32::UI::WindowsAndMessaging::{
     SMTO_ABORTIFHUNG, SMTO_BLOCK, SMTO_ERRORONEXIT, SendMessageTimeoutW, WM_GETOBJECT,
 };
 
 use verbatim_model::CallKind;
-
-/// Asks a window whether it exposes a native UIA server-side provider — the
-/// third rung of the arbitration ladder (architecture section 4), after the
-/// good- and bad-class lists.
-///
-/// The window is asked once, and its answer is the answer, as NVDA asks
-/// (`docs/parity/backends.md`). `UiaHasServerSideProvider` reports no
-/// provider when the window does not answer within UIA's own wait, three to
-/// five seconds; that "no" is kept like any other, for the short while the
-/// arbitrator trusts a verdict of no provider, after which the window is
-/// asked again.
-///
-/// This sends `WM_GETOBJECT` to the target window and therefore blocks on the
-/// target application's message pump, for up to UIA's own wait. It MUST be
-/// called only from a deadline-guarded worker, never from an event thread.
-#[must_use]
-pub fn has_server_side_provider(hwnd: isize) -> bool {
-    // The probe is a way into UIA's first-time setup too; a failed setup
-    // leaves the probe to try anyway.
-    let _ = crate::client::ensure_ready();
-    // One `WM_GETOBJECT`, sent to the window.
-    crate::calls::count(CallKind::WindowMessage);
-    crate::calls::count_connection();
-    // A new connection to the window by its handle, which answers "no"
-    // after about three seconds when it arrives while a remote operation
-    // from another process waits to be evaluated in the window's
-    // application (`docs/uia-bugs.md`, "A new connection fails while
-    // another process's remote operation is queued"); only the window's
-    // own application's outpost makes it, and no other Verbatim process
-    // sends that application a remote operation
-    // (`docs/design/listener-without-connections.md`, section 2).
-    // SAFETY: UiaHasServerSideProvider tolerates any window handle,
-    // returning false for invalid ones; the BOOL is converted, not
-    // assumed.
-    unsafe { UiaHasServerSideProvider(HWND(hwnd as *mut _)) }.as_bool()
-}
 
 /// How long the raw probe waits for the window to answer: the "no" UIA's
 /// own probe gives a busy window comes after about as long
@@ -113,8 +76,13 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// The raw probe: asks a window whether it has a native UIA server-side
 /// provider with one `WM_GETOBJECT` for `UiaRootObjectId`, sign-extended
 /// as UIA sends it, rather than with a UIA connection
-/// (`docs/design/listener-without-connections.md`, section 3, step 4).
-/// `UiaHasServerSideProvider` sends two `WM_GETOBJECT`s, first with a
+/// (`docs/design/listener-without-connections.md`, section 3, step 4, and
+/// decision 2). The outposts make it on their own application's windows
+/// and the focus listener on the windows of the focuses it reads. The
+/// window is asked once and its answer is the answer, as NVDA asks
+/// (`docs/parity/backends.md`); a window too busy to answer in time is a
+/// "no", kept as any "no" is.
+/// `UiaHasServerSideProvider`, which NVDA calls, sends two `WM_GETOBJECT`s, first with a
 /// nonzero wParam and then with wParam 0, and then connects (experiment
 /// `e39`, `docs/design/focus-pipeline.md` section 20); the raw probe sends
 /// only the second, with wParam 0, and nothing more. It answers correctly

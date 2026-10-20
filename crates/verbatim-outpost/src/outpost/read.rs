@@ -127,12 +127,9 @@ impl Client {
 /// Decides a window's backend with the outpost's arbitrator
 /// ([`crate::arbitration::uses_uia`]). Returns `true` for UIA.
 pub(super) fn window_uses_uia(context: &Context, hwnd: isize) -> bool {
-    let (uia, kept) = crate::arbitration::uses_uia_keeping(
-        &context.arbitrator,
-        hwnd,
-        crate::arbitration::Probe::Uia,
-        || verbatim_uia::console_reports_formatting(hwnd),
-    );
+    let (uia, kept) = crate::arbitration::uses_uia_keeping(&context.arbitrator, hwnd, || {
+        verbatim_uia::console_reports_formatting(hwnd)
+    });
     if kept {
         // The event thread may narrow its hook now that it knows.
         context.nudge_event_thread(super::narrowing::Nudge::Decide);

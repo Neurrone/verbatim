@@ -1,11 +1,10 @@
 //! Cross-process arbitration (architecture section 4, decision D1): asserts
 //! that a `uia`-backend mockapp window has a server-side UIA provider and a
-//! `msaa`-backend one does not, each found by a single probe, and that
+//! `msaa`-backend one does not, each found by a single raw probe, the one
+//! `WM_GETOBJECT` the outposts and the focus listener make, and that
 //! `verbatim-outpost`'s real `Arbitrator`, given that probe's answer,
 //! resolves each to the matching backend, and that a window too busy to
-//! answer is asked once and its "no" taken, as NVDA takes it. The focus
-//! listener's raw probe, one `WM_GETOBJECT`, gives each window the same
-//! answer.
+//! answer is asked once and its "no" taken, as NVDA takes it.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -15,7 +14,7 @@ use std::time::Duration;
 
 use verbatim_model::CallCounts;
 use verbatim_outpost::arbitration::{Arbitrator, WindowClasses};
-use verbatim_uia::{RawProbe, has_server_side_provider, raw_probe};
+use verbatim_uia::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe};
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     let title = common::unique_title("mockapp-arb-uia");
@@ -29,17 +28,10 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
         None,
         "only the probe decides"
     );
-    // The raw probe first, so it is the window's first contact from any
-    // client and its answer owes nothing to a connection UIA's own probe
-    // made.
     assert_eq!(
         raw_probe(hwnd),
         RawProbe::Provider,
         "the raw probe finds a uia-backend mockapp window's provider"
-    );
-    assert!(
-        has_server_side_provider(hwnd),
-        "UIA's own probe finds the same provider"
     );
     arbitrator.record_probe(hwnd, true);
     assert_eq!(
@@ -57,26 +49,31 @@ fn a_busy_uia_window_is_asked_once_and_its_no_kept() {
     let hwnd = common::find_window(&title).0 as isize;
     let classes = WindowClasses::of(hwnd);
 
-    // Blocked past the point where UIA's own check gives up (about five
-    // seconds here, three for Notepad starting up) and reports no provider:
-    // that "no" is the answer, from one message, as NVDA takes it.
-    let stall = Duration::from_secs(8);
+    // Blocked past the point where the raw probe gives up
+    // (`RAW_PROBE_TIMEOUT_MS`) and reports no provider: that "no" is the
+    // answer, from one message, as NVDA takes it.
+    let stall = Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS) * 2);
     app.stall(stall);
     let _ = verbatim_uia::calls::take();
-    let has = has_server_side_provider(hwnd);
+    let probed = raw_probe(hwnd);
     let returned_at = common::now_us();
     let calls = verbatim_uia::calls::take();
     let stall_ended_at = app.stall_ended(stall);
-    assert!(!has, "a window too busy to answer has no provider, for now");
+    assert_eq!(
+        probed,
+        RawProbe::TimedOut,
+        "a window too busy to answer has no provider, for now"
+    );
+    let has = probed.has_provider();
     assert_eq!(
         calls,
         CallCounts {
             uia: 0,
             msaa: 0,
             window_messages: 1,
-            connections: 1,
+            connections: 0,
         },
-        "the window is asked once"
+        "the window is asked once, with no connection"
     );
     assert!(
         returned_at < stall_ended_at,
@@ -141,14 +138,10 @@ fn msaa_backend_has_no_server_side_provider_and_arbitrates_to_msaa() {
         "only the probe decides"
     );
     // An answer, not silence: "no provider" said by the window itself.
-    assert!(
-        !has_server_side_provider(hwnd),
-        "a msaa-backend mockapp window answers that it has no server-side UIA provider"
-    );
     assert_eq!(
         raw_probe(hwnd),
         RawProbe::Answered(0),
-        "the raw probe gets the default window procedure's answer"
+        "a msaa-backend mockapp window answers the raw probe with the default window procedure's answer"
     );
     arbitrator.record_probe(hwnd, false);
     assert_eq!(

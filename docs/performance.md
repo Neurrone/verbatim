@@ -59,20 +59,18 @@ kinds, counted separately (`verbatim_model::CallKind`):
   `WindowFromAccessibleObject`, and a `QueryInterface` for any interface
   but `IUnknown` on an object from the application.
 - A window message sent to one of the application's windows and answered
-  by its window procedure: the arbitration probe. An outpost's
-  `UiaHasServerSideProvider` is counted as one window message, though it
-  sends two `WM_GETOBJECT`s, first with a nonzero wParam and then with
-  wParam 0, and then connects (experiment `e39`,
-  `docs/design/focus-pipeline.md` section 20); the focus listener's raw
-  probe sends only the second, with wParam 0, and nothing more. Also
+  by its window procedure: the arbitration probe, the outposts' and the
+  focus listener's alike, the raw probe, one `WM_GETOBJECT` with wParam 0
+  and nothing more, where `UiaHasServerSideProvider`, which Verbatim does
+  not call, sends two, first with a nonzero wParam, and then connects
+  (experiment `e39`, `docs/design/focus-pipeline.md` section 20). Also
   a list view's or tree view's `LVM_` and `TVM_` messages, and an edit
   control's `EM_` messages and `WM_GETTEXT`.
 
-Of the UIA calls and window messages, those that connect to a window by
-its handle are also counted apart (`CallCounts::connections`): an
-`ElementFromHandle` or `ElementFromHandleBuildCache`, a
-`GetFocusedElementBuildCache`, which reaches the focused window the same
-way, and an outpost's `UiaHasServerSideProvider`. Each still counts once
+Of the UIA calls, those that connect to a window by its handle are also
+counted apart (`CallCounts::connections`): an `ElementFromHandle` or
+`ElementFromHandleBuildCache`, and a `GetFocusedElementBuildCache`, which
+reaches the focused window the same way; the probe is not one. Each still counts once
 under its own kind, so a call's total is unchanged. The focus listener
 makes none (`docs/design/listener-without-connections.md`, section 2), and
 the ratchet asserts its count is zero (`call_counts.rs`,
@@ -478,7 +476,7 @@ child of the other's MSAA window (`call_counts.rs`,
   then makes 9 MSAA calls, its client area and the chain above it, and no
   probe of the parent, the other process's window
   (`docs/design/listener-without-connections.md`, section 4.3); with the
-  probe it made 1 window message more, a connection. Above a parent with
+  probe it made 1 window message more. Above a parent with
   a UIA provider it makes 23 MSAA calls, which MSAA's standard proxy
   answers in mockapp, and no UIA call of its own
   (`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`);

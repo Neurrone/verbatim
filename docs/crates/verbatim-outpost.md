@@ -482,8 +482,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   window, and the window is not the Start button), the bad class list, a
   forced override from `SetBackendOverride`, or a kept probe result, and
   `None` when only the probe can decide; the worker then probes, with
-  `UiaHasServerSideProvider` in an outpost and the raw probe
-  (`verbatim_uia::raw_probe`) in the focus listener, and calls
+  the raw probe (`verbatim_uia::raw_probe`) in an outpost and in the
+  focus listener alike (`arbitration::uses_uia`), and calls
   `record_probe`. `WindowClasses::of(hwnd)`
   reads the window's raw class, its class normalized as NVDA normalizes it
   (`normalize_class_name`: NVDA's class map, and the Windows Forms and

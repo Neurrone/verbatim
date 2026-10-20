@@ -93,7 +93,7 @@ use verbatim_uia::{
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
 use crate::ForegroundReader;
-use crate::arbitration::{Arbitrator, Clock, Probe, known_verdict, uses_uia, window_class_name};
+use crate::arbitration::{Arbitrator, Clock, known_verdict, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{is_shell_transition_window, window_is_hung};
@@ -1075,7 +1075,7 @@ impl FocusReader {
         };
         budget.verdict_begins();
         budget.call("the window's verdict, by the raw probe if it is not known");
-        let uia = uses_uia(&self.arbitrator, nearest, Probe::Raw, console);
+        let uia = uses_uia(&self.arbitrator, nearest, console);
         budget.probe_ended();
         if !uia {
             return Err(NOT_UIA);

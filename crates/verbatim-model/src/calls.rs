@@ -34,10 +34,9 @@ pub struct CallCounts {
     pub msaa: u32,
     /// Window messages.
     pub window_messages: u32,
-    /// Of the UIA calls and window messages, those that connect to a window
-    /// by its handle: `ElementFromHandle` and its cache-building form,
-    /// `GetFocusedElement`'s cache-building form, which reaches the focused
-    /// window the same way, and `UiaHasServerSideProvider`
+    /// Of the UIA calls, those that connect to a window by its handle:
+    /// `ElementFromHandle` and its cache-building form, and `GetFocusedElement`'s cache-building form, which reaches the
+    /// focused window the same way
     /// (`docs/design/listener-without-connections.md`, terms). Each is
     /// counted under its own kind too, so [`total`](Self::total) leaves
     /// this count out.

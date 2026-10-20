@@ -5,10 +5,9 @@
 //! config-overridable "good" class list forces UIA, and so does a Windows 11
 //! shell window, recognized by its root ancestor's class; a "bad" class list
 //! (seeded from NVDA's, where UIA implementations are known to interfere with
-//! MSAA) forces MSAA; otherwise the window is probed: by an outpost, on its
-//! own application's windows, with `UiaHasServerSideProvider`
-//! ([`verbatim_uia::has_server_side_provider`]), and by the focus listener
-//! with the raw probe, one `WM_GETOBJECT` and no UIA connection
+//! MSAA) forces MSAA; otherwise the window is probed, by an outpost on its
+//! own application's windows and by the focus listener alike, with the raw
+//! probe, one `WM_GETOBJECT` and no UIA connection
 //! ([`verbatim_uia::raw_probe`];
 //! `docs/design/listener-without-connections.md`, decision 2). A window
 //! with a provider is still set aside
@@ -26,8 +25,8 @@
 //! handle does not inherit a verdict when its destroy event was lost. A probe
 //! that finds none is trusted for only [`NEGATIVE_VERDICT_LIFETIME`], NVDA's
 //! cache period, and then probed again. The probe asks once, as NVDA does,
-//! so a window too busy to answer UIA's check in time is read through MSAA
-//! until that verdict runs out ([`verbatim_uia::has_server_side_provider`]).
+//! so a window too busy to answer the probe in time is read through MSAA
+//! until that verdict runs out ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]).
 //!
 //! The renewal is by time because nothing else can drive it: an
 //! application that starts answering the probe raises no event, as a
@@ -380,8 +379,8 @@ fn provider_usable(
 /// listener's UIA focus judgement alike: the class lists and kept verdicts first, then
 /// the provider probe, whose answer the arbitrator keeps (a provider for the
 /// window's lifetime, none for a short while). Returns `true` for UIA. The
-/// probe is `probe`: the listener's raw probe, or an outpost's
-/// `UiaHasServerSideProvider` ([`Probe`]). A console window with a provider
+/// probe is the raw probe ([`verbatim_uia::raw_probe`]), for the listener
+/// and the outposts alike. A console window with a provider
 /// is used only when `console` answers that its text reports formatting
 /// ([`PostProbeCheck::Console`]): an outpost reads that by the window's
 /// handle ([`verbatim_uia::console_reports_formatting`]), and the listener,
@@ -390,10 +389,9 @@ fn provider_usable(
 pub(crate) fn uses_uia(
     arbitrator: &Mutex<Arbitrator>,
     hwnd: isize,
-    probe: Probe,
     console: impl FnOnce() -> Option<bool>,
 ) -> bool {
-    uses_uia_keeping(arbitrator, hwnd, probe, console).0
+    uses_uia_keeping(arbitrator, hwnd, console).0
 }
 
 /// Window `hwnd`'s backend as [`uses_uia`] would decide it without a call
@@ -404,24 +402,12 @@ pub(crate) fn known_verdict(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> Opti
     lock(arbitrator).verdict(hwnd, &classes)
 }
 
-/// Which probe asks a window for its provider
-/// (`docs/design/listener-without-connections.md`, decision 2).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Probe {
-    /// UIA's own `UiaHasServerSideProvider`, a connection to the window:
-    /// an outpost's, on its own application's windows.
-    Uia,
-    /// One `WM_GETOBJECT`, no connection: the focus listener's.
-    Raw,
-}
-
 /// [`uses_uia`], and whether this call probed the window and kept a verdict
 /// of UIA for its lifetime: an outpost's event thread may then narrow its
 /// hook (`outpost::narrowing`).
 pub(crate) fn uses_uia_keeping(
     arbitrator: &Mutex<Arbitrator>,
     hwnd: isize,
-    probe: Probe,
     console: impl FnOnce() -> Option<bool>,
 ) -> (bool, bool) {
     let classes = WindowClasses::of(hwnd);
@@ -429,14 +415,10 @@ pub(crate) fn uses_uia_keeping(
         return (verdict, false);
     }
     let started = std::time::Instant::now();
-    let is_uia = match probe {
-        Probe::Uia => verbatim_uia::has_server_side_provider(hwnd),
-        Probe::Raw => verbatim_uia::raw_probe(hwnd).has_provider(),
-    };
+    let is_uia = verbatim_uia::raw_probe(hwnd).has_provider();
     tracing::debug!(
         hwnd,
         class = classes.raw,
-        ?probe,
         is_uia,
         elapsed_ms = started.elapsed().as_millis(),
         "arbitration probed"

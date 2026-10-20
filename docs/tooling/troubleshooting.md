@@ -257,25 +257,17 @@ error.
 
 **A provider probe answers "no" after about three seconds, and the focus
 is read through MSAA, spoken as "pane", or announced twice.** The
-outposts' probe is `UiaHasServerSideProvider`, logged at debug as
-`arbitration probed` with its `elapsed_ms` and `probe=Uia`; the focus
-listener's is the raw probe, one `WM_GETOBJECT` that waits at most 3
-seconds, logged as `arbitration probed` with `probe=Raw` and, before it,
-`raw probe` with its outcome (a timeout, a refusal, a gone window, or the
-window's answer). Two UIA faults give the outposts' slow "no"
-(`docs/uia-bugs.md`): "A new connection fails while another process's
-remote operation is queued", where the listener's focus read is the
-operation and another process's first connection to the application
-the connection, which Verbatim's own processes cannot make, since only an
-application's outpost sends it a remote operation or connects to it
-(`docs/design/listener-without-connections.md`, section 2); and, for a
-conhost window just created, "UiaHasServerSideProvider says no for a new
-conhost window while another process has an event handler". A slow "no"
-that remains has another cause: a remote operation by other software,
-such as NVDA's, or the end-to-end agent's two UIA requests
-(`docs/crates/verbatim-agent.md`); or an operation of
-Verbatim's that timed out just before, whose request UIA still processes
-when the application wakes.
+outposts and the focus listener both probe with the raw probe, one
+`WM_GETOBJECT` that waits at most 3 seconds, logged at debug as `raw
+probe` with its outcome (a timeout, a refusal, a gone window, or the
+window's answer) and then `arbitration probed` with its `elapsed_ms`. A
+"no" after about 3 seconds is the outcome `TimedOut`: the window's thread
+did not answer in time, because the application was busy, starting up or
+hung. The raw probe makes no UIA connection, so neither UIA fault that
+gives `UiaHasServerSideProvider` a slow false "no" (`docs/uia-bugs.md`,
+"A new connection fails while another process's remote operation is
+queued" and "UiaHasServerSideProvider says no for a new conhost window
+while another process has an event handler") reaches it.
 
 **A window's title-bar information takes seconds during a parallel
 mockapp run.** On the development VM the Desktop Window Manager does

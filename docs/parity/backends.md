@@ -25,14 +25,15 @@ Start, and the desktop. The window is asked once, and a "no" that UIA
 gave after the window did not answer in time is kept like any other, as
 NVDA keeps it (`docs/design/focus-pipeline.md`, section 8).
 
-Different: the focus listener asks the same question with one raw
-`WM_GETOBJECT` for `UiaRootObjectId`, counting only the answer `0x10000`
-as a provider and waiting at most 3 seconds, rather than with
-`UiaHasServerSideProvider`, which connects to the window and answered
-"no" falsely beside another process's queued remote operation (`e34`)
-and under `e38`'s trigger; the outposts keep `UiaHasServerSideProvider`
-for their own application's windows
-(`docs/design/listener-without-connections.md`, decision 2).
+Different: the focus listener and the outposts ask the same question
+with one raw `WM_GETOBJECT` for `UiaRootObjectId`, counting only the
+answer `0x10000` as a provider and waiting at most 3 seconds, rather than
+with `UiaHasServerSideProvider`, which connects to the window and
+answered "no" falsely beside another process's queued remote operation
+(`e34`), under `e38`'s trigger, and for the outposts on new console and
+File Explorer windows
+(`docs/design/listener-without-connections.md`, decision 2; the
+outposts' probe decided by Dickson on 2026-10-20).
 
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA
@@ -137,9 +138,10 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
 - Events are judged by their own application's window, never the
   system's focus window, which can belong to another application; UIA
   notifications are not arbitrated, as NVDA does not arbitrate them.
-- A provider probe stays within the outpost's deadline: UIA gives up on
-  a window that does not answer within three to five seconds and reports
-  no provider, which is kept for 500 ms, as NVDA keeps it.
+- A provider probe stays within the outpost's deadline: the raw probe
+  gives up on a window that does not answer within 3 seconds and reports
+  no provider, which is kept for 500 ms, as NVDA keeps UIA's "no" after
+  its own wait.
 
 ### UIA caching discipline
 

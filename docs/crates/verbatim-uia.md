@@ -454,30 +454,29 @@ Public API:
   Registering the listener's group took 9.9 ms at
   the median against mockapp where its three registrations took 18.5 ms
   (`docs/performance.md`, "Event handler groups").
-- `has_server_side_provider(hwnd)` — the arbitration probe. Sends
-  `WM_GETOBJECT` and can block on a hung application, so it is documented
-  as callable only from deadline-guarded query threads. It asks once, as
-  NVDA does, and its answer is the answer: `UiaHasServerSideProvider`
-  reports no provider when a busy window does not answer within three to
-  five seconds, and the outpost keeps that "no" for 500 ms like any other
-  (`docs/design/focus-pipeline.md`, section 8). The probe waits for UIA's first-time setup in the process (`ensure_ready`)
-  before it asks: one racing that setup answered "no provider" at once for
-  a window that has one, about one run in five of two probes started
-  together in a fresh process. The outposts make this probe on their own
-  application's windows.
-- `raw_probe(hwnd) -> RawProbe` — the focus listener's arbitration probe:
-  one `SendMessageTimeoutW` of `WM_GETOBJECT` with wParam 0 and
+- `raw_probe(hwnd) -> RawProbe` — the arbitration probe, which the
+  outposts make on their own application's windows and the focus
+  listener on the windows of the focuses it reads
+  (`docs/design/listener-without-connections.md`, decision 2): one
+  `SendMessageTimeoutW` of `WM_GETOBJECT` with wParam 0 and
   `UiaRootObjectId` sign-extended, with
   `SMTO_ABORTIFHUNG | SMTO_BLOCK | SMTO_ERRORONEXIT` and
-  `RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message.
-  `has_server_side_provider`, also counted as one window message, sends
-  two `WM_GETOBJECT`s, first with a nonzero wParam and then with wParam 0,
-  and then connects (experiment `e39`, `docs/design/focus-pipeline.md`
-  section 20); the raw probe sends only the second, with
-  wParam 0, and nothing more. It is
-  not a UIA connection, and it answers correctly where a new connection would meet
-  another process's queued remote operation
-  (`docs/design/listener-without-connections.md`, section 3, step 4).
+  `RAW_PROBE_TIMEOUT_MS` (3,000 ms), counted as one window message. It can
+  block for that long on a busy application, so it is called only from
+  deadline-guarded threads. It asks once, as NVDA does, and its answer is
+  the answer: a window that does not answer in time, like any answer but
+  exactly `0x10000`, is no provider, kept for 500 ms like any other "no"
+  (`docs/design/focus-pipeline.md`, section 8). `UiaHasServerSideProvider`,
+  which NVDA calls and Verbatim does not, sends two `WM_GETOBJECT`s, first
+  with a nonzero wParam and then with wParam 0, and then connects
+  (experiment `e39`, `docs/design/focus-pipeline.md` section 20); the raw
+  probe sends only the second, with wParam 0, and nothing more. It is not
+  a UIA connection, and it answers correctly where a new connection would
+  meet another process's queued remote operation (section 3, step 4 of
+  that design) and where `UiaHasServerSideProvider` gives a new console
+  window a false "no" (`docs/uia-bugs.md`). It runs UIA's first-time
+  setup in the process (`ensure_ready`) first, as Verbatim's UIA calls
+  do.
   `raw_probe_verdict(sent, answer, last_error)` reads the outcome, a pure
   function: exactly `0x10000` is `RawProbe::Provider`; any other answer is
   `Answered`, 0 being the default window procedure's and other values,
@@ -565,11 +564,10 @@ Public API:
   `*BuildCache` fetches and tree-walker steps, `BuildUpdatedCache`,
   `FindFirst`, `CurrentControllerFor`, pattern fetches and methods,
   `NormalizeElementBuildCache`, and the provider checks' text reads, as UIA
-  calls; the arbitration probe's `UiaHasServerSideProvider`, and the raw
-  probe's `WM_GETOBJECT`, each as one window message. The calls that
-  connect to a window by its handle, `ElementFromHandle`,
-  `ElementFromHandleBuildCache`, `GetFocusedElementBuildCache` and
-  `UiaHasServerSideProvider`, are also counted as connections
+  calls; the raw probe's `WM_GETOBJECT` as one window message. The calls
+  that connect to a window by its handle, `ElementFromHandle`,
+  `ElementFromHandleBuildCache` and `GetFocusedElementBuildCache`, are
+  also counted as connections
   (`CallCounts::connections`), which the focus listener keeps at zero
   (`docs/design/listener-without-connections.md`, section 2). Cached reads, `GetRuntimeId`, and
   creating clients, conditions, walkers, and cache requests are local and

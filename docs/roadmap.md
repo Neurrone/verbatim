@@ -94,13 +94,10 @@ its measurements, with the corrections of
   proposed fix is that the outpost treats a caret row that differs from
   its last screen read as a change (Dickson, 2026-10-17: part of this
   redesign).
-- The two terminal scenarios the lock-free listener's first step lets
-  fail ([its design](design/listener-without-connections.md), section 10,
-  step 1; Dickson, 2026-10-19): `conhost_two_windows`, from
-  `UiaHasServerSideProvider`'s 3-second false "no" for a new console
-  window, which the outposts keep ([UIA faults](uia-bugs.md), the entry
-  for that call and a new conhost window), and
-  `windows_terminal_two_windows`, which in that step's runs failed 2 of
+- The terminal scenario the lock-free listener's first step lets fail
+  ([its design](design/listener-without-connections.md), section 10,
+  step 1; Dickson, 2026-10-19): `windows_terminal_two_windows`, which in
+  that step's runs failed 2 of
   10 because Windows Terminal raised focus events for its terminal
   control under two runtime ids, one rooted at the control's window
   (`[42, <window>, 4, n]`) and one of the XAML framework's own (`[14,
@@ -247,12 +244,6 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   local run, since neither reproduces here.
 
 - The focus pipeline's follow-ups (2026-10-17):
-  - `conhost_two_windows` fails about 1 run in 20, its cause found: see
-    `docs/uia-bugs.md`, "UiaHasServerSideProvider says no for a new
-    conhost window while another process has an event handler". The
-    outposts take the raw `WM_GETOBJECT` probe the listener already
-    sends, in place of `UiaHasServerSideProvider` (Dickson, 2026-10-20),
-    as the next change.
   - The listener's reading threads gain NVDA's watchdog rule that a read
     is abandoned 0.5 seconds after the user has moved on to a window of
     the same application on another UI thread, as the outposts' worker

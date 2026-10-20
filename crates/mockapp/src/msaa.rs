@@ -7,8 +7,8 @@
 //! for application use per the MSAA object-identifier convention) so
 //! `NotifyWinEvent` can address any node directly without needing per-node
 //! `HWND`s. Deliberately does not answer `WM_GETOBJECT` for the UIA root
-//! object id, so [`verbatim_uia::has_server_side_provider`] finds nothing
-//! and the window arbitrates to MSAA.
+//! object id, so [`verbatim_uia::raw_probe`] finds no provider and the
+//! window arbitrates to MSAA.
 //!
 //! Roles and states are the inverse of the tables in `verbatim_ia2::map`.
 

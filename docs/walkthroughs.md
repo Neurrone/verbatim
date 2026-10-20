@@ -180,7 +180,7 @@ releases Alt. Notepad has no outpost yet.
      live element's nearest window, else the listener's `focus_window`.
    - Arbitration decides which backend owns that window
      (`read::window_uses_uia` and `Arbitrator`; NVDA's class lists, then
-     the `UiaHasServerSideProvider` probe, a positive verdict kept for the
+     the raw probe, one `WM_GETOBJECT`, a positive verdict kept for the
      window's life, a negative one for 500 ms). Exactly one backend
      reports: for a UIA window the MSAA fact for the same control is
      dropped in `Worker::msaa_focus`, and the other way round.

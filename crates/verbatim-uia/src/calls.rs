@@ -6,8 +6,8 @@
 //! `GetFocusedElementBuildCache`, `ElementFromHandleBuildCache`, a tree
 //! walker's `*BuildCache` step, `BuildUpdatedCache`, `FindFirstBuildCache`,
 //! `GetCurrentPattern`, a pattern's method, or `NormalizeElementBuildCache`;
-//! and a window message sent to one of its windows, which is what
-//! `UiaHasServerSideProvider` is (one `WM_GETOBJECT`). One API call counts
+//! and a window message sent to one of its windows, which is what the raw
+//! probe is (one `WM_GETOBJECT`). One API call counts
 //! once, however many round trips UIA makes inside it; the provider-side
 //! counters in `mockapp` show those.
 //!
@@ -35,7 +35,7 @@
 //!
 //! Of those calls, each thread also counts the ones that connect to a
 //! window by its handle (`ElementFromHandle`, `ElementFromHandleBuildCache`,
-//! `GetFocusedElementBuildCache`, `UiaHasServerSideProvider`), in
+//! `GetFocusedElementBuildCache`), in
 //! [`CallCounts::connections`], which the focus listener must keep at zero
 //! (`docs/design/listener-without-connections.md`, section 2).
 //!
