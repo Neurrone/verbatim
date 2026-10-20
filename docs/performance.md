@@ -70,7 +70,15 @@ kinds, counted separately (`verbatim_model::CallKind`):
 Of the UIA calls, those that connect to a window by its handle are also
 counted apart (`CallCounts::connections`): an `ElementFromHandle` or
 `ElementFromHandleBuildCache`, and a `GetFocusedElementBuildCache`, which
-reaches the focused window the same way; the probe is not one. Each still counts once
+reaches the focused window the same way; the probe is not one, but an
+outpost whose probe finds a provider follows it with one
+`ElementFromHandle`, once in the window's lifetime, since the "yes" is
+kept (`call_counts.rs`,
+`an_outposts_probe_that_finds_a_provider_connects_once`: the probe costs
+mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
+`HostRawElementProvider` and one `Navigate`, and the connection two
+`WM_GETOBJECT`s, seven `ProviderOptions`, two `HostRawElementProvider`
+and two `Navigate`). Each still counts once
 under its own kind, so a call's total is unchanged. The focus listener
 makes none (`docs/design/listener-without-connections.md`, section 2), and
 the ratchet asserts its count is zero (`call_counts.rs`,

@@ -63,6 +63,21 @@ fn answer(read: windows::core::Result<bool>) -> Option<bool> {
     }
 }
 
+/// Connects to window `hwnd` once, by its handle (`ElementFromHandle`), and
+/// lets the element go: an outpost's connection to its own application's
+/// window as soon as the raw probe finds a provider there
+/// (`docs/design/listener-without-connections.md`, decision 2). A new File
+/// Explorer window that some process connects to that early delivers its
+/// first UIA focus events as they are raised rather than in one burst
+/// after their senders are gone. Answers `Some(true)` once connected,
+/// `None` when the window did not answer in time, and `Some(false)` for
+/// any other failure. Cross-process, and a connection to the window; an
+/// outpost's only.
+#[must_use]
+pub fn connect_to_window(hwnd: isize) -> Option<bool> {
+    with_client(|uia| uia.window_live(hwnd).map(|_| true))
+}
+
 /// The automation id of a console's text area, which is not localized.
 pub const CONSOLE_TEXT_AREA: &str = "Text Area";
 

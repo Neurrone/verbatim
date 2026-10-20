@@ -33,7 +33,10 @@ answered "no" falsely beside another process's queued remote operation
 (`e34`), under `e38`'s trigger, and for the outposts on new console and
 File Explorer windows
 (`docs/design/listener-without-connections.md`, decision 2; the
-outposts' probe decided by Dickson on 2026-10-20).
+outposts' probe decided by Dickson on 2026-10-20). An outpost whose probe
+finds a provider then connects to the window once, which NVDA's probe
+does as part of it, so a new File Explorer window is connected to as
+early as NVDA connects to it.
 
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA

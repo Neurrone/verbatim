@@ -1911,6 +1911,55 @@ fn get_objects(
     .collect()
 }
 
+/// An outpost's first look at a window of its own application that has a
+/// UIA provider, here as it takes a foreground event for it: the raw probe,
+/// one `WM_GETOBJECT` with a zero `wParam`, and, once that finds the
+/// provider, one connection to the window by its handle, which a new
+/// File Explorer window needs early for its first UIA focus events to
+/// arrive as they are raised (`docs/design/listener-without-connections.md`,
+/// decision 2). The probe alone cost mockapp one `WM_GETOBJECT`, two
+/// `ProviderOptions`, one `HostRawElementProvider` and one `Navigate`; the
+/// connection adds two `WM_GETOBJECT`s, one with a nonzero `wParam` and one
+/// with a zero one, seven `ProviderOptions`, two `HostRawElementProvider`
+/// and two `Navigate`. The probe's verdict is kept for the window's
+/// lifetime, so a second foreground event costs nothing.
+fn an_outposts_probe_that_finds_a_provider_connects_once() {
+    let title = common::unique_title("mockapp-counts-probe-connects");
+    let app = common::spawn("counts.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+    let mut ratchet = Ratchet::default();
+    for (label, expected_get_objects, expected_hits) in [
+        (
+            "first",
+            get_objects(1, 2, &[]),
+            vec![
+                ("WM_GETOBJECT", 3),
+                ("ProviderOptions", 9),
+                ("HostRawElementProvider", 3),
+                ("Navigate", 3),
+            ],
+        ),
+        ("second", get_objects(0, 0, &[]), vec![]),
+    ] {
+        common::reset_hits(hwnd);
+        outpost.deliver(DeliveredFact::Foreground {
+            hwnd: hwnd.0 as isize,
+        });
+        outpost.settled();
+        let get_objects = common::read_get_objects(hwnd);
+        let hits = common::read_hits(hwnd);
+        if get_objects != expected_get_objects || hits != expected_hits {
+            ratchet.mismatches.push(format!(
+                "the outpost's {label} look at its UIA window: WM_GETOBJECTs {get_objects:?}, hits {hits:?}"
+            ));
+        }
+    }
+    ratchet.finish();
+    drop(outpost);
+    app.quit();
+}
+
 /// A mockapp MSAA window for another mockapp's window to be placed below
 /// ([`place_below`]), and its handle; shown without being activated when
 /// it is to be an owner, since UIA's raw view puts an owned window under
@@ -3974,6 +4023,10 @@ fn uia_notes(hwnd: HWND) -> UiaText {
 fn main() {
     harness::run_isolated(&[
         ("caret_moves_cost_exactly", caret_moves_cost_exactly),
+        (
+            "an_outposts_probe_that_finds_a_provider_connects_once",
+            an_outposts_probe_that_finds_a_provider_connects_once,
+        ),
         (
             "uia_mixed_stretch_costs_exactly",
             uia_mixed_stretch_costs_exactly,

@@ -515,7 +515,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `None` when only the probe can decide; the worker then probes, with
   the raw probe (`verbatim_uia::raw_probe`) in an outpost and in the
   focus listener alike (`arbitration::uses_uia`), and calls
-  `record_probe`. `WindowClasses::of(hwnd)`
+  `record_probe`. An outpost whose probe finds a provider then connects
+  to the window once by its handle (`arbitration::Connect::AfterYes`,
+  `verbatim_uia::connect_to_window`), unless the console check that
+  follows connects by the handle itself; the listener never does
+  (`Connect::Never`). A new File Explorer window that no process connects
+  to that early delivers its first UIA focus events in one burst after
+  their senders are gone (the listener design's decision 2). `WindowClasses::of(hwnd)`
   reads the window's raw class, its class normalized as NVDA normalizes it
   (`normalize_class_name`: NVDA's class map, and the Windows Forms and
   `ATL:` wrappers removed), and its root ancestor's class. When the probe
