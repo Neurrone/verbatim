@@ -1054,8 +1054,10 @@ impl Outpost {
     ///    dropped.
     /// 2. The `WinEvent` hooks are removed, with the thread that pumped
     ///    them.
-    /// 3. Every UIA event handler is removed: each subscription's client
-    ///    removes everything it registered (`RemoveAllEventHandlers`).
+    /// 3. The focus-following UIA subscription is closed: the process's
+    ///    registering thread removes each of its groups
+    ///    (`RemoveEventHandlerGroup`), each removal waiting for callbacks
+    ///    in progress; `RemoveAllEventHandlers` comes at step 7.
     /// 4. The worker finishes the entry in hand, and every abandoned worker
     ///    returns from its call, however long the application takes to
     ///    answer or UIA takes to end the call (its connection and

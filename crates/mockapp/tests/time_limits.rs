@@ -9,7 +9,9 @@
 //! - A search, many provider calls, ends at its own deadline on a
 //!   [`BoundedClient`], before any transaction timeout, its thread abandoned.
 //! - A subscription's move onto a held window ends at UIA's connection
-//!   timeout, and the registration's next move is made after it.
+//!   timeout, and the registration's next move is made after it, as is
+//!   another registration's move, since every registration of a process
+//!   shares its registering thread.
 //!
 //! Each test runs in a process of its own on a desktop of its own
 //! (`common/harness.rs`), since the timeouts belong to the process.
@@ -130,11 +132,14 @@ fn a_held_search_ends_at_its_deadline() {
 }
 
 /// A subscription moved onto the subtree of a window whose provider holds
-/// its call, the window's element looked up before the hold, has its
-/// registration there end at UIA's connection timeout, though the call is
-/// still held; its next move, onto another application's window, asked
-/// for while the first was held, is made once the first has returned, and
-/// registers there, as that application counts it.
+/// its call, the window's element looked up before the hold, and moved
+/// again, while that call is held, onto another application's window: both
+/// moves are made, the next registering on the other window, as that
+/// application counts it, between one and two of UIA's connection
+/// timeouts after the first was asked for, though the held call is still
+/// held. So the held registration ended at the connection timeout, and
+/// the second move's removal of the group from the held window cost no
+/// timeout of its own.
 fn a_held_subscription_move_returns_at_the_connection_timeout() {
     common::init_com();
     let held_title = common::unique_title("mockapp-held-move");
@@ -177,6 +182,69 @@ fn a_held_subscription_move_returns_at_the_connection_timeout() {
     held_app.quit();
     next_app.quit();
 }
+/// Two registrations of one process share its registering thread, which
+/// makes their commands in the order they were asked for: a second
+/// registration's move, asked for while the first registration's move onto
+/// a window whose provider holds its call is held, is made only after that
+/// move has returned at UIA's connection timeout, so the second
+/// registration's settle returns no sooner than one connection timeout
+/// after the first move was asked for, and its move has then registered on
+/// the other application's window, as that application counts it.
+fn two_registrations_moves_are_made_in_the_order_asked() {
+    common::init_com();
+    let held_title = common::unique_title("mockapp-held-first");
+    let mut held_app = common::spawn("small.json", "uia", &held_title);
+    let next_title = common::unique_title("mockapp-second-registration");
+    let next_app = common::spawn_counting_registrations("small.json", &next_title);
+    let registration = || {
+        Registration::with_parts(
+            vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
+                properties: vec![UIA_NamePropertyId],
+                callback: Arc::new(|_, _| {}),
+            })],
+            Scope::Nothing,
+        )
+        .expect("a registration")
+    };
+    let first = registration();
+    let second = registration();
+    let held_window = common::window_subtree(common::find_window(&held_title).0 as isize);
+    let next_hwnd = common::find_window(&next_title);
+    let next_window = common::window_subtree(next_hwnd.0 as isize);
+    let advised = || common::advised(next_hwnd, UIA_AutomationPropertyChangedEventId.0);
+    assert_eq!(
+        advised(),
+        0,
+        "nothing is registered on the other window yet"
+    );
+
+    held_app.hold();
+    let started = Instant::now();
+    first.retarget(held_window);
+    let held = held_app.held();
+    second.retarget(next_window);
+    second.settle();
+    let elapsed = started.elapsed();
+    assert_eq!(
+        held, "FragmentRoot",
+        "the first registration's call was held"
+    );
+    assert!(
+        elapsed >= CONNECTION_TIMEOUT && elapsed < CONNECTION_TIMEOUT * 2,
+        "the second registration's move was made after the first's returned: {elapsed:?}"
+    );
+    assert_eq!(
+        advised(),
+        1,
+        "the second registration's move registered on the other window"
+    );
+    held_app.release();
+    first.close();
+    second.close();
+    held_app.quit();
+    next_app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -191,6 +259,10 @@ fn main() {
         (
             "a_held_subscription_move_returns_at_the_connection_timeout",
             a_held_subscription_move_returns_at_the_connection_timeout,
+        ),
+        (
+            "two_registrations_moves_are_made_in_the_order_asked",
+            two_registrations_moves_are_made_in_the_order_asked,
         ),
     ]);
 }

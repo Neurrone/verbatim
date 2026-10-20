@@ -1,7 +1,7 @@
 //! The per-thread UIA client wrapper.
 //!
-//! Every outpost thread that talks to UIA — the focus-registration thread and
-//! the outpost's worker — owns its own [`Uia`]. Construction joins the
+//! Every outpost thread that talks to UIA — the process's registering
+//! thread and the outpost's worker — owns its own [`Uia`]. Construction joins the
 //! multithreaded apartment (architecture section 4) and creates a fresh
 //! `IUIAutomation`; the in-process client library gives each thread an
 //! independent object, so nothing is shared across threads and there is no COM
@@ -1099,7 +1099,9 @@ static MTA_USAGE: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
 /// every thread has left the apartment ([`crate::leave_mta`]), COM tears
 /// it down. The process's registering thread, which every
 /// [`crate::Registration`] is made on, is ended first, removing what its
-/// client registered and leaving the apartment. A later use of UIA sets it
+/// client registered and leaving the apartment: the effect is
+/// process-wide, so every registration still open in the process, whoever
+/// holds it, hears nothing more from then on. A later use of UIA sets it
 /// up again. Does nothing when UIA was never used.
 pub fn release_mta_usage() {
     crate::subscribe::end_registering_thread();

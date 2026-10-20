@@ -636,7 +636,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     The worker moves it each time it reports a focus, without waiting
     (`follow_focus`): the matching group is added to the new focus, then
     removed from the previous one alone (`RemoveEventHandlerGroup`);
-    `RemoveAllEventHandlers` is called only at shutdown. A move to the
+    `RemoveAllEventHandlers` is called only at shutdown, as the
+    registering thread ends. A move to the
     node and group already followed is not asked of the subscription, and
     one to the same element under another node makes no call, as the
     subscription compares the elements. A focus whose element the outpost
@@ -2033,8 +2034,11 @@ The outpost's side (`Outpost::shutdown`), in order:
 1. The intake closes: nothing new is taken, and what was waiting is
    dropped.
 2. The `WinEvent` hooks are removed, with the thread that pumped them.
-3. The focus-following UIA subscription is closed: its client removes
-   everything it registered (`RemoveAllEventHandlers`).
+3. The focus-following UIA subscription is closed: the process's
+   registering thread removes each of its groups one by one
+   (`RemoveEventHandlerGroup`), each removal waiting for callbacks in
+   progress; `RemoveAllEventHandlers` comes at step 7, as the
+   registering thread ends.
 4. The worker finishes the entry in hand and every abandoned worker
    returns from its call, and so does every thread of the client for
    operations with a deadline of their own. The watchdog ends first, so

@@ -363,8 +363,15 @@ Public API:
   registered (`RemoveEventHandlerGroup`) and its focus handler
   (`RemoveFocusChangedEventHandler`), each waiting for a callback in
   progress, and releases its objects; moving or settling a closed
-  registration does nothing, and dropping one closes it. An outpost
-  closes its registration when it shuts down. The
+  registration does nothing, and dropping one closes it. Each removal is
+  tried once: a group a move failed to remove is tried again at the
+  close, and a group or focus handler whose removal fails at the close
+  stays live on the registering thread's client, calling the closed
+  registration's callbacks, until the thread ends and
+  `RemoveAllEventHandlers` removes it. A `close()` made on the
+  registering thread itself, as when a registration's owner is dropped
+  there with another registration's callbacks, is queued and does not
+  wait. An outpost closes its registration when it shuts down. The
   `Scope` is nothing yet, the subtrees of given elements (`Subtrees`), the
   whole desktop (the subtree of the root element), or exactly given
   elements. The caller looks a window's element up itself, on a thread
@@ -429,12 +436,16 @@ Public API:
   the other group adds the new group, then removes the old one. Elements
   that fail to resolve, or on which the group cannot be registered (an
   element that has gone, which NVDA also logs and passes over), are
-  skipped. Every move is logged at debug level: the elements it moves from,
+  skipped. Every move is logged at debug level, a move skipped for a
+  later one of the same registration with that later move's scope, and a
+  move made with the elements it moves from,
   by runtime id and group, the scope and elements it moves to, and each
-  call it makes (`AddEventHandlerGroup`, `RemoveEventHandlerGroup`,
-  `AddFocusChangedEventHandler`) with its result and its elapsed
+  call it or a close makes (`AddEventHandlerGroup`,
+  `RemoveEventHandlerGroup`, `AddFocusChangedEventHandler`,
+  `RemoveFocusChangedEventHandler`) with its result and its elapsed
   milliseconds, at warn level when the call took longer than
-  `CONNECTION_TIMEOUT`, naming the element by runtime id; the first
+  `CONNECTION_TIMEOUT`, naming the element by runtime id, which is read
+  only when the line is written; the first
   registration `with_parts` makes is logged the same way. The element's
   window is not named: it would take a cached read the caller's element
   is not known to hold, or a call into the application that has just
@@ -461,8 +472,10 @@ Public API:
   a desktop-wide registration that advises several such applications
   waits a timeout for each. `RemoveAllEventHandlers` is called only as the
   thread ends, when the process has finished with UIA:
-  `release_mta_usage` ends the thread first, and a registration still open
-  then hears nothing more. A later registration starts the thread again.
+  `release_mta_usage` ends the thread first, and every registration still
+  open in the process then hears nothing more, whoever holds it. A later
+  registration starts the thread again, once the ending one has ended: a
+  registration asked for meanwhile waits for it.
   The focus listener holds one registration, the
   desktop-wide selection, menu-opened, and notification subscriptions as
   one group, where it held three registrations before; each outpost holds

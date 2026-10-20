@@ -24,8 +24,10 @@
 //!   position, which Verbatim does not yet subscribe to (`docs/parity/backends.md`,
 //!   "UIA event registration").
 //!
-//! The listener's callbacks, its writer, and its registration threads never
-//! make a cross-process call (decision D13, as amended on 2026-10-11). A UIA
+//! The listener's callbacks, its writer, and its registering thread never
+//! make a cross-process call (decision D13, as amended on 2026-10-11),
+//! except the registering thread's registration calls themselves, which
+//! reach every application's provider and which UIA's timeouts bound. A UIA
 //! callback delivers the element with its properties already cached, so
 //! building a fact is local memory reads (plus `GetRuntimeId`, a local read
 //! on a cached element); an MSAA `WinEvent` delivers a raw window and object

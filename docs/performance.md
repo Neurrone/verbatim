@@ -1473,8 +1473,8 @@ Every `verbatim_uia::Registration` now registers its subscriptions as one
 element of its scope, as NVDA registers its handlers. The focus listener's
 three desktop-wide subscriptions (an element selected, a menu opened, and
 notifications) became one registration with one thread and one client,
-where they were three of each. A registration runs on its own thread, so
-it makes no counted call on the worker's; what it costs the application
+where they were three of each. A registration runs on the process's
+registering thread, so it makes no counted call on the worker's; what it costs the application
 is the provider calls UIA makes while registering, now pinned by the
 ratchet (`uia_event_registrations_cost_exactly`), the same with remote
 operations on or off.

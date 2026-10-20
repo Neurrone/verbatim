@@ -41,15 +41,21 @@
 //! `removeLocalEventHandlerGroupFromElement`). An element that already has
 //! the chosen group, the same element by `CompareElements`, keeps it, and no
 //! call is made for it. Every move is logged at debug level, with the
-//! elements it moves from and to, by runtime id, and each call it makes
-//! with its result and the time it took, at warn level when that passed
-//! UIA's connection timeout
-//! ([`crate::CONNECTION_TIMEOUT`]). [`Registration::settle`] waits for
-//! every move asked for so far to be made, for a caller that measures what
-//! the moves cost the application. Closing or dropping a registration
-//! removes what it registered. `RemoveAllEventHandlers` is called only as
-//! the registering thread ends, once the process has finished with UIA
-//! ([`crate::release_mta_usage`]).
+//! elements it moves from and to, by runtime id, or, when a newer move of
+//! the same registration queued behind it makes it unneeded, that it was
+//! skipped and for which move; and each call a move or a close makes with
+//! its result and the time it took, at warn level when that passed UIA's
+//! connection timeout ([`crate::CONNECTION_TIMEOUT`]).
+//! [`Registration::settle`] waits for every move asked for so far to be
+//! made, for a caller that measures what the moves cost the application.
+//! Closing or dropping a registration removes what it registered, each
+//! removal tried once: a group or focus handler whose removal fails, in a
+//! move or in the close, stays recorded as live, and a group a move
+//! failed to remove is tried again at the close, but one whose removal
+//! fails at the close stays live on the shared client, still calling the
+//! closed registration's callbacks, until the registering thread ends.
+//! `RemoveAllEventHandlers` is called only then, once the process has
+//! finished with UIA ([`crate::release_mta_usage`]), and removes it.
 //!
 //! No call is given a deadline or abandoned: UIA ends a registration call
 //! into an application that does not answer at its connection timeout
@@ -413,17 +419,23 @@ fn registrar() -> windows::core::Result<mpsc::Sender<Command>> {
 /// multithreaded apartment. For a process that has finished with UIA for
 /// good, which [`crate::release_mta_usage`] says: a registration still
 /// open then hears nothing more, and moving, settling, or closing it does
-/// nothing. A later registration starts the thread again.
+/// nothing. A later registration starts the thread again, but only once
+/// this one has ended: the registering thread's slot stays locked until
+/// it has, so a registration asked for meanwhile waits and then starts a
+/// fresh thread, and two threads never add and remove handlers at once.
 pub(crate) fn end_registering_thread() {
-    let registrar = REGISTRAR
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .take();
-    if let Some(Registrar { commands, join }) = registrar {
+    let mut registrar = REGISTRAR.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(Registrar { commands, join }) = registrar.take() {
         let _ = commands.send(Command::End);
         drop(commands);
         let _ = join.join();
     }
+}
+
+thread_local! {
+    /// Whether this thread is the registering thread, where a
+    /// registration's close cannot wait for the thread's answer.
+    static REGISTERING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// The error for a registering thread that ended before it answered.
@@ -562,9 +574,15 @@ impl Registration {
     /// registration (`RemoveEventHandlerGroup`) and its focus handler
     /// (`RemoveFocusChangedEventHandler`), each of which waits for any of
     /// its callbacks in progress to return, and releases its objects.
-    /// Returns once all of that is done. Moving or settling a closed
-    /// registration does nothing; closing it again returns at once.
-    /// Dropping a registration closes it.
+    /// Returns once all of that is done, except on the registering thread
+    /// itself, as when the last reference to a registration's owner is
+    /// dropped there with another registration's callbacks: the close is
+    /// then queued and made after what the thread is doing, without
+    /// waiting, since the thread cannot answer itself. Each removal is
+    /// tried once; one that fails leaves its group or handler live on the
+    /// registering thread's client until the thread ends (module doc).
+    /// Moving or settling a closed registration does nothing; closing it
+    /// again returns at once. Dropping a registration closes it.
     pub fn close(&self) {
         let Some(commands) = self.lock().take() else {
             return;
@@ -575,7 +593,7 @@ impl Registration {
             done: done_tx,
         });
         drop(commands);
-        if sent.is_ok() {
+        if sent.is_ok() && !REGISTERING.with(std::cell::Cell::get) {
             // A disconnection means the thread ended, removing everything.
             let _ = done_rx.recv();
         }
@@ -621,17 +639,20 @@ impl Command {
     }
 }
 
-/// Whether a move of registration `id` can be skipped because `queued`,
-/// the commands behind it, holds a later move of the same registration
-/// before anything else of that registration's that waits for its moves
-/// (a settle or a close): only the newest target matters.
-fn superseded<'a>(queued: impl IntoIterator<Item = &'a Command>, id: u64) -> bool {
+/// The later move of registration `id` that lets a move of it be skipped,
+/// if `queued`, the commands behind it, holds one before anything else of
+/// that registration's that waits for its moves (a settle or a close):
+/// only the newest target matters.
+fn superseded<'a>(queued: impl IntoIterator<Item = &'a Command>, id: u64) -> Option<&'a Target> {
     for command in queued {
         if command.registration() == Some(id) {
-            return matches!(command, Command::Retarget { .. });
+            return match command {
+                Command::Retarget { target, .. } => Some(target),
+                _ => None,
+            };
         }
     }
-    false
+    None
 }
 
 impl Drop for Registration {
@@ -815,6 +836,9 @@ struct Follower {
     desktop_root: Option<IUIAutomationElement>,
     groups: Vec<BuiltGroup>,
     registered: Vec<Registered>,
+    /// The groups a move no longer wanted whose removal failed, still live
+    /// on the client: [`Follower::close`] tries them again.
+    unremoved: Vec<Registered>,
     /// The focus handlers registered on the client, which
     /// [`Follower::close`] removes.
     focus_handlers: Vec<IUIAutomationFocusChangedEventHandler>,
@@ -838,7 +862,11 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
         }
     };
     let _ = ready.send(Ok(()));
+    REGISTERING.with(|registering| registering.set(true));
     let mut followers: Vec<Follower> = Vec::new();
+    // Closed registrations with a group or focus handler whose removal
+    // failed, still live on the client until `RemoveAllEventHandlers`.
+    let mut unremoved: Vec<Follower> = Vec::new();
     let mut queue: VecDeque<Command> = VecDeque::new();
     'serving: while let Ok(command) = received.recv() {
         queue.push_back(command);
@@ -868,7 +896,14 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
                     // Only the newest target matters: one queued behind
                     // it, before a settle or a close that waits for it,
                     // is made instead.
-                    if superseded(&queue, id) {
+                    if let Some(later) = superseded(&queue, id) {
+                        tracing::debug!(
+                            registration = id,
+                            to = describe(&target.scope),
+                            later = describe(&later.scope),
+                            later_group = ?later.group,
+                            "a UIA subscription's move is skipped: a later move replaces it"
+                        );
                         continue;
                     }
                     if let Some(follower) = followers.iter_mut().find(|follower| follower.id == id)
@@ -880,8 +915,10 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
                     let _ = done.send(());
                 }
                 Command::Close { id, done } => {
-                    if let Some(at) = followers.iter().position(|follower| follower.id == id) {
-                        followers.swap_remove(at).close(&client);
+                    if let Some(at) = followers.iter().position(|follower| follower.id == id)
+                        && let Some(live) = followers.swap_remove(at).close(&client)
+                    {
+                        unremoved.push(live);
                     }
                     let _ = done.send(());
                 }
@@ -895,6 +932,7 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
     tracing::debug!(
         result = ?removed,
         open = followers.len(),
+        closed_with_live_handlers = unremoved.len(),
         "the UIA registering thread ends: RemoveAllEventHandlers"
     );
     // The commands not made, the handlers, the cache requests, the groups,
@@ -902,6 +940,7 @@ fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Recei
     // the apartment `Uia::new` joined it to.
     drop(queue);
     drop(followers);
+    drop(unremoved);
     drop(client);
     crate::com::leave_mta();
 }
@@ -919,9 +958,10 @@ fn log_call(
     result: &windows::core::Result<()>,
     elapsed: Duration,
 ) {
-    let runtime_id = crate::com::runtime_id(element);
+    // The runtime id is read only for a line that is written.
     let elapsed_ms = elapsed.as_millis();
     if elapsed > crate::CONNECTION_TIMEOUT {
+        let runtime_id = crate::com::runtime_id(element);
         tracing::warn!(
             registration,
             ?runtime_id,
@@ -929,7 +969,8 @@ fn log_call(
             elapsed_ms,
             "{call} took longer than UIA's connection timeout"
         );
-    } else {
+    } else if tracing::enabled!(tracing::Level::DEBUG) {
+        let runtime_id = crate::com::runtime_id(element);
         tracing::debug!(registration, ?runtime_id, ?result, elapsed_ms, "{call}");
     }
 }
@@ -1005,6 +1046,7 @@ impl Follower {
             desktop_root,
             groups: Vec::new(),
             registered: Vec::new(),
+            unremoved: Vec::new(),
             focus_handlers: Vec::new(),
         };
         let focus: Vec<_> = follower
@@ -1037,7 +1079,9 @@ impl Follower {
                 );
             }
             if let Err(error) = added {
-                follower.close(client);
+                // What this registration added before is removed; it has
+                // no groups yet.
+                drop(follower.close(client));
                 return Err(error);
             }
             follower.focus_handlers.push(handler);
@@ -1115,14 +1159,18 @@ impl Follower {
                 }
             }
         }
-        self.remove(client, previous);
+        let unremoved = self.remove(client, previous);
+        self.unremoved.extend(unremoved);
         self.registered = now;
     }
 
-    /// Removes from each of `registered` the group added there, and forgets
-    /// it whatever the result, as NVDA forgets it: a group on an element
-    /// that has gone since is forgotten by UIA itself.
-    fn remove(&self, client: &Client, registered: Vec<Registered>) {
+    /// Removes from each of `registered` the group added there, once each,
+    /// and answers those whose removal failed, which stay live on the
+    /// client (a removal made in the gap after a registration that timed
+    /// out fails and leaves the group live; `docs/uia-bugs.md`, "A
+    /// registration that times out reports success").
+    fn remove(&self, client: &Client, registered: Vec<Registered>) -> Vec<Registered> {
+        let mut failed = Vec::new();
         for registered in registered {
             let started = Instant::now();
             // SAFETY: the element and the group added there are live and
@@ -1139,27 +1187,59 @@ impl Follower {
                 &removed,
                 started.elapsed(),
             );
+            if removed.is_err() {
+                failed.push(registered);
+            }
         }
+        failed
     }
 
-    /// Ends the registration: removes every group it registered and its
-    /// focus handlers, each removal waiting for that handler's callbacks in
-    /// progress, then releases its objects.
-    fn close(mut self, client: &Client) {
-        let registered = std::mem::take(&mut self.registered);
-        self.remove(client, registered);
+    /// Ends the registration: removes every group it registered, those a
+    /// move failed to remove included, and its focus handlers, each removal
+    /// tried once and waiting for that handler's callbacks in progress,
+    /// then releases its objects. Answers the registration again, holding
+    /// only what is still live, when a removal failed, so that the
+    /// registering thread keeps it until it ends.
+    fn close(mut self, client: &Client) -> Option<Self> {
+        let mut registered = std::mem::take(&mut self.registered);
+        registered.append(&mut self.unremoved);
+        self.unremoved = self.remove(client, registered);
         for handler in std::mem::take(&mut self.focus_handlers) {
             let started = Instant::now();
             // SAFETY: the handler is live and was registered on this
             // client.
             let removed = unsafe { client.uia.client().RemoveFocusChangedEventHandler(&handler) };
-            tracing::debug!(
-                registration = self.id,
-                result = ?removed,
-                elapsed_ms = started.elapsed().as_millis(),
-                "RemoveFocusChangedEventHandler"
-            );
+            let elapsed = started.elapsed();
+            let elapsed_ms = elapsed.as_millis();
+            if elapsed > crate::CONNECTION_TIMEOUT {
+                tracing::warn!(
+                    registration = self.id,
+                    result = ?removed,
+                    elapsed_ms,
+                    "RemoveFocusChangedEventHandler took longer than UIA's connection timeout"
+                );
+            } else {
+                tracing::debug!(
+                    registration = self.id,
+                    result = ?removed,
+                    elapsed_ms,
+                    "RemoveFocusChangedEventHandler"
+                );
+            }
+            if removed.is_err() {
+                self.focus_handlers.push(handler);
+            }
         }
+        if self.unremoved.is_empty() && self.focus_handlers.is_empty() {
+            return None;
+        }
+        tracing::warn!(
+            registration = self.id,
+            groups = self.unremoved.len(),
+            focus_handlers = self.focus_handlers.len(),
+            "a closed UIA subscription keeps handlers whose removal failed until the registering thread ends"
+        );
+        Some(self)
     }
 
     /// The elements of `scope`, and the tree scope a group registered on
@@ -1511,10 +1591,10 @@ mod tests {
             id,
             done: done.clone(),
         };
-        assert!(superseded(&[retarget(2), settle(2), retarget(1)], 1));
-        assert!(!superseded(&[retarget(2)], 1));
-        assert!(!superseded(&[settle(1), retarget(1)], 1));
-        assert!(!superseded(&[close(1), retarget(1)], 1));
-        assert!(!superseded(&[], 1));
+        assert!(superseded(&[retarget(2), settle(2), retarget(1)], 1).is_some());
+        assert!(superseded(&[retarget(2)], 1).is_none());
+        assert!(superseded(&[settle(1), retarget(1)], 1).is_none());
+        assert!(superseded(&[close(1), retarget(1)], 1).is_none());
+        assert!(superseded(&[], 1).is_none());
     }
 }
