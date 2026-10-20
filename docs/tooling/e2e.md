@@ -392,12 +392,12 @@ test Windows 11 Notepad, which GitHub's Windows Server runner lacks (it
 has classic Notepad, a Win32 edit control), and their names start with
 `notepad_`; editing behaviour is also covered in the harness's Windows
 Forms text box, which runs everywhere. `settings_search_suggestions` is
-local-only by a decision of its own (2026-10-21), for two reasons: it
-fails in a state Settings is sometimes in, where Settings replaces its
-suggestion list's items as the list opens, and the Settings app's search
-index is untested on the runner (`docs/parity/changes-and-selection.md`,
-"Selection in a list the focus controls", which says how a failure from
-that state shows). The registry's `LOCAL_ONLY_FILTERS` lists the filters, and
+local-only by a decision of its own (2026-10-21), for two reasons: the
+Settings app's search index is untested on the runner, and in some
+launches Settings replaces its suggestion list's items as the list
+opens, a state of Settings' own that decides how Verbatim finds the
+first suggestion (`docs/parity/changes-and-selection.md`, "Selection in
+a list the focus controls"). The registry's `LOCAL_ONLY_FILTERS` lists the filters, and
 only local-only scenarios' names start with them. A local-only
 scenario is part of the suite: every local run and every
 `cargo xtask vm test` run includes it. CI's `e2e` job deselects them with

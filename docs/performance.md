@@ -820,7 +820,11 @@ the list selected (`crates/mockapp/tests/controller_for.rs`).
   it (1 UIA call): three round trips for one controlled list, more for
   each further controlled element.
 - Today: 1 UIA call, one remote operation, whatever the number of
-  controlled elements, and the same answer as the classic calls.
+  controlled elements, and the same answer as the classic calls. An item
+  found in none is answered with the first controlled element's current
+  selection, read in the same operation; the classic calls take three
+  more for it (the Selection pattern, its current selection, and the
+  selected item's cache).
 
 ### An event from a window not related to the foreground window, MSAA
 
@@ -1898,10 +1902,14 @@ share of the limit in brackets:
 - The navigation step: 870 (9 percent) from an item sixty-two levels
   below its window, 139 from right under it, about 12 for each level
   walked.
-- The controlled selection: 168 for a result inside a group of the
-  controlled list, 200 for the list's second child, and 212 for an item
-  outside the list, all three of the list's elements walked; about 35 for
-  each element passed. Of these, 5 return the runtime ids of the
+- The controlled selection: 174 for a result inside a group of the
+  controlled list, 206 for the list's second child, and 229 for an item
+  outside the list, all three of the list's elements walked and then the
+  list's selection read, which is empty; about 35 for each element
+  passed. Of these, 6 test whether the search found the element, and an
+  element not found takes 11 more to read the first controlled element's
+  runtime id and current selection, and the selection's first element's
+  cache when it has one. Of these, 5 return the runtime ids of the
   elements the relation names, for the outpost's log of a selection
   found in none: 1 for the string that collects them and 4 for each
   controlled element (its runtime id read, written as a string, joined

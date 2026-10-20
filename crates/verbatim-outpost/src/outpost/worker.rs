@@ -2732,6 +2732,9 @@ impl Worker<'_> {
     /// list the focus controls, when it is one: the focused element names,
     /// in its `ControllerFor` relation, an element the selected one is inside
     /// ("Selection in a list the focus controls" in `docs/nvda/events.md`).
+    /// When the selected one is inside none, the first controlled element's
+    /// current selection is reported in its place
+    /// (`verbatim_uia_rops::Controlled::selected`).
     fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
         // The focus this outpost last reported, as NVDA uses its focus
         // object; found by its path when its element is not known.
@@ -2768,17 +2771,29 @@ impl Worker<'_> {
             }
         }
         if answer.selected.is_none() && !answer.controlled.is_empty() {
-            // The search ran and did not find the element: what the
-            // relation named, for a selection Settings' search suggestions
-            // can raise for an element it has already replaced
-            // (`docs/parity/changes-and-selection.md`).
+            // The search ran and did not find the element, and the first
+            // controlled element has nothing selected: what the relation
+            // named.
             tracing::debug!(
                 selected = ?runtime_id,
                 controlled = ?answer.controlled,
-                "a selection in none of the elements the focus controls"
+                "a selection in none of the elements the focus controls, none of which has a selection"
             );
         }
         let selected = answer.selected?;
+        let reported = selected.runtime_id();
+        if reported != runtime_id {
+            // Not found, so the first controlled element's current
+            // selection, for a selection Settings' search suggestions raise
+            // for an item it has already replaced
+            // (`docs/parity/changes-and-selection.md`).
+            tracing::debug!(
+                selected = ?runtime_id,
+                ?reported,
+                controlled = ?answer.controlled,
+                "a selection in none of the elements the focus controls; the first one's current selection is reported"
+            );
+        }
         let registry = &self.context.uia_registry;
         // The controller's runtime id is UIA's own, kept with the element,
         // whatever its cache holds.

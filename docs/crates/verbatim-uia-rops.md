@@ -727,19 +727,30 @@ that ends at once (`crates/mockapp/tests/instruction_limit.rs`).
 element the focus controls (its base `event_selection` reads the focus's
 `controllerFor` live for each selection event) with a `Controlled`: the
 runtime ids of the elements the relation names (`controlled`, as
-`runtime_id_key` writes them, up to the one the element was found in),
-which the outpost logs when the element is in none of them, and
+`runtime_id_key` writes them, up to the one the element was found in,
+all of them when it was found in none), which the outpost logs when the
+element is in none of them, and
 `selected`, a `Cached<Node>` filled by the query's fill, when the element a selection event
 named by its runtime id (`ControlledQuery::selected`) is a descendant of
-one of the elements the focus names in its `ControllerFor` relation. The
+one of the elements the focus names in its `ControllerFor` relation.
+When it is in none, `selected` is the first controlled element's first
+selected element instead, read through its `Selection` property in the
+same program and filled the same way, unless the event named that
+element itself: Settings raises its search suggestions' first selection
+for an item it has already replaced, and the list's current selection
+is the new item (`docs/parity/changes-and-selection.md`, "Selection in a
+list the focus controls"). A caller tells the two answers apart by the
+runtime id. The
 program reads the relation, then walks each controlled element's
 raw-view descendants depth first (first child, else next sibling, else
 the nearest ancestor's next sibling, counting depth so the walk ends back
 at the controlled element, which is not its own descendant), comparing
 each one's stringified runtime id with the selected one's
 (`runtime_id_key`), and fills the found element's cache inside the
-provider. The classic implementation is `Uia::controlled_descendant`: the
-relation, then a `FindFirstBuildCache` under each controlled element.
+provider. The classic implementation is `Uia::controlled`: the
+relation, then a `FindFirstBuildCache` under each controlled element,
+and, found in none, the first controlled element's Selection pattern,
+its current selection, and the first selected element's cache.
 There is no `FindFirst` instruction, so the program walks; each element
 it passes costs about 35 instructions, so a run reaches the instruction
 limit after about 280, and a list that large is answered classically for
@@ -747,7 +758,10 @@ that call. Against mockapp's controller fixture
 (`crates/mockapp/tests/controller_for.rs`) both answer the same, the
 program in one call, for a result one level down and one inside a group
 of the list, and neither finds the controlled list itself, an item
-outside it, or anything from an element that controls nothing.
+outside it while the list has nothing selected, or anything from an
+element that controls nothing; both answer the list's current
+selection for a runtime id the list does not hold, and for an item
+outside it while the list has a selection.
 
 ## Fallback rules
 

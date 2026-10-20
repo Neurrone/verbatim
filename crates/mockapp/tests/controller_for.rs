@@ -7,10 +7,13 @@
 //! `ElementSelected` event; `verbatim_uia_rops::controlled_selection`, the
 //! check the outpost makes on such an event, must find it from the search
 //! box, one level down or inside a group of the list, and must find
-//! nothing for an item outside the controlled list, for the controlled list
-//! itself, or from an element that controls nothing. It answers each in one
-//! remote operation, and the classic calls behind the same signature
-//! answer the same. The focused element is passed in rather than read from
+//! nothing for an item outside the controlled list while the list has
+//! nothing selected, for the controlled list itself, or from an element
+//! that controls nothing. A selection the list does not hold, as Settings
+//! raises for a suggestion it has already replaced, is answered with the
+//! list's current selection, and so is an item outside the list while the
+//! list has one. It answers each in one remote operation, and the classic
+//! calls behind the same signature answer the same. The focused element is passed in rather than read from
 //! the keyboard focus, so the test runs headless.
 //!
 //! Through a real outpost, a controlled selection is also reported when the
@@ -169,7 +172,27 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
     assert_eq!(
         controlled(&uia, &search, &elsewhere),
         None,
-        "an item outside the controlled list is not a controlled selection"
+        "an item outside the controlled list, which has nothing selected, is not a controlled selection"
+    );
+
+    // The list's own selection stands for an element it does not hold.
+    app.send("select result2");
+    let current = selected_id("Sound settings");
+    let replaced: Vec<i32> = current.iter().copied().chain([1]).collect();
+    assert_eq!(
+        controlled(&uia, &search, &replaced),
+        Some((Some("Sound settings".to_owned()), current.clone())),
+        "a selection the list does not hold is answered with its current selection"
+    );
+    assert_eq!(
+        controlled(&uia, &search, &elsewhere),
+        Some((Some("Sound settings".to_owned()), current)),
+        "so is an item outside the list while the list has a selection"
+    );
+    assert_eq!(
+        controlled(&uia, &search, &verbatim_uia::runtime_id(&results)),
+        None,
+        "the controlled list itself is not answered with its selection"
     );
 
     assert!(

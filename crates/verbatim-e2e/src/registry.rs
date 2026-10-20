@@ -176,8 +176,8 @@ pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
 /// one, and no other scenario's does (a demonstration's `demo_` name can
 /// contain one, and is deselected with `--skip demo_`). `notepad_` begins every scenario that
 /// tests Windows 11 Notepad; `settings_search_suggestions` depends on the
-/// Settings app's search index, untested on GitHub's runner, and fails in
-/// a state Settings is sometimes in (`docs/parity/changes-and-selection.md`,
+/// Settings app's search index, untested on GitHub's runner, and on a
+/// state Settings is sometimes in (`docs/parity/changes-and-selection.md`,
 /// "Selection in a list the focus controls"). A unit test checks CI's
 /// `e2e` job's skips against this list.
 pub const LOCAL_ONLY_FILTERS: &[&str] = &["notepad_", "settings_search_suggestions"];

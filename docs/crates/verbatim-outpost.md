@@ -1955,7 +1955,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   and UIA notifications emit `NormalizedEvent::Notification`. A UIA
   selection inside an element the focused element names in its
   ControllerFor relation emits `NormalizedEvent::ControlledSelection`
-  instead, carrying the focus's id, as NVDA reports a search suggestion:
+  instead, carrying the focus's id, as NVDA reports a search suggestion,
+  and so does one inside none of them, with the first controlled
+  element's current selection as its node, logged at debug ("the first
+  one's current selection is reported"):
   the relation is read live for each selection, as NVDA reads it, and it
   and the search for the selected element under what it names are one
   remote operation where the focus's window allows one

@@ -73,7 +73,9 @@ Public API:
   runtime_id, request)` (a search of `parent`'s children only, which tells
   the outpost whether a selected item is a child of the focus) and `controlled(focused,
   runtime_id, request)` (the selected element, when it is inside an
-  element the focus names in its ControllerFor relation; the classic
+  element the focus names in its ControllerFor relation, else the first
+  controlled element's first selected element unless `runtime_id` names
+  that element; the classic
   implementation behind `verbatim_uia_rops::controlled_selection`, which
   answers with it the runtime ids of the elements the relation named),
   plus

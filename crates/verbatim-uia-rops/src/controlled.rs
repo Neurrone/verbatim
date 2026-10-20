@@ -6,16 +6,23 @@
 //! program reads the relation and searches each controlled element's
 //! subtree for the selected element in one round trip; the classic
 //! implementation behind the same signature reads the relation and
-//! searches with `FindFirstBuildCache`, one call each.
+//! searches with `FindFirstBuildCache`, one call each. When the selected
+//! element is in none of them, the first controlled element's current
+//! selection is the answer, read in the same round trip: Settings raises
+//! its search suggestions' first selection for an item it has already
+//! replaced, which NVDA reaches by walking up from the event's element and
+//! a search down cannot find ("Selection in a list the focus controls" in
+//! `docs/parity/changes-and-selection.md`).
 //! [`controlled_selection`] is the one function callers use.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, UIA_ControllerForPropertyId, UIA_RuntimeIdPropertyId,
+    UIA_SelectionSelectionPropertyId,
 };
 
 use verbatim_uia::{Cached, Fill, Live, Node, Uia};
 
-use crate::builder::{Builder, kind};
+use crate::builder::{Builder, Reg, kind};
 use crate::caret::gone_or_timed_out;
 use crate::error::Error;
 use crate::focus::{Path, RemoteCache, absent_record, runtime_id_key};
@@ -38,11 +45,16 @@ pub struct ControlledQuery<'a> {
 #[derive(Debug)]
 pub struct Controlled {
     /// The selected element, filled by the query's fill, when it is a
-    /// descendant of an element the focus controls; `None` when the focus
-    /// controls nothing or the element is in none of what it controls.
+    /// descendant of an element the focus controls; else the first element
+    /// selected in the first controlled element, unless the selection
+    /// named that element itself. `None` when the focus controls nothing,
+    /// or the element is in none of what it controls and the first
+    /// controlled element has nothing selected. A caller tells the two
+    /// apart by the answer's runtime id.
     pub selected: Option<Cached<Node>>,
     /// The runtime ids of the elements the focus's relation names, in its
-    /// order, up to the one the selected element was found in, each as
+    /// order, up to the one the selected element was found in (all of them
+    /// when it was found in none), each as
     /// [`runtime_id_key`] writes it: empty when it names none. Each was
     /// searched, but one that is the selected element itself, which is not
     /// its own descendant.
@@ -84,7 +96,9 @@ pub fn controlled_selection(
 /// in the raw view, depth first, until one has the selected element's
 /// runtime id, whose cache is then filled inside the provider; each
 /// controlled element's runtime id comes back with it. The
-/// controlled element itself is not its own descendant. A subtree too
+/// controlled element itself is not its own descendant. Found in none, the
+/// first controlled element's `Selection` property gives its first
+/// selected element, filled the same way. A subtree too
 /// large for one run stops it at the platform's instruction limit, and
 /// [`controlled_selection`] answers that call classically.
 ///
@@ -192,6 +206,7 @@ pub fn controlled_selection_remote(
                 );
             },
         );
+        current_selection_instead(b, &cache, (controlled, size, target), (found, found_absent));
     });
     let outcome = b.finish().execute()?;
     let absent = absent_record(outcome.get(found_absent)?);
@@ -203,6 +218,44 @@ pub fn controlled_selection_remote(
     })
 }
 
+/// Found in none (`found` still null): the first controlled element's
+/// first selected element, its cache filled, set into `found` and its
+/// absent record into `found_absent`, unless that element is the one the
+/// selection named (`target`). The Selection pattern has no method
+/// instructions; its `Selection` property is the same array of elements.
+fn current_selection_instead(
+    b: &mut Builder,
+    cache: &RemoteCache,
+    (controlled, size, target): (Reg<kind::Array>, Reg<kind::Uint>, Reg<kind::Str>),
+    (found, found_absent): (Reg<kind::Element>, Reg<kind::Int>),
+) {
+    let none = b.is_null(found);
+    let zero = b.uint(0);
+    let named = b.compare(size, zero, Comparison::GreaterThan);
+    let none = b.and(none, named);
+    b.if_(none, |b| {
+        let root = b.array_get_at(controlled, zero).assume::<kind::Element>();
+        let root_id = b.property(root, UIA_RuntimeIdPropertyId.0);
+        let root_key = b.stringify(root_id);
+        let other = b.not_equal(root_key, target);
+        b.if_(other, |b| {
+            let selection = b.property(root, UIA_SelectionSelectionPropertyId.0);
+            let is_array = b.is(TypeTest::Array, selection);
+            b.if_(is_array, |b| {
+                let selection = selection.assume::<kind::Array>();
+                let size = b.array_size(selection);
+                let any = b.compare(size, zero, Comparison::GreaterThan);
+                b.if_(any, |b| {
+                    let first = b.array_get_at(selection, zero).assume::<kind::Element>();
+                    let absent = cache.populate(b, first);
+                    b.set(found_absent, absent);
+                    b.set(found, first);
+                });
+            });
+        });
+    });
+}
+
 /// The runtime ids the program wrote one after another, each as
 /// [`runtime_id_key`] writes it, apart.
 fn split_runtime_ids(joined: &str) -> Vec<String> {
@@ -210,9 +263,9 @@ fn split_runtime_ids(joined: &str) -> Vec<String> {
 }
 
 /// The controlled selection the classic way, the fallback and the
-/// reference: the focus's `ControllerFor` read, then
-/// [`Uia::controlled_descendant`]'s search under each controlled element,
-/// one call each.
+/// reference: [`Uia::controlled`], the focus's `ControllerFor` read, then
+/// a search under each controlled element, one call each, and, found in
+/// none, the first controlled element's current selection.
 ///
 /// # Errors
 ///

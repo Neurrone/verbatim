@@ -363,8 +363,9 @@ fn reads_and_paths_execute_exactly() {
 /// A selection inside the list a search box controls
 /// (`tests/fixtures/controller.json`), found inside a group of the list,
 /// found as the list's second child, and not found, every element of the
-/// list walked: the program walks the controlled list depth first, so its
-/// count grows with the elements it passes before the selected one.
+/// list walked and then the list's selection, empty, read: the program
+/// walks the controlled list depth first, so its count grows with the
+/// elements it passes before the selected one.
 fn controlled_selections_execute_exactly() {
     common::init_com();
     let fixture = Fixture::start("controller.json", "mockapp-instructions-controlled");
@@ -392,7 +393,7 @@ fn controlled_selections_execute_exactly() {
 
     assert_eq!(
         [deep, near, missing],
-        [168, 200, 212],
+        [174, 206, 229],
         "controlled selection inside a group, second child, not found"
     );
 }

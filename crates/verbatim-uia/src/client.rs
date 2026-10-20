@@ -14,9 +14,10 @@ use windows::Win32::UI::Accessibility::{
     CUIAutomation8, CoalesceEventsOptions_Enabled, ConnectionRecoveryBehaviorOptions_Enabled,
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
-    IUIAutomationSelectionItemPattern, IUIAutomationTogglePattern, IUIAutomationTreeWalker,
-    TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId, UIA_PROPERTY_ID,
-    UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_TogglePatternId,
+    IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
+    IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
+    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+    UIA_TogglePatternId,
 };
 
 use windows::core::Interface;
@@ -471,7 +472,12 @@ impl Uia {
     /// `ControllerFor` relation: NVDA's test for a selection in a list the
     /// focus controls, such as a search result while the focus stays in
     /// the search box. `None` when `focused` controls nothing or the
-    /// element is in none of what it controls. With it, the runtime ids of
+    /// element is in none of what it controls and the first controlled
+    /// element has nothing selected: found in none, the answer is that
+    /// element's first selected element, unless `runtime_id` names it
+    /// itself, as `verbatim_uia_rops::controlled_selection_remote` answers
+    /// (an item Settings has already replaced, `docs/parity/changes-and-selection.md`).
+    /// With it, the runtime ids of
     /// the elements the relation names, in its order, which a caller logs
     /// when the element is in none of them. The classic implementation
     /// behind `verbatim_uia_rops::controlled_selection`. Cross-process; the
@@ -492,9 +498,32 @@ impl Uia {
         request: &Request<S>,
     ) -> windows::core::Result<(Option<Cached<S>>, Vec<Vec<i32>>)> {
         let (cache, gates) = request.parts();
-        let (found, controlled) =
-            self.controlled_descendant(focused.element(), runtime_id, cache)?;
-        Ok((found.map(|found| Cached::filled(found, gates)), controlled))
+        let roots = focused.element().controller_for()?;
+        let (found, controlled) = self.controlled_descendant(&roots, runtime_id, cache);
+        if let Some(found) = found {
+            return Ok((Some(Cached::filled(found, gates)), controlled));
+        }
+        let Some(root) = roots.first() else {
+            return Ok((None, controlled));
+        };
+        if controlled.first().is_some_and(|id| id == runtime_id) {
+            return Ok((None, controlled));
+        }
+        let pattern = unanswered_is_error(
+            root.current_pattern::<IUIAutomationSelectionPattern>(UIA_SelectionPatternId),
+        )?;
+        let first = match pattern {
+            Some(pattern) => unanswered_is_error(current_selection(&pattern))?
+                .and_then(|selection| selection.into_iter().next()),
+            None => None,
+        };
+        let Some(first) = first else {
+            return Ok((None, controlled));
+        };
+        Ok((
+            unanswered_is_error(Live::new(first).refresh(request))?,
+            controlled,
+        ))
     }
 
     /// Re-finds an element by its UIA runtime id inside `root`'s subtree,
@@ -546,41 +575,35 @@ impl Uia {
     }
 
     /// The element `runtime_id` names, rebuilt with `cache`, when it is a
-    /// descendant of one of the elements `focused` names in its UIA
+    /// descendant of one of `roots`, the elements a focus names in its UIA
     /// `ControllerFor` relation: NVDA's test for a selection in a list the
     /// focus controls, such as a search result while the focus stays in
-    /// the search box. `Ok(None)` when `focused` controls nothing or the
-    /// element is in none of what it controls; with it, the runtime ids of
-    /// the elements the relation names ([`Uia::controlled`]).
+    /// the search box. `None` when `roots` is empty or the element is in
+    /// none of them; with it, the runtime ids of `roots`
+    /// ([`Uia::controlled`]). A search that fails is no element found.
     /// Cross-process; the outpost's worker only, guarded by the caller's
     /// deadline.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the relation cannot be read or a search
-    /// fails for a reason other than the element being absent.
     fn controlled_descendant(
         &self,
-        focused: &IUIAutomationElement,
+        roots: &[IUIAutomationElement],
         runtime_id: &[i32],
         cache: &IUIAutomationCacheRequest,
-    ) -> windows::core::Result<(Option<IUIAutomationElement>, Vec<Vec<i32>>)> {
+    ) -> (Option<IUIAutomationElement>, Vec<Vec<i32>>) {
         let mut controlled = Vec::new();
-        for root in focused.controller_for()? {
+        for root in roots {
             // A failed read is no runtime id.
-            let root_id = crate::com::runtime_id(&root);
+            let root_id = crate::com::runtime_id(root);
             // A descendant, not the controlled element itself.
             let searched = root_id != runtime_id;
             controlled.push(root_id);
             // A search that fails under one controlled element leaves the
             // others to try.
-            if searched
-                && let Ok(Some(found)) = self.element_by_runtime_id(&root, runtime_id, cache)
+            if searched && let Ok(Some(found)) = self.element_by_runtime_id(root, runtime_id, cache)
             {
-                return Ok((Some(found), controlled));
+                return (Some(found), controlled);
             }
         }
-        Ok((None, controlled))
+        (None, controlled)
     }
 
     /// Walks the raw-view subtree rooted at `root`, every node read as a
