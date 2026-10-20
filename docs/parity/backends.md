@@ -346,8 +346,11 @@ raised, it removes every such focus raised before the change, whichever
 copy reaches Verbatim first. The outpost compares raise times in both
 arrival orders: a foreground change removes such a focus waiting from
 the same thread raised no later than the change, and such a focus that
-arrives after a waiting foreground change of its window and thread
-raised after it is dropped as it arrives. Within one tick the copy that
+arrives after a foreground change of its window and thread raised after
+it is dropped as it arrives, whether the change still waits or, until
+the listener's "forwarding ended" reaches the outpost, was already taken
+into a batch; the one case left is a listener copy the listener's hook
+receives only after it read the tick that message names. Within one tick the copy that
 arrived first counts as raised first, except that a hook copy was
 raised after a listener copy known to have been raised before the hook
 went in. The hook takes an event on a window object as the client object, as NVDA's

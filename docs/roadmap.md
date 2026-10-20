@@ -267,7 +267,14 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     UIA focus event followed within 14.5 seconds, where the passing runs
     had it within 1 to 35 ms; the window answered the outpost's probe in
     37 ms and kept raising name changes, so it was not hung. Decision
-    11's step covers it, since the listener had the WinEvents.
+    11's step covers it, since the listener had the WinEvents. Two
+    by-hand capture launches of Settings on 2026-10-21 showed it again:
+    the listener dropped the UIA focus on Settings' frame as "its window
+    does not use UIA" and no UIA focus on the page followed, while the
+    search box's suggestion selection event still came
+    (`target/e2e-evidence/fixes-round-six-2026-10-21/walk-logs/listener.log`, 17:46:49 and
+    17:46:53 UTC on 2026-10-20, and `walk-capture-2.txt` and
+    `walk-capture-3.txt` beside it, which hold no speech).
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,
@@ -319,6 +326,10 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     needs a follow-up, which can be tested only on the ARM64 runner.
   - `line_key_flood` once read a half-written line on GitHub's runner;
     repeat it there.
+  - The suggestions-closed sound once played twice for one Escape in
+    Settings' search box, 20 ms apart, in a by-hand capture on 2026-10-21
+    (`target/e2e-evidence/fixes-round-six-2026-10-21/walk-capture-4.txt`); find why if it
+    recurs.
 
 Exit: a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean.
@@ -355,6 +366,21 @@ NVDA capture.
   `ToastView`, from a desktop-wide window-opened subscription in the
   listener), then adopt NVDA's rule dropping MSAA alert and show events
   from native UIA windows.
+- The caret's line on a focus that a selection event follows: on
+  Shift+Tab into Settings' search box holding "sound", NVDA says
+  "Search box, Find a setting edit sound" and then the suggestion "Sound
+  settings 1 of 22", where Verbatim says the box without its line, the
+  suggestion, and then the line "sound", because the line comes from
+  Core's caret query, answered after the selection event; both cancel it
+  all at the next focus ([focus announcement
+  parity](parity/focus-announcement.md), "Text on focus"; the
+  `rapid-tab-nvda-1.txt`, `-nvda-2.txt`, `-verbatim-1.txt` and
+  `-verbatim-2.txt` captures in
+  `target/e2e-evidence/fixes-round-six-2026-10-21`).
+- Verbatim says "not selected" for each unselected item of an expanded
+  Settings combo box ("Simplified Chinese (Lunar) not selected 2 of 3");
+  capture NVDA's wording, which is not yet captured, and match it
+  (`target/e2e-evidence/fixes-round-six-2026-10-21/expanded-combo-box-capture.txt`).
 - A Settings search suggestions scenario with an NVDA capture. It also
   covers selecting inside a list the focus controls, which has no
   scenario and was not checked live after the cheaper reads of 2026-10-10.

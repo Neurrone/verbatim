@@ -684,10 +684,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     on its window's client object from the same thread, raised no later
     than the change (at one tick, unless the focus is the hook's copy and
     the change is known to have been raised before the hook went in), and
-    such a focus that arrives after a waiting foreground change of its
-    window and thread raised after it is dropped as it arrives (at one
-    tick, only when the focus is known to have been raised before the hook
-    went in and the change is the hook's copy), as NVDA's limiter, adding
+    such a focus that arrives after a foreground change of its window and
+    thread raised after it is dropped as it arrives (at one tick, only when
+    the focus is known to have been raised before the hook went in and the
+    change is the hook's copy), whether the change still waits or, until
+    the listener's "forwarding ended" is in (`Intake::forwarding_ended`),
+    was already taken into a batch, as NVDA's limiter, adding
     events in raised order, removes every such focus raised before the
     change; a run whose events all carry their raise time is tried in
     that order (`in_raised_order`), events of one clock tick ordered by
@@ -1791,17 +1793,23 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     out and reads their text in the same round trip when the selection
     moved (`CaretRead::changes`), and the edit controls work them out call
     by call.
-  - Which applications raise the evidence (measured 2026-10-08 with
-    mockapp's real edit control): a Common Controls version 6 edit
-    control, as a Windows Forms text box is with visual styles, raises
+  - Which applications raise the evidence, as checked live on
+    2026-10-08 (`docs/design/phase6-design.md`, "Live caret event
+    checks"): the focused Windows Forms text box raises, for every caret
+    move, `EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET` between the
+    caret's hide and show, then `EVENT_OBJECT_TEXTSELECTIONCHANGED` on its
+    client, and for Delete, which moves no caret, a value change and the
+    caret's hide and show; Windows 11 Notepad recreates its caret on every
+    move (destroy, create, location change, show) and raises
+    `EVENT_OBJECT_TEXTSELECTIONCHANGED` and UIA's text selection changed;
+    the console host raises its caret events together, 10 to about 520 ms
+    after the key; and Windows Terminal raises no caret `WinEvent`, only
+    UIA's text selection changed. The hook reports the caret's location
+    change and show as caret events. Measured the same day with mockapp's
+    real edit control, a Common Controls version 6 edit control raises
     `EVENT_OBJECT_TEXTSELECTIONCHANGED` whenever its caret moves, focused
-    or not, which the hooks report; the classic edit control raises
-    nothing for an unfocused caret move and, focused, only the system
-    caret's hide and show (`EVENT_OBJECT_HIDE` and `EVENT_OBJECT_SHOW` on
-    `OBJID_CARET`), and the hook reports the show as a caret event, as it
-    reports the system caret's location change. Windows 11 Notepad,
-    Windows Terminal, and the console host, whose caret events come on
-    their own schedule, need a live check.
+    or not, and the classic edit control raises nothing for an unfocused
+    caret move.
   - Reads move first when asked: from the start of the unit containing the
     point, by whole units, never past the text's ends, saying how far they
     went; a document movement goes to the start or the end. A unit the

@@ -125,7 +125,16 @@ Matched:
   object read the text the same way, whether or not the object has the
   focus: the selected text, else the line at the caret, else the first
   line of a control that reports no caret, and the value when it has no
-  text interface.
+  text interface. A known difference (2026-10-21): since the line comes
+  from Core's caret query, a selection event answered before it is
+  spoken before the line, where NVDA says the line with the focus. On
+  Shift+Tab into Settings' search box holding "sound", NVDA says "Search
+  box, Find a setting edit sound" and then the suggestion "Sound
+  settings 1 of 22"; Verbatim says the box without its line, the
+  suggestion, and then "sound"; both cancel it all at the next focus
+  (the rapid-Tab captures `rapid-tab-nvda-1.txt`, `rapid-tab-nvda-2.txt`,
+  `rapid-tab-verbatim-1.txt` and `rapid-tab-verbatim-2.txt` in
+  `target/e2e-evidence/fixes-round-six-2026-10-21`; listed in the roadmap's M4.2).
 - Multi-column list view items: NVDA names an item of a report view
   (such as msinfo32's right pane) from its column texts, "content;
   Header: content", with no value or description. Verbatim names an item

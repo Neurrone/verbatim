@@ -1289,6 +1289,7 @@ impl Outpost {
             ),
             SupervisorToOutpost::ForwardingEnded { through } => {
                 context.handover().forwarding_ended(*through);
+                context.intake.forwarding_ended();
             }
             SupervisorToOutpost::Query {
                 trace_id,
@@ -1681,6 +1682,7 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     // No listener forwards anything here: the outpost's own hook takes in
     // every `WinEvent`.
     outpost.context.handover().without_listener();
+    outpost.context.intake.forwarding_ended();
     outpost.handle_command(&SupervisorToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: 0,

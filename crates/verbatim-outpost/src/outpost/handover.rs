@@ -80,7 +80,19 @@
 //!   copy is taken as raised before the hook, so it and every listener copy
 //!   that arrived before it in that tick go ahead of the hook copies of
 //!   the tick raised before it. In each case the order can be wrong only
-//!   among the events of that tick.
+//!   among the events of that tick, but for one loss: a focus on a
+//!   window's client object wrongly judged raised before the hook, arriving
+//!   after a hook copy of its window's foreground change from the same
+//!   thread in that tick, is dropped, not reordered, since the intake drops
+//!   a focus raised before its window's change (`intake::foreground_waits_after`),
+//!   and its hook copy is then dropped as its twin. For example, the
+//!   window's thread raises foreground changes G1 and G2 of the window and
+//!   then the focus, in one tick; the listener's backlog replaces G1's
+//!   copy with G2's; G2's copies meet, and G1's hook copy stays unmatched;
+//!   the focus's listener copy, arriving before its hook copy, is judged
+//!   raised before the hook, and the hook's copy of G2, which replaced G1's
+//!   in the intake, drops it, where NVDA, seeing G1, G2 and the focus in
+//!   that order, keeps the focus.
 //!
 //! Pure, so the rules are tested on their own; the outpost holds one under
 //! a lock that its hook's callback and its reader take in turn, and queues
