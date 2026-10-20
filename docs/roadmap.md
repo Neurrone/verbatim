@@ -210,13 +210,6 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   "Time limits that hold".
 - What remains of the audits' items 9 to 11 (Dickson, 2026-10-20; item 8
   is done, `docs/roadmap-done.md`):
-  - Item 9: foreground events in the focus run as NVDA's `pumpAll` takes
-    them: a run of consecutive focus and foreground WinEvents tried
-    newest first until one is processed
-    (`nvda/source/IAccessibleHandler/__init__.py`, lines 1061 to 1075).
-    Verbatim's intake tries runs of MSAA focus events only and handles a
-    foreground change at its own place
-    (`crates/verbatim-outpost/src/outpost/intake.rs`, module doc).
   - Item 11, in three changes. First, MSAA caret events (`OBJID_CARET`
     location change and show) mapped to a caret event on a UIA focus, as
     NVDA maps them (`IAccessibleHandler/__init__.py`, lines 636 to 668).

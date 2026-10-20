@@ -644,9 +644,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     are not counted; events from a window the system reports hung
     (`IsHungAppWindow`) are dropped before any read. Within a batch only
     the newest foreground change is handled; each consecutive run of MSAA
-    focus events is tried newest first until one is reported, at the place
-    of the run's newest, as NVDA's `pumpAll` does (any other entry ends a
-    run; a foreground change within one keeps its own place and does not);
+    focus events and that foreground change is tried newest first until
+    one is reported, at the place of the run's newest, as NVDA's `pumpAll`
+    does (any other entry ends a run);
     every UIA focus event is handled at its own place; and the newest menu
     opening from each backend is handled last. A UIA
     focus's marker holds its place: nothing that arrives after it is

@@ -145,9 +145,13 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   came after it, as NVDA compares with the last focus queued from any
   application (`docs/parity/focus-events.md`, "Duplicate focus
   suppression"). `msaa_focus_changes_cost_exactly` pins both.
-- When the newest focus event of a batch cannot be reported (unreadable,
-  destroyed, refused), the next older one is tried, up to three, as
-  NVDA's event pump falls back.
+- Each consecutive run of a batch's MSAA focus events and its newest
+  foreground change is tried newest first until one is reported, as
+  NVDA's event pump tries a run of focus and foreground events: when the
+  newest cannot be reported (unreadable, destroyed, refused, or a
+  foreground change whose window is not the foreground window), the next
+  older one is tried, up to the limiter's four focus events (with the
+  difference "MSAA winevent flood control" records).
 - The fake focus after a menu or the Alt+Tab switcher closes is skipped
   only when a focus observed after the close was actually applied; a focus fact that
   is dropped or unreadable does not skip it.
@@ -296,10 +300,16 @@ the next other event comes; the menu event is tried last. Verbatim:
 **matched (unverified)** (`docs/design/focus-pipeline.md` section 5;
 [verbatim-outpost](../crates/verbatim-outpost.md), the queue under
 `Outpost`), in each outpost's intake. Every MSAA event is counted by the
-thread it carries, whichever hook took it in. Different: a foreground
-change keeps its own place in a run rather than being tried with its
-focus events; and events from a window the system reports hung are
-dropped before any read. Before an outpost hears them, the focus
+thread it carries, whichever hook took it in; the batch's newest
+foreground change is tried with the focus events of the run it is in.
+Different: events from a window the system reports hung are dropped
+before any read; and the outpost's foreground handling does not make
+NVDA's two tests against the last focus queued (the focus already in the
+window or a window inside it, and the focus being the foreground event's
+own object), so a foreground change those tests would drop is reported,
+ends its run's tries, and is then ignored by Core when the focus is
+already in its window, where NVDA tries the older focus event of the
+run. Before an outpost hears them, the focus
 listener coalesces its facts by the same one-per-object-and-kind rule,
 and the supervisor holds the facts that arrive while an outpost starts
 by that rule too, and lets a newer fact replace a waiting one when an

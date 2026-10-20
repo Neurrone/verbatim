@@ -534,6 +534,11 @@ landed it.
   in M4.3, the `requestEvents` opt-in table with extensions in M5,
   NVDA's Chromium rule in M7, and a per-source cap on background events
   unscheduled.
+- The audits' item 9, foreground events in the focus run as NVDA's
+  `pumpAll` takes them: each consecutive run of MSAA focus events and
+  the batch's newest foreground change is tried newest first until one is
+  reported, 2026-10-20 ([focus pipeline](design/focus-pipeline.md),
+  section 5.2).
 - Step 9, the relay: replaced by the communication migration, below.
 - Step 10, the harness's idle barrier through every child: communication
   step 6a, 10f01254, 2026-10-14.

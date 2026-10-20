@@ -37,14 +37,13 @@
 //!   worker drops it before it reads anything, as NVDA's limiter counts it
 //!   and `winEventToNVDAEvent` drops it.
 //! - Within a batch only the newest foreground change is handled. Each
-//!   consecutive run of MSAA focus events is tried newest first, until one
-//!   is reported, at the place of the run's newest. NVDA's `pumpAll`
-//!   collects a run of focus and foreground events together and tries it
-//!   newest first when the next accepted event that is neither comes;
-//!   Verbatim's runs differ: any other entry ends one, and a foreground
-//!   change is not in one but handled at its own place (roadmap, the
-//!   audits' items). Every UIA focus event is handled in turn at its own
-//!   place, as NVDA's UIA handler queues each one (the worker's
+//!   consecutive run of MSAA focus events and that foreground change is
+//!   tried newest first, until one is reported, at the place of the run's
+//!   newest, as NVDA's `pumpAll` collects a run of focus and foreground
+//!   events and tries it newest first when the next accepted event that is
+//!   neither comes; any other entry ends a run, and a foreground change
+//!   with no focus event beside it is a run of its own. Every UIA focus
+//!   event is handled in turn at its own place, as NVDA's UIA handler queues each one (the worker's
 //!   arbitration then drops a focus whose backend does not own the window,
 //!   as NVDA's separate MSAA and UIA paths do). The newest menu opening
 //!   from each backend is handled last: NVDA keeps only its newest MSAA
@@ -299,9 +298,10 @@ pub(super) enum Planned {
     Run(Entry),
     /// Handle a menu opening, after the batch's focus events.
     Menu(Entry),
-    /// Focus events from one backend, newest first: the worker handles each
-    /// in turn until one is reported, as NVDA falls back to an older focus
-    /// event when the newest cannot be processed.
+    /// Focus events from one backend, with a foreground change among MSAA
+    /// ones, newest first: the worker handles each in turn until one is
+    /// reported ([`try_newest_first`]), as NVDA falls back to an older focus
+    /// or foreground event when the newest cannot be processed.
     Focus(Vec<Entry>),
 }
 
@@ -1054,15 +1054,15 @@ fn admit(
 /// Plans one batch from everything that was waiting, in the order it
 /// arrived: drops events from hung windows, applies the batch limits, keeps
 /// only the newest foreground change, tries each consecutive run of MSAA
-/// focus events newest first at the place of its newest, handles each UIA
-/// focus event at its own place, and moves the newest menu opening from
-/// each backend to the end, ahead of an idle query that ends the batch.
+/// focus events and that foreground change newest first at the place of
+/// its newest ([`try_newest_first`]), handles each UIA focus event at its
+/// own place, and moves the newest menu opening from each backend to the
+/// end, ahead of an idle query that ends the batch.
 ///
 /// NVDA's `pumpAll` walks the flushed events in order, collecting focus and
 /// foreground events, and when another event comes processes those
 /// collected newest first, stopping at the first valid one, before that
-/// event. A foreground change here stays where it was, handled on its own,
-/// and does not end a run.
+/// event.
 fn plan(
     waiting: Vec<Waiting>,
     focused: Option<&Object>,
@@ -1075,15 +1075,20 @@ fn plan(
     };
     let foreground = newest(|key| matches!(key, Key::Foreground(_)));
     let msaa_menu = newest(|key| matches!(key, Key::MenuPopup(..)));
-    // Each consecutive run of MSAA focus events, oldest first, by where its
-    // newest is: any entry other than an MSAA focus or a foreground change
-    // ends a run.
+    // Each consecutive run of MSAA focus events and the newest foreground
+    // change, oldest first, by where its newest is: any entry other than an
+    // MSAA focus or a foreground change ends a run, and an older foreground
+    // change, which is not handled, neither joins nor ends one.
     let mut runs: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut run: Vec<usize> = Vec::new();
     for (index, item) in kept.iter().enumerate() {
         match item.key {
             Some(Key::MsaaFocus(..)) => run.push(index),
-            Some(Key::Foreground(_)) => {}
+            Some(Key::Foreground(_)) => {
+                if Some(index) == foreground {
+                    run.push(index);
+                }
+            }
             _ => {
                 if let Some(&last) = run.last() {
                     runs.insert(last, std::mem::take(&mut run));
@@ -1102,9 +1107,9 @@ fn plan(
     let mut planned = Vec::with_capacity(entries.len());
     let mut deferred = Vec::new();
     for (index, key) in keys.iter().enumerate() {
-        if matches!(key, Some(Key::MsaaFocus(..))) {
+        if matches!(key, Some(Key::MsaaFocus(..) | Key::Foreground(_))) {
             // An older event of a run waits for its newest, where the run is
-            // tried, newest first.
+            // tried, newest first; an older foreground change is dropped.
             if let Some(run) = runs.get(&index) {
                 let group = run
                     .iter()
@@ -1119,7 +1124,6 @@ fn plan(
             continue;
         };
         match key {
-            Some(Key::Foreground(_)) if Some(index) != foreground => {}
             Some(Key::UiaFocus(_)) => planned.push(Planned::Focus(vec![entry])),
             Some(Key::MenuPopup(..)) => {
                 // The newest only, as NVDA keeps its newest menu event.
@@ -1144,6 +1148,24 @@ fn plan(
     planned.extend(deferred.into_iter().map(Planned::Menu));
     planned.extend(query);
     planned
+}
+
+/// Handles a focus group's entries ([`Planned::Focus`]), newest first,
+/// each with `handle`, until one is reported: `handle` answers whether its
+/// entry was, a foreground change counting as reported when the worker
+/// reported its window, and `Err` stops at once. As NVDA's `pumpAll` tries
+/// a run of focus and foreground events, stopping at the first one
+/// processed.
+pub(super) fn try_newest_first<E>(
+    entries: Vec<Entry>,
+    mut handle: impl FnMut(Entry) -> Result<bool, E>,
+) -> Result<(), E> {
+    for entry in entries {
+        if handle(entry)? {
+            break;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1499,8 +1521,8 @@ mod tests {
         let planned = plan(waiting, None, never_hung);
         assert_eq!(
             observed(&planned),
-            vec![2, 4, 5, 1],
-            "the MSAA and the UIA focus are both handled, so the backend that owns the window reports"
+            vec![4, 2, 5, 1],
+            "the MSAA focus run, with its foreground change, and the UIA focus are both handled, so the backend that owns the window reports"
         );
         assert!(matches!(planned.last(), Some(Planned::Menu(_))));
     }
@@ -1547,8 +1569,50 @@ mod tests {
         assert_eq!(focus_groups(&planned), vec![vec![5, 4, 3, 2]]);
     }
 
+    /// The entries of `planned` the worker handles, in order, when only
+    /// those observed at a time `reported` names are reported: a focus
+    /// group stops at the first reported ([`try_newest_first`]).
+    fn tried(planned: Vec<Planned>, reported: &[u64]) -> Vec<u64> {
+        let mut order = Vec::new();
+        for planned in planned {
+            let mut handle = |entry: Entry| {
+                order.push(entry.observed_at_ms);
+                Ok::<bool, ()>(reported.contains(&entry.observed_at_ms))
+            };
+            match planned {
+                Planned::Focus(entries) => try_newest_first(entries, handle),
+                Planned::Run(entry) | Planned::Menu(entry) => handle(entry).map(|_| ()),
+            }
+            .expect("never stopped");
+        }
+        order
+    }
+
     #[test]
-    fn a_foreground_change_within_a_run_keeps_its_place_and_does_not_end_the_run() {
+    fn a_foreground_change_newest_in_a_run_is_tried_first_and_ends_the_run_when_reported() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![2, 1]]);
+        assert_eq!(tried(planned, &[1, 2, 30]), vec![2, 30]);
+    }
+
+    #[test]
+    fn a_dropped_foreground_change_newest_in_a_run_lets_the_older_focus_be_tried() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(tried(planned, &[1, 30]), vec![2, 1, 30]);
+    }
+
+    #[test]
+    fn a_focus_newest_in_a_run_is_tried_before_the_older_foreground_change() {
         let waiting = vec![
             msaa_focus(1, 1),
             fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
@@ -1556,8 +1620,21 @@ mod tests {
             msaa(WinEventKind::NameChange, 3, 30),
         ];
         let planned = plan(waiting, None, never_hung);
-        assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
-        assert_eq!(observed(&planned), vec![2, 3, 1, 30]);
+        assert_eq!(focus_groups(&planned), vec![vec![3, 2, 1]]);
+        assert_eq!(tried(planned, &[1, 2, 3, 30]), vec![3, 30]);
+    }
+
+    #[test]
+    fn a_foreground_change_with_no_focus_event_beside_it_is_tried_alone_at_its_place() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            msaa(WinEventKind::NameChange, 3, 30),
+            fact(DeliveredFact::Foreground { hwnd: 9 }, 2),
+            msaa(WinEventKind::NameChange, 3, 40),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![1], vec![2]]);
+        assert_eq!(tried(planned, &[]), vec![1, 30, 2, 40]);
     }
 
     #[test]
@@ -1692,9 +1769,12 @@ mod tests {
             },
         );
         push_fact(&intake, DeliveredFact::Foreground { hwnd: 77 });
-        let (_, first) = intake.next().expect("an entry");
-        let (_, second) = intake.next().expect("an entry");
-        assert_eq!(first, second, "one batch");
+        let (planned, _) = intake.next().expect("an entry");
+        assert_eq!(
+            planned.entries().len(),
+            2,
+            "the focus and the foreground change, one run"
+        );
         assert!(!intake.busy(), "nothing is held");
     }
 

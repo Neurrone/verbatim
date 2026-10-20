@@ -221,7 +221,7 @@ NVDA's limiter keeps the newest 10 events per thread and the newest 4 focus even
 
 NVDA's `pumpAll` walks the flushed events in order, collects each consecutive run of focus and foreground events, and when a non-focus event comes processes the run newest first, stopping at the first valid one, before that event (`IAccessibleHandler/__init__.py` 1061 to 1075). A run keeps its place among the events around it. Menu start, menu end and switch end become a fake focus tried last (1077 to 1079 and 1093 to 1103).
 
-Verbatim collapses all of a batch's MSAA focus events into one group of the newest 3, placed where the newest was (`plan`, intake.rs 775 to 887; `msaa_focus_plan`, 892; audit D4). Change: `plan` walks the batch in order; each consecutive run of MSAA focus and foreground entries becomes one group, tried newest first until one is reported, at the run's place; the limiter's 4 is the cap. Only the newest foreground per batch is kept, as today (it matches the run collapse).
+Verbatim's `plan` (`crates/verbatim-outpost/src/outpost/intake.rs`) walks the batch in order; each consecutive run of MSAA focus entries and the batch's newest foreground entry becomes one group, at the place of its newest, and the worker tries it newest first until one is reported (`try_newest_first`): a foreground entry is reported when the worker's foreground handling reports its window, and one it drops lets the next older entry be tried. Any other entry ends a run, and a foreground entry with no focus entry beside it is a group of its own. The limiter's 4 is the cap. Only the newest foreground per batch is kept; an older one neither joins nor ends a run. UIA focus entries keep their own places, and menu openings go last.
 
 ### 5.3 `msaa_focus_waiting`
 

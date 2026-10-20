@@ -223,7 +223,11 @@ cases listed last are not implemented.
   moves attention. The outpost handles a batch that holds a foreground
   fact at once and drops the fact when its window is not the foreground
   window then, as NVDA's `processForegroundWinEvent` drops it once its
-  deferral has passed. It does not wait for the window to come in front:
+  deferral has passed; a foreground fact beside MSAA focus facts is
+  tried with them, newest first, as NVDA's `pumpAll` tries a run of focus
+  and foreground events, so a dropped one lets the older focus be tried
+  and a reported one ends the run ([backends](backends.md), "How an
+  outpost turns events into focus reports"). It does not wait for the window to come in front:
   the system's foreground event reaches an out-of-context hook only once
   `GetForegroundWindow` names its window, after a restore,
   `SetForegroundWindow`, Alt+Tab, or a launch (measured for console

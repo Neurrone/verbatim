@@ -59,7 +59,7 @@ use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
 use super::focus_path::{self, FocusPath};
-use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, window_of};
+use super::intake::{Entry, Item, Object, Planned, UiaEvent, UiaKind, try_newest_first, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
@@ -270,9 +270,9 @@ pub(super) struct Tracking {
     /// The window of the last focus this outpost reported, for events on
     /// that focus, which then need no call to find their window.
     window: Option<isize>,
-    /// How many focuses (not foreground changes) this outpost has reported,
-    /// or recognized as the focus already, so the worker can tell when a
-    /// focus candidate was settled.
+    /// How many focuses and foreground changes this outpost has reported,
+    /// or focuses it recognized as the focus already, so the worker can tell
+    /// when an entry of a focus group was settled.
     reported: u64,
     /// The node of the last focus this outpost reported.
     focus: Option<NodeId>,
@@ -600,18 +600,11 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
         let outcome = match planned {
             Planned::Run(entry) => run(entry, false),
             Planned::Menu(entry) => run(entry, true),
-            Planned::Focus(entries) => {
-                // Newest first, until one is reported.
-                let mut outcome = Ok(());
-                for entry in entries {
-                    let reported = context.tracking().reported;
-                    outcome = run(entry, false);
-                    if outcome.is_err() || context.tracking().reported != reported {
-                        break;
-                    }
-                }
-                outcome
-            }
+            Planned::Focus(entries) => try_newest_first(entries, |entry| {
+                let reported = context.tracking().reported;
+                run(entry, false)?;
+                Ok(context.tracking().reported != reported)
+            }),
         };
         if outcome.is_err() {
             return;
@@ -1952,8 +1945,8 @@ impl Worker<'_> {
             tracking.role = Some(role);
             tracking.batch = Some(self.batch);
             tracking.foreground_since_focus = foreground;
+            tracking.reported += 1;
             if !foreground {
-                tracking.reported += 1;
                 tracking.focus_observed_at_ms = if observed_at_ms == 0 {
                     now_ms()
                 } else {
@@ -2909,6 +2902,11 @@ impl Worker<'_> {
     /// foreground event comes before the window is in front, and the window
     /// is read through UI Automation besides, so its title is the console
     /// window element's, the text area's parent.
+    ///
+    /// Within a focus group, a change reported ends the group's tries, and
+    /// one dropped lets the next older entry be tried
+    /// ([`try_newest_first`]), as NVDA's `pumpAll` stops at the first
+    /// foreground or focus event processed.
     fn foreground(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
         if window_belongs_to_hidden_frame(hwnd) {
             tracing::debug!(hwnd, "foreground dropped: Core's hidden frame");
