@@ -48,8 +48,9 @@ const MAX_NODES: usize = 1024;
 /// How long the walk may take before it makes no more calls and answers
 /// the items read by then. With one call under way when it passes, which
 /// UIA's transaction timeout ends after 5 seconds, a walk still answers
-/// within the worker's 5-second deadline for the query unless that call
-/// takes longer than 3 seconds.
+/// within the worker's deadline for the query
+/// ([`WALK_DEADLINE`](crate::protocol::WALK_DEADLINE), 5 seconds), which
+/// Core outlasts, unless that call takes longer than 3 seconds.
 const WALK_BUDGET: Duration = Duration::from_secs(2);
 
 /// The items of `kind`, read in the outpost's application.

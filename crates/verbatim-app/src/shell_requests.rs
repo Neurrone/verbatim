@@ -1,25 +1,37 @@
 //! The tray and taskbar list dialogs' requests for the shell's items that
 //! wait for the taskbar's process to have a ready outpost.
 //!
-//! Each request has a deadline from the moment the dialog asked
-//! ([`SHELL_ITEMS_DEADLINE`]) and gets exactly one outcome: the request it
+//! Each request waits for an outpost at most [`SHELL_ITEMS_DEADLINE`] from
+//! the moment the dialog asked, and gets exactly one outcome: the query it
 //! becomes once the outpost is ready ([`ShellItemsWanted::take`]), whose
-//! own outcome the request table owns under the same deadline; nothing
-//! when the process will get no outpost ([`ShellItemsWanted::refuse`]); or
-//! nothing once its deadline passes ([`ShellItemsWanted::expire`]).
+//! own outcome the request table owns under a deadline of the same length
+//! from when the query is sent; nothing when the process will get no
+//! outpost ([`ShellItemsWanted::refuse`]); or nothing once its deadline
+//! passes ([`ShellItemsWanted::expire`]).
 
 use std::time::{Duration, Instant};
 
 use verbatim_gui::{DeliverShellItems, ShellItemKind};
 use verbatim_model::Pid;
+use verbatim_outpost::protocol::WALK_DEADLINE;
 
-/// How long a request for the shell's items may take, from the dialog's
-/// request to its answer, whether it waits for the taskbar's outpost or for
-/// the outpost's walk: the outpost's own deadline for the walk
-/// (`WALK_DEADLINE` in `verbatim-outpost`'s worker), so a dialog never
-/// waits for an outpost that is starting, or waits out a failure's
-/// backoff, longer than it would wait for a slow walk.
-pub(crate) const SHELL_ITEMS_DEADLINE: Duration = Duration::from_secs(5);
+/// How long Core waits for the answer to a shell items query from when it
+/// sends it, 6 seconds: the outpost's own deadline for the walk
+/// ([`WALK_DEADLINE`], 5 seconds from when its worker begins the query),
+/// by which it has answered the items read, in part once the walk's time
+/// budget has passed, or the walk abandoned, and a second for the query's
+/// and the answer's way through the pipes and the reducer thread. Core
+/// gives up only after the outpost's deadline has run out, so the items
+/// read by then are not lost to Core's deadline
+/// (`docs/design/listener-without-connections.md`, section 10, step 11).
+/// It holds when the worker begins the query as it arrives; a query
+/// behind another entry of a busy worker begins later, by up to that
+/// entry's own deadline. A request also waits for the taskbar's outpost
+/// at most this long, from the dialog's request, so a dialog never waits
+/// for an outpost that is starting, or waits out a failure's backoff,
+/// longer than it would wait for a slow walk.
+pub(crate) const SHELL_ITEMS_DEADLINE: Duration =
+    WALK_DEADLINE.saturating_add(Duration::from_secs(1));
 
 /// One request waiting for an outpost.
 pub(crate) struct Waiting {

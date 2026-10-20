@@ -1777,8 +1777,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   proxy rule (`any_window_element`) and the overflow flyout's window
   under it (`window_element`), and asks its time budget (`WALK_BUDGET`,
   2 seconds) before each call after the first, answering the items read
-  by then once it has passed, within the worker's 5-second deadline for
-  the query.
+  by then once it has passed, within the worker's deadline for the query
+  (`protocol::WALK_DEADLINE`, 5 seconds, public so that Core's deadline
+  for the shell items can outlast it).
   `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::tree`, every node read as the `TreeDump` shape, MSAA via

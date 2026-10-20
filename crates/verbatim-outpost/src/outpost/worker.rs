@@ -52,7 +52,7 @@ use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, UiaFocusRead, UiaSnapshotFact, now_us,
+    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
 };
 
 use super::Context;
@@ -98,10 +98,6 @@ const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
 
 /// The deadline for one navigation step or an activation.
 const STEP_DEADLINE: Duration = Duration::from_millis(400);
-
-/// The deadline for an ancestor walk or a tree dump, each up to 64 hops or
-/// 4096 nodes.
-const WALK_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The deadline for a text request: one read, or a few, of the node's text;
 /// a caret key's watch is checked once within it and then kept open

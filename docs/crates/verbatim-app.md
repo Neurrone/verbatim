@@ -462,9 +462,13 @@ knowing for review:
   for it and sends the query once it is ready, and hands the outcome to
   the dialog's delivery callback, exactly once: the items, or `None` for
   any failure, when the process gets no outpost (`NotWatched`, or an end
-  with no replacement while it starts), or when no answer has come five
-  seconds after the request (`shell_requests::SHELL_ITEMS_DEADLINE`, the
-  outpost's own deadline for the walk). The requests still waiting for an
+  with no replacement while it starts), when no outpost is ready six
+  seconds after the request, or when no answer has come six seconds after
+  the query was sent (`shell_requests::SHELL_ITEMS_DEADLINE`: the
+  outpost's own deadline for the walk, `verbatim_outpost::protocol::WALK_DEADLINE`,
+  and a second for the way through the pipes, so that Core gives up only
+  after the outpost's deadline has run out and the items it read by then
+  reach the dialog). The requests still waiting for an
   outpost are `shell_requests::ShellItemsWanted`'s; a request sent is the
   request table's, recorded with its deadline (`RequestTable::begin_until`),
   so a late answer is dropped. The reducer thread waits for its next

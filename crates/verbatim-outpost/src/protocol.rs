@@ -11,6 +11,7 @@
 #![forbid(unsafe_code)]
 
 use std::io::{self, BufRead, Write};
+use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -834,6 +835,14 @@ pub enum Query {
         kind: verbatim_model::ShellItemKind,
     },
 }
+
+/// How long an outpost's worker may take over a walk query,
+/// [`Query::Ancestors`] (up to 64 hops), [`Query::DumpTree`] (up to 4096
+/// nodes) or [`Query::ShellItems`], from when it begins it: by then it has
+/// answered, or it is abandoned and the query answered
+/// [`QueryOutcome::Abandoned`]. Core waits for a shell items answer longer
+/// than this, so that whichever comes reaches it before it gives up.
+pub const WALK_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The one outcome of a query.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

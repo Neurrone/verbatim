@@ -1323,7 +1323,7 @@ impl ReducerThread<'_> {
                     self.focus_now(outpost, application);
                 }
                 for wanted in self.shell_items_wanted.take(target_pid) {
-                    self.ask_shell_items(outpost, wanted.kind, wanted.deliver, wanted.deadline);
+                    self.ask_shell_items(outpost, wanted.kind, wanted.deliver);
                 }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
@@ -1753,8 +1753,9 @@ impl ReducerThread<'_> {
     /// verbatim.exe makes no UIA connection into the shell's windows
     /// (`docs/design/listener-without-connections.md`, decision 9). The
     /// outcome goes to `deliver`, exactly once; `None` when there is no
-    /// taskbar, when its process gets no outpost, or when no answer has
-    /// come by [`shell_requests::SHELL_ITEMS_DEADLINE`] from now.
+    /// taskbar, when its process gets no outpost or none is ready by
+    /// [`shell_requests::SHELL_ITEMS_DEADLINE`] from now, or when no answer
+    /// has come by that long after the query was sent.
     fn shell_items(&mut self, kind: ShellItemKind, deliver: verbatim_gui::DeliverShellItems) {
         let Some(pid) = taskbar_process() else {
             tracing::warn!(?kind, "the taskbar window was not found");
@@ -1763,7 +1764,7 @@ impl ReducerThread<'_> {
         };
         let deadline = Instant::now() + shell_requests::SHELL_ITEMS_DEADLINE;
         if let Some(outpost) = self.live.ready(pid) {
-            self.ask_shell_items(outpost, kind, deliver, deadline);
+            self.ask_shell_items(outpost, kind, deliver);
         } else {
             self.shell_items_wanted.push(pid, kind, deliver, deadline);
             self.context.supervisor.ensure_spawned(pid);
@@ -1771,14 +1772,15 @@ impl ReducerThread<'_> {
     }
 
     /// Sends `outpost` the shell items query, answered with nothing by Core
-    /// if no outcome has come by `deadline`.
+    /// if no outcome has come [`shell_requests::SHELL_ITEMS_DEADLINE`] from
+    /// now, after the outpost's own deadline for the walk has run out.
     fn ask_shell_items(
         &mut self,
         outpost: OutpostId,
         kind: ShellItemKind,
         deliver: verbatim_gui::DeliverShellItems,
-        deadline: Instant,
     ) {
+        let deadline = Instant::now() + shell_requests::SHELL_ITEMS_DEADLINE;
         let id = self
             .requests
             .begin_until(outpost, Asker::ShellItems { deliver }, deadline);
