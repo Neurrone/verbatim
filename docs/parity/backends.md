@@ -21,9 +21,9 @@ list view was recognized live). A probe that finds a UIA provider is
 kept for the window's lifetime, one that finds none for 500 ms, NVDA's
 cache period; no window's answer was seen to change from a provider to
 none during its life, across about 65 windows of Explorer, Settings,
-Start, and the desktop. The window is asked once, and a "no" that UIA
-gave after the window did not answer in time is kept like any other, as
-NVDA keeps it (`docs/design/focus-pipeline.md`, section 8).
+Start, and the desktop. The window is asked once, and a "no" given because
+the window did not answer the probe within its 3 seconds is kept like any
+other, as NVDA keeps the "no" it is given (`docs/design/focus-pipeline.md`, section 8).
 
 Different: the focus listener and the outposts ask the same question
 with one raw `WM_GETOBJECT` for `UiaRootObjectId`, counting only the

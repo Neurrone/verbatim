@@ -186,7 +186,20 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
 - An audit of every end-to-end scenario for timing races (2026-10-11),
   each race fixed by waiting for evidence, not a longer bound; and the
   agent's bring-forward, which always takes its slowest path (once 1.4
-  seconds), its cause open.
+  seconds), its cause open. One race is known (2026-10-20):
+  `measure_focus_explorer` closes each of its ten new folder windows
+  after a `drain` that waits for nothing, since opening a window sets no
+  last input and `take_all_queued`'s idle check is then satisfied at
+  once, about 290 ms after the first item's focus WinEvent, while a new
+  File Explorer process's first UIA focus event reaches the listener 250
+  to 290 ms after that WinEvent (measured in the runs kept under
+  `target/e2e-evidence/review-fixes-2026-10-20/`, the
+  `measure_focus_explorer` run of 08:08:51 that day and the
+  `explorer_folder_window` run of 08:06:40). So its new-window samples
+  carry no announcement, and the kept 2026-10-16 run shows the same. The
+  fix is to wait for the window's announcement before closing it, as
+  `explorer_folder_window` does; its "after key" drains in the
+  steady-state part have the same defect.
 - Scheduled for later (Dickson, 2026-10-11, from the communication
   design): the mixer's retry after a failed audio device open is a timed
   deadline, to be replaced by waiting for evidence such as a device
@@ -303,6 +316,16 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     `target/e2e-evidence/full-suite-2026-10-17-spares-off/`.
   - One UIA focus event reached the listener 5 seconds late in a console
     host run on 2026-10-17; watch for it again.
+  - The moved-on rule, in an outpost's worker and in the listener's
+    reading threads alike, asks whether the window in front is another
+    thread of the application by `GetWindowThreadProcessId`, which names
+    a console window's client rather than conhost: a console client that
+    also owns a GUI window on another thread can have a read of its
+    console window abandoned as "moved on to another thread of its
+    application" when the user moves to that GUI window, though no
+    thread of conhost's waits on it. Compare by the window's provider
+    process (`verbatim_uia::provider_process`), as the window filters
+    do.
   - The trace tool's symbol lookup for ARM64X images, such as ntdll,
     needs a follow-up, which can be tested only on the ARM64 runner.
   - `line_key_flood` once read a half-written line on GitHub's runner;

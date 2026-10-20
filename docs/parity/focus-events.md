@@ -312,20 +312,52 @@ scenario makes an application slow enough to show it. An outpost's
 worker and the focus listener's reading thread for an application each
 abandon a call that has taken half a second (`MOVED_ON_GRACE`) once the
 window in front belongs to the same application on another UI thread
-than the window being handled or read, judged when the half second ends
-and again on each foreground event, until their own deadlines (10
+than the window being handled or read, until their own deadlines (10
 seconds for the worker, `READ_DEADLINE`, 11 seconds, for a reading
-thread). The event being handled or read is dropped, and a new worker or
-reading thread takes the application's later events. The rule is
-narrower than NVDA's by design: NVDA's one main thread serves every
-application, so a move to any other window frees it, while each of
-Verbatim's applications has its own worker and its own reading thread,
-so a move to another application's window is never held up; only the
-same application's windows on other threads, such as File Explorer's
-folder windows, taskbar and Alt+Tab switcher, wait behind a slow one.
-NVDA's other triggers, no focused window and an unacknowledged system
-menu, are not ported, and nor is its allowlist of window classes that
-always get the long wait (`safeWindowClassSet`).
+thread). The worker judges when the half second ends and again on each
+foreground event; a reading thread judges only once a foreground event
+has come since its event arrived, then when the half second ends and on
+each later foreground event. The window a reading thread's read is of is
+the sender's own window, or for a sender that is not a window its
+application's keyboard focus window when the event arrived, until the
+read finds the sender's nearest window. The event being handled or read
+is dropped, and a new worker or reading thread takes the application's
+later events. The rule is narrower than NVDA's by design: NVDA's one
+main thread serves every application, so a move to any other window
+frees it, while each of Verbatim's applications has its own worker and
+its own reading thread, so a move to another application's window is
+never held up; only the same application's windows on other threads,
+such as File Explorer's folder windows, taskbar and Alt+Tab switcher,
+wait behind a slow one. NVDA's other triggers, no focused window and an
+unacknowledged system menu, are not ported, and nor is its allowlist of
+window classes that always get the long wait (`safeWindowClassSet`).
+
+Other differences:
+
+- NVDA judges against its own focus object's window, the last focus it
+  accepted (`nvda/source/watchdog.py`, lines 224 to 232), so when the
+  user moves to another thread's window and that window's own focus read
+  is slow, NVDA cancels it; Verbatim deliberately does not, judging
+  against the window being read, which for a windowless sender starts as
+  the application's keyboard focus window at the event's arrival
+  (Dickson, 2026-10-20).
+- NVDA's rule covers only its main thread's work: its native check, the
+  probe and the nearest-window lookup, runs in the UIA focus handler on
+  its UIA thread (`nvda/source/UIAHandler/__init__.py`, line 887), where
+  `cancellableExecute` simply runs the call (`watchdog.py`, lines 417 to
+  420), while Verbatim's covers every call of the reading threads.
+- NVDA judges again every half second while it waits
+  (`_waitUntilNormalCoreAliveTimeout`, lines 133 to 148); Verbatim judges
+  when the half second ends and on foreground events, so a move of the
+  keyboard focus to another thread with no foreground event, such as to
+  a child window owned by another thread, is caught by NVDA and missed by
+  Verbatim.
+- Both of Verbatim's rules compare threads and processes with
+  `GetWindowThreadProcessId`, which names a console window's client
+  rather than conhost, so a console client that also owns a GUI window on
+  another thread can have its console's read abandoned with a wrong
+  reason when the user moves to that window (`docs/roadmap.md`, M4.1's
+  focus-pipeline follow-ups).
 
 ### Recovery after an outpost is replaced
 

@@ -265,7 +265,7 @@ Tree view messages use plain `SendMessageW` (`crates/verbatim-ia2/src/window.rs`
 
 ### 6.4 Watchdogs for every thread others wait on
 
-- The worker: as today (worker.rs 555 to 607), including the 500 ms abandonment when the foreground moves to another thread of the same application (`MOVED_ON_GRACE`, 103), which is NVDA's `MIN_CORE_ALIVE_TIMEOUT` rule. For an entry with no window, the check should use the foreground window's process (`focus-read-timeout.md` fix 3).
+- The worker: as today (worker.rs 555 to 607), including the 500 ms abandonment when the foreground moves to another thread of the same application (`MOVED_ON_GRACE`, now in `outpost/window.rs`), which is NVDA's `MIN_CORE_ALIVE_TIMEOUT` rule. For an entry with no window, the check should use the foreground window's process (`focus-read-timeout.md` fix 3).
 - Stage 1, the UIA receiving thread: new, with the same watchdog: past its deadline it is abandoned and replaced, the entry in hand dropped (as NVDA loses a cancelled call's event), and later events continue.
 - The subscription threads: `Registration::settle` and `close` wait on them (`crates/verbatim-uia/src/subscribe.rs` 212 to 241), and their moves call into the application. With the transaction timeout set, those calls are bounded if UIA applies it to registration calls; E-TT checks `AddEventHandlerGroup` too. If it does not, `settle` gets a deadline after which the registration is abandoned and a new one made.
 - The listener, Core's reducer and the supervisor's owner make no calls and wait on nothing that does.
