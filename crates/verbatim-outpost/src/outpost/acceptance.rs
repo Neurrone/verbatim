@@ -61,6 +61,10 @@ pub(crate) enum EventName {
     Selection,
     /// A UIA text control's caret or selection moved.
     Caret,
+    /// The system caret's location change, and its show, which NVDA
+    /// tests by its focus's own rule instead and Verbatim tests as a
+    /// location change (`docs/parity/text.md`).
+    LocationChange,
     /// A UIA text control's text changed.
     TextChange,
 }
@@ -68,9 +72,9 @@ pub(crate) enum EventName {
 impl EventName {
     /// The name NVDA gives a `WinEvent` of `kind`, or `None` for a kind the
     /// worker handles outside the test: an object destroyed, which NVDA
-    /// handles in its event callback, and Verbatim's own kinds, the caret and
-    /// text selection of edit controls, and the console host's updates and
-    /// caret (`docs/parity/focus-events.md`, "Event acceptance").
+    /// handles in its event callback, and Verbatim's own kinds, the text
+    /// selection of edit controls, and the console host's updates and caret
+    /// (`docs/parity/focus-events.md`, "Event acceptance").
     pub(crate) fn of_win_event(kind: WinEventKind) -> Option<Self> {
         Some(match kind {
             WinEventKind::Focus | WinEventKind::Foreground => Self::GainFocus,
@@ -84,8 +88,8 @@ impl EventName {
             WinEventKind::NameChange => Self::NameChange,
             WinEventKind::DescriptionChange => Self::DescriptionChange,
             WinEventKind::Selection => Self::Selection,
+            WinEventKind::Caret => Self::LocationChange,
             WinEventKind::Destroy
-            | WinEventKind::Caret
             | WinEventKind::TextSelectionChange
             | WinEventKind::ConsoleUpdate
             | WinEventKind::ConsoleCaret => return None,
@@ -533,6 +537,15 @@ mod tests {
         let mut desk = Desk::new();
         desk.window(BACKGROUND).topmost = true;
         assert!(desk.accepts(EventName::StateChange, BACKGROUND_CHILD));
+    }
+
+    #[test]
+    fn the_system_carets_event_is_tested_as_a_location_change() {
+        let event = EventName::of_win_event(WinEventKind::Caret);
+        assert_eq!(event, Some(EventName::LocationChange));
+        let desk = Desk::new();
+        assert!(desk.accepts(EventName::LocationChange, FOREGROUND_CHILD));
+        assert!(!desk.accepts(EventName::LocationChange, BACKGROUND_CHILD));
     }
 
     #[test]

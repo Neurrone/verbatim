@@ -1118,13 +1118,20 @@ location changes from Notepad (14 of them the caret's) and 33 caret
 shows, which were hooked already; `conhost_flood`, 28 location changes
 from the console window (22 of them the caret's); `windows_terminal_flood`,
 9 from Windows Terminal, none the caret's; `settings_system_page`, 4 from
-the Settings app and 11 from its frame host. The caret's events wake
-the worker too. Handled for every UIA focus, they doubled the caret
-reads of `notepad_editing`, 31 against 16, since Notepad raises the
-system caret's events before its UIA caret event for each move and each
-read the caret; so a focus that has raised a UIA caret event of its own
-has the system caret's events dropped by the worker, and only a focus
-that raises none reads them. The event thread takes the focus
+the Settings app and 11 from its frame host. Handled for every UIA
+focus, the caret's events doubled the caret reads of `notepad_editing`,
+31 against 16, since Notepad raises the system caret's events before its
+UIA caret event for each move and each read the caret. So once a focus
+has raised a UIA caret event of its own, and in a focused console host
+terminal from its focus on, the intake drops the system caret's events
+as the event thread pushes them, until the next focus is reported, and
+they wake the worker no more (`Intake::drop_system_caret`). Counted
+from the outposts' logs on 2026-10-20, over three runs each: in
+`notepad_editing` the hook delivered 47 to 52 of the caret's events (34
+to 39 of them shows) and 3 woke the worker, those before the document's
+first UIA caret event after each of its two focuses, where 22 to 25
+woke it when the worker dropped them; in `conhost_editing` the hook
+delivered 7 and none woke the worker, where all 6 or 7 did. The event thread takes the focus
 and foreground windows from its own hook's events, and from the
 listener's routed facts until its hook delivers one; the worker nudges it
 to decide again when it keeps a UIA verdict, and the reader when Core

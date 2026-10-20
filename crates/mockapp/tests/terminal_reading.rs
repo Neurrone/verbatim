@@ -19,7 +19,8 @@
 //!   Core asks for reads the caret with the text.
 //! - The console host's text area, in a window of the console's class,
 //!   takes its caret event from its console (`EVENT_CONSOLE_CARET`), and
-//!   UI Automation's caret event is not subscribed for it.
+//!   UI Automation's caret event is not subscribed for it, and the system
+//!   caret's events are not used for it.
 //! - A caret key's watch that knows no caret before the key is answered by
 //!   a read that covers a caret event waiting behind it.
 //! - A caret key's watch whose read finds the caret moved while the
@@ -358,6 +359,27 @@ fn the_console_hosts_caret_comes_from_its_console() {
     app.quit();
 }
 
+/// In the focused console host's text area the system caret's events tell
+/// of the caret its console caret event tells of, at the same tick, and are
+/// not used: the console's caret event alone has the caret read.
+fn the_console_hosts_system_caret_is_not_its_caret_event() {
+    let (mut app, outpost, text) = start_with(
+        "mockapp-console-system-caret",
+        "console_terminal.json",
+        "text",
+    );
+    app.send("caret text 1");
+    app.send("system-caret");
+    outpost.heard(&[Heard::Msaa(WinEventKind::Caret)]);
+    outpost.settled();
+    app.send("console-caret 1 0");
+    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    caret_read(&outpost, text);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// A caret key's watch that knows no caret before the key (no `since`,
 /// and no press time to find the outpost's own report before it by)
 /// takes a caret event as its evidence. One waiting behind a text change in one batch is
@@ -591,6 +613,10 @@ fn main() {
         (
             "the_console_hosts_caret_comes_from_its_console",
             the_console_hosts_caret_comes_from_its_console,
+        ),
+        (
+            "the_console_hosts_system_caret_is_not_its_caret_event",
+            the_console_hosts_system_caret_is_not_its_caret_event,
         ),
         (
             "a_read_covering_a_caret_event_answers_a_watch_with_no_caret",

@@ -995,6 +995,38 @@ which follows every typed character, and which nothing speaks.
 - Today: 1 remotely, 8 before remote operations and classically.
 - Target: 1.
 
+### The system caret's events
+
+The system caret's location change or show (`OBJID_CARET`), which NVDA
+handles as a caret event on its focus (`docs/parity/text.md`), measured
+from the outposts' logs on 2026-10-20 over three runs each of
+`notepad_editing` and `conhost_editing`
+(`target/e2e-evidence/fixes-item-11-2026-10-20/commit1-caret-counts.txt`).
+
+- Minimum: no call into the application for an event that tells of no
+  move the focus does not report itself; for one that does, the caret
+  report's calls, 1 UIA call remotely.
+- Today: each event the hook delivers wakes the outpost's event thread,
+  which drops it, waking nobody, while the focus has caret events of its
+  own (a UIA focus once it has raised a UIA caret event, and a focused
+  console host terminal). Every other one wakes the worker, which makes
+  NVDA's acceptance test as a location change, local calls only (the
+  window's class name and process, its root owner and the foreground's,
+  `IsChild`, its extended style, and `GetGUIThreadInfo` for a
+  `Windows.UI.Core` window), and then reads the caret as a caret report
+  does, unless a read since the event covers it. In `notepad_editing`
+  the hook delivered 47 to 52 per run, 34 to 39 of them shows, and 3
+  woke the worker, each a caret read: those before the document's first
+  UIA caret event after each of its two focuses, the first move after a
+  focus being read twice, so 16 to 18 caret reads per run against 16
+  with each move read once. In `conhost_editing` it delivered 7 and none
+  woke the worker: 8 caret reads, one for each console caret event and
+  one after the focus. A classic edit control's caret show comes with
+  each repaint, each a caret read, as in NVDA.
+- Target: the minimum. It is met but for the first move after a focus
+  in an application that raises both, whose system caret's event comes
+  first, before anything tells that the focus reports its own moves.
+
 ### The caret report after a focus, UIA
 
 The report after a text focus, whose line Core speaks, with the line's

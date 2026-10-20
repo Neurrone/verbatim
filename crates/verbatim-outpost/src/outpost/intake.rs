@@ -23,6 +23,12 @@
 //!   nothing for such an update, and the read that ends the hold covers
 //!   every update observed before it, as NVDA's console handler skips an
 //!   update while one is already pending.
+//! - The system caret's events (`WinEventKind::Caret`) are dropped as they
+//!   are pushed, without waking the worker, while the worker has marked
+//!   the focus as having caret events of its own
+//!   ([`Intake::drop_system_caret`]): a UIA focus that has raised a UIA
+//!   caret event, or a focused console terminal, whose console caret event
+//!   tells of the same caret.
 //! - Per batch, of the MSAA events, the newest 4 focus events and the
 //!   newest 10 other events per thread that raised them are kept; a
 //!   foreground change counts among both and is kept by either, as NVDA's
@@ -406,6 +412,33 @@ struct State {
     /// The console window whose updates are dropped as they are pushed
     /// ([`Intake::absorb_console_updates`]).
     absorbed: Option<isize>,
+    /// Whether the system caret's events are dropped as they are pushed:
+    /// the focus last reported has caret events of its own
+    /// ([`Intake::drop_system_caret`]).
+    system_caret_unused: bool,
+}
+
+impl State {
+    /// Whether `item` is dropped as it is pushed, waking nobody: a console
+    /// update while its window's updates are absorbed, for which the worker
+    /// would do nothing and which the read that ends the hold covers
+    /// ([`Intake::absorb_console_updates`]), and the system caret's event
+    /// while the focus's own caret events tell of the same moves
+    /// ([`Intake::drop_system_caret`]).
+    fn drops_on_arrival(&self, item: &Item) -> bool {
+        match item {
+            Item::Msaa {
+                kind: WinEventKind::ConsoleUpdate,
+                hwnd,
+                ..
+            } => self.absorbed == Some(*hwnd),
+            Item::Msaa {
+                kind: WinEventKind::Caret,
+                ..
+            } => self.system_caret_unused,
+            _ => false,
+        }
+    }
 }
 
 /// What the debug log says of an entry pushed, with what is queued around
@@ -511,15 +544,7 @@ impl Intake {
             drop(state);
             return;
         }
-        if let Item::Msaa {
-            kind: WinEventKind::ConsoleUpdate,
-            hwnd,
-            ..
-        } = &entry.item
-            && state.absorbed == Some(*hwnd)
-        {
-            // The worker would do nothing for it, and the read that ends
-            // the hold covers it: it is not queued, and wakes nobody.
+        if state.drops_on_arrival(&entry.item) {
             return;
         }
         let marker = match &entry.item {
@@ -814,6 +839,23 @@ impl Intake {
         self.lock().idle.take()
     }
 
+    /// Drops the system caret's events as they are pushed, until the next
+    /// focus is reported ([`set_focused`](Self::set_focused)), so they wake
+    /// nobody: the worker marks a UIA focus once it has raised a UIA caret
+    /// event of its own, and a focused console terminal as it is reported,
+    /// whose moves those events would only read a second time. An event
+    /// pushed after a new focus and before its report is dropped too, and
+    /// the new focus's caret, which its report reads, covers it.
+    pub(super) fn drop_system_caret(&self) {
+        self.lock().system_caret_unused = true;
+    }
+
+    /// Whether the system caret's events are dropped as they are pushed
+    /// ([`drop_system_caret`](Self::drop_system_caret)).
+    pub(super) fn system_caret_unused(&self) -> bool {
+        self.lock().system_caret_unused
+    }
+
     /// Records the object the worker last reported as the focus: its MSAA
     /// events other than focus events are always kept.
     pub(super) fn set_focused(&self, object: Option<Object>) {
@@ -822,6 +864,7 @@ impl Intake {
         state.terminal = None;
         state.focus_redirected = false;
         state.absorbed = None;
+        state.system_caret_unused = false;
     }
 
     /// Records that the focus last reported ([`set_focused`](Self::set_focused))

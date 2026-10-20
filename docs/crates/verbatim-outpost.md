@@ -1856,17 +1856,24 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   (`EVENT_OBJECT_LOCATIONCHANGE` or `EVENT_OBJECT_SHOW` on `OBJID_CARET`)
   and text selection events are reported as `CaretMoved`, and its value
   change as `TextChanged` without reading the control's whole text as its
-  MSAA value. For a UIA focus, the hooks' caret event from the focus's
-  window is the focus's caret event, handled as its UIA caret event is
-  (`Worker::system_caret_of_uia_focus`), as NVDA handles the system
-  caret's events on any focus, since some UIA documents, such as Visual
-  Studio's, raise no UIA caret event. Once the focus has raised a UIA
-  caret event of its own (`Context::raises_uia_caret_events`), its system
-  caret's events are not used: Windows 11 Notepad raises both for every
-  move, the system caret's first, so each read the caret a second time.
-  NVDA's exceptions are not built:
-  an IAccessible2 focus, not read before milestone M7, and Word's UIA
-  document, Word's own rule for the app-module track.
+  MSAA value. For a UIA focus, the hooks' caret event from any window
+  NVDA's acceptance test takes a location change from
+  (`acceptance::EventName::LocationChange`) is the focus's caret event,
+  handled as its UIA caret event is (`Worker::system_caret_of_uia_focus`),
+  as NVDA handles the system caret's events on its last queued focus,
+  since some UIA documents, such as Visual Studio's, raise no UIA caret
+  event. Once the focus has raised a UIA caret event of its own, and in a
+  focused console host terminal from the start, whose console caret event
+  is its caret event, the worker marks the focus
+  (`Intake::drop_system_caret`) and the intake drops the system caret's
+  events as they arrive, waking nobody, until the next focus is
+  reported: Windows 11 Notepad raises both for every move, the system
+  caret's first, and the console host raises both at the same blink
+  tick, so each would read the caret a second time. NVDA's exceptions
+  are not built: an IAccessible2 focus, not read before milestone M7,
+  Word's UIA document, Word's own rule, and Scintilla's refusal of the
+  caret's shows and hides, Notepad++'s, both for the app-module track
+  (`docs/parity/text.md`).
   The intake keeps one waiting caret report per node, and a caret event
   observed before the worker last read that node's caret (a caret key's
   check reads it after the event) is dropped. A caret event of a focused

@@ -760,7 +760,13 @@ Tiers, gated by the capabilities each module needs:
   Explorer (starting with the cosmetic fixes deferred from M3), Settings,
   Task Manager, Calculator, search, Open With,
   Notepad, Notepad++, VS Code, Poedit, Spotify, foobar2000, Audacity,
-  1Password, basic Zoom and Teams behavior.
+  1Password, basic Zoom and Teams behavior. Notepad++'s support, the
+  first Scintilla editor, takes with it NVDA's per-class rule that a
+  Scintilla editor's caret shows and hides are no caret event
+  (`shouldAcceptShowHideCaretEvent`, `NVDAObjects/IAccessible/scintilla.py`,
+  line 15, tested in `IAccessibleHandler/__init__.py`, lines 1039 to
+  1055), since its caret blinks by them; until then a focused Scintilla
+  editor tries to read its caret at each blink.
 - **Lock screen and logon UI — after M8.1**: reading the sign-in screen
   needs UIAccess, which M8.1 builds.
 - **Tier B — the terminal clients, in two stages**: Windows Terminal

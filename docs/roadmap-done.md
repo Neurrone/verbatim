@@ -540,10 +540,12 @@ landed it.
   reported, 2026-10-20 ([focus pipeline](design/focus-pipeline.md),
   section 5.2).
 - The audits' item 11, its first change: the system caret's location
-  change and show (`OBJID_CARET`) are a caret event on a UIA focus in
-  their window, as NVDA handles them, unless the focus raises UIA caret
-  events of its own, 2026-10-20 ([parity](parity/text.md),
-  "TextInfo-equivalent layer").
+  change and show (`OBJID_CARET`) are a caret event on a UIA focus, from
+  any window NVDA's acceptance test takes a location change from, as
+  NVDA handles them, unless the focus has raised UIA caret events of its
+  own since it was reported or is a console host terminal, when the
+  intake drops them unseen by the worker, 2026-10-20
+  ([parity](parity/text.md), "TextInfo-equivalent layer").
 - The audits' item 11, its second change: a UIA combo box without the
   `Value` pattern, and a looping selector, have their first selected
   item's name as their value, and an item of such a focus selected is a

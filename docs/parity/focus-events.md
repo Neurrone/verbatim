@@ -174,13 +174,16 @@ cases listed last are not implemented.
 - Where the test is made: each outpost's worker makes NVDA's test, rule
   by rule in NVDA's order, as it handles each entry, with local calls
   only, before any call into the application, for MSAA name,
-  description, state, value and selection changes, focus, foreground and
-  popup menu facts, and alerts (`docs/design/phase6-design.md`, "Event
-  filtering in the outposts"). Show facts pass by their class, which the
-  focus listener's hook already tested, as NVDA's show rule depends on
-  the class alone. Core's own test stays. Outside the test, as in NVDA's
-  callback: an object destroyed, and Verbatim's own events, the caret
-  and text selection of edit controls, and the console host's updates.
+  description, state, value and selection changes, the system caret's
+  location changes and shows (both tested as a location change; NVDA
+  tests a caret show by its focus's own rule instead,
+  `docs/parity/text.md`), focus, foreground and popup menu facts, and
+  alerts (`docs/design/phase6-design.md`, "Event filtering in the
+  outposts"). Show facts pass by their class, which the focus listener's
+  hook already tested, as NVDA's show rule depends on the class alone.
+  Core's own test stays. Outside the test, as in NVDA's callback: an
+  object destroyed, and Verbatim's own events, the text selection of edit
+  controls, and the console host's updates and caret.
 - MSAA, after acceptance and in NVDA's order: an event is dropped when
   its own window is no window, has a ghost window standing in for it, or
   belongs to an application the system reports hung, then when its

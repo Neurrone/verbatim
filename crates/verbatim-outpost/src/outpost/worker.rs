@@ -1994,13 +1994,7 @@ impl Worker<'_> {
                 self.end_watch("the focus moved");
             }
             if !foreground {
-                let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
-                self.context.intake.set_focused(object);
-                if terminal {
-                    self.context
-                        .intake
-                        .set_focus_is_terminal(window.unwrap_or(0));
-                }
+                self.note_focused(object, role, window);
             }
             let mut tracking = self.context.tracking();
             tracking.role = Some(role);
@@ -2049,6 +2043,27 @@ impl Worker<'_> {
             // is a window, not the control focus is in.
             if let Some(node) = text_node {
                 self.follow_text((node.id, node.role), trace);
+            }
+        }
+    }
+
+    /// Tells the intake of the focus just reported, `object` of `role` in
+    /// `window`: a terminal read through UIA has its caret event planned
+    /// after its text changes, and a console host's terminal, whose
+    /// console caret event is its caret event, has the system caret's
+    /// events, which tell of the same caret at the same tick, dropped
+    /// (`docs/parity/text.md`).
+    fn note_focused(&self, object: Option<Object>, role: Role, window: Option<isize>) {
+        let terminal = role == Role::Terminal && matches!(object, Some(Object::Uia(_)));
+        self.context.intake.set_focused(object);
+        if terminal {
+            self.context
+                .intake
+                .set_focus_is_terminal(window.unwrap_or(0));
+            if window
+                .is_some_and(|hwnd| window_class_name(hwnd) == text_reads::CONSOLE_WINDOW_CLASS)
+            {
+                self.context.intake.drop_system_caret();
             }
         }
     }
@@ -2153,13 +2168,17 @@ impl Worker<'_> {
         if !Self::readable(hwnd) {
             return;
         }
-        if read::window_uses_uia(self.context, hwnd) {
-            // UIA owns this window; only the system caret's events are
-            // used, as a caret event on a UIA focus.
-            if kind == WinEventKind::Caret {
-                self.system_caret_of_uia_focus(hwnd, trace, observed_at_ms);
-            }
+        // The system caret's event is a caret event on the focus, from
+        // whichever window it comes, as NVDA maps it onto its last queued
+        // focus.
+        if kind == WinEventKind::Caret
+            && let Some(Object::Uia(runtime_id)) = self.context.intake.focused()
+        {
+            self.system_caret_of_uia_focus(&runtime_id, trace, observed_at_ms);
             return;
+        }
+        if read::window_uses_uia(self.context, hwnd) {
+            return; // UIA owns this window.
         }
         if self.edit_event(kind, (hwnd, id_object, id_child), trace, observed_at_ms) {
             return;
@@ -2207,34 +2226,38 @@ impl Worker<'_> {
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
     }
 
-    /// The system caret's location change or show in `hwnd`, a window read
-    /// through UIA: a caret event on the focus, when the focus is a UIA
-    /// node in that window, by the path a UIA caret event takes. NVDA
-    /// handles these events as a caret event on its focus whatever API the
-    /// focus is read through, since some UIA documents, such as Visual
+    /// The system caret's location change or show, accepted from any
+    /// window NVDA's test accepts a location change from: a caret event on
+    /// the UIA focus whose `runtime_id` is given, by the path a UIA caret
+    /// event takes. NVDA handles these events as a caret event on its last
+    /// queued focus whatever API the focus is read through and whichever
+    /// window raised them, since some UIA documents, such as Visual
     /// Studio's, raise no UIA caret event of their own. Its two exceptions
-    /// are not here: a focus read through IA2, which Verbatim does
-    /// not read yet (milestone M7), and Word's UIA document, flooded with
-    /// them by Chinese input methods, which belongs to Word's application
-    /// support (the roadmap's app-module track, tier D).
+    /// are not here: a focus read through IA2, which Verbatim does not read
+    /// yet (milestone M7), and Word's UIA document, flooded with them by
+    /// Chinese input methods, which belongs to Word's application support
+    /// (the roadmap's app-module track, tier D).
     ///
-    /// Once the focus has raised a UIA caret event of its own, its system
-    /// caret's events are not used: they come with its UIA caret events,
-    /// as Windows 11 Notepad raises both, and arrive first, so each read
-    /// the caret once more for the same move (the move's UIA caret event is
-    /// observed after that read began, so `Context::caret_read_since`
-    /// cannot count the read as covering it), which doubled the caret
-    /// reads of `notepad_editing`, from 16 to 31.
-    fn system_caret_of_uia_focus(&mut self, hwnd: isize, trace: TraceId, observed_at_ms: u64) {
-        let Some(Object::Uia(runtime_id)) = self.context.intake.focused() else {
-            return;
-        };
-        if self.context.tracking().window != Some(hwnd) {
+    /// Once the focus has raised a UIA caret event of its own, and in a
+    /// focused console terminal, whose console caret event is its caret
+    /// event, the system caret's events are not used until the next focus:
+    /// they come with the focus's own, as Windows 11 Notepad raises both
+    /// for every move, the system caret's first, and each would read the
+    /// caret once more for the same move (the move's own event is observed
+    /// after that read began, so `Context::caret_read_since` cannot count
+    /// the read as covering it). The intake drops them as they arrive
+    /// (`Intake::drop_system_caret`); one queued before the mark is
+    /// dropped here.
+    fn system_caret_of_uia_focus(
+        &mut self,
+        runtime_id: &[i32],
+        trace: TraceId,
+        observed_at_ms: u64,
+    ) {
+        if self.context.intake.system_caret_unused() {
             return;
         }
-        if let Some(node_id) = self.context.uia_registry.existing_id(&runtime_id)
-            && !self.context.raises_uia_caret_events(node_id)
-        {
+        if let Some(node_id) = self.context.uia_registry.existing_id(runtime_id) {
             self.caret_event(node_id, trace, observed_at_ms);
         }
     }
@@ -2604,7 +2627,12 @@ impl Worker<'_> {
                     .existing_id(&event.parts.runtime_id)
                 {
                     text_reads::text_event_from(self.context, node_id, element.as_ref());
-                    self.context.uia_caret_event_from(node_id);
+                    if self.is_focus(node_id) {
+                        // The focus reports its caret moves itself: the
+                        // system caret's events are dropped until the next
+                        // focus (`Worker::system_caret_of_uia_focus`).
+                        self.context.intake.drop_system_caret();
+                    }
                     self.caret_event(node_id, trace, observed_at_ms);
                 }
                 return;

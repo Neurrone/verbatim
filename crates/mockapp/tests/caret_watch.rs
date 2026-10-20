@@ -5,7 +5,7 @@
 //! moves nothing is answered by nothing at all, and a text pattern missing
 //! as the focus arrives is read once the application raises a caret event,
 //! and the system caret's move is the caret event of a UIA focus that
-//! raises none of its own.
+//! raises none of its own, as its show is a classic edit control's.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -326,6 +326,113 @@ fn a_focus_with_uia_caret_events_has_no_system_caret_events() {
     app.quit();
 }
 
+/// A new focus has the system caret's events used again until it raises
+/// a UIA caret event of its own: the focus's mark is the focus's alone.
+fn a_new_focus_uses_the_system_caret_again() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-new-focus");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, .. },
+            ..
+        } if node_id == notes => {}
+        other => panic!("the outpost said {other:?}, not the document's caret"),
+    }
+    heard_caret_event(&outpost);
+    outpost.settled();
+    // The focus leaves the document and comes back.
+    outpost.deliver(focus_fact(&mut app, &outpost, hwnd, "ok"));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => assert_eq!(node.name.as_deref(), Some("OK")),
+        other => panic!("the outpost said {other:?}, not the focus on OK"),
+    }
+    outpost.settled();
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 6");
+    app.send("system-caret");
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret },
+            ..
+        } if node_id == notes => assert_eq!(caret.line.offset, 6),
+        other => panic!("the outpost said {other:?}, not the document's caret"),
+    }
+    outpost.heard(&[Heard::Msaa(WinEventKind::Caret)]);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A classic edit control, read through MSAA, reports its caret's move
+/// only by the system caret's hide and show: the show from the focused
+/// control is its caret event, and its caret is reported where it moved.
+fn a_classic_edit_controls_caret_show_is_its_caret_event() {
+    common::init_com();
+    let title = common::unique_title("mockapp-caret-watch-edit-show");
+    let mut app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // The keyboard focus cannot be given to the control on a desktop of
+    // its own, so its host has the focused state, which an MSAA focus
+    // needs on the object or an ancestor.
+    app.send("set-focus root");
+    let outpost = OutpostUnderTest::new(&app);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(
+            Some(hwnd),
+            None,
+            windows::core::w!("EDIT"),
+            None,
+        )
+    }
+    .expect("mockapp's edit control");
+    outpost.deliver(verbatim_outpost::protocol::DeliveredFact::MsaaFocus {
+        hwnd: edit.0 as isize,
+        id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+        id_child: 0,
+    });
+    let node = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => node,
+        other => panic!("the outpost said {other:?}, not the edit control's focus"),
+    };
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret },
+            ..
+        } if node_id == node.id => assert_eq!(caret.line.offset, 0),
+        other => panic!("the outpost said {other:?}, not the edit control's caret"),
+    }
+    outpost.settled();
+    app.send("caret doc 6");
+    // Unfocused on this desktop, the control raises nothing for the move;
+    // focused, it would show its caret again, as mockapp now does.
+    app.send("system-caret show");
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret },
+            ..
+        } if node_id == node.id => {
+            assert_eq!(
+                (caret.line.text.as_str(), caret.line.offset),
+                ("alpha beta\r\n", 6)
+            );
+        }
+        other => panic!("the outpost said {other:?}, not the edit control's caret"),
+    }
+    outpost.heard(&[Heard::Msaa(WinEventKind::Caret)]);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -352,6 +459,14 @@ fn main() {
         (
             "a_focus_with_uia_caret_events_has_no_system_caret_events",
             a_focus_with_uia_caret_events_has_no_system_caret_events,
+        ),
+        (
+            "a_new_focus_uses_the_system_caret_again",
+            a_new_focus_uses_the_system_caret_again,
+        ),
+        (
+            "a_classic_edit_controls_caret_show_is_its_caret_event",
+            a_classic_edit_controls_caret_show_is_its_caret_event,
         ),
     ]);
 }

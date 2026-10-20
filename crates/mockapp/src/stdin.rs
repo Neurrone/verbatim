@@ -88,11 +88,15 @@ pub(crate) enum Command {
     /// window, its cursor visible at that cell, as the console host raises
     /// it for its console window.
     ConsoleCaret(u16, u16),
-    /// `system-caret`: raises `EVENT_OBJECT_LOCATIONCHANGE` on the system
-    /// caret (`OBJID_CARET`) from the window, as Windows raises it when an
-    /// application moves its caret, and nothing else: an application whose
-    /// text raises no caret event of its own.
-    SystemCaret,
+    /// `system-caret` or `system-caret show`: raises
+    /// `EVENT_OBJECT_LOCATIONCHANGE`, or `EVENT_OBJECT_SHOW`, on the system
+    /// caret (`OBJID_CARET`) from the window that owns the caret (the
+    /// window on the UIA backend, the edit control on the MSAA backend),
+    /// as Windows raises it when an application moves its caret, or shows
+    /// it again after a move, as a classic edit control does, and nothing
+    /// else: an application whose text raises no caret event of its own.
+    /// `true` for the show.
+    SystemCaret(bool),
     /// `set-text <id> <text>`: replaces a UIA text node's text, raising no
     /// event, as a terminal's text changes before a client reads it; `\n`
     /// in `text` is a line feed and `\\` a backslash, so one stdin line can
@@ -282,7 +286,11 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "caret-event" if !rest.is_empty() => Some(Command::CaretEvent(rest.to_owned())),
         "text-changed" if !rest.is_empty() => Some(Command::TextChanged(rest.to_owned())),
         "console-caret" => console_caret(rest),
-        "system-caret" => Some(Command::SystemCaret),
+        "system-caret" => match rest {
+            "" => Some(Command::SystemCaret(false)),
+            "show" => Some(Command::SystemCaret(true)),
+            _ => None,
+        },
         "stall" => stall(rest),
         "on-activate" => parse_command(rest).map(|command| Command::OnActivate(Box::new(command))),
         "slow" => rest.parse().ok().map(Command::Slow),

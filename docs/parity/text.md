@@ -77,18 +77,59 @@ that is neither has no text.
   drops it (the terminal scenarios assert it).
 - The system caret's location change and show (`OBJID_CARET`) are a
   caret event on the focus, as NVDA handles them, whether the focus is
-  an edit control read through MSAA or a UIA node in the window that
-  raised them: some UIA documents, such as Visual Studio's, raise no
-  UIA caret event of their own (mockapp's
-  `the_system_carets_move_is_the_uia_focuss_caret_event`). Different:
-  once a UIA focus has raised a UIA caret event of its own, Verbatim no
-  longer uses the system caret's events for it, where NVDA handles both,
-  since each would read the caret again for a move its UIA event
-  reports, which says nothing new. NVDA's two
-  exceptions are not built: a focus read through IAccessible2, which
-  Verbatim does not read before milestone M7, and Word's UIA document,
-  which Chinese input methods flood with these events, a rule of Word's
-  own support (the roadmap's app-module track, tier D).
+  an edit control read through MSAA or a UIA node: some UIA documents,
+  such as Visual Studio's, raise no UIA caret event of their own
+  (mockapp's `the_system_carets_move_is_the_uia_focuss_caret_event`),
+  and a classic edit control reports a move only by the caret's hide and
+  show (`a_classic_edit_controls_caret_show_is_its_caret_event`). For a
+  UIA focus they are taken from any window NVDA's acceptance test takes a
+  location change from (the foreground application's windows, those
+  sharing its root owner, and the rest of `docs/parity/focus-events.md`,
+  "Event acceptance"), not only from the focus's own window. The caret's
+  show from a classic edit control comes with every repaint, since
+  painting hides and shows the caret, so each repaint reads the caret,
+  as in NVDA. Different, each to save a second read of the same move:
+  - Once a UIA focus has raised a UIA caret event of its own, Verbatim
+    drops the system caret's events until the next focus is reported,
+    where NVDA handles both. The ones that come before that first UIA
+    caret event are still read: Windows 11 Notepad raises the system
+    caret's events first, so the first move after each focus on its
+    document reads the caret twice (`notepad_editing`, two focuses on the
+    document: 3 system caret events read and 16 to 18 caret reads per
+    run in three runs on 2026-10-20, against 16 when every move was read
+    once). A focus that later stops raising UIA caret events, as one
+    raising them only for selections would, is followed again from its
+    next focus (`a_new_focus_uses_the_system_caret_again`).
+  - In a focused console host terminal, the system caret's events are
+    never used: the console's caret event (`EVENT_CONSOLE_CARET`) is its
+    caret event (`docs/crates/verbatim-outpost.md`, "Terminals"), and the
+    console host raises the system caret's location change about 130
+    microseconds before it, at the same blink tick, for the same move.
+    NVDA's console handler (`winConsoleHandler.py`, 169) queues the
+    console's caret event only when no caret event is pending for the
+    console, so for each such pair it handles one caret event, the system
+    caret's; Verbatim keeps the console's, which also comes for a move of
+    a selection's end and is what its terminal reading is built on, so
+    each move is read once by design rather than by the two arriving
+    before the read began (`conhost_editing`: 7 console caret events and
+    8 caret reads, none from the system caret's 7 events;
+    `the_console_hosts_system_caret_is_not_its_caret_event`).
+  - A caret show is tested for acceptance as a location change is; NVDA
+    skips the test for it and asks only its focus's
+    `shouldAcceptShowHideCaretEvent`. The two differ only for a show from
+    a window unrelated to the foreground window.
+
+  NVDA's three exceptions are not built, each recorded for where it
+  belongs: a focus read through IAccessible2, which Verbatim does not
+  read before milestone M7; Word's UIA document, which Chinese input
+  methods flood with these events, a rule of Word's own support; and a
+  focus whose class refuses the caret's shows and hides
+  (`shouldAcceptShowHideCaretEvent`), which only Scintilla's editor does
+  at the pin (`NVDAObjects/IAccessible/scintilla.py`, line 15), since its
+  caret blinks by them, a rule of Scintilla's support. The last two are
+  on the roadmap's app-module track, with Word (tier D) and Notepad++
+  (tier A). Until then a focused Scintilla editor, such as Notepad++'s,
+  tries to read its caret at each blink.
 - NVDA's `caretMovementFailed` event is not offered.
 
 Differences:

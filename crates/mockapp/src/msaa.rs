@@ -18,8 +18,8 @@ use windows::Win32::UI::Accessibility::{IAccessible, NotifyWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     CONSOLE_CARET_VISIBLE, EVENT_CONSOLE_CARET, EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_FOCUS,
     EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
-    EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE,
-    OBJID_CARET, OBJID_CLIENT,
+    EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
+    EVENT_OBJECT_VALUECHANGE, OBJID_CARET, OBJID_CLIENT,
 };
 
 use crate::stdin::Command;
@@ -124,19 +124,20 @@ fn raise_caret_event(hwnd: HWND) -> Result<(), String> {
     Ok(())
 }
 
-/// Raises `EVENT_OBJECT_LOCATIONCHANGE` on the system caret from window
-/// `hwnd`, as Windows raises it when the application moves its caret (the
+/// Raises `EVENT_OBJECT_LOCATIONCHANGE`, or with `show`
+/// `EVENT_OBJECT_SHOW`, on the system caret from window `hwnd`, as Windows
+/// raises it when the application moves its caret or shows it again (the
 /// `system-caret` command).
-pub(crate) fn raise_system_caret(hwnd: HWND) {
+pub(crate) fn raise_system_caret(hwnd: HWND, show: bool) {
+    let event = if show {
+        EVENT_OBJECT_SHOW
+    } else {
+        EVENT_OBJECT_LOCATIONCHANGE
+    };
     // SAFETY: `hwnd` is this thread's live window; the caret object is the
     // system's, answered for by the window's default proxy.
     unsafe {
-        NotifyWinEvent(
-            EVENT_OBJECT_LOCATIONCHANGE,
-            hwnd,
-            OBJID_CARET.0,
-            CHILDID_SELF,
-        );
+        NotifyWinEvent(event, hwnd, OBJID_CARET.0, CHILDID_SELF);
     }
 }
 
@@ -245,7 +246,11 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         }
         Command::CaretEvent(_) => raise_caret_event(hwnd)?,
         Command::ConsoleCaret(column, row) => raise_console_caret(hwnd, column, row),
-        Command::SystemCaret => raise_system_caret(hwnd),
+        Command::SystemCaret(show) => {
+            // The edit control owns the caret.
+            let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
+            raise_system_caret(edit, show);
+        }
         Command::Caret(_, start, end) => {
             // The text is the edit control's, in its own offsets.
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
