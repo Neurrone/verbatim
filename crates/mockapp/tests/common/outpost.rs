@@ -485,15 +485,38 @@ impl OutpostUnderTest {
     }
 
     /// Moves the time the outpost and the listener's reader read on by `by`.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the time is the system's
+    /// ([`follow_the_system_clock`](Self::follow_the_system_clock)), which
+    /// this cannot move.
     pub fn pass_time(&self, by: Duration) {
+        self.assert_the_time_is_the_tests();
         *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
+    }
+
+    /// Fails the test once the time is the system's, which the test can no
+    /// longer move.
+    fn assert_the_time_is_the_tests(&self) {
+        assert!(
+            !self.system_time.load(Ordering::Relaxed),
+            "the time follows the system's clock, which a test cannot move"
+        );
     }
 
     /// Lets the time the outpost and the listener's reader read be read
     /// `reads` more times unchanged, and then jump an hour on, past every
     /// time budget, for a step whose budget runs out at a chosen call: a
     /// focus read reads the time first to set its budget's end.
+    ///
+    /// # Panics
+    ///
+    /// Panics once the time is the system's
+    /// ([`follow_the_system_clock`](Self::follow_the_system_clock)), which
+    /// cannot be made to jump.
     pub fn run_out_of_time_after(&self, reads: u32) {
+        self.assert_the_time_is_the_tests();
         *self
             .jump_after
             .lock()
@@ -502,7 +525,9 @@ impl OutpostUnderTest {
 
     /// Makes the time the outpost and the listener's reader read the
     /// system's from now on, for a step whose time budget a real wait must
-    /// spend, as a stalled window's raw probe spends it.
+    /// spend, as a stalled window's raw probe spends it. The test can no
+    /// longer move the time ([`pass_time`](Self::pass_time),
+    /// [`run_out_of_time_after`](Self::run_out_of_time_after)).
     pub fn follow_the_system_clock(&self) {
         self.system_time.store(true, Ordering::Relaxed);
     }

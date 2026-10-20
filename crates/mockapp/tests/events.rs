@@ -28,13 +28,14 @@ use std::time::Instant;
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
-    Cached, FOCUS_PROPERTIES, ListenerEvent, Node, Part, PropertyEvent, Registration, Scope, Shape,
-    Subscription, Uia,
+    Cached, ElementExt as _, FOCUS_PROPERTIES, ListenerEvent, Node, Part, PropertyEvent,
+    Registration, Scope, Shape, Subscription, Uia,
     map::{ignores_notifications, notification_kind_from_uia, notification_processing_from_uia},
 };
 use windows::Win32::Foundation::{HWND, WAIT_TIMEOUT};
 use windows::Win32::UI::Accessibility::{
-    UIA_NamePropertyId, UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
+    UIA_AutomationFocusChangedEventId, UIA_HasKeyboardFocusPropertyId, UIA_NamePropertyId,
+    UIA_SelectionItem_ElementSelectedEventId, UIA_ValueValuePropertyId,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx, PM_REMOVE,
@@ -341,6 +342,85 @@ type ListenerRead = (
     Option<String>,
     Option<bool>,
 );
+
+/// A focus event's cache, filled by the focus listener's request
+/// (`ListenerEvent`), holds the same for `HasKeyboardFocus` when the
+/// provider's `GetPropertyValue` for it fails as when it answers an empty
+/// value: UIA's default, which a read that ignores defaults answers as
+/// "not supported" and a plain read as `false`; and a live read
+/// (`CurrentHasKeyboardFocus`, NVDA's) answers `false` for both, with no
+/// error. So neither the cache nor a live read tells a provider that failed
+/// from one that answered nothing, and a provider that answers reads as it
+/// answered.
+fn uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one() {
+    let title = common::unique_title("mockapp-events-uia-failed-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+
+    let (sender, observed) = mpsc::channel::<(String, String, String)>();
+    let registration = Registration::with_parts(
+        vec![Part::shaped::<ListenerEvent>(Subscription::Event {
+            event: UIA_AutomationFocusChangedEventId,
+            callback: Arc::new(move |element: &Cached<ListenerEvent>| {
+                let observe = |ignore_default| {
+                    describe(element.observe_cached(UIA_HasKeyboardFocusPropertyId, ignore_default))
+                };
+                let live = match element.live().element().has_keyboard_focus() {
+                    Ok(focus) => format!("{focus}"),
+                    Err(error) => format!("failed {:#010x}", error.code().0),
+                };
+                let _ = sender.send((observe(true), observe(false), live));
+            }),
+        })],
+        common::window_subtree(hwnd.0 as isize),
+    )
+    .expect("Registration::with_parts");
+
+    // Each event's cache is filled after its command is acknowledged, so
+    // each answer stays set until its event has arrived.
+    let property = UIA_HasKeyboardFocusPropertyId.0;
+    let mut observe = |answer: &str, item: &str| {
+        app.send(&format!("answer-property {property} {answer}"));
+        app.send(&format!("focus {item}"));
+        observed
+            .recv_timeout(common::WAIT_TIMEOUT)
+            .unwrap_or_else(|error| panic!("no focus event from {item}: {error}"))
+    };
+    let pair = |ignored: &str, plain: &str, live: &str| {
+        (ignored.to_owned(), plain.to_owned(), live.to_owned())
+    };
+    assert_eq!(
+        [
+            observe("fail", "item1"),
+            observe("empty", "item2"),
+            observe("usual", "item1"),
+        ],
+        [
+            pair("not supported", "false", "false"),
+            pair("not supported", "false", "false"),
+            pair("true", "true", "true"),
+        ]
+    );
+    assert_eq!(observed.try_recv(), Err(TryRecvError::Empty));
+    registration.close();
+    app.quit();
+}
+
+/// A cached read's answer, described: its failure's code, UIA's "not
+/// supported" sentinel, a boolean, an empty value, or another type.
+fn describe(answer: windows::core::Result<windows::Win32::System::Variant::VARIANT>) -> String {
+    match answer {
+        Err(error) => format!("failed {:#010x}", error.code().0),
+        Ok(value) if verbatim_uia::is_not_supported(&value) => "not supported".to_owned(),
+        Ok(value) => match value.vt() {
+            windows::Win32::System::Variant::VT_BOOL => {
+                format!("{}", bool::try_from(&value).unwrap_or(false))
+            }
+            windows::Win32::System::Variant::VT_EMPTY => "empty".to_owned(),
+            other => format!("type {}", other.0),
+        },
+    }
+}
 
 /// A registration of the focus listener's shape, `ListenerEvent`, for
 /// selections and notifications on mockapp's window reads each event's
@@ -724,6 +804,10 @@ fn main() {
         (
             "uia_listener_reads_its_facts_with_no_failed_read",
             uia_listener_reads_its_facts_with_no_failed_read,
+        ),
+        (
+            "uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one",
+            uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one,
         ),
         (
             "uia_one_group_delivers_each_of_its_subscriptions",

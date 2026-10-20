@@ -92,6 +92,39 @@ fn refusing_text() -> bool {
     REFUSE_TEXT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The property `answer-property` names, by its numeric id, and how it is
+/// answered; `None` while every property is answered as usual.
+static PROPERTY_ANSWER: std::sync::Mutex<Option<(i32, crate::stdin::PropertyAnswer)>> =
+    std::sync::Mutex::new(None);
+
+/// Has every provider answer `GetPropertyValue` for `property` as `answer`
+/// says from now on (`answer-property`).
+pub(crate) fn answer_property(property: i32, answer: crate::stdin::PropertyAnswer) {
+    *PROPERTY_ANSWER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) =
+        (answer != crate::stdin::PropertyAnswer::Usual).then_some((property, answer));
+}
+
+/// The answer `answer-property` set for `property`, if it set one: the
+/// call's failure, or the empty value.
+fn set_property_answer(
+    property: windows::Win32::UI::Accessibility::UIA_PROPERTY_ID,
+) -> Option<windows::core::Result<windows::Win32::System::Variant::VARIANT>> {
+    let answer = *PROPERTY_ANSWER
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    match answer {
+        Some((named, crate::stdin::PropertyAnswer::Fail)) if named == property.0 => {
+            Some(Err(windows::Win32::Foundation::E_FAIL.into()))
+        }
+        Some((named, crate::stdin::PropertyAnswer::Empty)) if named == property.0 => {
+            Some(Ok(windows::Win32::System::Variant::VARIANT::default()))
+        }
+        _ => None,
+    }
+}
+
 mod text;
 
 pub(crate) use text::{KeyMoved, caret_key};
@@ -257,6 +290,7 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         | Command::Slow(_)
         | Command::SlowPatterns(_)
         | Command::RefuseText(_)
+        | Command::AnswerProperty(..)
         | Command::Hold
         | Command::Release
         | Command::Quit
@@ -1112,6 +1146,9 @@ mod handler {
         }
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
             hits::hit(hits::Method::GetPropertyValue);
+            if let Some(answer) = super::set_property_answer(property_id) {
+                return answer;
+            }
             Ok(props::get_property_value(
                 &self.tree,
                 self.hwnd,
@@ -1203,6 +1240,9 @@ mod handler {
         fn GetPropertyValue(&self, property_id: UIA_PROPERTY_ID) -> WinResult<VARIANT> {
             hits::hit(hits::Method::GetPropertyValue);
             props::alive(&self.tree, self.index)?;
+            if let Some(answer) = super::set_property_answer(property_id) {
+                return answer;
+            }
             Ok(props::get_property_value(
                 &self.tree,
                 self.hwnd,

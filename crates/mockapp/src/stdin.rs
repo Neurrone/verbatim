@@ -8,6 +8,7 @@
 //! `notify <text>`,
 //! `active-text-position <id> <start> <end>`, `take-runtime-id <id> <from>`,
 //! `stall <ms> [<at> <command>]`, `on-activate <command>`, `slow <ms>`, `hold`,
+//! `answer-property <property id> <fail|empty|usual>`,
 //! `menu-opened <id>`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
 //! thread must keep pumping its message loop); parsed commands are handed
@@ -20,6 +21,18 @@
 
 use std::io::BufRead;
 use std::sync::mpsc::Sender;
+
+/// How every UIA provider answers `GetPropertyValue` for the property
+/// `answer-property` names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PropertyAnswer {
+    /// The call fails with `E_FAIL`.
+    Fail,
+    /// The call answers `VT_EMPTY`.
+    Empty,
+    /// The call answers as usual.
+    Usual,
+}
 
 /// One parsed stdin command.
 pub(crate) enum Command {
@@ -135,6 +148,13 @@ pub(crate) enum Command {
     /// provider that is not ready yet does while its application starts.
     /// UIA-only.
     RefuseText(bool),
+    /// `answer-property <property id> fail`, `... empty` or `... usual`:
+    /// from now on every provider's `GetPropertyValue` for that UIA
+    /// property, by its numeric id, fails (`E_FAIL`), answers an empty
+    /// value (`VT_EMPTY`), as a provider that does not support it does, or
+    /// answers as usual again; one property at a time, the last named.
+    /// UIA-only.
+    AnswerProperty(i32, PropertyAnswer),
     /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
     /// (its parent no longer lists it, and every call on its elements fails
     /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
@@ -215,6 +235,19 @@ fn stall(rest: &str) -> Option<Command> {
     Some(Command::Stall(ms, Some((at, Box::new(command)))))
 }
 
+/// `answer-property`'s arguments, a property's numeric id and how it is
+/// answered.
+fn answer_property(rest: &str) -> Option<Command> {
+    let (property, answer) = rest.split_once(' ')?;
+    let answer = match answer.trim() {
+        "fail" => PropertyAnswer::Fail,
+        "empty" => PropertyAnswer::Empty,
+        "usual" => PropertyAnswer::Usual,
+        _ => return None,
+    };
+    Some(Command::AnswerProperty(property.parse().ok()?, answer))
+}
+
 /// `write-on-read`'s arguments, a node's id and the text to write.
 fn write_on_read(rest: &str) -> Option<Command> {
     let (id, text) = rest.split_once(' ')?;
@@ -253,6 +286,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             "off" => Some(Command::RefuseText(false)),
             _ => None,
         },
+        "answer-property" => answer_property(rest),
         "take-runtime-id" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;

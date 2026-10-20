@@ -620,10 +620,13 @@ Public API:
     `ListenerEvent` (NVDA's thirteen base properties, `IsDialog` and
     `IsTogglePatternAvailable`, with the Text pattern prefetched;
     `parts(runtime_id)` gives its role, name and focused state, nothing
-    else; its cached `HasKeyboardFocus` is read as an `Option<bool>`, `None`
-    when the cache does not hold it, and `lacked_keyboard_focus()` is true
-    only for a cached `false`, for the focus listener's judgement once a
-    read's time is up), `PropertyEvent` (`RoleCore`, name, `ValueSet`, `States` and the
+    else; `lacked_keyboard_focus()` is true unless its cached
+    `HasKeyboardFocus` is `true`, for the focus listener's judgement once a
+    read's time is up or its live keyboard focus read has timed out: a
+    provider that answers nothing for the property and one whose answer
+    fails leave the same UIA default, `false`, in the cache, which mockapp's
+    events test `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`
+    shows), `PropertyEvent` (`RoleCore`, name, `ValueSet`, `States` and the
     process id, 24 properties; `parts(runtime_id)` gives everything but
     details), and `TextEvent` (process id, native window handle and class
     name). All three cover `Kept`, and `ListenerEvent` covers
@@ -658,7 +661,10 @@ Public API:
     reads the shape from the cache, locally; `live()` gives the `Live`
     element; `gates()`; `runtime_id()`; `agile()` makes the `Agile<S>`
     that crosses threads; `narrow::<T>()` reads the same element as a
-    shape it covers.
+    shape it covers; `observe_cached(property, ignore_default)` gives the
+    raw cached value as UIA answers it, for the tests that observe what UIA
+    stores for a provider's answer, which a shape's read kinds would hide,
+    and is not used by Verbatim's own code.
   - `Agile<S>`, a `Cached<S>` for another thread of this process, `Send`
     and `Sync` with no `unsafe`; `resolve()` gives the `Cached<S>` back,
     the same element and cache, and `reference()` the untyped agile

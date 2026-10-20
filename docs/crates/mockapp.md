@@ -184,7 +184,13 @@ a window, until `slow 0`; acknowledged `applied`), `refuse-text on` and
 `refuse-text off` (while on, every request for a node's text pattern fails
 with `E_FAIL`, as a provider that is not ready yet while its application
 starts, which UIA reports to the client as no pattern at all; UIA-only;
-acknowledged `applied`), `hold` (the next
+acknowledged `applied`), `answer-property <property id> fail`,
+`... empty` and `... usual` (from then on every provider's
+`GetPropertyValue` for that UIA property, by its numeric id, fails with
+`E_FAIL`, answers `VT_EMPTY`, or answers as usual again; one property at a
+time; UIA-only; acknowledged `applied`; UIA fills an event's cache after
+the event's command is acknowledged, so a test keeps an answer set until
+the event has arrived), `hold` (the next
 provider call, whichever client makes it, prints `held <method>` on
 stdout as it begins and waits until `release`, so a test knows a client's
 call is in progress and decides when it ends; acknowledged `applied`),

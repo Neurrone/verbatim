@@ -33,8 +33,9 @@ use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    IUIAutomation2, UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
 };
+use windows::core::Interface;
 
 use common::outpost::OutpostUnderTest;
 
@@ -1044,6 +1045,59 @@ fn a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped(
     app.quit();
 }
 
+/// A UIA focus whose live keyboard focus read fails by UIA's transaction
+/// timeout, Verbatim's and shorter than NVDA's, is judged by its event's
+/// cache as a focus out of time is: a sender whose event says it lacked the
+/// keyboard focus is dropped. The sender is mockapp's window element, whose
+/// window's verdict an earlier focus kept, so that the live read is the
+/// read's first provider call, which mockapp holds past the timeout.
+fn a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event() {
+    const TIMEOUT_MS: u32 = 300;
+    let title = common::unique_title("mockapp-focus-read-timed-out");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus slider1");
+    let _ = outpost.uia_focus(&client.focused());
+    let request = client
+        .uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
+    let window = client
+        .uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element")
+        .refresh(&request)
+        .expect("the window's element, filled as a focus event's");
+    assert!(
+        window.read().lacked_keyboard_focus(),
+        "the event's cache says the window's element lacked the keyboard focus"
+    );
+    let timeouts: IUIAutomation2 = client.uia.client().cast().expect("IUIAutomation2");
+    // SAFETY: reading a timeout returns a plain integer.
+    let usual = unsafe { timeouts.TransactionTimeout() }.expect("the transaction timeout");
+    // SAFETY: setting a timeout takes a plain integer.
+    unsafe { timeouts.SetTransactionTimeout(TIMEOUT_MS) }.expect("the timeout set");
+    app.hold();
+    let (judged, _) = outpost.listener_read(&window);
+    // SAFETY: as above.
+    unsafe { timeouts.SetTransactionTimeout(usual) }.expect("the timeout restored");
+    assert_eq!(app.held(), "GetPropertyValue");
+    app.release();
+    let Judged::Dropped(reason) = judged else {
+        panic!("the listener read a focus whose event said it was not focused: {judged:?}");
+    };
+    assert_eq!(
+        reason,
+        "its event says it did not have the keyboard focus, and its live read timed out"
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A UIA focus repeated on the last focus accepted, which still has the
 /// keyboard focus, is reported when its read's time is up once its
 /// nearest window has been looked up: NVDA's repeat check needs that
@@ -1559,6 +1613,10 @@ fn main() {
         (
             "a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped",
             a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped,
+        ),
+        (
+            "a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event",
+            a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event,
         ),
         (
             "a_repeated_focus_out_of_time_is_reported",

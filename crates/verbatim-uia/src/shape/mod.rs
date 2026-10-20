@@ -366,6 +366,30 @@ impl<S: Shape> Cached<S> {
         )
     }
 
+    /// What the cache holds for `property` as UIA answers a cached read
+    /// of it, with UIA's default for the property read as "not supported"
+    /// when `ignore_default` is set: for the tests that observe what UIA
+    /// stores for a property its provider answered in some way, such as
+    /// failing, where a shape's read kinds would hide the difference.
+    /// Verbatim's own code reads only through the shape. Local.
+    ///
+    /// # Errors
+    ///
+    /// UIA's error when the cached read fails, as for a property the
+    /// cache does not hold.
+    pub fn observe_cached(
+        &self,
+        property: UIA_PROPERTY_ID,
+        ignore_default: bool,
+    ) -> windows::core::Result<VARIANT> {
+        // SAFETY: as in `CachedReads::value`.
+        unsafe {
+            self.live
+                .element
+                .GetCachedPropertyValueEx(property, ignore_default)
+        }
+    }
+
     /// The element, for calls into the application.
     #[must_use]
     pub fn live(&self) -> &Live {

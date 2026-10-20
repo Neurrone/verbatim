@@ -217,9 +217,9 @@ uia_shape! {
             /// The localized control type.
             localized_control_type: UIA_LocalizedControlTypePropertyId => string,
             /// Whether it had the keyboard focus when the event was
-            /// raised, `None` when the cache does not hold it, as when
-            /// its provider failed to supply it.
-            has_focus: UIA_HasKeyboardFocusPropertyId => optional_bool,
+            /// raised: UIA's default, `false`, when its provider answered
+            /// nothing or failed, which the cache does not tell apart.
+            has_focus: UIA_HasKeyboardFocusPropertyId => bool,
         }
         prefetch { UIA_TextPatternId }
         covers { Kept, FocusInput, TextAreaPattern }
@@ -247,11 +247,13 @@ uia_shape! {
 
 impl ListenerEvent {
     /// Whether the event's cache says its element did not have the
-    /// keyboard focus: a cached `false`. A cache that does not hold the
-    /// property says nothing, as a live read that fails says nothing.
+    /// keyboard focus: anything but a cached `true`. A provider that
+    /// answered nothing for the property, or failed to, leaves UIA's
+    /// default, `false`, in the cache, as NVDA's live read
+    /// (`currentHasKeyboardFocus`) of such a provider answers `false`.
     #[must_use]
     pub fn lacked_keyboard_focus(&self) -> bool {
-        self.has_focus == Some(false)
+        !self.has_focus
     }
 
     /// The event's element as the focus listener forwards it: its runtime
@@ -264,7 +266,7 @@ impl ListenerEvent {
         let mut name = self.name.clone();
         strip_bidi_controls([&mut name]);
         let mut states = StateSet::new();
-        if self.has_focus == Some(true) {
+        if self.has_focus {
             states.insert(State::Focused);
         }
         CachedUiaParts {

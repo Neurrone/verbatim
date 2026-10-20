@@ -713,9 +713,10 @@ impl FocusReader {
                 // true on a COM error): reported as the event's cache gives
                 // it, its ancestors unknown, whatever that cache says of its
                 // keyboard focus. Step 6 has already judged that: a live
-                // read that answered true or failed lets the focus through
-                // in NVDA too, and out of time a cache that said no has
-                // already dropped it.
+                // read that answered true, or failed other than by timing
+                // out, lets the focus through in NVDA too, and a cache that
+                // said no has already dropped it, out of time or after a
+                // live read that timed out.
                 tracing::debug!(%error, "a UIA focus could not be read; reported from its event");
                 self.last = Some(LastFocus {
                     runtime_id: event.runtime_id.clone(),
@@ -724,10 +725,14 @@ impl FocusReader {
                 });
                 self.last_accepted
                     .accept(self.number, element, (nearest, arrival), &self.window);
+                // Reported as the focus, as `focused` reports one, whatever
+                // the event's cache says of its keyboard focus.
+                let mut snapshot = fact_of(event);
+                snapshot.states = snapshot.states.with(State::Focused);
                 Judged::Read(Box::new(UiaFocusRead {
                     hwnd,
                     focus_window,
-                    snapshot: fact_of(event),
+                    snapshot,
                     ancestors: None,
                     selected_child: None,
                     window: Some(nearest),
@@ -1072,49 +1077,44 @@ impl FocusReader {
         // read live with a plain property read (`CurrentHasKeyboardFocus`
         // on the event's element, client side, or on the focus's for a
         // menu opening redirected to it), a failed read letting the event
-        // through.
-        //
-        // Until 2026-10-12 this check was made only inside the remote
-        // operation that reads the focus (Option B, 2026-10-06), its first
-        // instruction, to save this call. That is not the same read. An
-        // element imported into a remote operation is the provider's own
-        // object, in the application, while a plain read goes through the
-        // element as this client holds it. For almost every element the
-        // two answer alike, but Windows Terminal raises some focus events
-        // from a second identity of its terminal (a runtime id starting
-        // 14), and for that identity they differ: the remote operation
-        // answered that it had the keyboard focus, the plain read that it
-        // had not. NVDA never took one (captured 6 times in 15 second
-        // windows, 9 ms after it took the same terminal's focus by its
-        // usual identity; that NVDA, alpha-57645, read the event's cached
-        // value, and NVDA has read it plainly since its #20764, as here,
-        // sections 16.8 and 16.9); the listener took them and "terminal"
-        // was said twice (`docs/design/focus-pipeline.md`, section 16.8).
-        // So the check must be this plain read, here, before the read,
-        // which does not make it again: a focus that moves on while it is
-        // read is followed by the focus event of where it went
-        // (`docs/design/listener-without-connections.md`, section 3, step
-        // 8).
+        // through. It is this plain read, here, and not one inside a remote
+        // operation, because Windows Terminal's second identity of its
+        // terminal answers the two differently, and only the plain read
+        // drops it as NVDA does (`docs/design/focus-pipeline.md`, section
+        // 16.8); the read does not make it again, since a focus that moves
+        // on while it is read is followed by the focus event of where it
+        // went (`docs/design/listener-without-connections.md`, section 3,
+        // step 8).
         //
         // Out of time, the live read is not made, and the sender's keyboard
         // focus is taken from the event's cache instead, as it stood when
         // the event was raised: a sender that did not have it then is
-        // dropped. A cache that does not hold it, its provider having
-        // failed to supply it, lets the focus through, as a live read that
-        // fails does. A menu opening redirected to the current focus is judged
-        // by the focus's element, whose keyboard focus no cache of this
-        // event holds, so it is let through.
+        // dropped. A live read that fails by UIA's transaction timeout is
+        // taken the same way, since its 5 seconds are Verbatim's, where
+        // NVDA's 20 would usually have had the answer; any other failure
+        // lets the focus through, as NVDA's does. A menu opening
+        // redirected to the current focus is judged by the focus's
+        // element, whose keyboard focus no cache of this event holds, so
+        // it is let through.
+        let lacked_by_its_event =
+            || std::ptr::eq(subject, element) && sender.lacked_keyboard_focus();
         if out_of_time() {
-            if std::ptr::eq(subject, element) && sender.lacked_keyboard_focus() {
+            if lacked_by_its_event() {
                 return Err(
                     "its event says it did not have the keyboard focus, and its read's time was up",
                 );
             }
-        } else if {
+        } else {
             budget.call("the keyboard focus");
-            matches!(subject.has_keyboard_focus(), Ok(false))
-        } {
-            return Err("its element no longer has the keyboard focus");
+            match subject.has_keyboard_focus() {
+                Ok(false) => return Err("its element no longer has the keyboard focus"),
+                Err(error) if verbatim_uia::timed_out(&error) && lacked_by_its_event() => {
+                    return Err(
+                        "its event says it did not have the keyboard focus, and its live read timed out",
+                    );
+                }
+                Ok(true) | Err(_) => {}
+            }
         }
         Ok(window)
     }

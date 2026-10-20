@@ -771,7 +771,8 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
 }
 
 /// A focus whose read fails is reported from its event, its containers
-/// unknown, whatever the event's cache says of its keyboard focus: NVDA's
+/// unknown, as the focus, its only state focused, whatever the event's
+/// cache says of its keyboard focus: NVDA's
 /// last check reads the sender's keyboard focus live
 /// (`shouldAllowUIAFocusEvent`), and once that has said it has the focus,
 /// nothing NVDA does consults the event's cached value. Here the event's
@@ -786,7 +787,7 @@ fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
     let outpost = OutpostUnderTest::new(&fixture.app);
     let deep = fixture.delivered("Deep button");
     assert!(
-        deep.read().has_focus == Some(false),
+        !deep.read().has_focus,
         "the event's cache says the sender did not have the keyboard focus"
     );
     fixture.app.send("set-focus deep");
@@ -809,6 +810,11 @@ fn a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus() {
         panic!("the listener did not report a focus whose read failed: {judged:?}");
     };
     assert_eq!(read.snapshot.name.as_deref(), Some("Deep button"));
+    assert_eq!(
+        read.snapshot.states,
+        verbatim_model::StateSet::new().with(State::Focused),
+        "reported as the focus, whatever its event's cache said"
+    );
     assert!(read.ancestors.is_none(), "its containers are unknown");
     drop(outpost);
     fixture.app.quit();

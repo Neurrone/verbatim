@@ -6,6 +6,7 @@ use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     UIA_HasKeyboardFocusPropertyId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
     UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionPatternId, UIA_TextPatternId,
+    UiaGetReservedNotSupportedValue,
 };
 use windows::core::IUnknown;
 
@@ -166,20 +167,29 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
 }
 
 /// A focus event's cache whose `HasKeyboardFocus` is the given boolean, or
-/// which does not hold it, and which holds every other property empty.
+/// UIA's default for it (`None`), as its provider's empty answer or failure
+/// leaves it (mockapp's events test
+/// `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`),
+/// and which holds every other property empty.
 struct KeyboardFocus(Option<bool>);
 
 impl CachedReads for KeyboardFocus {
     fn value(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
         if property == UIA_HasKeyboardFocusPropertyId {
-            self.0.map(VARIANT::from)
+            Some(VARIANT::from(self.0.unwrap_or(false)))
         } else {
             Some(VARIANT::default())
         }
     }
 
     fn value_ignoring_default(&self, property: UIA_PROPERTY_ID) -> Option<VARIANT> {
-        self.value(property)
+        if property == UIA_HasKeyboardFocusPropertyId && self.0.is_none() {
+            // SAFETY: a local call that returns UIA's process-wide sentinel.
+            let sentinel = unsafe { UiaGetReservedNotSupportedValue() }.ok()?;
+            Some(VARIANT::from(sentinel))
+        } else {
+            self.value(property)
+        }
     }
 
     fn rect(&self, _: UIA_PROPERTY_ID) -> Option<RECT> {
@@ -191,13 +201,13 @@ impl CachedReads for KeyboardFocus {
     }
 }
 
-/// A focus event whose cache does not hold `HasKeyboardFocus`, its
-/// provider having failed to supply it, does not say its element lacked
-/// the keyboard focus, which the focus listener takes from the cache once
-/// its read's time is up; a cached `false` does, and a cached `true` does
-/// not.
+/// A focus event says its element lacked the keyboard focus, which the
+/// focus listener takes from the cache once its read's time is up, unless
+/// its cache holds `true`: a cached `false` says so, and so does UIA's
+/// default, which a provider that answered nothing or failed leaves, as
+/// NVDA's live read of such a provider answers `false`.
 #[test]
-fn a_focus_event_lacks_the_keyboard_focus_only_by_a_cached_false() {
+fn a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true() {
     let lacked = |focus: Option<bool>| {
         ListenerEvent::read_from(
             &Reader {
@@ -210,6 +220,6 @@ fn a_focus_event_lacks_the_keyboard_focus_only_by_a_cached_false() {
     };
     assert_eq!(
         [None, Some(false), Some(true)].map(lacked),
-        [false, true, false]
+        [true, true, false]
     );
 }

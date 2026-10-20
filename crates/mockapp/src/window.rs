@@ -478,6 +478,11 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
         acknowledge("applied");
         return true;
     }
+    if let Command::AnswerProperty(property, answer) = command {
+        uia::answer_property(property, answer);
+        acknowledge("applied");
+        return true;
+    }
     if let Command::Hold = command {
         hits::hold_next();
         acknowledge("applied");

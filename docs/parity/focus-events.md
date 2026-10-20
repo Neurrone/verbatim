@@ -58,14 +58,22 @@ difference when a read's time is up.
   are made where no call is needed
   (`docs/design/listener-without-connections.md`, section 5), and the
   sender's keyboard focus, which NVDA reads live, is taken from the
-  event's cache: a cached `false` drops the focus, and a cache that does
-  not hold it lets the focus through, as NVDA's live read that fails
-  does. Mockapp's `a_repeated_focus_out_of_time_is_reported` pins the
-  skipped repeat test, mockapp's
+  event's cache, as it is when the live read fails by UIA's transaction
+  timeout, Verbatim's 5 seconds where NVDA's 20 would usually have had
+  the answer: anything but a cached `true` drops the focus. A provider
+  that answers the property empty, or whose answer fails, leaves UIA's
+  default, `false`, in the cache, the same for both, and NVDA's live read
+  of such a provider gets the same `false` and drops the focus too. Any
+  other failure of the live read lets the focus through, as NVDA's does.
+  Mockapp's `a_repeated_focus_out_of_time_is_reported` pins the skipped
+  repeat test, mockapp's
   `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`
-  the cached `false`, and `verbatim-uia`'s
-  `a_focus_event_lacks_the_keyboard_focus_only_by_a_cached_false` the
-  cache that does not hold it.
+  and `a_focus_whose_keyboard_focus_read_times_out_is_judged_by_its_event`
+  the drop from the cache, mockapp's events test
+  `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`
+  what UIA stores for an empty or failed answer, and `verbatim-uia`'s
+  `a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true` the
+  reading of it.
 - Each outpost makes NVDA's MSAA test, by the address of the last focus
   it reported, a whole object rather than a child by id. That focus
   stops counting after a foreground change the outpost reports, and once

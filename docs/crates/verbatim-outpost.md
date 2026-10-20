@@ -182,7 +182,10 @@ event's own element:
   the event only when the probe, and so perhaps the console check, would
   be needed; the acceptance test and the refusals are local; and the
   sender's keyboard focus is taken from the event's cached
-  `HasKeyboardFocus`, a sender that did not have it being dropped. The
+  `HasKeyboardFocus`, a sender whose cache does not hold `true` being
+  dropped. A live keyboard focus read that fails by UIA's transaction
+  timeout is judged the same way, from the cache; any other failure lets
+  the focus through. The
   repeat check, which needs the last focus's keyboard focus read live, is
   skipped, so a repeat out of time is reported, a deliberate divergence
   from NVDA. A focus so judged is reported with what was read, the
