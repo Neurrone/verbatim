@@ -305,7 +305,11 @@ the next other event comes; the menu event is tried last. Verbatim:
 thread it carries, whichever hook took it in; every foreground change
 of a batch is tried with the focus events of the run it is in, a newer
 one of the same window replacing one waiting, as NVDA's limiter keeps
-one per window (Dickson, 2026-10-20). The outpost's foreground handling
+one per window (Dickson, 2026-10-20); a run whose events all carry the
+time Windows raised them is tried in that order, the order NVDA's one
+hook receives them in, since an outpost can receive the focus listener's
+copy of an event after its own hook's copy of a later one during a
+hand-over. The outpost's foreground handling
 makes NVDA's two tests against the last focus queued, after its
 in-front test and before any read, and a change they drop lets the
 run's next older event be tried (`processForegroundWinEvent`, lines 842
@@ -314,8 +318,9 @@ no focus Core queued from another application has replaced it, is in
 the change's window or a child window of it (`isDescendantWindow`, which
 follows parents only), or came from the change's own event address. The
 fact the hook forwards carries the window alone, so the change's object
-and child ids are taken as the system raises them, `OBJID_WINDOW` and
-`CHILDID_SELF`. A last focus Core took from another outpost inside the
+and child ids are taken as the system raises them, on the window object,
+which the hook, as NVDA's event callback, takes as the client object
+(`OBJID_CLIENT`, `CHILDID_SELF`). A last focus Core took from another outpost inside the
 window, which this outpost cannot see, is left to the reducer, which
 ignores a foreground change of the window the focus is already in.
 Mockapp's `msaa_events` tests pin the first test and the replacement by

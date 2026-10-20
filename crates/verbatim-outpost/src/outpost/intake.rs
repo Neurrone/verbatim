@@ -41,7 +41,11 @@
 //!   newest, as NVDA's `pumpAll` collects a run of focus and foreground
 //!   events and tries it newest first when the next accepted event that is
 //!   neither comes; any other entry ends a run, and a foreground change
-//!   with no focus event beside it is a run of its own. Every foreground
+//!   with no focus event beside it is a run of its own. A run whose events
+//!   all carry the time Windows raised them is tried in that order, which
+//!   is the order NVDA's one hook receives them in, since an outpost can
+//!   receive the listener's copy of an event after its own hook's copy of
+//!   a later one (`in_raised_order`). Every foreground
 //!   change of the batch is tried in its run, as NVDA tries each; a newer
 //!   one of the same window replaces one waiting, as NVDA's limiter keeps
 //!   one foreground event per window, object and thread. Every UIA focus
@@ -1122,6 +1126,9 @@ fn plan(
     if let Some(&last) = run.last() {
         runs.insert(last, run);
     }
+    for run in runs.values_mut() {
+        in_raised_order(&kept, run);
+    }
 
     let (keys, mut entries): (Vec<Option<Key>>, Vec<Option<Entry>>) = kept
         .into_iter()
@@ -1171,6 +1178,30 @@ fn plan(
     planned.extend(deferred.into_iter().map(Planned::Menu));
     planned.extend(query);
     planned
+}
+
+/// Puts `run`, indexes into `kept` in the order they arrived, in the order
+/// Windows raised its events, when every one carries the time it was
+/// raised: NVDA's one hook receives a run's events in that order, while an
+/// outpost can receive the focus listener's copy of an event after its own
+/// hook's copy of a later one, as during the hand-over after a spare is
+/// given an application, when the listener still forwards the foreground
+/// change the system raised just before the focus. The sort is stable, and
+/// a run with an event of unknown time keeps the order it arrived in.
+fn in_raised_order(kept: &[Waiting], run: &mut [usize]) {
+    let raised = |at: usize| match &kept[at].entry.item {
+        Item::Fact(_, Some(stamp)) => Some(stamp.time),
+        _ => None,
+    };
+    let Some(first) = run.first().and_then(|&at| raised(at)) else {
+        return;
+    };
+    if run.iter().any(|&at| raised(at).is_none()) {
+        return;
+    }
+    // Relative to the first, so the clock's wrap after 49.7 days orders
+    // a run raised across it.
+    run.sort_by_key(|&at| raised(at).map_or(0, |time| time.wrapping_sub(first).cast_signed()));
 }
 
 /// Handles a focus group's entries ([`Planned::Focus`]), newest first,
@@ -1623,6 +1654,29 @@ mod tests {
         let planned = plan(waiting, None, never_hung);
         assert_eq!(focus_groups(&planned), vec![vec![4, 3, 2, 1]]);
         assert_eq!(observed(&planned), vec![4, 3, 2, 1, 30]);
+    }
+
+    /// A run's events in the order Windows raised them when each carries
+    /// the time it was raised: a foreground change raised before a focus
+    /// but arriving after it, as the focus listener's copy can arrive after
+    /// the outpost's own hook's during a hand-over, is the older, so the
+    /// focus is tried first.
+    #[test]
+    fn a_run_is_tried_in_the_order_its_events_were_raised() {
+        let stamped = |mut waiting: Waiting, time: u32| {
+            if let Item::Fact(_, stamp) = &mut waiting.entry.item {
+                *stamp = Some(WinEventStamp { thread: 1, time });
+            }
+            waiting
+        };
+        let waiting = vec![
+            stamped(msaa_focus(1, 1), 200),
+            stamped(fact(DeliveredFact::Foreground { hwnd: 9 }, 2), 196),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![1, 2]]);
+        assert_eq!(observed(&planned), vec![1, 2, 30]);
     }
 
     /// Two foreground changes in one run, the newer dropped, as when its

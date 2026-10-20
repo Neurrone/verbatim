@@ -323,11 +323,13 @@ struct QueuedFocus {
     observed_at_ms: u64,
 }
 
-/// The event address a foreground change is taken to have: the system
-/// raises its foreground event with `OBJID_WINDOW` and `CHILDID_SELF`, and
-/// the fact the hook forwards carries the window alone.
+/// The event address a foreground change has: the system raises its
+/// foreground event on the window object, `OBJID_WINDOW` and
+/// `CHILDID_SELF`, which the hook takes as the client object, as NVDA's
+/// event callback does (`IAccessibleHandler/internalWinEventHandler.py`
+/// 104 to 106); the fact forwarded carries the window alone.
 fn foreground_event(hwnd: isize) -> (isize, i32, i32) {
-    (hwnd, OBJID_WINDOW.0, CHILDID_SELF)
+    (hwnd, OBJID_CLIENT.0, CHILDID_SELF)
 }
 
 /// Why NVDA's `processForegroundWinEvent` drops a foreground change of
@@ -3569,7 +3571,7 @@ mod tests {
     }
 
     /// NVDA's second foreground test: a change whose event address, the
-    /// window with `OBJID_WINDOW` and `CHILDID_SELF`, is the last focus's
+    /// window with `OBJID_CLIENT` and `CHILDID_SELF`, is the last focus's
     /// own event's is dropped, though the last focus's window is not the
     /// change's; another address is not.
     #[test]
@@ -3577,7 +3579,7 @@ mod tests {
         let unrelated = |parent: isize, child: isize| parent == child;
         assert_eq!(
             foreground_repeats_focus(
-                Some(last_focus(8, Some((5, OBJID_WINDOW.0, CHILDID_SELF)))),
+                Some(last_focus(8, Some((5, OBJID_CLIENT.0, CHILDID_SELF)))),
                 false,
                 5,
                 unrelated
@@ -3586,7 +3588,7 @@ mod tests {
         );
         assert_eq!(
             foreground_repeats_focus(
-                Some(last_focus(8, Some((5, OBJID_CLIENT.0, CHILDID_SELF)))),
+                Some(last_focus(8, Some((5, OBJID_WINDOW.0, CHILDID_SELF)))),
                 false,
                 5,
                 unrelated

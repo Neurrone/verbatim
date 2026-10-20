@@ -1221,7 +1221,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   when the last focus or foreground change the outpost reported
   (`Tracking`'s queued focus) is in its window or a child window of it
   (`window::is_descendant_window`), or came from the fact's own event
-  address, taken as `OBJID_WINDOW` and `CHILDID_SELF`, and no focus Core
+  address, taken as the client object (`OBJID_CLIENT`, `CHILDID_SELF`),
+  as the hook takes a foreground event's window object, and no focus Core
   queued from another application has replaced it: NVDA's two tests in
   `processForegroundWinEvent` (`worker::foreground_repeats_focus`).
   Otherwise a foreground fact is reported at once, whether or not its window has been shown yet,
