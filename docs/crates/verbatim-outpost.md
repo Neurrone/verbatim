@@ -171,7 +171,10 @@ event's own element:
   through a full queue in order.
 - A read, its checks included, has one time budget, `READ_BUDGET`, 2
   seconds, asked before each of its calls after the first, so at most the
-  call under way runs past it. Once it has passed the read makes no more
+  call under way runs past it. The raw probe's wait, up to 3 seconds, is
+  not counted (`Budget`): the budget's end moves on by the time the
+  window's verdict took, so for a sender with a window of its own the
+  budget starts once the probe has answered. Once it has passed the read makes no more
   calls: a comparison or keyboard focus read not made counts as one that
   failed, as NVDA lets the event through when such a read fails; the
   native check takes the window's verdict when it is known without a call,
@@ -179,10 +182,11 @@ event's own element:
   probe, and so perhaps the console check, would be needed; and a
   focus already judged is reported with what was read, the event's cache
   giving the rest, its ancestors unknown.
-- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 8
-  seconds: the budget, UIA's five-second transaction timeout for the call
-  that can be under way when it passes (the raw probe's three seconds is
-  shorter), and a second to spare. It bounds how long the application's
+- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 11
+  seconds: the budget, the raw probe's three seconds it does not count,
+  UIA's five-second transaction timeout for the call that can be under
+  way when the budget passes, and a second to spare.
+ It bounds how long the application's
   later events wait behind the read's marker, but not the call under way:
   the transaction timeout bounds each provider call, not a UIA operation
   (`docs/uia-bugs.md`, "A timeout bounds each provider call, not an

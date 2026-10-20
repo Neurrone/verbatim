@@ -53,18 +53,18 @@
 //! holds, which UIA's transaction timeout, set once for the process, ends
 //! (`verbatim_uia::TRANSACTION_TIMEOUT`); a call that fails ends the read.
 //! The whole read, its checks included, has one time budget,
-//! [`READ_BUDGET`], asked before each of its calls after the first: once
-//! it has passed, the read makes no more calls and reports what it has
-//! read, as the event's cache gives what it has not, with its ancestors
-//! unknown, or drops the event when its window is not yet judged. A
-//! watchdog abandons a thread whose read runs past [`READ_DEADLINE`], the
-//! budget and the one call that can be under way when it passes: its
-//! event is dropped, a new thread takes the application's later events,
-//! and the abandoned thread, once UIA gives up, says nothing more and
-//! ends. An
-//! application whose abandoned threads reach [`ABANDONED_LIMIT`] gets no
-//! new thread until one returns, and its events are dropped meanwhile, as
-//! NVDA drops a hung window's.
+//! [`READ_BUDGET`], asked before each of its calls after the first, which
+//! does not count the raw probe's wait ([`Budget`]): once it has passed,
+//! the read makes no more calls and reports what it has read, as the
+//! event's cache gives what it has not, with its ancestors unknown, or
+//! drops the event when its window is not yet judged. A watchdog abandons
+//! a thread whose read runs past [`READ_DEADLINE`], the budget, the
+//! probe's wait, and the one call that can be under way when the budget
+//! passes: its event is dropped, a new thread takes the application's
+//! later events, and the abandoned thread, once UIA gives up, says nothing
+//! more and ends. An application whose abandoned threads reach
+//! [`ABANDONED_LIMIT`] gets no new thread until one returns, and its
+//! events are dropped meanwhile, as NVDA drops a hung window's.
 //!
 //! A thread keeps its focus before, NVDA's duplicate evidence, for as long
 //! as its application has an outpost: it ends, once it has read every event
@@ -73,6 +73,7 @@
 //! (`docs/design/focus-pipeline.md`, section 16.6). An event that arrives
 //! after that, for an application still running, starts a new thread.
 
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -92,9 +93,7 @@ use verbatim_uia::{
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
 use crate::ForegroundReader;
-use crate::arbitration::{
-    Arbitrator, Clock, Probe, known_verdict, time_limit, uses_uia, window_class_name,
-};
+use crate::arbitration::{Arbitrator, Clock, Probe, known_verdict, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{is_shell_transition_window, window_is_hung};
@@ -108,19 +107,24 @@ const MAX_ANCESTORS: u32 = 64;
 /// How long one focus event's read, its checks included, may take before
 /// it makes no more calls into the application: asked before each call
 /// after the first, each of which UIA ends after its transaction timeout.
-/// A read of an application that answers takes milliseconds
-/// (`docs/design/listener-without-connections.md`, section 10, step 6),
+/// The raw probe's wait, which can be 3 seconds by itself, is not counted
+/// ([`Budget`]), so that the probe of a slow window cannot use up the
+/// budget alone and leave the focus's checks unmade
+/// (`docs/design/listener-without-connections.md`, section 5). A read of
+/// an application that answers takes milliseconds (section 10, step 6),
 /// so only a slow application meets it, and its focus is then reported
 /// with what was read by then, its ancestors unknown, rather than held
 /// (section 9, risk 4).
 const READ_BUDGET: Duration = Duration::from_secs(2);
 
 /// How long a reading thread may take over one focus event before the
-/// watchdog abandons it, 8 seconds: the [`READ_BUDGET`] of 2 seconds,
-/// UIA's transaction timeout of 5 seconds for the call that can be under
-/// way when the budget passes (the raw probe's 3 seconds is shorter), and
-/// a second to spare. It bounds how long the application's later events
-/// wait behind the read's marker, whatever the read's calls do. It does
+/// watchdog abandons it, 11 seconds: the [`READ_BUDGET`] of 2 seconds,
+/// the raw probe's wait of up to 3 seconds
+/// ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]), which the budget does not
+/// count, UIA's transaction timeout of 5 seconds for the call that can be
+/// under way when the budget passes, and a second to spare. It bounds
+/// how long the application's later events wait behind the read's marker,
+/// whatever the read's calls do. It does
 /// not bound the call under way: the transaction timeout bounds each
 /// provider call, not a UIA operation (`docs/uia-bugs.md`, "A timeout
 /// bounds each provider call, not an operation"), so one operation that
@@ -130,8 +134,60 @@ const READ_BUDGET: Duration = Duration::from_secs(2);
 /// abandoned though the application still answers. Only a read whose last
 /// call is one provider call, or one remote operation, a single
 /// transaction, is sure to end within it.
-pub(crate) const READ_DEADLINE: Duration =
-    Duration::from_secs(READ_BUDGET.as_secs() + verbatim_uia::TRANSACTION_TIMEOUT.as_secs() + 1);
+pub(crate) const READ_DEADLINE: Duration = READ_BUDGET
+    .saturating_add(Duration::from_millis(
+        verbatim_uia::RAW_PROBE_TIMEOUT_MS as u64,
+    ))
+    .saturating_add(verbatim_uia::TRANSACTION_TIMEOUT)
+    .saturating_add(Duration::from_secs(1));
+
+/// One focus read's time budget, [`READ_BUDGET`], on the reader's clock,
+/// asked before each of the read's calls after the first. The raw probe's
+/// wait is not counted: the budget's end moves on by the time the window's
+/// verdict took to decide, up to the console check that may follow the
+/// probe ([`FocusReader::native_window`]), so that for a sender with a
+/// window of its own, whose probe is the read's first call, the budget
+/// starts once the probe has answered.
+struct Budget {
+    clock: Clock,
+    /// When the time is up.
+    end: Cell<Instant>,
+    /// When the window's verdict began to be decided, until it is.
+    verdict_began: Cell<Option<Instant>>,
+}
+
+impl Budget {
+    /// A budget from now, by `clock`.
+    fn new(clock: Clock) -> Self {
+        let end = clock() + READ_BUDGET;
+        Self {
+            clock,
+            end: Cell::new(end),
+            verdict_began: Cell::new(None),
+        }
+    }
+
+    /// Whether the time is up.
+    fn out_of_time(&self) -> bool {
+        (self.clock)() >= self.end.get()
+    }
+
+    /// The window's verdict, and with it perhaps the raw probe, begins to
+    /// be decided; its time is not counted.
+    fn verdict_begins(&self) {
+        self.verdict_began.set(Some((self.clock)()));
+    }
+
+    /// The raw probe, if one was made, has answered: the budget's end
+    /// moves on by the time since [`verdict_begins`](Self::verdict_begins),
+    /// once.
+    fn probe_ended(&self) {
+        if let Some(began) = self.verdict_began.take() {
+            let waited = (self.clock)().saturating_duration_since(began);
+            self.end.set(self.end.get() + waited);
+        }
+    }
+}
 
 /// How many of an application's reading threads may be abandoned and still
 /// in their calls before its focus events are dropped without a read.
@@ -404,18 +460,14 @@ impl FocusReader {
         let hwnd = fields.role.hwnd;
         let event = fields.parts(sender.runtime_id());
         // The read's one time budget, from here, for its checks and its
-        // read alike.
-        let clock = self.clock();
-        let out_of_time = time_limit(&clock, READ_BUDGET);
-        let nearest = match self.judge_before_reading(
-            sender,
-            (&fields, &event.runtime_id),
-            kind,
-            &out_of_time,
-        ) {
-            Ok(nearest) => nearest,
-            Err(reason) => return Judged::Dropped(reason),
-        };
+        // read alike, the probe's wait aside.
+        let budget = Budget::new(self.clock());
+        let out_of_time = || budget.out_of_time();
+        let nearest =
+            match self.judge_before_reading(sender, (&fields, &event.runtime_id), kind, &budget) {
+                Ok(nearest) => nearest,
+                Err(reason) => return Judged::Dropped(reason),
+            };
         let previous = self
             .last
             .as_ref()
@@ -685,7 +737,7 @@ impl FocusReader {
     /// As NVDA queues it as a focus on the menu, it becomes the last focus
     /// accepted.
     ///
-    /// The read's time, `out_of_time`, is asked before each call after the
+    /// The read's time, `budget`, is asked before each call after the
     /// first: once it is up, a comparison or keyboard focus read is not
     /// made, and counts as one that failed, as NVDA lets the event through
     /// when such a read fails, and the native check drops the event unless
@@ -696,10 +748,11 @@ impl FocusReader {
         held: &Cached<ListenerEvent>,
         (sender, runtime_id): (&ListenerEvent, &[i32]),
         kind: FocusEvent,
-        out_of_time: &dyn Fn() -> bool,
+        budget: &Budget,
     ) -> Result<isize, &'static str> {
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
+        let out_of_time = || budget.out_of_time();
         // 1. A sender whose own window, from the event's cache, the system
         // reports hung (`_shouldSkipEventForHungWindow`, `utils.py` 438):
         // its cached handle only, so a windowless sender is not tested
@@ -744,7 +797,7 @@ impl FocusReader {
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
                     _ => (
-                        self.native_window(held, sender, out_of_time, same.is_some())?,
+                        self.native_window(held, sender, budget, same.is_some())?,
                         element,
                     ),
                 }
@@ -752,7 +805,7 @@ impl FocusReader {
             // Only focuses and menu openings are read; a selection or a
             // notification is checked ([`Self::check_fact`]).
             FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
-                let nearest = self.native_window(held, sender, out_of_time, false)?;
+                let nearest = self.native_window(held, sender, budget, false)?;
                 // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
                 // 923; section 16.3): the sender is the last focus accepted,
                 // by any of the listener's readers, as UIA compares them,
@@ -869,9 +922,10 @@ impl FocusReader {
     /// none is known, gets no answer: its focus is dropped as not native,
     /// and the window is checked again at its next focus.
     ///
-    /// The read's time, `out_of_time`, is asked before each call here after
-    /// the read's first, `called` saying whether one was made before this
-    /// check. Once it is up, the window's verdict is still taken when it is
+    /// The read's time, `budget`, is asked before each call here after the
+    /// read's first, `called` saying whether one was made before this
+    /// check; the time the window's verdict takes to decide, the raw
+    /// probe's wait, is not counted. Once it is up, the window's verdict is still taken when it is
     /// known without a call, from the class lists or a kept verdict; only a
     /// window whose verdict needs the probe, and so perhaps the console
     /// check, drops the focus.
@@ -879,10 +933,11 @@ impl FocusReader {
         &self,
         held: &Cached<ListenerEvent>,
         sender: &ListenerEvent,
-        out_of_time: &dyn Fn() -> bool,
+        budget: &Budget,
         mut called: bool,
     ) -> Result<isize, &'static str> {
         const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
+        let out_of_time = || budget.out_of_time();
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
         let nearest = if hwnd == 0 {
@@ -915,19 +970,24 @@ impl FocusReader {
         // application's window (`docs/design/listener-without-connections.md`,
         // section 2).
         let automation_id = sender.automation_id.as_deref();
+        // The console check follows the probe, and its time counts.
         let console = || {
+            budget.probe_ended();
             (automation_id == Some(verbatim_uia::CONSOLE_TEXT_AREA) || hwnd == nearest)
                 .then(|| {
                     verbatim_uia::held_console_reports_formatting(
                         &self.uia,
                         held,
                         automation_id,
-                        out_of_time,
+                        &out_of_time,
                     )
                 })
                 .flatten()
         };
-        if !uses_uia(&self.arbitrator, nearest, Probe::Raw, console) {
+        budget.verdict_begins();
+        let uia = uses_uia(&self.arbitrator, nearest, Probe::Raw, console);
+        budget.probe_ended();
+        if !uia {
             return Err(NOT_UIA);
         }
         Ok(nearest)
@@ -1637,6 +1697,28 @@ mod tests {
     }
 
     const WAIT: Duration = Duration::from_secs(10);
+
+    /// The time the window's verdict takes, the raw probe's wait, is not
+    /// counted: a read whose probe waited 3 seconds still has its whole
+    /// budget after it.
+    #[test]
+    fn a_read_s_budget_does_not_count_the_probe_s_wait() {
+        let start = Instant::now();
+        let time = Arc::new(Mutex::new(start));
+        let read = Arc::clone(&time);
+        let budget = Budget::new(Arc::new(move || {
+            *read.lock().unwrap_or_else(PoisonError::into_inner)
+        }));
+        let set = |at: Duration| *time.lock().unwrap_or_else(PoisonError::into_inner) = start + at;
+        set(Duration::from_millis(100));
+        budget.verdict_begins();
+        set(Duration::from_millis(3_100));
+        budget.probe_ended();
+        set(READ_BUDGET + Duration::from_millis(2_999));
+        assert!(!budget.out_of_time());
+        set(READ_BUDGET + Duration::from_secs(3));
+        assert!(budget.out_of_time());
+    }
 
     #[test]
     fn an_applications_events_are_read_in_the_order_they_arrived_on_one_thread() {
