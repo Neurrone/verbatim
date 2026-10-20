@@ -2,55 +2,68 @@
 //! selected, a menu opened), notifications, and active text position
 //! changes, over a [`Scope`] that can be moved later.
 //!
-//! Each [`Registration`] owns its own thread, apartment, client, and
-//! handlers, and registers its subscriptions as one event handler group
-//! (`IUIAutomationEventHandlerGroup`): the handlers are added to the group,
-//! which is local, and the group is registered on each element of the scope
-//! in one `AddEventHandlerGroup` call, as NVDA registers its handlers. A
-//! registration has two such groups, as NVDA has two local groups
-//! (`UIAHandler/__init__.py`, `_createLocalEventHandlerGroup`): the base
-//! group, and the extended group, which also holds the parts marked
-//! [`Part::extended`]; and a third, the extended group without the
-//! parts marked [`Part::text_events`], for an element whose text and caret
-//! changes reach the caller another way. Each group is built once per thread and client,
-//! on first need, and every handler in it is added with its own part's
-//! cache request, so the element each event brings arrives with that part's
-//! properties prefetched and the callback reads them without a
-//! cross-process call.
+//! Every [`Registration`] in a process is made by one thread, the
+//! registering thread, with one client: the thread, its client, and its
+//! place in COM's multithreaded apartment are created on the process's
+//! first registration, and every registration's adds, removes, moves, and
+//! closes are made there, in the order they are asked for. Microsoft's
+//! guidance for UIA clients asks for this: a client should not add or
+//! remove event handlers from several threads at once, since unexpected
+//! behavior can result
+//! (<https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading>).
+//! What a registration registers, its handlers, groups, and the elements
+//! they are on, is its own. A registration registers its subscriptions as
+//! one event handler group (`IUIAutomationEventHandlerGroup`): the handlers
+//! are added to the group, which is local, and the group is registered on
+//! each element of the scope in one `AddEventHandlerGroup` call, as NVDA
+//! registers its handlers. A registration has two such groups, as NVDA has
+//! two local groups (`UIAHandler/__init__.py`,
+//! `_createLocalEventHandlerGroup`): the base group, and the extended
+//! group, which also holds the parts marked [`Part::extended`]; and a
+//! third, the extended group without the parts marked
+//! [`Part::text_events`], for an element whose text and caret changes
+//! reach the caller another way. Each group is built once per
+//! registration, on first need, and every handler in it is added with its
+//! own part's cache request, so the element each event brings arrives with
+//! that part's properties prefetched and the callback reads them without a
+//! cross-process call. UIA calls the handlers on threads of its own.
 //!
 //! Moving a registration ([`Registration::retarget`],
-//! [`Registration::retarget_to`]) is made on that thread, so the caller never
-//! waits: removing a UIA handler waits for its running callbacks to finish,
-//! which is why callbacks must never wait on whoever moves the
-//! subscription. A move adds the chosen group to each element of the new
-//! scope that does not already have it, then removes from each element that
-//! is no longer in the scope the group added there
+//! [`Registration::retarget_to`]) is made on the registering thread, so the
+//! caller never waits: removing a UIA handler waits for its running
+//! callbacks to finish, which is why callbacks must never wait on any
+//! registration's moves. A move adds the chosen group to each element of
+//! the new scope that does not already have it, then removes from each
+//! element that is no longer in the scope the group added there
 //! (`RemoveEventHandlerGroup`), as NVDA adds its group to a new focus and
 //! removes it from the old one (`UIAHandler/__init__.py`,
 //! `addLocalEventHandlerGroupToElement` and
 //! `removeLocalEventHandlerGroupFromElement`). An element that already has
 //! the chosen group, the same element by `CompareElements`, keeps it, and no
-//! call is made for it. `RemoveAllEventHandlers` is called only as the
-//! thread ends. Every move is logged at debug level, with the elements it
-//! moves from and to, by runtime id, and each call it makes with its result.
-//! [`Registration::settle`] waits for every move asked for so far to be
-//! made, for a caller that measures what the moves cost the application.
-//! Dropping a registration unregisters and ends its thread.
+//! call is made for it. Every move is logged at debug level, with the
+//! elements it moves from and to, by runtime id, and each call it makes
+//! with its result and the time it took, at warn level when that passed
+//! UIA's connection timeout
+//! ([`crate::CONNECTION_TIMEOUT`]). [`Registration::settle`] waits for
+//! every move asked for so far to be made, for a caller that measures what
+//! the moves cost the application. Closing or dropping a registration
+//! removes what it registered. `RemoveAllEventHandlers` is called only as
+//! the registering thread ends, once the process has finished with UIA
+//! ([`crate::release_mta_usage`]).
 //!
-//! A registration's thread calls into applications as it moves, and a
-//! caller can wait on it ([`Registration::with_parts`] for its first registration,
-//! [`Registration::settle`]), so it has a watchdog, the outpost worker's
-//! rule: a move that has not finished within [`MOVE_DEADLINE`] when the
-//! registration is next moved or settled has its thread abandoned and
-//! replaced by a new one, with its own client, that registers on the
-//! newest scope. The abandoned thread's handlers call back no more, and
-//! once its call returns it removes what its client registered and ends.
+//! No call is given a deadline or abandoned: UIA ends a registration call
+//! into an application that does not answer at its connection timeout
+//! (`docs/uia-bugs.md`, "A registration that times out reports success"),
+//! and the next move waits for it.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
-use std::sync::mpsc::{self, RecvTimeoutError};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
+
+use windows::Win32::Foundation::E_FAIL;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomation6, IUIAutomationActiveTextPositionChangedEventHandler, IUIAutomationCacheRequest,
@@ -118,16 +131,6 @@ pub const FOCUS_PROPERTIES: [UIA_PROPERTY_ID; 8] = [
     UIA_ControllerForPropertyId,
 ];
 
-/// How long a registration's thread may take over one move (registering on
-/// a new scope and removing what is no longer in it) before it is abandoned
-/// and replaced: two of UIA's transaction timeouts
-/// ([`crate::TRANSACTION_TIMEOUT`]), which also cover a registration's
-/// wait, since a registration on a busy application returns after the
-/// connection timeout ([`crate::CONNECTION_TIMEOUT`]; `docs/uia-bugs.md`,
-/// "A registration that times out reports success"), so a move whose
-/// calls each answer within the timeouts is never abandoned.
-pub const MOVE_DEADLINE: Duration = Duration::from_secs(10);
-
 /// Where a registration listens.
 #[derive(Clone)]
 pub enum Scope {
@@ -135,7 +138,7 @@ pub enum Scope {
     Nothing,
     /// The subtree of each of these elements, such as windows' elements.
     /// The caller looks a window's element up itself, on a thread that
-    /// serves the window's application, so the registration's thread makes
+    /// serves the window's application, so the registering thread makes
     /// no connection by handle.
     Subtrees(Vec<AgileReference<IUIAutomationElement>>),
     /// The whole desktop: the subtree of the root element.
@@ -211,7 +214,7 @@ pub enum Subscription<E = IUIAutomationElement> {
         callback: ActiveTextPositionCallback<E>,
     },
     /// Focus changes anywhere on the desktop. Not part of the event handler
-    /// groups: the handler is registered on the registration's client
+    /// groups: the handler is registered on the registering thread's client
     /// itself, as NVDA registers its focus handler on the client that holds
     /// its global group (`_registerGlobalEventHandlers`), and in NVDA's
     /// order: over the desktop, its root element fetched first, then the
@@ -333,11 +336,14 @@ impl Part {
 }
 
 /// A live subscription: one or more [`Part`]s registered together as one
-/// event handler group. Dropping it unregisters and ends its thread.
+/// event handler group, by the process's registering thread. Dropping it
+/// unregisters it.
 pub struct Registration {
-    /// What each of its threads registers, for a replacement.
-    parts: Vec<Part>,
-    state: Mutex<State>,
+    /// Which of the registering thread's registrations this is.
+    id: u64,
+    /// The way to the registering thread, until [`Registration::close`]
+    /// takes it.
+    commands: Mutex<Option<mpsc::Sender<Command>>>,
     /// The failed cached reads its callbacks have made, on UIA's threads
     /// ([`crate::calls`]).
     failed_reads: Arc<AtomicU32>,
@@ -351,83 +357,81 @@ struct Target {
     group: Group,
 }
 
-/// A registration's threads and the target it was last asked to move to.
-struct State {
-    /// The thread in charge, until [`Registration::close`] takes it.
-    current: Option<Incarnation>,
-    /// Threads abandoned past [`MOVE_DEADLINE`] and not yet waited for.
-    abandoned: Vec<JoinHandle<()>>,
-    /// The newest target asked for, where a replacement registers.
-    target: Target,
-}
+/// The id the next registration is given.
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
-/// One of a registration's threads.
-struct Incarnation {
+/// The process's registering thread, from its first use until
+/// [`end_registering_thread`].
+static REGISTRAR: Mutex<Option<Registrar>> = Mutex::new(None);
+
+/// The process's registering thread, as the registrations reach it.
+struct Registrar {
     commands: mpsc::Sender<Command>,
     join: JoinHandle<()>,
-    /// Cleared when the thread is abandoned: its handlers call back no
-    /// more, and it ends once its call returns.
-    live: Arc<AtomicBool>,
-    /// When the move the thread is making began, while it makes one.
-    moving: Arc<Mutex<Option<Instant>>>,
 }
 
-/// What [`Incarnation::start`] gives: the thread, and the way to hear that
-/// its first registration is made.
-type Started = (Incarnation, mpsc::Receiver<windows::core::Result<()>>);
-
-impl Incarnation {
-    /// Starts a thread that registers `parts` on `target`, its callbacks'
-    /// failed cached reads counted into `failed_reads`.
-    fn start(
-        parts: Vec<Part>,
-        target: Target,
-        failed_reads: &Arc<AtomicU32>,
-    ) -> windows::core::Result<Started> {
-        let (commands, received) = mpsc::channel::<Command>();
-        let (ready_tx, ready_rx) = mpsc::channel::<windows::core::Result<()>>();
-        let live = Arc::new(AtomicBool::new(true));
-        let moving = Arc::new(Mutex::new(Some(Instant::now())));
-        let thread = Thread {
-            live: Arc::clone(&live),
-            moving: Arc::clone(&moving),
-            failed_reads: Arc::clone(failed_reads),
-        };
-        let join = thread::Builder::new()
-            .name("verbatim-uia-subscription".to_owned())
-            .spawn(move || {
-                run(parts, &target, &thread, &ready_tx, &received);
-            })
-            .map_err(|e| {
-                windows::core::Error::new(windows::Win32::Foundation::E_FAIL, e.to_string())
-            })?;
-        Ok((
-            Self {
-                commands,
+/// The way to the process's registering thread, which is started on first
+/// use: it joins COM's multithreaded apartment and creates its client
+/// before this returns, local calls only.
+fn registrar() -> windows::core::Result<mpsc::Sender<Command>> {
+    let mut registrar = REGISTRAR.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(running) = registrar.as_ref()
+        && !running.join.is_finished()
+    {
+        return Ok(running.commands.clone());
+    }
+    let (commands, received) = mpsc::channel::<Command>();
+    let (ready_tx, ready) = mpsc::channel::<windows::core::Result<()>>();
+    let join = thread::Builder::new()
+        .name("verbatim-uia-registrations".to_owned())
+        .spawn(move || serve(&ready_tx, &received))
+        .map_err(|e| windows::core::Error::new(E_FAIL, e.to_string()))?;
+    match ready.recv() {
+        Ok(Ok(())) => {
+            *registrar = Some(Registrar {
+                commands: commands.clone(),
                 join,
-                live,
-                moving,
-            },
-            ready_rx,
-        ))
+            });
+            Ok(commands)
+        }
+        Ok(Err(error)) => {
+            let _ = join.join();
+            Err(error)
+        }
+        Err(_) => {
+            let _ = join.join();
+            Err(ended())
+        }
     }
+}
 
-    /// Whether the move the thread is making began [`MOVE_DEADLINE`] or
-    /// more ago.
-    fn overdue(&self) -> bool {
-        self.moving
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some_and(|began| began.elapsed() >= MOVE_DEADLINE)
+/// Ends the process's registering thread, if it runs, and returns once it
+/// has ended: every move and close asked for before is made, then
+/// everything its client registered is removed (`RemoveAllEventHandlers`,
+/// which waits for any callback in progress to return, and the only place
+/// that call is made), its objects are released, and it leaves COM's
+/// multithreaded apartment. For a process that has finished with UIA for
+/// good, which [`crate::release_mta_usage`] says: a registration still
+/// open then hears nothing more, and moving, settling, or closing it does
+/// nothing. A later registration starts the thread again.
+pub(crate) fn end_registering_thread() {
+    let registrar = REGISTRAR
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .take();
+    if let Some(Registrar { commands, join }) = registrar {
+        let _ = commands.send(Command::End);
+        drop(commands);
+        let _ = join.join();
     }
+}
 
-    /// Abandons the thread: its handlers call back no more, it is asked for
-    /// nothing more, and it ends once its call returns.
-    fn abandon(self) -> JoinHandle<()> {
-        self.live.store(false, Ordering::Release);
-        drop(self.commands);
-        self.join
-    }
+/// The error for a registering thread that ended before it answered.
+fn ended() -> windows::core::Error {
+    windows::core::Error::new(
+        E_FAIL,
+        "the UIA registering thread ended before it answered",
+    )
 }
 
 impl Registration {
@@ -437,53 +441,67 @@ impl Registration {
     /// the extended group instead ([`retarget_to`](Self::retarget_to)). The
     /// desktop's root is fetched with the first part's cache request.
     ///
+    /// The registration is made on the process's registering thread, after
+    /// every move and close asked for before it, and this waits for it
+    /// however long it takes, with no deadline of its own: UIA ends a
+    /// registration on an application that does not answer at its
+    /// connection timeout ([`crate::CONNECTION_TIMEOUT`]; `docs/uia-bugs.md`,
+    /// "A registration that times out reports success"), so a desktop-wide
+    /// registration that advises several such applications waits that
+    /// long for each. The time it took is logged at debug level, and at
+    /// warn level when it passed the connection timeout.
+    ///
     /// # Errors
     ///
-    /// Returns the COM error if the client, cache request, or a handler
-    /// cannot be created, or `UIA_E_TIMEOUT` if the first registration is
-    /// not made within [`MOVE_DEADLINE`], when its thread is abandoned. An
-    /// element of the scope that cannot be resolved, or on which the group
-    /// cannot be registered, is skipped rather than failing the
-    /// registration.
+    /// Returns the COM error if the registering thread's client, a cache
+    /// request, or a handler cannot be created. An element of the scope
+    /// that cannot be resolved, or on which the group cannot be
+    /// registered, is skipped rather than failing the registration.
     pub fn with_parts(parts: Vec<Part>, scope: Scope) -> windows::core::Result<Self> {
         let target = Target {
             scope,
             group: Group::Base,
         };
+        let to = describe(&target.scope);
         let failed_reads = Arc::new(AtomicU32::new(0));
-        let (incarnation, ready) =
-            Incarnation::start(parts.clone(), target.clone(), &failed_reads)?;
-        match ready.recv_timeout(MOVE_DEADLINE) {
-            Ok(Ok(())) => Ok(Self {
+        let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+        let commands = registrar()?;
+        let (ready_tx, ready) = mpsc::channel();
+        let started = Instant::now();
+        commands
+            .send(Command::Start {
+                id,
                 parts,
-                state: Mutex::new(State {
-                    current: Some(incarnation),
-                    abandoned: Vec::new(),
-                    target,
-                }),
-                failed_reads,
-            }),
-            Ok(Err(error)) => {
-                let _ = incarnation.join.join();
-                Err(error)
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                // Not waited for: it ends once its call returns.
-                drop(incarnation.abandon());
-                tracing::warn!("a UIA subscription's first registration passed its deadline");
-                Err(windows::core::Error::new(
-                    UIA_E_TIMEOUT,
-                    "the subscription's first registration passed its deadline",
-                ))
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                let _ = incarnation.join.join();
-                Err(windows::core::Error::new(
-                    windows::Win32::Foundation::E_FAIL,
-                    "subscription thread ended before signalling readiness",
-                ))
-            }
+                target,
+                failed_reads: Arc::clone(&failed_reads),
+                ready: ready_tx,
+            })
+            .map_err(|_| ended())?;
+        let result = ready.recv().unwrap_or_else(|_| Err(ended()));
+        let elapsed = started.elapsed();
+        let elapsed_ms = elapsed.as_millis();
+        if elapsed > crate::CONNECTION_TIMEOUT {
+            tracing::warn!(
+                registration = id,
+                to,
+                result = ?result,
+                elapsed_ms,
+                "a UIA subscription's first registration took longer than UIA's connection timeout"
+            );
+        } else {
+            tracing::debug!(
+                registration = id,
+                to,
+                result = ?result,
+                elapsed_ms,
+                "a UIA subscription's first registration"
+            );
         }
+        result.map(|()| Self {
+            id,
+            commands: Mutex::new(Some(commands)),
+            failed_reads,
+        })
     }
 
     /// Moves the subscription to `scope`, its elements given the base group,
@@ -493,46 +511,43 @@ impl Registration {
     }
 
     /// Moves the subscription to `scope`, its elements given `group`,
-    /// without waiting: the registration's own thread adds the group to
-    /// each element of the scope that does not already have it, then
-    /// removes from every other element the group added there (module
-    /// doc). A thread whose move has passed [`MOVE_DEADLINE`] is abandoned
-    /// instead, and a new one registers on `scope`.
+    /// without waiting: the registering thread adds the group to each
+    /// element of the scope that does not already have it, then removes
+    /// from every other element the group added there (module doc), once
+    /// it has made everything asked of it before.
     pub fn retarget_to(&self, scope: Scope, group: Group) {
-        let target = Target { scope, group };
-        let mut state = self.lock();
-        state.target = target.clone();
-        if state.current.as_ref().is_some_and(Incarnation::overdue) {
-            self.replace(&mut state);
-        } else if let Some(current) = &state.current {
-            let _ = current.commands.send(Command::Retarget(target));
+        if let Some(commands) = self.lock().as_ref() {
+            let _ = commands.send(Command::Retarget {
+                id: self.id,
+                target: Target { scope, group },
+            });
         }
     }
 
     /// Waits until every move [`retarget`](Self::retarget) was asked for
     /// before this call has been made: the new handlers registered and the
     /// old ones removed, so every call those make into an application has
-    /// returned. Returns at once if the registration is closed. A thread
-    /// that has not made them within [`MOVE_DEADLINE`] is abandoned and
-    /// replaced, and this returns: the replacement registers on the newest
-    /// scope on its own.
+    /// returned. It waits as long as those calls take, and as long as the
+    /// registering thread takes over what other registrations asked of it
+    /// before. Returns at once if the registration is closed.
     pub fn settle(&self) {
         let (done_tx, done_rx) = mpsc::channel();
         {
-            let state = self.lock();
-            let Some(current) = &state.current else {
+            let commands = self.lock();
+            let Some(commands) = commands.as_ref() else {
                 return;
             };
-            if current.commands.send(Command::Settle(done_tx)).is_err() {
+            let sent = commands.send(Command::Settle {
+                id: self.id,
+                done: done_tx,
+            });
+            if sent.is_err() {
                 return;
             }
         }
         // A disconnection means the thread ended, with nothing left to
         // move.
-        if let Err(RecvTimeoutError::Timeout) = done_rx.recv_timeout(MOVE_DEADLINE) {
-            let mut state = self.lock();
-            self.replace(&mut state);
-        }
+        let _ = done_rx.recv();
     }
 
     /// The failed cached reads its callbacks have made so far, on every
@@ -543,71 +558,80 @@ impl Registration {
     }
 
     /// Ends the subscription: every move already asked for is made, then
-    /// everything its client registered is removed
-    /// (`RemoveAllEventHandlers`, which waits for any callback in progress
-    /// to return), its objects are released, its thread leaves COM's
-    /// multithreaded apartment, and the thread ends. Every thread abandoned
-    /// before is waited for as well, each returning from its call however
-    /// long UIA takes to end it. Returns once all of that is done. Moving
-    /// or settling a closed registration does nothing; closing it again
-    /// returns at once. Dropping a registration closes it.
+    /// the registering thread removes every group it registered for this
+    /// registration (`RemoveEventHandlerGroup`) and its focus handler
+    /// (`RemoveFocusChangedEventHandler`), each of which waits for any of
+    /// its callbacks in progress to return, and releases its objects.
+    /// Returns once all of that is done. Moving or settling a closed
+    /// registration does nothing; closing it again returns at once.
+    /// Dropping a registration closes it.
     pub fn close(&self) {
-        let (current, abandoned) = {
-            let mut state = self.lock();
-            (state.current.take(), std::mem::take(&mut state.abandoned))
-        };
-        if let Some(current) = current {
-            drop(current.commands);
-            let _ = current.join.join();
-        }
-        for thread in abandoned {
-            let _ = thread.join();
-        }
-    }
-
-    /// How many of this registration's threads have been abandoned and not
-    /// yet waited for.
-    #[must_use]
-    pub fn abandoned(&self) -> usize {
-        self.lock().abandoned.len()
-    }
-
-    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// Abandons the thread in charge, if the registration is not closed,
-    /// and starts a replacement registering on the newest target, without
-    /// waiting for it.
-    fn replace(&self, state: &mut State) {
-        let Some(current) = state.current.take() else {
+        let Some(commands) = self.lock().take() else {
             return;
         };
-        state.abandoned.retain(|thread| !thread.is_finished());
-        state.abandoned.push(current.abandon());
-        tracing::warn!(
-            abandoned = state.abandoned.len(),
-            "a UIA subscription's move passed its deadline; its thread is abandoned and replaced"
-        );
-        match Incarnation::start(self.parts.clone(), state.target.clone(), &self.failed_reads) {
-            // Its first registration is made on its own thread.
-            Ok((incarnation, _ready)) => state.current = Some(incarnation),
-            Err(error) => {
-                tracing::warn!(%error, "a UIA subscription could not be replaced");
-            }
+        let (done_tx, done_rx) = mpsc::channel();
+        let sent = commands.send(Command::Close {
+            id: self.id,
+            done: done_tx,
+        });
+        drop(commands);
+        if sent.is_ok() {
+            // A disconnection means the thread ended, removing everything.
+            let _ = done_rx.recv();
+        }
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<mpsc::Sender<Command>>> {
+        self.commands.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// What the registering thread is asked to do, each for one registration
+/// but [`Command::End`].
+enum Command {
+    /// Set registration `id` up and make its first registration, replying
+    /// once it is made.
+    Start {
+        id: u64,
+        parts: Vec<Part>,
+        target: Target,
+        failed_reads: Arc<AtomicU32>,
+        ready: mpsc::Sender<windows::core::Result<()>>,
+    },
+    /// Move registration `id` to this target.
+    Retarget { id: u64, target: Target },
+    /// Reply once every move asked for before has been made.
+    Settle { id: u64, done: mpsc::Sender<()> },
+    /// Remove what registration `id` registered, and reply.
+    Close { id: u64, done: mpsc::Sender<()> },
+    /// End the thread ([`end_registering_thread`]).
+    End,
+}
+
+impl Command {
+    /// The registration the command is for.
+    fn registration(&self) -> Option<u64> {
+        match self {
+            Self::Start { id, .. }
+            | Self::Retarget { id, .. }
+            | Self::Settle { id, .. }
+            | Self::Close { id, .. } => Some(*id),
+            Self::End => None,
         }
     }
 }
 
-/// UIA's error for a provider that did not answer in time.
-const UIA_E_TIMEOUT: windows::core::HRESULT = windows::core::HRESULT(0x8013_1505_u32.cast_signed());
-
-/// What a registration's thread is asked to do.
-enum Command {
-    /// Move the subscription to this target.
-    Retarget(Target),
-    /// Reply once every move asked for before has been made.
-    Settle(mpsc::Sender<()>),
+/// Whether a move of registration `id` can be skipped because `queued`,
+/// the commands behind it, holds a later move of the same registration
+/// before anything else of that registration's that waits for its moves
+/// (a settle or a close): only the newest target matters.
+fn superseded<'a>(queued: impl IntoIterator<Item = &'a Command>, id: u64) -> bool {
+    for command in queued {
+        if command.registration() == Some(id) {
+            return matches!(command, Command::Retarget { .. });
+        }
+    }
+    false
 }
 
 impl Drop for Registration {
@@ -643,18 +667,9 @@ enum Handler {
 }
 
 impl Handler {
-    /// The handler for `subscription`, calling back only while `live` is
-    /// set: an abandoned thread's handlers stay registered until its call
-    /// returns, and must not repeat what its replacement's report. The
-    /// failed cached reads each callback makes on UIA's thread are added to
-    /// `failed_reads`.
-    fn of(
-        subscription: Subscription,
-        live: &Arc<AtomicBool>,
-        failed_reads: &Arc<AtomicU32>,
-    ) -> Self {
-        let live = Arc::clone(live);
-        let is_live = move || live.load(Ordering::Acquire);
+    /// The handler for `subscription`. The failed cached reads each
+    /// callback makes on UIA's thread are added to `failed_reads`.
+    fn of(subscription: Subscription, failed_reads: &Arc<AtomicU32>) -> Self {
         let failed_reads = Arc::clone(failed_reads);
         match subscription {
             Subscription::Properties {
@@ -663,9 +678,7 @@ impl Handler {
             } => Self::Properties(
                 handlers::PropertyHandler {
                     callback: Arc::new(move |element, property| {
-                        if is_live() {
-                            counted(&failed_reads, || callback(element, property));
-                        }
+                        counted(&failed_reads, || callback(element, property));
                     }),
                 }
                 .into(),
@@ -674,9 +687,7 @@ impl Handler {
             Subscription::Event { event, callback } => Self::Event(
                 handlers::EventHandler {
                     callback: Arc::new(move |element, _| {
-                        if is_live() {
-                            counted(&failed_reads, || callback(element));
-                        }
+                        counted(&failed_reads, || callback(element));
                     }),
                 }
                 .into(),
@@ -685,9 +696,7 @@ impl Handler {
             Subscription::Events { events, callback } => Self::Events(
                 handlers::EventHandler {
                     callback: Arc::new(move |element, event| {
-                        if is_live() {
-                            counted(&failed_reads, || callback(element, event));
-                        }
+                        counted(&failed_reads, || callback(element, event));
                     }),
                 }
                 .into(),
@@ -696,11 +705,9 @@ impl Handler {
             Subscription::Notifications { callback } => Self::Notifications(
                 handlers::NotificationHandler {
                     callback: Arc::new(move |element, kind, processing, display, activity| {
-                        if is_live() {
-                            counted(&failed_reads, || {
-                                callback(element, kind, processing, display, activity);
-                            });
-                        }
+                        counted(&failed_reads, || {
+                            callback(element, kind, processing, display, activity);
+                        });
                     }),
                 }
                 .into(),
@@ -708,9 +715,7 @@ impl Handler {
             Subscription::ActiveTextPosition { callback } => Self::ActiveTextPosition(
                 handlers::ActiveTextPositionHandler {
                     callback: Arc::new(move |element, range| {
-                        if is_live() {
-                            counted(&failed_reads, || callback(element, range));
-                        }
+                        counted(&failed_reads, || callback(element, range));
                     }),
                 }
                 .into(),
@@ -718,9 +723,7 @@ impl Handler {
             Subscription::Focus { callback } => Self::Focus(
                 FocusHandler {
                     callback: Arc::new(move |element| {
-                        if is_live() {
-                            counted(&failed_reads, || callback(element));
-                        }
+                        counted(&failed_reads, || callback(element));
                     }),
                 }
                 .into(),
@@ -764,7 +767,7 @@ impl Handler {
     }
 }
 
-/// A part's handler as a registration's thread holds it: with its cache
+/// A part's handler as the registering thread holds it: with its cache
 /// request, and whether only the extended group holds it.
 struct Built {
     handler: Handler,
@@ -773,16 +776,16 @@ struct Built {
     text_events: bool,
 }
 
-/// A group built on a registration's thread, for one [`Group`] and one tree
-/// scope, kept for the thread's life.
+/// A group built on the registering thread for one registration, for one
+/// [`Group`] and one tree scope, kept for the registration's life.
 struct BuiltGroup {
     group: Group,
     tree_scope: TreeScope,
     handlers: IUIAutomationEventHandlerGroup,
 }
 
-/// An element a registration's thread has added a group to, with the group
-/// added there, which a later move removes from it.
+/// An element the registering thread has added a registration's group to,
+/// with the group added there, which a later move removes from it.
 struct Registered {
     element: IUIAutomationElement,
     group: Group,
@@ -790,13 +793,21 @@ struct Registered {
     handlers: IUIAutomationEventHandlerGroup,
 }
 
-/// What a registration's thread holds: its client, also as
-/// `IUIAutomation6` for the event handler groups, the handlers with their
-/// cache requests, the groups built so far, and the elements the groups
-/// are registered on.
-struct Follower {
+/// The registering thread's client, also as `IUIAutomation6` for the event
+/// handler groups: one for the process, which every registration's
+/// handlers are added to and removed from.
+struct Client {
     uia: Uia,
     client: IUIAutomation6,
+}
+
+/// What the registering thread holds for one registration: the handlers
+/// with their cache requests, the groups built so far, the elements the
+/// groups are registered on, and the focus handlers registered on the
+/// client.
+struct Follower {
+    /// Which registration this is, for the log.
+    id: u64,
     built: Vec<Built>,
     /// The desktop's root element, fetched before a focus handler was
     /// registered, for the group to be registered on, as NVDA registers its
@@ -804,187 +815,244 @@ struct Follower {
     desktop_root: Option<IUIAutomationElement>,
     groups: Vec<BuiltGroup>,
     registered: Vec<Registered>,
+    /// The focus handlers registered on the client, which
+    /// [`Follower::close`] removes.
+    focus_handlers: Vec<IUIAutomationFocusChangedEventHandler>,
 }
 
-/// What a registration's thread shares with the registration.
-struct Thread {
-    /// Whether the thread is still the one in charge.
-    live: Arc<AtomicBool>,
-    /// When its current move began, while it makes one.
-    moving: Arc<Mutex<Option<Instant>>>,
-    /// Where its callbacks' failed cached reads are counted: the
-    /// registration's count.
-    failed_reads: Arc<AtomicU32>,
-}
-
-impl Thread {
-    fn is_live(&self) -> bool {
-        self.live.load(Ordering::Acquire)
-    }
-
-    /// Notes when a move begins (`Some`) or ends (`None`).
-    fn moving(&self, began: Option<Instant>) {
-        *self.moving.lock().unwrap_or_else(PoisonError::into_inner) = began;
-    }
-}
-
-/// Sets a registration's thread up: its client, each part's handler with
-/// its cache request, and any focus handler registered on the client
-/// in NVDA's order (the desktop's root fetched first, for a desktop
-/// registration), before any group is.
-fn set_up(parts: Vec<Part>, target: &Target, thread: &Thread) -> windows::core::Result<Follower> {
-    let uia = Uia::new()?;
-    // Parts asking for the same properties share one cache request, as
-    // every one of NVDA's global handlers carries its one base cache
-    // request.
-    let mut caches: Vec<(
-        &'static [UIA_PROPERTY_ID],
-        &'static [UIA_PATTERN_ID],
-        IUIAutomationCacheRequest,
-    )> = Vec::new();
-    let built = parts
-        .into_iter()
-        .map(|part| {
-            let shared = caches.iter().find(|(properties, patterns, _)| {
-                *properties == part.properties && *patterns == part.patterns
-            });
-            let cache = if let Some((_, _, cache)) = shared {
-                cache.clone()
-            } else {
-                let cache = crate::cache::cache_request(uia.client(), part.properties)?;
-                for &pattern in part.patterns {
-                    // SAFETY: `cache` is a live cache request; a pattern id
-                    // is a plain value.
-                    unsafe { cache.AddPattern(pattern) }?;
-                }
-                caches.push((part.properties, part.patterns, cache.clone()));
-                cache
-            };
-            Ok(Built {
-                cache,
-                handler: Handler::of(part.subscription, &thread.live, &thread.failed_reads),
-                extended_only: part.extended_only,
-                text_events: part.text_events,
-            })
+/// The registering thread: creates the process's client, says whether it
+/// could, then makes what it is asked, in order, until it is ended
+/// ([`end_registering_thread`]). It waits on its commands and wakes for
+/// nothing else.
+fn serve(ready: &mpsc::Sender<windows::core::Result<()>>, received: &mpsc::Receiver<Command>) {
+    let client = match Uia::new().and_then(|uia| {
+        Ok(Client {
+            client: uia.client().cast()?,
+            uia,
         })
-        .collect::<windows::core::Result<Vec<_>>>()?;
-    // NVDA's order (`UIAHandler/__init__.py` 547 to 593): the desktop's
-    // root element is fetched first, then the focus handler goes on the
-    // client, and only then is the group registered, on that root. A
-    // focus handler registered after the group receives the second
-    // identity Windows Terminal raises focus from (NVDA itself does,
-    // its handler registered again after its group: 55 times in 40
-    // openings; `docs/design/focus-pipeline.md`, section 16.8).
-    let has_focus = built
-        .iter()
-        .any(|built| matches!(built.handler, Handler::Focus(_)));
-    let desktop_root = match (&target.scope, built.first()) {
-        (Scope::Desktop, Some(first)) if has_focus => {
-            // SAFETY: the cache request is live and owned by this
-            // thread's client.
-            Some(unsafe { uia.client().GetRootElementBuildCache(&first.cache) }?)
-        }
-        _ => None,
-    };
-    for built in &built {
-        if let Handler::Focus(handler) = &built.handler {
-            // SAFETY: the cache and handler are live and owned by this
-            // thread's client, which keeps its own references to both.
-            unsafe {
-                uia.client()
-                    .AddFocusChangedEventHandler(&built.cache, handler)
-            }?;
-        }
-    }
-    Ok(Follower {
-        client: uia.client().cast()?,
-        uia,
-        built,
-        desktop_root,
-        groups: Vec::new(),
-        registered: Vec::new(),
-    })
-}
-
-fn run(
-    parts: Vec<Part>,
-    target: &Target,
-    thread: &Thread,
-    ready: &mpsc::Sender<windows::core::Result<()>>,
-    retarget: &mpsc::Receiver<Command>,
-) {
-    let setup = set_up(parts, target, thread);
-    let mut follower = match setup {
-        Ok(follower) => follower,
+    }) {
+        Ok(client) => client,
         Err(error) => {
             let _ = ready.send(Err(error));
             return;
         }
     };
-    follower.move_to(target);
-    thread.moving(None);
     let _ = ready.send(Ok(()));
-    while let Ok(command) = retarget.recv() {
-        if !thread.is_live() {
-            break;
-        }
-        let mut target = match command {
-            Command::Retarget(target) => target,
-            Command::Settle(done) => {
-                let _ = done.send(());
-                continue;
-            }
-        };
-        // Only the newest target matters: skip any that queued up behind
-        // it, up to a request to settle, which waits for that target.
-        let mut settled: Vec<mpsc::Sender<()>> = Vec::new();
-        while let Ok(newer) = retarget.try_recv() {
-            match newer {
-                Command::Retarget(newer) if settled.is_empty() => target = newer,
-                Command::Retarget(newer) => {
-                    thread.moving(Some(Instant::now()));
-                    follower.move_to(&target);
-                    thread.moving(None);
-                    for done in settled.drain(..) {
-                        let _ = done.send(());
+    let mut followers: Vec<Follower> = Vec::new();
+    let mut queue: VecDeque<Command> = VecDeque::new();
+    'serving: while let Ok(command) = received.recv() {
+        queue.push_back(command);
+        loop {
+            queue.extend(received.try_iter());
+            let Some(command) = queue.pop_front() else {
+                break;
+            };
+            match command {
+                Command::Start {
+                    id,
+                    parts,
+                    target,
+                    failed_reads,
+                    ready,
+                } => match Follower::set_up(&client, id, parts, &target, &failed_reads) {
+                    Ok(mut follower) => {
+                        follower.move_to(&client, &target);
+                        followers.push(follower);
+                        let _ = ready.send(Ok(()));
                     }
-                    target = newer;
+                    Err(error) => {
+                        let _ = ready.send(Err(error));
+                    }
+                },
+                Command::Retarget { id, target } => {
+                    // Only the newest target matters: one queued behind
+                    // it, before a settle or a close that waits for it,
+                    // is made instead.
+                    if superseded(&queue, id) {
+                        continue;
+                    }
+                    if let Some(follower) = followers.iter_mut().find(|follower| follower.id == id)
+                    {
+                        follower.move_to(&client, &target);
+                    }
                 }
-                Command::Settle(done) => settled.push(done),
+                Command::Settle { done, .. } => {
+                    let _ = done.send(());
+                }
+                Command::Close { id, done } => {
+                    if let Some(at) = followers.iter().position(|follower| follower.id == id) {
+                        followers.swap_remove(at).close(&client);
+                    }
+                    let _ = done.send(());
+                }
+                Command::End => break 'serving,
             }
-        }
-        if !thread.is_live() {
-            break;
-        }
-        thread.moving(Some(Instant::now()));
-        follower.move_to(&target);
-        thread.moving(None);
-        for done in settled {
-            let _ = done.send(());
         }
     }
-    // SAFETY: removing this thread's own client's registrations, before
+    // SAFETY: removing the registering client's own registrations, before
     // teardown.
-    let removed = unsafe { follower.uia.client().RemoveAllEventHandlers() };
+    let removed = unsafe { client.uia.client().RemoveAllEventHandlers() };
     tracing::debug!(
         result = ?removed,
-        "a UIA subscription ends: RemoveAllEventHandlers"
+        open = followers.len(),
+        "the UIA registering thread ends: RemoveAllEventHandlers"
     );
-    // The handlers, the cache requests, the groups, the elements, and the
-    // client are released before the thread leaves the apartment
-    // `Uia::new` joined it to.
-    drop(follower);
+    // The commands not made, the handlers, the cache requests, the groups,
+    // the elements, and the client are released before the thread leaves
+    // the apartment `Uia::new` joined it to.
+    drop(queue);
+    drop(followers);
+    drop(client);
     crate::com::leave_mta();
 }
 
+/// Logs one registration call into an application, `call` on `element`,
+/// with its result and how long it took: at debug level, or at warn level
+/// when it took longer than UIA's connection timeout. The element is named
+/// by its runtime id, which is local; its window would take a cached read
+/// the caller's element is not known to hold, or a call into the
+/// application that has just failed to answer.
+fn log_call(
+    call: &str,
+    registration: u64,
+    element: &IUIAutomationElement,
+    result: &windows::core::Result<()>,
+    elapsed: Duration,
+) {
+    let runtime_id = crate::com::runtime_id(element);
+    let elapsed_ms = elapsed.as_millis();
+    if elapsed > crate::CONNECTION_TIMEOUT {
+        tracing::warn!(
+            registration,
+            ?runtime_id,
+            ?result,
+            elapsed_ms,
+            "{call} took longer than UIA's connection timeout"
+        );
+    } else {
+        tracing::debug!(registration, ?runtime_id, ?result, elapsed_ms, "{call}");
+    }
+}
+
 impl Follower {
+    /// Sets registration `id` up on the registering thread: each part's
+    /// handler with its cache request, and any focus handler registered on
+    /// the client in NVDA's order (the desktop's root fetched first, for a
+    /// desktop registration), before any group is.
+    fn set_up(
+        client: &Client,
+        id: u64,
+        parts: Vec<Part>,
+        target: &Target,
+        failed_reads: &Arc<AtomicU32>,
+    ) -> windows::core::Result<Self> {
+        let uia = &client.uia;
+        // Parts asking for the same properties share one cache request, as
+        // every one of NVDA's global handlers carries its one base cache
+        // request.
+        let mut caches: Vec<(
+            &'static [UIA_PROPERTY_ID],
+            &'static [UIA_PATTERN_ID],
+            IUIAutomationCacheRequest,
+        )> = Vec::new();
+        let built = parts
+            .into_iter()
+            .map(|part| {
+                let shared = caches.iter().find(|(properties, patterns, _)| {
+                    *properties == part.properties && *patterns == part.patterns
+                });
+                let cache = if let Some((_, _, cache)) = shared {
+                    cache.clone()
+                } else {
+                    let cache = crate::cache::cache_request(uia.client(), part.properties)?;
+                    for &pattern in part.patterns {
+                        // SAFETY: `cache` is a live cache request; a pattern id
+                        // is a plain value.
+                        unsafe { cache.AddPattern(pattern) }?;
+                    }
+                    caches.push((part.properties, part.patterns, cache.clone()));
+                    cache
+                };
+                Ok(Built {
+                    cache,
+                    handler: Handler::of(part.subscription, failed_reads),
+                    extended_only: part.extended_only,
+                    text_events: part.text_events,
+                })
+            })
+            .collect::<windows::core::Result<Vec<_>>>()?;
+        // NVDA's order (`UIAHandler/__init__.py` 547 to 593): the desktop's
+        // root element is fetched first, then the focus handler goes on the
+        // client, and only then is the group registered, on that root. A
+        // focus handler registered after the group receives the second
+        // identity Windows Terminal raises focus from (NVDA itself does,
+        // its handler registered again after its group: 55 times in 40
+        // openings; `docs/design/focus-pipeline.md`, section 16.8).
+        let has_focus = built
+            .iter()
+            .any(|built| matches!(built.handler, Handler::Focus(_)));
+        let desktop_root = match (&target.scope, built.first()) {
+            (Scope::Desktop, Some(first)) if has_focus => {
+                // SAFETY: the cache request is live and owned by this
+                // thread's client.
+                Some(unsafe { uia.client().GetRootElementBuildCache(&first.cache) }?)
+            }
+            _ => None,
+        };
+        let mut follower = Self {
+            id,
+            built,
+            desktop_root,
+            groups: Vec::new(),
+            registered: Vec::new(),
+            focus_handlers: Vec::new(),
+        };
+        let focus: Vec<_> = follower
+            .built
+            .iter()
+            .filter_map(|built| match &built.handler {
+                Handler::Focus(handler) => Some((handler.clone(), built.cache.clone())),
+                _ => None,
+            })
+            .collect();
+        for (handler, cache) in focus {
+            let started = Instant::now();
+            // SAFETY: the cache and handler are live and owned by this
+            // thread's client, which keeps its own references to both.
+            let added = unsafe { uia.client().AddFocusChangedEventHandler(&cache, &handler) };
+            let elapsed_ms = started.elapsed().as_millis();
+            if started.elapsed() > crate::CONNECTION_TIMEOUT {
+                tracing::warn!(
+                    registration = id,
+                    result = ?added,
+                    elapsed_ms,
+                    "AddFocusChangedEventHandler took longer than UIA's connection timeout"
+                );
+            } else {
+                tracing::debug!(
+                    registration = id,
+                    result = ?added,
+                    elapsed_ms,
+                    "AddFocusChangedEventHandler"
+                );
+            }
+            if let Err(error) = added {
+                follower.close(client);
+                return Err(error);
+            }
+            follower.focus_handlers.push(handler);
+        }
+        Ok(follower)
+    }
+
     /// Moves the registration to `target`: adds the target's group to each
     /// of its elements that does not already have it, then removes from
     /// every element that is no longer in the target the group added there
     /// (module doc).
-    fn move_to(&mut self, target: &Target) {
-        let (elements, tree_scope) = self.resolve(&target.scope);
+    fn move_to(&mut self, client: &Client, target: &Target) {
+        let (elements, tree_scope) = self.resolve(client, &target.scope);
         tracing::debug!(
+            registration = self.id,
             from = ?self
                 .registered
                 .iter()
@@ -998,7 +1066,7 @@ impl Follower {
         let handlers = if elements.is_empty() {
             None
         } else {
-            match self.group(target.group, tree_scope) {
+            match self.group(client, target.group, tree_scope) {
                 Ok(handlers) => Some(handlers),
                 Err(error) => {
                     tracing::warn!(%error, "a UIA event handler group could not be built");
@@ -1014,7 +1082,7 @@ impl Follower {
             };
             for element in elements {
                 let kept = plan_keep(&previous, &element, |registered, element| {
-                    wanted(registered) && self.same(&registered.element, element)
+                    wanted(registered) && same(client, &registered.element, element)
                 });
                 if let Some(at) = kept {
                     tracing::debug!(
@@ -1024,13 +1092,16 @@ impl Follower {
                     now.push(previous.swap_remove(at));
                     continue;
                 }
+                let started = Instant::now();
                 // SAFETY: the element and group are live and owned by this
                 // thread's client.
-                let added = unsafe { self.client.AddEventHandlerGroup(&element, &handlers) };
-                tracing::debug!(
-                    runtime_id = ?crate::com::runtime_id(&element),
-                    result = ?added,
-                    "AddEventHandlerGroup"
+                let added = unsafe { client.client.AddEventHandlerGroup(&element, &handlers) };
+                log_call(
+                    "AddEventHandlerGroup",
+                    self.id,
+                    &element,
+                    &added,
+                    started.elapsed(),
                 );
                 // On an error, as NVDA logs it and goes on: the element has
                 // most likely gone, and nothing is registered on it.
@@ -1044,22 +1115,51 @@ impl Follower {
                 }
             }
         }
-        for registered in previous {
+        self.remove(client, previous);
+        self.registered = now;
+    }
+
+    /// Removes from each of `registered` the group added there, and forgets
+    /// it whatever the result, as NVDA forgets it: a group on an element
+    /// that has gone since is forgotten by UIA itself.
+    fn remove(&self, client: &Client, registered: Vec<Registered>) {
+        for registered in registered {
+            let started = Instant::now();
             // SAFETY: the element and the group added there are live and
             // owned by this thread's client.
             let removed = unsafe {
-                self.client
+                client
+                    .client
                     .RemoveEventHandlerGroup(&registered.element, &registered.handlers)
             };
-            // Forgotten whatever the result, as NVDA forgets it: a group on
-            // an element that has gone since is forgotten by UIA itself.
-            tracing::debug!(
-                runtime_id = ?crate::com::runtime_id(&registered.element),
-                result = ?removed,
-                "RemoveEventHandlerGroup"
+            log_call(
+                "RemoveEventHandlerGroup",
+                self.id,
+                &registered.element,
+                &removed,
+                started.elapsed(),
             );
         }
-        self.registered = now;
+    }
+
+    /// Ends the registration: removes every group it registered and its
+    /// focus handlers, each removal waiting for that handler's callbacks in
+    /// progress, then releases its objects.
+    fn close(mut self, client: &Client) {
+        let registered = std::mem::take(&mut self.registered);
+        self.remove(client, registered);
+        for handler in std::mem::take(&mut self.focus_handlers) {
+            let started = Instant::now();
+            // SAFETY: the handler is live and was registered on this
+            // client.
+            let removed = unsafe { client.uia.client().RemoveFocusChangedEventHandler(&handler) };
+            tracing::debug!(
+                registration = self.id,
+                result = ?removed,
+                elapsed_ms = started.elapsed().as_millis(),
+                "RemoveFocusChangedEventHandler"
+            );
+        }
     }
 
     /// The elements of `scope`, and the tree scope a group registered on
@@ -1067,7 +1167,7 @@ impl Follower {
     /// subtrees are the caller's, resolved here, a local call. The
     /// desktop's root is fetched with the first part's cache request, and
     /// UIA serves it in this process.
-    fn resolve(&self, scope: &Scope) -> (Vec<IUIAutomationElement>, TreeScope) {
+    fn resolve(&self, client: &Client, scope: &Scope) -> (Vec<IUIAutomationElement>, TreeScope) {
         let Some(cache) = self.built.first().map(|built| &built.cache) else {
             return (Vec::new(), TreeScope_Element);
         };
@@ -1085,7 +1185,7 @@ impl Follower {
                     Some(root) => vec![root.clone()],
                     // SAFETY: `cache` is a live cache request owned by this
                     // thread.
-                    None => unsafe { self.uia.client().GetRootElementBuildCache(cache) }
+                    None => unsafe { client.uia.client().GetRootElementBuildCache(cache) }
                         .ok()
                         .into_iter()
                         .collect(),
@@ -1107,6 +1207,7 @@ impl Follower {
     /// cache request. Local: nothing is registered until the group is.
     fn group(
         &mut self,
+        client: &Client,
         group: Group,
         tree_scope: TreeScope,
     ) -> windows::core::Result<IUIAutomationEventHandlerGroup> {
@@ -1118,7 +1219,7 @@ impl Follower {
             return Ok(built.handlers.clone());
         }
         // SAFETY: a local call on this thread's live client.
-        let handlers = unsafe { self.client.CreateEventHandlerGroup() }?;
+        let handlers = unsafe { client.client.CreateEventHandlerGroup() }?;
         for built in &self.built {
             if group.holds(built.extended_only, built.text_events) {
                 built.handler.add_to(&handlers, tree_scope, &built.cache)?;
@@ -1131,18 +1232,18 @@ impl Follower {
         });
         Ok(handlers)
     }
+}
 
-    /// Whether `a` and `b` are the same element, by UIA's own comparison,
-    /// which compares their runtime ids, kept with each element
-    /// (`docs/performance.md`, "What counts as a call"). NVDA tests whether
-    /// an element has its group by membership of a set of the element
-    /// pointers it added the group to, not by `CompareElements`, so it
-    /// removes and adds the group again for a new pointer to the same
-    /// element, where Verbatim keeps it; what is registered is the same.
-    fn same(&self, a: &IUIAutomationElement, b: &IUIAutomationElement) -> bool {
-        // SAFETY: both elements are live, owned by this thread.
-        unsafe { self.uia.client().CompareElements(a, b) }.is_ok_and(windows_core::BOOL::as_bool)
-    }
+/// Whether `a` and `b` are the same element, by UIA's own comparison,
+/// which compares their runtime ids, kept with each element
+/// (`docs/performance.md`, "What counts as a call"). NVDA tests whether
+/// an element has its group by membership of a set of the element
+/// pointers it added the group to, not by `CompareElements`, so it
+/// removes and adds the group again for a new pointer to the same
+/// element, where Verbatim keeps it; what is registered is the same.
+fn same(client: &Client, a: &IUIAutomationElement, b: &IUIAutomationElement) -> bool {
+    // SAFETY: both elements are live, owned by this thread.
+    unsafe { client.uia.client().CompareElements(a, b) }.is_ok_and(windows_core::BOOL::as_bool)
 }
 
 /// Which of `previous` to keep for `element`, the first that `same` says is
@@ -1284,7 +1385,7 @@ mod handlers {
 
 #[cfg(test)]
 mod tests {
-    use super::{Group, plan_keep};
+    use super::{Command, Group, Scope, Target, plan_keep, superseded};
 
     /// Each group holds the parts it should, as (extended only, text
     /// events): the group without text events holds the base parts and the
@@ -1306,7 +1407,7 @@ mod tests {
         );
     }
 
-    /// An element a registration's thread has registered on, by name, with
+    /// An element the registering thread has registered on, by name, with
     /// its group, for the plan's tests.
     #[derive(Debug)]
     struct Registered(&'static str, bool);
@@ -1384,5 +1485,36 @@ mod tests {
             ),
             (vec!["window"], vec![])
         );
+    }
+
+    fn retarget(id: u64) -> Command {
+        Command::Retarget {
+            id,
+            target: Target {
+                scope: Scope::Nothing,
+                group: Group::Base,
+            },
+        }
+    }
+
+    /// A move queued on the registering thread is skipped for a later move
+    /// of the same registration, past other registrations' commands, but
+    /// not past a settle or close of its own, which waits for it.
+    #[test]
+    fn a_move_is_skipped_only_for_a_later_move_of_its_own_registration() {
+        let (done, _) = std::sync::mpsc::channel();
+        let settle = |id| Command::Settle {
+            id,
+            done: done.clone(),
+        };
+        let close = |id| Command::Close {
+            id,
+            done: done.clone(),
+        };
+        assert!(superseded(&[retarget(2), settle(2), retarget(1)], 1));
+        assert!(!superseded(&[retarget(2)], 1));
+        assert!(!superseded(&[settle(1), retarget(1)], 1));
+        assert!(!superseded(&[close(1), retarget(1)], 1));
+        assert!(!superseded(&[], 1));
     }
 }

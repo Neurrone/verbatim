@@ -182,7 +182,10 @@ Verbatim's minimum is Windows 11 24H2. Every registration is an event
 handler group, registered with one `AddEventHandlerGroup` call per
 element; a group that cannot be registered on an element (most often
 one that has gone) is logged and skipped, and removing handlers from an
-element that died is left to UIA, as NVDA does.
+element that died is left to UIA, as NVDA does. Handlers are added and
+removed from one thread per process, as Microsoft's guidance for UIA
+clients asks
+([Understanding Threading Issues](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading)).
 - The global group, desktop-wide in the focus listener: an element
   selected, a menu opened, and notifications. NVDA's also takes live
   regions, tool tips, windows opened, system alerts, layout
@@ -233,8 +236,8 @@ element that died is left to UIA, as NVDA does.
   focus, for typed text and terminal output.
 - NVDA checks that the element is still focused before registering on
   it (comparing it with `GetFocusedElement`, a call). Verbatim does
-  not: a registration's thread registers only the newest focus it was
-  handed, and a newer focus replaces it.
+  not: the registering thread registers only the newest focus a
+  registration was handed, and a newer focus replaces it.
 
 ### The active text position
 

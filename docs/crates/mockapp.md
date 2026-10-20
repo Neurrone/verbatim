@@ -604,12 +604,12 @@ with `UIA_E_TIMEOUT` after one `TRANSACTION_TIMEOUT` (five seconds, not
 UIA's default of twenty); a `FindFirst` search run on a `BoundedClient` is
 given up at its own one-second deadline, before any transaction timeout,
 its thread abandoned and waited for once the call is released; and a
-subscription moved onto the subtrees of six held windows, each of a
-mockapp of its own, their elements looked up before the holds, so that
-its move makes six registrations each waiting out the two-second
-connection timeout, is abandoned and replaced when settled, once
-`MOVE_DEADLINE` has passed. (A move held at one registration ends at the
-connection timeout, within the deadline.)
+subscription moved onto the subtree of a held window, its element looked
+up before the hold, has its registration there (`FragmentRoot`, the call
+held) end at the two-second connection timeout, and its next move, onto
+a second mockapp's window and asked for while the first was held, is
+made after it: settling both takes one connection timeout, and the
+second mockapp counts one registration.
 `focus_reports.rs` runs a real outpost in the test process over
 `tests/fixtures/reuse.json` (two lists named alike, as a File Explorer
 folder and its subfolder), through `tests/common/outpost.rs`, the

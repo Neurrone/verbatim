@@ -143,7 +143,7 @@ screen reader in both rendered and source form.
   the single desktop-global UIA focus registration and global MSAA
   WinEvent hooks (focus, foreground, menu popups), under a hard rule: it
   never makes a cross-process call from a callback, writer, or
-  registration thread — those read only what the event itself carries (a
+  registering thread — those read only what the event itself carries (a
   UIA element's cached properties, an MSAA event's raw window and object
   ids) plus hang-safe local reads, and forward each captured focus fact to
   Core, which routes it to the target's own outpost for acquisition,
@@ -192,7 +192,7 @@ screen reader in both rendered and source form.
   watchdogs. A UIA element cannot be handed to another process (experiment
   E-marshal), so the listener, which receives the event, is the one
   process that can judge it by its own element, as NVDA does. Its
-  callbacks, writer, and registration threads still make no cross-process
+  callbacks, writer, and registering thread still make no cross-process
   call; each application's reading thread reads each focus with a few
   calls on elements it holds, with no remote operation and no connection
   to a window (`docs/design/listener-without-connections.md`, section 2),

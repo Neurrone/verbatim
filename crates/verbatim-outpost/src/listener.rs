@@ -919,13 +919,13 @@ impl Listener {
     /// Shuts the listener down cleanly ([`SupervisorToOutpost::Shutdown`]),
     /// returning once it is done: the `WinEvent` hooks are removed with the
     /// thread that pumped them, the desktop-wide UIA focus handler and the
-    /// other desktop-wide handlers are removed (the registration's thread
-    /// waits for a callback in progress, releases its client, and leaves
-    /// COM), every reading thread finishes the read in hand, each abandoned
+    /// other desktop-wide handlers are removed (the registering thread
+    /// waits for a callback in progress), every reading thread finishes the read in hand, each abandoned
     /// one returning once UIA gives up on its call, what waits to be
     /// written to Core is written, the I/O thread `io` serves waiting for
     /// every write in flight to complete, and the pipe is closed, and the
-    /// process's hold on COM's multithreaded apartment is given back.
+    /// process's hold on COM's multithreaded apartment is given back, the
+    /// registering thread releasing its client and leaving COM first.
     fn shutdown(self, io: &mut ChildIo) {
         let started = Instant::now();
         let Self {

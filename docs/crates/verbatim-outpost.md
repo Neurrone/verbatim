@@ -2033,8 +2033,9 @@ The outpost's side (`Outpost::shutdown`), in order:
    (`ChildIo::finish`).
 7. The thread leaves COM's multithreaded apartment, and the process's
    hold on it is given back (`verbatim_uia::release_mta_usage`), so COM
-   ends the apartment once every thread has left it; each worker and each
-   subscription thread leaves it as it ends.
+   ends the apartment once every thread has left it; each worker leaves it
+   as it ends, and so does the process's registering thread, which that
+   call ends first (`docs/crates/verbatim-uia.md`, `Registration`).
 
 The outpost logs how long each step took (`the outpost shut down`). The
 listener's shutdown removes its hooks, its desktop-wide focus handler, and

@@ -8,10 +8,8 @@
 //!   ([`verbatim_uia::TRANSACTION_TIMEOUT`]).
 //! - A search, many provider calls, ends at its own deadline on a
 //!   [`BoundedClient`], before any transaction timeout, its thread abandoned.
-//! - A subscription's move whose registrations each wait out UIA's
-//!   connection timeout and do not finish is abandoned when the
-//!   registration is settled, at [`MOVE_DEADLINE`], and its thread
-//!   replaced.
+//! - A subscription's move onto a held window ends at UIA's connection
+//!   timeout, and the registration's next move is made after it.
 //!
 //! Each test runs in a process of its own on a desktop of its own
 //! (`common/harness.rs`), since the timeouts belong to the process.
@@ -25,10 +23,10 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use verbatim_uia::{
-    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, MOVE_DEADLINE, Node, Part, PropertyEvent,
-    Registration, Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
+    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, Node, Part, PropertyEvent, Registration,
+    Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
 };
-use windows::Win32::UI::Accessibility::UIA_NamePropertyId;
+use windows::Win32::UI::Accessibility::{UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId};
 
 /// How long a search may take in the test: well under UIA's transaction timeout,
 /// so the search's end is its deadline's, not UIA's.
@@ -131,33 +129,18 @@ fn a_held_search_ends_at_its_deadline() {
     app.quit();
 }
 
-/// A subscription moved onto the subtrees of [`HELD_WINDOWS`] held
-/// windows, each of a mockapp of its own, their elements looked up before
-/// the holds, so that its move makes that many registrations that each
-/// wait out UIA's connection timeout, longer in all than
-/// [`MOVE_DEADLINE`], is abandoned when settled once the deadline has
-/// passed, and replaced; closing the registration waits for the abandoned
-/// thread, which ends once the calls are released. (One held registration
-/// alone ends at the connection timeout, within the deadline.)
-/// The windows are three applications' because the move's own calls are
-/// its registrations, and registering on a second element of an
-/// application whose registration timed out makes no call there.
-/// How many held windows a move registers on: one more than the
-/// connection timeouts that fit in [`MOVE_DEADLINE`].
-const HELD_WINDOWS: u32 = 6;
-
-fn a_held_subscription_move_is_abandoned_at_its_deadline() {
-    assert!(
-        CONNECTION_TIMEOUT * (HELD_WINDOWS - 1) >= MOVE_DEADLINE,
-        "the held registrations outlast the move's deadline"
-    );
+/// A subscription moved onto the subtree of a window whose provider holds
+/// its call, the window's element looked up before the hold, has its
+/// registration there end at UIA's connection timeout, though the call is
+/// still held; its next move, onto another application's window, asked
+/// for while the first was held, is made once the first has returned, and
+/// registers there, as that application counts it.
+fn a_held_subscription_move_returns_at_the_connection_timeout() {
     common::init_com();
-    let mut apps: Vec<common::MockApp> = (0..HELD_WINDOWS)
-        .map(|index| {
-            let title = common::unique_title(&format!("mockapp-held-move-{index}"));
-            common::spawn("small.json", "uia", &title)
-        })
-        .collect();
+    let held_title = common::unique_title("mockapp-held-move");
+    let mut held_app = common::spawn("small.json", "uia", &held_title);
+    let next_title = common::unique_title("mockapp-next-move");
+    let next_app = common::spawn_counting_registrations("small.json", &next_title);
     let registration = Registration::with_parts(
         vec![Part::shaped::<PropertyEvent>(Subscription::Properties {
             properties: vec![UIA_NamePropertyId],
@@ -166,42 +149,33 @@ fn a_held_subscription_move_is_abandoned_at_its_deadline() {
         Scope::Nothing,
     )
     .expect("a registration");
+    let held_window = common::window_subtree(common::find_window(&held_title).0 as isize);
+    let next_hwnd = common::find_window(&next_title);
+    let next_window = common::window_subtree(next_hwnd.0 as isize);
+    let advised = || common::advised(next_hwnd, UIA_AutomationPropertyChangedEventId.0);
+    assert_eq!(
+        advised(),
+        0,
+        "nothing is registered on the other window yet"
+    );
 
-    let elements = apps
-        .iter()
-        .flat_map(|app| {
-            let hwnd = common::find_window(app.title()).0 as isize;
-            let Scope::Subtrees(window) = common::window_subtree(hwnd) else {
-                unreachable!("a window's subtree")
-            };
-            window
-        })
-        .collect();
-    for app in &mut apps {
-        app.hold();
-    }
-    registration.retarget(Scope::Subtrees(elements));
-    let held = apps[0].held();
+    held_app.hold();
     let started = Instant::now();
+    registration.retarget(held_window);
+    let held = held_app.held();
+    registration.retarget(next_window);
     registration.settle();
     let elapsed = started.elapsed();
-    assert!(!held.is_empty(), "a call of the move was held");
+    assert_eq!(held, "FragmentRoot", "the registration's call was held");
     assert!(
-        elapsed >= MOVE_DEADLINE && elapsed < MOVE_DEADLINE + CONNECTION_TIMEOUT,
-        "the settle ended at the move's deadline: {elapsed:?}"
+        elapsed >= CONNECTION_TIMEOUT && elapsed < CONNECTION_TIMEOUT * 2,
+        "both moves were made after one connection timeout: {elapsed:?}"
     );
-    assert_eq!(registration.abandoned(), 1);
-    // The abandoned move went on to the others.
-    for app in &mut apps[1..] {
-        assert!(!app.held().is_empty(), "a call of the move was held");
-    }
-    for app in &mut apps {
-        app.release();
-    }
+    assert_eq!(advised(), 1, "the next move registered on the other window");
+    held_app.release();
     registration.close();
-    for app in apps {
-        app.quit();
-    }
+    held_app.quit();
+    next_app.quit();
 }
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
@@ -215,8 +189,8 @@ fn main() {
             a_held_search_ends_at_its_deadline,
         ),
         (
-            "a_held_subscription_move_is_abandoned_at_its_deadline",
-            a_held_subscription_move_is_abandoned_at_its_deadline,
+            "a_held_subscription_move_returns_at_the_connection_timeout",
+            a_held_subscription_move_returns_at_the_connection_timeout,
         ),
     ]);
 }

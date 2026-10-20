@@ -857,7 +857,7 @@ NVDA (`UIAHandler/__init__.py` 642 to 756; `NVDAObjects/UIA/__init__.py` 1623 to
 
 ### 17.3 The proposal
 
-1. One focus-following group per outpost, built once, as NVDA's: the property changes and the caret event, with text changes and the active text position added for a text focus (two prebuilt groups, as NVDA's two). One thread and client, as today's registration threads.
+1. One focus-following group per outpost, built once, as NVDA's: the property changes and the caret event, with text changes and the active text position added for a text focus (two prebuilt groups, as NVDA's two). One thread and client: the process's registering thread, which makes every registration's adds and removes (`crates/verbatim-uia/src/subscribe.rs`).
 2. On a new focus whose element the outpost has, add the matching group to that element, then remove the previous element's group from the previous element with `RemoveEventHandlerGroup`. `RemoveAllEventHandlers` is used only at the outpost's shutdown.
 3. Never register or move a group to an element that already has it: a move to the element already followed does nothing. This removes the repeated re-registration of 17.1.
 4. No temporary registration on a window's subtree: `follow_focus_window` and `adopt_focus_element` go. Until the outpost has the focus's element, nothing is followed, as in NVDA's gap. On main the outpost reads the focused element as it reports the focus, so the gap is that read; with step 6, it is the path walk after the report (12.5).

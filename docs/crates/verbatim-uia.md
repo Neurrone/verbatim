@@ -349,7 +349,7 @@ Public API:
   active, when the event carries one), or `Subscription::Focus` (focus
   changes anywhere on the desktop, delivering the focused element with its
   part's cache request). A focus subscription is not part of the groups:
-  its handler is registered on the registration's client itself
+  its handler is registered on the registering thread's client itself
   (`AddFocusChangedEventHandler`) before any group, as NVDA registers its
   focus handler on the client that holds its global group. The two must
   share a client: UIA delivers the focus events Windows Terminal's XAML
@@ -359,16 +359,16 @@ Public API:
   desktop-wide, so the focus listener, which watches every application at
   once (decision D13), is the one process that registers it. `close()` ends a registration for
   good and returns once it is done: every move already asked for is made,
-  then its client removes everything it registered
-  (`RemoveAllEventHandlers`, which waits for a callback in progress, and
-  the only place that call is made), its
-  objects are released, and its thread leaves the apartment and ends;
-  moving or settling a closed registration does nothing, and dropping one
-  closes it. An outpost closes its registration when it shuts down. The
+  then the registering thread removes each group the registration
+  registered (`RemoveEventHandlerGroup`) and its focus handler
+  (`RemoveFocusChangedEventHandler`), each waiting for a callback in
+  progress, and releases its objects; moving or settling a closed
+  registration does nothing, and dropping one closes it. An outpost
+  closes its registration when it shuts down. The
   `Scope` is nothing yet, the subtrees of given elements (`Subtrees`), the
   whole desktop (the subtree of the root element), or exactly given
   elements. The caller looks a window's element up itself, on a thread
-  that serves the window's application, so the registration's thread makes
+  that serves the window's application, so the registering thread makes
   no connection by handle.
 - A registration registers its subscriptions as an event handler group
   (`IUIAutomationEventHandlerGroup`, from `IUIAutomation6`), as NVDA
@@ -398,7 +398,7 @@ Public API:
   `Group::ExtendedWithoutTextEvents`, every part but those marked
   `.text_events()`, for an element whose text and caret changes
   reach the caller another way, so UIA is not asked to deliver them. Each
-  is built once per thread and client, on first need, every part with its
+  is built once per registration, on first need, every part with its
   own shape's request, so the provider is asked for no more with each
   event than the part's callbacks read. The
   desktop's root is fetched with the first part's cache request.
@@ -415,8 +415,9 @@ Public API:
   changes are marked `text_events`. The focus listener's
   desktop-wide registration has four parts shaped as `ListenerEvent`.
 - A move (`retarget` gives the base group, `retarget_to` the group named)
-  is handed to the registration's thread, so the caller never waits on
-  UIA's removal, which waits for running callbacks. The thread adds the
+  is handed to the registering thread, so the caller never waits on
+  UIA's removal, which waits for running callbacks; so no callback may
+  wait on any registration's moves. The thread adds the
   group to each element of the new scope that does not already have it,
   then removes from each element no longer in the scope the group it added
   there (`RemoveEventHandlerGroup`), and forgets that element whatever the
@@ -430,26 +431,42 @@ Public API:
   element that has gone, which NVDA also logs and passes over), are
   skipped. Every move is logged at debug level: the elements it moves from,
   by runtime id and group, the scope and elements it moves to, and each
-  call it makes with its result. `settle()` waits until every move asked
+  call it makes (`AddEventHandlerGroup`, `RemoveEventHandlerGroup`,
+  `AddFocusChangedEventHandler`) with its result and its elapsed
+  milliseconds, at warn level when the call took longer than
+  `CONNECTION_TIMEOUT`, naming the element by runtime id; the first
+  registration `with_parts` makes is logged the same way. The element's
+  window is not named: it would take a cached read the caller's element
+  is not known to hold, or a call into the application that has just
+  failed to answer. `settle()` waits until every move asked
   for before it has been made, for a test that measures what the moves
   cost an application.
-- A registration's thread has a watchdog, the
-  outpost worker's rule: when a move has taken `MOVE_DEADLINE` (ten
-  seconds, two transaction timeouts, covering a registration's wait, which
-  follows the connection timeout) by the time the registration is next
-  retargeted or settled, the thread is abandoned and a new one, with its
-  own client and the same parts, registers on the newest scope and group;
-  `settle()` then returns without waiting for it. An abandoned thread's
-  handlers call back no more, so nothing is heard twice, and once its call
-  returns it removes what its client registered and ends; `abandoned()`
-  counts those not yet waited for, and `close()` waits for them too.
-  `with_parts` waits for the first registration up to `MOVE_DEADLINE` and fails
-  with `UIA_E_TIMEOUT` past it. Dropping a registration unregisters
-  and ends its thread. The focus listener holds one registration, the
+- Every registration in a process is made by one thread, the registering
+  thread, with one client: the thread, its client, and its place in COM's
+  multithreaded apartment are created on the process's first
+  registration, and every registration's first registration, moves,
+  settles, and closes are made there in the order asked, as Microsoft's
+  guidance for UIA clients asks: a client should not add or remove event
+  handlers from several threads at once
+  ([Understanding Threading Issues](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-threading)).
+  What a registration registers, its parts, groups, and the elements they
+  are on, stays its own; a move of one registration queued behind a newer
+  move of the same registration is skipped, unless a settle or close of
+  that registration comes between them. The thread waits on its commands
+  and wakes for nothing else. No call is given a deadline or abandoned:
+  UIA ends a registration on an application that does not answer at the
+  connection timeout (`docs/uia-bugs.md`, "A registration that times out
+  reports success"), and what is asked after it waits for it.
+  `with_parts` waits for the first registration however long it takes;
+  a desktop-wide registration that advises several such applications
+  waits a timeout for each. `RemoveAllEventHandlers` is called only as the
+  thread ends, when the process has finished with UIA:
+  `release_mta_usage` ends the thread first, and a registration still open
+  then hears nothing more. A later registration starts the thread again.
+  The focus listener holds one registration, the
   desktop-wide selection, menu-opened, and notification subscriptions as
-  one group, where it held three registrations, each with its own thread
-  and client, before; each outpost holds one focus-following registration,
-  where it held two, each with its own thread and client, before
+  one group, where it held three registrations before; each outpost holds
+  one focus-following registration, where it held two before
   (`docs/design/focus-pipeline.md`, section 17).
   Registering the listener's group took 9.9 ms at
   the median against mockapp where its three registrations took 18.5 ms

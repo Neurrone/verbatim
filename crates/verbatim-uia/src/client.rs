@@ -1097,9 +1097,12 @@ static MTA_USAGE: std::sync::Mutex<Option<usize>> = std::sync::Mutex::new(None);
 /// outlives whichever thread happens to be in it. For a process that has
 /// finished with UIA for good, such as an outpost shutting down: once
 /// every thread has left the apartment ([`crate::leave_mta`]), COM tears
-/// it down. A later use of UIA sets it up again. Does nothing when UIA
-/// was never used.
+/// it down. The process's registering thread, which every
+/// [`crate::Registration`] is made on, is ended first, removing what its
+/// client registered and leaving the apartment. A later use of UIA sets it
+/// up again. Does nothing when UIA was never used.
 pub fn release_mta_usage() {
+    crate::subscribe::end_registering_thread();
     let mut ready = UIA_READY
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

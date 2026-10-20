@@ -104,7 +104,7 @@ pub use shape::{
 };
 pub use subscribe::{
     ActiveTextPositionCallback, ElementCallback, EventCallback, FOCUS_PROPERTIES, Group,
-    MOVE_DEADLINE, NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,
+    NotificationCallback, Part, PropertyCallback, Registration, Scope, Subscription,
 };
 
 /// Releases the UIA objects this crate keeps for the calling thread: the
