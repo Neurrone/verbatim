@@ -683,8 +683,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     NVDA's limiter keeps one per window, and removes a focus event waiting
     on its window's client object from the same thread, raised no later
     than the change (at one tick, unless the focus is the hook's copy and
-    the change is known to have been raised before the hook went in), as
-    NVDA's limiter, adding events in raised order, pops it; a run whose events all carry their raise time is tried in
+    the change is known to have been raised before the hook went in), and
+    such a focus that arrives after a waiting foreground change of its
+    window and thread raised after it is dropped as it arrives (at one
+    tick, only when the focus is known to have been raised before the hook
+    went in and the change is the hook's copy), as NVDA's limiter, adding
+    events in raised order, removes every such focus raised before the
+    change; a run whose events all carry their raise time is tried in
     that order (`in_raised_order`), events of one clock tick ordered by
     the hand-over's `Arrival` (`outpost::handover`): a listener copy known
     to have been raised before the outpost's hook went in, and every

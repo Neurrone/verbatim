@@ -39,7 +39,10 @@
 //!   entries are not counted. A newer list of the nodes Core holds replaces
 //!   a waiting one. A foreground change removes a focus event waiting on
 //!   its window's client object from the same thread, raised no later than
-//!   the change, as NVDA's limiter does. A run of focus events and foreground changes can so hold the 4
+//!   the change, and such a focus that arrives after a waiting change of
+//!   its window and thread raised after it is dropped as it arrives, as
+//!   NVDA's limiter removes every such focus raised before the change. A
+//!   run of focus events and foreground changes can so hold the 4
 //!   newest of them and, besides, every older foreground change of another
 //!   window that its thread's limit keeps.
 //! - UIA events from a window the system reports as hung are dropped
@@ -519,10 +522,14 @@ impl Intake {
     /// event on a window object as its client object, as NVDA's callback
     /// does, so that is the address NVDA's foreground event has. NVDA's one
     /// hook adds events in the order they were raised, so it removes only
-    /// a focus raised before the change; during the hand-over an outpost
-    /// can receive its hook's copy of a focus before the listener's copy of
-    /// a foreground change raised earlier, so the two are compared by when
-    /// they were raised ([`removes_client_focus`]).
+    /// a focus raised before the change, whichever reached it first; during
+    /// the hand-over an outpost can receive its hook's copy of a focus
+    /// before the listener's copy of a foreground change raised earlier, or
+    /// its hook's copy of a change before the listener's copy of a focus
+    /// raised earlier, so the two are compared by when they were raised
+    /// ([`focus_raised_first`]): a waiting focus raised no later than the
+    /// change is removed, and a focus that arrives after a waiting change
+    /// of its window and thread raised after it is dropped as it arrives.
     fn push_arrived(&self, entry: Entry, arrival: Option<Arrival>) {
         // A marked UIA event takes its marker's place as itself.
         let (entry, resolved_by_read) = match entry.item {
@@ -571,6 +578,9 @@ impl Intake {
             Item::Fact(DeliveredFact::UiaFocusRead { marker, .. }, _) => Some(*marker),
             _ => resolved_by_read,
         };
+        if foreground_waits_after(&state.waiting, key.as_ref(), &entry.item, (thread, arrival)) {
+            return;
+        }
         let mut place = resolves.and_then(|resolves| {
             state
                 .waiting
@@ -914,7 +924,7 @@ fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option
 /// from thread `thread`, among those no idle query divides from the back,
 /// for a foreground change of the window raised and arrived as `change`
 /// says ([`Intake::push`]), unless the focus was raised after the change
-/// ([`removes_client_focus`]).
+/// ([`focus_raised_first`]).
 fn remove_client_focus(
     waiting: &mut VecDeque<Waiting>,
     window: isize,
@@ -924,7 +934,9 @@ fn remove_client_focus(
     let client = Some(Key::MsaaFocus(window, OBJID_CLIENT, 0));
     let at = waiting.len();
     if remove_waiting(waiting, at, |waiting| {
-        waiting.key == client && waiting.thread == thread && removes_client_focus(change, waiting)
+        waiting.key == client
+            && waiting.thread == thread
+            && focus_raised_first((stamp_of(waiting), waiting.arrival), change, true)
     })
     .is_some()
     {
@@ -936,28 +948,80 @@ fn remove_client_focus(
     }
 }
 
-/// Whether a foreground change raised and arrived as `change` says
-/// removes the waiting focus `focus` on its window's client object, which
-/// arrived before it: unless the focus was raised after the change, as
-/// NVDA's limiter, adding events in the order they were raised, removes
-/// only a focus added before the change. In one tick of the clock the
-/// focus arrived first, so it counts as raised first, except that the
-/// hook's copy of a focus was raised after a change the hand-over knows
-/// was raised before the hook went in ([`Arrival::ListenerBeforeHook`]).
-/// A copy with no time, which only a test hands over, is removed.
-fn removes_client_focus(
-    (stamp, arrival): (Option<WinEventStamp>, Option<Arrival>),
-    focus: &Waiting,
+/// Whether `item`, with `key`, raised by `thread` and arrived as
+/// `arrival` says, is a focus on a window's client object behind which a
+/// foreground change of that window from the same thread waits, among the
+/// entries no idle query divides from the back, that was raised after it
+/// ([`focus_raised_first`]): NVDA's limiter, adding events in the order
+/// they were raised, removed that focus when it added the change, so it is
+/// dropped as it arrives.
+fn foreground_waits_after(
+    waiting: &VecDeque<Waiting>,
+    key: Option<&Key>,
+    item: &Item,
+    (thread, arrival): (u32, Option<Arrival>),
 ) -> bool {
-    let (Some(change), Item::Fact(_, Some(raised))) = (stamp, &focus.entry.item) else {
-        return true;
-    };
-    if raised.raised_after(change.time) {
+    let (Some(Key::MsaaFocus(window, OBJID_CLIENT, 0)), Item::Fact(_, stamp)) = (key, item) else {
         return false;
+    };
+    let change = Some(Key::Foreground(*window));
+    let waits = waiting
+        .iter()
+        .rev()
+        .take_while(|waiting| !matches!(waiting.entry.item, Item::IdleQuery { .. }))
+        .any(|waiting| {
+            waiting.key == change
+                && waiting.thread == thread
+                && focus_raised_first(
+                    (*stamp, arrival),
+                    (stamp_of(waiting), waiting.arrival),
+                    false,
+                )
+        });
+    if waits {
+        tracing::debug!(
+            window,
+            thread,
+            "a focus on the window's client object is dropped behind its later foreground change"
+        );
     }
-    !(raised.time == change.time
-        && arrival == Some(Arrival::ListenerBeforeHook)
-        && focus.arrival == Some(Arrival::Hook))
+    waits
+}
+
+/// Whether a focus on a window's client object, raised and arrived as
+/// `focus` says, was raised before the window's foreground change raised
+/// and arrived as `change` says, so that NVDA's limiter, adding events in
+/// the order they were raised, removes it as it adds the change.
+/// `focus_arrived_first` says which reached the intake first. In one tick
+/// of the clock the one that arrived first counts as raised first, except
+/// that the hook's copy of an event was raised after one the hand-over
+/// knows was raised before the hook went in
+/// ([`Arrival::ListenerBeforeHook`]). Without both times, which only a
+/// test hands over, the one that arrived first counts as raised first.
+fn focus_raised_first(
+    (focus, focus_arrival): (Option<WinEventStamp>, Option<Arrival>),
+    (change, change_arrival): (Option<WinEventStamp>, Option<Arrival>),
+    focus_arrived_first: bool,
+) -> bool {
+    let (Some(focus), Some(change)) = (focus, change) else {
+        return focus_arrived_first;
+    };
+    if focus.time != change.time {
+        return focus.raised_before(change.time);
+    }
+    match (focus_arrival, change_arrival) {
+        (Some(Arrival::Hook), Some(Arrival::ListenerBeforeHook)) => false,
+        (Some(Arrival::ListenerBeforeHook), Some(Arrival::Hook)) => true,
+        _ => focus_arrived_first,
+    }
+}
+
+/// The time a waiting `WinEvent` fact was raised, if it carries it.
+fn stamp_of(waiting: &Waiting) -> Option<WinEventStamp> {
+    match &waiting.entry.item {
+        Item::Fact(_, stamp) => *stamp,
+        _ => None,
+    }
 }
 
 /// Removes the first entry for which `matches` holds among those around
@@ -2068,6 +2132,39 @@ mod tests {
                 );
             }
             assert_eq!(handed_out(&intake), vec![1, 2], "{arrival:?} at {time}");
+        }
+    }
+
+    /// The reverse order: the hook's copy of a foreground change arrives
+    /// before the listener's copy of a focus on the window's client object
+    /// raised earlier, a tick earlier or in the same tick and known to be
+    /// raised before the hook went in. NVDA's limiter adds the focus first
+    /// and removes it with the change: only the change is kept.
+    #[test]
+    fn a_focus_raised_before_a_waiting_foreground_change_is_dropped_as_it_arrives() {
+        for (time, arrival) in [(184, Arrival::Listener), (200, Arrival::ListenerBeforeHook)] {
+            let intake = Intake::default();
+            let stamp = |time| Some(WinEventStamp { thread: 7, time });
+            let client_focus = DeliveredFact::MsaaFocus {
+                hwnd: 9,
+                id_object: OBJID_CLIENT,
+                id_child: 0,
+            };
+            for (fact, time, arrival, observed_at_ms) in [
+                (DeliveredFact::Foreground { hwnd: 9 }, 200, Arrival::Hook, 1),
+                (client_focus, time, arrival, 2),
+            ] {
+                intake.push_copy(
+                    Entry {
+                        item: Item::Fact(fact, stamp(time)),
+                        trace: TraceId::mint(),
+                        observed_at_ms,
+                        timing: crate::protocol::EventTiming::default(),
+                    },
+                    arrival,
+                );
+            }
+            assert_eq!(handed_out(&intake), vec![1], "{arrival:?} at {time}");
         }
     }
 

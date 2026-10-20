@@ -762,9 +762,14 @@ navigation step):
 - An import that fails (`Error::Import`, a client-side proxy) marks the
   window the focus is in for its lifetime, and the outpost then reads it
   with its own classic walk, without trying; the mark is forgotten when
-  the window is destroyed, since its handle may be reused. The window is
-  the one known without a call: the focus event's own window, else the
-  application's keyboard focus window when the listener captured it.
+  the window is destroyed, since its handle may be reused. The window
+  marked is the one the operation already holds: for a focus-now query,
+  the window with the keyboard focus; for an element found by the path
+  the focus listener read for the focus, that path's window; for a
+  navigation step, the top-level window of the window the step answered;
+  for a controlled selection, the top-level window of the tracked focus's
+  window; and for the caret read, the text reads and a terminal's screen,
+  the tracked focus's window.
 - A run that fails otherwise is answered by the classic walk for that
   call (`Path::Fallback`) and logged as a warning with the failing
   instruction and its source line.

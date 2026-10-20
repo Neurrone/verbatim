@@ -804,6 +804,10 @@ impl Reading for UiaFocusReading {
         self.last_accepted.abandoned(meta.trace);
     }
 
+    fn kind(&self, (_, _, _, kind, _): &Self::Job) -> FocusEvent {
+        *kind
+    }
+
     fn key<'a>(
         &self,
         (_, _, runtime_id, kind, _): &'a Self::Job,

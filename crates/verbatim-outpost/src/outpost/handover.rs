@@ -55,21 +55,32 @@
 //!   that order too, so had it received this event, raised before the one
 //!   it has, its copy would already be here as this one's twin. This rests
 //!   on every listener copy of a hooked event raised in the tick reaching
-//!   the outpost. The outpost's hook drops what the listener drops for
-//!   having no window or a window with no owner, as NVDA's callback drops
-//!   an invalid window, but a listener copy can still be lost three ways,
-//!   its hook copy then stays unmatched, and a later listener copy raised
-//!   in the same tick is taken as raised before the hook:
+//!   the outpost, and on the outpost's hook keeping every event the
+//!   listener forwards. The outpost's hook drops what the listener drops
+//!   for having no window or a window with no owner, as NVDA's callback
+//!   drops an invalid window, but the two sources can still lose different
+//!   copies of one event:
 //!   - the listener's backlog replaces a waiting fact with a newer one of
-//!     the same element and kind while a write to Core is in flight;
+//!     the same element and kind while a write to Core is in flight, which
+//!     loses the listener's copy;
 //!   - the listener drops an event when it finds no process to route it
-//!     to, as for a console window whose console host it cannot find;
-//!   - the listener drops an event whose window was destroyed after the
-//!     outpost's hook took its copy and before the listener's callback
-//!     ran, each callback reading the window's owner when it runs.
+//!     to, as for a console window whose console host it cannot find,
+//!     which loses the listener's copy;
+//!   - the window is destroyed between the two callbacks' reads of its
+//!     owner, each callback reading it when it runs. When the outpost's
+//!     hook reads first, the listener drops its copy and the hook keeps
+//!     its own. When the listener reads first, it forwards its copy and
+//!     the outpost's hook drops its own.
 //!
-//!   In each case the order can be wrong only among the events of that
-//!   tick.
+//!   A lost listener copy leaves its hook copy unmatched, so a later
+//!   listener copy raised in the same tick is taken as raised before the
+//!   hook. A lost hook copy leaves its listener copy with no twin, and
+//!   while the hook holds an unmatched copy of a later event of the same
+//!   tick, as it usually does since hook copies arrive first, the listener
+//!   copy is taken as raised before the hook, so it and every listener copy
+//!   that arrived before it in that tick go ahead of the hook copies of
+//!   the tick raised before it. In each case the order can be wrong only
+//!   among the events of that tick.
 //!
 //! Pure, so the rules are tested on their own; the outpost holds one under
 //! a lock that its hook's callback and its reader take in turn, and queues

@@ -319,21 +319,38 @@ that arrived before it, go ahead of the rest, which keep their arrival
 order. A copy is known so when it was raised before the clock reading
 taken just before the hook went in, or when it has no twin while the
 hook has an unmatched copy of an event raised in the same tick, whose
-own listener copy would otherwise have arrived first. That listener
-copy can be lost, and the order can then be wrong for events of that
-tick, three ways: the listener's backlog replaces a waiting fact with a
-newer one of the same element and kind while a write is in flight; the
-listener finds no process to route the event to; or the event's window
-is destroyed between the outpost's hook callback and the listener's.
-The outpost's hook drops an event whose window has no owner, as the
+own listener copy would otherwise have arrived first. The two sources
+can lose different copies of one event, and the order can then be
+wrong for events of that tick. The listener loses its copy, leaving the
+hook's unmatched so that a later listener copy of the tick is taken as
+raised before the hook, when its backlog replaces a waiting fact with a
+newer one of the same element and kind while a write is in flight, or
+when it finds no process to route the event to. A window destroyed
+between the two callbacks' reads of its owner loses a copy in either
+direction: when the outpost's hook reads first, the listener drops its
+copy and the hook keeps its own, with the same effect; when the
+listener reads first, it forwards its copy and the hook drops its own,
+so the listener copy has no twin, and while the hook holds an unmatched
+copy of a later event of the same tick, as it usually does since hook
+copies arrive first, it is taken as raised before the hook and goes
+ahead of the hook copies of the tick raised before it, with every
+listener copy that arrived before it in that tick. The outpost's hook drops an event whose window has no owner, as the
 listener does and as NVDA's callback drops an invalid window, so a
 window already gone when both callbacks run loses no copy. Each copy is
 queued under the lock it is judged under, so the intake receives the
-copies in the order they were judged. A
-foreground change removes a focus event waiting on its window's client
-object from the same thread, as NVDA's limiter pops it when the
-foreground event is added (`orderedWinEventLimiter.py`, `addEvent`); the
-hook takes an event on a window object as the client object, as NVDA's
+copies in the order they were judged. NVDA's limiter removes a
+waiting focus event on a window's client object from the same thread
+when it adds the window's foreground event (`orderedWinEventLimiter.py`,
+`addEvent`), and since its one hook adds events in the order they were
+raised, it removes every such focus raised before the change, whichever
+copy reaches Verbatim first. The outpost compares raise times in both
+arrival orders: a foreground change removes such a focus waiting from
+the same thread raised no later than the change, and such a focus that
+arrives after a waiting foreground change of its window and thread
+raised after it is dropped as it arrives. Within one tick the copy that
+arrived first counts as raised first, except that a hook copy was
+raised after a listener copy known to have been raised before the hook
+went in. The hook takes an event on a window object as the client object, as NVDA's
 callback does, so that is the address NVDA's foreground event has.
 The limiter so keeps, in one run, the newest 4 focus and foreground
 events and every older foreground change of another window that its

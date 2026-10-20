@@ -1434,6 +1434,9 @@ pub(crate) trait Reading: Send + Sync + 'static {
     fn moved_on(&self, window: isize) -> bool {
         front_is_another_thread_of_its_application(window)
     }
+    /// The kind of event `job` is, for the test of whether a focus is
+    /// pending ([`Readers::focus_pending`]).
+    fn kind(&self, job: &Self::Job) -> FocusEvent;
     /// The kind of event `job` is and the element it is of, by runtime id,
     /// for NVDA's UIA limiter rule: a newer event of one kind of one
     /// element replaces one still waiting ([`Readers::push`]). `None`, the
@@ -1466,7 +1469,7 @@ struct Running {
     /// When the thread began it.
     started: Instant,
     meta: Meta,
-    /// Its kind, a focus when the job has no key.
+    /// Its kind ([`Reading::kind`]).
     kind: FocusEvent,
     /// The read as the watchdog watches it.
     watched: WatchedRead,
@@ -1726,12 +1729,10 @@ impl<R: Reading> Readers<R> {
                 .as_ref()
                 .is_some_and(|running| running.kind == FocusEvent::Focus)
                 || (app.live.is_some() || Some(*owner) == pid)
-                    && app.queue.iter().any(|queued| {
-                        shared
-                            .reading
-                            .key(&queued.job)
-                            .is_some_and(|(kind, _)| kind == FocusEvent::Focus)
-                    })
+                    && app
+                        .queue
+                        .iter()
+                        .any(|queued| shared.reading.kind(&queued.job) == FocusEvent::Focus)
         })
     }
 
@@ -1918,10 +1919,7 @@ fn next_job<R: Reading>(
             ..
         }) = app.queue.pop_front()
         {
-            let kind = shared
-                .reading
-                .key(&job)
-                .map_or(FocusEvent::Focus, |(kind, _)| kind);
+            let kind = shared.reading.kind(&job);
             // Only a judged read whose window is not yet known learns it, so
             // only it is given what to do then: a selection or a
             // notification is never judged, so it is given nothing.
@@ -2128,7 +2126,7 @@ fn drop_waiting<R: Reading>(
             %pid,
             abandoned,
             dropped,
-            "a UIA focus is dropped as it arrives: its application is past its bound behind its abandoned reads"
+            "every waiting UIA event of the application, of whatever kind, is dropped as one arrives: it is past its bound behind its abandoned reads"
         ),
     }
     for queued in app.queue.drain(..) {
@@ -2227,6 +2225,8 @@ mod tests {
         returned: Mutex<Sender<(u64, WatchedRead)>>,
         finished: Mutex<Sender<ThreadId>>,
         moved_on: AtomicBool,
+        /// Whether its events are notifications rather than focuses.
+        notifications: AtomicBool,
         asked: Mutex<Sender<isize>>,
         hwnd: isize,
         nearest: isize,
@@ -2241,6 +2241,14 @@ mod tests {
 
         fn reader(&self, _: Pid) -> Option<ThreadId> {
             Some(thread::current().id())
+        }
+
+        fn kind(&self, _: &Self::Job) -> FocusEvent {
+            if self.notifications.load(Ordering::SeqCst) {
+                FocusEvent::Notification
+            } else {
+                FocusEvent::Focus
+            }
         }
 
         fn key<'a>(&self, (_, _, element): &'a Self::Job) -> Option<(FocusEvent, &'a [i32])> {
@@ -2369,6 +2377,7 @@ mod tests {
                     returned: Mutex::new(returned_tx),
                     finished: Mutex::new(finished_tx),
                     moved_on: AtomicBool::new(false),
+                    notifications: AtomicBool::new(false),
                     asked: Mutex::new(asked_tx),
                     hwnd,
                     nearest,
@@ -2441,6 +2450,39 @@ mod tests {
             .map(|_| fixture.read_on.recv_timeout(WAIT).expect("a read").1)
             .collect();
         assert!(threads.iter().all(|thread| *thread == threads[0]));
+        assert_eq!(fixture.readers.stop(), 1);
+    }
+
+    /// A notification's check being made is no pending focus: a menu
+    /// opening that arrives meanwhile, of its application or another, is
+    /// kept, as NVDA's `isPendingEvents("gainFocus")` counts no
+    /// notification.
+    #[test]
+    fn a_running_notification_check_is_no_pending_focus() {
+        let fixture = fixture(Duration::from_secs(60));
+        fixture
+            .readers
+            .shared
+            .reading
+            .notifications
+            .store(true, Ordering::SeqCst);
+        let (open, gate) = mpsc::channel();
+        fixture
+            .readers
+            .push(Pid(5), meta(1), (1, Some(gate), Vec::new()));
+        assert_eq!(fixture.read_on.recv_timeout(WAIT).expect("a read").0, 1);
+        assert_eq!(
+            (
+                fixture.readers.focus_pending(Some(Pid(5))),
+                fixture.readers.focus_pending(Some(Pid(6)))
+            ),
+            (false, false)
+        );
+        open.send(()).expect("the read waits");
+        assert_eq!(
+            fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
+            (Pid(5), 1, "read")
+        );
         assert_eq!(fixture.readers.stop(), 1);
     }
 
