@@ -40,8 +40,17 @@
 //!   tried newest first, until one is reported, at the place of the run's
 //!   newest, as NVDA's `pumpAll` collects a run of focus and foreground
 //!   events and tries it newest first when the next accepted event that is
-//!   neither comes; any other entry ends a run, and a foreground change
-//!   with no focus event beside it is a run of its own. A run whose events
+//!   neither comes. Only an MSAA event NVDA's pump receives ends a run,
+//!   menu openings among them; entries its pump never receives neither
+//!   join a run nor end it, and are handled at their own places, before
+//!   the run when they arrived before its newest: UIA events and focus
+//!   reads, Core's queries and housekeeping, an object destroyed, and the
+//!   console host's events and a text control's selection change, which
+//!   NVDA hooks apart or not at all (`ends_a_run`). An MSAA event the
+//!   worker's acceptance test will drop still ends a run, where NVDA's pump
+//!   filters it out first, since that test is made against the foreground
+//!   window when the event is handled. A foreground change with no focus
+//!   event beside it is a run of its own. A run whose events
 //!   all carry the time Windows raised them is tried in that order, which
 //!   is the order NVDA's one hook receives them in, since an outpost can
 //!   receive the listener's copy of an event after its own hook's copy of
@@ -49,9 +58,13 @@
 //!   change of the batch is tried in its run, as NVDA tries each; a newer
 //!   one of the same window replaces one waiting, as NVDA's limiter keeps
 //!   one foreground event per window, object and thread. Every UIA focus
-//!   event is handled in turn at its own place, as NVDA's UIA handler queues each one (the worker's
-//!   arbitration then drops a focus whose backend does not own the window,
-//!   as NVDA's separate MSAA and UIA paths do). The newest menu opening
+//!   event is handled in turn at its own place, as NVDA's UIA handler
+//!   queues each one as it arrives, on a path apart from the MSAA pump: one
+//!   that arrived between two events of an MSAA run is handled before the
+//!   run (the worker's arbitration then drops a focus whose backend does
+//!   not own the window, as NVDA's separate MSAA and UIA paths do, so it
+//!   is never spoken beside an MSAA focus of the same window). The newest
+//!   menu opening
 //!   from each backend is handled last: NVDA keeps only its newest MSAA
 //!   menu event, a menu end included, which Verbatim sends elsewhere, and
 //!   tries it after the focus events; NVDA's UIA menu opening is instead
@@ -1089,15 +1102,16 @@ fn admit(
 /// Plans one batch from everything that was waiting, in the order it
 /// arrived: drops events from hung windows, applies the batch limits, tries
 /// each consecutive run of MSAA focus events and foreground changes newest
-/// first at the place of its newest ([`try_newest_first`]), handles each
-/// UIA focus event at its
-/// own place, and moves the newest menu opening from each backend to the
-/// end, ahead of an idle query that ends the batch.
+/// first at the place of its newest ([`try_newest_first`]), a run ended
+/// only by an MSAA event of NVDA's pump ([`ends_a_run`]), handles every
+/// other entry, each UIA focus event among them, at its own place, and
+/// moves the newest menu opening from each backend to the end, ahead of an
+/// idle query that ends the batch.
 ///
 /// NVDA's `pumpAll` walks the flushed events in order, collecting focus and
-/// foreground events, and when another event comes processes those
-/// collected newest first, stopping at the first valid one, before that
-/// event.
+/// foreground events, and when another accepted event comes processes
+/// those collected newest first, stopping at the first valid one, before
+/// that event.
 fn plan(
     waiting: Vec<Waiting>,
     focused: Option<&Object>,
@@ -1110,17 +1124,20 @@ fn plan(
     };
     let msaa_menu = newest(|key| matches!(key, Key::MenuPopup(..)));
     // Each consecutive run of MSAA focus events and foreground changes,
-    // oldest first, by where its newest is: any other entry ends a run.
+    // oldest first, by where its newest is: an MSAA event of NVDA's pump
+    // ends a run ([`ends_a_run`]), and every other entry keeps its place
+    // without ending it.
     let mut runs: HashMap<usize, Vec<usize>> = HashMap::new();
     let mut run: Vec<usize> = Vec::new();
     for (index, item) in kept.iter().enumerate() {
-        match item.key {
+        match &item.key {
             Some(Key::MsaaFocus(..) | Key::Foreground(_)) => run.push(index),
-            _ => {
+            key if ends_a_run(key.as_ref()) => {
                 if let Some(&last) = run.last() {
                     runs.insert(last, std::mem::take(&mut run));
                 }
             }
+            _ => {}
         }
     }
     if let Some(&last) = run.last() {
@@ -1178,6 +1195,32 @@ fn plan(
     planned.extend(deferred.into_iter().map(Planned::Menu));
     planned.extend(query);
     planned
+}
+
+/// Whether an entry keyed `key` ends a run of MSAA focus events and
+/// foreground changes: an MSAA event NVDA's `pumpAll` receives, as only
+/// the next accepted event of its pump that is neither a focus nor a
+/// foreground event ends its run. Entries NVDA's pump never receives
+/// neither join a run nor end it, and are handled at their own places:
+/// UIA events and focus reads, which NVDA's UIA handler queues on its own
+/// path; Core's queries and housekeeping, which have no counterpart; an
+/// object destroyed, which NVDA's event callback handles as it arrives;
+/// the console host's updates and caret, which NVDA's console support
+/// hooks apart; and a text control's selection change, which NVDA does not
+/// hook. Whether the worker's acceptance test will drop an MSAA event,
+/// which NVDA's pump filters out before its run, is known only against the
+/// foreground window when it is handled, so such an event ends the run.
+fn ends_a_run(key: Option<&Key>) -> bool {
+    match key {
+        Some(Key::Msaa(kind, ..)) => ![
+            WinEventKind::ConsoleUpdate as u8,
+            WinEventKind::ConsoleCaret as u8,
+            WinEventKind::TextSelectionChange as u8,
+        ]
+        .contains(kind),
+        Some(Key::MenuPopup(..)) => true,
+        _ => false,
+    }
 }
 
 /// Puts `run`, indexes into `kept` in the order they arrived, in the order
@@ -1741,6 +1784,123 @@ mod tests {
         let planned = plan(waiting, None, never_hung);
         assert_eq!(focus_groups(&planned), vec![vec![1], vec![2]]);
         assert_eq!(tried(planned, &[]), vec![1, 30, 2, 40]);
+    }
+
+    /// Core's housekeeping and queries, which NVDA's `WinEvent` stream never
+    /// holds, neither join nor end a run: they are handled at their places,
+    /// before the run, and the run, its foreground change newest, is tried
+    /// as one.
+    #[test]
+    fn core_entries_between_two_focus_facts_neither_join_nor_end_their_run() {
+        let held = Item::NodesHeld {
+            nodes: Vec::new(),
+            acknowledged: 0,
+        };
+        let (key, category, hwnd) = classify(&held);
+        let held = Waiting {
+            key,
+            category,
+            hwnd,
+            thread: 0,
+            marker: None,
+            entry: Entry {
+                item: held,
+                trace: TraceId::mint(),
+                observed_at_ms: 2,
+                timing: crate::protocol::EventTiming::default(),
+            },
+        };
+        let waiting = vec![
+            msaa_focus(1, 1),
+            held,
+            query(1),
+            fact(DeliveredFact::Foreground { hwnd: 9 }, 3),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
+        assert_eq!(tried(planned, &[3]), vec![2, 0, 3, 30]);
+    }
+
+    /// A UIA event, which NVDA's MSAA pump never sees, neither joins nor
+    /// ends a run: it is handled at its place, before the run.
+    #[test]
+    fn a_uia_event_between_two_focus_facts_neither_joins_nor_ends_their_run() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            fact(
+                DeliveredFact::UiaSelection {
+                    hwnd: 3,
+                    focus_window: 0,
+                    snapshot: snapshot(vec![42]),
+                },
+                2,
+            ),
+            msaa_focus(3, 3),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
+        assert_eq!(observed(&planned), vec![2, 3, 1, 30]);
+    }
+
+    /// A UIA focus read between two focus facts of a run is handled on its
+    /// own at its place, before the run, which it does not end.
+    #[test]
+    fn a_uia_focus_between_two_focus_facts_is_handled_before_their_run() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            fact(uia_focus(0, 3, vec![42]), 2),
+            msaa_focus(3, 3),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![2], vec![3, 1]]);
+        assert_eq!(observed(&planned), vec![2, 3, 1, 30]);
+    }
+
+    /// The MSAA events NVDA's pump never receives neither join nor end a
+    /// run: an object destroyed, which NVDA's callback handles as it
+    /// arrives, the console host's update, which its console support hooks
+    /// apart, and a text control's selection change, which it does not
+    /// hook.
+    #[test]
+    fn msaa_events_outside_nvdas_pump_neither_join_nor_end_a_run() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            msaa(WinEventKind::Destroy, 3, 20),
+            msaa(WinEventKind::ConsoleUpdate, 4, 21),
+            msaa(WinEventKind::TextSelectionChange, 5, 22),
+            msaa_focus(3, 3),
+            msaa(WinEventKind::NameChange, 3, 30),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![3, 1]]);
+        assert_eq!(observed(&planned), vec![20, 21, 22, 3, 1, 30]);
+    }
+
+    /// An MSAA event of NVDA's pump that is neither a focus nor a
+    /// foreground change ends a run, a menu opening, which still goes
+    /// last, and a caret event among them.
+    #[test]
+    fn an_msaa_event_of_another_kind_ends_a_run() {
+        let waiting = vec![
+            msaa_focus(1, 1),
+            fact(
+                DeliveredFact::MenuPopup {
+                    hwnd: 3,
+                    id_object: -4,
+                    id_child: 0,
+                },
+                2,
+            ),
+            msaa_focus(3, 3),
+            msaa(WinEventKind::Caret, 3, 40),
+            msaa_focus(5, 5),
+        ];
+        let planned = plan(waiting, None, never_hung);
+        assert_eq!(focus_groups(&planned), vec![vec![1], vec![3], vec![5]]);
+        assert_eq!(observed(&planned), vec![1, 3, 40, 5, 2]);
     }
 
     #[test]

@@ -152,8 +152,10 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   whose window is not the foreground window, or that NVDA's tests against
   the last focus queued drop), the next older one is tried, through every
   event the limiter kept: its four focus events, and a foreground change
-  kept as one of its thread's other events besides (with the difference
-  "MSAA winevent flood control" records).
+  kept as one of its thread's other events besides. A run is ended only
+  by an MSAA event NVDA's pump receives; UIA events and focus reads and
+  Core's queries and housekeeping keep their own places without ending
+  it, with the differences "MSAA winevent flood control" records.
 - The fake focus after a menu or the Alt+Tab switcher closes is skipped
   only when a focus observed after the close was actually applied; a focus fact that
   is dropped or unreadable does not skip it.
@@ -325,13 +327,17 @@ window, which this outpost cannot see, is left to the reducer, which
 ignores a foreground change of the window the focus is already in.
 Mockapp's `msaa_events` tests pin the first test and the replacement by
 another application's focus, and the worker's unit tests both tests.
+Entries NVDA's pump never receives neither join a run nor end it, and
+are handled at their own places: UIA events and UIA focus reads, Core's
+queries, its list of held nodes and its caret requests, an object
+destroyed, the console host's events, and a text control's selection
+change (Dickson, 2026-10-20).
 Different: events from a window the system reports hung are dropped
-before any read; and, pending Dickson's decision and not built, a run
-ends on entries NVDA's run never sees, which are UIA events and UIA
-focus reads, Core's queries, its list of held nodes and its caret
-requests, and MSAA events NVDA's acceptance test filters out before its
-run, while a menu end and a switch end, which end NVDA's run, do not end
-one in an outpost, since the focus listener takes them. Before an
+before any read; an MSAA event the outpost's acceptance test will drop
+ends a run, where NVDA's pump filters it out before its run, since the
+test is made against the foreground window when the event is handled;
+and a menu end and a switch end, which end NVDA's run, do not end one in
+an outpost, since the focus listener takes them. Before an
 outpost hears them, the focus
 listener coalesces its facts by the same one-per-object-and-kind rule,
 and the supervisor holds the facts that arrive while an outpost starts

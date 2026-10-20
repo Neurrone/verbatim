@@ -663,8 +663,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     (`IsHungAppWindow`) are dropped before any read. Each consecutive run
     of MSAA focus events and foreground changes, every foreground change
     of the batch among them, is tried newest first until one is reported,
-    at the place of the run's newest, as NVDA's `pumpAll` does (any other
-    entry ends a run; `Planned::handle` dispatches each planned item); a
+    at the place of the run's newest, as NVDA's `pumpAll` does (only an
+    MSAA event NVDA's pump receives ends a run, and every other entry is
+    handled at its own place, `ends_a_run`; `Planned::handle` dispatches
+    each planned item); a
     newer foreground change of the same window replaces one waiting, as
     NVDA's limiter keeps one per window;
     every UIA focus event is handled at its own place; and the newest menu
