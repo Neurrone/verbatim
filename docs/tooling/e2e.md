@@ -259,6 +259,9 @@ once its outpost was retired after two minutes without attention is
 announced as before, through a new outpost; it takes about three
 minutes), `explorer_folder_window` (a File Explorer window on a harness
 folder), `settings_system_page` (the Settings app's System page),
+`settings_search_suggestions` (the Settings app's search suggestions,
+read as the selection moves through them while the focus stays in the
+search box),
 `lock_key_announcements` (Scroll Lock pressed twice is announced on,
 then off, or the reverse),
 `rapid_tabbing_in_settings` (a burst of Tab and Shift+Tab presses in

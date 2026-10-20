@@ -132,11 +132,20 @@ names in its UIA ControllerFor relation, NVDA reports that item as it
 reports a focus, without moving focus; this is how it reads the Start
 menu's search results and the Settings app's search suggestions as
 the user types and arrows ("Selection in a list the focus controls"
-in [Event handling](../nvda/events.md)). Verbatim: **partial**. Matched
-for UIA, with reducer tests, and checked live on the Settings app's
-search suggestions ("Display settings 1 of 25" and so on as the user
-arrows, with the focus staying in the search box); no scenario pins it
-yet. The ControllerFor relation is read live for each selection event,
+in [Event handling](../nvda/events.md)). Verbatim: **partial**.
+**matched (verified)** for moving the selection through UIA suggestions,
+with reducer tests and the `settings_search_suggestions` scenario, whose
+arrowing through the Settings app's search suggestions for "sound"
+("Sound mixer options 2 of 22", "Themes and related settings 3 of 22",
+and back) is what NVDA says, apart from the search box's line NVDA also
+says for each arrow, which Verbatim leaves unsaid for a caret key that
+moves nothing ([text](text.md), "TextInfo-equivalent layer"). Different:
+the first suggestion, which the Settings app selects itself as its list
+opens, is spoken by NVDA with the name its event's element carried,
+which it does not have yet ("list item 1 of 22", the same in two
+comparisons and a capture on 2026-10-20), and by Verbatim with the name
+read when the selection is handled ("Sound settings 1 of 22").
+The ControllerFor relation is read live for each selection event,
 as NVDA reads it (Dickson, 2026-10-10), in one remote operation with
 the search for the selected element. Not yet built: Start's results
 that are in a Chromium document NVDA reads through IA2, which belong to

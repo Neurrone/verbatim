@@ -46,6 +46,7 @@ scenario_tests! {
     lock_key_announcements
     explorer_folder_window
     settings_dialog_keys
+    settings_search_suggestions
     settings_system_page
     notepad_editing
     text_box_editing

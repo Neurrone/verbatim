@@ -210,10 +210,8 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   "Time limits that hold".
 - What remains of the audits' items 10 and 11 (Dickson, 2026-10-20;
   items 8 and 9 are done, `docs/roadmap-done.md`):
-  - Item 11, in one more change: an end-to-end scenario pinning selection in a list the focus
-    controls, Settings' search suggestions
-    (`docs/parity/changes-and-selection.md`, "Selection in a list the
-    focus controls"). Also left from the item, deferred until a capture shows
+  - Item 11, its three changes done (`docs/roadmap-done.md`); left from
+    it, deferred until a capture shows
     speech that should have been cut (Dickson, 2026-10-20), since the
     spoken words already match: the staging windows' focus, which
     Verbatim drops, so speech is not cut at the staging window, where
