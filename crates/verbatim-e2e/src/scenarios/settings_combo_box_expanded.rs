@@ -14,6 +14,15 @@
 //! no input; it is announced inside its Additional settings group, as the
 //! capture announces it when Shift+Tab reaches it from outside the group.
 //!
+//! Local-only: GitHub's runner's Settings opens the page with its focus on
+//! "Location Settings link" instead of the Region button (run 39686251059
+//! heard "Settings", "Settings window", "Location Settings link"), a
+//! difference in the runner's Settings, not in Verbatim. The opening is
+//! not read from the agent, as `settings_search_suggestions` reads its
+//! suggestions' names, because the agent's reads of the focus give its
+//! name and no role, and composing the spoken role word here would copy
+//! Verbatim's role vocabulary into the scenario.
+//!
 //! Settings raises the combo box's expand state change before its item's
 //! focus, but the change reaches the outpost through its own subscription
 //! and the focus through the focus listener, so which the outpost takes in
