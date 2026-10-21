@@ -965,6 +965,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   report's selection is kept for the next to compare with, and with the
   change in general terms when the node's text changed since
   (`ReportedCaret::content_changed` and `new_selection`);
+  `caret_report_checking` is `caret_report_since` that also asks a given
+  check, once the caret is read and only for a comparison with a
+  selection in either report, whether an unnoted change of the text
+  waits, and then makes the comparison in general terms;
   `Anchors::note_content_changed` notes such a change, and
   `NodeText::forget_selection` and `Anchors::forget_selection` make the
   next report carry no change. `Anchors` keeps one backend's anchors, by
@@ -1976,18 +1980,18 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     in general terms, as NVDA's `hasContentChangedSinceLastSelection`
     makes it (`docs/parity/text.md`, "TextInfo-equivalent layer"): the
     node's note is set when the control's value change is handled
-    (`text_reads::note_value_change`), and at a caret event while that
-    value change still waits in the intake
-    (`text_reads::value_change_waiting`: the Windows Forms text box raises
-    its caret's move before its value change), and is cleared by the next
+    (`text_reads::note_value_change`), and is cleared by the next
     report, a caret key's answer included, that has a selection to compare
-    with, and by a focus. A caret key's answer that compares selections
-    is made in general terms too when the control's value change waits as
-    the answer is made (`CaretSignal::text_change_waiting`): the control
-    raised it while handling the key, before the read that found the
-    evidence returned, so the check first waits for the `WinEvent` thread
-    to handle every event delivered to it (`Nudger::sync`); the Windows
-    Forms text box's Control+X is answered so. Such a comparison (`text::general_changes`)
+    with, and by a focus. A caret event's report and a caret key's answer
+    that compare a selection, a kept one or a new one that holds text,
+    are made in general terms too when the control's value change waits
+    once the caret is read (`text_reads::value_change_raised`, through
+    `caret_report_checking` and `CaretSignal::text_change_waiting`): the
+    Windows Forms text box raises its caret's move before its value
+    change, and may raise the value change while it answers the read, so
+    the check first waits for the `WinEvent` thread to handle every event
+    delivered to it (`Nudger::sync`); "x" typed over a selection and the
+    text box's Control+X are said so. Such a comparison (`text::general_changes`)
     compares the ends only, and sends each change with no text, whether
     something was selected or unselected, with `content_changed` and the
     whole new selection's text in `new_selection`, the one text it reads,

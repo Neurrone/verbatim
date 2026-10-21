@@ -73,10 +73,12 @@ nothing. `crates/mockapp/src/stdin.rs` documents each command in full.
   whose text raises no caret event of its own.
 - `set-text <id> <text>` (UIA only) replaces a text node's text, raising
   no event; `\n` in the text is a line feed and `\\` a backslash.
-- `write-on-read <id> <text>` (UIA only) writes the text at the caret,
-  and moves the caret past it, the next time any range of the node's text
-  is read, as a terminal writes a typed character in the middle of a
-  client's read.
+- `write-on-read <id> <text>` writes the text at the caret, and moves the
+  caret past it, the next time any range of a UIA node's text is read, as
+  a terminal writes a typed character in the middle of a client's read; in
+  the MSAA backend, it types the text over the edit control's selection
+  and raises the control's value change the next time another thread
+  reads its text or selection.
 - `text-changed <id>` (UIA only) raises UIA's text changed event from a
   text node.
 - `screen <id> <rows>` (UIA only) puts only the last `rows` lines of a

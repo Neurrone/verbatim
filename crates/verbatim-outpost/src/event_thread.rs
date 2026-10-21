@@ -296,18 +296,24 @@ mod tests {
     /// An event thread hooking this process's name and value changes, its
     /// nudge `1` suspending the name changes and `0` hooking every kind
     /// again: a change of its hooks while it runs, as an outpost makes
-    /// them. Each event delivered is sent on `events`, and the outcome of
-    /// each change on `changes`.
+    /// them. Each event the calling thread raised is sent on `events` as
+    /// it is delivered, and the outcome of each change on `changes`.
     fn event_thread(
         events: Sender<WinEventKind>,
         changes: Sender<Result<(), String>>,
     ) -> EventThread {
+        // Only the calling test's events: the hooks see every thread of
+        // this process, and the tests run at once.
+        // SAFETY: GetCurrentThreadId is always sound.
+        let test_thread = unsafe { GetCurrentThreadId() };
         let make: MakeHandlers = Arc::new(move || {
             let events = events.clone();
             let changes = changes.clone();
             EventHandlers {
                 win_event: Box::new(move |event| {
-                    let _ = events.send(event.kind);
+                    if event.thread == test_thread {
+                        let _ = events.send(event.kind);
+                    }
                 }),
                 nudge: Some(Box::new(move |word, _| {
                     let suspended: &[WinEventKind] = if word == 1 {
@@ -326,14 +332,11 @@ mod tests {
         thread
     }
 
-    #[test]
-    fn kinds_are_unhooked_and_hooked_again_while_the_thread_runs() {
-        let (events_tx, events) = unbounded();
-        let (changes_tx, changes) = unbounded();
-        let thread = event_thread(events_tx, changes_tx);
-        // SAFETY: a hidden static control of this thread's, with no
-        // parent, destroyed below on the same thread.
-        let window = unsafe {
+    /// A hidden static control of this thread's, with no parent, to raise
+    /// events from; the caller destroys it on the same thread.
+    fn window() -> windows::Win32::Foundation::HWND {
+        // SAFETY: a window with no parent, made on this thread.
+        unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
                 w!("STATIC"),
@@ -349,7 +352,34 @@ mod tests {
                 None,
             )
         }
-        .expect("a window to raise events from");
+        .expect("a window to raise events from")
+    }
+
+    /// A `WinEvent` raised before a sync is delivered before the sync
+    /// returns: the event is queued to the thread as it is raised, ahead of
+    /// the sync's message, which is what a check behind a sync relies on
+    /// to see every event the application raised before it.
+    #[test]
+    fn an_event_raised_before_a_sync_is_delivered_before_it_returns() {
+        let (events_tx, events) = unbounded();
+        let (changes_tx, _changes) = unbounded();
+        let thread = event_thread(events_tx, changes_tx);
+        let window = window();
+        // SAFETY: raising an event for a live window of this thread.
+        unsafe { NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, window, OBJID_CLIENT.0, 0) };
+        thread.nudger().sync();
+        assert_eq!(events.try_recv(), Ok(WinEventKind::ValueChange));
+        drop(thread);
+        // SAFETY: the window made above, on this thread.
+        unsafe { DestroyWindow(window) }.expect("the window destroyed");
+    }
+
+    #[test]
+    fn kinds_are_unhooked_and_hooked_again_while_the_thread_runs() {
+        let (events_tx, events) = unbounded();
+        let (changes_tx, changes) = unbounded();
+        let thread = event_thread(events_tx, changes_tx);
+        let window = window();
         // A name change, then a value change, from the window's client
         // area: delivered in the order raised.
         let raise_both = || {

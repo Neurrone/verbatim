@@ -8,13 +8,27 @@
 //! Line breaks in the fixture's text become the control's carriage return
 //! and line feed pairs.
 
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::Controls::EM_SETSEL;
+use std::cell::RefCell;
+
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::UI::Accessibility::NotifyWinEvent;
+use windows::Win32::UI::Controls::{EM_REPLACESEL, EM_SETSEL};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, ES_AUTOVSCROLL, ES_MULTILINE, FindWindowExW, HMENU, SendMessageW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETTEXT, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
+    CallWindowProcW, CreateWindowExW, ES_AUTOVSCROLL, ES_MULTILINE, EVENT_OBJECT_VALUECHANGE,
+    FindWindowExW, GWLP_WNDPROC, HMENU, InSendMessage, OBJID_CLIENT, SendMessageW,
+    SetWindowLongPtrW, WINDOW_EX_STYLE, WINDOW_STYLE, WM_GETTEXT, WM_GETTEXTLENGTH, WM_SETTEXT,
+    WNDPROC, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{PCWSTR, w};
+
+thread_local! {
+    /// The edit control's own window procedure, once [`write_on_read`]
+    /// has put [`read_watching_proc`] in front of it.
+    static EDIT_PROC: RefCell<Option<isize>> = const { RefCell::new(None) };
+    /// The text [`write_on_read`] waits to type, as another thread next
+    /// reads the control's text.
+    static WRITE_ON_READ: RefCell<Option<String>> = const { RefCell::new(None) };
+}
 
 /// The edit control's window class.
 const EDIT_CLASS: PCWSTR = w!("EDIT");
@@ -115,4 +129,69 @@ pub(crate) fn select(edit: HWND, start: usize, end: usize) {
             Some(LPARAM(isize::try_from(end).unwrap_or(isize::MAX))),
         );
     }
+}
+
+/// Types `text` over the edit control's selection the next time another
+/// thread reads its text or selection (`write-on-read`), before the read
+/// is answered, and raises the control's value change: a typed character
+/// the application handles while a client's read of the caret event
+/// before it is on its way, the value change raised during that read.
+pub(crate) fn write_on_read(edit: HWND, text: &str) {
+    WRITE_ON_READ.with_borrow_mut(|waiting| *waiting = Some(text.to_owned()));
+    EDIT_PROC.with_borrow_mut(|original| {
+        if original.is_none() {
+            // SAFETY: `edit` is this thread's own control, and
+            // `read_watching_proc` passes every message on to the
+            // procedure it replaces.
+            *original = Some(unsafe {
+                SetWindowLongPtrW(edit, GWLP_WNDPROC, read_watching_proc as *const () as isize)
+            });
+        }
+    });
+}
+
+/// The edit control's window procedure once [`write_on_read`] is used:
+/// types the waiting text at a read sent from another thread, then passes
+/// every message on to the control's own procedure.
+///
+/// # Safety
+///
+/// Installed only as the edit control's window procedure by
+/// [`write_on_read`].
+unsafe extern "system" fn read_watching_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    // The control's text and selection messages, `EM_GETSEL` to
+    // `EM_GETIMESTATUS`, and its text.
+    let is_read = matches!(msg, WM_GETTEXT | WM_GETTEXTLENGTH | 0x00B0..=0x00D9);
+    if is_read
+        // SAFETY: InSendMessage has no preconditions.
+        && unsafe { InSendMessage() }.as_bool()
+        && let Some(text) = WRITE_ON_READ.with_borrow_mut(Option::take)
+    {
+        let typed: Vec<u16> = text.encode_utf16().collect();
+        let contents = contents(&typed);
+        // SAFETY: `contents` is a live, NUL-terminated buffer for the
+        // duration of the call; `hwnd` is this thread's own control.
+        unsafe {
+            SendMessageW(
+                hwnd,
+                EM_REPLACESEL,
+                Some(WPARAM(0)),
+                Some(LPARAM(contents.as_ptr() as isize)),
+            );
+        }
+        // SAFETY: `hwnd` is this thread's own control, which answers for
+        // its client object.
+        unsafe { NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, hwnd, OBJID_CLIENT.0, 0) };
+    }
+    let original = EDIT_PROC.with_borrow(|original| original.unwrap_or_default());
+    // SAFETY: `original` is the control's own procedure, stored before this
+    // one was installed.
+    let procedure: WNDPROC = unsafe { std::mem::transmute::<isize, WNDPROC>(original) };
+    // SAFETY: passes the message on to the procedure this one replaced.
+    unsafe { CallWindowProcW(procedure, hwnd, msg, wparam, lparam) }
 }

@@ -115,18 +115,7 @@ impl CaretSignal for Signal<'_> {
     /// thread to handle every event delivered to it first. A UIA text's
     /// change is never noted.
     fn text_change_waiting(&mut self) -> bool {
-        if self
-            .context
-            .uia_registry
-            .runtime_id_of(self.node_id)
-            .is_some()
-        {
-            return false;
-        }
-        if let Some(nudger) = self.context.event_thread.get() {
-            nudger.sync();
-        }
-        value_change_waiting(self.context, self.node_id)
+        value_change_raised(self.context, self.node_id)
     }
 }
 
@@ -536,22 +525,6 @@ pub(super) fn report_caret(
         CaretFor::Terminal => LastSelection::Ignore,
         CaretFor::Event => LastSelection::Compare,
     };
-    // An edit control's value change waiting behind this caret event: the
-    // text changed since the selection was last reported, so the change is
-    // spoken in general terms, as after a value change handled first. NVDA's
-    // edit control notes the content changed when a value change for it is
-    // pending at its caret event (`Edit.event_caret`,
-    // `nvda/source/NVDAObjects/window/edit.py` 1068 to 1084). A UIA text
-    // change is never noted: NVDA handles UIA's text changed event as a
-    // text change only for Word and the two terminals
-    // (`nvda/source/UIAHandler/__init__.py` 145 to 151 and 778 to 799), so
-    // a UIA text's comparison always reads the old selection's range as it
-    // now is.
-    if purpose == CaretFor::Event && value_change_waiting(context, node_id) {
-        context
-            .edit_anchors()
-            .note_content_changed(node_id.number());
-    }
     let formats = purpose == CaretFor::Focus;
     context.caret_read(node_id);
     let report = match source {
@@ -578,11 +551,28 @@ pub(super) fn report_caret(
         }
         Source::Edit(mut source) => {
             let mut anchors = context.edit_anchors();
-            text::caret_report_since(
+            // An edit control's value change waiting behind this caret
+            // event: the text changed since the selection was last
+            // reported, so the change is spoken in general terms, as after
+            // a value change handled first. NVDA's edit control notes the
+            // content changed when a value change for it is pending at its
+            // caret event (`Edit.event_caret`,
+            // `nvda/source/NVDAObjects/window/edit.py` 1068 to 1084). The
+            // check is made once the caret is read, behind the `WinEvent`
+            // thread's queue ([`value_change_raised`]): the control may
+            // raise the change while it answers the read, as the Windows
+            // Forms text box raises a typed character's after its caret
+            // event. A UIA text change is never noted: NVDA handles UIA's
+            // text changed event as a text change only for Word and the
+            // two terminals (`nvda/source/UIAHandler/__init__.py` 145 to
+            // 151 and 778 to 799), so a UIA text's comparison always reads
+            // the old selection's range as it now is.
+            text::caret_report_checking(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
                 (formats, None, last),
+                &mut || purpose == CaretFor::Event && value_change_raised(context, node_id),
             )
             .map(|read| {
                 let (report, selection) = selection_report(read);
@@ -634,6 +624,22 @@ pub(super) fn note_value_change(context: &Context, node_id: NodeId) {
     context
         .edit_anchors()
         .note_content_changed(node_id.number());
+}
+
+/// Whether a value change of `node_id`, an edit control's client area,
+/// raised before now waits in the intake: the check waits for the
+/// `WinEvent` thread to handle every event delivered to it first, one wake
+/// of that thread and no call to the application, since the control may
+/// have raised it while it answered a read the caller just made. A UIA
+/// text's change is never checked for.
+fn value_change_raised(context: &Context, node_id: NodeId) -> bool {
+    if context.uia_registry.runtime_id_of(node_id).is_some() {
+        return false;
+    }
+    if let Some(nudger) = context.event_thread.get() {
+        nudger.sync();
+    }
+    value_change_waiting(context, node_id)
 }
 
 /// Whether a value change of `node_id`, an edit control's client area,

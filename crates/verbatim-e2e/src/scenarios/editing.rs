@@ -121,14 +121,15 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-textbox-1-type-over.txt`
     // and `part3b-textbox-2-cut.txt`): "x" typed over the selected word is
     // echoed, then the selection is removed; so is the line cut with
-    // Control+X. The "x" typed after it changes no selection, so the cut's
-    // words are the only ones before it.
+    // Control+X, and nothing more, once Verbatim reports the key handled
+    // and itself idle. The "x" typed after it changes no selection.
     press(scenario, "control+home", &["alpha beta gammaelta epsilon"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "x", &["x", "selection removed"]);
     press(scenario, "control+home", &["xbeta gammaelta epsilon"]);
     press(scenario, "shift+end", &["xbeta gammaelta epsilon selected"]);
     press(scenario, "control+x", &["selection removed"]);
+    scenario.expect_nothing_more();
     press(scenario, "x", &["x"]);
 }
 
@@ -184,8 +185,8 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`
     // and `part3b-notepad-2.txt`): "x" typed over the selected word is
     // echoed, then unselected, the old range holding it now; the line cut
-    // with Control+X says nothing, its old range now empty, so the echo of
-    // the "x" typed next is the next thing heard.
+    // with Control+X says nothing, its old range now empty, once Verbatim
+    // reports the key handled and itself idle.
     //
     // Notepad's spell checker marks a misspelt word a moment after the
     // caret leaves it, raising no event, and never while the caret is in
@@ -193,20 +194,16 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // Control+Home here reads it, and marked once the caret has left it;
     // "xbeta" stays unmarked while the caret follows its "x". Before the
     // line is read again, the agent reads the marks through UI Automation,
-    // independently of Verbatim, and the scenario fails unless "gammaelta"
-    // alone is marked; the line is then read with its error, as NVDA reads
+    // independently of Verbatim, until "gammaelta" alone is marked, and the
+    // scenario fails if it is not within the harness's step bound; the line is then read with its error, as NVDA reads
     // it after the same keys
     // (`target/e2e-evidence/m42-desktop-4-2026-10-22/notepad-cut-after-typing-over.txt`).
     press(scenario, "control+home", &["alpha beta gammaelta epsilon"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "x", &["x", "x unselected"]);
-    assert_eq!(
-        scenario
-            .misspelt_words()
-            .expect("the agent reads the marked words"),
-        ["gammaelta"],
-        "the words Notepad's spell checker marked once the caret left them"
-    );
+    scenario
+        .wait_for_misspelt_words(&["gammaelta"])
+        .expect("Notepad's spell checker marks the words the caret left");
     press(
         scenario,
         "control+home",
@@ -218,6 +215,7 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         &["xbeta gammaelta epsilon  selected"],
     );
     scenario.send_keys(&["control+x"]).expect("sends control+x");
+    scenario.expect_nothing_more();
     press(scenario, "x", &["x"]);
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)

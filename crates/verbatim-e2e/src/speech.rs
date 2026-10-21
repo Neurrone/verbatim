@@ -2371,9 +2371,12 @@ mod tests {
         ]);
         let failed = failure(move || speech.expect(&["first", "second"]));
         assert_eq!(failed.trace, Some(heard_first));
-        assert!(failed.report(&timeline, Ok(&[])).contains(&format!(
-            "the failing step's trace, {heard_first}: no log line carries it"
-        )));
+        assert_eq!(
+            trace_lines_in(&failed.report(&timeline, Ok(&[]))),
+            [format!(
+                "the failing step's trace, {heard_first}: no log line carries it"
+            )]
+        );
 
         let timeline = Timeline::new();
         let mut speech = collector_on(
@@ -2384,9 +2387,21 @@ mod tests {
         timeline.push_keys(&["downarrow"]);
         let failed = failure(move || speech.expect(&["after"]));
         assert_eq!(failed.trace, None);
-        assert!(failed.report(&timeline, Ok(&[])).contains(
-            "the failing step's trace: none, since the step heard nothing that carries a trace ID"
-        ));
+        assert_eq!(
+            trace_lines_in(&failed.report(&timeline, Ok(&[]))),
+            [
+                "the failing step's trace: none, since the step heard nothing that carries a trace ID"
+            ]
+        );
+    }
+
+    /// The lines of a failure's report that say the failing step's trace.
+    fn trace_lines_in(report: &str) -> Vec<String> {
+        report
+            .lines()
+            .filter(|line| line.starts_with("the failing step's trace"))
+            .map(str::to_owned)
+            .collect()
     }
 
     #[test]

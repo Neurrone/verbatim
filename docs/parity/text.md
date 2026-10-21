@@ -255,9 +255,10 @@ Differences:
   before it or its value change waits as the key is answered, since NVDA
   answers the key at the same caret event (mockapp's
   `an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms`).
-  A key outside the caret table whose answer says so, Control+X on a
-  selection, says only the selection's change, not also the text it
-  removed, which was the selection's. The outpost carries the general terms to Core as
+  A key outside the caret table whose answer shows the selection removed,
+  something selected before it and nothing after, as Control+X on a
+  selection does, says only the selection's change, in general or
+  specific terms, never the text it removed, which was the selection's. The outpost carries the general terms to Core as
   `content_changed` with the whole new selection's text, read in the same
   caret read in place of the changed pieces' text. A UIA text's change
   never counts, as in NVDA, which handles UIA's text change as one only for
@@ -267,10 +268,13 @@ Differences:
   range now holding the typed character, and Control+X on a selected line
   says nothing, the old range now empty (mockapp's
   `a_caret_event_before_its_text_change_compares_the_old_ranges_text`).
-  Different and unverified, needing a capture: after Backspace over a
-  selection, NVDA's classic edit control probably says "selection
-  removed", by the general terms above, where Verbatim's Backspace path
-  says what was deleted and nothing about the selection.
+  Different and unverified, needing a capture: after Backspace, Delete,
+  Control+Backspace or Control+Delete over a selection, NVDA's classic
+  edit control probably says "selection removed", by the general terms
+  above, at its caret event, where Verbatim's path for a deleting key
+  says what was deleted and nothing about the selection: the key's watch
+  carries no previous selection, and its answer clears the note of the
+  changed text without speaking it.
   Not yet built:
   - NVDA's classic edit control drops a caret event whose selection
     offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to

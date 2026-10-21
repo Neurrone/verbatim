@@ -1111,7 +1111,29 @@ pub fn caret_report_since<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     now_ms: &mut dyn FnMut() -> u64,
+    request: (bool, Option<&S::Pos>, LastSelection),
+) -> TextResult<ReportedCaret<S::Pos>> {
+    caret_report_checking(source, anchors, now_ms, request, &mut || false)
+}
+
+/// [`caret_report_since`], with `text_change_waiting` asked, once the
+/// caret is read and only when a comparison with the last report's
+/// selection is made with a selection in either, whether a change of the
+/// node's text that no report has noted waits to be handled: the
+/// comparison is then made in general terms, as after a noted change. It
+/// is asked after the read, since the application may raise the change
+/// while it answers the read (an edit control's value change, raised as it
+/// handles the typed character a caret event came before).
+///
+/// # Errors
+///
+/// When the application does not answer or the node is gone.
+pub fn caret_report_checking<S: TextSource>(
+    source: &mut S,
+    anchors: &mut NodeText<'_, S::Pos>,
+    now_ms: &mut dyn FnMut() -> u64,
     (formats, since, last): (bool, Option<&S::Pos>, LastSelection),
+    text_change_waiting: &mut dyn FnMut() -> bool,
 ) -> TextResult<ReportedCaret<S::Pos>> {
     if last == LastSelection::Restart {
         anchors.forget_selection();
@@ -1152,6 +1174,11 @@ pub fn caret_report_since<S: TextSource>(
             };
             (state, moved, read_at_ms, None, None)
         };
+    let content_changed = content_changed
+        || (last
+            .as_ref()
+            .is_some_and(|last| !(last.collapsed && state.selection.is_none()))
+            && text_change_waiting());
     let (selection_changes, new_selection) = match (&last, read_changes) {
         (Some(last), _) if content_changed => {
             general_changes(source, (&last.ends, last.collapsed), &state)?

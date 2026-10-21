@@ -119,8 +119,12 @@ pub(crate) enum Command {
     /// `write-on-read <id> <text>`: the next time any range of a UIA text
     /// node's text is read, `text` is first written over the text at the
     /// caret and the caret moved past it, raising no event, as a terminal
-    /// writes a typed character between two calls of a client's read.
-    /// UIA-only.
+    /// writes a typed character between two calls of a client's read. In
+    /// the MSAA backend, the next time another thread reads the edit
+    /// control's text or selection, `text` is first typed over the
+    /// selection (`EM_REPLACESEL`) and the control's value change raised,
+    /// as an application handles a typed character during a client's read
+    /// of the caret event before it.
     WriteOnRead(String, String),
     /// `text-changed <id>`: raises UIA's text changed event from a text
     /// node, as a terminal reports that its text changed, or, in the MSAA

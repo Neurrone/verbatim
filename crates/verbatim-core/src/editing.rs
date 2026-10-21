@@ -137,6 +137,9 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         context
     };
     let previous_selection = selection_before.and_then(|caret| previous_selection(key, caret));
+    let selected_before = previous_selection
+        .as_ref()
+        .is_some_and(|selection| selection.start != selection.end);
     let watch = CaretWatch {
         since: context.map(CaretBefore::caret),
         pressed_at_ms,
@@ -157,6 +160,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         deleted,
         before,
         later_key_at_ms: None,
+        selected_before,
     });
     effects.push(Effect::Text(TextRequest {
         query_id,
@@ -447,12 +451,10 @@ pub(crate) fn caret_reply(
                     _ => Vec::new(),
                 }
             }
-            // The selection removed with the text it held, as a cut
-            // removes it in a classic edit control, said by its change in
-            // general terms alone, as NVDA's caret event says it (`docs/parity/text.md`, "TextInfo-equivalent
-            // layer": Control+X on a selected line says "selection
-            // removed"); the text removed is the selection's.
-            CaretMotion::Other if general.is_some() && !selection_changes.is_empty() => Vec::new(),
+            // The selection removed with its text, as by a cut: said by its
+            // change alone, after, never the removed text, as NVDA's caret
+            // event says it (`docs/parity/text.md`, "TextInfo-equivalent layer").
+            CaretMotion::Other if removes_selection(pending, &caret) => Vec::new(),
             // A typed line that had wrapped onto more rows, removed.
             CaretMotion::Other if removed.is_some() => removed_segments(
                 removed.as_deref().unwrap_or_default(),
@@ -495,6 +497,12 @@ pub(crate) fn caret_reply(
         effects.push(speak(trace_id, unselected));
     }
     effects
+}
+
+/// Whether the answer to `pending`'s key shows the selection removed:
+/// something was selected when the key was pressed, and nothing is now.
+fn removes_selection(pending: &PendingCaret, caret: &CaretReport) -> bool {
+    pending.selected_before && caret.selection.is_none()
 }
 
 /// What a key outside the caret table did (`docs/design/phase6-design.md`, "What a

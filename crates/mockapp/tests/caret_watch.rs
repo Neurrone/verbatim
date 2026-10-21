@@ -832,6 +832,33 @@ fn an_edit_controls_value_change_handled_first_has_the_next_change_said_in_gener
     app.quit();
 }
 
+/// "x" typed over the selected "alpha" in a classic edit control while the
+/// caret event before it is read, as the Windows Forms text box handles a
+/// typed character: the caret event is taken from the intake with no value
+/// change waiting, and the control types the character and raises its
+/// value change as it answers the read, which then sees the edited text.
+/// The value change, checked for once the caret is read and behind the
+/// `WinEvent` thread's queue, has the report say its change in general
+/// terms, the selection removed, as when the value change waits behind the
+/// caret event from the start.
+fn an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms() {
+    let (mut app, outpost, node, _) = focus_edit("mockapp-caret-watch-edit-typed-during-read");
+    app.send("write-on-read doc x");
+    app.send("caret-event doc");
+    outpost.heard(&[
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    assert_eq!(
+        reported_selection(&outpost, node),
+        (vec![unselected_in_general()], true, None)
+    );
+    text_changed(&outpost, node);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// The selected "alpha" cut from a classic edit control with a key whose
 /// watch compares the selections, its caret event raised before its value
 /// change, as the Windows Forms text box raises them: the value change
@@ -947,6 +974,10 @@ fn main() {
         (
             "an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms",
             an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms,
+        ),
+        (
+            "an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms",
+            an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms,
         ),
         (
             "an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms",

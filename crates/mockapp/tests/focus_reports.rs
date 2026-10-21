@@ -2300,13 +2300,7 @@ fn a_protected_fields_focus_comes_with_its_caret_and_no_selected_text() {
             caret.selection.is_some(),
             selected_text.as_deref(),
         ),
-        (
-            true,
-            "alpha beta
-",
-            true,
-            None
-        )
+        (true, "alpha beta\n", true, None)
     );
     outpost.settled();
 

@@ -1220,7 +1220,9 @@ queues. The parts of a UIA focus's count are:
   something is selected, and 17 for its terminal;
 - the selected text, read only when something is selected and the
   field is not protected, since Core says none of a protected field's
-  text: 1 UIA call remotely and 4 classically.
+  text: 1 UIA call remotely and 4 classically, the read of the range
+  alone, since the caret read has already fetched the selection ("The
+  selected text, UIA" below counts 7 for a read that fetches it too).
 
 - Minimum: each part's own minimum: the listener's read, whose minimum
   "A focus change, UIA, steady state" gives, here 5; the search's
@@ -1457,7 +1459,10 @@ start to its end).
 
 - Minimum: 1 UIA call.
 - Today: 1 remotely; classically 7 (10 before: the caret was read once for
-  each end).
+  each end), of which the range's read is 4 and the selection's fetch
+  the rest; at a focus, whose caret read has already fetched the
+  selection, the read costs those 4 alone ("A focus on a text field"
+  above).
 - Target: 1, met.
 
 ### The review copy's selection, UIA
@@ -1574,9 +1579,14 @@ makes no call to the application.
   takes, so it adds no message to the comparison it replaces.
 - Target: the minimum.
 
-The local work beside the calls: the registry looked up and the intake
-scanned once under its lock for the control's value change waiting, and
-the selection's two offsets kept. Each value change of the focused
+The local work beside the calls: the selection's two offsets kept, and,
+for a report that compares a selection, a kept one or a new one that
+holds text, the registry looked up, one wake of the `WinEvent` thread
+waited for so that it handles the events delivered to it first, and the
+intake scanned once under its lock for the control's value change, which
+the control may raise while it answers the read; this makes no call to
+the application. A report with nothing selected before or after checks
+nothing. Each value change of the focused
 control locks the edit controls' anchors once to note that its text
 changed, and nothing else; a UIA text change takes no lock on the
 anchors.

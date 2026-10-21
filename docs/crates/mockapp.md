@@ -173,7 +173,11 @@ the end of its buffer, 0 the whole text again; raises no event; UIA only),
 `write-on-read <id> <text>` (the next time any range of a UIA text node's
 text is read, `text` is first written over the text at the caret and the
 caret moved past it, raising no event, as a terminal writes a typed
-character between two calls of a client's read; UIA only),
+character between two calls of a client's read; in the MSAA backend, the
+next time another thread reads the edit control's text or selection,
+`text` is first typed over the selection and the control's value change
+raised, as an application handles a typed character during a client's
+read of the caret event before it),
 `take-runtime-id <id> <from>` (node `from` dies:
 its parent no longer lists it, and every call on its elements fails with
 `UIA_E_ELEMENTNOTAVAILABLE`, as on an element that is gone; node `id`

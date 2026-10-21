@@ -2888,6 +2888,58 @@ fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_remove
     assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
+/// Control+X on a selected line in Windows 11 Notepad: the answer, from
+/// UIA, shows the selection removed with no change in general terms, and
+/// the text the key removed, the selection's, is not said, as NVDA says
+/// nothing for it.
+#[test]
+fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_removed_text() {
+    let text = "xbeta gammaelta epsilon\n";
+    let mut state = editing(text, 0);
+    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, true));
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
+        removed: None,
+        moved: true,
+        read_at_ms: 0,
+        caret: CaretReport {
+            line: line(text, 100, 0),
+            selection: Some(Selection {
+                start: TextPosition {
+                    anchor: TextAnchor(100),
+                    offset: 0,
+                },
+                end: TextPosition {
+                    anchor: TextAnchor(100),
+                    offset: 24,
+                },
+            }),
+        },
+        unit: None,
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+    }));
+    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
+    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: Some(true),
+        removed: None,
+        moved: true,
+        read_at_ms: 0,
+        caret: CaretReport {
+            line: line("\n", 100, 0),
+            selection: None,
+        },
+        unit: None,
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+    }));
+    let effects = reduce(&mut state, &completed(request_of(&effects), reply));
+    assert_eq!(effects, []);
+}
+
 #[test]
 fn a_selecting_keys_change_reported_before_its_answer_is_spoken_once() {
     // The key's caret event reaches Core while its watch waits: the
