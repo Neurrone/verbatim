@@ -226,9 +226,8 @@ event's own element:
   read), so a UIA focus in another window of the application, such as the
   folder window a new File Explorer window was opened from, answers
   nothing of it; a drop carries no window and is matched by its
-  observation alone, a limit (Fable, 2026-10-21, pending Dickson's
-  acceptance). A gap a drop or the end of the reads closes is logged at
-  debug, one line per close. The gap is the worker's alone, without a
+  observation alone, a limit (Dickson, 2026-10-21). A gap a drop or the
+  end of the reads closes is logged at debug, one line per close. The gap is the worker's alone, without a
   lock, and a replacement worker starts with none. While a marker waits,
   the gap is not judged, whatever the worker wakes for. The intake hands
   the worker, with each entry, the news of the focus markers it resolved
@@ -1037,7 +1036,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `WinEvent`'s fact other than a menu opening (a foreground change, an MSAA
   focus, an alert, or a tooltip shown) is keyed by the thread that raised
   it too, as NVDA's `WinEvent` limiter keys it (for the alert and tooltip,
-  Fable, 2026-10-21, pending Dickson's acceptance); a menu opening is
+  Dickson, 2026-10-21); a menu opening is
   keyed by its address alone, since NVDA's limiter keeps only its most
   recent menu event, whatever its address or thread, and the outpost's
   intake handles only a batch's newest, which follows NVDA per

@@ -157,9 +157,8 @@ jobs:
       # Every live test is #[ignore]d, so a plain `cargo test` lists it as
       # ignored rather than reporting a pass it never ran; this step runs
       # them with --ignored, and a missing agent fails them. The runner's
-      # Windows Server has classic Notepad, not Windows 11 Notepad, and its
-      # Settings search index is untested, so the local-only scenarios,
-      # named notepad_ and settings_search_suggestions, are deselected by name
+      # Windows Server has classic Notepad, not Windows 11 Notepad, so the
+      # local-only scenarios, named notepad_, are deselected by name
       # (libtest counts them as filtered out, never as passed), and
       # VERBATIM_E2E_SKIP_LOCAL_ONLY makes one that ran anyway fail. The
       # demonstrations, named demo_, are recorded by `cargo xtask demo`
@@ -218,7 +217,7 @@ jobs:
               if ($LASTEXITCODE -ne 0) { $status = $LASTEXITCODE }
             }
           } else {
-            cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
+            cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
             $status = $LASTEXITCODE
           }
           Stop-Process -Id $agent.Id -ErrorAction SilentlyContinue

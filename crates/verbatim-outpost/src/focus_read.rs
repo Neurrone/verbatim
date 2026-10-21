@@ -456,8 +456,8 @@ const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for
 /// on is in a window it judged UIA, so such a drop is of another window of
 /// the application, such as a new File Explorer window's frame beside its
 /// items view, or a disagreement of the listener's and the outpost's
-/// verdicts, and establishes nothing of the copy's focus (Fable,
-/// 2026-10-21, pending Dickson's acceptance).
+/// verdicts, and establishes nothing of the copy's focus (Dickson,
+/// 2026-10-21).
 const VERDICTS: [&str; 6] = [
     HUNG,
     COMPARISON_FAILED,
@@ -470,11 +470,10 @@ const VERDICTS: [&str; 6] = [
 /// The drops of a focus because the listener gave up on its read, the
 /// application not answering in time ([`DropEvidence::Focus`]): a read
 /// into that application by the outpost would call into one that has just
-/// failed to answer, so the wait ends without one (Fable, 2026-10-21,
-/// pending Dickson's acceptance). The drop whose event said it lacked the
-/// keyboard focus when the read's time was up is among them, a judgement
-/// call of its own (Dickson, 2026-10-21): its
-/// time ran out as the others' did.
+/// failed to answer, so the wait ends without one (Dickson, 2026-10-21).
+/// The drop whose event said it lacked the keyboard focus when the read's
+/// time was up is among them, a judgement call of its own (Dickson,
+/// 2026-10-21): its time ran out as the others' did.
 const GAVE_UP: [&str; 5] = [
     NOT_IN_TIME,
     WAITED_TOO_LONG,
@@ -1283,10 +1282,9 @@ impl FocusReader {
         // the event was raised: a sender that did not have it then is
         // dropped. A live read that fails, by UIA's transaction timeout or
         // otherwise, lets the focus through, as NVDA's `except COMError:
-        // return True` does (Fable, 2026-10-20, pending Dickson's
-        // acceptance). A menu opening redirected to the current focus is
-        // judged by the focus's element, whose keyboard focus no cache of
-        // this event holds, so it is let through.
+        // return True` does (Dickson, 2026-10-21). A menu opening redirected
+        // to the current focus is judged by the focus's element, whose
+        // keyboard focus no cache of this event holds, so it is let through.
         let lacked_by_its_event =
             || std::ptr::eq(subject, element) && sender.lacked_keyboard_focus();
         if out_of_time() {

@@ -105,8 +105,7 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   dropped (mockapp's
   `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`);
   a live read that fails, by UIA's transaction timeout or otherwise, lets
-  the focus through, as NVDA's does (Fable, 2026-10-20, pending Dickson's
-  acceptance; mockapp's
+  the focus through, as NVDA's does (Dickson, 2026-10-21; mockapp's
   `a_focus_whose_keyboard_focus_read_times_out_is_reported`). A provider that answers the property empty, or whose answer
   fails, leaves UIA's default, `false`, in the event's cache, the same
   for both (mockapp's events test
@@ -391,7 +390,7 @@ of any application, or by another application's popup start, is
 announced by Verbatim and not by NVDA, whose slot keeps only the later
 event (`IAccessibleHandler/__init__.py` 1093 to 1103). Each needs two
 menu events within one flush, so they are rare, and none is changed
-(Fable, 2026-10-21, pending Dickson's acceptance).
+(Dickson, 2026-10-21).
 
 Before an outpost hears them, the focus listener coalesces its facts one
 per object and kind, and for an MSAA event other than a menu opening,

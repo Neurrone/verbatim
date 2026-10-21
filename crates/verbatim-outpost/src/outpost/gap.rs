@@ -15,13 +15,13 @@
 //! wait closes it, a drop that could not establish the focus leaves it to
 //! its bound, a drop for no window reads it at once, and a selection's, a
 //! notification's or a menu opening's neither closes it nor reads it
-//! (Fable, 2026-10-21, pending Dickson's acceptance). At most one read is
+//! (Dickson, 2026-10-21). At most one read is
 //! made for a gap.
 //!
 //! A read answers only a copy in its own top-level window: a UIA focus in
 //! another window of the application, such as the folder window a new File
 //! Explorer window was opened from, establishes nothing of the copy's focus
-//! (Fable, 2026-10-21, pending Dickson's acceptance). The top-level window,
+//! (Dickson, 2026-10-21). The top-level window,
 //! not the copy's own, is compared, since a copy can name a window above
 //! the focus's own: Windows Terminal's first copy names its top-level
 //! window, its UIA focus the input site inside it. A drop carries no

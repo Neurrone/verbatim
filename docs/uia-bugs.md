@@ -264,7 +264,7 @@ Not established. In steady state a UIA focus follows its `WinEvent` in the same 
 
 #### Workarounds that worked
 
-Not a workaround of the fault but a recovery from it (Fable, 2026-10-21, pending Dickson's acceptance): the application's outpost, which sees the `WinEvent` focus copy, waits a second from the copy's observation for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came after its sender was gone, with no window above it (decision 11 of the same design). The full suite's `conhost_two_windows` has met the late delivery, its second console window's UIA focus coming 2.15 seconds after its `WinEvent` focus, and the read at the bound reported the focus with its window. The burst's recovery is tested in mockapp.
+Not a workaround of the fault but a recovery from it (Dickson, 2026-10-21): the application's outpost, which sees the `WinEvent` focus copy, waits a second from the copy's observation for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came after its sender was gone, with no window above it (decision 11 of the same design). The full suite's `conhost_two_windows` has met the late delivery, its second console window's UIA focus coming 2.15 seconds after its `WinEvent` focus, and the read at the bound reported the focus with its window. The burst's recovery is tested in mockapp.
 
 #### Workarounds that didn't work
 

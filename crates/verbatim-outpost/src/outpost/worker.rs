@@ -86,8 +86,8 @@ const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
 
 /// How long the worker waits for a UIA focus after a `WinEvent` focus in a
 /// UIA window before it reads its application's focus itself
-/// (`docs/design/listener-without-connections.md`, decision 11; Fable,
-/// 2026-10-21, pending Dickson's acceptance), counted from the observation
+/// (`docs/design/listener-without-connections.md`, decision 11; Dickson,
+/// 2026-10-21), counted from the observation
 /// of the first such focus no UIA focus has answered, not from when the
 /// worker took it up. A UIA focus follows its `WinEvent`
 /// within 1 to 35 ms in Settings, and in the same millisecond at the median
@@ -986,7 +986,8 @@ fn property_event(
 enum Refreshed {
     /// For a help text change: its description.
     HelpText(Cached<HelpTextRefresh>),
-    /// For a `ControllerFor` change: whether it reports suggestions.
+    /// For a `ControllerFor` change: whether it reports suggestions and
+    /// whether its relation names any element.
     Suggestions(Cached<SuggestionsRefresh>),
 }
 

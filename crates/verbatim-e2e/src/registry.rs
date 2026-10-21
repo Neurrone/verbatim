@@ -122,11 +122,10 @@
 //!   `docs/tooling/e2e.md` says how to run them.
 //!
 //! A scenario marked [`ScenarioDef::local_only`] needs what GitHub's
-//! Windows Server runner lacks or is untested on: Windows 11 Notepad, or
-//! the Settings app's search index; its name starts with one of
-//! [`LOCAL_ONLY_FILTERS`]. Every local and VM run includes it; GitHub's
-//! `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`] and deselects it by name (one
-//! `--skip` per filter), and [`run_named`] fails a local-only scenario
+//! Windows Server runner lacks, Windows 11 Notepad; its name starts with
+//! one of [`LOCAL_ONLY_FILTERS`]. Every local and VM run includes it;
+//! GitHub's `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`] and deselects it by
+//! name (one `--skip` per filter), and [`run_named`] fails a local-only scenario
 //! that runs anyway with the variable set, so a skip is never reported as
 //! a pass. The skip comes from that setting alone, never from detecting
 //! the machine.
@@ -174,13 +173,10 @@ pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
 /// The `--skip` filters a run off a Windows 11 desktop deselects the
 /// local-only scenarios by: every local-only scenario's name starts with
 /// one, and no other scenario's does (a demonstration's `demo_` name can
-/// contain one, and is deselected with `--skip demo_`). `notepad_` begins every scenario that
-/// tests Windows 11 Notepad; `settings_search_suggestions` depends on the
-/// Settings app's search index, untested on GitHub's runner, and on a
-/// state Settings is sometimes in (`docs/parity/changes-and-selection.md`,
-/// "Selection in a list the focus controls"). A unit test checks CI's
+/// contain one, and is deselected with `--skip demo_`). `notepad_` begins
+/// every scenario that tests Windows 11 Notepad. A unit test checks CI's
 /// `e2e` job's skips against this list.
-pub const LOCAL_ONLY_FILTERS: &[&str] = &["notepad_", "settings_search_suggestions"];
+pub const LOCAL_ONLY_FILTERS: &[&str] = &["notepad_"];
 
 /// Whether `name` starts with one of [`LOCAL_ONLY_FILTERS`], so libtest's
 /// `--skip`, which matches anywhere in a test's name, deselects it.
@@ -522,12 +518,7 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_search_suggestions",
         group: Group::Shell,
         settings: None,
-        // Settings' search index is untested on GitHub's runner, and the
-        // first suggestion goes unsaid in a state Settings is sometimes
-        // in, where it replaces the list's items as it opens
-        // (`docs/parity/changes-and-selection.md`, "Selection in a list
-        // the focus controls").
-        local_only: true,
+        local_only: false,
         document: None,
         comparable: Comparable::Yes,
         setup: settings_search_suggestions::setup,

@@ -986,7 +986,7 @@ fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
 /// A `WinEvent` focus in a UIA window whose UIA focus event came but was
 /// dropped because its element no longer had the keyboard focus, as in
 /// ordinary fast navigation: the drop neither answers the wait nor reads at
-/// once (Fable, 2026-10-21, pending Dickson's acceptance), and the focus is
+/// once (Dickson, 2026-10-21), and the focus is
 /// read at the bound.
 fn a_winevent_focus_whose_uia_focus_is_no_longer_focused_is_read_at_its_bound() {
     let title = common::unique_title("mockapp-unfocused-drop");

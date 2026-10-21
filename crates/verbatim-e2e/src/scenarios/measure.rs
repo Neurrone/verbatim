@@ -336,10 +336,10 @@ pub(crate) fn setup_focus_explorer(scenario: &mut Scenario) -> io::Result<Scenar
 ///   window's announcement cannot end the next window's wait.
 /// - After each new window closes, the folder window's item again, which
 ///   its title and list precede on every return, so that every new window
-///   opens on the same desktop (Fable, 2026-10-21, pending Dickson's
-///   acceptance). Waiting for the title alone left the item arriving in a
-///   later step on 1 to 4 of each run's 10 returns (4, 1, 4, 3 and 3 in
-///   five runs, 15 of 50): in the next window's step, but for run 2's one
+///   opens on the same desktop (Dickson, 2026-10-21). Waiting for the title
+///   alone left the item arriving in a later step on 1 to 4 of each run's
+///   10 returns (4, 1, 4, 3 and 3 in five runs, 15 of 50): in the next
+///   window's step, but for run 2's one
 ///   miss, the last return, whose item came in the steady state's first
 ///   step.
 /// - Each key, the item `explorer_folder_window` asserts for it.

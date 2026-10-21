@@ -19,12 +19,11 @@
 //! property Verbatim's "of N" comes from, not the count of the list's
 //! realized children, which a virtualized list would make smaller.
 //!
-//! Local-only. Settings' search index on GitHub's runner is untested, and
-//! in some launches Settings replaces the list's items as it opens, when
+//! In some launches Settings replaces the list's items as it opens, when
 //! the first suggestion is the list's current selection rather than the
 //! item its event named (`docs/parity/changes-and-selection.md`,
-//! "Selection in a list the focus controls"). The order of the first suggestion before the
-//! suggestions-opened sound holds by a margin of about 50 ms: the
+//! "Selection in a list the focus controls"). The order of the first
+//! suggestion before the suggestions-opened sound holds by a margin of about 50 ms: the
 //! selection must reach the outpost before Settings' second change of the
 //! search box's relation.
 

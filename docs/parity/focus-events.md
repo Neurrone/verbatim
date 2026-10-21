@@ -70,7 +70,7 @@ difference when a read's time is up.
   what UIA stores for an empty or failed answer, and `verbatim-uia`'s
   `a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true` the
   reading of it.
-- Matched (Fable, 2026-10-20, pending Dickson's acceptance): within the budget, a live read of the
+- Matched (Dickson, 2026-10-21): within the budget, a live read of the
   sender's keyboard focus that fails, by UIA's transaction timeout or
   otherwise, lets the focus through, as NVDA's
   `except COMError: return True` does
@@ -322,7 +322,7 @@ watchdog: detection" and "What a live capture shows").
 
 Verbatim: **matched for the read after a focus's judgement; different,
 deliberately, for the judgement's calls once the read's window is known;
-not judged for the rest (Fable, 2026-10-20, pending Dickson's acceptance)**; unit tests of the
+not judged for the rest (Dickson, 2026-10-21)**; unit tests of the
 outposts' worker and of the listener's reading threads pin the rule, and
 no end-to-end scenario makes an application slow enough to show it. An
 outpost's worker and the focus listener's reading thread for an
@@ -373,8 +373,8 @@ abandoned thread's call returns and takes the queue, which ends the
 bound. The bound is one per application, not one per event, so the
 application's outpost, whose later events wait behind each focus's
 marker, runs at most `READ_DEADLINE` behind the hung reads, once, and a
-stream of events from the application cannot keep it behind (Fable,
-2026-10-20, pending Dickson's acceptance). The limit is Verbatim's own, since NVDA has no reading
+stream of events from the application cannot keep it behind (Dickson,
+2026-10-21). The limit is Verbatim's own, since NVDA has no reading
 threads to abandon.
 
 A focus waiting so is a pending focus, for NVDA's rule that drops a
@@ -385,7 +385,7 @@ lines 772 to 777): any queued focus drops any application's menu
 opening. Verbatim's is per application for a waiting focus, so that a
 hung window cannot silence every other application's menus while its
 reads stay stuck; a focus being read, or waiting for a live thread,
-still counts for every application, as in NVDA (Fable, 2026-10-20, pending Dickson's acceptance).
+still counts for every application, as in NVDA (Dickson, 2026-10-21).
 
 The rule is narrower than NVDA's by design: NVDA's one main thread serves
 every application, so a move to any other window frees it, while each of
@@ -455,7 +455,7 @@ path that reads the focus after a `WinEvent`, so by its source it loses
 these focuses; that is not captured.
 
 Verbatim: **different**, as a consequence of that design's decision 11
-(Fable, 2026-10-21, pending Dickson's acceptance). When no UIA focus
+(Dickson, 2026-10-21). When no UIA focus
 follows a `WinEvent` focus in a UIA window within a second of the
 `WinEvent`, the application's outpost reads its focus itself, as the
 focus-now query does, and reports it, once. The listener's drops of the
@@ -464,9 +464,8 @@ UIA focus it waits for fall into three classes:
 - A drop that ends the wait: a verdict of NVDA's checks on the event, for
   which NVDA drops it too, or the listener giving up on the application
   when its read's time ran out, a read into an application that has just
-  failed to answer not being made (Fable, 2026-10-21, pending Dickson's
-  acceptance). The drop whose event said it lacked the keyboard focus
-  when the read's time was up is among these (Dickson, 2026-10-21).
+  failed to answer not being made (Dickson, 2026-10-21). The drop whose
+  event said it lacked the keyboard focus when the read's time was up is among these (Dickson, 2026-10-21).
 - A drop that could not establish the focus: its element no longer has
   the keyboard focus (NVDA's drop at lines 1632 to 1637), its window does
   not use UIA, so it is another window than the copy's, its read was
@@ -475,7 +474,7 @@ UIA focus it waits for fall into three classes:
   2026-10-21). The
   wait goes on to its second with nothing read at once, since these drops
   come in ordinary fast navigation, where the next key's focus event
-  follows (Fable, 2026-10-21, pending Dickson's acceptance).
+  follows (Dickson, 2026-10-21).
 - A sender with no window above it, as in a new window's first burst of
   focus events after their senders are gone: the event came and cannot
   be read, and the event for where the focus went may never come, so the

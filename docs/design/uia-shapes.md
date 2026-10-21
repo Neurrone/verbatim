@@ -223,7 +223,9 @@ separately, so a kind and a type cannot disagree. There is one kind per
 reader of `map.rs:296` to 448 and `element.rs:47` to 96: `bool`,
 `optional_bool` (ignoring defaults), `i32`, `f64`, `string`, `one_based`,
 `rect`, `control_type`, `framework_id` and `window_handle`, with today's
-handling of defaults unchanged.
+handling of defaults unchanged. Two kinds read a property whose value is
+an element: `element`, the element it names, and `names_any`, whether a
+relation names any element.
 
 Patterns. A `patterns { selection: Selection }` section declares a cached
 pattern read as the pattern object (`SelectionContainer`). A
@@ -1020,8 +1022,8 @@ Fetch shapes:
 - `ControlledSelection`: nothing for the controller (its runtime id), and
   `Node` for the item.
 - `HelpTextRefresh` (`Description`) and `SuggestionsRefresh`
-  (`IsTextPatternAvailable`, `AutomationId`), chosen per property id as
-  `refreshed_for` chooses today.
+  (`IsTextPatternAvailable`, `AutomationId`, `ControllerFor`), chosen per
+  property id as `refreshed_for` chooses today.
 - `ShellButton`: `NativeWindowHandle`, `ControlType`, `Name`,
   `IsOffscreen`, `BoundingRectangle`.
 - `TextAreaPattern`: the Text pattern, which `ListenerEvent` prefetches

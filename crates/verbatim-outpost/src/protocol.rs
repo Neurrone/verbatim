@@ -269,8 +269,8 @@ impl ListenerFact {
 
 /// What the drop of a UIA focus event's read says to an outpost waiting
 /// for a UIA focus after a `WinEvent` focus in one of its UIA windows
-/// (`docs/design/listener-without-connections.md`, decision 11; Fable,
-/// 2026-10-21, pending Dickson's acceptance): only a focus event's
+/// (`docs/design/listener-without-connections.md`, decision 11; Dickson,
+/// 2026-10-21): only a focus event's
 /// resolution answers that wait, in one of three ways. It goes on the pipe
 /// as JSON, by its variant's name; the listener, the supervisor and the
 /// outposts are one build of this definition, so it needs no version.
