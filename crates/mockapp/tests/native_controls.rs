@@ -55,6 +55,7 @@ fn spoken_in(state: &mut SrState, reported: &Reported) -> Vec<Vec<SegmentContent
         ancestors: reported.ancestors.clone(),
         ancestors_unknown: false,
         selected_child: reported.selected_child.clone(),
+        text: None,
     };
     event.assign_outpost(OutpostId(1));
     let effects = verbatim_core::reduce(

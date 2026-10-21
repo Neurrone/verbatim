@@ -62,7 +62,8 @@ Public API:
   and — for selection containers —
   the container's selected child, both gathered by the outpost on a query
   worker before emitting: deadline-guarded, degrading to empty on failure,
-  so enrichment never blocks or loses a focus announcement),
+  so enrichment never blocks or loses a focus announcement; and, for a
+  focus that may have text, `text`, a `FocusText`, below),
   `PropertyChanged` (name, value, description, or the complete new
   `States` set, with a `child_count` the outpost reads only for a state
   change that newly expands the focus, a Win32 tree view item),
@@ -270,33 +271,38 @@ the contract the Windows side implements.
 
 ### Events the outpost sends
 
+- `FocusChanged`'s `text` (`serde(default)`, left out when `None`), a
+  `FocusText`: what the outpost's caret read of a focus that may have text
+  found, read while it handled the focus, so the line at the caret comes
+  in the focus's own message and nothing comes between them, as NVDA's
+  object announcement reads an object's text within it. `Caret { caret,
+  selected_text }` carries the `CaretReport` and, when something is
+  selected, the selected text, which Core speaks as "selected" with it in
+  place of the line; `NoText` says the node has no text the outpost can
+  read, and Core speaks its value instead, as for any object without
+  text; `NotRead` says its text could not be read now, and Core speaks
+  neither. The caret, when read, becomes Core's, and is the one the
+  focus's later `CaretMoved` reports are compared with.
 - `NormalizedEvent::CaretMoved { node_id, caret: CaretReport,
   selection_changes }`: the caret or selection moved in a node with text.
   A `CaretReport` is the line at the caret, with its `offset` at the caret,
   and the `Selection` (a start and an end `TextPosition`), `None` when
-  nothing is selected. Send one when a node with text gains the focus, as
-  soon after the focus event as possible, and on every later caret or
-  selection change in the focus, coalesced so a burst sends only the
+  nothing is selected. Send one on every caret or selection change in
+  the focus, coalesced so a burst sends only the
   latest, with the selection changes of every report it replaces before
   its own; a report carrying changes is not replaced across a reply. It keeps Core's copy of the caret current (Backspace knows what
-  it deleted, the review cursor follows the caret). The first one after a
-  focus ends the focus announcement with the selected text or the caret's
-  line, in place of the value the announcement left out. `selection_changes`
+  it deleted, the review cursor follows the caret). `selection_changes`
   (`serde(default)`, left out when empty) is how the selection changed
   from the one in the outpost's last report for the node, by the rule of
-  `CaretReply`'s: empty for the report after a focus, for a terminal, and
+  `CaretReply`'s: empty for a terminal, and
   for the first report after the node's text changed (or with its change
   waiting behind the caret event) or Verbatim selected or moved the caret
-  itself. A later report speaks only these changes, as
+  itself. A report speaks only these changes, as
   "selected" and "unselected" with the words a selecting key's reply uses,
   unless a caret key's answer is awaited for the node, which speaks them;
   a key's own caret event is taken by its watch, and reaches Core as a
   `CaretMoved` only when the outpost handled it before the key's watch
   arrived.
-- `NormalizedEvent::NoText { node_id }`: sent in place of that first
-  `CaretMoved` when a focus whose role may have text (edit field, document,
-  terminal) has no text the outpost can read, or its caret could not be
-  read. Core then speaks the focus's value, as for any object without text.
 - `NormalizedEvent::TextChanged { node_id }`: the node's text changed.
   Characters typed into a terminal wait for this before Core echoes them.
 - `NormalizedEvent::TerminalOutput { node_id, output }` (M4 item 9): sent

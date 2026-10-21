@@ -255,6 +255,16 @@ pub enum Request {
         /// How many of the children's names to report.
         names: u32,
     },
+    /// Reports the name of the first element of the foreground window
+    /// whose UI Automation identifier is `automation_id`, read through UI
+    /// Automation independently of any screen reader, without focusing it,
+    /// as a control whose name differs between machines, such as Settings'
+    /// account button, is named before a test fixes what it expects.
+    /// Answered by [`ReplyPayload::Name`].
+    NameByAutomationId {
+        /// The element's UI Automation identifier.
+        automation_id: String,
+    },
     /// Reports whether the lock key `key` (a key name of the control
     /// plane's vocabulary, such as `scrolllock`) is on, read independently
     /// of any screen reader. Answered by [`ReplyPayload::KeyToggled`].
@@ -634,6 +644,11 @@ pub enum ReplyPayload {
         /// The names of its first children, as many as asked for, or all
         /// of them when it has fewer.
         names: Vec<String>,
+    },
+    /// Answer to [`Request::NameByAutomationId`].
+    Name {
+        /// The element's name.
+        name: String,
     },
     /// Answer to [`Request::MisspeltWords`].
     Words {

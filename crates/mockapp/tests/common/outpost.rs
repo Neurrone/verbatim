@@ -53,7 +53,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use verbatim_model::{
-    CallCounts, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId, WindowHandle,
+    CallCounts, FocusText, NodeId, NodeSnapshot, NormalizedEvent, Pid, QueryKind, TraceId,
+    WindowHandle,
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged, LastAccepted};
 use verbatim_outpost::protocol::{
@@ -258,6 +259,8 @@ pub struct Reported {
     pub node: NodeSnapshot,
     pub ancestors: Vec<NodeSnapshot>,
     pub selected_child: Option<NodeSnapshot>,
+    /// What the outpost's caret read found, for a focus that may have text.
+    pub text: Option<FocusText>,
     /// The top-level window of the event's window.
     pub window: Option<WindowHandle>,
     pub calls: CallCounts,
@@ -792,6 +795,7 @@ impl OutpostUnderTest {
                         ancestors,
                         ancestors_unknown: false,
                         selected_child,
+                        text,
                     },
                 window,
                 timing,
@@ -800,6 +804,7 @@ impl OutpostUnderTest {
                 node,
                 ancestors,
                 selected_child,
+                text: text.map(|text| *text),
                 window: window.map(|window| window.top_level),
                 calls: timing.calls,
                 failed_reads: 0,

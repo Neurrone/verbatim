@@ -228,17 +228,6 @@ pub(crate) struct PendingCaret {
     pub(crate) later_key_at_ms: Option<u64>,
 }
 
-/// A focus with text whose announcement still has its text to say: the
-/// focus announcement left the value out, and the selection or the caret's
-/// line follows once the outpost's first caret report arrives
-/// (`docs/nvda/speech.md`, "What an object with text says").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct FocusText {
-    pub(crate) node: NodeId,
-    /// The request reading the selected text, once one is made.
-    pub(crate) selection_query: Option<QueryId>,
-}
-
 /// A text request a review or text command made, and what to do with its
 /// answer. A newer command's request supersedes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -530,9 +519,6 @@ pub struct SrState {
     /// (`editing::caret_moved_by_core`).
     #[serde(default)]
     pub(crate) caret_history: [Option<TimedCaret>; CARET_HISTORY],
-    /// The focus whose text is still to be spoken.
-    #[serde(default)]
-    pub(crate) focus_text: Option<FocusText>,
     /// The caret key waiting for evidence.
     #[serde(default)]
     pub(crate) pending_caret: Option<PendingCaret>,

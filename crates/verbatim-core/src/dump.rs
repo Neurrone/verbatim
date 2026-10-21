@@ -289,6 +289,7 @@ mod tests {
                             states: StateSet::new(),
                             details: NodeDetails::default(),
                         },
+                        text: None,
                     },
                 },
                 effect_count: 1,

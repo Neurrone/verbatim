@@ -66,8 +66,8 @@
 //!   menu openings among them; entries its pump never receives neither
 //!   join a run nor end it, and are handled at their own places, before
 //!   the run when they arrived before its newest: UIA events and focus
-//!   reads, Core's queries and list of held nodes, the worker's caret
-//!   follow-up and the outpost's settle request, an object destroyed, and
+//!   reads, Core's queries and list of held nodes, the outpost's settle
+//!   request, an object destroyed, and
 //!   the console host's events and a text control's selection change, which
 //!   NVDA hooks apart or not at all (`ends_a_run`). An MSAA event the
 //!   worker's acceptance test will drop still ends a run, where NVDA's pump
@@ -233,10 +233,6 @@ pub(super) enum Item {
     /// The nodes Core still holds, and the position of the last message it
     /// has handled: release the rest.
     NodesHeld { nodes: Vec<u64>, acknowledged: u64 },
-    /// Report the caret of the focus `node_id` names, which has text or
-    /// whose role says it may, just after it was reported: as `CaretMoved`,
-    /// or as `NoText` when there is no caret to report.
-    CaretOf { node_id: verbatim_model::NodeId },
     /// A caret event of the focused terminal `node_id`, noted while its
     /// reading was held and its text had changed unread: its caret is read
     /// once nothing else is waiting ([`Intake::when_idle`]), unless a read
@@ -250,11 +246,11 @@ pub(super) enum Item {
     /// The harness's idle barrier, round `round`
     /// (`docs/design/communication.md`, section 6.7): reached once
     /// everything that arrived before it has been handled, and answered
-    /// once the follow-ups those entries queued are handled and no deferred
-    /// work is pending. `behind_follow_ups` once the worker has put it
-    /// directly behind those follow-ups ([`Intake::push_behind_follow_ups`]),
-    /// so that reaching it again waits for nothing more.
-    IdleQuery { round: u64, behind_follow_ups: bool },
+    /// once a noted caret is read and no deferred work is pending.
+    /// `behind_noted` once the worker has put it directly behind the noted
+    /// caret ([`Intake::push_ahead`]), so that reaching it again waits for
+    /// nothing more.
+    IdleQuery { round: u64, behind_noted: bool },
     /// The time [`Intake::wake_at`] named has come with nothing else to do:
     /// a caret key's watch may have reached the bound on its age.
     Wake,
@@ -294,7 +290,6 @@ pub(super) enum Key {
         Option<String>,
     ),
     NodesHeld,
-    CaretOf(u64),
 }
 
 impl Key {
@@ -308,7 +303,7 @@ impl Key {
             Key::Uia(_, _, runtime_id)
             | Key::UiaFocus(runtime_id)
             | Key::UiaNotification(runtime_id, ..) => Some(Object::Uia(runtime_id.clone())),
-            Key::Foreground(..) | Key::NodesHeld | Key::CaretOf(_) => None,
+            Key::Foreground(..) | Key::NodesHeld => None,
         }
     }
 }
@@ -929,28 +924,20 @@ impl Intake {
                 .any(|planned| planned.entries().into_iter().any(&wanted))
     }
 
-    /// Puts `entries` directly behind the newest caret follow-up waiting
-    /// ([`Item::CaretOf`]), or ahead of everything waiting when none is,
-    /// for the idle barrier's query the worker has reached: every follow-up
-    /// waiting then was queued by an entry that arrived before the query,
-    /// since the query ends its batch and nothing after it has been
-    /// handled, so the query waits for those and for nothing that arrived
-    /// after it.
-    pub(super) fn push_behind_follow_ups(&self, entries: impl IntoIterator<Item = Entry>) {
+    /// Puts `entries` ahead of everything waiting, for the idle barrier's
+    /// query the worker has reached with a noted caret owed: the query ends
+    /// its batch and nothing after it has been handled, so the query waits
+    /// for that caret and for nothing that arrived after it.
+    pub(super) fn push_ahead(&self, entries: impl IntoIterator<Item = Entry>) {
         let mut state = self.lock();
         if state.closed {
             return;
         }
-        let at = state
-            .waiting
-            .iter()
-            .rposition(|waiting| matches!(waiting.entry.item, Item::CaretOf { .. }))
-            .map_or(0, |caret| caret + 1);
         for (offset, entry) in entries.into_iter().enumerate() {
             let (key, category, hwnd) = classify(&entry.item);
             let thread = thread_of(&entry.item);
             state.waiting.insert(
-                at + offset,
+                offset,
                 Waiting {
                     key,
                     category,
@@ -1210,9 +1197,6 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         Item::Fact(fact, _) => classify_fact(fact, thread_of(item)),
         // Only the newest list of held nodes matters.
         Item::NodesHeld { .. } => (Some(Key::NodesHeld), Category::Exempt, 0),
-        // Only the newest caret report for a node matters, and it is never
-        // limited: the focus's caret.
-        Item::CaretOf { node_id } => (Some(Key::CaretOf(node_id.number())), Category::Exempt, 0),
         Item::Query { .. }
         | Item::NotedCaret { .. }
         | Item::Settle(_)
@@ -1559,8 +1543,8 @@ fn plan(
 /// foreground event ends its run. Entries NVDA's pump never receives
 /// neither join a run nor end it, and are handled at their own places:
 /// UIA events and focus reads, which NVDA's UIA handler queues on its own
-/// path; Core's queries and list of held nodes, the worker's caret
-/// follow-up after a focus it reported, and the outpost's settle request,
+/// path; Core's queries and list of held nodes, and the outpost's settle
+/// request,
 /// which have no counterpart; an
 /// object destroyed, which NVDA's event callback handles as it arrives;
 /// the console host's updates and caret, which NVDA's console support
@@ -3089,7 +3073,7 @@ mod tests {
     fn idle_query(round: u64) -> Item {
         Item::IdleQuery {
             round,
-            behind_follow_ups: false,
+            behind_noted: false,
         }
     }
 

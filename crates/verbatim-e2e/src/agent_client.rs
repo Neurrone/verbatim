@@ -692,6 +692,25 @@ impl AgentClient {
         }
     }
 
+    /// The name of the foreground window's element whose UI Automation
+    /// identifier is `automation_id`, as the agent reads it through UI
+    /// Automation, independently of Verbatim, without focusing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn name_by_automation_id(&mut self, automation_id: &str) -> io::Result<String> {
+        match self.request(Request::NameByAutomationId {
+            automation_id: automation_id.to_owned(),
+        })? {
+            Frame::Reply {
+                payload: ReplyPayload::Name { name },
+                ..
+            } => Ok(name),
+            other => Err(unexpected("NameByAutomationId", &other)),
+        }
+    }
+
     /// Of the first element the focused element controls (its UI
     /// Automation `ControllerFor` relation), the set size its first child
     /// reports (`SizeOfSet`) and the names of its first `names` children, as the agent reads them through UI

@@ -20,7 +20,7 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    CaretReply, CaretReport, CaretWatch, NodeId, NormalizedEvent, PreviousSelection,
+    CaretReply, CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, PreviousSelection,
     SelectionChange, TextOp, TextPoint, TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
@@ -54,28 +54,31 @@ fn focus_fact(
 }
 
 /// Focuses mockapp's "Notes" document and returns its node and the caret
-/// the outpost reported after the focus, which must be all it said.
+/// the outpost reported with the focus, which must be all it said.
 fn focus_notes(
     app: &mut common::MockApp,
     outpost: &OutpostUnderTest,
     hwnd: HWND,
 ) -> (NodeId, CaretReport) {
     outpost.deliver(focus_fact(app, outpost, hwnd, "doc"));
-    let node = match outpost.next() {
+    let (node, caret) = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node,
-        other => panic!("the outpost said {other:?}, not the document's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => {
+            let FocusText::Caret { caret, .. } = *text else {
+                unreachable!("matched by the guard");
+            };
+            (node, caret)
+        }
+        other => panic!("the outpost said {other:?}, not the document's focus with its caret"),
     };
     assert_eq!(node.name.as_deref(), Some("Notes"));
-    let caret = match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
-            ..
-        } if node_id == node.id => caret,
-        other => panic!("the outpost said {other:?}, not the document's caret"),
-    };
     outpost.settled();
     (node.id, caret)
 }
@@ -285,18 +288,16 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
     outpost.deliver(fact);
     let notes = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node.id,
-        other => panic!("the outpost said {other:?}, not the document's focus"),
+        } if matches!(*text, FocusText::NoText) => node.id,
+        other => panic!("the outpost said {other:?}, not the document's focus with no text"),
     };
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::NoText { node_id },
-            ..
-        } if node_id == notes => {}
-        other => panic!("the outpost said {other:?}, not that the document has no text"),
-    }
     let key = outpost.ask(Query::Text {
         node_id: notes,
         op: TextOp::AwaitCaret(CaretWatch {
@@ -453,18 +454,22 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
     });
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node,
-        other => panic!("the outpost said {other:?}, not the edit control's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => {
+            let FocusText::Caret { caret, .. } = *text else {
+                unreachable!("matched by the guard");
+            };
+            assert_eq!(caret.line.offset, 0);
+            node
+        }
+        other => panic!("the outpost said {other:?}, not the edit control's focus with its caret"),
     };
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
-            ..
-        } if node_id == node.id => assert_eq!(caret.line.offset, 0),
-        other => panic!("the outpost said {other:?}, not the edit control's caret"),
-    }
     outpost.settled();
     app.send("caret doc 6");
     // Unfocused on this desktop, the control raises nothing for the move,
@@ -683,12 +688,16 @@ fn an_edit_controls_caret_event_before_its_value_change_carries_no_selection_cha
     });
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node.id,
-        other => panic!("the outpost said {other:?}, not the edit control's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => node.id,
+        other => panic!("the outpost said {other:?}, not the edit control's focus with its caret"),
     };
-    assert_eq!(reported_changes(&outpost, node), []);
     outpost.settled();
     app.send("caret doc 0 5");
     app.send("caret-event doc");

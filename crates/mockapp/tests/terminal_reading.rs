@@ -51,8 +51,8 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    CaretWatch, LineChange, NodeId, NormalizedEvent, PropertyChange, Role, TerminalOutput, TextOp,
-    TextPosition, TextReply, TextUnit,
+    CaretWatch, FocusText, LineChange, NodeId, NormalizedEvent, PropertyChange, Role,
+    TerminalOutput, TextOp, TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::protocol::DeliveredFact;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
@@ -87,7 +87,8 @@ fn caret_read(outpost: &OutpostUnderTest, node: NodeId) {
 }
 
 /// mockapp's terminal fixture in its UIA backend, with an outpost watching
-/// it and the terminal focused: its focus and caret said, and nothing else.
+/// it and the terminal focused: its focus said with its caret, and nothing
+/// else.
 fn start(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     start_with(
         name,
@@ -115,13 +116,17 @@ fn start_with(
     outpost.deliver(outpost.listener_fact(&element));
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node,
-        other => panic!("the outpost said {other:?}, not the terminal's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => node,
+        other => panic!("the outpost said {other:?}, not the terminal's focus with its caret"),
     };
     assert_eq!(node.role, Role::Terminal);
-    caret_read(&outpost, node.id);
     outpost.settled();
     (app, outpost, node.id)
 }

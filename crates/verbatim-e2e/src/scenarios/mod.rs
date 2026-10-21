@@ -36,6 +36,7 @@ pub(crate) mod review_words;
 pub(crate) mod second_application_and_verbatim_menu;
 pub(crate) mod settings_dialog_keys;
 pub(crate) mod settings_search_suggestions;
+pub(crate) mod settings_search_suggestions_reentered;
 pub(crate) mod settings_system_page;
 pub(crate) mod spelling_errors;
 pub(crate) mod switch_to_onecore;

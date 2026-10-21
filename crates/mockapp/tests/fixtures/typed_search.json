@@ -1,0 +1,31 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Typed Search Fixture",
+  "children": [
+    {
+      "id": "search",
+      "role": "editable_text",
+      "name": "Search box",
+      "automation_id": "SearchTextBox",
+      "states": ["focusable"],
+      "text": "sound",
+      "controller_for": "suggestions"
+    },
+    {
+      "id": "suggestions",
+      "role": "list",
+      "name": "Suggestions",
+      "children": [
+        {
+          "id": "sound",
+          "role": "list_item",
+          "name": "Sound settings",
+          "states": ["focusable", "selectable"],
+          "position_in_set": 1,
+          "set_size": 1
+        }
+      ]
+    }
+  ]
+}

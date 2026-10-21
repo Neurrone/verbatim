@@ -773,6 +773,7 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
                 ancestors: Vec::new(),
                 ancestors_unknown: false,
                 selected_child: None,
+                text: None,
             },
         ),
     );

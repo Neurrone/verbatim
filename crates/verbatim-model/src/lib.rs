@@ -39,7 +39,7 @@ pub use speech::{
 };
 pub use terminal::{LineChange, Skipped, TerminalOutput};
 pub use text::{
-    BulletStyle, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, FormatRun,
+    BulletStyle, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, FocusText, FormatRun,
     HeldAnchors, LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD,
     MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection, SelectionChange,
     TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,

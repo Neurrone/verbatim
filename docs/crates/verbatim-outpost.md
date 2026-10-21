@@ -1524,8 +1524,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   nodes minted from runtime ids; its ancestors are the listener's chain,
   filtered as a walk filters them, stopped at a container of the previous
   focus's chain and spliced, and continued through MSAA from a window MSAA
-  owns (`read::uia_chain_from_read`). Then, off the way to speech, it
-  finds its own copy of the element by the chain's runtime ids, from the
+  owns (`read::uia_chain_from_read`). It finds its own copy of the
+  element by the chain's runtime ids, off the way to speech for a focus
+  without text, and before the report for one whose role may have text
+  (edit field, document, terminal), whose caret is read with it, from the
   nearest element of the chain with a window of its own: one
   `ElementFromHandle` and one remote operation
   (`verbatim_uia_rops::element_by_path`; the classic walk within a second
@@ -1640,10 +1642,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   forgotten when it is destroyed), the per-hop walk (`read::uia_enrichment`)
   is used. A program that fails otherwise is answered by the classic walk
   for that call and logged with the failing instruction's source line. A
-  UIA focus event costs the outpost no UIA call before it is reported:
-  the listener's read is its classic walk (`focus_ancestry_classic`), and
-  the outpost's walk to its own copy of the element after the report is
-  one `ElementFromHandle` and one `Execute` (`docs/performance.md`). A
+  UIA focus event without text costs the outpost no UIA call before it is
+  reported: the listener's read is its classic walk
+  (`focus_ancestry_classic`), and the outpost's walk to its own copy of the
+  element after the report is one `ElementFromHandle` and one `Execute`
+  (`docs/performance.md`); for a focus with text the walk and the caret's
+  read come before the report. A
   focused menu item's legacy MSAA checked state, which a menu item that no
   pattern makes checkable may have, costs the listener's read one call
   more, read live for it alone, as are the focus-now answer
@@ -1982,18 +1986,24 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     reads.
 - Caret and text events (the worker). A focus that may have text (through
   UIA an edit field, a document, or a terminal; through MSAA an edit
-  control's client area) gets a caret report, queued just after the focus
-  is published (`Item::CaretOf`), so the focus's own calls and speech are
-  unchanged, and sent as `CaretMoved`. So does any other focus whose role
-  is edit field, document, or terminal; when that report finds no text to
-  read (an MSAA object that is not an edit control, a UIA element with no
-  text pattern), `NoText` is sent instead, and Core speaks the focus's
-  value in place of its line, as NVDA speaks the value of an object
-  without navigable text. When the text could not be read now (its
-  element is not known yet, the provider did not answer, or the caret
-  read failed), nothing is sent: Core speaks the line when the caret is
-  next reported, and never the value, which for a document is all of its
-  text. A focused terminal's caret is reported as any other's, so a new
+  control's client area), and any other focus whose role is edit field,
+  document, or terminal, has its caret read while the worker handles the
+  focus, before it is reported (`Worker::read_focus_text`), and the read
+  comes in the focus's own message (`FocusChanged`'s `text`), so the line
+  at the caret arrives with the name, role and states and nothing from any
+  source comes between them, as NVDA's object announcement reads an
+  object's text within it (`docs/nvda/speech.md`, "What an object with text
+  says"). When something is selected the selected text is read too, which
+  Core speaks in place of the line. A focus with no text to read (an MSAA
+  object that is not an edit control, a UIA element with no text pattern)
+  carries `FocusText::NoText`, and Core speaks its value in place of its
+  line, as NVDA speaks the value of an object without navigable text. One
+  whose text could not be read now (its element was not found, the
+  provider did not answer, or the caret read failed) carries
+  `FocusText::NotRead`, and Core speaks neither the line nor the value,
+  which for a document is all of its text. A caret read that hangs holds
+  the whole focus report until the handling deadline (Dickson,
+  2026-10-21). A focused terminal's caret is read as any other's, so a new
   terminal window or tab says "blank" for its empty line, in Windows
   Terminal as in the console host (`docs/parity/terminals.md`, "New terminal output"). The worker then
   follows its caret:
@@ -2221,9 +2231,10 @@ it covers whatever is in pipes and backlogs without counting it.
   it divides what waits: no entry that arrives after it replaces one
   waiting before it, and it ends the batch it is planned in, so that
   batch's menu opening goes before it. The worker reaches it once
-  everything that arrived before it has been handled; a caret follow-up those entries queued, or a noted caret, goes
+  everything that arrived before it has been handled; a noted caret goes
   first, the query going directly behind it, ahead of what arrived after
-  the query, and waiting for no follow-up when it is reached again. It is then answered as soon as no
+  the query (`Intake::push_ahead`), and waiting for nothing more when it is
+  reached again. It is then answered as soon as no
   caret key's watch is open and no terminal owes Core a read: checked after
   every entry the worker in charge handles. The requests terminals owe are
   kept under a lock of their own, never held across a call into the

@@ -373,17 +373,6 @@ NVDA capture.
   `ToastView`, from a desktop-wide window-opened subscription in the
   listener), then adopt NVDA's rule dropping MSAA alert and show events
   from native UIA windows.
-- The caret's line on a focus that a selection event follows: on
-  Shift+Tab into Settings' search box holding "sound", NVDA says
-  "Search box, Find a setting edit sound" and then the suggestion "Sound
-  settings 1 of 22", where Verbatim says the box without its line, the
-  suggestion, and then the line "sound", because the line comes from
-  Core's caret query, answered after the selection event; both cancel it
-  all at the next focus ([focus announcement
-  parity](parity/focus-announcement.md), "Text on focus"; the
-  `rapid-tab-nvda-1.txt`, `-nvda-2.txt`, `-verbatim-1.txt` and
-  `-verbatim-2.txt` captures in
-  `target/e2e-evidence/fixes-round-six-2026-10-21`).
 - NVDA says "expanded" when Alt+Down Arrow expands a Settings combo box,
   before its first item, and Verbatim does not; both say the items alike,
   "not selected" included ([changes and

@@ -426,7 +426,7 @@ impl Context {
         self.push(
             Item::IdleQuery {
                 round,
-                behind_follow_ups: false,
+                behind_noted: false,
             },
             TraceId::mint(),
             now_ms(),
@@ -1059,7 +1059,7 @@ impl Outpost {
     }
 
     /// Waits until the worker has handled everything queued before this
-    /// call and every follow-up those entries queued, the focus-following
+    /// call and the noted caret those entries left, the focus-following
     /// subscriptions have made every move the worker asked of them, and
     /// every message the worker published has been written to the pipe. A
     /// test that measures what the outpost's handling cost the application,

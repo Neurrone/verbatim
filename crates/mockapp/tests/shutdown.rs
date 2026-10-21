@@ -24,7 +24,8 @@ mod harness;
 use std::sync::mpsc::{self, RecvTimeoutError};
 
 use verbatim_model::{
-    CallCounts, NodeId, NormalizedEvent, TextOp, TextPoint, TextRead, TextReply, TextUnit,
+    CallCounts, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextRead, TextReply,
+    TextUnit,
 };
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
@@ -65,7 +66,7 @@ fn focused(hwnd: HWND) -> verbatim_uia::Cached<verbatim_uia::ListenerEvent> {
 }
 
 /// Focuses mockapp's "Notes" document and returns its node, once the
-/// outpost has reported the focus and its caret, which must be all it
+/// outpost has reported the focus with its caret, which must be all it
 /// said.
 fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND) -> NodeId {
     app.send("set-focus doc");
@@ -73,19 +74,17 @@ fn focus_notes(app: &mut common::MockApp, outpost: &OutpostUnderTest, hwnd: HWND
     outpost.deliver(outpost.listener_fact(&element));
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node,
-        other => panic!("the outpost said {other:?}, not the document's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => node,
+        other => panic!("the outpost said {other:?}, not the document's focus with its caret"),
     };
     assert_eq!(node.name.as_deref(), Some("Notes"));
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, .. },
-            ..
-        } if node_id == node.id => {}
-        other => panic!("the outpost said {other:?}, not the document's caret"),
-    }
     outpost.settled();
     node.id
 }

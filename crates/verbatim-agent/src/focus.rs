@@ -2,9 +2,9 @@
 //! [`Request::FocusedElement`](crate::protocol::Request::FocusedElement):
 //! state a test reads independently of the screen reader under test, such
 //! as which item of the desktop has the focus, to fix what it expects the
-//! screen reader to say before it says it. Three requests need facts only
+//! screen reader to say before it says it. Four requests need facts only
 //! UI Automation has and keep it: [`focus_by_automation_id`],
-//! [`controlled_items`], and [`misspelt_words`]
+//! [`controlled_items`], [`name_by_automation_id`], and [`misspelt_words`]
 //! (`docs/design/listener-without-connections.md`, section 4.5).
 
 use std::io;
@@ -17,7 +17,7 @@ use windows::Win32::System::Ole::{SafeArrayGetElement, SafeArrayGetLBound, SafeA
 use windows::Win32::System::Variant::{VARENUM, VARIANT, VT_ARRAY, VT_I4};
 use windows::Win32::UI::Accessibility::{
     AccessibleObjectFromWindow, AnnotationType_SpellingError, CUIAutomation, IAccessible,
-    IUIAutomation, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
+    IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern, TextPatternRangeEndpoint_End,
     TextPatternRangeEndpoint_Start, TextUnit_Word, TreeScope_Children, TreeScope_Descendants,
     UIA_AnnotationTypesAttributeId, UIA_AutomationIdPropertyId, UIA_SizeOfSetPropertyId,
     UIA_TextPatternId, WindowFromAccessibleObject,
@@ -46,6 +46,37 @@ pub fn focus_by_automation_id(automation_id: &str) -> io::Result<u32> {
 
 /// [`focus_by_automation_id`]'s UI Automation calls.
 fn focus_through_uia(automation_id: &str) -> io::Result<u32> {
+    let (automation, element) = find_in_foreground(automation_id)?;
+    // SAFETY: plain COM calls on live interfaces.
+    unsafe { element.SetFocus() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let any = unsafe { automation.CreateTrueCondition() }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let children =
+        unsafe { element.FindAll(TreeScope_Children, &any) }.map_err(io::Error::other)?;
+    // SAFETY: as above.
+    let count = unsafe { children.Length() }.map_err(io::Error::other)?;
+    u32::try_from(count).map_err(io::Error::other)
+}
+
+/// Of the first element the focused element's UI Automation
+/// `ControllerFor` relation names, the size of the set its first child
+/// reports (its `SizeOfSet` property, the count a screen reader says "of
+/// N" from) and the names of its first `names` children.
+///
+/// # Errors
+///
+/// Returns an error if UI Automation cannot be reached, nothing has the
+/// focus, the focused element controls nothing, or the controlled
+/// element's first child reports no set size.
+pub fn controlled_items(names: u32) -> io::Result<(u32, Vec<String>)> {
+    through_uia("ControlledItems", || controlled_through_uia(names))
+}
+
+/// The first element of the foreground window whose UI Automation
+/// identifier is `automation_id`, with the UI Automation client that found
+/// it.
+fn find_in_foreground(automation_id: &str) -> io::Result<(IUIAutomation, IUIAutomationElement)> {
     // SAFETY: as in `focused_element`.
     let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
     // SAFETY: as in `focused_element`.
@@ -70,30 +101,7 @@ fn focus_through_uia(automation_id: &str) -> io::Result<u32> {
             "no element of the foreground window has the identifier {automation_id:?}"
         ))
     })?;
-    // SAFETY: as above.
-    unsafe { element.SetFocus() }.map_err(io::Error::other)?;
-    // SAFETY: as above.
-    let any = unsafe { automation.CreateTrueCondition() }.map_err(io::Error::other)?;
-    // SAFETY: as above.
-    let children =
-        unsafe { element.FindAll(TreeScope_Children, &any) }.map_err(io::Error::other)?;
-    // SAFETY: as above.
-    let count = unsafe { children.Length() }.map_err(io::Error::other)?;
-    u32::try_from(count).map_err(io::Error::other)
-}
-
-/// Of the first element the focused element's UI Automation
-/// `ControllerFor` relation names, the size of the set its first child
-/// reports (its `SizeOfSet` property, the count a screen reader says "of
-/// N" from) and the names of its first `names` children.
-///
-/// # Errors
-///
-/// Returns an error if UI Automation cannot be reached, nothing has the
-/// focus, the focused element controls nothing, or the controlled
-/// element's first child reports no set size.
-pub fn controlled_items(names: u32) -> io::Result<(u32, Vec<String>)> {
-    through_uia("ControlledItems", || controlled_through_uia(names))
+    Ok((automation, element))
 }
 
 /// [`controlled_items`]' UI Automation calls.
@@ -146,6 +154,22 @@ fn controlled_through_uia(names: u32) -> io::Result<(u32, Vec<String>)> {
         read.push(name.to_string());
     }
     Ok((count, read))
+}
+
+/// The name of the first element of the foreground window whose UI
+/// Automation identifier is `automation_id`, read without focusing it.
+///
+/// # Errors
+///
+/// Returns an error if UI Automation cannot be reached, there is no
+/// foreground window, or no such element is found.
+pub fn name_by_automation_id(automation_id: &str) -> io::Result<String> {
+    through_uia("NameByAutomationId", || {
+        let (_, element) = find_in_foreground(automation_id)?;
+        // SAFETY: a plain COM call on a live interface.
+        let name = unsafe { element.CurrentName() }.map_err(io::Error::other)?;
+        Ok(name.to_string())
+    })
 }
 
 /// How long one of the agent's UI Automation requests may take before it

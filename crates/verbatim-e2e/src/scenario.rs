@@ -1621,6 +1621,17 @@ impl Scenario {
         self.agent.misspelt_words()
     }
 
+    /// The name of the foreground window's element whose UI Automation
+    /// identifier is `automation_id`, read by the agent through UI
+    /// Automation independently of Verbatim, without focusing it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn name_by_automation_id(&mut self, automation_id: &str) -> io::Result<String> {
+        self.agent.name_by_automation_id(automation_id)
+    }
+
     /// Of the first element the focused element controls (its UI
     /// Automation `ControllerFor` relation), the set size its first child
     /// reports (`SizeOfSet`) and the names of its first `names` children, read by the agent independently of

@@ -152,9 +152,9 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   event the limiter kept: its four focus events, and a foreground change
   kept as one of its thread's other events besides. A run is ended only
   by an MSAA event NVDA's pump receives; UIA events and focus reads,
-  Core's queries and list of held nodes, the worker's caret follow-up
-  and the outpost's settle request keep their own places without ending
-  it, with the differences "MSAA winevent flood control" records.
+  Core's queries and list of held nodes, and the outpost's settle request
+  keep their own places without ending it, with the differences "MSAA
+  winevent flood control" records.
 - The fake focus after a menu or the Alt+Tab switcher closes is skipped
   only when a focus observed after the close was actually applied; a focus fact that
   is dropped or unreadable does not skip it.
@@ -349,14 +349,14 @@ another application's focus, and the worker's unit tests both tests.
 
 Entries NVDA's pump never receives neither join a run nor end it, and
 are handled at their own places: UIA events and UIA focus reads, Core's
-queries and its list of held nodes, the worker's own caret follow-up
-after a focus it reported, the outpost's settle request, an object
-destroyed, the console host's events, and a text control's selection
-change (Dickson, 2026-10-20). None of the sequences this decides is yet
-captured from NVDA; the one that adds work is rapid tabbing out of an
-edit field, where [focus A, the caret follow-up of the focus N reported
-before, focus B] reads N's caret and speaks its line or value before B
-alone is reported, and its capture is the one to take.
+queries and its list of held nodes, the outpost's settle request, an
+object destroyed, the console host's events, and a text control's
+selection change (Dickson, 2026-10-20). None of the sequences this decides
+is yet captured from NVDA. A focus's caret is read within the focus's own
+handling, as NVDA reads an object's text within its announcement, so
+rapid tabbing through an edit field N, with a newer focus B already
+waiting, reads N's caret before B is reported, as NVDA reads N's line
+with N's focus.
 
 Different: events from a window the system reports hung are dropped
 before any read; an MSAA event the outpost's acceptance test will drop

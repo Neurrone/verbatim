@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::settings::ReaderSettings;
 use crate::speech::{SpeechMark, Utterance};
-use crate::text::{CaretKey, CaretReport, SelectionChange, TextPosition, TextReply, TextRequest};
+use crate::text::{
+    CaretKey, CaretReport, FocusText, SelectionChange, TextPosition, TextReply, TextRequest,
+};
 use crate::tree::{Backend, NodeSnapshot, Rect, StateSet};
 use crate::{NodeId, OutpostId, TraceId};
 
@@ -134,6 +136,16 @@ pub enum NormalizedEvent {
         /// compatibility.
         #[serde(default)]
         selected_child: Option<NodeSnapshot>,
+        /// For a focus that may have text, what the outpost's caret read
+        /// found, made while it handled the focus, so the line at the caret
+        /// comes in the same message as the name, role and states and
+        /// nothing is spoken between them, as NVDA's object announcement
+        /// reads an object's text within it (`docs/nvda/speech.md`, "What
+        /// an object with text says"). `None` for a focus that has no
+        /// text and for a foreground change.
+        /// Boxed, as the rest of the message is large already.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<Box<FocusText>>,
     },
     /// A property of a node changed.
     PropertyChanged {
@@ -208,13 +220,11 @@ pub enum NormalizedEvent {
     /// The caret or the selection moved in a node with text (UIA's text
     /// selection changed event, an edit control's caret event), carrying
     /// the line at the caret and the selection (milestone M4). The outpost
-    /// sends one when a node with text gains the focus, as soon after the
-    /// focus event as it can, and on every later caret or selection change
-    /// in the focus, coalesced so a burst sends the latest only. It keeps
-    /// Core's copy of the caret current. The first one after a focus ends
-    /// the focus announcement with the selection or the caret's line, as
-    /// NVDA reads an object with text in place of its value; a later one
-    /// speaks only the selection changes it carries, a selection no key made
+    /// sends one on every caret or selection change in the focus,
+    /// coalesced so a burst sends the latest only; the focus's own caret
+    /// comes with the focus ([`FocusText`]). It keeps Core's copy of the
+    /// caret current, and speaks only the selection changes it carries, a
+    /// selection no key made
     /// (the mouse's or the application's), as NVDA reports any selection
     /// change of the focus after its caret event
     /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes"). A
@@ -229,23 +239,11 @@ pub enum NormalizedEvent {
         caret: CaretReport,
         /// How the selection changed from the one the outpost last reported
         /// for the node, by the rule of [`CaretReply`](crate::CaretReply)'s
-        /// `selection_changes`. Always empty for the report after a focus,
-        /// which sets the selection later reports are compared with, for a
-        /// terminal, and for the first report after the node's text changed
+        /// `selection_changes`. Always empty for a terminal, and for the first report after the node's text changed
         /// (or with its change waiting behind the caret event) or Verbatim
         /// itself selected or moved the caret.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         selection_changes: Vec<SelectionChange>,
-    },
-    /// A newly focused node whose role may have text (an edit field, a
-    /// document, or a terminal) has no text the outpost can read, or its
-    /// caret could not be read: sent in place of the focus's first
-    /// [`CaretMoved`](Self::CaretMoved). Core speaks the node's value
-    /// instead, as NVDA speaks the value of an object with no text
-    /// interface.
-    NoText {
-        /// The focused node.
-        node_id: NodeId,
     },
     /// The text of a node changed (UIA's text changed event, an edit
     /// control's change notification). Characters typed into a terminal
@@ -314,7 +312,6 @@ impl NormalizedEvent {
             | NormalizedEvent::ValueChanged { node_id, .. }
             | NormalizedEvent::Notification { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
-            | NormalizedEvent::NoText { node_id }
             | NormalizedEvent::TextChanged { node_id }
             | NormalizedEvent::TerminalOutput { node_id, .. }
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {

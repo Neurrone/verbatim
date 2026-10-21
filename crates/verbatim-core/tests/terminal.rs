@@ -12,7 +12,7 @@ use verbatim_model::{
     Backend, Effect, Input, LineChange, Message, NodeDetails, NodeId, NodeSnapshot,
     NormalizedEvent, OutpostId, Phrase, Pid, QueryId, ReaderSettings, ReviewCommand, Role,
     SegmentContent, Skipped, SpeechMark, SpeechPriority, StateSet, TerminalOutput, TextOp,
-    TextReply, TextRequest, TraceId,
+    TextReply, TextRequest, TraceId, UtteranceSegment,
 };
 
 const OUTPOST: OutpostId = OutpostId(1);
@@ -36,25 +36,28 @@ fn event(event: NormalizedEvent) -> Input {
 /// A state whose focus is a terminal.
 fn terminal() -> SrState {
     let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &event(NormalizedEvent::FocusChanged {
-            node: NodeSnapshot {
-                id: id(TERMINAL),
-                backend: Backend::Uia,
-                role: Role::Terminal,
-                name: Some("Terminal".to_owned()),
-                value: None,
-                states: StateSet::new(),
-                details: NodeDetails::default(),
-            },
-            foreground: false,
-            ancestors: Vec::new(),
-            ancestors_unknown: false,
-            selected_child: None,
-        }),
-    );
+    let _ = reduce(&mut state, &terminal_focus(None));
     state
+}
+
+/// The focus on the terminal, with what its caret read found, `text`.
+fn terminal_focus(text: Option<verbatim_model::FocusText>) -> Input {
+    event(NormalizedEvent::FocusChanged {
+        node: NodeSnapshot {
+            id: id(TERMINAL),
+            backend: Backend::Uia,
+            role: Role::Terminal,
+            name: Some("Terminal".to_owned()),
+            value: None,
+            states: StateSet::new(),
+            details: NodeDetails::default(),
+        },
+        foreground: false,
+        ancestors: Vec::new(),
+        ancestors_unknown: false,
+        selected_child: None,
+        text: text.map(Box::new),
+    })
 }
 
 fn lines(range: std::ops::RangeInclusive<u32>) -> Vec<String> {
@@ -1059,31 +1062,68 @@ fn a_clearing_key_forgets_the_typing_held() {
 fn caret_at(text: &str, offset: u32) -> Input {
     event(NormalizedEvent::CaretMoved {
         node_id: id(TERMINAL),
-        caret: verbatim_model::CaretReport {
-            line: verbatim_model::TextChunk {
-                unit: verbatim_model::TextUnit::Line,
-                text: text.to_owned(),
-                start: verbatim_model::TextAnchor(1),
-                offset,
-                languages: Vec::new(),
-                first: false,
-                last: false,
-                truncated: false,
-                formats: Vec::new(),
-            },
-            selection: None,
-        },
+        caret: caret_on(text, offset),
         selection_changes: Vec::new(),
     })
 }
 
+/// The focus on the terminal, its caret on `text` at byte `offset`.
+fn focus_at(text: &str, offset: u32) -> Input {
+    terminal_focus(Some(verbatim_model::FocusText::Caret {
+        caret: caret_on(text, offset),
+        selected_text: None,
+    }))
+}
+
+/// The segments of each utterance `focus` speaks, which it reduces.
+fn focus_speech(state: &mut SrState, focus: &Input) -> Vec<Vec<UtteranceSegment>> {
+    reduce(state, focus)
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance) => Some(utterance.segments.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The terminal's focus announcement, then its line, `line`.
+fn announced_with(line: &str) -> Vec<Vec<UtteranceSegment>> {
+    vec![
+        vec![
+            UtteranceSegment::label("Terminal"),
+            UtteranceSegment::new(SegmentContent::Role(Role::Terminal)),
+        ],
+        vec![UtteranceSegment::text(line)],
+    ]
+}
+
+/// The caret on `text` at byte `offset`.
+fn caret_on(text: &str, offset: u32) -> verbatim_model::CaretReport {
+    verbatim_model::CaretReport {
+        line: verbatim_model::TextChunk {
+            unit: verbatim_model::TextUnit::Line,
+            text: text.to_owned(),
+            start: verbatim_model::TextAnchor(1),
+            offset,
+            languages: Vec::new(),
+            first: false,
+            last: false,
+            truncated: false,
+            formats: Vec::new(),
+        },
+        selection: None,
+    }
+}
+
 #[test]
 fn a_typed_space_padding_hides_is_echoed_when_the_caret_moves_past_it() {
-    let mut state = terminal();
+    let mut state = SrState::new();
     let mut playback = Playback::default();
-    // The focus's first caret report reads its line, as a focus does.
-    playback.feed(&mut state, &caret_at("ready> echo          ", 11));
-    assert_eq!(playback.play_all(&mut state), ["ready> echo"]);
+    // The focus reads its line.
+    assert_eq!(
+        focus_speech(&mut state, &focus_at("ready> echo          ", 11)),
+        announced_with("ready> echo")
+    );
     playback.feed(&mut state, &typed(" "));
     // The line's text reads the same, but the caret moved one cell on.
     playback.feed(&mut state, &caret_at("ready> echo          ", 12));
@@ -1170,10 +1210,13 @@ fn typing_past_the_right_margin_is_echoed_not_spoken_as_output() {
 
 #[test]
 fn typing_over_ghost_text_that_showed_it_already_is_echoed() {
-    let mut state = terminal();
+    let mut state = SrState::new();
     let mut playback = Playback::default();
-    playback.feed(&mut state, &caret_at("ready> git status", 8));
-    assert_eq!(playback.play_all(&mut state), ["ready> git status"]);
+    // The focus reads its line.
+    assert_eq!(
+        focus_speech(&mut state, &focus_at("ready> git status", 8)),
+        announced_with("ready> git status")
+    );
     // The prediction showed "it status"; typing "i" changes no text.
     playback.feed(&mut state, &typed("i"));
     playback.feed(&mut state, &caret_at("ready> git status", 9));
@@ -1186,10 +1229,13 @@ fn typing_over_ghost_text_that_showed_it_already_is_echoed() {
 
 #[test]
 fn typing_the_caret_shows_before_the_screen_read_is_echoed_once() {
-    let mut state = terminal();
+    let mut state = SrState::new();
     let mut playback = Playback::default();
-    playback.feed(&mut state, &caret_at("ready>          ", 7));
-    assert_eq!(playback.play_all(&mut state), ["ready>"]);
+    // The focus reads its line.
+    assert_eq!(
+        focus_speech(&mut state, &focus_at("ready>          ", 7)),
+        announced_with("ready>")
+    );
     playback.feed(&mut state, &typed("."));
     // The console host's caret reports, read before the screen: the line
     // already shows the "." and the caret then moves past it.

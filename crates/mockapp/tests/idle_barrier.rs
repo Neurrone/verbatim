@@ -15,8 +15,8 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    CaretReport, CaretWatch, NodeId, NormalizedEvent, TextOp, TextPoint, TextPosition, TextReply,
-    TextUnit,
+    CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, TextOp, TextPoint, TextPosition,
+    TextReply, TextUnit,
 };
 use verbatim_outpost::protocol::{
     DeliveredFact, OutpostToSupervisor, Query, QueryOutcome, QueryResult, SupervisorToOutpost,
@@ -106,7 +106,7 @@ fn the_answer_goes_behind_a_message_in_the_pipe_and_one_in_the_backlog() {
 
 /// Focuses mockapp's "Notes" document, hands the outpost the fact the
 /// listener sends for it, and returns its node and the caret the outpost
-/// reported after the focus, which must be all it said.
+/// reported with the focus, which must be all it said.
 fn notes_focus(
     app: &mut common::MockApp,
     outpost: &OutpostUnderTest,
@@ -116,21 +116,24 @@ fn notes_focus(
     let uia = Uia::new().expect("a UIA client");
     let element = common::listener_focus(&uia, hwnd.0 as isize);
     outpost.deliver(outpost.listener_fact(&element));
-    let node = match outpost.next() {
+    let (node, caret) = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node,
-        other => panic!("the outpost said {other:?}, not the document's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => {
+            let FocusText::Caret { caret, .. } = *text else {
+                unreachable!("matched by the guard");
+            };
+            (node, caret)
+        }
+        other => panic!("the outpost said {other:?}, not the document's focus with its caret"),
     };
     assert_eq!(node.name.as_deref(), Some("Notes"));
-    let caret = match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
-            ..
-        } if node_id == node.id => caret,
-        other => panic!("the outpost said {other:?}, not the document's caret"),
-    };
     outpost.settled();
     (node.id, caret)
 }
@@ -201,18 +204,16 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     outpost.deliver(outpost.listener_fact(&element));
     let term = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node.id,
-        other => panic!("the outpost said {other:?}, not the terminal's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => node.id,
+        other => panic!("the outpost said {other:?}, not the terminal's focus with its caret"),
     };
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, .. },
-            ..
-        } if node_id == term => {}
-        other => panic!("the outpost said {other:?}, not the terminal's caret"),
-    }
     outpost.settled();
     let hold = outpost.ask(Query::Text {
         node_id: term,

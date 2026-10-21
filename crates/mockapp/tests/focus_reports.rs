@@ -29,8 +29,8 @@ use std::time::Duration;
 use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    Backend, Effect, Fetches, Input, NodeDetails, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
-    PropertyChange, Role, SegmentContent, State, StateSet, TraceId,
+    Backend, Effect, Fetches, FocusText, Input, NodeDetails, NodeSnapshot, NormalizedEvent,
+    OutpostId, Pid, PropertyChange, Role, SegmentContent, State, StateSet, TextFormat, TraceId,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{
@@ -422,6 +422,7 @@ fn focus_without_a_path(
                     ancestors,
                     ancestors_unknown: true,
                     selected_child: None,
+                    text: None,
                 },
             ..
         } if ancestors.is_empty() => node,
@@ -640,8 +641,9 @@ fn a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus() {
 }
 
 /// Focuses `id` in mockapp's caret watch fixture and returns the focus the
-/// outpost reports, which must be the next thing it says, followed by the
-/// caret it reports for a document, and nothing more.
+/// outpost reports, which must be the next thing it says, with its caret
+/// for a document and with no text read for anything else, and nothing
+/// more.
 fn focus_in_caret_fixture(
     app: &mut common::MockApp,
     client: &Client,
@@ -651,21 +653,20 @@ fn focus_in_caret_fixture(
     app.send(&format!("set-focus {id}"));
     let element = client.focused();
     outpost.deliver(outpost.listener_fact(&element));
-    let node = match outpost.next() {
+    let (node, text) = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event: NormalizedEvent::FocusChanged { node, text, .. },
             ..
-        } => node,
+        } => (node, text),
         other => panic!("the outpost said {other:?}, not the focus on {id}"),
     };
-    if node.role == Role::EditableText {
-        match outpost.next() {
-            OutpostToSupervisor::Event {
-                event: NormalizedEvent::CaretMoved { node_id, .. },
-                ..
-            } if node_id == node.id => {}
-            other => panic!("the outpost said {other:?}, not the document's caret"),
-        }
+    assert_eq!(
+        matches!(text.as_deref(), Some(FocusText::Caret { .. })),
+        node.role == Role::EditableText,
+        "the caret with a document's focus alone: {text:?}"
+    );
+    if node.role != Role::EditableText {
+        assert_eq!(text, None, "no text read for {id}");
     }
     outpost.settled();
     node
@@ -1198,14 +1199,16 @@ fn a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_wi
             false
         )
     );
-    let node_id = node.id;
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id: caret, .. },
-            ..
-        } if caret == node_id => {}
-        other => panic!("the outpost said {other:?}, not the terminal's caret"),
-    }
+    let NormalizedEvent::FocusChanged {
+        text: Some(text), ..
+    } = &read
+    else {
+        panic!("the terminal's focus came without its caret: {read:?}");
+    };
+    assert!(
+        matches!(**text, FocusText::Caret { .. }),
+        "the focus came with {text:?}"
+    );
     outpost.settled();
 
     let mut state = SrState::new();
@@ -1218,6 +1221,12 @@ fn a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_wi
                 SegmentContent::Role(Role::Window),
             ],
             vec![SegmentContent::Role(Role::Terminal)],
+            vec![
+                SegmentContent::Format(TextFormat::FontName("Consolas".to_owned())),
+                SegmentContent::Format(TextFormat::FontSize("11.0 pt".to_owned())),
+                SegmentContent::Format(TextFormat::Color("black".to_owned())),
+                SegmentContent::Text("ready>".to_owned()),
+            ],
         ]
     );
 
@@ -1852,12 +1861,16 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
     outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     let (node, ancestors) = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged {
-                node, ancestors, ..
-            },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    ancestors,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => (node, ancestors),
-        other => panic!("the outpost said {other:?}, not the text area's focus"),
+        } if matches!(*text, FocusText::Caret { .. }) => (node, ancestors),
+        other => panic!("the outpost said {other:?}, not the text area's focus with its caret"),
     };
     assert_eq!((node.role, node.name), (Role::Terminal, None));
     assert_eq!(
@@ -1867,13 +1880,6 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
             .collect::<Vec<_>>(),
         [Some("Mockapp Console Window Fixture")]
     );
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, .. },
-            ..
-        } if node_id == node.id => {}
-        other => panic!("the outpost said {other:?}, not the terminal's caret"),
-    }
     outpost.settled();
 
     drop(outpost);
@@ -1933,26 +1939,24 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
     let client = Client::new(common::find_window(&title));
     let outpost = OutpostUnderTest::new(&app);
 
-    // The search box has no text pattern in mockapp, so its focus is
-    // followed by the outpost's word that it has no text.
+    // The search box has no text pattern in mockapp, so its focus carries
+    // the outpost's word that it has no text.
     app.send("set-focus search");
     let (judged, _) = outpost.listener_read(&client.focused());
     assert!(matches!(judged, Judged::Read(_)), "dropped: {judged:?}");
     outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node,
-        other => panic!("the outpost said {other:?}, not the search box's focus"),
+        } if matches!(*text, FocusText::NoText) => node,
+        other => panic!("the outpost said {other:?}, not the search box's focus with no text"),
     };
-    match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::NoText { node_id },
-            ..
-        } => assert_eq!(node_id, node.id),
-        other => panic!("the outpost said {other:?}, not that the search box has no text"),
-    }
     outpost.settled();
 
     app.send("set-description search Type to search");

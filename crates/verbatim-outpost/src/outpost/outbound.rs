@@ -79,7 +79,6 @@ fn key(message: &OutpostToSupervisor) -> Option<Key> {
         NormalizedEvent::ProgressChanged { bar } => (bar.id, Detail::None),
         NormalizedEvent::ValueChanged { node_id, .. }
         | NormalizedEvent::CaretMoved { node_id, .. }
-        | NormalizedEvent::NoText { node_id }
         | NormalizedEvent::TextChanged { node_id }
         | NormalizedEvent::TerminalOutput { node_id, .. }
         | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => (*node_id, Detail::None),
@@ -575,9 +574,10 @@ mod tests {
         })
     }
 
-    fn no_text(number: u64) -> OutpostToSupervisor {
-        event(NormalizedEvent::NoText {
+    fn value_changed(number: u64) -> OutpostToSupervisor {
+        event(NormalizedEvent::ValueChanged {
             node_id: node(number),
+            value: None,
         })
     }
 
@@ -647,7 +647,7 @@ mod tests {
     fn a_waiting_event_is_replaced_by_one_of_the_same_kind_for_the_same_node_at_the_back() {
         let mut pending = pending();
         push(&mut pending, text_changed(1), &[]);
-        push(&mut pending, no_text(1), &[]);
+        push(&mut pending, value_changed(1), &[]);
         push(&mut pending, text_changed(2), &[]);
         push(&mut pending, reply(7), &[]);
         push(&mut pending, text_changed(1), &[]);
@@ -655,7 +655,7 @@ mod tests {
         assert_eq!(
             order,
             vec![
-                summary(&no_text(1)),
+                summary(&value_changed(1)),
                 summary(&text_changed(2)),
                 "reply 7".to_owned(),
                 summary(&text_changed(1)),
@@ -872,7 +872,7 @@ mod tests {
         let (outbound, mut reader) = outbound();
         outbound.send(large());
         outbound.send(text_changed(1));
-        outbound.send(no_text(1));
+        outbound.send(value_changed(1));
         outbound.send(text_changed(2));
         outbound.send(reply(7));
         outbound.send(text_changed(1));
@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(
             rest,
             vec![
-                summary(&no_text(1)),
+                summary(&value_changed(1)),
                 summary(&text_changed(2)),
                 "reply 7".to_owned(),
                 summary(&text_changed(1)),

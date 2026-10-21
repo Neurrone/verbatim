@@ -58,7 +58,8 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, mpsc};
 
 use verbatim_model::{
-    CallCounts, Fetches, NodeSnapshot, NormalizedEvent, QueryKind, Role, TreeNode, WindowHandle,
+    CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, TreeNode,
+    WindowHandle,
 };
 use verbatim_model::{
     CaretWatch, LineStyle, PreviousSelection, SelectionChange, TextAttributes, TextMovement,
@@ -4267,6 +4268,120 @@ fn uia_combo_box_costs_exactly() {
     );
 }
 
+/// A UIA focus on a text field, read by the listener, through an outpost
+/// reading with remote operations or the classic walk as `remote` says:
+/// the field `id` of `fixture`, the first focus in its window. Its caret
+/// is read with it, so the one focus message carries every call the focus
+/// costs: the listener's read, the outpost's own element found by the
+/// listener's path, the focus's enrichment, and the caret's read.
+fn uia_text_focus(fixture: &str, id: &str, remote: bool) -> Reported {
+    let title = common::unique_title("mockapp-counts-text-focus");
+    let mut app = common::spawn(fixture, "uia", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::with_options(
+        &app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    app.send(&format!("set-focus {id}"));
+    let uia = Uia::new().expect("a UIA client");
+    let reported = outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
+    drop(outpost);
+    app.quit();
+    reported
+}
+
+/// The calls a focus on a text field costs, its caret read with it and
+/// counted in the focus's one message (`docs/performance.md`, "A focus on
+/// a text field"): a UIA document and a terminal, remotely and
+/// classically, and a classic edit control through MSAA. Each is the first
+/// focus in its window, so a UIA focus makes the one connection that
+/// finds the outpost's own element.
+fn text_field_focuses_cost_exactly() {
+    common::init_com();
+    let mut ratchet = Ratchet::default();
+    let with_connection = |uia| CallCounts {
+        connections: 1,
+        ..calls(uia, 0, 1)
+    };
+    for (operation, fixture, id, remote, expected) in [
+        (
+            "UIA text field focus with its caret, remotely",
+            "text.json",
+            "doc",
+            true,
+            with_connection(9),
+        ),
+        (
+            "UIA text field focus with its caret, classically",
+            "text.json",
+            "doc",
+            false,
+            with_connection(45),
+        ),
+        (
+            "UIA terminal focus with its caret, remotely",
+            "terminal_reading.json",
+            "term",
+            true,
+            with_connection(9),
+        ),
+        (
+            "UIA terminal focus with its caret, classically",
+            "terminal_reading.json",
+            "term",
+            false,
+            with_connection(27),
+        ),
+    ] {
+        let reported = uia_text_focus(fixture, id, remote);
+        assert!(
+            matches!(reported.text, Some(FocusText::Caret { .. })),
+            "{operation}: the focus came without its caret: {:?}",
+            reported.text
+        );
+        ratchet.check_calls(operation, reported.calls, expected);
+    }
+
+    let title = common::unique_title("mockapp-counts-edit-focus");
+    let mut app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // The keyboard focus cannot be given to the control on a desktop of
+    // its own, so its host has the focused state, which an MSAA focus
+    // needs on the object or an ancestor.
+    app.send("set-focus root");
+    let outpost = OutpostUnderTest::new(&app);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(
+            Some(hwnd),
+            None,
+            windows::core::w!("EDIT"),
+            None,
+        )
+    }
+    .expect("mockapp's edit control");
+    let reported = outpost.focus(DeliveredFact::MsaaFocus {
+        hwnd: edit.0 as isize,
+        id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+        id_child: 0,
+    });
+    assert!(
+        matches!(reported.text, Some(FocusText::Caret { .. })),
+        "the edit control's focus came without its caret: {:?}",
+        reported.text
+    );
+    ratchet.check_calls(
+        "edit control focus with its caret",
+        reported.calls,
+        calls(0, 39, 6),
+    );
+    drop(outpost);
+    app.quit();
+    ratchet.finish();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -4362,6 +4477,10 @@ fn main() {
         (
             "uia_event_caches_cost_exactly",
             uia_event_caches_cost_exactly,
+        ),
+        (
+            "text_field_focuses_cost_exactly",
+            text_field_focuses_cost_exactly,
         ),
     ]);
 }

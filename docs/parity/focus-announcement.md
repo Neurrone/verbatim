@@ -117,26 +117,21 @@ Matched:
   the caret through its text interface, in place of its value ("What an
   object with text says" in [Speech](../nvda/speech.md)). Verbatim, through
   the text protocol, speaks the name, role, and states at once, and the
-  line, or "selected" with the selected text, as soon as the outpost's
-  caret report arrives; an edit field, document, or terminal with no
-  text interface speaks its value once the outpost says so (`NoText`),
-  after the rest of the announcement rather than between the role and
-  the states. Object navigation, to-focus, and reporting the current
+  line, or "selected" with the selected text, from the focus's message;
+  an edit field, document, or terminal with no text interface speaks its
+  value when the outpost says so (`NoText`), after the rest of the
+  announcement rather than between the role and the states. Object navigation, to-focus, and reporting the current
   object read the text the same way, whether or not the object has the
   focus: the selected text, else the line at the caret, else the first
   line of a control that reports no caret, and the value when it has no
-  text interface. A known difference (2026-10-21): since the line comes
-  from Core's caret query, a selection event answered before it is
-  spoken before the line, where NVDA says the line with the focus. On
-  Shift+Tab into Settings' search box holding "sound", NVDA says "Search
-  box, Find a setting edit sound" and then the suggestion "Sound
-  settings 1 of 22"; Verbatim says the box without its line, the
-  suggestion, and then "sound"; in both readers the suggestion's speech
-  cuts off the box's, so the difference the user hears is Verbatim's
-  separate "sound" after the suggestion; both cancel it all at the next focus
-  (the rapid-Tab captures `rapid-tab-nvda-1.txt`, `rapid-tab-nvda-2.txt`,
-  `rapid-tab-verbatim-1.txt` and `rapid-tab-verbatim-2.txt` in
-  `target/e2e-evidence/fixes-round-six-2026-10-21`; listed in the roadmap's M4.2).
+  text interface. The focus's line comes in the focus's own message, read
+  by the outpost while it handled the focus, so nothing is spoken between
+  the focus and its line, as NVDA says the line with the focus. On
+  Shift+Tab into Settings' search box holding "sound", both say "Search
+  box, Find a setting edit" and "sound", cut off by the suggestion "Sound
+  settings 1 of 22" (`rapid-tab-nvda-1.txt` in
+  `target/e2e-evidence/fixes-round-six-2026-10-21`; the scenario
+  `settings_search_suggestions_reentered`).
 - Multi-column list view items: NVDA names an item of a report view
   (such as msinfo32's right pane) from its column texts, "content;
   Header: content", with no value or description. Verbatim names an item

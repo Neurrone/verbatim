@@ -19,7 +19,7 @@ use verbatim_model::{
     Query, QueryId, QueryKind, ReviewCommand, Role, SegmentContent, SpeechPriority, State,
     StateSet, TraceId, Utterance, UtteranceSegment, UtteranceSource, WindowFacts,
 };
-use verbatim_model::{Backend, FocusNow, FocusValidity};
+use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity};
 
 use crate::state::{
     Attention, FocusContext, Navigator, NavigatorRead, PendingNavigation, SrState, TextFollowUp,
@@ -367,12 +367,6 @@ fn reduce_text_completed(
     {
         return editing::caret_reply(state, trace_id, &pending, reply);
     }
-    if let Some(focus_text) = state
-        .focus_text
-        .take_if(|pending| pending.selection_query == Some(query_id))
-    {
-        return editing::focus_selection(state, trace_id, focus_text.node, reply);
-    }
     if let Some(pending) = state
         .pending_text
         .take_if(|pending| pending.query_id == query_id)
@@ -432,6 +426,7 @@ fn focus_dropped_first(
         node,
         ancestors,
         ancestors_unknown,
+        text,
         ..
     } = event
     else {
@@ -440,17 +435,16 @@ fn focus_dropped_first(
     if is_duplicate_focus(state, node) {
         keep_newer_reading(state, node, ancestors, *ancestors_unknown);
         sync_navigator_with_focus(state);
+        editing::keep_focus_caret(state, node.id, text.as_deref(), observed_at_ms);
         return true;
     }
     is_stale_focus(state, node.id.outpost(), observed_at_ms, window)
 }
 
-/// A caret report of `node`: keeps Core's caret current, ends the focus's
-/// announcement when it was waiting for it, and, once the announcement was
-/// complete, speaks the selection changes it carries, a selection no key
-/// made (`editing::selection_changed`). The report that completes the
-/// announcement sets the selection later ones are compared with, and
-/// carries no change.
+/// A caret report of `node`: keeps Core's caret current and speaks the
+/// selection changes it carries, a selection no key made
+/// (`editing::selection_changed`). The focus's own caret comes with the
+/// focus (`editing::focus_text`).
 fn reduce_caret_moved(
     state: &mut SrState,
     (trace_id, observed_at_ms): (TraceId, u64),
@@ -465,18 +459,14 @@ fn reduce_caret_moved(
         return Vec::new();
     };
     let node = *node;
-    let announced = state.focus_text.is_none_or(|pending| pending.node != node);
     let mut effects = terminal::caret_shows_typing(state, trace_id, node, caret);
     editing::update_caret(state, node, caret.clone(), observed_at_ms);
-    effects.extend(editing::focus_caret(state, trace_id, node));
-    if announced {
-        effects.extend(editing::selection_changed(
-            state,
-            trace_id,
-            (node, observed_at_ms),
-            selection_changes,
-        ));
-    }
+    effects.extend(editing::selection_changed(
+        state,
+        trace_id,
+        (node, observed_at_ms),
+        selection_changes,
+    ));
     effects
 }
 
@@ -519,6 +509,7 @@ fn reduce_event(
             ancestors,
             ancestors_unknown,
             selected_child,
+            text,
         } => reduce_focus_changed(
             state,
             trace_id,
@@ -531,6 +522,7 @@ fn reduce_event(
                 ancestors,
                 ancestors_unknown: *ancestors_unknown,
                 selected_child: selected_child.as_ref(),
+                text: text.as_deref(),
             },
         ),
         NormalizedEvent::SelectionChanged { node } => {
@@ -551,7 +543,6 @@ fn reduce_event(
         moved @ NormalizedEvent::CaretMoved { .. } => {
             reduce_caret_moved(state, (trace_id, observed_at_ms), moved)
         }
-        NormalizedEvent::NoText { node_id } => editing::focus_value(state, trace_id, *node_id),
         NormalizedEvent::TextChanged { node_id } => {
             editing::text_changed(state, trace_id, *node_id)
         }
@@ -656,6 +647,8 @@ struct FocusReport<'a> {
     /// The outpost could not read the ancestors in time.
     ancestors_unknown: bool,
     selected_child: Option<&'a NodeSnapshot>,
+    /// What the outpost's caret read found, for a focus that may have text.
+    text: Option<&'a FocusText>,
 }
 
 /// Handles an accepted focus change (`docs/parity/focus-announcement.md`,
@@ -751,6 +744,7 @@ fn reduce_focus_changed(
         if state.navigator.is_none() {
             state.navigator = Some(Navigator::on(report.node.clone()));
         }
+        editing::keep_focus_caret(state, report.node.id, report.text, report.observed_at_ms);
         return Vec::new();
     }
 
@@ -795,9 +789,16 @@ fn reduce_focus_changed(
         return effects;
     }
 
-    editing::await_focus_text(state, report.node);
+    // A new focus is a new object, whose formatting has not been reported.
+    state.reported_format = None;
     let speech = focus_speech(state, trace_id, report, entered);
     effects.extend(speech);
+    effects.extend(editing::focus_text(
+        state,
+        trace_id,
+        report.node,
+        (report.text, report.observed_at_ms),
+    ));
     effects
 }
 
@@ -849,7 +850,6 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
         effects.push(Effect::StopSpeech);
     }
     state.pending_caret = None;
-    state.focus_text = None;
     state.typed_word.clear();
     state.held_typing.clear();
     crate::terminal::focus_moved(state, node);
@@ -886,7 +886,7 @@ fn foreground_changed(
 /// first whenever it is presentable, whether or not a foreground report
 /// came for it, as NVDA speaks a window it took from the focus's ancestry
 /// ([`is_presentable_container`]). A focus that may have text leaves its
-/// value out, since its text follows (`editing::await_focus_text`).
+/// value out, since its text follows (`editing::focus_text`).
 fn focus_speech(
     state: &mut SrState,
     trace_id: TraceId,
@@ -1029,12 +1029,6 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
         .is_some_and(|pending| pending.node.outpost() == outpost)
     {
         state.pending_caret = None;
-    }
-    if state
-        .focus_text
-        .is_some_and(|pending| pending.node.outpost() == outpost)
-    {
-        state.focus_text = None;
     }
     if state
         .pending_text

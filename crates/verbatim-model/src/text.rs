@@ -353,6 +353,36 @@ pub struct CaretReport {
     pub selection: Option<Selection>,
 }
 
+/// What the outpost's caret read found for a focus that may have text,
+/// carried with the focus
+/// ([`NormalizedEvent::FocusChanged`](crate::NormalizedEvent::FocusChanged)).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FocusText {
+    /// The caret: Core speaks its line, or "selected" and the selected text
+    /// when something is selected, in place of the focus's value. The
+    /// caret's selection is the one the focus's later caret reports are
+    /// compared with.
+    Caret {
+        /// The line at the caret and the selection.
+        caret: CaretReport,
+        /// The selected text, read with the caret when something is
+        /// selected; `None` when nothing is, or it could not be read, and
+        /// the line is spoken instead.
+        #[serde(default)]
+        selected_text: Option<String>,
+    },
+    /// The node has no text the outpost can read (an MSAA object that is
+    /// not an edit control, a UIA element with no text pattern): Core
+    /// speaks its value instead, as NVDA speaks the value of an object with
+    /// no text interface.
+    NoText,
+    /// The node has text, or may have, but it could not be read now (its
+    /// element is not known, its provider did not answer, or the read
+    /// failed): Core speaks neither its line nor its value, which for a
+    /// document is all of its text.
+    NotRead,
+}
+
 /// What Core asks the outpost to do after it has passed a caret key to the
 /// application: watch for evidence of what the key did, then report the
 /// caret (`docs/nvda/editable-text-and-terminals.md`, the wait for

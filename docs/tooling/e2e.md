@@ -266,7 +266,9 @@ speech and the item),
 `settings_search_suggestions` (the Settings app's search suggestions,
 read as the selection moves through them while the focus stays in the
 search box, their number and names read by the agent before they are
-expected),
+expected), `settings_search_suggestions_reentered` (the search box
+entered again by Shift+Tab while it holds text, its line spoken with it
+before the suggestion Settings selects; local-only by the same filter),
 `lock_key_announcements` (Scroll Lock pressed twice is announced on,
 then off, or the reverse),
 `rapid_tabbing_in_settings` (a burst of Tab and Shift+Tab presses in

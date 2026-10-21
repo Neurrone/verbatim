@@ -795,8 +795,8 @@ pub enum SupervisorToOutpost {
     /// this query is still in progress. The listener answers once its
     /// `WinEvent` thread and its reading threads have nothing in progress;
     /// an outpost once its worker has handled everything that reached its
-    /// intake before the query, with the follow-ups those entries queued,
-    /// and no caret key's watch or owed terminal read is open. Either
+    /// intake before the query, with the caret those entries noted, and no
+    /// caret key's watch or owed terminal read is open. Either
     /// answers behind every message it sent before, never merged and never
     /// ahead as urgent.
     IdleQuery {
@@ -1452,6 +1452,7 @@ mod tests {
                     states: StateSet::new().with(State::Focused),
                     details: NodeDetails::default(),
                 },
+                text: None,
             },
         };
         let ready = OutpostToSupervisor::Ready {
@@ -1500,6 +1501,7 @@ mod tests {
                 ancestors: vec![snapshot(2)],
                 ancestors_unknown: false,
                 selected_child: Some(snapshot(3)),
+                text: None,
             },
         };
         let mut chain = OutpostToSupervisor::Reply {

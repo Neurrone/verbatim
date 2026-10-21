@@ -137,15 +137,16 @@ Implementation notes, `reduce`:
   check box, radio button, link, menu item, or application, and a
   description equal to the name is dropped. An edit field, document, or
   terminal leaves its value out too and says its text at the caret instead
-  ("What an object with text says" in `docs/nvda/speech.md`): the state
-  keeps a `FocusText` for it, and the outpost's first `CaretMoved` for the
-  focus speaks the caret's line ("blank" when empty) as a second queued
-  utterance with the focus's validity, or, when text is selected, asks for
-  the selected text (`TextOp::ReadRange` between the reported selection's
-  ends) and speaks "selected" with it, or its count at 512 characters or
-  more. `NoText` in its place speaks the value. The name and role are never
-  held back for it; a caret key or a focus change drops what is still
-  waiting, and a protected field's text and value are never spoken. Object
+  ("What an object with text says" in `docs/nvda/speech.md`): the focus's
+  message carries what the outpost's caret read found (`FocusChanged`'s
+  `text`), and the same reduction speaks the caret's line ("blank" when
+  empty) as a second queued utterance with the focus's validity, or, when
+  text is selected, "selected" with the selected text the outpost read
+  with the caret, or its count at 512 characters or more
+  (`editing::focus_text`). `NoText` speaks the value; `NotRead` speaks
+  neither. Nothing is left waiting, so nothing from any source can come
+  between the focus and its line, and a protected field's text and value
+  are never spoken. Object
   navigation, to-focus, and the first press of report current object
   announce such an object the same way, with or without the focus
   (`announce_navigator` in `reduce.rs`, `navigator_text` in `editing.rs`):

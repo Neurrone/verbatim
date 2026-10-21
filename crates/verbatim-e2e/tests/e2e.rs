@@ -47,6 +47,7 @@ scenario_tests! {
     explorer_folder_window
     settings_dialog_keys
     settings_search_suggestions
+    settings_search_suggestions_reentered
     settings_system_page
     notepad_editing
     text_box_editing

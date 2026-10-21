@@ -121,10 +121,13 @@ Public API:
     no input, and answers how many children it has), `ControlledItems`
     (of the first element the focused element's `ControllerFor` relation
     names, the set size its first child reports, `SizeOfSet`, and the
-    names of the first children asked for, as a search box's suggestions), `MisspeltWords` (the
+    names of the first children asked for, as a search box's suggestions),
+    `NameByAutomationId` (the name of the foreground window's element with
+    that identifier, read without focusing it, for a control whose name
+    differs between machines), `MisspeltWords` (the
     words of the focused text marked with UI Automation's spelling-error
     annotation, read word by word), and `KeyToggled` (whether a lock key
-    is on). The three requests that keep UI Automation, which need facts only
+    is on). The four requests that keep UI Automation, which need facts only
     it has, log how long each took, at warn from two seconds, so their slow
     answers are counted apart from Verbatim's
     (`docs/design/listener-without-connections.md`, section 4.5).

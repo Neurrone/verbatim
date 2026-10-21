@@ -73,7 +73,9 @@
 //!   the Settings app's System page
 //!   ([`settings_system_page`](crate::scenarios::settings_system_page)),
 //!   and its search suggestions
-//!   ([`settings_search_suggestions`](crate::scenarios::settings_search_suggestions)).
+//!   ([`settings_search_suggestions`](crate::scenarios::settings_search_suggestions),
+//!   and [`settings_search_suggestions_reentered`](crate::scenarios::settings_search_suggestions_reentered)
+//!   for the box entered again holding text).
 //! - [`Group::Navigation`]: the M3 object-navigation and review-cursor
 //!   commands (`docs/roadmap.md`'s M3 section) —
 //!   [`object_navigation_in_settings`](crate::scenarios::object_navigation_in_settings)
@@ -154,12 +156,12 @@ use crate::scenarios::{
     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery,
     rapid_tabbing_in_settings, return_after_retirement, review_cursor, review_words,
     second_application_and_verbatim_menu, settings_dialog_keys, settings_search_suggestions,
-    settings_system_page, spelling_errors, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree, terminal_commands, terminal_editing, terminal_flood,
-    terminal_flood_kinds, terminal_footer, terminal_key_timing, terminal_lists, terminal_overflow,
-    terminal_pager, terminal_progress, terminal_review_grid, terminal_review_output,
-    terminal_screens, terminal_settings_page, terminal_short_output, terminal_typing,
-    terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
+    settings_search_suggestions_reentered, settings_system_page, spelling_errors,
+    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
+    terminal_editing, terminal_flood, terminal_flood_kinds, terminal_footer, terminal_key_timing,
+    terminal_lists, terminal_overflow, terminal_pager, terminal_progress, terminal_review_grid,
+    terminal_review_output, terminal_screens, terminal_settings_page, terminal_short_output,
+    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -529,6 +531,19 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: settings_search_suggestions::setup,
         body: settings_search_suggestions::body,
         teardown: settings_search_suggestions::teardown,
+    },
+    ScenarioDef {
+        name: "settings_search_suggestions_reentered",
+        group: Group::Shell,
+        settings: None,
+        // The runner's Settings raises no selection for a first suggestion
+        // as the list opens.
+        local_only: true,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: settings_search_suggestions_reentered::setup,
+        body: settings_search_suggestions_reentered::body,
+        teardown: settings_search_suggestions_reentered::teardown,
     },
     ScenarioDef {
         name: "notepad_editing",

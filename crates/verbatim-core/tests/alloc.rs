@@ -104,6 +104,7 @@ fn focus_event(node: NodeSnapshot, ancestors: Vec<NodeSnapshot>) -> Input {
             ancestors,
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     }
 }

@@ -59,6 +59,7 @@ fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input 
             ancestors: Vec::new(),
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     }
 }
@@ -112,6 +113,7 @@ fn focus_in(
             ancestors,
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     )
 }
@@ -128,6 +130,7 @@ fn foreground_in(source: Pid, facts: WindowFacts, snapshot: NodeSnapshot) -> Inp
             ancestors: Vec::new(),
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     )
 }
@@ -706,6 +709,7 @@ fn a_state_change_on_an_ancestor_of_the_focus_is_spoken() {
                 ancestors: vec![header],
                 ancestors_unknown: false,
                 selected_child: None,
+                text: None,
             },
         ),
     );
@@ -1316,6 +1320,7 @@ fn sample_script() -> Vec<Input> {
                 ancestors: Vec::new(),
                 ancestors_unknown: false,
                 selected_child: None,
+                text: None,
             },
         },
         Input::Event {
@@ -1433,6 +1438,7 @@ fn focus_event_with_ancestors(
             ancestors,
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     }
 }
@@ -1890,6 +1896,7 @@ fn focus_event_with_selection(
             ancestors: Vec::new(),
             ancestors_unknown: false,
             selected_child,
+            text: None,
         },
     }
 }
@@ -2557,6 +2564,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
             ancestors: vec![],
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     };
     let (state, _) = reduce_from(&SrState::new(), &foreground(900), OutpostId(2));
@@ -2622,6 +2630,7 @@ fn a_focus_in_the_foreground_window_from_another_application_is_not_stale() {
             ancestors: vec![],
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     };
     let (state, _) = reduce_from(&SrState::new(), &frame, OutpostId(1));
@@ -4134,6 +4143,7 @@ fn held_nodes_group_focus_ancestors_selection_and_navigator_by_outpost() {
             ancestors: vec![pane],
             ancestors_unknown: false,
             selected_child: Some(item),
+            text: None,
         },
     );
     let (state, _) = reduce(&SrState::new(), &input);
@@ -4630,6 +4640,7 @@ fn focus_event_with_unknown_ancestors(source: Pid, snapshot: NodeSnapshot) -> In
             ancestors: Vec::new(),
             ancestors_unknown: true,
             selected_child: None,
+            text: None,
         },
     }
 }
@@ -5144,6 +5155,7 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
             ancestors,
             ancestors_unknown: false,
             selected_child: None,
+            text: None,
         },
     };
     let menu_item_of_focus = |effects: &[Effect]| match effects.first() {

@@ -1149,9 +1149,11 @@ from the outposts' logs on 2026-10-20 over three runs each of
 
 ### The caret report after a focus, UIA
 
-The report after a text focus, whose line Core speaks, with the line's
+The caret read of a text focus, whose line Core speaks, with the line's
 formatting: mockapp's first line has four stretches (bold "alpha", a
-space, the misspelt "beta", the line feed).
+space, the misspelt "beta", the line feed). It is made within the focus's
+handling and counted in the focus's one message ("A focus on a text
+field" below); this entry is the read alone, as `caret_report` makes it.
 
 - Minimum: 1 UIA call remotely. Classically, a caret report's 8 and the
   walk by UIA's format unit: a collapsed copy of the line (2), and for each
@@ -1185,6 +1187,37 @@ space, the misspelt "beta", the line feed).
   not support (strikethrough, background color, bullet style, link) are
   known.
 - Target: 1.
+
+### A focus on a text field
+
+The whole cost of a focus on a text field, its caret read while the
+outpost handles the focus and carried in the focus's one message
+(`FocusChanged`'s `text`), each the first focus in its window, pinned in
+`crates/mockapp/tests/call_counts.rs`
+(`text_field_focuses_cost_exactly`):
+
+- A UIA document (mockapp's `text.json`), read remotely: 9 UIA calls, 1
+  window message and 1 connection, the listener's read, the outpost's
+  search for its own element (the connection and one remote operation),
+  the focus's enrichment and the caret's read. Classically: 45 UIA calls,
+  1 window message and 1 connection.
+- A UIA terminal (`terminal_reading.json`), remotely: 9 UIA calls, 1
+  window message and 1 connection; classically 27 UIA calls, 1 window
+  message and 1 connection.
+- A classic edit control through MSAA: 39 MSAA calls and 6 window
+  messages.
+
+The calls are the ones the focus and its caret report made when the
+caret report was a message of its own after the focus: the edit
+control's 39 and 6 then too, and for UIA the focus and caret messages'
+7 remotely and 41 classically, 23 for a terminal classically, with the
+search for the outpost's own element made after the focus's message and
+before the caret's entry, counted in no message, 2 UIA calls and the
+connection remotely and 4 and the connection classically, which the one
+message now counts. The search and the caret's read now come before the
+focus is reported for a focus that may have text, so the first word
+waits for them; a focus without text is reported before its search, as
+it was.
 
 ### A caret key that selects, UIA
 

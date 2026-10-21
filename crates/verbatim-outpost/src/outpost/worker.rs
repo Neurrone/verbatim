@@ -37,8 +37,8 @@ use std::time::{Duration, Instant};
 use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
-    Backend, CallCounts, CaretWatch, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role,
-    State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
+    Backend, CallCounts, CaretWatch, FocusText, NodeId, NodeSnapshot, NormalizedEvent,
+    PropertyChange, Role, State, StateSet, TerminalOutput, TextOp, TextPoint, TextReply, TraceId,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Kept, Node, SelectedItem, SuggestionsRefresh,
@@ -867,7 +867,6 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         Item::Fact(..)
         | Item::Msaa { .. }
         | Item::Uia(_)
-        | Item::CaretOf { .. }
         | Item::NotedCaret { .. }
         | Item::Settle(_)
         | Item::IdleQuery { .. }
@@ -897,7 +896,6 @@ fn describe(item: &Item) -> String {
         Item::Fact(fact, stamp) => format!("fact {:?}", fact.key(*stamp)),
         Item::Query { query, .. } => format!("query {query:?}"),
         Item::NodesHeld { nodes, .. } => format!("nodes held ({})", nodes.len()),
-        Item::CaretOf { node_id } => format!("caret of {node_id:?}"),
         Item::NotedCaret { node_id } => format!("noted caret of {node_id:?}"),
         Item::Settle(_) => "settle".to_owned(),
         Item::IdleQuery { round, .. } => format!("idle query {round}"),
@@ -1072,9 +1070,8 @@ impl Worker<'_> {
                 nodes,
                 acknowledged,
             } => self.release(&nodes, acknowledged),
-            Item::CaretOf { node_id } => self.caret_of(node_id, trace, observed_at_ms, true),
             // Read now that nothing else waits, unless a read since saw it.
-            Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_ms, false),
+            Item::NotedCaret { node_id } => self.caret_of(node_id, trace, observed_at_ms),
             Item::Settle(done) => {
                 // A gap due is work still to do: its read comes first.
                 self.gap_wake();
@@ -1082,8 +1079,8 @@ impl Worker<'_> {
             }
             Item::IdleQuery {
                 round,
-                behind_follow_ups,
-            } => self.idle_query(round, behind_follow_ups, trace),
+                behind_noted,
+            } => self.idle_query(round, behind_noted, trace),
             Item::Wake => self.wake(),
         }
     }
@@ -1366,8 +1363,8 @@ impl Worker<'_> {
     }
 
     /// Answers [`Outpost::settle`](super::Outpost::settle) once nothing
-    /// else is waiting, the follow-ups the entries before it queued
-    /// included: otherwise it goes to the back of the queue again.
+    /// else is waiting, a noted caret included: otherwise it goes to the
+    /// back of the queue again.
     fn settle(&self, done: std::sync::mpsc::Sender<()>, trace: TraceId) {
         let context = self.context;
         if context.intake.busy() {
@@ -1399,38 +1396,27 @@ impl Worker<'_> {
     }
 
     /// The idle barrier's query, reached at the front of the intake, so
-    /// every entry that arrived before it has been handled. A follow-up one
-    /// of them queued, the caret of a focus just reported, is part of that
-    /// entry's work, and a noted caret is work owed: the query goes
-    /// directly behind them, the noted caret first, and waits for nothing
-    /// more when it is reached again (`behind_follow_ups`). Otherwise it is
-    /// kept until no deferred work is pending, and answered then
-    /// ([`answer_idle`]), at once if none is. Entries that arrived after it
-    /// are not waited for, nor are the follow-ups they queue or the carets
+    /// every entry that arrived before it has been handled. A noted caret
+    /// is work owed: the query goes directly behind it, ahead of everything
+    /// waiting, and waits for nothing more when it is reached again
+    /// (`behind_noted`). Otherwise it is kept until no deferred work is
+    /// pending, and answered then ([`answer_idle`]), at once if none is.
+    /// Entries that arrived after it are not waited for, nor are the carets
     /// they note, so a flood cannot keep the answer back.
-    fn idle_query(&self, round: u64, behind_follow_ups: bool, trace: TraceId) {
+    fn idle_query(&self, round: u64, behind_noted: bool, trace: TraceId) {
         let context = self.context;
-        if !behind_follow_ups {
-            let noted = context.intake.take_idle();
-            if noted.is_some()
-                || context
-                    .intake
-                    .any_waiting(|entry| matches!(entry.item, Item::CaretOf { .. }))
-            {
-                let query = Entry {
-                    item: Item::IdleQuery {
-                        round,
-                        behind_follow_ups: true,
-                    },
-                    trace,
-                    observed_at_ms: now_ms(),
-                    timing: EventTiming::default(),
-                };
-                context
-                    .intake
-                    .push_behind_follow_ups(noted.into_iter().chain([query]));
-                return;
-            }
+        if !behind_noted && let Some(noted) = context.intake.take_idle() {
+            let query = Entry {
+                item: Item::IdleQuery {
+                    round,
+                    behind_noted: true,
+                },
+                trace,
+                observed_at_ms: now_ms(),
+                timing: EventTiming::default(),
+            };
+            context.intake.push_ahead([noted, query]);
+            return;
         }
         *context.idle_query() = Some(round);
     }
@@ -1450,20 +1436,9 @@ impl Worker<'_> {
     /// Reports the caret of `node_id` as `CaretMoved`, when it is still the
     /// focus and the worker has not read its caret since the event that
     /// asked: a caret key's answer, read after the event, already told Core.
-    /// For the report that follows a new focus (`after_focus`), a focus with
-    /// no text to read is reported as `NoText`, and Core speaks its value
-    /// instead of a line. A focus whose text could not be read now reports
-    /// nothing: Core speaks its line when its caret is next reported, as a
-    /// caret event of the application's says the text can be read, and
-    /// never its value, which for a document is all of its text, as NVDA
-    /// never speaks the value of an object with text.
-    fn caret_of(
-        &mut self,
-        node_id: NodeId,
-        trace: TraceId,
-        observed_at_ms: u64,
-        after_focus: bool,
-    ) {
+    /// A focus's own caret comes with the focus
+    /// ([`read_focus_text`](Self::read_focus_text)).
+    fn caret_of(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
         if !self.is_focus(node_id)
             || self
                 .context
@@ -1473,9 +1448,7 @@ impl Worker<'_> {
         }
         let started = std::time::Instant::now();
         let terminal = self.focused_terminal(node_id);
-        let purpose = if after_focus {
-            text_reads::CaretFor::Focus
-        } else if terminal {
+        let purpose = if terminal {
             text_reads::CaretFor::Terminal
         } else {
             text_reads::CaretFor::Event
@@ -1485,7 +1458,6 @@ impl Worker<'_> {
         // its cursor moves.
         tracing::debug!(
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            after_focus,
             "caret read timing"
         );
         let event = match report {
@@ -1503,13 +1475,6 @@ impl Worker<'_> {
                     selection_changes,
                 }
             }
-            Err(text_reads::NoCaret::NoText) if after_focus => NormalizedEvent::NoText { node_id },
-            Err(text_reads::NoCaret::NotRead) if after_focus => {
-                tracing::debug!(
-                    "the focus's caret could not be read; its line is spoken when its caret is next reported"
-                );
-                return;
-            }
             Err(_) => return,
         };
         let backend = if self.context.uia_registry.runtime_id_of(node_id).is_some() {
@@ -1519,11 +1484,6 @@ impl Worker<'_> {
         };
         let window = self.context.tracking().window;
         self.emit(trace, observed_at_ms, backend, window, event);
-        if after_focus && self.focused_terminal(node_id) {
-            // Where the terminal's text ends now: what it held before the
-            // focus arrived is not new output.
-            self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_ms));
-        }
     }
 
     /// Whether `node_id` is the focused terminal and its reading is held
@@ -1584,7 +1544,7 @@ impl Worker<'_> {
         if self.held_with_changes(node_id) {
             self.note_caret(node_id, trace, observed_at_ms);
         } else {
-            self.caret_of(node_id, trace, observed_at_ms, false);
+            self.caret_of(node_id, trace, observed_at_ms);
         }
     }
 
@@ -1886,28 +1846,79 @@ impl Worker<'_> {
         self.terminal_event(node_id, Event::TextChanged, None, (trace, observed_at_ms));
     }
 
-    /// Asks for the caret of a newly reported focus that may have text, or
-    /// whose role says it may (Core waits to hear which before it speaks
-    /// the line or the value), and moves the focus-following subscription
-    /// to it ([`follow_focus`](Self::follow_focus)).
-    fn follow_text(&self, (node_id, role): (NodeId, Role), trace: TraceId) {
-        text_reads::forget_no_text(self.context, node_id);
+    /// What the caret read of a focus about to be reported finds, for a
+    /// focus that may have text or whose role says it may, `None` for any
+    /// other: read while the worker handles the focus, so the line comes
+    /// with the focus and nothing is reported between them, as NVDA's
+    /// object announcement reads an object's text within it
+    /// (`docs/nvda/speech.md`, "What an object with text says"). When
+    /// something is selected, the selected text is read too, which Core
+    /// speaks in place of the line. A focus with no text to read is
+    /// [`FocusText::NoText`], and Core speaks its value; one whose text
+    /// could not be read now is [`FocusText::NotRead`], and Core speaks
+    /// neither, never the value, which for a document is all of its text.
+    fn read_focus_text(&self, node_id: NodeId, role: Role) -> Option<FocusText> {
+        let context = self.context;
+        text_reads::forget_no_text(context, node_id);
         // A terminal gaining the focus has its caret reported afresh.
-        if let Some(terminal) = self.context.terminals().get_mut(&node_id.number()) {
+        if let Some(terminal) = context.terminals().get_mut(&node_id.number()) {
             terminal.sent_caret = None;
         }
-        let has_text = self.follow_focus((node_id, role));
         let role_has_text = matches!(role, Role::EditableText | Role::Document | Role::Terminal);
-        if has_text || role_has_text {
-            self.context.intake.push(Entry {
-                item: Item::CaretOf { node_id },
-                trace,
-                observed_at_ms: now_ms(),
-                timing: EventTiming {
-                    observed_at_us: now_us(),
-                    ..EventTiming::default()
-                },
-            });
+        if !role_has_text && !text_reads::may_have_text(context, node_id, role) {
+            return None;
+        }
+        let started = Instant::now();
+        let read = text_reads::report_caret(context, node_id, text_reads::CaretFor::Focus);
+        let text = match read {
+            Ok((caret, _, _)) => {
+                let selected_text = caret.selection.and_then(|selection| {
+                    let op = TextOp::ReadRange {
+                        start: TextPoint::At(selection.start),
+                        end: TextPoint::At(selection.end),
+                        through: None,
+                    };
+                    match text_reads::answer(context, node_id, &op) {
+                        TextReply::Range { text, .. } => Some(text),
+                        _ => None,
+                    }
+                });
+                FocusText::Caret {
+                    caret,
+                    selected_text,
+                }
+            }
+            Err(text_reads::NoCaret::NoText) => FocusText::NoText,
+            Err(text_reads::NoCaret::NotRead) => {
+                tracing::debug!("the focus's caret could not be read");
+                FocusText::NotRead
+            }
+        };
+        tracing::debug!(
+            elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            "the focus's caret read"
+        );
+        Some(text)
+    }
+
+    /// Follows the focus `node_id` of `role` just reported with `text`
+    /// ([`read_focus_text`](Self::read_focus_text)): moves the
+    /// focus-following subscription to it ([`follow_focus`](Self::follow_focus)),
+    /// and, for a terminal whose caret was read, notes that caret as the one
+    /// sent to Core and where the terminal's text ends now, since what it
+    /// held before the focus arrived is not new output.
+    fn follow_text(
+        &mut self,
+        (node_id, role): (NodeId, Role),
+        text: Option<&FocusText>,
+        (trace, observed_at_ms): (TraceId, u64),
+    ) {
+        self.follow_focus((node_id, role));
+        if let Some(FocusText::Caret { caret, .. }) = text
+            && self.focused_terminal(node_id)
+        {
+            self.sent_caret(node_id, caret);
+            self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_ms));
         }
     }
 
@@ -2119,6 +2130,9 @@ impl Worker<'_> {
         let node_id = node.id;
         let states = node.states;
         let text_node = (!foreground).then(|| node.clone());
+        let text = text_node
+            .as_ref()
+            .and_then(|node| self.read_focus_text(node.id, node.role));
         tracing::debug!(
             ?role,
             name = ?node.name,
@@ -2140,6 +2154,7 @@ impl Worker<'_> {
             ancestors_unknown: ancestors.is_none(),
             ancestors: ancestors.unwrap_or_default(),
             selected_child,
+            text: text.clone().map(Box::new),
         };
         if self.emit(trace, observed_at_ms, backend, window, event) {
             // A focus observed after a `WinEvent` focus no UIA focus has
@@ -2204,10 +2219,10 @@ impl Worker<'_> {
             }
             drop(tracking);
             // Move the focus-following subscription to the new focus,
-            // without waiting, and ask for its caret. A foreground report
-            // is a window, not the control focus is in.
+            // without waiting. A foreground report is a window, not the
+            // control focus is in.
             if let Some(node) = text_node {
-                self.follow_text((node.id, node.role), trace);
+                self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_ms));
             }
         }
     }
@@ -2518,7 +2533,7 @@ impl Worker<'_> {
                             .msaa_registry
                             .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
                     if !self.check_open_watch(node_id, true) {
-                        self.caret_of(node_id, trace, observed_at_ms, false);
+                        self.caret_of(node_id, trace, observed_at_ms);
                     }
                 } else if let Some(node_id) = self.watched_edit(hwnd) {
                     // A caret key's watch on an edit control Core took as
@@ -3524,7 +3539,9 @@ impl Worker<'_> {
     /// gives the id a new node first. Only then, off the way to speech,
     /// does the outpost find its own copy of the element, which no process
     /// can hand it (experiment E-marshal), by the path the listener read
-    /// ([`find_focus_element`](Self::find_focus_element)).
+    /// ([`find_focus_element`](Self::find_focus_element)); for a focus that
+    /// may have text, before it is reported, since its caret is read with
+    /// it.
     fn uia_focus(&mut self, read: &UiaFocusRead, focus: bool, trace: TraceId, observed_at_ms: u64) {
         let context = self.context;
         // The UIA focus a `WinEvent` focus in a UIA window was waiting for,
@@ -3585,6 +3602,17 @@ impl Worker<'_> {
         // to the element after one in another application.
         let found =
             read.same_as_last == Some(true) && context.uia_registry.element_of(node.id).is_some();
+        // A focus that may have text needs its own element before it is
+        // reported, since its caret is read with it; any other's is found
+        // after, off the way to speech.
+        let text_first = !found
+            && matches!(
+                node.role,
+                Role::EditableText | Role::Document | Role::Terminal
+            );
+        if text_first {
+            self.find_focus_element(runtime_id);
+        }
         context.tracking().value_from_selection = read.value_from_selection.then_some(node.id);
         self.emit_focus(
             trace,
@@ -3596,25 +3624,26 @@ impl Worker<'_> {
             Some(Object::Uia(runtime_id.clone())),
             (ancestors, selected),
         );
-        if !found {
-            self.find_focus_element(runtime_id, trace);
+        if !found
+            && !text_first
+            && context.intake.focused() == Some(Object::Uia(runtime_id.clone()))
+            && let Some(id) = self.find_focus_element(runtime_id)
+        {
+            let role = context.tracking().role.unwrap_or(Role::Unknown);
+            self.follow_focus((id, role));
         }
     }
 
-    /// Finds this outpost's own copy of the focus `runtime_id` names, just
-    /// reported from the listener's read, by the path the listener read:
-    /// from the nearest window in the focus's chain, down by runtime ids,
-    /// one connection call and one transaction. Found, it is kept under the
-    /// focus's node and the focus-following subscription is moved to it
-    /// ([`follow_focus`](Self::follow_focus)); not found, as Windows
-    /// Terminal's tab focus elements, which are in no tree, are not, nothing
-    /// is followed, as NVDA hears nothing local before its group is added to
-    /// a focus (`docs/design/focus-pipeline.md`, sections 12.5 and 17).
-    /// Nothing is looked for once another focus has been reported.
-    fn find_focus_element(&mut self, runtime_id: &[i32], trace: TraceId) {
-        if self.context.intake.focused() != Some(Object::Uia(runtime_id.to_vec())) {
-            return;
-        }
+    /// Finds this outpost's own copy of the focus `runtime_id` names, from
+    /// the listener's read, by the path the listener read: from the nearest
+    /// window in the focus's chain, down by runtime ids, one connection
+    /// call and one transaction, and keeps it under the focus's node, whose
+    /// id it returns. Not found, as Windows Terminal's tab focus elements,
+    /// which are in no tree, are not, nothing is kept, its text cannot be
+    /// read, and nothing is followed, as NVDA hears nothing local before
+    /// its group is added to a focus (`docs/design/focus-pipeline.md`,
+    /// sections 12.5 and 17).
+    fn find_focus_element(&mut self, runtime_id: &[i32]) -> Option<NodeId> {
         let finding = Instant::now();
         let found = self.element_by_focus_path(runtime_id);
         tracing::debug!(
@@ -3622,11 +3651,15 @@ impl Worker<'_> {
             elapsed_us = finding.elapsed().as_micros(),
             "the focus's own element looked for by its path"
         );
-        if let Some(element) = found {
-            self.follow_focus_element(runtime_id, &element, trace);
-        } else {
+        let Some(element) = found else {
             tracing::debug!("the focus's element was not found; nothing is followed");
-        }
+            return None;
+        };
+        Some(
+            self.context
+                .uia_registry
+                .id_for_element(runtime_id, &element),
+        )
     }
 
     /// The element `runtime_id` names, an element of the chain the
@@ -3673,25 +3706,6 @@ impl Worker<'_> {
             return Err(Dropped);
         }
         Ok(reported)
-    }
-
-    /// Keeps `element`, found for the focus `runtime_id` names, which was
-    /// reported from its event alone, under the focus's node, and follows
-    /// its changes.
-    fn follow_focus_element(&mut self, runtime_id: &[i32], element: &Cached<Kept>, trace: TraceId) {
-        let context = self.context;
-        let id = context.uia_registry.id_for_element(runtime_id, element);
-        // The focus was reported without its element, so its text could not
-        // be read: its changes are followed from now on, and its caret
-        // reported, whose line Core speaks for the focus.
-        let role = context.tracking().role;
-        match role {
-            Some(role) => self.follow_text((id, role), trace),
-            None => {
-                self.follow_focus((id, Role::Unknown));
-            }
-        }
-        tracing::debug!("the focus's element was found; its changes are followed");
     }
 
     /// A menu opening, handled after the batch's focus events, as NVDA's

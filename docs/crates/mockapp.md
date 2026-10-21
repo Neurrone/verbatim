@@ -534,7 +534,10 @@ or `SetForegroundWindow` succeeding, and pass headless on GitHub
 and asserts that `verbatim_uia::Uia::controlled_descendant` finds a
 result inside the list the search box's `ControllerFor` names, and
 nothing for an item elsewhere, for the list itself, or from a box that
-controls nothing. `remote_ops.rs` runs `verbatim-uia-rops`'s remote and
+controls nothing; over `typed_search.json`, a search box holding text,
+it asserts that the box's focus comes with the line at its caret in the
+one message, ahead of a selection in its list delivered after the focus.
+`remote_ops.rs` runs `verbatim-uia-rops`'s remote and
 classic focus ancestry over `ancestry.json` (a five-level chain, a list
 and a tab control with selected children) and asserts they return the
 same ancestors with the same cached properties, that an element that
@@ -647,6 +650,9 @@ message box: a dialog holding a question, with a description, and two
 buttons) for a dialog's own text, it measures each ledger operation on each
 backend and asserts exactly how many cross-process calls the client side
 made, by kind, and how many calls mockapp's providers answered, by method.
+A focus on a text field, its caret read with it, is measured whole
+through a real outpost for a UIA document and terminal, remotely and
+classically, and a classic edit control (`text_field_focuses_cost_exactly`).
 The MSAA operations (a focus change cold and in the steady state, a focus
 into a list, an arrow to the next list item, and a next-sibling and parent
 navigation step) run through a real outpost, as `slow_application.rs`

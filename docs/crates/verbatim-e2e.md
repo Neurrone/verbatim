@@ -427,7 +427,9 @@ and the input methods above:
   `focus_by_automation_id` (focuses an element with UI Automation's
   `SetFocus` and returns how many children it has), `controlled_items`
   (of the first element the focused element controls, the set size its
-  first child reports and the names of the first children), and `misspelt_words`
+  first child reports and the names of the first children), `name_by_automation_id`
+  (the name of the foreground window's element with that UI Automation
+  identifier, read without focusing it), and `misspelt_words`
   (the words of the focused text marked with UI Automation's
   spelling-error annotation).
 - `verbatim_children`, `end_verbatim_process(pid)` (ending one of

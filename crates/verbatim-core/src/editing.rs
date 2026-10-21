@@ -30,16 +30,16 @@
 use std::sync::Arc;
 
 use verbatim_model::{
-    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, FocusValidity, NodeId,
-    NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection, SelectionChange,
-    SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp, TextPoint,
-    TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho, Utterance,
-    UtteranceSegment,
+    CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, FocusText, FocusValidity,
+    NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection,
+    SelectionChange, SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp,
+    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
+    Utterance, UtteranceSegment,
 };
 
 use crate::state::{
-    CARET_HISTORY, CaretContext, FocusText, NavigatorRead, PendingCaret, PendingText, ReviewText,
-    SrState, TextFollowUp, TimedCaret,
+    CARET_HISTORY, CaretContext, NavigatorRead, PendingCaret, PendingText, ReviewText, SrState,
+    TextFollowUp, TimedCaret,
 };
 use crate::text;
 
@@ -98,9 +98,6 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
 pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
     state.typed_word.clear();
-    // The key's own report says where the caret went; the focus's text at
-    // the caret before it is no longer worth hearing.
-    state.focus_text = None;
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return effects;
     };
@@ -824,75 +821,56 @@ fn follow_caret(state: &mut SrState, node: NodeId) {
     }
 }
 
-/// Sets the state to wait for a new focus's text at the caret, which it
-/// says in place of its value (`docs/nvda/speech.md`, "What an object with
-/// text says"): an object that may have text does, once the outpost's first
-/// caret report tells Core what that text is. Its name and role are not held
-/// back for it. A protected field leaves its value out and never has its
-/// text read.
-pub(crate) fn await_focus_text(state: &mut SrState, node: &NodeSnapshot) {
-    // A new focus is a new object, whose formatting has not been reported.
-    state.reported_format = None;
-    if may_have_text(node.role) && !node.states.contains(State::Protected) {
-        state.focus_text = Some(FocusText {
-            node: node.id,
-            selection_query: None,
-        });
-    }
-}
-
-/// Ends the announcement of a focus with text once its first caret report
-/// has arrived (`docs/nvda/speech.md`, "What an object with text says"):
-/// the caret's line, or, when text is selected, asks the outpost for the
-/// selected text, which [`focus_selection`] speaks.
-pub(crate) fn focus_caret(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
-    let Some(pending) = state
-        .focus_text
-        .filter(|pending| pending.node == node && pending.selection_query.is_none())
-    else {
-        return Vec::new();
-    };
-    let Some(caret) = state.caret.as_ref().filter(|caret| caret.node == node) else {
-        return Vec::new();
-    };
-    if let Some(selection) = caret.selection {
-        let query_id = state.allocate_query_id();
-        state.focus_text = Some(FocusText {
-            selection_query: Some(query_id),
-            ..pending
-        });
-        return vec![Effect::Text(TextRequest {
-            query_id,
-            node_id: node,
-            op: TextOp::ReadRange {
-                start: TextPoint::At(selection.start),
-                end: TextPoint::At(selection.end),
-                through: None,
-            },
-        })];
-    }
-    state.focus_text = None;
-    focus_line(state, trace_id, node)
-}
-
-/// Speaks the selected text a focus had when it gained the focus, read for
-/// [`focus_caret`]: "selected" and the text, or its number of characters
-/// when there are 512 or more. With no selected text after all, or no
-/// answer, the caret's line is spoken instead.
-pub(crate) fn focus_selection(
+/// Ends the announcement of the focus `node` with what the outpost's caret
+/// read found, carried with the focus (`docs/nvda/speech.md`, "What an
+/// object with text says"): the caret's line, or "selected" and the
+/// selected text when text is selected, or, for an object with no text to
+/// read, its value, which the focus's announcement left out. Its name and
+/// role were not held back for it, and nothing comes between them, since
+/// both come from the one message. A protected field never has its text
+/// read, and one whose text could not be read speaks neither its line nor
+/// its value. The caret, when read, becomes Core's.
+pub(crate) fn focus_text(
     state: &mut SrState,
     trace_id: TraceId,
-    node: NodeId,
-    reply: TextReply,
+    node: &NodeSnapshot,
+    (text, observed_at_ms): (Option<&FocusText>, u64),
 ) -> Vec<Effect> {
-    let text = match reply {
-        TextReply::Range { text, .. } => text,
-        TextReply::Gone => return Vec::new(),
-        _ => String::new(),
-    };
-    match selected_segments(text) {
-        Some(segments) => focus_speech(state, trace_id, node, segments),
-        None => focus_line(state, trace_id, node),
+    keep_focus_caret(state, node.id, text, observed_at_ms);
+    if !may_have_text(node.role) || node.states.contains(State::Protected) {
+        return Vec::new();
+    }
+    match text {
+        Some(FocusText::Caret {
+            caret,
+            selected_text,
+        }) => {
+            let selected = caret
+                .selection
+                .and(selected_text.clone())
+                .and_then(selected_segments);
+            match selected {
+                Some(segments) => focus_speech(state, trace_id, node.id, segments),
+                None => focus_line(state, trace_id, node.id),
+            }
+        }
+        Some(FocusText::NoText) => focus_value(state, trace_id, node.id),
+        Some(FocusText::NotRead) | None => Vec::new(),
+    }
+}
+
+/// Takes the caret a focus `node` came with, when its text was read, as
+/// Core's caret, without speaking: for a focus announced
+/// ([`focus_text`]) and for one taken silently, a duplicate or the same
+/// focus reported again by a replacement outpost.
+pub(crate) fn keep_focus_caret(
+    state: &mut SrState,
+    node: NodeId,
+    text: Option<&FocusText>,
+    observed_at_ms: u64,
+) {
+    if let Some(FocusText::Caret { caret, .. }) = text {
+        update_caret(state, node, caret.clone(), observed_at_ms);
     }
 }
 
@@ -917,11 +895,7 @@ fn selected_segments(text: String) -> Option<Vec<UtteranceSegment>> {
 
 /// Speaks the value of a focus that turned out to have no text to read, as
 /// any object without text speaks its value.
-pub(crate) fn focus_value(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
-    if state.focus_text.is_none_or(|pending| pending.node != node) {
-        return Vec::new();
-    }
-    state.focus_text = None;
+fn focus_value(state: &SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
     let Some(value) = state
         .focus
         .as_ref()

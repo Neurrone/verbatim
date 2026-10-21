@@ -25,7 +25,10 @@
 //! A selection raised for an item the list has since replaced (mockapp's
 //! `replace-items`) is reported as the list's current selection, the new
 //! item, with its name and position. A selection of the focus itself is
-//! reported as an ordinary selection change, never as the list's.
+//! reported as an ordinary selection change, never as the list's. A
+//! search box holding text is reported with the line at its caret in the
+//! focus's own message, ahead of a controlled selection that arrived after
+//! the focus.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -34,7 +37,9 @@ mod harness;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use verbatim_model::{CallCounts, NodeId, NormalizedEvent, PropertyChange, Role, StateSet};
+use verbatim_model::{
+    CallCounts, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, StateSet,
+};
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
@@ -213,8 +218,8 @@ fn a_selected_result_is_found_only_inside_the_list_the_search_box_controls() {
 }
 
 /// Focuses mockapp's search box, as the listener reads and sends the
-/// focus, and returns its node once the outpost has reported it, and that
-/// it has no text, and has nothing more to say.
+/// focus, and returns its node once the outpost has reported it with the
+/// word that it has no text, and has nothing more to say.
 fn focus_search_box(
     app: &mut common::MockApp,
     outpost: &OutpostUnderTest,
@@ -234,24 +239,19 @@ fn focus_search_box(
         .expect("the search box");
     let (judged, _) = outpost.listener_read(&focused);
     outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
+    // The search box has no text pattern in mockapp.
     let search = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::FocusChanged { node, .. },
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
             ..
-        } => node.id,
-        other => panic!("the outpost said {other:?}, not the focus on the search box"),
+        } if matches!(*text, FocusText::NoText) => node.id,
+        other => panic!("the outpost said {other:?}, not the focus on the search box with no text"),
     };
-    // The search box has no text pattern in mockapp.
-    assert!(
-        matches!(
-            outpost.next(),
-            OutpostToSupervisor::Event {
-                event: NormalizedEvent::NoText { .. },
-                ..
-            }
-        ),
-        "the search box has no text"
-    );
     outpost.settled();
     search
 }
@@ -488,6 +488,100 @@ fn a_controlled_selection_from_a_kept_event_element_reads_nothing_uncached() {
     app.quit();
 }
 
+/// A focus on a search box holding text, followed by a selection in the
+/// list it controls, as Settings selects its first suggestion on a Shift+Tab
+/// into its search box: the selection's marker comes after the focus's, so
+/// the focus's read and the selection are planned as one batch, in that
+/// order. The outpost reports the focus with the line at its caret, which
+/// is part of the focus's announcement (`docs/nvda/speech.md`, "What an
+/// object with text says"), in the one message, then the controlled
+/// selection, and nothing more.
+fn a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it() {
+    let title = common::unique_title("mockapp-controller-typed");
+    let mut app = common::spawn("typed_search.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let window = hwnd.0 as isize;
+    let outpost = OutpostUnderTest::new(&app);
+    let uia = Uia::new().expect("Uia::new");
+    let root = uia.window_live(window).expect("mockapp's window element");
+
+    app.send("set-focus search");
+    app.send("select sound");
+    let listener = uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the listener's cache request");
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Search box")))
+        .expect("name condition");
+    let focused = root
+        .find_first(TreeScope_Descendants, &condition, &listener)
+        .expect("the search")
+        .expect("the search box");
+    let (judged, _) = outpost.listener_read(&focused);
+    let sound = verbatim_uia::runtime_id(&find(&uia, &root, "Sound settings"));
+
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 1 });
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 2 });
+    outpost.deliver(DeliveredFact::UiaMarked {
+        marker: 2,
+        fact: Box::new(selection_fact(
+            window,
+            sound,
+            Role::ListItem,
+            "Sound settings",
+        )),
+    });
+    outpost.deliver(judged.into_fact(1, FocusEvent::Focus));
+
+    let search = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    text: Some(text),
+                    ..
+                },
+            ..
+        } if matches!(*text, FocusText::Caret { .. }) => {
+            let FocusText::Caret {
+                caret,
+                selected_text,
+            } = *text
+            else {
+                unreachable!("matched by the guard");
+            };
+            assert_eq!(
+                (
+                    node.name.as_deref(),
+                    caret.line.text.as_str(),
+                    caret.selection,
+                    selected_text
+                ),
+                (Some("Search box"), "sound", None, None),
+                "the focus with its line"
+            );
+            node.id
+        }
+        other => {
+            panic!("the outpost said {other:?}, not the focus on the search box with its line")
+        }
+    };
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::ControlledSelection { controller, node },
+            ..
+        } => assert_eq!(
+            (controller, node.name.as_deref()),
+            (search, Some("Sound settings"))
+        ),
+        other => panic!("the outpost said {other:?}, not the controlled selection"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -507,6 +601,10 @@ fn main() {
         (
             "a_selection_of_the_focus_itself_is_reported_as_its_own",
             a_selection_of_the_focus_itself_is_reported_as_its_own,
+        ),
+        (
+            "a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it",
+            a_text_focus_carries_its_line_ahead_of_a_selection_that_followed_it,
         ),
     ]);
 }
