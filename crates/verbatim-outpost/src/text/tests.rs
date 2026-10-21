@@ -18,8 +18,9 @@ struct Fake {
     sentences: Sentences,
     /// How many times the caret was read.
     caret_reads: usize,
-    /// Moves the caret to this offset on the given caret read, as an
-    /// application handling a key a little later would.
+    /// Moves the caret to this offset on the given caret read, collapsing
+    /// any selection, as an application handling a key a little later
+    /// would.
     moves_on_read: Option<(usize, usize)>,
 }
 
@@ -98,6 +99,7 @@ impl TextSource for Fake {
             && read == self.caret_reads
         {
             self.caret = to;
+            self.selection = None;
         }
         Ok(CaretState {
             caret: self.caret,
@@ -1112,4 +1114,34 @@ fn a_caret_read_before_the_key_with_its_line_after_is_no_answer() {
     ));
     assert_eq!(reply.caret.line.text, "abcx");
     assert_eq!(reply.caret.line.offset, 4);
+}
+
+#[test]
+fn a_selection_read_before_a_cut_with_its_line_after_is_no_answer() {
+    // Control+X handled between the selection's read and its line's, as
+    // the Windows Forms text box can be: the line has lost the selected
+    // "abc", the selection read first is still there, and is gone by the
+    // time it is read again, its start, the caret, unmoved. Nothing is
+    // answered until the next check.
+    let mut source = Fake::new("abc def", 0);
+    source.selection = Some((0, 3));
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    source.text = " def".encode_utf16().collect();
+    source.moves_on_read = Some((source.caret_reads + 2, 0));
+    let key = watch(Some(since), TextUnit::Word);
+    let first = check(&mut source, &mut anchors, &key, &mut FakeSignal::new());
+    assert!(matches!(first, Watched::Watching));
+    let reply = answered(check(
+        &mut source,
+        &mut anchors,
+        &key,
+        &mut FakeSignal::new(),
+    ));
+    assert_eq!(reply.caret.line.text, " def");
+    assert_eq!(reply.caret.selection, None);
 }

@@ -1484,10 +1484,12 @@ The same caret key in a standard edit control, read through its messages.
 - Target: 5, with the caret and its line read in one message, which no
   edit control message offers.
 
-Each check of the key's watch also looks the node up in the registries
-and scans the intake once under its lock for the control's value change
-waiting, as a caret report does, so a selecting key's answer is said in
-general terms after an edit; it makes no call.
+An answer that compares selections, a selecting key's or one made with
+something selected, also waits once for the `WinEvent` thread to handle
+the events delivered to it, one wake of that thread, and then scans the
+intake once under its lock for the control's value change, as a caret
+report does, so the answer is said in general terms after an edit; it
+makes no call to the application.
 
 ### A caret report, Win32 edit control
 

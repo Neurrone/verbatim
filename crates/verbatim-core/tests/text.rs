@@ -2768,6 +2768,62 @@ fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
     );
 }
 
+/// Control+X on a selected line in a classic edit control: the answer
+/// says the selection's change in general terms, and the text the key
+/// removed, the selection's, is not said as well, as NVDA says only
+/// "selection removed".
+#[test]
+fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_removed() {
+    let mut state = editing("hello world\n", 0);
+    let effects = reduce(&mut state, &key(CaretMotion::EndOfLine, true));
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
+        removed: None,
+        moved: true,
+        read_at_ms: 0,
+        caret: CaretReport {
+            line: line("hello world\n", 100, 0),
+            selection: Some(Selection {
+                start: TextPosition {
+                    anchor: TextAnchor(100),
+                    offset: 0,
+                },
+                end: TextPosition {
+                    anchor: TextAnchor(100),
+                    offset: 11,
+                },
+            }),
+        },
+        unit: None,
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+    }));
+    let _ = reduce(&mut state, &completed(request_of(&effects), reply));
+    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: Some(true),
+        removed: None,
+        moved: true,
+        read_at_ms: 0,
+        caret: CaretReport {
+            line: line("\n", 101, 0),
+            selection: None,
+        },
+        unit: None,
+        selection_changes: vec![SelectionChange {
+            selected: false,
+            text: String::new(),
+            characters: 0,
+        }],
+        content_changed: true,
+        new_selection: None,
+    }));
+    let effects = reduce(&mut state, &completed(request_of(&effects), reply));
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
+}
+
 #[test]
 fn a_selecting_keys_change_reported_before_its_answer_is_spoken_once() {
     // The key's caret event reaches Core while its watch waits: the

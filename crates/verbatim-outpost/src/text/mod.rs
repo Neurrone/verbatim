@@ -481,6 +481,14 @@ pub trait CaretSignal {
     /// The caret is about to be read: a caret event observed before now
     /// changed nothing the read will not see.
     fn reading(&mut self) {}
+
+    /// Whether a change of the node's text that no report has noted yet
+    /// waits to be handled, checked once the key's evidence is read and
+    /// before an answer that compares selections is made: the answer then
+    /// says the change in general terms ([`Anchors::note_content_changed`]).
+    fn text_change_waiting(&mut self) -> bool {
+        false
+    }
 }
 
 /// What a check of a caret key's watch found ([`check_caret`]).
@@ -1514,8 +1522,10 @@ fn evidence<S: TextSource>(
     let moved_while_read = if let Some(moved) = polled.moved_while_read {
         moved
     } else {
-        let again = source.caret()?.caret;
-        source.compare(&again, &polled.state.caret)? != Ordering::Equal
+        // The selection too: a cut leaves its start, the caret, where it
+        // was.
+        let again = source.caret()?;
+        !same_state(source, &again, &polled.state)?
     };
     if moved_while_read {
         tracing::debug!("the caret moved while it was read; the watch waits for its event");
@@ -1534,15 +1544,34 @@ fn evidence<S: TextSource>(
         }
         None => None,
     };
+    let text_changed = previous.is_some() && signal.text_change_waiting();
     answer_caret(
         source,
         anchors,
         polled,
         (request.formats, watch.unit),
         previous.as_ref(),
-        same_line,
+        (same_line, text_changed),
     )
     .map(Some)
+}
+
+/// Whether caret states `a` and `b` have the same caret and selection.
+fn same_state<S: TextSource>(
+    source: &mut S,
+    a: &CaretState<S::Pos>,
+    b: &CaretState<S::Pos>,
+) -> TextResult<bool> {
+    if source.compare(&a.caret, &b.caret)? != Ordering::Equal {
+        return Ok(false);
+    }
+    match (&a.selection, &b.selection) {
+        (None, None) => Ok(true),
+        (Some((a_start, a_end)), Some((b_start, b_end))) => Ok(source.compare(a_start, b_start)?
+            == Ordering::Equal
+            && source.compare(a_end, b_end)? == Ordering::Equal),
+        _ => Ok(false),
+    }
 }
 
 /// Whether `at` lies on `line`: from its start up to its end, or at its end
@@ -1631,14 +1660,16 @@ fn baseline<S: TextSource>(
 
 /// The answer to a caret key once its watch found evidence: the caret's
 /// line, the unit at the caret, and the selection's changes, from what the
-/// read found, with the formatting read for `span`.
+/// read found, with the formatting read for `span`; `text_changed` says a
+/// change of the text waits that no report has noted
+/// ([`CaretSignal::text_change_waiting`]).
 fn answer_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     polled: Polled<S::Pos>,
     (span, unit): (Option<FormatSpan>, TextUnit),
     previous: Option<&(S::Pos, S::Pos)>,
-    same_line: Option<bool>,
+    (same_line, text_changed): (Option<bool>, bool),
 ) -> TextResult<TextReply> {
     let Polled {
         state,
@@ -1661,8 +1692,9 @@ fn answer_caret<S: TextSource>(
     // whenever it has a selection to compare with
     // (`detectPossibleSelectionChange`, `nvda/source/editableText.py` 437
     // to 451); a comparison the key asked for is then made in general
-    // terms.
-    let content_changed = anchors.anchors.selection.is_some() && anchors.take_content_changed();
+    // terms, as it is when a change of the text waits to be handled.
+    let content_changed =
+        anchors.anchors.selection.is_some() && (anchors.take_content_changed() | text_changed);
     // A key's answer is the last report the next caret event's compares
     // with.
     let caret = report_for(source, anchors, (&state, read_at_ms), line, true)?;

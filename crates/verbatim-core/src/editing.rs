@@ -447,6 +447,12 @@ pub(crate) fn caret_reply(
                     _ => Vec::new(),
                 }
             }
+            // The selection removed with the text it held, as a cut
+            // removes it in a classic edit control, said by its change in
+            // general terms alone, as NVDA's caret event says it (`docs/parity/text.md`, "TextInfo-equivalent
+            // layer": Control+X on a selected line says "selection
+            // removed"); the text removed is the selection's.
+            CaretMotion::Other if general.is_some() && !selection_changes.is_empty() => Vec::new(),
             // A typed line that had wrapped onto more rows, removed.
             CaretMotion::Other if removed.is_some() => removed_segments(
                 removed.as_deref().unwrap_or_default(),

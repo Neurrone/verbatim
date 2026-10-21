@@ -104,6 +104,30 @@ impl CaretSignal for Signal<'_> {
         }
         self.context.caret_read(self.node_id);
     }
+
+    /// An edit control's value change waiting, as a caret event's report
+    /// checks for one ([`report_caret`]): NVDA answers a selecting key at
+    /// the key's caret event, which notes a pending value change
+    /// (`Edit.event_caret`, `nvda/source/NVDAObjects/window/edit.py` 1068
+    /// to 1082). The control raised it while it handled the key, before
+    /// the read that found the key's evidence returned, but the `WinEvent`
+    /// thread may not have queued it yet, so the check waits for that
+    /// thread to handle every event delivered to it first. A UIA text's
+    /// change is never noted.
+    fn text_change_waiting(&mut self) -> bool {
+        if self
+            .context
+            .uia_registry
+            .runtime_id_of(self.node_id)
+            .is_some()
+        {
+            return false;
+        }
+        if let Some(nudger) = self.context.event_thread.get() {
+            nudger.sync();
+        }
+        value_change_waiting(self.context, self.node_id)
+    }
 }
 
 /// Whether a caret event of `node_id` observed at or after `since_ms`
@@ -399,18 +423,6 @@ pub(super) fn check_watch(
         }
         Err(reply) => return Watched::Answered(reply),
     };
-    // An edit control's value change waiting behind the key's evidence: the
-    // text changed since the selection was last reported, so an answer
-    // that compares selections says the change in general terms, as a
-    // caret event's report does ([`report_caret`]). NVDA's selecting keys
-    // are answered by the same caret event, which notes the pending value
-    // change (`Edit.event_caret`, `nvda/source/NVDAObjects/window/edit.py`
-    // 1068 to 1082).
-    if value_change_waiting(context, node_id) {
-        context
-            .edit_anchors()
-            .note_content_changed(node_id.number());
-    }
     let mut signal = Signal {
         context,
         node_id,
