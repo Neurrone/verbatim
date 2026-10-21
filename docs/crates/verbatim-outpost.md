@@ -1629,9 +1629,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   below the desktop root fails or finds no parent
   (`Ancestry::ancestors_unknown`;
   `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`).
-  `read::uia_enrichment`'s walk (`Uia::ancestors`) still ends at such a
-  step as the root. Object navigation's ancestor query reads the whole
-  chain.
+  The outpost's own walks do the same: the remote program's walk that
+  ends at a null parent having found no window, and
+  `read::uia_enrichment`'s per-hop walk (`Uia::ancestors`) at such a step
+  (`AncestorWalk::Unknown`), report the ancestors unknown
+  (`a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`,
+  `a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`).
+  Object navigation's ancestor query reads the whole chain.
 - A dialog's own text (`read::describe_dialogs`). Before a focus is
   published, every dialog among its ancestors, and the focus itself, that
   is not in the previous focus's chain and has no description of its own
@@ -1661,9 +1665,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   is used. A program that fails otherwise is answered by the classic walk
   for that call and logged with the failing instruction's source line.
   The program's walk ends at a null parent, as it reaches the top of a
-  program's tree, so it reports a step below a top-level window that
-  finds no parent as a complete walk, where the classic walk reports the
-  ancestors unknown. A
+  program's tree; one that ends there having found no window ended below
+  the top-level window, and reports the ancestors unknown, as the classic
+  walk does. A
   UIA focus event without text costs the outpost no UIA call before it is
   reported: the listener's read is its classic walk
   (`focus_ancestry_classic`), and the outpost's walk to its own copy of the

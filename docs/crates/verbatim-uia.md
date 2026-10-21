@@ -126,8 +126,13 @@ Public API:
   `AncestorStops`: at a window read through the other API, at an ancestor
   the caller already knows (reporting `AncestorWalk::MetKnown`), or at a
   caller's out-of-time check (`out_of_time`) or a hop that UIA's
-  transaction timeout ended (`AncestorWalk::OutOfTime`); any other failed
-  hop is the root. The check is made between hops, each of which UIA ends after
+  transaction timeout ended (`AncestorWalk::OutOfTime`). The root has no
+  parent, which ends the walk as complete; any other failed hop, or one
+  that finds no parent, from an element below the root ends it as
+  `AncestorWalk::Unknown`, carrying a `FailedHop` (`Error` with the code,
+  or `NoParent`), which callers treat as they treat `OutOfTime`, as NVDA
+  reads the window hierarchy when its UIA parent read fails. Telling the
+  root is two local calls, made only when a hop fails. The check is made between hops, each of which UIA ends after
   `TRANSACTION_TIMEOUT`. The walk never steps across the process boundary:
   before each hop from an element whose own window (`element_window` for
   the first, the cached handle after) has a parent window, or visible

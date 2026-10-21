@@ -54,13 +54,46 @@ pub struct AncestorStops<'a> {
 /// How an ancestor walk ended ([`Uia::ancestors`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AncestorWalk {
-    /// It reached the root, a window read through the other API, or a hop
-    /// that found no parent.
+    /// It reached the root, a window read through the other API, the
+    /// process boundary, or its hop limit.
     Complete,
     /// It reached this known ancestor, the outermost one in the chain.
     MetKnown(verbatim_model::NodeId),
     /// It ran out of time, so the chain is incomplete.
     OutOfTime,
+    /// A step to a parent failed this way from an element below the root,
+    /// so the chain is incomplete, as when the walk runs out of time: in
+    /// the raw view a top-level window's parent is the root, so a missing
+    /// parent below it is abnormal, and NVDA reads the window hierarchy
+    /// when its parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to
+    /// 2145, `NVDAObjects/window/__init__.py` 287 to 293).
+    Unknown(FailedHop),
+}
+
+/// How a walk's step to a parent failed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailedHop {
+    /// The step failed with this code, other than UIA's transaction
+    /// timeout, which leaves a walk out of time or failed.
+    Error(windows::core::HRESULT),
+    /// The step answered no parent: the error carrying no failure code
+    /// that `windows` reports for a null element.
+    NoParent,
+}
+
+impl FailedHop {
+    /// How a step that answered `error` failed: no parent for the error
+    /// carrying no failure code, else the code. (A provider whose own
+    /// `Navigate` fails with `E_FAIL` reaches the client as no parent,
+    /// verified against mockapp's `answer-parent`.)
+    #[must_use]
+    pub fn of(error: &windows::core::Error) -> Self {
+        if error.code().is_ok() {
+            Self::NoParent
+        } else {
+            Self::Error(error.code())
+        }
+    }
 }
 
 /// One ancestor as another process read it from its cached element
@@ -669,7 +702,9 @@ impl Uia {
     /// ancestry stops where it meets the previous focus's ancestors; and
     /// when `stops.out_of_time` says its time is up, or a hop finds the provider did not
     /// answer within UIA's transaction timeout, reporting the chain as
-    /// incomplete. Ancestors that are not presentable focus context are
+    /// incomplete; and at a hop that otherwise fails, or finds no parent,
+    /// from an element below the root, reporting the chain as unknown
+    /// ([`AncestorWalk::Unknown`]): only the root ends a known walk. Ancestors that are not presentable focus context are
     /// crossed but never reported (NVDA's `isPresentableFocusAncestor`).
     ///
     /// The walk never steps across the process boundary: before each hop,
@@ -684,7 +719,8 @@ impl Uia {
     /// # Errors
     ///
     /// Returns the COM error if the tree walker itself cannot be created;
-    /// a hop that finds no parent is not an error, it simply ends the walk.
+    /// a hop that fails or finds no parent is not an error, it ends the
+    /// walk as above.
     pub fn ancestors(
         &self,
         (element, element_window): (&Live, isize),
@@ -731,18 +767,33 @@ impl Uia {
             let parent = match current.walk(&walker, Direction::Parent, request) {
                 Ok(parent) => parent,
                 // A hop that timed out, or ran past the deadline, is an
-                // incomplete chain, not the root. Any other failure ends the
-                // chain as the root, as NVDA's does: its parent read answers
-                // no parent when the call fails.
+                // incomplete chain. The root has no parent, which ends the
+                // chain as known; any other failed hop, or one that finds no
+                // parent, from an element below the root leaves the chain
+                // unknown, as NVDA's parent read falls back to the window
+                // hierarchy when it fails. Telling the root is local, and
+                // asked only here.
                 Err(error) => {
-                    let ending = if crate::timed_out(&error) || out_of_time() {
-                        AncestorWalk::OutOfTime
-                    } else {
-                        AncestorWalk::Complete
-                    };
                     chain.reverse();
-                    log(hops, "root");
-                    return Ok((chain, None, ending));
+                    if crate::timed_out(&error) || out_of_time() {
+                        log(hops, "out of time");
+                        return Ok((chain, None, AncestorWalk::OutOfTime));
+                    }
+                    let at_root = self
+                        .root_element()
+                        .is_ok_and(|root| crate::com::runtime_id(&root) == current.runtime_id());
+                    if at_root {
+                        log(hops, "root");
+                        return Ok((chain, None, AncestorWalk::Complete));
+                    }
+                    let hop = FailedHop::of(&error);
+                    tracing::debug!(
+                        hops,
+                        ?hop,
+                        elapsed_us = started.elapsed().as_micros(),
+                        "UIA ancestor walk ended at a failed step below the root"
+                    );
+                    return Ok((chain, None, AncestorWalk::Unknown(hop)));
                 }
             };
             current_window = parent.read().node.role.hwnd;

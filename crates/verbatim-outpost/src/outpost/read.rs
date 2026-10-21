@@ -243,8 +243,9 @@ fn wants_selected_child(role: Role) -> bool {
 /// at a container of `previous` (the last focus's ancestors and the focus
 /// itself) and reuses the rest; within [`ENRICHMENT_BUDGET`], checked
 /// between its calls. Failures degrade to no containers or no selected
-/// child; running out of time to containers unknown. Enrichment never
-/// turns a focus into an error.
+/// child; running out of time, or a step to a parent that fails or finds
+/// none below the desktop root ([`AncestorWalk::Unknown`]), to containers
+/// unknown. Enrichment never turns a focus into an error.
 pub(super) fn uia_enrichment(
     context: &Context,
     (uia, nodes, ancestors): (&Uia, &Request<Node>, &Request<Ancestor>),
@@ -279,7 +280,8 @@ pub(super) fn uia_enrichment(
 }
 
 /// A UIA element's ancestors, outermost first, or `None` when the walk ran
-/// out of time. Where the walk reaches the root of a window read through
+/// out of time or a step to a parent failed, or found none, below the
+/// desktop root. Where the walk reaches the root of a window read through
 /// MSAA, it continues from that window's client area through MSAA, as NVDA
 /// switches API when its walk crosses into such a window: in File
 /// Explorer, the folder window above the UIA file list is then the client
@@ -335,7 +337,8 @@ fn uia_ancestors(
 /// window has a UIA provider or not, without probing it, as the Settings
 /// page's content is continued from its frame
 /// (`docs/design/listener-without-connections.md`, sections 4.2 to 4.4).
-/// `None` when the walk ran out of time.
+/// `None` when the walk ran out of time or ended at a failed step below
+/// the root ([`AncestorWalk::Unknown`]).
 fn uia_chain_onward(
     context: &Context,
     (uia, request): (&Uia, &Request<Ancestor>),
@@ -350,7 +353,7 @@ fn uia_chain_onward(
 ) -> Option<Vec<NodeSnapshot>> {
     let known = |id: NodeId| previous.iter().any(|node| node.id == id);
     match walked {
-        AncestorWalk::OutOfTime => return None,
+        AncestorWalk::OutOfTime | AncestorWalk::Unknown(_) => return None,
         AncestorWalk::MetKnown(met) => return Some(splice(previous, uia_chain, met)),
         AncestorWalk::Complete => {}
     }
@@ -458,7 +461,9 @@ pub(super) fn uia_chain_from_read(
         // UIA, so it is not made; the chain read is reported as it is.
         Err(_) => match walked {
             AncestorWalk::MetKnown(met) => Some(splice(previous, chain, met)),
-            AncestorWalk::Complete | AncestorWalk::OutOfTime => Some(chain),
+            AncestorWalk::Complete | AncestorWalk::OutOfTime | AncestorWalk::Unknown(_) => {
+                Some(chain)
+            }
         },
     }
 }
@@ -483,7 +488,9 @@ pub(super) struct NotFocused;
 /// emitted it; one whose element could not be imported (a client-side
 /// proxy) also has `window` read the classic way from then on. A walk that
 /// fails, the program by UIA's transaction timeout or the classic walk any
-/// way, reports the containers unknown.
+/// way, reports the containers unknown, as does a walk that ends at a
+/// failed or missing parent below the top
+/// ([`verbatim_uia_rops::Ancestry::failed_hop`]).
 pub(super) fn uia_remote_enrichment(
     context: &Context,
     (uia, request): (&Uia, &Request<Ancestor>),

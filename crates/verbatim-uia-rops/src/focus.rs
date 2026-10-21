@@ -113,17 +113,19 @@ pub struct Ancestry {
     /// Whether the classic walk stopped when the query's time was up, with
     /// ancestors left. Never set by the remote program.
     pub out_of_time: bool,
-    /// How the classic walk's step to a parent failed from an element
-    /// below the desktop root, which ends the walk with the ancestors
-    /// unknown, as an out-of-time walk does ([`Self::ancestors_unknown`]);
-    /// `None` when no step failed. Only reaching the root ends a walk as
-    /// known: in the classic view a top-level window's parent is the root
-    /// element, so a missing parent below it is abnormal, and NVDA reads
-    /// the window hierarchy instead when its parent read fails
-    /// (`NVDAObjects/UIA/__init__.py` 2142 to 2145). Never set by the
-    /// remote program, whose walk ends at a null parent, as it reaches the
-    /// top of a program's tree, so it reports a missing parent below a
-    /// top-level window as a complete walk.
+    /// How the walk's step to a parent failed below the top, which ends
+    /// the walk with the ancestors unknown, as an out-of-time walk does
+    /// ([`Self::ancestors_unknown`]); `None` when no step failed. Only
+    /// reaching the top ends a walk as known, as NVDA reads the window
+    /// hierarchy instead when its parent read fails
+    /// (`NVDAObjects/UIA/__init__.py` 2142 to 2145). For the classic walk
+    /// the top is the desktop root, a top-level window's parent, and any
+    /// step below it that fails or finds no parent sets this. Inside the
+    /// remote program a top-level window's parent is null, so its walk
+    /// ends at any null parent, and sets this, as
+    /// [`FailedHop::NoParent`], when it ended there without finding a
+    /// window: no window handle, and the last element read is not a
+    /// window's own element (runtime id `[42, handle]`).
     pub failed_hop: Option<FailedHop>,
     /// For a list or tab control, the first selected child, filled by the
     /// query's fill: what `verbatim_uia::Uia::selected_node` reports; for a
@@ -164,30 +166,8 @@ impl Ancestry {
     }
 }
 
-/// How a classic walk's step to a parent failed ([`Ancestry::failed_hop`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FailedHop {
-    /// The step failed with this code, other than UIA's transaction
-    /// timeout, which fails the whole walk.
-    Error(windows::core::HRESULT),
-    /// The step answered no parent: the error carrying no failure code
-    /// that `windows` reports for a null element.
-    NoParent,
-}
-
-impl FailedHop {
-    /// How a step that answered `error` failed: no parent for the error
-    /// carrying no failure code, else the code. (A provider whose own
-    /// `Navigate` fails with `E_FAIL` reaches the client as no parent,
-    /// verified against mockapp's `answer-parent`.)
-    fn of(error: &windows::core::Error) -> Self {
-        if error.code().is_ok() {
-            Self::NoParent
-        } else {
-            Self::Error(error.code())
-        }
-    }
-}
+/// How a walk's step to a parent failed ([`Ancestry::failed_hop`]).
+pub use verbatim_uia::FailedHop;
 
 /// The signature both implementations share, so a caller can hold either.
 pub type FocusAncestryFn = fn(&Uia, &FocusQuery<'_>) -> Result<FocusAncestry, Error>;
@@ -394,6 +374,13 @@ fn is_window_element(runtime_id: &[i32], hwnd: isize) -> bool {
     runtime_id == [42, handle]
 }
 
+/// Whether the element whose runtime id is `runtime_id` is some window's
+/// own element, `[42, handle]` ([`is_window_element`]); an element inside
+/// a window's provider has more parts.
+fn is_a_window_element(runtime_id: &[i32]) -> bool {
+    matches!(runtime_id, &[42, handle] if handle != 0)
+}
+
 /// The focus ancestry in one cross-process round trip: a program that
 /// reads the element's `HasKeyboardFocus` live and stops if it is false,
 /// then reads the previous element's (`FocusQuery::previous`), then, with
@@ -404,7 +391,9 @@ fn is_window_element(runtime_id: &[i32], hwnd: isize) -> bool {
 /// raw-view parents, filling each one's cache inside the provider, until
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
-/// ancestor read so far has a window handle.
+/// ancestor read so far has a window handle. A walk that ends at a null
+/// parent having found no window ended below the top-level window, and is
+/// reported with the ancestors unknown ([`Ancestry::failed_hop`]).
 ///
 /// `uia` is unused; it is in the signature so that this and
 /// [`focus_ancestry_classic`] are interchangeable ([`FocusAncestryFn`]).
@@ -625,7 +614,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         return Ok(FocusAncestry::NotFocused);
     }
     let absents = outcome.get(absents)?;
-    let ancestors = outcome
+    let ancestors: Vec<Cached<Ancestor>> = outcome
         .get(ancestors)?
         .into_iter()
         .zip(absents)
@@ -637,15 +626,36 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         })
         .collect();
     let window = outcome.get(window)?;
+    let met_known = usize::try_from(outcome.get(met_known)?).ok();
+    let depth_limited = outcome.get(depth_limited)?;
+    // A walk that stopped at neither a known ancestor nor the depth limit
+    // ended at a null parent. Inside a program a top-level window's parent
+    // is null, and a walk that ends there has found a window: the window's
+    // handle, or, where a read inside the provider leaves the handle out
+    // (`docs/uia-bugs.md`, "Inside a remote operation, conhost's window
+    // has no handle or title"), the window's own runtime id. One that
+    // found neither ended at a missing parent below the window: its
+    // ancestors are unknown, as the classic walk reports a missing parent
+    // below the root, and as NVDA reads the window hierarchy when its
+    // parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145).
+    let failed_hop = (met_known.is_none()
+        && !depth_limited
+        && window == 0
+        && !is_a_window_element(
+            &ancestors
+                .last()
+                .map_or_else(|| query.element.runtime_id(), Cached::runtime_id),
+        ))
+    .then_some(FailedHop::NoParent);
     let claimed = |element: Option<IUIAutomationElement>, absent: i32| {
         element.map(|element| query.fill.claim(element, absent_record(absent)))
     };
     Ok(FocusAncestry::Focused(Ancestry {
         ancestors,
-        met_known: usize::try_from(outcome.get(met_known)?).ok(),
-        depth_limited: outcome.get(depth_limited)?,
+        met_known,
+        depth_limited,
         out_of_time: false,
-        failed_hop: None,
+        failed_hop,
         selected_child: claimed(outcome.get(selected)?, outcome.get(selected_absent)?),
         window: (window != 0).then_some(window as isize),
         previous_focused: match query.previous {

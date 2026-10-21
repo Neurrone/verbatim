@@ -78,8 +78,8 @@ pub mod text;
 pub use bounded::{BoundedClient, Unanswered};
 pub use checks::{CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting};
 pub use client::{
-    AncestorParts, AncestorStops, AncestorWalk, CONNECTION_TIMEOUT, TRANSACTION_TIMEOUT, Uia,
-    release_mta_usage,
+    AncestorParts, AncestorStops, AncestorWalk, CONNECTION_TIMEOUT, FailedHop, TRANSACTION_TIMEOUT,
+    Uia, release_mta_usage,
 };
 pub use com::{
     element_is_gone, init_mta, is_mixed, is_not_supported, leave_mta, runtime_id, timed_out,

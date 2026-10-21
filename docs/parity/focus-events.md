@@ -554,7 +554,14 @@ root ends the walk as known (`focus_ancestry_classic` and
 `Ancestry::failed_hop` in `crates/verbatim-uia-rops/src/focus.rs`; the
 listener at line 1047). The listener's log line "UIA focus ancestors
 read" names the failed step as `failed_hop`, `NoParent` or the failing
-code, and as `None` for a walk that reached the root. The placeholder's
+code, and as `None` for a walk that reached the root. The outpost's own
+walks behave the same: its remote program's walk, which ends at a null
+parent inside the program, reports the ancestors unknown when it ended
+there having found no window, and its per-hop walk (`Uia::ancestors` in
+`crates/verbatim-uia/src/client.rs`) ends at a failed or missing parent
+below the root as `AncestorWalk::Unknown`, so a focus-now answer or a
+focus the outpost reads itself carries no partial chain as if it were
+whole. The placeholder's
 element can answer its properties after it has left the tree, so its
 read succeeds and only that step fails, which run 39613639083 shows with
 `read=0` and the ancestors reported as known; reported as known and
@@ -580,7 +587,11 @@ Tests of Verbatim's side: `remote_ops.rs` in `mockapp`,
 `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`,
 and `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`,
 which pins the failed step and the missing parent, for the listener's
-report, the unit test `a_failed_step_is_told_by_its_code` in
+report,
+`a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`
+and
+`a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`
+for the outpost's own walks, the unit test `a_failed_step_is_told_by_its_code` in
 `verbatim-uia-rops` for a step that fails with a code, and `focus_reports.rs`, whose
 `focus_without_a_path` and its caller
 `a_focus_without_a_path_is_followed_from_its_next_focus_event` assert that

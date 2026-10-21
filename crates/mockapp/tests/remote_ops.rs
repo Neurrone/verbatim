@@ -868,6 +868,62 @@ fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
     }
 }
 
+/// The focus-now query's answer for "Deep button" when the step from its
+/// container "Inner group" to that container's parent answers `answer`,
+/// with remote operations on or off: the focus now's chain, outermost
+/// first, ending at the focus.
+fn focus_now_chain_with_a_missing_grandparent(remote: bool, answer: &str) -> Vec<Option<String>> {
+    let path = if remote { "remote" } else { "classic" };
+    let mut fixture = Fixture::start(&format!("mockapp-rops-now-{answer}-{path}"));
+    let mut outpost = OutpostUnderTest::with_options(
+        &fixture.app,
+        OutpostOptions {
+            remote_operations: remote,
+        },
+    );
+    fixture.app.send("set-focus deep");
+    fixture.app.send(&format!("answer-parent group2 {answer}"));
+    outpost.read_focus_as(&fixture.find("Deep button"));
+    let now = outpost
+        .focus_now()
+        .unwrap_or_else(|| panic!("{answer} {path}: the focus now has a focused control"));
+    drop(outpost);
+    fixture.app.quit();
+    now.ancestors
+        .iter()
+        .chain(std::iter::once(&now.node))
+        .map(|node| node.name.clone())
+        .collect()
+}
+
+/// A focus-now query whose remote program's walk ends at a missing parent
+/// below the top-level window, which the program finds as the window
+/// where its walk ends, reports the focus's ancestors unknown: the answer
+/// has no flag for them, so it holds the focus alone, never the ancestors
+/// read before the missing parent as if they were the whole chain. NVDA
+/// reads the window hierarchy when its parent read fails
+/// (`NVDAObjects/UIA/__init__.py` 2142 to 2145).
+fn a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown() {
+    assert_eq!(
+        focus_now_chain_with_a_missing_grandparent(true, "none"),
+        [Some("Deep button".to_owned())]
+    );
+}
+
+/// The same with remote operations off: the outpost's classic walk's
+/// step to a parent that fails, or answers none, below the desktop root
+/// leaves the focus's ancestors unknown. UIA hands the client no parent
+/// both ways (verified), so both are asked of the provider.
+fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown() {
+    for answer in ["fail", "none"] {
+        assert_eq!(
+            focus_now_chain_with_a_missing_grandparent(false, answer),
+            [Some("Deep button".to_owned())],
+            "{answer}"
+        );
+    }
+}
+
 /// A focus whose read fails is reported from its event, its containers
 /// unknown, as the focus, its only state focused, whatever the event's
 /// cache says of its keyboard focus: NVDA's
@@ -1316,6 +1372,14 @@ fn main() {
         (
             "a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown",
             a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown,
+        ),
+        (
+            "a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown",
+            a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown,
+        ),
+        (
+            "a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown",
+            a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown,
         ),
         (
             "a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus",
