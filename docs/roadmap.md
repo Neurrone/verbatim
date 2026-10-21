@@ -265,15 +265,11 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     and the scenario has no handling for it; what File Explorer raises
     then, beyond a name change and three state changes on the items view
     whose states the hook's debug line does not show, is to be found.
-  - The early connection an outpost makes to a new window after its probe
-    finds a provider (variant d of
-    [the listener design](design/listener-without-connections.md),
-    risk 11) can hold the worker 2 to 4 seconds while File Explorer
-    builds the window, delaying its first focus, and a copy the worker
-    takes up after such a hold is read at once, racing the UIA focus
-    (`target/e2e-evidence/explorer-flakes-2026-10-21/partA/`). A question
-    for Dickson: whether the connection moves off the worker or is made
-    later, which decides these reads too; nothing is changed for it.
+  - No outpost connects to a new window after its probe, so the worker is
+    not held while File Explorer builds the window: a new folder window's
+    first item was queued 62 to 323 ms after its event in 50 windows on
+    2026-10-21, against up to 2,280 ms with that connection
+    ([the listener design](design/listener-without-connections.md), risk 11).
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,

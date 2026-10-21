@@ -76,10 +76,7 @@ mod subscribe;
 pub mod text;
 
 pub use bounded::{BoundedClient, Unanswered};
-pub use checks::{
-    CONSOLE_TEXT_AREA, connect_to_window, console_reports_formatting,
-    held_console_reports_formatting,
-};
+pub use checks::{CONSOLE_TEXT_AREA, console_reports_formatting, held_console_reports_formatting};
 pub use client::{
     AncestorParts, AncestorStops, AncestorWalk, CONNECTION_TIMEOUT, TRANSACTION_TIMEOUT, Uia,
     release_mta_usage,

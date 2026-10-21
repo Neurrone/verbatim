@@ -33,12 +33,10 @@ answered "no" falsely beside another process's queued remote operation
 (`e34`), under `e38`'s trigger, and for the outposts on new console and
 File Explorer windows
 (`docs/design/listener-without-connections.md`, decision 2; the
-outposts' probe decided by Dickson on 2026-10-20). An outpost whose probe
-finds a provider then connects to the window once, which NVDA's probe
-does as part of it, so a new File Explorer window gets the same kind of
-call at its first sight as NVDA makes; whether it comes as early as
-NVDA's is not measured. A list view whose provider the Windows Forms
-check excludes, from its class name alone, is not connected to.
+outposts' probe decided by Dickson on 2026-10-20). No connection to the
+window follows the probe, where NVDA's probe connects as part of it, so
+a new File Explorer window gets no UIA connection at Verbatim's first
+sight of it.
 
 Not yet (M7): NVDA's Word, Excel, and Chromium exceptions, which set UIA
 aside only when NVDA has injected its in-process helper; without it NVDA

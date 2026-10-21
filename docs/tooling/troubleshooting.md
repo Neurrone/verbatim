@@ -267,14 +267,7 @@ hung. The raw probe makes no UIA connection, so neither UIA fault that
 gives `UiaHasServerSideProvider` a slow false "no" (`docs/uia-bugs.md`,
 "A new connection fails while another process's remote operation is
 queued" and "UiaHasServerSideProvider says no for a new conhost window
-while another process has an event handler") reaches it. After a "yes",
-an outpost connects to its own application's window once, logged at
-debug as `arbitration connected to the window after its probe` with its
-own `elapsed_ms`; on a new File Explorer folder window that connection
-took about 200 to 450 ms where the probe took 33 to 45 ms in the runs
-of 2026-10-20, and 2,004 to 4,230 ms, each connecting, in about half the
-new windows of five `measure_focus_explorer` runs on 2026-10-21, so a slow first look
-at a window is the connection when that line's time is the long one.
+while another process has an event handler") reaches it.
 
 **`measure_focus_explorer` times out on File Explorer's "Working on
 it..." placeholder.** This is a known File Explorer fault of the measure

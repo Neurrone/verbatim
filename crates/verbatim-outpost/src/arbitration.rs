@@ -380,9 +380,9 @@ fn provider_usable(
 /// the provider probe, whose answer the arbitrator keeps (a provider for the
 /// window's lifetime, none for a short while). Returns `true` for UIA. The
 /// probe is the raw probe ([`verbatim_uia::raw_probe`]), for the listener
-/// and the outposts alike; the listener makes no connection after it
-/// ([`Connect::Never`]). A console window with a provider
-/// is used only when `console` answers that its text reports formatting
+/// and the outposts alike, and no connection follows it. A console window
+/// with a provider is used only when `console` answers that its text
+/// reports formatting
 /// ([`PostProbeCheck::Console`]): an outpost reads that by the window's
 /// handle ([`verbatim_uia::console_reports_formatting`]), and the listener,
 /// which connects to no window, from the elements it holds
@@ -392,27 +392,7 @@ pub(crate) fn uses_uia(
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
 ) -> bool {
-    uses_uia_keeping(arbitrator, hwnd, Connect::Never, console).0
-}
-
-/// Whether a probe that finds a provider is followed by one connection to
-/// the window ([`verbatim_uia::connect_to_window`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Connect {
-    /// The listener's: it connects to no application's window
-    /// (`docs/design/listener-without-connections.md`, section 2). Also an
-    /// outpost's where its caller connects to the window itself at once
-    /// (`outpost::read`'s window snapshot and focused control, which only
-    /// a focus-now query reaches with a window not yet decided), so that
-    /// the window gets one connection, not two.
-    Never,
-    /// An outpost's, on its own application's window: connected at once,
-    /// unless the console check that follows the probe connects by the
-    /// window's handle itself, or the list view check, from the class name
-    /// alone, excludes the provider. A new File Explorer window that no process
-    /// connects to early delivers its first UIA focus events in one burst
-    /// after their senders are gone (decision 2, measured on 2026-10-20).
-    AfterYes,
+    uses_uia_keeping(arbitrator, hwnd, console).0
 }
 
 /// Window `hwnd`'s backend as [`uses_uia`] would decide it without a call
@@ -423,14 +403,12 @@ pub(crate) fn known_verdict(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> Opti
     lock(arbitrator).verdict(hwnd, &classes)
 }
 
-/// [`uses_uia`], with `connect` saying whether a probe that finds a
-/// provider is followed by a connection to the window, and whether this
-/// call probed the window and kept a verdict of UIA for its lifetime: an
-/// outpost's event thread may then narrow its hook (`outpost::narrowing`).
+/// [`uses_uia`], and whether this call probed the window and kept a verdict
+/// of UIA for its lifetime: an outpost's event thread may then narrow its
+/// hook (`outpost::narrowing`).
 pub(crate) fn uses_uia_keeping(
     arbitrator: &Mutex<Arbitrator>,
     hwnd: isize,
-    connect: Connect,
     console: impl FnOnce() -> Option<bool>,
 ) -> (bool, bool) {
     let classes = WindowClasses::of(hwnd);
@@ -446,26 +424,7 @@ pub(crate) fn uses_uia_keeping(
         elapsed_ms = started.elapsed().as_millis(),
         "arbitration probed"
     );
-    let check = post_probe_check(&classes);
-    // A list view's check is its class name alone, known before any call,
-    // so a list view it excludes is never connected to; a console's check
-    // connects by the window's handle itself.
-    let connects = match check {
-        None => true,
-        Some(PostProbeCheck::WindowsFormsListView) => has_windows_forms_class(&classes.raw),
-        Some(PostProbeCheck::Console) => false,
-    };
-    if is_uia && connect == Connect::AfterYes && connects {
-        let started = std::time::Instant::now();
-        let connected = verbatim_uia::connect_to_window(hwnd);
-        tracing::debug!(
-            hwnd,
-            ?connected,
-            elapsed_ms = started.elapsed().as_millis(),
-            "arbitration connected to the window after its probe"
-        );
-    }
-    if is_uia && let Some(check) = check {
+    if is_uia && let Some(check) = post_probe_check(&classes) {
         // NVDA uses some providers only after checking them.
         let usable = provider_usable(check, &classes, console);
         tracing::debug!(hwnd, ?check, ?usable, "arbitration checked the provider");

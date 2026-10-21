@@ -566,12 +566,6 @@ Public API:
   focus listener's walks up stop and the outpost continues the chain
   through MSAA (`docs/design/listener-without-connections.md`, section
   3). Local calls only.
-- `connect_to_window(hwnd)` — one connection to the window by its handle
-  (`ElementFromHandle`), the element let go: an outpost's, on its own
-  application's window, once its probe has found a provider there
-  (`docs/design/listener-without-connections.md`, decision 2). `None`
-  when the window did not answer in time, `Some(false)` for any other
-  failure.
 - `console_reports_formatting(hwnd)` — the check NVDA makes on a console
   window with a provider before using it: whether its text area reports
   one visible range with its font (the complete console provider of

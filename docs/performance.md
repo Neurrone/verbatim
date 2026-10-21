@@ -70,29 +70,12 @@ kinds, counted separately (`verbatim_model::CallKind`):
 Of the UIA calls, those that connect to a window by its handle are also
 counted apart (`CallCounts::connections`): an `ElementFromHandle` or
 `ElementFromHandleBuildCache`, and a `GetFocusedElementBuildCache`, which
-reaches the focused window the same way; the probe is not one, but an
-outpost whose probe finds a provider follows it with one
-`ElementFromHandle`, once in the window's lifetime, since the "yes" is
-kept, unless the console check follows, which connects itself, the list
-view check excludes the provider from its class name alone, or the
-caller connects to the window at once itself, as a focus-now query's
-window snapshot (`ElementFromHandleBuildCache`) and focused control's
-read (`GetFocusedElementBuildCache`) do, the only path that reaches them
-with a window not yet decided (the worker's foreground handling decides
-the window with its connection first), which are then the window's one
-connection rather than the second of two
-(`call_counts.rs`,
-`an_outposts_probe_that_finds_a_provider_connects_once`: the probe costs
-mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
-`HostRawElementProvider` and one `Navigate`, and the connection two
-`WM_GETOBJECT`s, seven `ProviderOptions`, two `HostRawElementProvider`
-and two `Navigate`). That connection runs on the outpost's worker and
-took 250 to 454 ms for the first window of each new File Explorer
-folder window and 200 to 230 ms for a second, against 33 to 45 ms for
-the probe alone (2026-10-20, the `vard-*` logs under
-`target/e2e-evidence/review-fixes-2026-10-20/`); its result is not kept,
-so a connection that fails is not made again
-(`docs/design/listener-without-connections.md`, risk 11). Each still counts once
+reaches the focused window the same way; the probe is not one, and no
+connection follows it (`call_counts.rs`,
+`an_outposts_probe_that_finds_a_provider_makes_no_connection`: the probe
+costs mockapp one `WM_GETOBJECT`, two `ProviderOptions`, one
+`HostRawElementProvider` and one `Navigate`, and nothing more;
+`docs/design/listener-without-connections.md`, risk 11). Each still counts once
 under its own kind, so a call's total is unchanged. The focus listener
 makes none (`docs/design/listener-without-connections.md`, section 2), and
 the ratchet asserts its count is zero (`call_counts.rs`,
@@ -493,9 +476,8 @@ verdict for the focus's window rather than asking the window again.
   read then comes, the outpost finds its own copy of the element by the
   path again (`find_focus_element`), since the listener holds no element
   for the read: one connection more per recovered focus. A gap whose copy
-  the worker took up after a hold, such as the early connection after a
-  probe, can be due at once, since the bound counts from the copy's
-  observation.
+  the worker took up after a hold can be due at once, since the bound
+  counts from the copy's observation.
 - Reads made in vain, accepted as the design's cost: in
   `measure_focus_explorer` a gap can come to a read in the first folder
   window as it takes the focus back, after the focus has moved to a new
@@ -503,9 +485,7 @@ verdict for the focus's window rather than asking the window again.
   200 ms before it takes the foreground. The read ends at its local check,
   about 110 µs with no call into the application; the outpost's own hook
   sees only its application's events, so nothing it has says the other
-  window is coming. A read can also come late, after the worker was held
-  by its own early connections into a new window (the listener design's
-  risk 11; `target/e2e-evidence/explorer-c3-fixes-2026-10-21/`).
+  window is coming.
 - Target: no cost per focus; one read per gap.
 
 ### A focus behind other objects' events
