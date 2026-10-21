@@ -237,8 +237,9 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   `the_codeview_record_read_is_the_one_dbghelp_reports` in
   `verbatim-trace-waits` (`server.rs`, an equality assertion), and the
   hosted end-to-end job, where `windows_terminal_two_windows` and
-  `windows_terminal_leave_flood` failed beside the known
-  `explorer_folder_window` placeholder (80 of 83 passed). Root-cause each
+  `windows_terminal_leave_flood` failed (80 of 83 passed; the third
+  failure, File Explorer's placeholder in `explorer_folder_window`, is an
+  optional utterance of that scenario now). Root-cause each
   from the run logs (`gh run view <id> --log-failed`) rather than from a
   local run, since neither reproduces here.
 - GitHub's `e2e` job in run 39558690998 showed that the runner's

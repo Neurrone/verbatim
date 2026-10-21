@@ -18,16 +18,23 @@
 //! the items view list with a new element, so it is entered anew
 //! (`docs/parity/focus-context.md`, "Focus-ancestry context").
 //!
-//! As the subfolder loads after Enter, File Explorer may give the keyboard
-//! focus for a moment to a placeholder, a static text element named
-//! "Working on it...", depending on how quickly the folder loads: in 8 of
-//! 18 recorded runs on GitHub's runners, and in none of about 100 on a
-//! development machine. NVDA says it too (Dickson has heard it). It is an
-//! optional utterance (`docs/testing.md`, "Optional utterances"): first,
-//! before "Items View list", heard in full, cut off by the item's focus,
-//! or not said at all. No run has had it after Backspace, which returns to
-//! a folder File Explorer has just shown, or on the window's opening, so
-//! it is declared after Enter only.
+//! While it loads a folder after Enter or Backspace, File Explorer may give
+//! the keyboard focus for a moment to a placeholder, a static text element
+//! named "Working on it...", and then give it to the item: in 8 of 18
+//! recorded runs after Enter and in 2 runs after Backspace on GitHub's
+//! runners, and rarely on a development machine. Whether it comes depends
+//! on how quickly the machine loads the folder, so it is an optional
+//! utterance (`docs/testing.md`, "Optional utterances", approved by
+//! Dickson for Enter on 2026-10-17 and for Backspace on 2026-10-21) rather
+//! than an expectation that depends on the machine: heard in full, cut off
+//! by the item's focus, or not said at all, always immediately before the
+//! item's focus speech. After Enter it comes first, and the new list's
+//! "Items View list" comes with the item's focus; after Backspace the
+//! placeholder's own focus enters the new list, so it comes between
+//! "Items View list" and the item (GitHub runs 39558690998 and
+//! 39583748471). The item is still required: a run
+//! where the placeholder keeps the focus fails. No run has had it on the
+//! window's opening, so it is not declared there.
 
 use std::io;
 
@@ -67,7 +74,9 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
         heard("delta not selected 1 of 1"),
     ]);
     scenario.send_keys(&["backspace"]).expect("sends the key");
-    scenario
-        .speech()
-        .expect(&["Items View list", "Inner 1 of 4"]);
+    scenario.speech().expect_sequence(&[
+        heard("Items View list"),
+        optional("Working on it..."),
+        heard("Inner 1 of 4"),
+    ]);
 }

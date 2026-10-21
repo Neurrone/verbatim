@@ -258,7 +258,9 @@ new one), `return_after_retirement` (an application brought forward again
 once its outpost was retired after two minutes without attention is
 announced as before, through a new outpost; it takes about three
 minutes), `explorer_folder_window` (a File Explorer window on a harness
-folder), `settings_system_page` (the Settings app's System page),
+folder, where File Explorer's "Working on it..." placeholder is an
+optional utterance before the item after Enter and after Backspace),
+`settings_system_page` (the Settings app's System page),
 `settings_search_suggestions` (the Settings app's search suggestions,
 read as the selection moves through them while the focus stays in the
 search box, their number and names read by the agent before they are

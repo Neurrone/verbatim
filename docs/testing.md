@@ -46,7 +46,7 @@ An optional utterance is only for speech whose presence or repetition the applic
 
 The approved uses:
 
-- File Explorer's "Working on it..." placeholder, after Enter in `explorer_folder_window`: as the subfolder loads, File Explorer gives the placeholder the keyboard focus for a moment or not, depending on how quickly the folder loads.
+- File Explorer's "Working on it..." placeholder, after Enter and after Backspace in `explorer_folder_window`, immediately before the item's focus speech: as the folder loads, File Explorer gives the placeholder the keyboard focus for a moment or not, depending on how quickly the machine loads the folder, and then gives it to the item, which stays required.
 - A Windows Terminal window's "<title> terminal", repeated before the one heard in full, as the window opens in every Windows Terminal scenario, up to once for a window opened on its own and up to twice for a second window opened in the running Windows Terminal: in some launches Windows Terminal raises the terminal's focus under a second runtime id besides the usual one, so the terminal is announced again.
 
 ## Waits are for evidence
