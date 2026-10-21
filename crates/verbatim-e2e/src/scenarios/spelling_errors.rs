@@ -43,7 +43,7 @@ const SPELLING_ERRORS: &str = "[[0, 3], [15, 19]]";
 const TEXT_AREA: &str = "Text edit";
 
 /// The first line as the default theme reads it.
-const FIRST_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset .";
+const FIRST_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset.";
 
 pub(crate) fn setup(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     let directory = scenario.run_directory().to_owned();

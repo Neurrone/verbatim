@@ -47,6 +47,13 @@ cache-and-diff is why reading a fully bold paragraph says "bold"
 once, and why any implementation that re-announces per line sounds
 broken to NVDA users.
 
+The text between fields is joined as it is: consecutive text strings
+are concatenated into one piece of speech with no separator, and only a
+format change that produces words, a change of language, or the start
+or end of a control field begins a new piece. So a word at the end of a
+spelling error followed by a period is spoken "tset." with no gap,
+while "spelling error" said where an error starts is a piece of its own.
+
 ### The cache, attribute by attribute
 
 What follows was read from `getTextInfoSpeech` and

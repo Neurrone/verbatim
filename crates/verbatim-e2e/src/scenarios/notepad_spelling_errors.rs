@@ -46,7 +46,7 @@ const FINE_LINE: &str = "All fine here.";
 
 /// The line with errors as the default theme reads it once they are
 /// marked.
-const ERROR_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset .";
+const ERROR_LINE: &str = "sound: spelling-error spelling error Ths line has a sound: spelling-error spelling error tset.";
 
 /// The scenario's document, which Notepad opens before Verbatim starts.
 pub(crate) fn document() -> Document {

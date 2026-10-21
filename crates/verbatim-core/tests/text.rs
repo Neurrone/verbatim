@@ -2914,8 +2914,7 @@ fn a_line_speaks_a_spelling_error_where_it_starts() {
         vec![
             UtteranceSegment::text("hello"),
             format(TextFormat::SpellingError),
-            UtteranceSegment::text("wrold"),
-            UtteranceSegment::text("there"),
+            UtteranceSegment::text("wrold there"),
         ]
     );
     // Leaving the error inside a line says nothing, and reading the same
@@ -2925,8 +2924,40 @@ fn a_line_speaks_a_spelling_error_where_it_starts() {
         vec![
             UtteranceSegment::text("hello"),
             format(TextFormat::SpellingError),
-            UtteranceSegment::text("wrold"),
-            UtteranceSegment::text("there"),
+            UtteranceSegment::text("wrold there"),
+        ]
+    );
+}
+
+#[test]
+fn a_line_joins_its_stretches_as_the_text_has_them() {
+    let mut state = editing(
+        "first
+", 0,
+    );
+    let line = with_errors(
+        line(
+            "Ths line has a tset.
+",
+            101,
+            0,
+        ),
+        &[
+            (0, 3, true),
+            (3, 15, false),
+            (15, 19, true),
+            (19, 21, false),
+        ],
+    );
+    // Only a spoken change parts the text; the dot after the error follows
+    // it with no space, as NVDA says the line.
+    assert_eq!(
+        answered(&mut state, CaretMotion::NextLine, line, None),
+        vec![
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("Ths line has a"),
+            format(TextFormat::SpellingError),
+            UtteranceSegment::text("tset."),
         ]
     );
 }
@@ -3038,8 +3069,7 @@ fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
             document(),
             vec![
                 format(TextFormat::SpellingError),
-                UtteranceSegment::text("Ths"),
-                UtteranceSegment::text("is"),
+                UtteranceSegment::text("Ths is"),
             ]
         ]
     );

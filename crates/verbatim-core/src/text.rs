@@ -503,27 +503,36 @@ pub(crate) fn formatted_segments(
         segments.extend(text_segments("", None));
         return Some(segments);
     }
-    for (index, (range, attributes)) in runs.iter().enumerate() {
-        if index > 0 {
-            segments.extend(
-                format_changes(reported, attributes, extra_detail)
-                    .into_iter()
-                    .map(format),
-            );
-            *reported = attributes.clone();
-        }
-        let start = range.start.max(spoken.start);
-        let end = range.end.min(spoken.end);
-        // Each stretch is its own piece of speech, without the white space
-        // around it, which the pieces are spoken apart by anyway.
-        let piece = chunk.text[start.min(end)..end].trim();
+    // The text of the stretches since the last spoken change, joined as it
+    // is, since NVDA joins the text of a unit's fields without separators
+    // (`docs/nvda/document-formatting.md`, "The diffing model"); only a
+    // spoken change between stretches parts the text, as a piece of speech
+    // of its own.
+    let mut joined = String::new();
+    let flush = |joined: &mut String, segments: &mut Vec<UtteranceSegment>| {
+        let piece = joined.trim();
         if !piece.is_empty() {
             segments.push(in_language(
                 SegmentContent::Text(piece.to_owned()),
                 language,
             ));
         }
+        joined.clear();
+    };
+    for (index, (range, attributes)) in runs.iter().enumerate() {
+        if index > 0 {
+            let changes = format_changes(reported, attributes, extra_detail);
+            if !changes.is_empty() {
+                flush(&mut joined, &mut segments);
+                segments.extend(changes.into_iter().map(format));
+            }
+            *reported = attributes.clone();
+        }
+        let start = range.start.max(spoken.start);
+        let end = range.end.min(spoken.end);
+        joined.push_str(&chunk.text[start.min(end)..end]);
     }
+    flush(&mut joined, &mut segments);
     Some(segments)
 }
 
