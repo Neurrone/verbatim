@@ -471,7 +471,8 @@ UIA focus it waits for fall into three classes:
   the keyboard focus (NVDA's drop at lines 1632 to 1637), its window does
   not use UIA, so it is another window than the copy's, its read was
   abandoned or never started, its element could not be kept or resolved,
-  or a newer event of its element replaced it (Dickson, 2026-10-21). The
+  or a newer event of its element replaced it (that last one Dickson's,
+  2026-10-21). The
   wait goes on to its second with nothing read at once, since these drops
   come in ordinary fast navigation, where the next key's focus event
   follows (Fable, 2026-10-21, pending Dickson's acceptance).

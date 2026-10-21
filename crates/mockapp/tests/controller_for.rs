@@ -24,9 +24,8 @@
 //! whose cache holds less than a focus read's, with no failed cached read.
 //! A selection raised for an item the list has since replaced (mockapp's
 //! `replace-items`) is reported as the list's current selection, the new
-//! item, with its name and position. A selection of the focus itself, of
-//! an ancestor reported with it, or of anything while the focus is a list,
-//! is reported as an ordinary selection change, never as the list's.
+//! item, with its name and position. A selection of the focus itself is
+//! reported as an ordinary selection change, never as the list's.
 
 mod common;
 #[path = "common/harness.rs"]
