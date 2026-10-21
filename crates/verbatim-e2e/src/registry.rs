@@ -1825,7 +1825,9 @@ fn run_compare(def: &ScenarioDef) {
 /// by asserting that nothing more was said; save Core's focus and the
 /// flight recorder while Verbatim is up; check that none of Verbatim's own
 /// processes exited unexpectedly; quit Verbatim and check it exited with
-/// code 0; run the scenario's teardown; close everything the scenario
+/// code 0 and its outposts shut down cleanly; take the speech Verbatim
+/// sent, until the speech connection ends after a clean quit, or what has
+/// arrived after a failed one; run the scenario's teardown; close everything the scenario
 /// opened; collect the logs, latency report, audio, crash dumps, and video;
 /// write the summary and archive the run. Each step after the body runs
 /// whatever happened before it, and every problem it meets is a failure of
@@ -1906,19 +1908,28 @@ fn run(def: &ScenarioDef) {
         })),
         Err(error) => problems.push(format!("could not read Verbatim's process exits: {error}")),
     }
+    // Once Verbatim has quit, the speech connection's end is the evidence
+    // that every frame it sent has been taken: `latency.csv` and the
+    // summary then cover the run's last utterance, and a failed run's
+    // speech after its failing step. A quit that failed may leave the
+    // connection open, so only what has arrived is taken then.
     match scenario.quit_verbatim() {
-        Ok(()) => match scenario.outposts_shut_down_cleanly() {
-            Ok(found) => problems.extend(found),
-            Err(error) => problems.push(format!(
-                "could not check that Verbatim's outposts shut down cleanly: {error}"
-            )),
-        },
-        Err(error) => problems.push(format!("quitting Verbatim failed: {error}")),
+        Ok(()) => {
+            match scenario.outposts_shut_down_cleanly() {
+                Ok(found) => problems.extend(found),
+                Err(error) => problems.push(format!(
+                    "could not check that Verbatim's outposts shut down cleanly: {error}"
+                )),
+            }
+            if let Err(problem) = scenario.speech().take_until_the_end() {
+                problems.push(problem);
+            }
+        }
+        Err(error) => {
+            problems.push(format!("quitting Verbatim failed: {error}"));
+            scenario.speech().take_remaining();
+        }
     }
-    // Verbatim has quit, so the speech already arrived is all there is:
-    // `latency.csv` and the summary then cover the run's last utterance,
-    // and a failed run's speech after its failing step.
-    scenario.speech().take_remaining();
     let teardown_outcome = state.map(|state| {
         panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)))
     });

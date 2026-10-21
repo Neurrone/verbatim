@@ -549,16 +549,22 @@ focus (`collect_focus`, `focus.txt`: the focus,
 its ancestors, and the navigator, from the control plane's `DumpFocus`),
 and the flight recorder while Verbatim is up; check for unexpected exits;
 quit Verbatim and check that its outposts and listener shut down cleanly;
-take every speech frame that has already arrived (`take_remaining`, a
-`try_recv` loop that waits for nothing, since none can follow the quit);
-run the teardown; clean up; collect the artifacts; finish the recording;
+take the speech Verbatim sent: after a clean quit, every frame until the
+speech connection ends (`take_until_the_end`, a `recv_timeout` loop
+bounded by the step timeout, its end not coming a problem of the run),
+since the agent shuts the connection down when Verbatim's pipe closes
+and the reader thread passes that end on after every frame it read,
+recording each frame on the timeline and then passing it on; after a
+failed quit, only what has arrived (`take_remaining`, a `try_recv` loop
+that waits for nothing, as compare mode's report takes it); run the
+teardown; clean up; collect the artifacts; finish the recording;
 check that no Windows Terminal window the run did not open appeared;
 write `foreground.txt`, the summary, and archive the run. The summary's
 latency lines (`ScenarioSummary::new`) are built from the speech
 collector's `latency_rows`, the rows `latency.csv` holds: every utterance
 that carries its event's time (the startup speech and the desktop's
-announcement carry none). Taking the arrived frames first makes them
-include the run's last utterance in collect-only mode, which does not
+announcement carry none). Taking the speech up to the connection's end
+first makes them include the run's last utterance in collect-only mode, which does not
 wait for speech to end, and a failed run's speech after its failing
 step. They count utterances, not traces, and an utterance's event to
 audio includes the time it waited while the speech queued before it

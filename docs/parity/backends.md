@@ -463,17 +463,25 @@ one slot for all four of its menu events, menu start and end and popup
 start and end (`MENU_EVENTIDS`, `orderedWinEventLimiter.py` 12 to 17;
 `_lastMenuEvent`, 76 to 78), and its one limiter covers every
 application; an outpost's intake keeps a batch's newest popup start, per
-application. Two cases differ. A popup start followed in one flush by a
-popup end or a menu end of any application, the same one or another,
-since the slot covers every application: NVDA's slot keeps only
+application. Three cases differ. A popup start followed in one flush
+by a popup end or a menu end of any application, the same one or
+another, since the slot covers every application: NVDA's slot keeps only
 the end, which `pumpAll` handles as a fake focus only when no focus of
-the flush was valid (`IAccessibleHandler/__init__.py` 1093 to 1103), so
+the flush was valid (`IAccessibleHandler/__init__.py` 1093 and 1101 to 1103), so
 the popup is never announced, where the outpost still handles the popup
-start. And two applications' popup starts in one flush: NVDA handles
-only the later, where each application's outpost handles its own. Both
-need a menu opened and closed, or two applications' menus opened,
-within one flush, so they are rare; neither is changed (Fable,
-2026-10-21, pending Dickson's acceptance). Before an outpost hears
+start. A popup start followed in one flush by a menu start of any
+application: NVDA's slot keeps only the menu start, and `pumpAll` hands
+it to `processMenuStartWinEvent` whether or not a focus of the flush was
+valid ("menuStart needs to be handled specially and might act even if
+there was a valid focus event", 1093 to 1100), which acts on the menu
+start's own object, so the popup is never announced either, where the
+outpost, which takes popup starts and no menu start
+(`acceptance.rs`, `EventName::of_win_event`), still announces it. And two
+applications' popup starts in one flush: NVDA handles only the later,
+where each application's outpost handles its own. All three need menu
+events of two kinds, or of two applications, within one flush, so they
+are rare; none is changed (Fable, 2026-10-21, pending Dickson's
+acceptance). Before an outpost hears
 them, the focus listener coalesces its facts one per object and kind,
 and for an MSAA event other than a menu opening, the thread that raised
 it, and the supervisor holds the facts that arrive while an outpost

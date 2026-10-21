@@ -421,12 +421,12 @@ const EXPLORER_KEYS: [(&str, Option<&str>, &str); 6] = [
 /// they measure different things:
 ///
 /// - keys: each key's item (the utterances in [`EXPLORER_KEYS`]). Its
-///   audio figures cover the arrow keys alone, 80 of the 120 items: the
-///   items after Enter, and after every Backspace but the last, never
-///   play, since the next key's speech ends them. The last Backspace's
-///   item plays, but after this file is written at the end of the body, so
-///   `latency.csv` and the run summary count it (81 of 120) and this file
-///   does not.
+///   audio figures are taken from the arrow keys' items alone, the rows
+///   whose step is `keys downarrow` or `keys uparrow`, so they cover 80 of
+///   the 120 items in every run: the items after Enter, and after every
+///   Backspace but the last, never play, since the next key's speech ends
+///   them, and the last Backspace's item, which plays, waits behind the
+///   folder window's title and list, so its time to audio is not a key's.
 /// - new windows: each new window's title (`new_windows`), once per
 ///   window. Its list and its first item are announced from the same
 ///   event, with the same latency, so counting them too would weigh each
@@ -436,7 +436,8 @@ const EXPLORER_KEYS: [(&str, Option<&str>, &str); 6] = [
 ///   window and the folder window's item (`returns`), so a title said in
 ///   another phase is not counted. It measures the title's event to the
 ///   title being queued: the list and the item come from a later focus
-///   event, raised 49 to 304 ms after the title's in the run of 2026-10-21
+///   event, raised 49 to 304 ms after the title's in round fifteen's `mfe-3`
+///   (`target/e2e-evidence/fixes-round-fifteen-2026-10-21/mfe-3`)
 ///   and queued within 35 ms of the title, so the return is not finished
 ///   when its title is queued.
 ///
@@ -456,6 +457,9 @@ fn write_explorer_summary(
         .iter()
         .filter(|row| EXPLORER_KEYS.iter().any(|(_, _, said)| row.text == *said))
         .collect();
+    let arrow =
+        |row: &&&LatencyRow| matches!(row.step.as_deref(), Some("keys downarrow" | "keys uparrow"));
+    let keys_audio: Vec<&LatencyRow> = keys.iter().filter(arrow).copied().collect();
     let windows: Vec<&LatencyRow> = rows
         .iter()
         .filter(|row| new_windows.contains(&row.text))
@@ -465,13 +469,13 @@ fn write_explorer_summary(
         "All figures in milliseconds. A kind's P95 is its maximum with 11 samples or fewer, and \
          its P99 with 51 or fewer.\n",
     );
-    for (kind, samples) in [
-        ("keys", keys),
-        ("new windows", windows),
-        ("returns", returns),
+    for (kind, samples, audio_samples) in [
+        ("keys", keys, keys_audio),
+        ("new windows", windows.clone(), windows),
+        ("returns", returns.clone(), returns),
     ] {
         let queue: Vec<u64> = samples.iter().map(|row| row.event_to_queue_ms).collect();
-        let audio: Vec<u64> = samples
+        let audio: Vec<u64> = audio_samples
             .iter()
             .filter_map(|row| row.event_to_audio_ms)
             .collect();

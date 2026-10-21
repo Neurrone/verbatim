@@ -265,7 +265,7 @@ struct Timing {
 pub struct LatencyRow {
     /// The step injected last before the event: keys, typed text, or a
     /// gesture, as the timeline describes it; `None` when nothing had been
-    /// injected, such as for startup speech.
+    /// injected, such as for the speech during setup.
     pub step: Option<String>,
     /// The utterance's text.
     pub text: String,
@@ -1478,14 +1478,48 @@ impl SpeechCollector {
 
     /// Absorbs every frame that has already reached the harness, without
     /// waiting for any and without failing on a connection that has gone,
-    /// since the run may have failed for that. Called once the scenario
-    /// has ended: after Verbatim has quit, no frame can follow, so the
-    /// latency rows then cover every utterance that started to play, the
-    /// last one included, which a run that asserts no endings (the measure
-    /// set) or that failed has not waited for.
+    /// since the run may have failed for that: for compare mode's report
+    /// ([`Self::take_comparison`]), and once a run whose quit of Verbatim
+    /// failed has ended, when the connection's end may never come.
     pub fn take_remaining(&mut self) {
         while let Ok(Ok(frame)) = self.frames.try_recv() {
             self.absorb(frame);
+        }
+    }
+
+    /// Absorbs every frame Verbatim sent, waiting for the speech
+    /// connection's end, for at most the step timeout: called once Verbatim
+    /// has quit cleanly. When Verbatim's pipe closes, the agent shuts the
+    /// connection down, and the reader thread passes that end on after
+    /// every frame it read, so the end, or the reader's channel closing
+    /// after it, is the evidence that every frame has been absorbed. The
+    /// latency rows then cover every utterance that started to play, the
+    /// last one included, which a run that asserts no endings (the measure
+    /// set) or that failed has not waited for. The reader records each
+    /// frame on the timeline and then passes it on, so the timeline can
+    /// hold a frame the collector has not yet absorbed; the end covers
+    /// both.
+    ///
+    /// # Errors
+    ///
+    /// Returns the problem, for the run's report, when the connection has
+    /// not ended within the step timeout.
+    pub fn take_until_the_end(&mut self) -> Result<(), String> {
+        let deadline = Instant::now() + self.step_timeout;
+        loop {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            match self.frames.recv_timeout(wait) {
+                Ok(Ok(frame)) => {
+                    self.absorb(frame);
+                }
+                Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(format!(
+                        "the speech connection did not end within {:?} after Verbatim quit, so its last frames may be missing from the latency report",
+                        self.step_timeout
+                    ));
+                }
+            }
         }
     }
 
@@ -2184,6 +2218,44 @@ mod tests {
                 event_to_queue_ms: 5,
                 event_to_audio_ms: Some(50),
             }]
+        );
+    }
+
+    /// Every frame sent before the connection's end is taken, though the
+    /// reader has not passed it on when the wait begins: the last
+    /// utterance's audio start counts in the latency rows.
+    #[test]
+    fn the_speech_up_to_the_connections_end_is_taken() {
+        let (mut speech, script) = scripted(Timeline::new());
+        for frame in [queued(1, "last"), started(1)] {
+            script
+                .feed
+                .send(Some(frame))
+                .expect("the reader is running");
+        }
+        script.feed.send(None).expect("the reader is running");
+        assert_eq!(speech.take_until_the_end(), Ok(()));
+        assert_eq!(
+            speech.latency_rows(),
+            vec![LatencyRow {
+                step: None,
+                text: "last".to_owned(),
+                event_to_queue_ms: 5,
+                event_to_audio_ms: Some(50),
+            }]
+        );
+    }
+
+    /// A connection that does not end within the step timeout is reported
+    /// as a problem of the run, not waited on further.
+    #[test]
+    fn a_connection_that_does_not_end_is_reported() {
+        let (mut speech, _script) = scripted(Timeline::new());
+        assert_eq!(
+            speech.take_until_the_end(),
+            Err(format!(
+                "the speech connection did not end within {SHORT:?} after Verbatim quit, so its last frames may be missing from the latency report"
+            ))
         );
     }
 
