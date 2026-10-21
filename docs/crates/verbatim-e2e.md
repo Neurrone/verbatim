@@ -156,6 +156,14 @@ an utterance is named in its text.
   optional utterance, an `OptionalOutcome` (its text, the input its step
   answers, and each time's ending, none when absent), is noted on the
   timeline and kept in `optional_outcomes()`, which the registry reports.
+- `expect_sequence_until_idle(expected, after_input)`, and
+  `Scenario::expect_sequence_until_idle(expected)` with the scenario's
+  last input: `expect_sequence` for a step whose speech may end with
+  optional utterances that nothing always said follows. Once the rest is
+  matched, it asks Verbatim to report that it has handled the input and
+  is idle, and matches each trailing optional utterance, in order,
+  against what was queued by then, without waiting for more; one queued
+  later is unmatched and fails the next input's check.
 - `expect_within(texts, timeout)`: `expect` with a longer bound, for a
   terminal flood.
 - `expect_started(text)`: the next utterance is exactly `text` and its

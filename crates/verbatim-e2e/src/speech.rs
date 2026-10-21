@@ -695,6 +695,51 @@ impl SpeechCollector {
         self.expect_sequence_within(&expected, timeout);
     }
 
+    /// [`expect_sequence`](Self::expect_sequence) for a step whose speech
+    /// may end with optional utterances ([`optional`]), which no utterance
+    /// always said follows: once the rest is matched, Verbatim is asked to
+    /// report that it has handled the input numbered `after_input` and is
+    /// idle, and each trailing optional utterance is matched, in order,
+    /// against the utterances queued by then, without waiting for more. One
+    /// queued after that is unmatched, and fails the next input's check as
+    /// any speech no assertion matched does
+    /// ([`require_all_asserted`](Self::require_all_asserted)).
+    ///
+    /// # Panics
+    ///
+    /// As [`expect`](Self::expect), and if Verbatim does not become idle.
+    pub fn expect_sequence_until_idle(&mut self, expected: &[Expected], after_input: Option<u64>) {
+        let split = expected
+            .iter()
+            .rposition(|want| want.said == Said::Once)
+            .map_or(0, |last| last + 1);
+        let (head, trailing) = expected.split_at(split);
+        self.expect_sequence_within(head, self.step_timeout);
+        if self.compare.is_some() {
+            return;
+        }
+        self.await_idle(after_input);
+        let mut runs = Vec::new();
+        for want in trailing {
+            let Said::UpTo(times) = want.said else {
+                unreachable!("every utterance after the last one always said is optional");
+            };
+            let mut run = Vec::new();
+            while run.len() < times
+                && self
+                    .pending
+                    .front()
+                    .is_some_and(|next| next.text == want.text)
+            {
+                run.extend(self.pending.pop_front());
+            }
+            runs.push((want.text.as_str(), run));
+        }
+        for (text, run) in runs {
+            self.record_optional(text, &run, self.step_timeout);
+        }
+    }
+
     fn expect_sequence_within(&mut self, expected: &[Expected], timeout: Duration) {
         // In compare mode an optional utterance is left out: NVDA's speech
         // is compared with what is always expected.
@@ -1982,6 +2027,28 @@ mod tests {
         assert_eq!(
             speech.optional_outcomes()[0].to_string(),
             "\"title terminal\": cut off"
+        );
+    }
+
+    #[test]
+    fn a_trailing_optional_utterance_queued_before_idle_passes_and_is_reported_in_full() {
+        let mut speech = collector(vec![
+            queued(1, "sound: suggestions-closed"),
+            queued(2, "sound: suggestions-closed"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence_until_idle(
+            &[
+                heard("sound: suggestions-closed"),
+                optional("sound: suggestions-closed"),
+            ],
+            None,
+        );
+        speech.require_all_asserted("before the next key");
+        assert_eq!(
+            speech.optional_outcomes()[0].to_string(),
+            "\"sound: suggestions-closed\": in full"
         );
     }
 

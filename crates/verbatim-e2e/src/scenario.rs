@@ -843,6 +843,19 @@ impl Scenario {
         self.speech.expect_nothing_more(self.last_input);
     }
 
+    /// Asserts the step's speech as
+    /// [`SpeechCollector::expect_sequence_until_idle`] does, its trailing
+    /// optional utterances matched against what was queued once Verbatim
+    /// has handled the scenario's last input and is idle.
+    ///
+    /// # Panics
+    ///
+    /// As [`SpeechCollector::expect_sequence_until_idle`].
+    pub fn expect_sequence_until_idle(&mut self, expected: &[crate::speech::Expected]) {
+        self.speech
+            .expect_sequence_until_idle(expected, self.last_input);
+    }
+
     /// Every utterance not yet matched that was queued before Verbatim
     /// has handled the scenario's last input and is idle
     /// ([`SpeechCollector::take_until_idle`]), for the caller to assert on.
