@@ -1245,11 +1245,61 @@ queues. The parts of a UIA focus's count are:
 - Target: the minimum, which the remote counts meet; classically,
   today's counts.
 
-`measure_focus_text_box` does not isolate the wait this adds before the
-first word: it times focuses on windows brought forward, whose text is
-not read with the focus. The full figures for that wait, in the form the
-measuring guide gives (`docs/tooling/measuring.md`), are to be recorded
-here from a run that focuses a text field and reads its caret.
+Measured on 2026-10-22 as the measuring guide gives
+(`docs/tooling/measuring.md`): debug builds at info level, five runs
+each of `measure_focus_text_box` and `measure_focus_new_application`
+with `cargo xtask measure`, before at dd363ecc (named with
+`--verbatim-exe`) and after at 6a644058, which also holds the 21 commits
+after the change. Figures are in milliseconds as minimum, P50, P95, P99
+and maximum. The latency line times an announcement's first word; the
+field's line is timed from the same focus event with `latency.csv` and
+`timeline.txt`, in whole milliseconds. Every stage's figures and the
+script that derives them are in
+`target/e2e-evidence/m42-measure-2026-10-22` (`figures.txt`,
+`analyse.py`).
+
+The only UIA text field in the measure set is `mockapp`'s, the first
+focus in a newly started application in `measure_focus_new_application`
+(30 focuses each):
+
+- First word, event to queued: before 8.9, 12.2, 38.4, 40.3, 40.3;
+  after 28.0, 34.2, 44.1, 46.6, 46.6.
+- First word, event to audio: before 9.9, 21.5, 53.8, 62.7, 62.7; after
+  29.5, 35.6, 67.7, 72.0, 72.0.
+- Outpost read: before 0.1, 0.2, 0.3, 0.3, 0.3, with no calls; after
+  18.9, 20.7, 25.8, 28.2, 28.2, with 4 calls.
+- The field's line, event to queued: before 27, 34, 63, 71, 71; after
+  28, 34, 44, 46, 46. It followed the first word by 19, 21, 24, 33, 33
+  before, and by 0, 0, 1, 1, 1 after.
+
+The line ends as it did, and its tail is shorter, but the first word
+waits about 22 ms longer, not the caret read's millisecond, and that is
+a defect against the costing, not this cost's expected figure: the
+outpost's debug log (`debuglog-after-new-application`) shows the search
+for its own element taking 19.0 to 24.3 ms in each new application, its
+first connection to it, and the caret read 0.8 to 1.0 ms. No `measure_`
+scenario times a UIA text focus in an application already connected.
+
+`measure_focus_text_box`'s focuses are Windows Forms edit controls read
+through MSAA, which the change leaves at 8 or 9 calls; its 20 switches a
+run (97 announcements before, 99 after, 100 lines each):
+
+- First word, event to queued: before 13.3, 20.4, 40.6, 49.1, 53.0;
+  after 14.1, 20.5, 51.7, 55.9, 56.8. The tail is the wait for the
+  reducer, about 20 ms in both builds, and the runs' own P95s overlap,
+  24 to 44 before and 37 to 54 after.
+- The field's line, event to queued: before 23, 28, 39, 43, 44; after
+  21, 29, 42, 44, 46.
+
+Wake-ups and processor time, from `cargo xtask trace scenario
+measure_focus_new_application --after 8 --seconds 5`, three runs each,
+harness threads left out (`measure_focus_text_box` has no room for a
+window): the outposts were woken 10,245 to 11,367 times over 729 to 867
+ms on a processor before and 9,845 to 11,675 times over 712 to 860 ms
+after, and verbatim.exe 1,344 to 1,510 times over 371 to 420 ms before
+and 1,325 to 1,591 times over 369 to 455 ms after. The window is mostly
+outposts starting, so it shows no difference beyond the runs' own
+spread.
 
 ### A caret key that selects, UIA
 
