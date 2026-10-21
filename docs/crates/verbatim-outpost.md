@@ -1976,10 +1976,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     in general terms, as NVDA's `hasContentChangedSinceLastSelection`
     makes it (`docs/parity/text.md`, "TextInfo-equivalent layer"): the
     node's note is set when the control's value change is handled
-    (`text_reads::note_value_change`) and at a caret event while that
-    value change still waits in the intake
+    (`text_reads::note_value_change`), and at a caret event or a check of
+    a caret key's watch while that value change still waits in the intake
     (`text_reads::value_change_waiting`: the Windows Forms text box raises
-    its caret's move before its value change), and is cleared by the next
+    its caret's move before its value change, and its Control+X's watch
+    is answered before the value change is handled), and is cleared by the next
     report, a caret key's answer included, that has a selection to compare
     with, and by a focus. Such a comparison (`text::general_changes`)
     compares the ends only, and sends each change with no text, whether

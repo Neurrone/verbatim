@@ -399,6 +399,18 @@ pub(super) fn check_watch(
         }
         Err(reply) => return Watched::Answered(reply),
     };
+    // An edit control's value change waiting behind the key's evidence: the
+    // text changed since the selection was last reported, so an answer
+    // that compares selections says the change in general terms, as a
+    // caret event's report does ([`report_caret`]). NVDA's selecting keys
+    // are answered by the same caret event, which notes the pending value
+    // change (`Edit.event_caret`, `nvda/source/NVDAObjects/window/edit.py`
+    // 1068 to 1082).
+    if value_change_waiting(context, node_id) {
+        context
+            .edit_anchors()
+            .note_content_changed(node_id.number());
+    }
     let mut signal = Signal {
         context,
         node_id,

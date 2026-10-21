@@ -1484,6 +1484,11 @@ The same caret key in a standard edit control, read through its messages.
 - Target: 5, with the caret and its line read in one message, which no
   edit control message offers.
 
+Each check of the key's watch also looks the node up in the registries
+and scans the intake once under its lock for the control's value change
+waiting, as a caret report does, so a selecting key's answer is said in
+general terms after an edit; it makes no call.
+
 ### A caret report, Win32 edit control
 
 - Minimum: 5 window messages, as for a caret move, whose comparison is

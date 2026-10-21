@@ -252,7 +252,9 @@ Differences:
   and
   `an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms`).
   A selecting key's answer is said the same way when the text changed
-  before it. The outpost carries the general terms to Core as
+  before it or its value change waits as the key is answered, since NVDA
+  answers the key at the same caret event (mockapp's
+  `an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms`). The outpost carries the general terms to Core as
   `content_changed` with the whole new selection's text, read in the same
   caret read in place of the changed pieces' text. A UIA text's change
   never counts, as in NVDA, which handles UIA's text change as one only for

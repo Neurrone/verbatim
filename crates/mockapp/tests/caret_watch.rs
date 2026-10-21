@@ -11,7 +11,8 @@
 //! and a selection no key made is reported with its change, one a key or
 //! Verbatim made is not; and a selection change after a text change is
 //! compared through UIA as always, and said in general terms in a classic
-//! edit control in either order of its caret event and value change.
+//! edit control in either order of its caret event and value change, and
+//! in a selecting key's answer while the value change waits.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -714,9 +715,10 @@ fn a_caret_event_before_its_text_change_compares_the_old_ranges_text() {
     app.quit();
 }
 
-/// mockapp's classic edit control focused, with an outpost watching it:
-/// the app, the outpost, and the edit control's node.
-fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
+/// mockapp's classic edit control focused, with an outpost watching it,
+/// and "alpha" selected: the app, the outpost, the edit control's node,
+/// and the caret reported with the selection.
+fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, CaretReport) {
     common::init_com();
     let title = common::unique_title(name);
     let mut app = common::spawn("text.json", "msaa", &title);
@@ -755,13 +757,29 @@ fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     outpost.settled();
     app.send("caret doc 0 5");
     app.send("caret-event doc");
-    assert_eq!(
-        reported_selection(&outpost, node),
-        (vec![change(true, "alpha")], false, None)
-    );
+    let caret = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::CaretMoved {
+                    node_id,
+                    caret,
+                    selection_changes,
+                    content_changed,
+                    new_selection,
+                },
+            ..
+        } if node_id == node => {
+            assert_eq!(
+                (selection_changes, content_changed, new_selection),
+                (vec![change(true, "alpha")], false, None)
+            );
+            caret
+        }
+        other => panic!("the outpost said {other:?}, not the caret of {node:?}"),
+    };
     outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
     outpost.settled();
-    (app, outpost, node)
+    (app, outpost, node, caret)
 }
 
 /// "x" typed over the selected "alpha" in a classic edit control, its
@@ -772,7 +790,7 @@ fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
 /// general terms, the selection removed, as NVDA's edit control does
 /// (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-textbox-1-type-over.txt`).
 fn an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms() {
-    let (mut app, outpost, node) = focus_edit("mockapp-caret-watch-edit-typed-over");
+    let (mut app, outpost, node, _) = focus_edit("mockapp-caret-watch-edit-typed-over");
     outpost.hold_worker_on(common::another_applications_window().0 as isize);
     app.send(r"set-text doc x beta\ngamma\n");
     app.send("caret doc 1");
@@ -797,7 +815,7 @@ fn an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms
 /// change handled before its caret event: the caret event's report says
 /// its change in general terms, as when the value change waits behind it.
 fn an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms() {
-    let (mut app, outpost, node) = focus_edit("mockapp-caret-watch-edit-changed-first");
+    let (mut app, outpost, node, _) = focus_edit("mockapp-caret-watch-edit-changed-first");
     app.send(r"set-text doc x beta\ngamma\n");
     outpost.heard(&[Heard::Msaa(WinEventKind::ValueChange)]);
     text_changed(&outpost, node);
@@ -809,6 +827,59 @@ fn an_edit_controls_value_change_handled_first_has_the_next_change_said_in_gener
         reported_selection(&outpost, node),
         (vec![unselected_in_general()], true, None)
     );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The selected "alpha" cut from a classic edit control with a key whose
+/// watch compares the selections, its caret event raised before its value
+/// change, as the Windows Forms text box raises them: the value change
+/// waiting when the caret event answers the key, the answer says its change
+/// in general terms, the selection removed, as NVDA's edit control does at
+/// the key's caret event
+/// (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-textbox-2-cut.txt`).
+fn an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms() {
+    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-cut");
+    let selection = before.selection.expect("the selected alpha");
+    let key = outpost.ask(Query::Text {
+        node_id: node,
+        op: TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(TextPosition {
+                anchor: before.line.start,
+                offset: before.line.offset,
+            }),
+            pressed_at_ms: 0,
+            unit: TextUnit::Word,
+            compare: None,
+            previous_selection: Some(PreviousSelection {
+                start: selection.start,
+                end: selection.end,
+            }),
+        }),
+    });
+    outpost.settled();
+    outpost.hold_worker_on(common::another_applications_window().0 as isize);
+    app.send(r"set-text doc  beta\ngamma\n");
+    app.send("caret doc 0");
+    app.send("caret-event doc");
+    app.send("text-changed doc");
+    outpost.heard(&[
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    outpost.release_worker();
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        (
+            reply.selection_changes,
+            reply.content_changed,
+            reply.new_selection
+        ),
+        (vec![unselected_in_general()], true, None)
+    );
+    text_changed(&outpost, node);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -876,6 +947,10 @@ fn main() {
         (
             "an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms",
             an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms,
+        ),
+        (
+            "an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms",
+            an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms,
         ),
     ]);
 }
