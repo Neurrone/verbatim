@@ -608,7 +608,10 @@ mod tests {
 
     /// A burst of strokes, each Verbatim+V with a harness number, larger
     /// than the 64 gestures the router's channel once held, decided while
-    /// nothing reads the channel.
+    /// nothing reads the channel. It shows that `decide` sends every
+    /// gesture, in order; on an unbounded channel it would pass with
+    /// `try_send` too, so the guarantee that no key is lost rests on
+    /// `a_bounded_channel_is_refused`.
     #[test]
     fn a_burst_larger_than_the_old_bound_is_delivered_in_order_with_none_lost() {
         use verbatim_input::GestureMap;
@@ -662,6 +665,8 @@ mod tests {
         assert_eq!(received, expected);
     }
 
+    /// The hook refuses a bounded channel, which once full would make the
+    /// hook wait or drop the key: this is what guarantees no key is lost.
     #[test]
     fn a_bounded_channel_is_refused() {
         let (events, _routed) = crossbeam_channel::bounded(64);

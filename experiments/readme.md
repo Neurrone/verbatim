@@ -1,6 +1,6 @@
 # Experiments
 
-This folder keeps the experiments behind `docs/uia-bugs.md`, the record of faults in Windows' UI Automation that Verbatim has established: for each one, the scripts or code that were run, the tool patches and prototype source they ran with, the raw text outputs, and a readme that defines each experiment by its identifier, with its setup, its result and its numbers. They were scratch work, run on Dickson's x64 machine (Windows 11, build 26200) between 2026-10-10 and 2026-10-19. Nothing here is built or tested by the workspace: prototype manifests are kept as `Cargo.toml.txt`, and each readme says how to rebuild and rerun its experiments.
+This folder keeps the experiments behind `docs/uia-bugs.md`, the record of faults in Windows' UI Automation that Verbatim has established: for each one, the scripts or code that were run, the tool patches and prototype source they ran with, the raw text outputs, and a readme that defines each experiment by its identifier, with its setup, its result and its numbers. They were scratch work, run on Dickson's x64 machine (Windows 11, build 26200) between 2026-10-10 and 2026-10-21. Nothing here is built or tested by the workspace: prototype manifests are kept as `Cargo.toml.txt`, and each readme says how to rebuild and rerun its experiments.
 
 Left out everywhere: screen recordings, ETW traces, symbol caches, binaries and build output. Paths to a session's scratch folder are redacted to `<scratch folder>`.
 
@@ -28,6 +28,7 @@ The other faults in `docs/uia-bugs.md` rest on commits and tests named in their 
 ## Design experiments
 
 - [The listener's read below another process's window](the-listeners-read-below-another-processs-window/readme.md): how a busy parent window of another process, and a remote operation queued in its process, delay or drop the listener's read of a focus in the child window (`docs/design/listener-without-connections.md`, decision 13 and risk 14).
+- [CoCancelCall ends an MSAA COM call, but not a window message](cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/readme.md): whether `CoCancelCall`, as NVDA's watchdog uses it, can end the outpost's MSAA calls into a hung application; it ends an `IAccessible` call through a proxy, but not the `WM_GETOBJECT` of an acquisition (`docs/design/phase6-design.md`, "Time limits that hold (2026-10-11)").
 
 ## Shared code
 

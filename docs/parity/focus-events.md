@@ -336,6 +336,15 @@ seconds, for a reading thread). The event being handled or read is
 dropped, and a new worker or reading thread takes the application's later
 events.
 
+Console host's own Find, Properties and Defaults windows are on the
+console window's real thread, while `GetWindowThreadProcessId` names the
+console's client's thread for the console window, so with one of them in
+front a slow read of the console window counts as another thread's and
+is abandoned after the half second, as NVDA's watchdog, comparing the
+same two thread ids, abandons it. A console window whose console host
+cannot be read, such as an elevated client's, has no provider process,
+so it is never judged moved on from, nor is moving to it.
+
 A reading thread judges only the reads of focuses and menu openings, and
 only once the read's window is known: the sender's own window from the
 event's cache, or, for a sender that is not a window, its nearest window

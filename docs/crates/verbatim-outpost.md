@@ -311,7 +311,13 @@ event's own element:
   calls, which an outpost's worker shares): File Explorer's folder
   windows, the taskbar and the Alt+Tab switcher are one process on
   several threads, and a focus on one must not wait behind a slow read
-  of another. Only a focus's or a menu opening's read is judged so, and
+  of another. Console host's Find, Properties and Defaults windows are on
+  the console window's real thread, which `GetWindowThreadProcessId`
+  reports as the client's for the console window, so a slow read of the
+  console window with one of them in front is abandoned after the half
+  second, as NVDA's watchdog abandons it; a console window whose host
+  cannot be read has no provider process and is never judged moved on
+  from or to. Only a focus's or a menu opening's read is judged so, and
   only once the window being read (`focus_read::WatchedRead`, the read
   as the watchdog watches it) is known: the event's cached window
   handle, or for a sender that is not a window the nearest window once

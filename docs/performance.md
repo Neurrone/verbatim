@@ -418,7 +418,8 @@ verdict for the focus's window rather than asking the window again.
   the wake-up the read's start already makes; for a windowless sender,
   the same calls on the reading thread once its nearest window is found,
   and only then one boxed closure for the read, made as it starts, which
-  wakes the watchdog only when the front is another thread's. The closure
+  wakes the watchdog only when the front is another thread of its
+  application's. The closure
   is made only for a focus or a menu opening whose sender is windowless,
   never for a selection or a notification, whose reads are not judged. No call
   into the application, and no wake-up beyond the start's.

@@ -278,11 +278,11 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     Verbatim's subscriptions are installed, the taskbar rehosts the Start
     button in a new PopupHost window, raising a UIA focus on a topmost
     window that reports keyboard focus (runs 39040893786 and 38980790680).
-    NVDA's checks would accept that focus too. Dickson chooses between a
+    NVDA's checks would accept that focus too. The choice between a
     throwaway warm-up start before the suite and an experiment to find
-    what triggers the rehosting. The local cause of the same utterance,
-    the agent's minimize activating the taskbar, is fixed (ace7858d)
-    (deferred, Dickson, 2026-10-21).
+    what triggers the rehosting is deferred (Dickson, 2026-10-21). The
+    local cause of the same utterance, the agent's minimize activating
+    the taskbar, is fixed (ace7858d).
   - Notepad's "app not responding" sound played once in `notepad_editing`
     on 2026-10-18, about 2 seconds after a right arrow, and the rerun
     passed; investigate if it recurs.

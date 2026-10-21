@@ -3,9 +3,9 @@
 Audio output (architecture section 6, decisions D5, D16 and D17): the
 mixer that everything audible goes through, speech and sounds alike, the
 `AudioDevice` seam it writes to, `DeviceNotices`, `Sound`,
-`SilentDevice`, and `WavRecorder`, which records what the mixer plays. The WASAPI device is
-[verbatim-audio-wasapi](verbatim-audio-wasapi.md); this crate has no
-Windows dependency.
+`SilentDevice`, and `WavRecorder`, which records what the mixer plays.
+The WASAPI device is [verbatim-audio-wasapi](verbatim-audio-wasapi.md);
+this crate has no Windows dependency.
 
 Public API:
 
@@ -173,8 +173,12 @@ Device recovery. On any device error, or when `needs_reopen` is set, the
 mixer rewinds as above and calls `open` again, with the shared state
 unlocked. When `open` fails, at start or later, the mixer plays through a
 `SilentDevice` in the device's place (`fallback.rs`), so speech goes on
-and every utterance still ends, and keeps waiting on the device's own
-`wait`, so that the waker and the device's notifications still end it.
+and every utterance still ends. The silent device is 48 kHz stereo, so
+an utterance in flight when the device is lost goes on only if the lost
+device had that rate and channel count; otherwise it fails, as on any
+reopen in a different format. The mixer keeps waiting on the device's own
+`wait`, so that the waker and the device's notifications still end the
+fallback.
 It tries the device again only when `needs_reopen` asks: it keeps no
 timer of its own, and waits idle with no time limit.
 

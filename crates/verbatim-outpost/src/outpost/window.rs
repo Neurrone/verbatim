@@ -410,7 +410,14 @@ pub(crate) const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
 /// so only that application's other threads are held up. The application
 /// is the window's provider process ([`provider_process`]), so a console
 /// window is its console host's, never its client's. `false` when either
-/// window's owner or provider cannot be told. Local calls only.
+/// window's owner or provider cannot be told, so a console window whose
+/// host cannot be read (`provider_process` answers `None`, as for an
+/// elevated client) is never moved on from, nor moved on to. Console
+/// host's Find, Properties and Defaults windows are on the console
+/// window's real thread, which `GetWindowThreadProcessId` reports as the
+/// client's for the console window, so with one of them in front a slow
+/// read of the console window is abandoned, as NVDA's watchdog abandons
+/// it. Local calls only.
 pub(crate) fn front_is_another_thread_of_its_application(handle: isize) -> bool {
     focus_window().is_some_and(|front| is_another_thread_of_its_application(handle, front))
 }

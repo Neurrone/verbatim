@@ -273,6 +273,17 @@ the transcripts and NVDA debug-log excerpts are under
   dropped at once ("Hung application. Dropping winEvent"). Nothing is
   spoken during the stall or after it, and NVDA's focus stays where it
   was, on the other application or the previously focused control.
+- The 5.2 s is this capture's: NVDA's `AccessibleObjectFromEvent`
+  failed with `E_FAIL` 5.20 to 5.24 s into the stall in all three
+  `msaa-within` runs, with mockapp's window in front on the user's
+  desktop. Verbatim's CoCancelCall experiment saw a different end for
+  the same wait
+  (`experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/readme.md`,
+  experiment 2): from a multithreaded-apartment caller, with mockapp on
+  a desktop of its own and stalled for 15 s, `AccessibleObjectFromEvent`
+  returned after about 10 s with no error and oleacc's default client
+  object for the window. Which difference in setup accounts for this is
+  not established.
 - About 8 s into a 20- or 30-second stall, Windows replaces the window
   with a ghost window (class `Ghost`, owned by `dwm`), which takes the
   foreground; NVDA drops its foreground, focus and name-change

@@ -82,7 +82,10 @@ The decision for each key is `decide`, which the hook procedure calls
 with the thread's state; a unit test drives it directly with a burst of
 a thousand Verbatim+V strokes, more than the 64 the channel once held,
 unread until the end, and checks that every gesture and every stroke's
-handled mark arrives, in order. The `hook_echo` example installs the
+handled mark arrives, in order. On an unbounded channel that test would
+pass with `try_send` too, so the guarantee that no key is lost rests on
+`a_bounded_channel_is_refused`, which checks that `InputHook::start`
+refuses a bounded channel. The `hook_echo` example installs the
 real hook with two bound gestures and prints what fires and what each
 key reports; it needs an interactive desktop and is never run in CI.
 
