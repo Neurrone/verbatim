@@ -36,8 +36,8 @@
 //!   [`verbatim_e2e::artifacts::ScenarioSummary`] that scenario's own run
 //!   wrote to its artifacts directory (`verbatim_e2e::artifacts`) — rather
 //!   than parsing the subprocess's stdout — and prints one line per
-//!   scenario at the end: pass or fail, and how many of its latency
-//!   timelines reached audio, with each outpost crash it saw, and then the
+//!   scenario at the end: pass or fail, and how many of its utterances
+//!   with an event time reached audio, with each outpost crash it saw, and then the
 //!   run's total of outpost crashes. A selected scenario that exited but wrote *no*
 //!   summary is reported as a failure of the run, never a pass: a
 //!   `--scenario` typo or a scenario missing from `tests/e2e.rs` makes
@@ -353,7 +353,7 @@ fn print_scenario_list() {
 
 /// The one-line-per-scenario report `cargo xtask vm test` prints at the end
 /// of a multi-scenario run: pass or fail, how many of that scenario's
-/// latency timelines reached audio, when known, its outpost crashes and
+/// utterances with an event time reached audio, when known, its outpost crashes and
 /// what became of each optional utterance it asserted, each on a line of
 /// its own; then the run's total of outpost crashes.
 fn print_run_summary(results: &[(String, Option<ScenarioSummary>)]) {

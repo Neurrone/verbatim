@@ -433,11 +433,22 @@ Every scenario run, pass or fail, keeps its artifacts, and losing any of
 them fails the run. It writes a one-line-per-fact summary (name,
 pass or fail, latency counts, and the outpost crashes it saw) to `target/e2e-artifacts/<scenario name>/
 summary.txt` under the workspace root; its latency counts and maxima
-cover every utterance of the run that carries its event's time, from
-startup to the last step, the rows `latency.csv` holds
+cover every utterance that carries its event's time (the startup speech
+and the desktop's announcement carry none), the rows `latency.csv` holds
 (`latency_records` utterances, `latency_reached_audio` of them played,
 and the worst event to queue and event to audio among them, in
-milliseconds) (`VERBATIM_E2E_ARTIFACTS_DIR`
+milliseconds). Both are taken once Verbatim has quit, from every speech
+frame that has arrived by then, so they include the run's last
+utterance, also in the measure set, which does not wait for its speech
+to end, and a failed run's speech after its failing step. They count
+utterances, not traces, and an utterance's event to audio includes the
+time it waited while the speech queued before it played. Until c5be1bd2
+(2026-10-21) the counts and maxima were per trace, from Verbatim's own
+latency record, so the audio maximum is not comparable across that commit,
+and the "audio max" `cargo xtask vm test` prints shows a step there with
+no regression behind it: `explorer_folder_window`'s went from 294 ms to
+2,574 ms, its folder's first item waiting behind the window's title and
+list (`VERBATIM_E2E_ARTIFACTS_DIR`
 overrides the root), whether run runner-direct or through `cargo xtask vm
 test`; `xtask vm test` reads this back to build its own run summary rather
 than parsing test output. Every scenario run, pass or fail, also writes into
@@ -573,13 +584,18 @@ The eight scenarios, all named `measure_`:
   since the new windows' first focus, which includes a new outpost's
   start, sets any overall percentile alone. The kinds are keys (each
   key's item; their audio figures cover the arrow keys alone, n 80 of
-  120, since the items after Enter and Backspace never play), new
+  120, since the items after Enter, and after every Backspace but the
+  last, never play, the next key's speech ending them; the last
+  Backspace's item plays after the file is written at the end of the
+  body, so `latency.csv` counts 81 of 120 and the file 80), new
   windows (each window's title, once per window, though its list and
   item share its latency) and returns (the folder window's title heard
   between each close and the folder window's item, measuring the title's
   event to the title being queued; the list and the item come from a
-  later focus event, 8 to 36 ms after the title's in the runs of
-  2026-10-21). At the nearest rank a kind's P95 is its maximum with 11
+  later focus event, raised 49 to 304 ms after the title's in the run of
+  2026-10-21 and queued within 35 ms of the title). Each percentile is
+  the sample at the rounded index p/100 times (n-1), index
+  `(p(n-1)+50)/100` of the sorted samples, so a kind's P95 is its maximum with 11
   samples or fewer, and its P99 with 51 or fewer, so the new windows'
   and returns' 10 samples give both as the maximum, as the file says.
   Runs before 3de02d37 (2026-10-21) closed each new window without

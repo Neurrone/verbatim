@@ -1915,6 +1915,10 @@ fn run(def: &ScenarioDef) {
         },
         Err(error) => problems.push(format!("quitting Verbatim failed: {error}")),
     }
+    // Verbatim has quit, so the speech already arrived is all there is:
+    // `latency.csv` and the summary then cover the run's last utterance,
+    // and a failed run's speech after its failing step.
+    scenario.speech().take_remaining();
     let teardown_outcome = state.map(|state| {
         panic::catch_unwind(AssertUnwindSafe(|| (def.teardown)(&mut scenario, state)))
     });

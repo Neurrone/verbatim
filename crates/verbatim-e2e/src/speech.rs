@@ -1281,11 +1281,7 @@ impl SpeechCollector {
     /// report, once the scenario has ended, passed or failed. Empty
     /// outside compare mode.
     pub fn take_comparison(&mut self) -> Vec<CompareStep> {
-        // Whatever has reached the harness, without failing on a
-        // connection that has gone: the run may have failed for that.
-        while let Ok(Ok(frame)) = self.frames.try_recv() {
-            self.absorb(frame);
-        }
+        self.take_remaining();
         self.record_step();
         self.compare
             .as_mut()
@@ -1480,9 +1476,23 @@ impl SpeechCollector {
         }
     }
 
+    /// Absorbs every frame that has already reached the harness, without
+    /// waiting for any and without failing on a connection that has gone,
+    /// since the run may have failed for that. Called once the scenario
+    /// has ended: after Verbatim has quit, no frame can follow, so the
+    /// latency rows then cover every utterance that started to play, the
+    /// last one included, which a run that asserts no endings (the measure
+    /// set) or that failed has not waited for.
+    pub fn take_remaining(&mut self) {
+        while let Ok(Ok(frame)) = self.frames.try_recv() {
+            self.absorb(frame);
+        }
+    }
+
     /// One row per utterance heard so far that carries the time of the
     /// event behind it, in the order they were queued: the latency report
-    /// a run's artifacts keep.
+    /// a run's artifacts keep. An utterance's time to audio includes any
+    /// time it waited while the speech queued before it played.
     #[must_use]
     pub fn latency_rows(&self) -> Vec<LatencyRow> {
         self.order

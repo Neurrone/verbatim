@@ -464,7 +464,8 @@ start and end (`MENU_EVENTIDS`, `orderedWinEventLimiter.py` 12 to 17;
 `_lastMenuEvent`, 76 to 78), and its one limiter covers every
 application; an outpost's intake keeps a batch's newest popup start, per
 application. Two cases differ. A popup start followed in one flush by a
-popup end or a menu end of the same application: NVDA's slot keeps only
+popup end or a menu end of any application, the same one or another,
+since the slot covers every application: NVDA's slot keeps only
 the end, which `pumpAll` handles as a fake focus only when no focus of
 the flush was valid (`IAccessibleHandler/__init__.py` 1093 to 1103), so
 the popup is never announced, where the outpost still handles the popup

@@ -276,6 +276,15 @@ of 2026-10-20, and 2,004 to 4,230 ms, each connecting, in about half the
 new windows of five `measure_focus_explorer` runs on 2026-10-21, so a slow first look
 at a window is the connection when that line's time is the long one.
 
+**`measure_focus_explorer` times out on File Explorer's "Working on
+it..." placeholder.** This is a known File Explorer fault of the measure
+set: File Explorer sometimes gives the focus to the placeholder and raises
+no later focus, so the wait for the item times out with no fault of
+Verbatim's (2 of 3 runs on 2026-10-21,
+`target/e2e-evidence/fixes-round-fifteen-2026-10-21/mfe-1-fail` and
+`mfe-2-fail`; the roadmap's M4.1 audit records it), and the run is
+recorded and repeated.
+
 **A window's title-bar information takes seconds during a parallel
 mockapp run.** On the development VM the Desktop Window Manager does
 about 30 ms of work for every hidden top-level window, about 200 ms for

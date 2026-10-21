@@ -83,11 +83,15 @@ pub struct ScenarioSummary {
     /// quit) completed without error.
     pub passed: bool,
     /// How many of the run's utterances carry the time of the event behind
-    /// them: every one, from the start of the run to its end, the rows of
-    /// `latency.csv` ([`crate::speech::SpeechCollector::latency_rows`]).
-    /// `None` when the run read no speech, as in compare mode.
+    /// them (the startup speech and the desktop's announcement carry none),
+    /// the rows of `latency.csv`
+    /// ([`crate::speech::SpeechCollector::latency_rows`]), read once
+    /// Verbatim has quit. It counts utterances, not traces, so one trace's
+    /// several utterances count several times. `None` when the run read no
+    /// speech, as in compare mode.
     pub latency_records: Option<usize>,
-    /// How many of those utterances started to play.
+    /// How many of those utterances started to play, the run's last one
+    /// included.
     pub latency_reached_audio: Option<usize>,
     /// The worst event-to-queue latency (milliseconds) across those
     /// utterances, or `None` when there were none. This is the
@@ -95,10 +99,13 @@ pub struct ScenarioSummary {
     /// independent of the synthesizer.
     pub max_event_to_queue_ms: Option<u64>,
     /// The worst event-to-audio latency (milliseconds) across those
-    /// utterances that played, or `None` when none did. Under the capture
-    /// synth's instant sink this is close to the pipeline latency; under a
-    /// real synth it includes synthesis and is the looser end-to-end smoke
-    /// number.
+    /// utterances that played, or `None` when none did. An utterance's time
+    /// to audio includes the time it waited while the speech queued before
+    /// it played, so an utterance behind others in one step has a far
+    /// larger figure than the first. Under the capture synth's instant sink
+    /// this is close to the pipeline latency; under a real synth it
+    /// includes synthesis and that waiting, and is the looser end-to-end
+    /// smoke number.
     pub max_event_to_audio_ms: Option<u64>,
     /// The outposts that crashed during the run, whether or not its steps
     /// passed ([`crate::scenario::Scenario::outpost_crashes`]), or `None`

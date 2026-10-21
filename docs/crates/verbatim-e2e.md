@@ -549,13 +549,21 @@ focus (`collect_focus`, `focus.txt`: the focus,
 its ancestors, and the navigator, from the control plane's `DumpFocus`),
 and the flight recorder while Verbatim is up; check for unexpected exits;
 quit Verbatim and check that its outposts and listener shut down cleanly;
+take every speech frame that has already arrived (`take_remaining`, a
+`try_recv` loop that waits for nothing, since none can follow the quit);
 run the teardown; clean up; collect the artifacts; finish the recording;
 check that no Windows Terminal window the run did not open appeared;
 write `foreground.txt`, the summary, and archive the run. The summary's
 latency lines (`ScenarioSummary::new`) are built from the speech
 collector's `latency_rows`, the rows `latency.csv` holds: every utterance
-of the run that carries its event's time, from startup to the last step,
-so its maximum is the run's.
+that carries its event's time (the startup speech and the desktop's
+announcement carry none). Taking the arrived frames first makes them
+include the run's last utterance in collect-only mode, which does not
+wait for speech to end, and a failed run's speech after its failing
+step. They count utterances, not traces, and an utterance's event to
+audio includes the time it waited while the speech queued before it
+played, so the audio maximum is not comparable with runs before
+c5be1bd2, whose figures were per trace (`docs/tooling/e2e.md`).
 Every step after the body runs whatever happened before it, and every
 problem is a failure reported together with the body's own panic.
 

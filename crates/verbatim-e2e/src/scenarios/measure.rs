@@ -421,8 +421,12 @@ const EXPLORER_KEYS: [(&str, Option<&str>, &str); 6] = [
 /// they measure different things:
 ///
 /// - keys: each key's item (the utterances in [`EXPLORER_KEYS`]). Its
-///   audio figures cover the arrow keys alone: the items after Enter and
-///   Backspace never play, since the next key's speech ends them.
+///   audio figures cover the arrow keys alone, 80 of the 120 items: the
+///   items after Enter, and after every Backspace but the last, never
+///   play, since the next key's speech ends them. The last Backspace's
+///   item plays, but after this file is written at the end of the body, so
+///   `latency.csv` and the run summary count it (81 of 120) and this file
+///   does not.
 /// - new windows: each new window's title (`new_windows`), once per
 ///   window. Its list and its first item are announced from the same
 ///   event, with the same latency, so counting them too would weigh each
@@ -432,11 +436,13 @@ const EXPLORER_KEYS: [(&str, Option<&str>, &str); 6] = [
 ///   window and the folder window's item (`returns`), so a title said in
 ///   another phase is not counted. It measures the title's event to the
 ///   title being queued: the list and the item come from a later focus
-///   event, 8 to 36 ms after the title's in the runs of 2026-10-21, so the
-///   return is not finished when its title is queued.
+///   event, raised 49 to 304 ms after the title's in the run of 2026-10-21
+///   and queued within 35 ms of the title, so the return is not finished
+///   when its title is queued.
 ///
 /// The file gives its unit and notes where a percentile is only the
-/// maximum: at the nearest rank, a kind's P95 is its maximum with 11
+/// maximum: with the sample at the rounded index p/100 times (n-1)
+/// ([`figures`]), a kind's P95 is its maximum with 11
 /// samples or fewer, and its P99 with 51 or fewer, so the new windows' and
 /// returns' 10 samples give both as the maximum.
 fn write_explorer_summary(
@@ -482,7 +488,9 @@ fn write_explorer_summary(
 }
 
 /// `samples`' minimum, P50, P95, P99 and maximum in milliseconds, each
-/// percentile the sample at the nearest rank; `none` when there are none.
+/// percentile the sample at the rounded index p/100 times (n-1), that is
+/// index `(p(n-1)+50)/100` of the sorted samples; `none` when there are
+/// none.
 fn figures(mut samples: Vec<u64>) -> String {
     samples.sort_unstable();
     let Some(&max) = samples.last() else {
