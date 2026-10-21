@@ -524,6 +524,12 @@ pub struct NodeAnchors<P> {
     /// reported ([`Anchors::note_content_changed`]), so that comparison is
     /// made in general terms.
     content_changed: bool,
+    /// When the last change of the node's text that was noted
+    /// ([`Anchors::note_content_changed`]) was observed, in milliseconds
+    /// since the Unix epoch, 0 before any: a caret key pressed no later
+    /// has its answer compare in general terms even when a report has
+    /// since consumed `content_changed` ([`NodeText::value_changed_since`]).
+    content_changed_at_ms: u64,
 }
 
 /// The selection of a caret report, as the next report compares with it.
@@ -543,6 +549,7 @@ impl<P> Default for NodeAnchors<P> {
             carets: VecDeque::new(),
             selection: None,
             content_changed: false,
+            content_changed_at_ms: 0,
         }
     }
 }
@@ -600,15 +607,18 @@ impl<P: Clone> Anchors<P> {
         }
     }
 
-    /// Notes that node `node`'s text changed, so the next caret report that
+    /// Notes that node `node`'s text changed, observed at `observed_at_ms`
+    /// (milliseconds since the Unix epoch), so the next caret report that
     /// compares selections makes its comparison in general terms and clears
     /// the note, as NVDA's `hasContentChangedSinceLastSelection` is set by a
     /// classic edit control's value change and read and cleared by
     /// `detectPossibleSelectionChange` (`nvda/source/editableText.py` 429
     /// to 451; `nvda/source/NVDAObjects/IAccessible/__init__.py` 2019 to
     /// 2023).
-    pub fn note_content_changed(&mut self, node: u64) {
-        self.nodes.entry(node).or_default().content_changed = true;
+    pub fn note_content_changed(&mut self, node: u64, observed_at_ms: u64) {
+        let anchors = self.nodes.entry(node).or_default();
+        anchors.content_changed = true;
+        anchors.content_changed_at_ms = anchors.content_changed_at_ms.max(observed_at_ms);
     }
 
     /// The anchors of node `node`, with what minting needs.
@@ -677,6 +687,19 @@ impl<P: Clone> NodeText<'_, P> {
     /// report that compares with the kept selection consumes it.
     fn take_content_changed(&mut self) -> bool {
         std::mem::take(&mut self.anchors.content_changed)
+    }
+
+    /// Whether a change of the node's text observed at or after
+    /// `pressed_at_ms` was noted ([`Anchors::note_content_changed`]),
+    /// whether or not a report has consumed the note since: a caret event
+    /// handled before a key's watch opened reports to Core, which ignores
+    /// it while the key is pending, so the key's answer stands in for the
+    /// one caret event NVDA handles for the key, which reads and clears
+    /// the note and speaks with it (`nvda/source/editableText.py` 437 to
+    /// 451; `nvda/source/NVDAObjects/window/edit.py` 1068 to 1084).
+    fn value_changed_since(&self, pressed_at_ms: u64) -> bool {
+        self.anchors.content_changed_at_ms != 0
+            && self.anchors.content_changed_at_ms >= pressed_at_ms
     }
 
     /// The text of the chunk `anchor` started, when the anchor is kept.
@@ -1579,6 +1602,7 @@ fn evidence<S: TextSource>(
         (request.formats, watch.unit),
         previous.as_ref(),
         (same_line, text_changed),
+        watch.pressed_at_ms,
     )
     .map(Some)
 }
@@ -1689,7 +1713,9 @@ fn baseline<S: TextSource>(
 /// line, the unit at the caret, and the selection's changes, from what the
 /// read found, with the formatting read for `span`; `text_changed` says a
 /// change of the text waits that no report has noted
-/// ([`CaretSignal::text_change_waiting`]).
+/// ([`CaretSignal::text_change_waiting`]), and a change noted at or after
+/// `pressed_at_ms`, the key's press, counts as well
+/// ([`NodeText::value_changed_since`]).
 fn answer_caret<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
@@ -1697,6 +1723,7 @@ fn answer_caret<S: TextSource>(
     (span, unit): (Option<FormatSpan>, TextUnit),
     previous: Option<&(S::Pos, S::Pos)>,
     (same_line, text_changed): (Option<bool>, bool),
+    pressed_at_ms: u64,
 ) -> TextResult<TextReply> {
     let Polled {
         state,
@@ -1719,9 +1746,13 @@ fn answer_caret<S: TextSource>(
     // whenever it has a selection to compare with
     // (`detectPossibleSelectionChange`, `nvda/source/editableText.py` 437
     // to 451); a comparison the key asked for is then made in general
-    // terms, as it is when a change of the text waits to be handled.
-    let content_changed =
-        anchors.anchors.selection.is_some() && (anchors.take_content_changed() | text_changed);
+    // terms, as it is when a change of the text waits to be handled, or
+    // was noted since the key was pressed by a report that Core ignored
+    // while the key was pending.
+    let content_changed = anchors.anchors.selection.is_some()
+        && (anchors.take_content_changed()
+            | text_changed
+            | anchors.value_changed_since(pressed_at_ms));
     // A key's answer is the last report the next caret event's compares
     // with.
     let caret = report_for(source, anchors, (&state, read_at_ms), line, true)?;

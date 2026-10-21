@@ -192,18 +192,25 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // caret leaves it, raising no event, and never while the caret is in
     // it: "gammaelta", made by the Backspace above, is unmarked when the
     // Control+Home here reads it, and marked once the caret has left it;
-    // "xbeta" stays unmarked while the caret follows its "x". Before the
-    // line is read again, the agent reads the marks through UI Automation,
-    // independently of Verbatim, until "gammaelta" alone is marked, and the
-    // scenario fails if it is not within the harness's step bound; the line is then read with its error, as NVDA reads
-    // it after the same keys
+    // "xbeta" stays unmarked while the caret follows its "x". Since Notepad
+    // raises no event when it marks a word, the agent reads the marks once
+    // through UI Automation, independently of Verbatim, immediately before
+    // the line is read again, as the precondition's evidence, and the
+    // scenario fails, naming the words read, unless "gammaelta" alone is
+    // marked; whether a precondition with no event has a sanctioned form of
+    // wait is Dickson's question (`docs/roadmap.md`, M4). The line is then
+    // read with its error, as NVDA reads it after the same keys
     // (`target/e2e-evidence/m42-desktop-4-2026-10-22/notepad-cut-after-typing-over.txt`).
     press(scenario, "control+home", &["alpha beta gammaelta epsilon"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "x", &["x", "x unselected"]);
-    scenario
-        .wait_for_misspelt_words(&["gammaelta"])
-        .expect("Notepad's spell checker marks the words the caret left");
+    assert_eq!(
+        scenario
+            .misspelt_words()
+            .expect("the agent reads the marked words"),
+        ["gammaelta"],
+        "the words Notepad's spell checker marked once the caret left them"
+    );
     press(
         scenario,
         "control+home",

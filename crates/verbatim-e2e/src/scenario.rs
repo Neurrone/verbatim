@@ -1621,33 +1621,6 @@ impl Scenario {
         self.agent.misspelt_words()
     }
 
-    /// Reads the words of the focused text that its application marks as
-    /// misspelt ([`misspelt_words`](Self::misspelt_words)) until they are
-    /// exactly `expected`, for up to the harness's step bound
-    /// ([`STEP_TIMEOUT`](crate::speech::STEP_TIMEOUT)): an application that
-    /// marks a word a moment after the caret leaves it raises no event, so
-    /// the marks read are the only evidence that it has.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if a read fails, or, naming the words last read,
-    /// if they are not `expected` within the bound.
-    pub fn wait_for_misspelt_words(&mut self, expected: &[&str]) -> io::Result<()> {
-        let bound = crate::speech::STEP_TIMEOUT;
-        let deadline = std::time::Instant::now() + bound;
-        loop {
-            let words = self.agent.misspelt_words()?;
-            if words == expected {
-                return Ok(());
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(io::Error::other(format!(
-                    "the words marked misspelt were not {expected:?} within {bound:?}: the last read found {words:?}"
-                )));
-            }
-        }
-    }
-
     /// The name of the foreground window's element whose UI Automation
     /// identifier is `automation_id`, read by the agent through UI
     /// Automation independently of Verbatim, without focusing it.

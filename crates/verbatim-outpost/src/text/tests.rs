@@ -652,7 +652,7 @@ fn a_comparison_after_the_text_changed_is_in_general_terms_once() {
     source.selection = Some((0, 5));
     let mut anchors = store();
     report(&mut source, &mut anchors);
-    anchors.note_content_changed(1);
+    anchors.note_content_changed(1, PRESSED_AT);
     source.selection = None;
     source.caret = 1;
     let compare = |source: &mut Fake, anchors: &mut Anchors<usize>| {
@@ -705,7 +705,7 @@ fn a_selecting_keys_answer_after_the_text_changed_is_in_general_terms() {
     let mut anchors = store();
     let before = report(&mut source, &mut anchors);
     let selection = before.selection.expect("a selection");
-    anchors.note_content_changed(1);
+    anchors.note_content_changed(1, PRESSED_AT);
     source.selection = Some((0, 5));
     let mut watch = watch(None, TextUnit::Character);
     watch.previous_selection = Some(PreviousSelection {

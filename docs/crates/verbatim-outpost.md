@@ -969,7 +969,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   check, once the caret is read and only for a comparison with a
   selection in either report, whether an unnoted change of the text
   waits, and then makes the comparison in general terms;
-  `Anchors::note_content_changed` notes such a change, and
+  `Anchors::note_content_changed` notes such a change with when it was
+  observed, and
   `NodeText::forget_selection` and `Anchors::forget_selection` make the
   next report carry no change. `Anchors` keeps one backend's anchors, by
   node, numbered from a counter both of an outpost's backends share, and never forgets
@@ -1991,7 +1992,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     change, and may raise the value change while it answers the read, so
     the check first waits for the `WinEvent` thread to handle every event
     delivered to it (`Nudger::sync`); "x" typed over a selection and the
-    text box's Control+X are said so. Such a comparison (`text::general_changes`)
+    text box's Control+X are said so. A caret key's answer is made in
+    general terms as well when a value change observed at or after the
+    key's press was noted, even when a caret event's report, which Core
+    ignores while the key is pending, has since cleared the note
+    (`NodeText::value_changed_since`): the answer stands in for the one
+    caret event NVDA handles for the key. Such a comparison (`text::general_changes`)
     compares the ends only, and sends each change with no text, whether
     something was selected or unselected, with `content_changed` and the
     whole new selection's text in `new_selection`, the one text it reads,

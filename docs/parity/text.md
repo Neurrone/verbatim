@@ -254,11 +254,17 @@ Differences:
   A selecting key's answer is said the same way when the text changed
   before it or its value change waits as the key is answered, since NVDA
   answers the key at the same caret event (mockapp's
-  `an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms`).
+  `an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms`),
+  and when a value change observed after the key was pressed was noted
+  and a caret event handled before the key's answer consumed the note,
+  since that event's report, which Core ignores while the key is
+  pending, stands in for no caret event of NVDA's (mockapp's
+  `an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms`).
   A key outside the caret table whose answer shows the selection removed,
-  something selected before it and nothing after, as Control+X on a
-  selection does, says only the selection's change, in general or
-  specific terms, never the text it removed, which was the selection's. The outpost carries the general terms to Core as
+  something selected before it and nothing after, as Control+X, Enter
+  and Control+V over a selection do, says only the selection's change,
+  in general or specific terms, never the text it removed, which was the
+  selection's. The outpost carries the general terms to Core as
   `content_changed` with the whole new selection's text, read in the same
   caret read in place of the changed pieces' text. A UIA text's change
   never counts, as in NVDA, which handles UIA's text change as one only for
@@ -268,6 +274,8 @@ Differences:
   range now holding the typed character, and Control+X on a selected line
   says nothing, the old range now empty (mockapp's
   `a_caret_event_before_its_text_change_compares_the_old_ranges_text`).
+  Enter and Control+V over a selection are unverified, needing a
+  capture, as Delete, Control+Backspace and Control+Delete are.
   Different and unverified, needing a capture: after Backspace, Delete,
   Control+Backspace or Control+Delete over a selection, NVDA's classic
   edit control probably says "selection removed", by the general terms

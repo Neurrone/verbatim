@@ -1588,8 +1588,10 @@ the control may raise while it answers the read; this makes no call to
 the application. A report with nothing selected before or after checks
 nothing. Each value change of the focused
 control locks the edit controls' anchors once to note that its text
-changed, and nothing else; a UIA text change takes no lock on the
-anchors.
+changed, with the value change's observed time stored in one 64-bit
+integer kept per node, and nothing else; a caret key's answer compares
+that time with the key's press once, making no call and no wake; a UIA
+text change takes no lock on the anchors.
 
 ### Typed-character echo
 

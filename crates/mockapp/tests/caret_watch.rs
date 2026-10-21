@@ -12,7 +12,8 @@
 //! Verbatim made is not; and a selection change after a text change is
 //! compared through UIA as always, and said in general terms in a classic
 //! edit control in either order of its caret event and value change, and
-//! in a selecting key's answer while the value change waits.
+//! in a selecting key's answer while the value change waits or after a
+//! report the key ignored consumed it.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -912,6 +913,70 @@ fn an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general
     app.quit();
 }
 
+/// The selected "alpha" cut from a classic edit control with a key whose
+/// watch compares the selections, the control's value change and then its
+/// caret event both handled before the key's watch arrives: the caret
+/// event's report, which Core ignores while the key is pending, consumes
+/// the note that the text changed, and the key's answer, which stands in
+/// for the one caret event NVDA handles for the key and speaks with its
+/// note (`nvda/source/editableText.py` 437 to 451), still says its change
+/// in general terms, the selection removed, since the value change was
+/// observed after the key was pressed.
+fn an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms() {
+    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-cut-reported");
+    let selection = before.selection.expect("the selected alpha");
+    let pressed_at_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after the epoch")
+            .as_millis(),
+    )
+    .expect("milliseconds that fit");
+    app.send(r"set-text doc  beta\ngamma\n");
+    // The control raises its value change for the new text itself.
+    app.send("caret doc 0");
+    app.send("caret-event doc");
+    outpost.heard(&[
+        Heard::Msaa(WinEventKind::ValueChange),
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+    ]);
+    text_changed(&outpost, node);
+    assert_eq!(
+        reported_selection(&outpost, node),
+        (vec![unselected_in_general()], true, None)
+    );
+    outpost.settled();
+    let key = outpost.ask(Query::Text {
+        node_id: node,
+        op: TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(TextPosition {
+                anchor: before.line.start,
+                offset: before.line.offset,
+            }),
+            pressed_at_ms,
+            unit: TextUnit::Word,
+            compare: None,
+            previous_selection: Some(PreviousSelection {
+                start: selection.start,
+                end: selection.end,
+            }),
+        }),
+    });
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        (
+            reply.selection_changes,
+            reply.content_changed,
+            reply.new_selection
+        ),
+        (vec![unselected_in_general()], true, None)
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -982,6 +1047,10 @@ fn main() {
         (
             "an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms",
             an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms,
+        ),
+        (
+            "an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms",
+            an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms,
         ),
     ]);
 }

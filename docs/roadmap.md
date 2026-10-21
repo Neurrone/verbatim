@@ -178,6 +178,11 @@ with the item.
 - The caret read made with a focus chooses remote or classic reading by
   the previous focus's window, since the outpost's window tracking is
   updated after the focus is published; only the read's cost differs.
+- A question for Dickson: `notepad_editing` reads Notepad's spelling
+  marks once before its second Control+Home, since Notepad raises no
+  event when it marks a word, and fails when the idle-time spell check
+  has not marked "gammaelta" yet; is there a sanctioned form of wait for
+  a precondition with no event?
 
 ### Follow-ups from M4.1
 

@@ -614,16 +614,16 @@ pub(super) fn forget_selection(context: &Context, node_id: NodeId, backend: Back
     }
 }
 
-/// Notes that the text of edit control `node_id` changed, its value change
-/// handled, so its next caret report's selection comparison is made in
+/// Notes that the text of edit control `node_id` changed, its value change,
+/// observed at `observed_at_ms`, handled, so its next caret report's selection comparison is made in
 /// general terms ([`text::Anchors::note_content_changed`]): NVDA's
 /// `IAccessible.event_valueChange` for an object that detects its own
 /// selection changes (`nvda/source/NVDAObjects/IAccessible/__init__.py`
 /// 2019 to 2023).
-pub(super) fn note_value_change(context: &Context, node_id: NodeId) {
+pub(super) fn note_value_change(context: &Context, node_id: NodeId, observed_at_ms: u64) {
     context
         .edit_anchors()
-        .note_content_changed(node_id.number());
+        .note_content_changed(node_id.number(), observed_at_ms);
 }
 
 /// Whether a value change of `node_id`, an edit control's client area,
