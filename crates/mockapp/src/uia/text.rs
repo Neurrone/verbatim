@@ -17,9 +17,10 @@
 //! moves with the keys [`caret_key`] lists. The language is English
 //! (`en-US`) outside the fixture's `cultures` stretches and theirs within
 //! them, mixed over a range that holds more than one; the annotation types
-//! are the spelling error type for a range touching one of the fixture's
-//! spelling errors and unsupported otherwise, as Windows 11 Notepad reports
-//! them; the font is Consolas in black, 11 point outside the fixture's
+//! are the spelling error type for a range within the fixture's spelling
+//! errors, mixed for a range holding both misspelled and other text, and
+//! unsupported for a range with no spelling error, as Windows 11 Notepad
+//! reports them; the font is Consolas in black, 11 point outside the fixture's
 //! `font_sizes` stretches, italic within the fixture's `italic` stretches
 //! (which the format unit does not end at, so a stretch of it holding
 //! italic and upright text reads as mixed), underlined as its `underlines`
@@ -660,7 +661,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                 None => sentinel_variant(unsafe { UiaGetReservedMixedAttributeValue() }?),
             },
             UIA_AnnotationTypesAttributeId => {
-                if touches(&formats.spelling_errors, start, end) {
+                if within(&formats.spelling_errors, start, end) {
                     let spelling = ANNOTATION_SPELLING_ERROR;
                     // SAFETY: a one-element vector of plain integers, the
                     // pointer to a local the call copies.
@@ -679,6 +680,10 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                             }),
                         },
                     }
+                } else if touches(&formats.spelling_errors, start, end) {
+                    // SAFETY: UIA's own sentinel object, owned by the
+                    // returned variant.
+                    sentinel_variant(unsafe { UiaGetReservedMixedAttributeValue() }?)
                 } else {
                     not_supported()?
                 }

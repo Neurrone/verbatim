@@ -405,10 +405,8 @@ NVDA capture.
   node is the focus; the outpost reports held MSAA nodes it forgets with
   their window; and an end-to-end test in both terminals that a reviewed
   line stays on its text as new output is written below it ("Revised").
-- Three differences the first compare-mode runs found on 2026-10-15,
-  each to be captured, decided and recorded as a parity entry: NVDA leaves
-  out the second "spelling error" in a line with two misspellings, where
-  Verbatim says it for each (`spelling_errors`, steps 2 and 11); NVDA says
+- Two differences the first compare-mode runs found on 2026-10-15,
+  each to be captured, decided and recorded as a parity entry: NVDA says
   "ready greater" at a shell prompt where Verbatim leaves the symbol out
   (`windows_terminal_commands`, the first prompt; a symbol-level question
   first, as docs/nvda-transcript.md's settings note says); and the

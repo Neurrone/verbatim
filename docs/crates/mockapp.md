@@ -264,7 +264,8 @@ its crate-internal modules are the reviewable surface:
   a Windows locale id) and theirs within one, mixed over a range holding
   more than one; the
   annotation types are the spelling error type (60001) for a range
-  touching one of the spelling errors and unsupported otherwise, as
+  within the spelling errors, mixed for a range holding both misspelled
+  and other text, and unsupported for a range with no spelling error, as
   Windows 11 Notepad reports them; the font is Consolas in black, 11
   point outside the node's `styles.font_sizes` stretches, underlined only
   within its `styles.underlines` stretches (each with a UIA underline
