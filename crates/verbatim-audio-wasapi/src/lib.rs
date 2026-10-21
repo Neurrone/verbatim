@@ -13,11 +13,10 @@
 //! `AUDCLNT_E_DEVICE_INVALIDATED`) is an error the mixer answers by
 //! reopening. When an open fails, the mixer plays real-time silence in the
 //! device's place, and the device asks to be opened again on the evidence
-//! for its failure ([`open_failure`]): when there is no render device, or
-//! the one there was went away, at the next notification that a device
-//! arrived, became active, or became the default; when an active device
-//! refused the stream, which Windows sends no notification for clearing,
-//! also a second later.
+//! for its failure ([`open_failure`]): when there is no render device, at
+//! the next notification that a device arrived, became active, or became
+//! the default; for any other failure, which Windows need send no such
+//! notification for clearing, also a second later.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,7 +25,7 @@ use tracing::{info, warn};
 use verbatim_audio::{AudioDevice, AudioError, ClockReading, DeviceFormat, DeviceNotices, Waker};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, RPC_E_CHANGED_MODE};
 use windows::Win32::Media::Audio::{
-    AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
     AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioClient,
     IAudioClock, IAudioRenderClient, IMMDeviceEnumerator, IMMNotificationClient,
     MMDeviceEnumerator, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eConsole,
@@ -61,9 +60,9 @@ const SUBTYPE_IEEE_FLOAT: GUID = GUID::from_u128(0x0000_0003_0000_0010_8000_00aa
 )]
 const E_NOTFOUND: HRESULT = HRESULT(0x8007_0490_u32 as i32);
 
-/// How long after an active device refused the stream to try it again,
-/// since Windows sends no notification when what refused it clears
-/// ([`open_failure`]).
+/// How long after a failed open, other than for a missing device, to try
+/// it again, since Windows sends no notification when such a failure
+/// clears ([`open_failure`]).
 const OPEN_RETRY: Duration = Duration::from_secs(1);
 
 fn device_error(context: &str, error: &windows::core::Error) -> AudioError {
@@ -199,23 +198,28 @@ enum Evidence {
 ///   Windows reports the next one as it arrives (`OnDeviceAdded`), becomes
 ///   active (`OnDeviceStateChanged`) and becomes the default
 ///   (`OnDefaultDeviceChanged`).
-/// - The device went away or was disabled while it was being opened
-///   (`AUDCLNT_E_DEVICE_INVALIDATED`): its removal changes the default
-///   device, and a device enabled again becomes active, both notified.
-/// - Anything else, an active device that refused the stream: another
-///   program holding it in exclusive mode (`AUDCLNT_E_DEVICE_IN_USE`), the
-///   audio service not running, or a resource the engine lacked. The
-///   endpoint notifications report endpoints arriving, leaving, changing
-///   state or becoming the default, and an endpoint's properties changing,
-///   never that one became free, so these alone are tried again at a
-///   deadline, [`OPEN_RETRY`]. Checked on 2026-10-21: with the default
-///   device held in exclusive mode, a shared open failed with
+/// - Anything else is tried again at a deadline, [`OPEN_RETRY`], as well,
+///   since the endpoint notifications report endpoints arriving, leaving,
+///   changing state or becoming the default, and an endpoint's properties
+///   changing, never that a failure on a device still there has cleared.
+///   An active device refuses the stream when another program holds it in
+///   exclusive mode (`AUDCLNT_E_DEVICE_IN_USE`), the audio service is not
+///   running, or the engine lacked a resource. Checked on 2026-10-21: with
+///   the default device held in exclusive mode, a shared open failed with
 ///   `AUDCLNT_E_DEVICE_IN_USE`, releasing the device raised no
 ///   notification in the five seconds after, and a shared open then
 ///   succeeded.
+/// - `AUDCLNT_E_DEVICE_INVALIDATED` is among them: besides a device that
+///   went away, it reports a device reconfigured in place, which stays the
+///   default and active. Checked on 2026-10-21 by changing the default
+///   device's format: every open stream failed with it, and an open made
+///   while the engine was still reconfiguring failed with it too. Windows
+///   raised only property changes, all before that open returned (in one
+///   trial before it began, so even passing them on would not have asked
+///   for another open), and nothing in the five seconds after; an open
+///   about 60 ms later succeeded.
 fn open_failure(error: &windows::core::Error) -> Evidence {
-    let code = error.code();
-    if code == E_NOTFOUND || code == AUDCLNT_E_DEVICE_INVALIDATED {
+    if error.code() == E_NOTFOUND {
         Evidence::Notification
     } else {
         Evidence::Deadline
@@ -608,5 +612,18 @@ impl AudioDevice for WasapiDevice {
 
     fn needs_reopen(&self) -> bool {
         self.notices.needs_reopen()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Media::Audio::AUDCLNT_E_DEVICE_INVALIDATED;
+
+    use super::*;
+
+    #[test]
+    fn an_open_that_finds_the_device_invalidated_is_tried_again_at_the_deadline() {
+        let error = windows::core::Error::from_hresult(AUDCLNT_E_DEVICE_INVALIDATED);
+        assert_eq!(open_failure(&error), Evidence::Deadline);
     }
 }

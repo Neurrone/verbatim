@@ -243,9 +243,10 @@ waiting for that audio and going no further than it until the utterance
 is finished, one stopped or never mixed when its utterance is
 cancelled, one played at once over another source's speech and alone,
 and one partly heard going on from where it was after a reopen; and a
-device that fails to open replaced by real-time silence, waited for with
-no time limit and no second open, then opened again on a notice that a
-device is available. Unit tests in `notices.rs` check that a failed open
+device that fails to open replaced by real-time silence, its waits
+capped at the silence's 10 ms period while it plays and with no time
+limit once idle, with no second open, then opened again on a notice that
+a device is available. Unit tests in `notices.rs` check that a failed open
 asks for a reopen only once a device is available or its deadline has
 passed, that an open device is reopened on a default change and not on an
 arrival, and that an arrival during a failing open is not lost. Unit

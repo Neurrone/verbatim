@@ -8,9 +8,10 @@ names, and the gesture tables carry no Windows dependency.
 Public API: `InputHook::start(config, map, events, speech, reports)`,
 which installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls.
 `events` is the gesture router's channel of `Routed` values, in the order
-the keys came; it must be unbounded, and `start` refuses a bounded one
-with `InvalidInput`, so that no key is ever lost: `Gesture`, a gesture that fired; `Handled(n)`, sent when
-the last key event of an end-to-end harness's numbered key stroke
+the keys came. It must be unbounded, so that no key is ever lost, and
+`start` refuses a bounded one with `InvalidInput`. The values are
+`Gesture`, a gesture that fired; `Handled(n)`, sent when the last key
+event of an end-to-end harness's numbered key stroke
 (`verbatim_input::harness`, read from `dwExtraInfo`) has been decided, so
 everything the stroke caused was sent before it; and `Barrier(token)`,
 which the hook never sends but the router's other producers do, for a
@@ -75,13 +76,15 @@ the backlog waits in memory in front of the router, as every backlog in
 name's string, and the channel allocates a block of 31 slots as it
 grows, which in steady state is one allocation per 31 keys. A held key
 repeats about 30 times a second, so even a router stalled for a minute
-holds under 2,000 gestures, about 140 kilobytes. The decision for each key is `decide`, which the
-hook procedure calls with the thread's state; a unit test drives it
-directly with a burst of a thousand Verbatim+V strokes, more than the 64
-the channel once held, unread until the end, and checks that every
-gesture and every stroke's handled mark arrives, in order. The `hook_echo` example installs the real hook with two
-bound gestures and prints what fires and what each key reports; it needs
-an interactive desktop and is never run in CI.
+holds under 2,000 gestures, about 140 kilobytes.
+
+The decision for each key is `decide`, which the hook procedure calls
+with the thread's state; a unit test drives it directly with a burst of
+a thousand Verbatim+V strokes, more than the 64 the channel once held,
+unread until the end, and checks that every gesture and every stroke's
+handled mark arrives, in order. The `hook_echo` example installs the
+real hook with two bound gestures and prints what fires and what each
+key reports; it needs an interactive desktop and is never run in CI.
 
 ## Typed text (the `typed` module)
 

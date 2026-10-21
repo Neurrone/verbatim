@@ -39,8 +39,8 @@ struct DeviceState {
     /// How many times the mixer has begun to wait for the device: once at
     /// the end of every pass, when it has done all it could.
     waits: u64,
-    /// The time limit of the wait the mixer began last.
-    last_wait: Option<Duration>,
+    /// The time limit of every wait the mixer has begun, in order.
+    wait_limits: Vec<Duration>,
     /// How many times the mixer has opened the device.
     opens: u32,
 }
@@ -198,7 +198,7 @@ impl AudioDevice for ManualDevice {
         let (state, condvar) = &*self.state;
         let mut state = state.lock().unwrap();
         state.waits += 1;
-        state.last_wait = Some(timeout);
+        state.wait_limits.push(timeout);
         // For `settle`, which waits on the same condition variable.
         condvar.notify_all();
         let (mut state, _) = condvar
@@ -625,17 +625,26 @@ fn a_device_that_fails_to_open_is_replaced_by_silence_until_a_notice_and_then_op
             buffer_frames: 1_920,
         }
     );
+    // A whole idle pass first, so the waits below begin with an idle one.
+    harness.device.settle();
     let trace = harness.speak(1, 20);
     assert_eq!(harness.next(), started(1, trace));
     assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
     harness.nothing_more();
 
-    // Idle, the mixer waits on the device with no time limit and has not
-    // tried it again: only a notice ends that wait.
+    // While the silence played, the mixer's waits on the device were
+    // capped at the silent device's 10 ms period, so it kept time; idle,
+    // before and after, it waits with no time limit and has not tried the
+    // device again: only a notice ends that wait.
     {
         let state = harness.device.state.0.lock().unwrap();
         assert_eq!(state.opens, 1);
-        assert_eq!(state.last_wait, Some(Duration::MAX));
+        let mut limits = state.wait_limits.clone();
+        limits.dedup();
+        assert_eq!(
+            limits,
+            [Duration::MAX, Duration::from_millis(10), Duration::MAX]
+        );
         assert_eq!(state.written, []);
     }
 

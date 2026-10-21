@@ -44,13 +44,19 @@ When no stream can be opened, `open` returns the error, and the mixer
 plays real-time silence in the device's place until `needs_reopen` asks.
 What the next open waits for depends on the failure (`open_failure`):
 when the system has no render device (`GetDefaultAudioEndpoint` returns
-`E_NOTFOUND`), or the device went away during the open
-(`AUDCLNT_E_DEVICE_INVALIDATED`), only a notification, with no timer.
-Any other failure is an active device refusing the stream, such as
-another program holding it in exclusive mode (`AUDCLNT_E_DEVICE_IN_USE`),
-the audio service not running, or a resource the engine lacked; Windows
-sends no notification when such a failure clears (checked on 2026-10-21
-by holding the device exclusively and releasing it), so the device also
-asks a second later, and `wait` ends by then. So does every failure when
-the notification client could not be registered. The mixer reopens with
+`E_NOTFOUND`), only a notification, with no timer. Any other failure can
+come from a device that is still there, and Windows sends no
+notification when such a failure clears, so the device also asks a
+second later, and `wait` ends by then. That covers an active device
+refusing the stream, such as another program holding it in exclusive
+mode (`AUDCLNT_E_DEVICE_IN_USE`; checked on 2026-10-21 by holding the
+device exclusively and releasing it, which raised no notification), the
+audio service not running, or a resource the engine lacked. It covers
+`AUDCLNT_E_DEVICE_INVALIDATED` too, which reports a device reconfigured
+in place as well as one that went away: changing the default device's
+format failed an open made while the engine reconfigured, and Windows
+raised only property changes, none after that open returned (checked on
+2026-10-21; `docs/design/communication.md`, section 16). A failure also
+waits for the deadline when the notification client could not be
+registered. The mixer reopens with
 its shared state unlocked, so speech is never held up behind the device.

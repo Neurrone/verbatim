@@ -1406,12 +1406,6 @@ fn carry_out(
     }
 }
 
-/// Recovers from a device error or a request to reopen: discards what was
-/// queued, rewinds every source to what had played, and opens the device
-/// again, with the shared state unlocked while the device is opened so
-/// writers and requesters are never held up by it. A device that comes back
-/// in a different format cannot play the frames already converted for the
-/// old one, so every utterance not yet ended fails.
 /// How many written frames the device still has queued, with `played`
 /// brought up to date first. A device asking to be reopened can still say
 /// how much it has played, so that is read before the error that has it
@@ -1433,6 +1427,12 @@ fn poll_device(
     Ok(queued)
 }
 
+/// Recovers from a device error or a request to reopen: discards what was
+/// queued, rewinds every source to what had played, and opens the device
+/// again, with the shared state unlocked while the device is opened so
+/// writers and requesters are never held up by it. A device that comes back
+/// in a different format cannot play the frames already converted for the
+/// old one, so every utterance not yet ended fails.
 fn recover(shared: &Shared, device: &mut Fallback, played: u64, error: &AudioError) {
     warn!(target: "verbatim::audio", %error, "reopening the audio device");
     device.stop();

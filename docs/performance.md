@@ -969,6 +969,22 @@ no cached read fails (`docs/design/uia-shapes.md`, step 4).
   read (milestone M4, themes).
 - Target: 10 each.
 
+### A key through the keyboard hook
+
+Passing a gesture from the keyboard hook to the gesture router.
+
+- Minimum: none: the hook decides the key from its own state, and nothing
+  about the application is read.
+- Today: none. The hook sends each gesture and harness mark on an
+  unbounded channel (`docs/crates/verbatim-input-windows.md`), so a key's
+  wake-ups are unchanged: the send wakes the router once, as before. The
+  channel stores its messages in blocks of 31 slots, so the hook thread
+  allocates one block whenever the last block fills, about once every 31
+  sends, and the router frees it once it has read the block. While the
+  router is backed up, each queued gesture holds about 70 bytes, its
+  48-byte slot and its gesture name.
+- Target: none.
+
 ### An interrupt
 
 Stopping speech when a key is pressed.

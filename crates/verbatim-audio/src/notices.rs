@@ -2,15 +2,16 @@
 //! requests to reopen that a device makes through
 //! [`AudioDevice::needs_reopen`](crate::AudioDevice::needs_reopen).
 //!
-//! The rule (`docs/design/communication.md`, section 16): a device that
-//! failed to open is opened again only on evidence that an open could now
-//! succeed. That evidence is a notification: the default device changed,
-//! or a device arrived or became usable. An open device is reopened only
-//! when the default device changed, since a device arriving does not
-//! change which one plays. A failure the system sends no notification
-//! for clearing, such as a device another program holds for itself, is
-//! the one case retried at a deadline, which the device names when it
-//! reports the failure.
+//! The rule (`docs/design/communication.md`, section 16, on audio device
+//! recovery): a device that failed to open is opened again only on
+//! evidence that an open could now succeed. That evidence is a
+//! notification: the default device changed, or a device arrived or became
+//! usable. An open device is reopened only when the default device
+//! changed, since a device arriving does not change which one plays. A
+//! failure the system sends no notification for clearing, such as a
+//! device another program holds for itself or one reconfigured in place,
+//! is also retried at a deadline, which the device names when it reports
+//! the failure.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
