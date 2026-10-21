@@ -311,7 +311,7 @@ What stays:
 
 ### 10.1 What a user will hear differently, with NVDA's behaviour and a recommendation
 
-1. A UIA focus whose element lost the keyboard focus before stage 1 read it is dropped. Today it is reported "as the event said" unless a moved-on rule drops it. NVDA drops it (`NVDAObjects/UIA/__init__.py` 1632 to 1637). Cases: File Explorer's file list pane before "Items View" (now dropped like NVDA in every run, not only when the worker was late), File Explorer's "Working on it..." placeholder (dropped or kept as NVDA would; unknown until captured). Recommend: adopt, as decided.
+1. A UIA focus whose element lost the keyboard focus before stage 1 read it is dropped. Today it is reported "as the event said" unless a moved-on rule drops it. NVDA drops it (`NVDAObjects/UIA/__init__.py` 1632 to 1637). Cases: File Explorer's file list pane before "Items View" (now dropped like NVDA in every run, not only when the worker was late), File Explorer's "Working on it..." placeholder (see `docs/parity/focus-events.md`, "A focus whose element is gone before its read"). Recommend: adopt, as decided.
 2. Control+Tab: the tab left is announced, then cut when the focus moves on. NVDA queues it and culls it. Decided by Dickson (`docs/roadmap.md` 274 to 275).
 3. Windows Terminal's tabs: "tab control" is no longer said before "list"; the tab's position is read from the sender. NVDA says "list", "<title> 1 of 2". Recommend: adopt (it was accepted as a difference only for now).
 4. A repeated focus on an element that still has the keyboard focus is not announced again, unless another application's focus came in between. NVDA does the same. Recommend: adopt, as decided.

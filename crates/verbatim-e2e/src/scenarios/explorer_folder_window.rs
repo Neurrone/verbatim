@@ -29,16 +29,17 @@
 //! utterances", approved by Dickson for Enter on 2026-10-17 and for
 //! Backspace on 2026-10-21) rather than an expectation that depends on the
 //! machine: heard in full, cut off by the item's focus, or not said at
-//! all. Where it lands depends on whether the outpost's read of the
-//! placeholder's focus still finds its element. When File Explorer has
-//! already removed it (the outpost logs "the focus's own element looked
-//! for by its path" with found=false, and the focus is reported with
-//! `ancestors_unknown`), the placeholder is spoken with no ancestors,
-//! before "Items View list", which comes with the item's focus; when the
-//! read finds it, its ancestry ends in the new list, so "Items View list"
-//! is spoken first and the placeholder between it and the item. NVDA's
-//! own handling depends on the same timing and speaks a placeholder whose
-//! element is gone by its main thread's read without its list
+//! all. Where it lands depends on the focus listener's own read of the
+//! placeholder (`verbatim-outpost`'s `focus_read.rs`). When File Explorer
+//! removes it after the listener's nearest-window walk, the listener's
+//! classic read of it fails, or its read budget runs out, and the
+//! listener reports it with its ancestors unknown, so it is spoken with
+//! no ancestors, before "Items View list", which comes with the item's
+//! focus; when the read succeeds, its ancestry ends in the new list, so
+//! "Items View list" is spoken first and the placeholder between it and
+//! the item. NVDA's own handling depends on the same kind of timing and
+//! speaks a placeholder whose element is gone by its main thread's
+//! handling without its list
 //! (`docs/parity/focus-events.md`, "A focus whose element is gone before
 //! its read"), so each step accepts the placeholder at either position,
 //! an explicit exception to the one-outcome rule (Dickson, 2026-10-21).
@@ -103,6 +104,6 @@ fn expect_after_load(scenario: &mut Scenario, item: &str) {
         .sum();
     assert!(
         said <= 1,
-        "{placeholder:?} was said {said} times in one step, where at most once is accepted"
+        "{placeholder:?} was said {said} times in the folder load ending in {item:?}, where at most once is accepted"
     );
 }
