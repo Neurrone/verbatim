@@ -541,8 +541,9 @@ pub fn drop_evidence(kind: FocusEvent, reason: &str) -> DropEvidence {
 struct LastFocus {
     runtime_id: Vec<i32>,
     element: IUIAutomationElement,
-    /// Its raw-view ancestors, nearest first.
-    ancestors: Vec<UiaAncestorFact>,
+    /// Its raw-view ancestors, nearest first, or `None` when its read left
+    /// them unknown: the next read then reuses nothing of this focus.
+    ancestors: Option<Vec<UiaAncestorFact>>,
 }
 
 /// The last focus any of the listener's reading threads accepted, shared
@@ -838,18 +839,24 @@ impl FocusReader {
             .filter(|last| last.runtime_id == event.runtime_id)
             .map(|last| last.element.clone());
         // The focus before and its ancestors, nearest first: where the
-        // ancestor read stops ([`FocusQuery::known`]).
+        // ancestor read stops ([`FocusQuery::known`]). A focus before whose
+        // ancestors are unknown is left out, itself included, since the
+        // chain reused from where the read meets it would end there with
+        // nothing above it: the read then runs as a first read does.
         let known: Vec<Vec<i32>> = self
             .last
             .as_ref()
-            .map(|last| {
-                std::iter::once(last.runtime_id.clone())
-                    .chain(
-                        last.ancestors
-                            .iter()
-                            .map(|ancestor| ancestor.snapshot.runtime_id.clone()),
-                    )
-                    .collect()
+            .and_then(|last| {
+                let ancestors = last.ancestors.as_ref()?;
+                Some(
+                    std::iter::once(last.runtime_id.clone())
+                        .chain(
+                            ancestors
+                                .iter()
+                                .map(|ancestor| ancestor.snapshot.runtime_id.clone()),
+                        )
+                        .collect(),
+                )
             })
             .unwrap_or_default();
         // Every detail: the listener reads for every application, whatever
@@ -905,7 +912,7 @@ impl FocusReader {
                 self.last = Some(LastFocus {
                     runtime_id: event.runtime_id.clone(),
                     element: element.clone(),
-                    ancestors: Vec::new(),
+                    ancestors: None,
                 });
                 self.last_accepted
                     .accept(self.number, element, (nearest, arrival), &self.window);
@@ -1046,7 +1053,13 @@ impl FocusReader {
         // than ending the chain.
         let ancestors = (!ancestry.ancestors_unknown()).then(|| {
             let tail = match (ancestry.met_known, &self.last) {
-                (Some(met), Some(last)) => reused_ancestors(&last.ancestors, met),
+                (
+                    Some(met),
+                    Some(LastFocus {
+                        ancestors: Some(before),
+                        ..
+                    }),
+                ) => reused_ancestors(before, met),
                 _ => Vec::new(),
             };
             ancestry
@@ -1078,7 +1091,7 @@ impl FocusReader {
         self.last = Some(LastFocus {
             runtime_id: snapshot.runtime_id.clone(),
             element: element.clone(),
-            ancestors: ancestors.clone().unwrap_or_default(),
+            ancestors: ancestors.clone(),
         });
         self.last_accepted
             .accept(self.number, element, (nearest, arrival), &self.window);

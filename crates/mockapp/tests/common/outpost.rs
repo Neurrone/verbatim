@@ -866,13 +866,19 @@ impl OutpostUnderTest {
     /// returns its focused control; the reply must be the next thing the
     /// outpost says, and the only thing.
     pub fn focus_now(&mut self) -> Option<FocusedControl> {
+        self.focus_now_with_calls().0
+    }
+
+    /// [`focus_now`](Self::focus_now) with the calls its read made.
+    pub fn focus_now_with_calls(&mut self) -> (Option<FocusedControl>, CallCounts) {
         let request_id = self.ask(Query::FocusNow);
         let answer = match self.next() {
             OutpostToSupervisor::Reply {
                 request_id: answered,
                 outcome: QueryOutcome::Done(QueryResult::Focus(now)),
+                timing,
                 ..
-            } if answered == request_id => now.focus,
+            } if answered == request_id => (now.focus, timing.calls),
             other => panic!("the outpost said {other:?}, not the focus now"),
         };
         self.settled();

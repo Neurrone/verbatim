@@ -1373,7 +1373,7 @@ impl Worker<'_> {
             node,
             false,
             object,
-            (Some(ancestors), selected_child),
+            (ancestors, selected_child),
         );
         self.follow_focus((node_id, role));
     }
@@ -3856,7 +3856,7 @@ impl Worker<'_> {
                     let FocusedControl {
                         node, ancestors, ..
                     } = focus;
-                    ancestors.iter_mut().chain(std::iter::once(node))
+                    ancestors.iter_mut().flatten().chain(std::iter::once(node))
                 });
                 read::describe_dialogs(context, window.chain(focus), (&previous, &mut None, false));
                 // Core takes the answer's control as its focus, and a caret

@@ -132,7 +132,10 @@ Public API:
   `AncestorWalk::Unknown`, carrying a `FailedHop` (`Error` with the code,
   or `NoParent`), which callers treat as they treat `OutOfTime`, as NVDA
   reads the window hierarchy when its UIA parent read fails. Telling the
-  root is two local calls, made only when a hop fails. The check is made between hops, each of which UIA ends after
+  root is two local calls, made when a hop fails, which includes every
+  walk that reaches the root, since the root's step to its parent finds
+  none; they are off the per-event path, whose walk is the focus
+  listener's. The time check is made between hops, each of which UIA ends after
   `TRANSACTION_TIMEOUT`. The walk never steps across the process boundary:
   before each hop from an element whose own window (`element_window` for
   the first, the cached handle after) has a parent window, or visible

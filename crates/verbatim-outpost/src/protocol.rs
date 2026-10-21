@@ -983,8 +983,11 @@ pub struct FocusNow {
 pub struct FocusedControl {
     /// The control.
     pub node: NodeSnapshot,
-    /// Its ancestors, outermost first.
-    pub ancestors: Vec<NodeSnapshot>,
+    /// Its ancestors, outermost first, or `None` when their read left them
+    /// unknown (it ran out of time, or a step to a parent failed or found
+    /// none below the desktop root), so Core keeps the previous focus's
+    /// chain rather than taking the control as having no containers.
+    pub ancestors: Option<Vec<NodeSnapshot>>,
     /// The selected child, for a selection container.
     pub selected_child: Option<NodeSnapshot>,
     /// Its window's facts.
@@ -1216,7 +1219,7 @@ impl OutpostToSupervisor {
                     }
                     if let Some(control) = &mut focus.focus {
                         control.node.assign_outpost(outpost);
-                        for ancestor in &mut control.ancestors {
+                        for ancestor in control.ancestors.iter_mut().flatten() {
                             ancestor.assign_outpost(outpost);
                         }
                         if let Some(selected) = &mut control.selected_child {
@@ -1873,7 +1876,7 @@ mod tests {
                 window: None,
                 focus: Some(FocusedControl {
                     node: node.clone(),
-                    ancestors: Vec::new(),
+                    ancestors: None,
                     selected_child: None,
                     window: None,
                 }),

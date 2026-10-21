@@ -25,8 +25,9 @@ use crate::state::SrState;
 /// or per-line shape changes in a way that is not backward compatible.
 /// Version 1: node ids carry their outpost, events carry window facts, and
 /// snapshot versions are gone. Version 2: the line after the header is the
-/// reducer state the inputs start from.
-pub const DUMP_FORMAT_VERSION: u32 = 2;
+/// reducer state the inputs start from. Version 3: a select then copy's
+/// pending read names the start marker it was made for.
+pub const DUMP_FORMAT_VERSION: u32 = 3;
 
 /// The first line of a dump: format version, the crate version that wrote
 /// it, and a caller-supplied timestamp string.

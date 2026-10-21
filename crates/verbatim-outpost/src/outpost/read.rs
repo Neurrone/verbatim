@@ -920,7 +920,6 @@ pub(super) fn focused_control_in(
                 &[],
             ),
         };
-        let ancestors = ancestors.unwrap_or_default();
         // A combo box without the `Value` pattern, or a looping selector:
         // its first selected item is its value.
         let mut selected_child = selected_child;
@@ -940,7 +939,6 @@ pub(super) fn focused_control_in(
         let node =
             verbatim_ia2::acquire::focused_snapshot(context.target_pid(), &context.msaa_registry)?;
         let (ancestors, selected_child) = msaa_enrichment(context, client, &node, &[]);
-        let ancestors = ancestors.unwrap_or_default();
         Some((
             hwnd,
             FocusedControl {

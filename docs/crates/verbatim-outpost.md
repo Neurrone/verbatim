@@ -1421,7 +1421,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   (`GetForegroundWindow`, never `GetGUIThreadInfo`'s `hwndFocus`, which can
   name a child window such as Windows 11 Notepad's text area), and its
   focused control (`hwndFocus`, through that window's backend) with its
-  ancestors and selected child; a console's text area reads as a nameless
+  ancestors, or with them unknown (`FocusedControl::ancestors` is then
+  `None`, and Core receives the focus with `ancestors_unknown`), and
+  selected child; a console's text area reads as a nameless
   terminal there too, as on the event path (`read::console_text_area`).
   There are no retries: a nameless window is
   not announced later, a control that takes focus later raises its own focus
@@ -1638,9 +1640,17 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   The outpost's own walks do the same: the remote program's walk that
   ends at a null parent having found no window, and
   `read::uia_enrichment`'s per-hop walk (`Uia::ancestors`) at such a step
-  (`AncestorWalk::Unknown`), report the ancestors unknown
+  (`AncestorWalk::Unknown`), report the ancestors unknown: the focus-now
+  answer's `FocusedControl::ancestors` is `None`, which Core receives as
+  `ancestors_unknown`, as it does from the focus the worker reads after
+  a `WinEvent` focus no UIA focus followed
   (`a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`,
-  `a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`).
+  `a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`,
+  `a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown`).
+  The focus listener keeps a last focus whose ancestors are unknown out of
+  where its next read stops, so the next focus, even one inside it, is
+  read to its window as a first focus is
+  (`a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain`).
   Object navigation's ancestor query reads the whole chain.
 - A dialog's own text (`read::describe_dialogs`). Before a focus is
   published, every dialog among its ancestors, and the focus itself, that

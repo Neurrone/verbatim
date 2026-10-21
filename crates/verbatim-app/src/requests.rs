@@ -430,24 +430,27 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
 /// report of the focus the user already heard after a replacement is taken
 /// silently.
 fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
-    let event =
-        |node: NodeSnapshot, window: Option<WindowFacts>, foreground, ancestors, selected_child| {
-            Input::Event {
-                trace_id,
-                observed_at_ms: focus.observed_at_ms,
-                source,
-                backend: node.backend,
-                window,
-                event: NormalizedEvent::FocusChanged {
-                    node,
-                    foreground,
-                    ancestors,
-                    ancestors_unknown: false,
-                    selected_child,
-                    text: None,
-                },
-            }
-        };
+    let event = |node: NodeSnapshot,
+                 window: Option<WindowFacts>,
+                 foreground,
+                 ancestors: Option<Vec<NodeSnapshot>>,
+                 selected_child| {
+        Input::Event {
+            trace_id,
+            observed_at_ms: focus.observed_at_ms,
+            source,
+            backend: node.backend,
+            window,
+            event: NormalizedEvent::FocusChanged {
+                node,
+                foreground,
+                ancestors_unknown: ancestors.is_none(),
+                ancestors: ancestors.unwrap_or_default(),
+                selected_child,
+                text: None,
+            },
+        }
+    };
     match (focus.focus, focus.window) {
         (Some(control), window) => vec![event(
             control.node,
@@ -456,7 +459,9 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
             control.ancestors,
             control.selected_child,
         )],
-        (None, Some((window, facts))) => vec![event(window, Some(facts), true, Vec::new(), None)],
+        (None, Some((window, facts))) => {
+            vec![event(window, Some(facts), true, Some(Vec::new()), None)]
+        }
         (None, None) => Vec::new(),
     }
 }
@@ -805,7 +810,7 @@ mod tests {
             window: Some((window, notepad_facts(None))),
             focus: Some(FocusedControl {
                 node: control.clone(),
-                ancestors: ancestors.clone(),
+                ancestors: Some(ancestors.clone()),
                 selected_child: selected_child.clone(),
                 window: Some(control_facts),
             }),
@@ -892,7 +897,7 @@ mod tests {
                 window: Some((window, facts)),
                 focus: Some(FocusedControl {
                     node: control.clone(),
-                    ancestors: Vec::new(),
+                    ancestors: Some(Vec::new()),
                     selected_child: None,
                     window: None,
                 }),
@@ -935,7 +940,7 @@ mod tests {
             window: None,
             focus: Some(FocusedControl {
                 node: control.clone(),
-                ancestors: Vec::new(),
+                ancestors: Some(Vec::new()),
                 selected_child: None,
                 window: None,
             }),
@@ -959,6 +964,56 @@ mod tests {
                     foreground: false,
                     ancestors: Vec::new(),
                     ancestors_unknown: false,
+                    selected_child: None,
+                    text: None,
+                },
+            }]
+        );
+    }
+
+    /// A focus-now answer whose ancestors' read left them unknown reaches
+    /// Core as a focus with its ancestors unknown, never as one with no
+    /// containers.
+    #[test]
+    fn a_focus_now_answer_with_its_ancestors_unknown_reports_them_unknown() {
+        let mut table = RequestTable::default();
+        let trace_id = TraceId::mint();
+        let id = table.begin(
+            OutpostId(1),
+            Asker::FocusNow {
+                source: Pid(5),
+                trace_id,
+            },
+        );
+        let control = node(Role::Button, "OK");
+        let answer = FocusNow {
+            window: None,
+            focus: Some(FocusedControl {
+                node: control.clone(),
+                ancestors: None,
+                selected_child: None,
+                window: None,
+            }),
+            observed_at_ms: 1234,
+        };
+        let inputs = table.finish(
+            id,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::Focus(answer)),
+        );
+        assert_eq!(
+            inputs,
+            [Input::Event {
+                trace_id,
+                observed_at_ms: 1234,
+                source: Pid(5),
+                backend: Backend::Uia,
+                window: None,
+                event: NormalizedEvent::FocusChanged {
+                    node: control,
+                    foreground: false,
+                    ancestors: Vec::new(),
+                    ancestors_unknown: true,
                     selected_child: None,
                     text: None,
                 },

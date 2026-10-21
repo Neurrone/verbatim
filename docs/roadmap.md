@@ -291,6 +291,10 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     its read", and its `mockapp` test). The scenario accepts the
     placeholder at either place, so its next runner pass is what confirms
     the fix.
+  - The outpost's remote focus program still reports as a complete walk
+    one that ends at a missing parent above an element with its own
+    window handle when no top-level window was reached; only a fragment
+    element reporting a handle it does not host reaches this.
   - Check why the `delta` item inside Inner in run 39558690998 still
     carried the parent folder's window title: File Explorer's title
     lagging, or a stale ancestor name.

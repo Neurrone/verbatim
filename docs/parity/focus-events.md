@@ -561,7 +561,15 @@ there having found no window, and its per-hop walk (`Uia::ancestors` in
 `crates/verbatim-uia/src/client.rs`) ends at a failed or missing parent
 below the root as `AncestorWalk::Unknown`, so a focus-now answer or a
 focus the outpost reads itself carries no partial chain as if it were
-whole. The placeholder's
+whole: the answer's `FocusedControl::ancestors` is then `None`, and Core
+receives the focus with `ancestors_unknown`. A focus whose ancestors are
+unknown also leaves nothing for the listener's next read to reuse, so
+the next focus, even one inside it, is read to its window as a first
+focus is. The mechanism differs from NVDA's, by decision (Dickson,
+2026-10-22): NVDA builds a known chain from the window hierarchy, where
+Verbatim reports the ancestors unknown and Core keeps the previous
+focus's chain; for the File Explorer placeholder the spoken result is
+the same. The placeholder's
 element can answer its properties after it has left the tree, so its
 read succeeds and only that step fails, which run 39613639083 shows with
 `read=0` and the ancestors reported as known; reported as known and
@@ -589,9 +597,13 @@ and `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`,
 which pins the failed step and the missing parent, for the listener's
 report,
 `a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`
+,
+`a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`,
 and
-`a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`
-for the outpost's own walks, the unit test `a_failed_step_is_told_by_its_code` in
+`a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown`
+for the outpost's own walks,
+`a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain`
+for the listener's next read, the unit test `a_failed_step_is_told_by_its_code` in
 `verbatim-uia-rops` for a step that fails with a code, and `focus_reports.rs`, whose
 `focus_without_a_path` and its caller
 `a_focus_without_a_path_is_followed_from_its_next_focus_event` assert that

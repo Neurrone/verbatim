@@ -1647,6 +1647,8 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
         assert_eq!(
             now.ancestors
+                .as_ref()
+                .unwrap_or_else(|| panic!("the focus now's ancestors are known ({path})"))
                 .iter()
                 .chain(std::iter::once(&now.node))
                 .map(|node| node.name.as_deref())
@@ -1858,6 +1860,8 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
             .unwrap_or_else(|| panic!("the focus now has a focused control ({path})"));
         assert_eq!(
             now.ancestors
+                .as_ref()
+                .unwrap_or_else(|| panic!("the focus now's ancestors are known ({path})"))
                 .iter()
                 .chain(std::iter::once(&now.node))
                 .map(|node| node.name.as_deref())

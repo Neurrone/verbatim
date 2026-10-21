@@ -24,7 +24,7 @@ use verbatim_model::NormalizedEvent;
 use verbatim_model::{Role, State};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::focus_read::Judged;
-use verbatim_outpost::protocol::OutpostToSupervisor;
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, WinEventStamp};
 use verbatim_uia::map::{add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
     Ancestor, Cached, ElementExt, Fill, FocusInput, Kept, ListenerEvent, Live, Node, Shape, Uia,
@@ -803,7 +803,8 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
 /// the desktop root is reported with its containers unknown, never as
 /// having none: only the root ends a known walk, as NVDA reads the window
 /// hierarchy when its parent read fails (`NVDAObjects/UIA/__init__.py`
-/// 2142 to 2145), whether remote operations are on or off. The listener's
+/// 2142 to 2145). The listener's read is always the classic walk, so
+/// remote operations, an outpost option, are left at their default. Its
 /// classic read steps from the focus to its parent after its nearest
 /// window has been found, as File Explorer's "Working on it..."
 /// placeholder answers its properties after it has left the tree. UIA
@@ -811,21 +812,9 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
 /// and when it answers none (verified), so a step that fails with a code
 /// is covered by the walk's own unit test.
 fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
-    for (answer, remote) in [
-        ("fail", true),
-        ("fail", false),
-        ("none", true),
-        ("none", false),
-    ] {
-        let path = if remote { "remote" } else { "classic" };
-        let case = format!("{answer} {path}");
-        let mut fixture = Fixture::start(&format!("mockapp-rops-parent-{answer}-{path}"));
-        let outpost = OutpostUnderTest::with_options(
-            &fixture.app,
-            OutpostOptions {
-                remote_operations: remote,
-            },
-        );
+    for case in ["fail", "none"] {
+        let mut fixture = Fixture::start(&format!("mockapp-rops-parent-{case}"));
+        let outpost = OutpostUnderTest::new(&fixture.app);
         // A focus before, in the same window, whose containers are known.
         let check = fixture.focus_delivered("check", "Remember");
         outpost.deliver(outpost.listener_fact(&check));
@@ -843,7 +832,7 @@ fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
         let deep = fixture.focus_delivered("deep", "Deep button");
         // The listener's walk to the nearest window steps to the focus's
         // parent once first; the step after it is the classic read's.
-        fixture.app.send(&format!("answer-parent deep {answer} 1"));
+        fixture.app.send(&format!("answer-parent deep {case} 1"));
         outpost.deliver(outpost.listener_fact(&deep));
         match outpost.next() {
             OutpostToSupervisor::Event {
@@ -868,11 +857,15 @@ fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
     }
 }
 
-/// The focus-now query's answer for "Deep button" when the step from its
-/// container "Inner group" to that container's parent answers `answer`,
-/// with remote operations on or off: the focus now's chain, outermost
-/// first, ending at the focus.
-fn focus_now_chain_with_a_missing_grandparent(remote: bool, answer: &str) -> Vec<Option<String>> {
+/// What the focus-now query answers for "Deep button" when the step from
+/// its container "Inner group" to that container's parent answers
+/// `answer`, with remote operations on or off: the focus's name, the names
+/// of its ancestors, outermost first, or `None` when they are unknown, and
+/// the UIA calls the read made.
+fn focus_now_with_a_missing_grandparent(
+    remote: bool,
+    answer: &str,
+) -> (Option<String>, Option<Vec<Option<String>>>, u32) {
     let path = if remote { "remote" } else { "classic" };
     let mut fixture = Fixture::start(&format!("mockapp-rops-now-{answer}-{path}"));
     let mut outpost = OutpostUnderTest::with_options(
@@ -884,29 +877,29 @@ fn focus_now_chain_with_a_missing_grandparent(remote: bool, answer: &str) -> Vec
     fixture.app.send("set-focus deep");
     fixture.app.send(&format!("answer-parent group2 {answer}"));
     outpost.read_focus_as(&fixture.find("Deep button"));
-    let now = outpost
-        .focus_now()
-        .unwrap_or_else(|| panic!("{answer} {path}: the focus now has a focused control"));
+    let (now, calls) = outpost.focus_now_with_calls();
+    let now = now.unwrap_or_else(|| panic!("{answer} {path}: the focus now has a focused control"));
     drop(outpost);
     fixture.app.quit();
-    now.ancestors
-        .iter()
-        .chain(std::iter::once(&now.node))
-        .map(|node| node.name.clone())
-        .collect()
+    let ancestors = now
+        .ancestors
+        .map(|ancestors| ancestors.into_iter().map(|node| node.name).collect());
+    (now.node.name, ancestors, calls.uia)
 }
 
 /// A focus-now query whose remote program's walk ends at a missing parent
 /// below the top-level window, which the program finds as the window
-/// where its walk ends, reports the focus's ancestors unknown: the answer
-/// has no flag for them, so it holds the focus alone, never the ancestors
-/// read before the missing parent as if they were the whole chain. NVDA
-/// reads the window hierarchy when its parent read fails
-/// (`NVDAObjects/UIA/__init__.py` 2142 to 2145).
+/// where its walk ends, reports the focus's ancestors unknown, never the
+/// ancestors read before the missing parent as if they were the whole
+/// chain. NVDA reads the window hierarchy when its parent read fails
+/// (`NVDAObjects/UIA/__init__.py` 2142 to 2145). The read's UIA calls are
+/// the program's: the focused element's read and the program, one call
+/// each, so a fallback to the classic walk, which steps hop by hop, cannot
+/// pass for the program's answer.
 fn a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown() {
     assert_eq!(
-        focus_now_chain_with_a_missing_grandparent(true, "none"),
-        [Some("Deep button".to_owned())]
+        focus_now_with_a_missing_grandparent(true, "none"),
+        (Some("Deep button".to_owned()), None, 2)
     );
 }
 
@@ -916,12 +909,126 @@ fn a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_
 /// both ways (verified), so both are asked of the provider.
 fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown() {
     for answer in ["fail", "none"] {
+        let (name, ancestors, _) = focus_now_with_a_missing_grandparent(false, answer);
         assert_eq!(
-            focus_now_chain_with_a_missing_grandparent(false, answer),
-            [Some("Deep button".to_owned())],
+            (name, ancestors),
+            (Some("Deep button".to_owned()), None),
             "{answer}"
         );
     }
+}
+
+/// The focus the outpost reads itself after a `WinEvent` focus in its UIA
+/// window that no UIA focus follows, read once the wait's bound has passed
+/// by the outpost's clock, whose step from its container "Inner group" to
+/// that container's parent finds none, is reported with its ancestors
+/// unknown, never as having no containers, as the focus-now query's read
+/// reports them.
+fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown() {
+    let mut fixture = Fixture::start("mockapp-rops-gap-none");
+    let outpost = OutpostUnderTest::with_options(
+        &fixture.app,
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+    fixture.app.send("set-focus deep");
+    fixture.app.send("answer-parent group2 none");
+    outpost.read_focus_as(&fixture.find("Deep button"));
+    // The listener's copy of a `WinEvent` focus on the window's client
+    // object, with no UIA focus event of its own.
+    outpost.deliver_win_event(
+        DeliveredFact::MsaaFocus {
+            hwnd: fixture.hwnd,
+            id_object: -4,
+            id_child: 0,
+        },
+        WinEventStamp { thread: 1, time: 1 },
+    );
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settle();
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    ancestors,
+                    ancestors_unknown,
+                    ..
+                },
+            ..
+        } => {
+            assert_eq!(node.name.as_deref(), Some("Deep button"));
+            assert!(ancestors_unknown, "the containers are unknown");
+            assert_eq!(ancestors, []);
+        }
+        other => panic!("the outpost said {other:?}, not the focus"),
+    }
+    outpost.settled();
+    drop(outpost);
+    fixture.app.quit();
+}
+
+/// A focus whose walk's step to a parent fails leaves nothing for the
+/// next focus's read to reuse: the next focus, inside it, is read up to
+/// the window as a first focus is, and reported with its real ancestors,
+/// never with the failed focus as its outermost container and nothing
+/// above it.
+fn a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain() {
+    let mut fixture = Fixture::start("mockapp-rops-after-unknown");
+    let outpost = OutpostUnderTest::new(&fixture.app);
+    let group = fixture.focus_delivered("group2", "Inner group");
+    // The listener's walk to the nearest window steps to the focus's
+    // parent once first; the step after it is the classic read's.
+    fixture.app.send("answer-parent group2 fail 1");
+    outpost.deliver(outpost.listener_fact(&group));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    ancestors_unknown, ..
+                },
+            ..
+        } => assert!(ancestors_unknown, "the group's containers are unknown"),
+        other => panic!("the outpost said {other:?}, not the group's focus"),
+    }
+    outpost.settled();
+    fixture.app.send("answer-parent group2 usual");
+    let deep = fixture.focus_delivered("deep", "Deep button");
+    outpost.deliver(outpost.listener_fact(&deep));
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    ancestors,
+                    ancestors_unknown,
+                    ..
+                },
+            ..
+        } => {
+            assert_eq!(node.name.as_deref(), Some("Deep button"));
+            assert!(!ancestors_unknown, "the button's containers are known");
+            assert_eq!(
+                ancestors
+                    .iter()
+                    .map(|node| node.name.as_deref())
+                    .collect::<Vec<_>>(),
+                // The unnamed pane is crossed, not presentable.
+                [
+                    Some("Mockapp Ancestry Fixture"),
+                    Some("Outer group"),
+                    Some("Tools"),
+                    Some("Inner group")
+                ]
+            );
+        }
+        other => panic!("the outpost said {other:?}, not the button's focus"),
+    }
+    outpost.settled();
+    drop(outpost);
+    fixture.app.quit();
 }
 
 /// A focus whose read fails is reported from its event, its containers
@@ -1380,6 +1487,14 @@ fn main() {
         (
             "a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown",
             a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown,
+        ),
+        (
+            "a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown",
+            a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown,
+        ),
+        (
+            "a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain",
+            a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain,
         ),
         (
             "a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus",

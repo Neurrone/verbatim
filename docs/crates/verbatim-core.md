@@ -70,7 +70,7 @@ Public API:
   JSON-lines file, a header line (`DumpHeader`: format version, the writing
   crate's version, and a caller-supplied timestamp string — this module
   never reads a clock itself), then the `SrState` the inputs start from
-  (format version 2), then one compact-JSON `RecordedInput` per line.
+  (format version 3), then one compact-JSON `RecordedInput` per line.
   `write_dump(writer, crate_version, timestamp, base, inputs)` writes one;
   `read_dump(reader)` reads one back as `DumpContents` (header, base state,
   the inputs that parsed completely, and whether the file ended mid-line).
