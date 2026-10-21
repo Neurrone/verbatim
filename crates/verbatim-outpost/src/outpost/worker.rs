@@ -41,7 +41,7 @@ use verbatim_model::{
     State, StateSet, TerminalOutput, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::{
-    Cached, ElementExt as _, Fill, HelpTextRefresh, Kept, Node, SelectedItem, SuggestionsRefresh,
+    Cached, Fill, HelpTextRefresh, Kept, Node, SelectedItem, SuggestionsRefresh,
     nearest_window_handle,
 };
 use windows::Win32::UI::Accessibility::{
@@ -992,9 +992,10 @@ enum Refreshed {
 
 /// `element` refreshed with what a change of property `id` reads when it is
 /// handled, in one call: the description for a help text change, and
-/// whether it is editable text or a search field for a `ControllerFor`
-/// change. `None` for any other change, which is reported from the event's
-/// cache as it stands, and when the refresh fails.
+/// whether it is editable text or a search field and whether the relation
+/// names any element for a `ControllerFor` change. `None` for any other
+/// change, which is reported from the event's cache as it stands, and when
+/// the refresh fails.
 fn refreshed_for(
     uia: Option<&verbatim_uia::Uia>,
     id: i32,
@@ -1018,19 +1019,14 @@ fn refreshed_for(
 /// search fields report suggestions
 /// (`EditableTextWithSuggestions.event_controllerForChange`,
 /// `NVDAObjects/behaviors.py` 231): whether the relation now names any
-/// element, read live, as NVDA reads `controllerFor` (not in its base
-/// cache). A failed read names none.
+/// element, read live by the refresh that read the rest, as NVDA reads
+/// `controllerFor` (not in its base cache). A relation the refresh could
+/// not read names none.
 fn suggestions_open(element: &Cached<SuggestionsRefresh>) -> Option<bool> {
-    if !element.read().reports_suggestions() {
-        return None;
-    }
-    Some(
-        element
-            .live()
-            .element()
-            .controller_for()
-            .is_ok_and(|controlled| !controlled.is_empty()),
-    )
+    let refreshed = element.read();
+    refreshed
+        .reports_suggestions()
+        .then_some(refreshed.controls_any)
 }
 
 /// A focus that is not reported, for the reason logged where it was found.

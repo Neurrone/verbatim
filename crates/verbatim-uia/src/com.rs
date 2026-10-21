@@ -17,7 +17,7 @@ use windows::Win32::System::Variant::{
     VARENUM, VARIANT, VT_ARRAY, VT_BOOL, VT_I4, VT_R8, VariantToStringAlloc,
 };
 use windows::Win32::UI::Accessibility::{
-    IUIAutomationElement, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT,
+    IUIAutomationElement, IUIAutomationElementArray, UIA_E_ELEMENTNOTAVAILABLE, UIA_E_TIMEOUT,
     UiaGetReservedMixedAttributeValue, UiaGetReservedNotSupportedValue,
 };
 use windows::core::{HRESULT, IUnknown, Interface};
@@ -201,6 +201,20 @@ pub fn variant_element(value: &VARIANT) -> Option<IUIAutomationElement> {
     IUnknown::try_from(value)
         .ok()
         .and_then(|unknown| unknown.cast().ok())
+}
+
+/// How many elements a `VARIANT` holding an element array (`VT_UNKNOWN`,
+/// as UIA gives a cached `ControllerFor`) names, 0 when it holds no array:
+/// empty, UIA's "not supported" sentinel, or another type. Local: reading
+/// the array's length does not reach the application.
+#[must_use]
+pub(crate) fn variant_element_count(value: &VARIANT) -> i32 {
+    IUnknown::try_from(value)
+        .ok()
+        .and_then(|unknown| unknown.cast::<IUIAutomationElementArray>().ok())
+        // SAFETY: `array` is a live element array, whose length is read
+        // in this process.
+        .map_or(0, |array| unsafe { array.Length() }.unwrap_or(0))
 }
 
 /// Reads a `VARIANT` boolean property, defaulting to `false` when the value is

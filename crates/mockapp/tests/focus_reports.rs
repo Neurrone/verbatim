@@ -1924,7 +1924,9 @@ fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
 /// The focus's help text and `ControllerFor` relation are followed, as
 /// NVDA's local group follows them: a help text change is reported as the
 /// focus's new description, and a search box's relation naming its list
-/// and then nothing as its suggestions opening and closing.
+/// and then nothing as its suggestions opening and closing, each change
+/// in one call, the refresh of the box's cache, which reads the relation
+/// with the rest (`docs/performance.md`).
 fn a_focus_s_help_text_and_suggestions_are_followed() {
     let title = common::unique_title("mockapp-suggestions");
     let mut app = common::spawn("controller.json", "uia", &title);
@@ -1986,8 +1988,13 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
                         change: PropertyChange::Suggestions(reported),
                         child_count: None,
                     },
+                timing,
                 ..
-            } => assert_eq!((node_id, reported), (node.id, open), "{command}"),
+            } => assert_eq!(
+                (node_id, reported, timing.calls.uia),
+                (node.id, open, 1),
+                "{command}"
+            ),
             other => panic!("the outpost said {other:?}, not the suggestions after {command}"),
         }
         outpost.settled();

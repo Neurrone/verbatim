@@ -328,9 +328,10 @@ Public API:
 - `HelpTextRefresh` (its `Description` group's `description()`: the full
   description, else the help text) and `SuggestionsRefresh`
   (`reports_suggestions()`: a text pattern, or the automation id
-  `SearchTextBox` or `TextBox`): what a help text or `ControllerFor`
-  change of the focus reads when the outpost handles it, in one cache
-  refresh.
+  `SearchTextBox` or `TextBox`; `controls_any`: whether the
+  `ControllerFor` relation names any element): what a help text or
+  `ControllerFor` change of the focus reads when the outpost handles it,
+  in one cache refresh.
 - `map::ignores_notifications(class, automation_id)` — a terminal control's and
   the console host's text area's (automation id "Text Area")
   notifications are all ignored, as NVDA's terminal overlays ignore them.
@@ -703,9 +704,10 @@ Public API:
     `Kept`; `name()` without bidirectional controls), an item found among
     a focused combo box's children as it is selected, whose name is the
     combo box's new value; `HelpTextRefresh` (`Description`) and `SuggestionsRefresh`
-    (Text pattern availability and automation id;
-    `reports_suggestions()`), what a help text and a `ControllerFor`
-    change read; `WindowLookup` (native window handle), one property;
+    (Text pattern availability, automation id, and whether the
+    `ControllerFor` relation names any element, read as a count of the
+    cached element array; `reports_suggestions()`), what a help text and
+    a `ControllerFor` change read; `WindowLookup` (native window handle), one property;
     `TextAreaPattern` (the Text pattern of an event's sender, which
     `ListenerEvent` covers), the held console check's;
     and `ShellButton`, what `verbatim-gui`'s list of the shell's buttons

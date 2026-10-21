@@ -338,17 +338,16 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     source does not settle. An NVDA debug log with UIA event logging on
     would settle it.
   - The first ControllerFor change after Enter in Settings' search box
-    takes 138 to 144 ms to handle, with the selection events and the new
-    focus waiting behind it (`target/e2e-evidence/fixes-round-ten-2026-10-21/`,
-    the outpost logs). Its two calls are the refresh of the box's cache
-    (`refreshed_for`, one `BuildUpdatedCache`) and the live read of its
-    relation (`suggestions_open`, `CurrentControllerFor`), in
-    `outpost/worker.rs`; trace the stall with `cargo xtask trace
-    scenario`. The two calls could be one round trip, as the audit rule
-    in `CLAUDE.md` asks: adding `UIA_ControllerForPropertyId` to
-    `SuggestionsRefresh` (`crates/verbatim-uia/src/shape/shapes.rs`)
-    would have `BuildUpdatedCache` read the relation live; to decide
-    after the trace.
+    is handled in one call, the refresh of the box's cache, which reads
+    the relation live (`refreshed_for` in `outpost/worker.rs`), and takes
+    138 to 164 ms when it reaches Settings while Settings lays out the
+    page Enter opened, with the selection events and the new focus
+    waiting behind it. CPU traces on 2026-10-21
+    (`target/e2e-evidence/controllerfor-2026-10-21/`) place the whole
+    wait inside that refresh's `BuildUpdatedCache`, which Settings' UI
+    thread answers only once it has measured and rendered the new page,
+    on the processor for 135 of the 145 ms, while the relation's
+    separate `CurrentControllerFor` read, now gone, took under 1 ms.
 
 Exit: a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean.

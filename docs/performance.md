@@ -1732,8 +1732,9 @@ The two rarer property changes of the focus read what they need when
 the outpost handles them, as NVDA reads them, not in every property
 change's request: a help text change refreshes the element's full
 description and help text, one call, and a `ControllerFor` change its
-text pattern availability and automation id and then reads the relation
-itself, two calls (`a_focus_s_help_text_and_suggestions_are_followed`).
+text pattern availability, automation id and the relation itself, which
+the refresh reads live, one call
+(`a_focus_s_help_text_and_suggestions_are_followed`).
 
 ### Several text attributes in one call
 

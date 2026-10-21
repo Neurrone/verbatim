@@ -40,8 +40,8 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::{AgileReference, IUnknown, Interface};
 
 use crate::com::{
-    is_not_supported, variant_bool, variant_element, variant_f64, variant_i32,
-    variant_optional_bool, variant_string,
+    is_not_supported, variant_bool, variant_element, variant_element_count, variant_f64,
+    variant_i32, variant_optional_bool, variant_string,
 };
 use crate::element::{ElementExt, WalkerExt};
 
@@ -314,6 +314,13 @@ impl Reader<'_> {
         } else {
             variant_element(&value).map(ElementValue::Element)
         }
+    }
+
+    /// Whether an element-array property names any element: `false` when
+    /// not cached, not an element array, or empty.
+    pub(crate) fn names_any(&self, property: UIA_PROPERTY_ID) -> bool {
+        self.value(property)
+            .is_some_and(|value| variant_element_count(&value) > 0)
     }
 
     /// A cached pattern object as the interface `T`, `None` when the cache
@@ -899,6 +906,7 @@ macro_rules! kind_type {
     (one_based) => { Option<u32> };
     (rect) => { Option<verbatim_model::Rect> };
     (element) => { Option<$crate::shape::ElementValue> };
+    (names_any) => { bool };
 }
 
 /// The `Covers` implementations of a shape, each with a compile-time

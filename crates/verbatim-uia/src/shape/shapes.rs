@@ -4,7 +4,7 @@ use verbatim_model::{Backend, NodeDetails, NodeSnapshot, Role, State, StateSet};
 use windows::Win32::UI::Accessibility::{
     IUIAutomationSelectionPattern, IUIAutomationTextPattern, UIA_AcceleratorKeyPropertyId,
     UIA_AccessKeyPropertyId, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
-    UIA_ClassNamePropertyId, UIA_ControlTypePropertyId,
+    UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FrameworkIdPropertyId,
     UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
     UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
@@ -719,7 +719,9 @@ uia_shape! {
 
 uia_shape! {
     /// An element refreshed for a `ControllerFor` change: whether it is
-    /// editable text or a search field, which report suggestions.
+    /// editable text or a search field, which report suggestions, and
+    /// whether the relation names any element, read live by the same
+    /// refresh, as NVDA reads `controllerFor` when it handles the change.
     pub struct SuggestionsRefresh {
         gates: none;
         groups {}
@@ -728,6 +730,8 @@ uia_shape! {
             text_available: UIA_IsTextPatternAvailablePropertyId => bool,
             /// The automation id.
             automation_id: UIA_AutomationIdPropertyId => string,
+            /// Whether its `ControllerFor` relation names any element.
+            controls_any: UIA_ControllerForPropertyId => names_any,
         }
         prefetch {}
         covers {}
