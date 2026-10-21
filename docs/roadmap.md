@@ -239,7 +239,7 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   hosted end-to-end job, where `windows_terminal_two_windows` and
   `windows_terminal_leave_flood` failed (80 of 83 passed; the third
   failure, File Explorer's placeholder in `explorer_folder_window`, is an
-  optional utterance of that scenario now). Root-cause each
+  optional utterance of that scenario). Root-cause each
   from the run logs (`gh run view <id> --log-failed`) rather than from a
   local run, since neither reproduces here.
 - GitHub's `e2e` job in run 39558690998 showed that the runner's
@@ -264,6 +264,34 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     and the scenario has no handling for it; what File Explorer raises
     then, beyond a name change and three state changes on the items view
     whose states the hook's debug line does not show, is to be found.
+  - Where the placeholder is spoken in `explorer_folder_window` depends on
+    Verbatim's read timing against File Explorer's removal of it. In run
+    39558690998, after Enter the outpost read the placeholder's focus 255
+    ms after the event and found its element gone ("the focus's own
+    element looked for by its path" found=false, reported with
+    `ancestors_unknown`), so it was spoken with no ancestors, before
+    "Items View list"; after Backspace the read, 230 ms after the event,
+    found it, its ancestry ended in the new list, and "Items View list"
+    was spoken first. The scenario's allowance covers one order per step,
+    so the runner can still fail on the other. The choice is open between
+    making the outcome deterministic in Verbatim, by dropping a focus
+    whose element is gone before the read, as NVDA drops a UIA focus
+    whose element no longer has the keyboard focus
+    (`shouldAllowUIAFocusEvent`, `nvda/source/NVDAObjects/UIA/__init__.py`
+    line 1632), and an explicit exception accepting the placeholder at
+    either position.
+  - `explorer_folder_window` failed in run 39573264801 after Enter with
+    `["Working on it...", "Inner - File Explorer"]` where "Items View
+    list" was expected. The likely cause is the item's focus arriving
+    after File Explorer retitled the window, so the renamed window counted
+    as a new ancestor: Verbatim compares MSAA ancestors by role and name,
+    and NVDA's IAccessible equality compares names too
+    (`nvda/source/NVDAObjects/IAccessible/__init__.py` lines 957 to 958),
+    but no capture shows what NVDA says. To settle it, read that run's
+    flight recorder for the window ancestor's names, and capture NVDA on
+    a slow folder load. In the same pass, check why the `delta` item
+    inside Inner in run 39558690998 still carried the parent folder's
+    window title: File Explorer's title lagging, or a stale ancestor name.
   - No outpost connects to a new window after its probe, so the worker is
     held only by the probe while File Explorer builds the window: a new folder window's
     first item was queued 62 to 323 ms after its event in 50 windows on

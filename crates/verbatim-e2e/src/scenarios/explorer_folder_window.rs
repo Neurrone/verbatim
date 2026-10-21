@@ -20,19 +20,32 @@
 //!
 //! While it loads a folder after Enter or Backspace, File Explorer may give
 //! the keyboard focus for a moment to a placeholder, a static text element
-//! named "Working on it...", and then give it to the item: in 8 of 18
-//! recorded runs after Enter and in 2 runs after Backspace on GitHub's
-//! runners, and rarely on a development machine. Whether it comes depends
+//! named "Working on it...", and then give it to the item: on GitHub's
+//! runners in 8 of 18 recorded runs after Enter, and after Backspace in
+//! runs 39558690998 and 39583748471; in none of 5 local runs of this
+//! scenario, though `measure_focus_explorer` has met it on a development
+//! machine. Whether it comes depends
 //! on how quickly the machine loads the folder, so it is an optional
 //! utterance (`docs/testing.md`, "Optional utterances", approved by
 //! Dickson for Enter on 2026-10-17 and for Backspace on 2026-10-21) rather
 //! than an expectation that depends on the machine: heard in full, cut off
 //! by the item's focus, or not said at all, always immediately before the
-//! item's focus speech. After Enter it comes first, and the new list's
-//! "Items View list" comes with the item's focus; after Backspace the
-//! placeholder's own focus enters the new list, so it comes between
-//! "Items View list" and the item (GitHub runs 39558690998 and
-//! 39583748471). The item is still required: a run
+//! item's focus speech. Where it lands relative to "Items View list"
+//! depends on whether the outpost's read of the placeholder's focus finds
+//! its element still there. When File Explorer has already removed it
+//! (the outpost logs "the focus's own element looked for by its path"
+//! with found=false, and the focus is reported with `ancestors_unknown`),
+//! the placeholder is spoken with no ancestors, so it comes before
+//! "Items View list", which comes with the item's focus. When the read
+//! finds it, its ancestry ends in the new list, so "Items View list" is
+//! spoken first and the placeholder between it and the item. Which
+//! happens depends on whether Verbatim's read beats File Explorer's
+//! removal of the placeholder, not on the key. Each step's allowance
+//! matches the order seen in run 39558690998: the Enter step accepts the
+//! placeholder first, the Backspace step between the list and the item.
+//! Either step can meet the other order, and fails when it does (run
+//! 39583748471 also had the placeholder after Backspace); the expectation
+//! for that is an open question (`docs/roadmap.md`, M4.1). The item is still required: a run
 //! where the placeholder keeps the focus fails. No run has had it on the
 //! window's opening, so it is not declared there.
 
