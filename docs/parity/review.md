@@ -194,7 +194,12 @@ new. An object with no text interface is reviewed by its value or name,
 NVDA's fallback, through the M3 flat walk, which walks
 the same grapheme clusters and words as text with a text pattern;
 different, as a follow-up: its start and end of line still speak the
-line rather than the character there.
+line rather than the character there. Different, not yet matched:
+flat review's current-line command moves the review position to the
+line's start, where NVDA's current-line command leaves the review
+position where it is, so a following character or word command starts
+from a different place; it is fixed with the review cursor on objects
+that no longer exist ([the roadmap](../roadmap.md), M4.2).
 
 ### Review cursor columns
 
@@ -236,10 +241,14 @@ flat text included, where the first press only tried to select. The
 second, within the multi-press timeout, copies that range ("Copied to
 clipboard: Name") and clears the start marker whether or not anything
 was copied, so a further press says "No start marker set"; a range with
-no text copies nothing and says nothing. With the navigator in another
+no text copies nothing and says nothing. Verbatim clears only the marker
+the copy was made for, so a marker set again while the copy's read is in
+flight is kept. With the navigator in another
 object than the marker, Verbatim+F10 says "No start marker set" and
 keeps the marker, so back in the marker's object it selects from it.
-NVDA has no message of its own for that case. The captures
+NVDA has no message of its own for that case: the messages listed
+above are all of NVDA's for these commands, with no "same object"
+message. The captures
 `target/e2e-evidence/m42-captures-2026-10-21/1a-review-copy-messages.txt`,
 `1b-start-marker-other-object-parent.txt`, and
 `1b-start-marker-other-object-and-back.txt` show both.
@@ -259,9 +268,9 @@ marker is covered by
 `a_range_through_its_ends_holds_both_ends_characters_whichever_comes_first`.
 A copy the text cannot answer says "Not supported in this document" and
 clears the marker too, a recorded difference: NVDA keeps the marker and
-says nothing, since the read's failure escapes its script. NVDA's "No text to copy", for a first press whose
-range holds nothing, which it says and then clears the marker, is not
-built: the range holds nothing only where the marker and the review
+says nothing, since the read's failure escapes its script. NVDA's "No
+text to copy", for a first press whose range holds nothing, which it
+says and then clears the marker, is not built: the range holds nothing only where the marker and the review
 cursor are at the same place with no character there, such as the end of
 the text, and Core cannot tell that two positions from different reads
 are the same place, so such a press asks the control to select nothing,

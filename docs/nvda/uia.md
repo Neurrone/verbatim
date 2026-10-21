@@ -16,7 +16,7 @@ client object, registers every handler, and then services a small
 internal queue; COM delivers event callbacks on UIA's own MTA worker
 threads. Handler methods do fast filtering and then
 `eventHandler.queueEvent(...)` to the main thread — no announcement
-logic runs on UIA's threads. Where available (Windows 11), NVDA opts
+logic runs on UIA's threads. Where available (Windows 10 RS5, 1809), NVDA opts
 into `CoalesceEvents` (duplicate-event batching in UIA itself) and
 `ConnectionRecoveryBehavior` (UIA reconnects to crashed providers)
 (`MTAThreadFunc`).

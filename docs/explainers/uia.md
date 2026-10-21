@@ -89,8 +89,9 @@ UI thread. The rules that keep this sane:
   callback thread and can stall the whole event pipeline. Queue and return.
 - Registration and unregistration are themselves expensive cross-process
   operations (they touch every provider in scope); add/remove churn is a
-  known performance sink, and Windows 11 added `IUIAutomation6` "event
-  coalescing" and "connection recovery" options to soften handler cost.
+  known performance sink, and Windows 10 RS5 (1809) added
+  `IUIAutomation6` "event coalescing" and "connection recovery" options
+  to soften handler cost.
 
 ## Provider side, briefly
 

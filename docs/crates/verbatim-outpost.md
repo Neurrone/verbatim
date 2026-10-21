@@ -198,10 +198,10 @@ event's own element:
   `NoWindow`, its sender with no window above it
   (`focus_read::NO_WINDOW`), as a sender gone before its read has; or
   `NotFocus`, not a focus at all. Two of these are judgement calls of
-  their own (Dickson, 2026-10-21): the drop
-  whose event said it lacked the keyboard focus when the read's time was
-  up ends the wait, and the one a newer event replaced is inconclusive. A read says, in `focus`, whether it was
-  a focus's rather than a menu opening's. Both go on the pipe as JSON,
+  their own (Dickson, 2026-10-21): the drop whose event said it lacked
+  the keyboard focus when the read's time was up ends the wait, and the
+  one a newer event replaced is inconclusive. A read says, in `focus`,
+  whether it was a focus's rather than a menu opening's. Both go on the pipe as JSON,
   the field `"evidence"` on each drop and `"focus"` on each read; the
   listener, the supervisor and the outposts build from one `protocol.rs`,
   so neither needs a version.
@@ -227,8 +227,9 @@ event's own element:
   folder window a new File Explorer window was opened from, answers
   nothing of it; a drop carries no window and is matched by its
   observation alone, a limit (Dickson, 2026-10-21). A gap a drop or the
-  end of the reads closes is logged at debug, one line per close. The gap is the worker's alone, without a
-  lock, and a replacement worker starts with none. While a marker waits,
+  end of the reads closes is logged at debug, one line per close. The
+  gap is the worker's alone, without a lock, and a replacement worker
+  starts with none. While a marker waits,
   the gap is not judged, whatever the worker wakes for. The intake hands
   the worker, with each entry, the news of the focus markers it resolved
   without a read (`MarkerNews`), under the lock `Intake::next_with_gap`
@@ -965,9 +966,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   change in general terms when the node's text changed since
   (`ReportedCaret::content_changed` and `new_selection`);
   `Anchors::note_content_changed` notes such a change, and
-  `NodeText::forget_selection`
-  and `Anchors::forget_selection` make the next report carry no change. `Anchors` keeps one backend's anchors, by node, numbered
-  from a counter both of an outpost's backends share, and never forgets
+  `NodeText::forget_selection` and `Anchors::forget_selection` make the
+  next report carry no change. `Anchors` keeps one backend's anchors, by
+  node, numbered from a counter both of an outpost's backends share, and never forgets
   those in its `HeldAnchors`, the anchors Core holds, which both of an
   outpost's backends share too (`Anchors::sharing`); `NodeText` is one
   node's, and its `position_at` mints a position at a backend position
@@ -1671,7 +1672,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   one `Execute` checks the element's `HasKeyboardFocus` live, reads a list's
   or tab control's selected child, walks the raw-view parents with the
   base cache filled inside the provider, and finds the element's nearest
-  window. The parents become the chain through `Uia::ancestor_chain_from_parts`,
+  window. The parents become the chain through `Uia::ancestors_from`,
   with the same presentable filter, the same stop at a window read through
   MSAA and the same continuation through MSAA from there. With remote
   operations off (`--classic-uia`),

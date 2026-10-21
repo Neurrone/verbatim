@@ -134,9 +134,10 @@ Public API:
   reads the window hierarchy when its UIA parent read fails. Telling the
   root is two local calls, made when a hop fails, which includes every
   walk that reaches the root, since the root's step to its parent finds
-  none; they are off the per-event path, whose walk is the focus
-  listener's. The time check is made between hops, each of which UIA ends after
-  `TRANSACTION_TIMEOUT`. The walk never steps across the process boundary:
+  none. On the event path they are paid only for an MSAA focus whose
+  walk crosses into a UIA window and reaches the root, once per such
+  walk. The time check is made between hops, each of which UIA ends
+  after `TRANSACTION_TIMEOUT`. The walk never steps across the process boundary:
   before each hop from an element whose own window (`element_window` for
   the first, the cached handle after) has a parent window, or visible
   owner, that another process serves (`parent_across_process_boundary`),

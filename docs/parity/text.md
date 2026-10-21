@@ -262,6 +262,10 @@ Differences:
   range now holding the typed character, and Control+X on a selected line
   says nothing, the old range now empty (mockapp's
   `a_caret_event_before_its_text_change_compares_the_old_ranges_text`).
+  Different and unverified, needing a capture: after Backspace over a
+  selection, NVDA's classic edit control probably says "selection
+  removed", by the general terms above, where Verbatim's Backspace path
+  says what was deleted and nothing about the selection.
   Not yet built:
   - NVDA's classic edit control drops a caret event whose selection
     offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to
@@ -342,14 +346,18 @@ Unicode's line and paragraph separators (`verbatim-text`'s `lines`).
 
 ### The review cursor's bottom in a standard edit control
 
-NVDA's review
-bottom (Shift+Numpad 9) there is the last line with text, while
-Verbatim's, like NVDA's in Windows 11 Notepad, is the empty line after a
-final line break. Verbatim: **different** (Dickson, 2026-10-15): in
-every control, the review cursor's bottom is the last line the caret can
-occupy, including the empty line after a final line break. The claim
-about NVDA's Shift+Numpad 9 in a standard edit control is from reading
-its source and awaits a capture (M4.2).
+NVDA's review bottom (Shift+Numpad 9) there is the line before the
+empty line a final line break leaves, while Verbatim's, like NVDA's in
+Windows 11 Notepad, is that empty line. Verbatim: **different**
+(Dickson, 2026-10-15): in every control, the review cursor's bottom is
+the last line the caret can occupy, including the empty line after a
+final line break. NVDA's behavior is verified by capture in a Windows
+Forms text box (2026-10-21, in `target/e2e-evidence/m42-captures-2026-10-21/`):
+for "one" and "two" NVDA says "two" with no final line break
+(`2-review-bottom-no-final-line-break.txt`) and with one
+(`2-review-bottom-one-final-line-break.txt`), and "blank", the empty
+line between the two breaks, with two
+(`2-review-bottom-two-final-line-breaks.txt`).
 
 ### Browse mode, quick nav, pass-through rules, virtual-buffer equivalent
 

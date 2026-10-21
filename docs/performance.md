@@ -1114,7 +1114,8 @@ from the caret.
 - Target: 1.
 
 Local work beside the calls, which by "What counts as a call" counts as
-none: each report looks the node up in the registry, and, a UIA text
+none: each report looks the node up in the registries (the UIA registry,
+then the MSAA registry), and, a UIA text
 change being no reason to change the comparison, scans no intake for one;
 and each report, a caret key's answer included, keeps its selection's
 ends for the next report to compare with, a copy of two text positions,

@@ -682,3 +682,194 @@ Steps of [the communication design](design/communication.md), section 11.
   2026-10-11.
 - The mixer's idle wait no longer wakes once a second: 451523d0,
   2026-10-13.
+
+### M4.1, stability
+
+M4.1 is complete (Dickson, 2026-10-21). Its aim was that Verbatim stops
+crashing and stalling and the suite stops failing by timing; its exit
+was a week of Dickson's daily use without a crash or a stall, and the
+full suite ten times clean. The items below are its follow-ups as they
+stand at its close: each is open or deferred unless it says it is
+resolved or matched.
+
+- The outpost crash inside UI Automation's saved-event delivery
+  ([the phase 6 design](design/phase6-design.md), "Console windows as one
+  application"): section 17 of the focus-pipeline design is built
+  (152f09a), but `conhost_leave_flood`'s console host outpost failed fast
+  again on 2026-10-12. Read its full dump, kept outside the repository,
+  and make section 17's fifty-run check.
+- Verbatim's own outpost once left a fact in its intake for 6.37 seconds
+  (2026-10-11); reproduce it with the intake and menu logs of f9d067d.
+- MSAA events lost while the listener resumes
+  ([the phase 6 design](design/phase6-design.md), "MSAA events in each
+  outpost's own hook"): an event raised between a ready outpost's end and
+  the listener resuming is lost. The gap is accepted (Dickson,
+  2026-10-21), as the design's recommendation there says.
+- An audit of every end-to-end scenario for timing races (2026-10-11),
+  each race fixed by waiting for evidence, not a longer bound; and the
+  agent's bring-forward, which always takes its slowest path (once 1.4
+  seconds), its cause open. A known weakness of `measure_focus_explorer`'s
+  key waits: each ends on its key's item, and "alpha 2 of 4" ends both
+  Down 1 and Up 1, as "Inner 1 of 4" ends both Up 2 and Backspace, so a
+  late repeat of one step's item arriving after the next key would end
+  that key's wait; renaming cannot remove it, since the targets are
+  `explorer_folder_window`'s.
+- `CoCancelCall` for MSAA calls is not built (Dickson, 2026-10-21): the
+  experiment's record,
+  `experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/readme.md`,
+  finds it ends a COM call but not the window-message acquisitions, NVDA
+  ends the entry on it and speaks nothing, and it costs about 12
+  microseconds on every COM call of the thread; the worker's deadline and
+  abandonment stay the bound.
+- What remains of the audits' items 10 and 11 (Dickson, 2026-10-20;
+  items 8 and 9 are done, under stage A above):
+  - Item 11, its three changes done (stage A above); left from it,
+    deferred until a capture shows speech that should have been cut
+    (Dickson, 2026-10-20), since the
+    spoken words already match: the staging windows' focus, which
+    Verbatim drops, so speech is not cut at the staging window, where
+    NVDA makes it the focus without speaking it and cuts speech
+    (`docs/parity/windows-and-processes.md`, "The shell's staging
+    windows"). Deferred until Verbatim reads such a combo box in an
+    application, because no .NET Framework application is in the suite
+    and expectations come only from captures (Dickson, 2026-10-20): the
+    classic .NET Framework Windows Forms combo box rule, element-selected
+    events from the `ComboLBox` window reported as the combo box's value
+    change (`NVDAObjects/UIA/__init__.py`, lines 2734 to 2744 and 2779
+    to 2790). Not built, since no combo box it applies to was found: the
+    rule for a `Windows.UI.Core` combo box that has the `Value` pattern
+    (lines 2795 to 2798); every Settings combo box checked on 2026-10-20
+    lacks the pattern and takes the rule without it, which is built
+    (`docs/parity/changes-and-selection.md`, "A combo box's value from its
+    selected item"). The item's live reads of the focus's property events are
+    struck: the ledger's "Name change on the focus" and "What an accepted
+    MSAA change reads" already match NVDA.
+  - Item 10, the events NVDA registers desktop-wide that Verbatim lacks,
+    is deferred until each event is supported (Dickson, 2026-10-20);
+    `docs/parity/backends.md`, "UIA event registration", records the gap,
+    and its pieces have homes: a foreground UIA progress bar that is not
+    the focus in M4.2, background progress bars in M4.3.
+- The OneCore synthesizer host failed now and then to become ready within
+  10 seconds on GitHub's runner (runs before 2026-10-15, 39603654902, and
+  the run on 4304016c). The cause is the first activation of the Windows
+  speech platform in a fresh runner session, which takes longer than ten
+  seconds: the unit tests start several OneCore hosts at once, and the
+  ones that start first all wait on that one activation, while every
+  host after it is ready in about 50 milliseconds. Both unit-test jobs
+  therefore run `cargo xtask warm-speech` before `cargo xtask ci`, which
+  activates the platform once and prints how long it took. The host's
+  start is logged step by step to
+  `target/debug/logs/<test pid>/synth-onecore.log`, which the job log
+  never shows, so the unit-test jobs upload that directory as an
+  artifact when they fail, for any other failure to start.
+- Open (Dickson, 2026-10-21): what Verbatim does for a user whose first
+  OneCore activation after logon takes longer than the synthesizer
+  host's ten-second hang bound.
+
+- GitHub's CI on main had failed on the two pushes before 2026-10-15
+  (runs 38271366442 and 38544999189), in two places that this machine
+  never runs: the ARM64 job's unit test
+  `the_codeview_record_read_is_the_one_dbghelp_reports` in
+  `verbatim-trace-waits` (`server.rs`, an equality assertion), and the
+  hosted end-to-end job, where `windows_terminal_two_windows` and
+  `windows_terminal_leave_flood` failed (80 of 83 passed; the third
+  failure, File Explorer's placeholder in `explorer_folder_window`, is an
+  optional utterance of that scenario). Root-cause each
+  from the run logs (`gh run view <id> --log-failed`) rather than from a
+  local run, since neither reproduces here.
+- GitHub's `e2e` job in run 39558690998 showed that the runner's
+  Settings opens the suggestions list and sets the search box's
+  ControllerFor relation but raises no selection event for a first
+  suggestion within 1.6 seconds, so `settings_search_suggestions` is
+  local-only.
+
+- The focus pipeline's follow-ups (2026-10-17):
+  - UIA's late or missing delivery of a new process's focus events, and
+    the burst of gone senders (risks 2 and 13 of
+    [the listener design](design/listener-without-connections.md)), are
+    recovered by decision 11's step (section 10, step 12). What remains:
+    the first `settings_system_page` or File Explorer run that meets the
+    fault is to be read for the outpost's "the focus is read and
+    reported" line and the speech after it.
+  - A placeholder that keeps the focus: File Explorer can give the focus
+    to its "Working on it..." placeholder, a static text, and raise no
+    later focus, UIA or `WinEvent`, so `measure_focus_explorer`'s step
+    times out (`target/e2e-evidence/fixes-round-fifteen-2026-10-21/mfe-1-fail/`).
+    Decision 11's wait cannot recover it, since no `WinEvent` focus comes,
+    and the scenario has no handling for it; what File Explorer raises
+    then, beyond a name change and three state changes on the items view
+    whose states the hook's debug line does not show, is to be found.
+  - `explorer_folder_window` failed in runs 39573264801 and 39613639083
+    after Enter with `["Working on it...", "Inner - File Explorer"]` where
+    "Items View list" was expected. The cause: the focus listener's
+    classic ancestor walk took the placeholder's failed step to its
+    parent for the desktop root, so the placeholder was stored with no
+    containers, and the item's focus after it counted every container,
+    the window included, as entered. The walk now reports a step from
+    below the root that fails or finds no parent as ancestors unknown, so
+    Core keeps the previous chain and the item enters only the list
+    (`docs/parity/focus-events.md`, "A focus whose element is gone before
+    its read", and its `mockapp` test). The scenario accepts the
+    placeholder at either place, so its next runner pass is what confirms
+    the fix.
+  - The outpost's remote focus program still reports as a complete walk
+    one that ends at a missing parent above an element with its own
+    window handle when no top-level window was reached; only a fragment
+    element reporting a handle it does not host reaches this.
+  - Check why the `delta` item inside Inner in run 39558690998 still
+    carried the parent folder's window title: File Explorer's title
+    lagging, or a stale ancestor name.
+  - No outpost connects to a new window after its probe, so the worker is
+    held only by the probe while File Explorer builds the window: a new folder window's
+    first item was queued 62 to 323 ms after its event in 50 windows on
+    2026-10-21, against up to 2,280 ms with that connection
+    ([the listener design](design/listener-without-connections.md), risk 11).
+  - When a console window is read through MSAA, NVDA gives its client
+    object the legacy console overlay with the terminal role
+    (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,
+    and `IAccessible/winConsole.py`); Verbatim says "pane" (deferred,
+    Dickson, 2026-10-21).
+  - On a fresh GitHub runner, the first Verbatim start can say "Start
+    toggle button not pressed" instead of "Desktop list": shortly after
+    Verbatim's subscriptions are installed, the taskbar rehosts the Start
+    button in a new PopupHost window, raising a UIA focus on a topmost
+    window that reports keyboard focus (runs 39040893786 and 38980790680).
+    NVDA's checks would accept that focus too. The choice between a
+    throwaway warm-up start before the suite and an experiment to find
+    what triggers the rehosting is deferred (Dickson, 2026-10-21). The
+    local cause of the same utterance, the agent's minimize activating
+    the taskbar, is fixed (ace7858d).
+  - Notepad's "app not responding" sound played once in `notepad_editing`
+    on 2026-10-18, about 2 seconds after a right arrow, and the rerun
+    passed; investigate if it recurs.
+  - In File Explorer scenarios the listener's read once came 285
+    milliseconds late. The listener logs how long its nearest-window
+    lookup takes (f9fb32f7): locally most of the delay, about 230
+    milliseconds, is the first lookup waiting on a busy File Explorer.
+    Confirm the same on GitHub's runner (deferred, Dickson, 2026-10-21).
+  - Windows Terminal's terminal is sometimes said twice, or three times
+    for a second window: in some launches Windows Terminal raises the
+    terminal's focus under a second runtime id, the one starting 14,
+    besides the usual one. The tests accept it as an optional utterance
+    (`docs/testing.md`, "Optional utterances"). The cause is most likely
+    a race in Windows Terminal's startup: it happens in about 4% of
+    launches locally and 13 to 20% on GitHub's runner, the first such
+    event arrives before any Verbatim client contacts the terminal, and
+    it happens with spare outposts off too; NVDA receives it as well.
+    The rule that recognizes it is deferred to a Windows Terminal app
+    module in M5 (see M5, "Windows Terminal's second terminal
+    identity"). Evidence is in
+    `target/e2e-evidence/full-suite-2026-10-17/` and
+    `target/e2e-evidence/full-suite-2026-10-17-spares-off/`.
+  - One UIA focus event reached the listener 5 seconds late in a console
+    host run on 2026-10-17; watch for it again.
+  - The trace tool's symbol lookup for ARM64X images, such as ntdll,
+    needs a follow-up, which can be tested only on the ARM64 runner
+    (deferred, Dickson, 2026-10-21).
+  - `line_key_flood` once read a half-written line on GitHub's runner;
+    repeat it there (deferred, Dickson, 2026-10-21).
+  - The suggestions-closed sound played twice in Settings' search box is
+    matched: NVDA's UIA debug logs show it receives Settings' duplicate
+    ControllerFor change in some presses and plays the sound for each
+    (`docs/parity/changes-and-selection.md`, "Suggestions appearing and
+    going away").

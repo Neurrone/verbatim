@@ -282,7 +282,9 @@ heard. The verdicts are:
 - "not compared: NVDA says nothing about a desktop already in front":
   the run's start, its first step when that has no input, which is not
   judged, since NVDA, started before the scenario, announces nothing
-  about the desktop the scenario starts from.
+  about the desktop the scenario starts from. A deviation the scenario
+  declares on that start step is not counted either, since the step is
+  not compared.
 
 A gesture with the Verbatim modifier is judged like any other step:
 `kb:verbatim+f9`, for example, is pressed as `insert+f9`, "same" when
@@ -293,7 +295,9 @@ A summary at the end counts each verdict.
 For the comparison to say anything, NVDA must run with the settings the
 scenarios' expectations were captured with: eSpeak NG as its
 synthesizer, as the suite runs Verbatim with eSpeak NG, and its symbol
-level and verbosity settings at NVDA's defaults. The quiet period and
+level and verbosity settings at NVDA's defaults, and delayed character
+descriptions off, NVDA's default, since with it on NVDA says a
+character's phonetic word after the character. The quiet period and
 the text compared do not depend on the voice's rate. Check the pin
 before a series of comparisons, as before a capture.
 

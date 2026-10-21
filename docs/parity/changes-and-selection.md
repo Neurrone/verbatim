@@ -71,7 +71,11 @@ judges it by the changed object's own states: a focus that reported
 itself focused when it became the focus, and whose new state set no
 longer includes focused, has lost the focus, and its change is not
 spoken (its states are still kept). A control that never reports the
-focused state is unaffected. **matched (unverified)**.
+focused state is unaffected. A focus that has expired is not spoken
+for either: the focus listener drops a focus that lost the keyboard
+focus before it was read, so it never becomes Core's focus, as the
+Control+Tab case in [terminals](terminals.md) records. **matched
+(unverified)**.
 
 ### The number of items an expanded tree view item holds
 
