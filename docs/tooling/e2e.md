@@ -259,8 +259,9 @@ once its outpost was retired after two minutes without attention is
 announced as before, through a new outpost; it takes about three
 minutes), `explorer_folder_window` (a File Explorer window on a harness
 folder, where File Explorer's "Working on it..." placeholder is an
-optional utterance after Enter and after Backspace, before "Items View
-list" or between it and the item),
+optional utterance on the window's opening and after Enter and after
+Backspace, before the speech its item's focus brings or between that
+speech and the item),
 `settings_system_page` (the Settings app's System page),
 `settings_search_suggestions` (the Settings app's search suggestions,
 read as the selection moves through them while the focus stays in the
