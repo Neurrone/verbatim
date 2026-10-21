@@ -57,6 +57,13 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-hakari
+      # Environment preparation: a fresh runner's first activation of the
+      # Windows speech platform takes longer than the synthesizer host's
+      # ten-second hang bound, and the unit tests start several OneCore
+      # hosts at once that would all wait on it. Activating it once here
+      # pays that cost before the tests and shows it in the job log.
+      - name: Warm the Windows speech platform
+        run: cargo xtask warm-speech
       - name: Run CI checks
         run: cargo xtask ci
       # The unit tests launch the synthesizer host as Verbatim does, and
@@ -104,6 +111,13 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-hakari
+      # Environment preparation: a fresh runner's first activation of the
+      # Windows speech platform takes longer than the synthesizer host's
+      # ten-second hang bound, and the unit tests start several OneCore
+      # hosts at once that would all wait on it. Activating it once here
+      # pays that cost before the tests and shows it in the job log.
+      - name: Warm the Windows speech platform
+        run: cargo xtask warm-speech
       - name: Run CI checks
         run: cargo xtask ci
       # The unit tests launch the synthesizer host as Verbatim does, and

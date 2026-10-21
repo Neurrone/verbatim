@@ -27,12 +27,21 @@
 //! local end-to-end run keeps working with no RDP client connected. See
 //! `xtask/src/park.rs`.
 //!
+//! `warm-speech` activates the Windows speech platform once and reports how
+//! long that took, so a CI job pays the platform's cold first activation
+//! before the tests that start synthesizer hosts in parallel.
+//!
 //! `trace start` and `trace stop` record a WPR trace of the CPU's
 //! scheduling through two elevated tasks. See `xtask/src/trace.rs`.
 
 use std::env;
 use std::process::{Command, ExitCode};
 use std::str;
+use std::time::Instant;
+
+use windows::Media::SpeechSynthesis::SpeechSynthesizer;
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
 mod demo;
 mod nvda;
@@ -78,6 +87,7 @@ fn main() -> ExitCode {
         Some("nvda") => nvda::run(&args[1..]),
         Some("windows-terminal") => windows_terminal(),
         Some("relay-floor") => relay_floor(&args[1..]),
+        Some("warm-speech") => warm_speech(),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");
@@ -105,6 +115,9 @@ fn main() -> ExitCode {
             );
             eprintln!(
                 "  relay-floor  measure the platform's floor for Verbatim's pipes and relay, in release (docs/tooling/measuring.md)"
+            );
+            eprintln!(
+                "  warm-speech  activate the Windows speech platform once and print how long it took and the default voice"
             );
             ExitCode::from(2)
         }
@@ -137,6 +150,48 @@ fn relay_floor(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Activates the Windows speech platform once through the binding
+/// Verbatim's synthesizer in `verbatim-synth-onecore` uses: COM
+/// initialized as MTA as that synthesizer does, one `SpeechSynthesizer`
+/// constructed, its voice's display name read, and the synthesizer
+/// dropped. It prints how long that
+/// took, so a CI job's log shows the platform's cold cost, and fails when
+/// any step fails.
+fn warm_speech() -> ExitCode {
+    let started = Instant::now();
+    match activate_speech() {
+        Ok(voice) => {
+            println!(
+                "the Windows speech platform activated in {} ms, default voice {voice}",
+                started.elapsed().as_millis()
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!(
+                "xtask warm-speech: the Windows speech platform failed to activate after {} ms: {error}",
+                started.elapsed().as_millis()
+            );
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Constructs a speech synthesizer and returns its voice's display name.
+fn activate_speech() -> Result<String, String> {
+    // SAFETY: no reserved parameter; COM stays initialized for the process.
+    let hr = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if hr.is_err() && hr != RPC_E_CHANGED_MODE {
+        return Err(format!("CoInitializeEx failed: {:#010x}", hr.0));
+    }
+    let synth = SpeechSynthesizer::new().map_err(|error| format!("create synthesizer: {error}"))?;
+    let voice = synth
+        .Voice()
+        .and_then(|voice| voice.DisplayName())
+        .map_err(|error| format!("read the voice's name: {error}"))?;
+    Ok(voice.to_string())
 }
 
 /// Downloads, checks, and unpacks the pinned portable Windows Terminal the

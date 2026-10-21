@@ -228,15 +228,22 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     `docs/parity/backends.md`, "UIA event registration", records the gap,
     and its pieces have homes: a foreground UIA progress bar that is not
     the focus in M4.2, background progress bars in M4.3.
-- The OneCore synthesizer host fails now and then to become ready within
-  10 seconds on GitHub's runner, where it is otherwise ready in about a
-  second (runs before 2026-10-15, and 39603654902, where four hosting
-  tests' hosts all stalled in the same ten seconds while one started
-  just after was ready). Its start is logged step by step (3baec60) to
+- The OneCore synthesizer host failed now and then to become ready within
+  10 seconds on GitHub's runner (runs before 2026-10-15, 39603654902, and
+  the run on 4304016c). The cause is the first activation of the Windows
+  speech platform in a fresh runner session, which takes longer than ten
+  seconds: the unit tests start several OneCore hosts at once, and the
+  ones that start first all wait on that one activation, while every
+  host after it is ready in about 50 milliseconds. Both unit-test jobs
+  therefore run `cargo xtask warm-speech` before `cargo xtask ci`, which
+  activates the platform once and prints how long it took. The host's
+  start is logged step by step to
   `target/debug/logs/<test pid>/synth-onecore.log`, which the job log
   never shows, so the unit-test jobs upload that directory as an
-  artifact when they fail: investigate the next recurrence from it,
-  which shows the step where the host stopped.
+  artifact when they fail, for any other failure to start.
+- Open (Dickson, 2026-10-21): what Verbatim does for a user whose first
+  OneCore activation after logon takes longer than the synthesizer
+  host's ten-second hang bound.
 
 - GitHub's CI on main had failed on the two pushes before 2026-10-15
   (runs 38271366442 and 38544999189), in two places that this machine

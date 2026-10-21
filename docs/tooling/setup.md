@@ -90,6 +90,8 @@ every finding:
   reads an element through a shape, declaring one in the shape module if
   none holds what it reads.
 
+`cargo xtask warm-speech` activates the Windows speech platform once and prints how long that took and the default voice's name, failing if the activation fails; CI's two unit-test jobs run it before `cargo xtask ci`, because a fresh runner's first activation outlasts the synthesizer host's ten-second hang bound.
+
 ### Build disk use
 
 Most of a debug build is debug information (PDBs) and incremental
