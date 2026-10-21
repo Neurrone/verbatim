@@ -19,7 +19,7 @@ const BUFFER_FRAMES: u32 = SAMPLE_RATE / 25;
 
 /// How often a running silent device wakes its waiter: 10 ms, a typical
 /// device period.
-const PERIOD: Duration = Duration::from_millis(10);
+pub(crate) const PERIOD: Duration = Duration::from_millis(10);
 
 /// Plays frames at real-time speed into silence.
 pub struct SilentDevice {
@@ -65,15 +65,22 @@ impl Default for SilentDevice {
     }
 }
 
-impl AudioDevice for SilentDevice {
-    fn open(&mut self) -> Result<DeviceFormat, AudioError> {
+impl SilentDevice {
+    /// Opens the device, which cannot fail: stopped, with nothing queued.
+    pub(crate) fn open_silent(&mut self) -> DeviceFormat {
         self.queued = 0.0;
         self.running_since = None;
-        Ok(DeviceFormat {
+        DeviceFormat {
             sample_rate: SAMPLE_RATE,
             channels: CHANNELS,
             buffer_frames: BUFFER_FRAMES,
-        })
+        }
+    }
+}
+
+impl AudioDevice for SilentDevice {
+    fn open(&mut self) -> Result<DeviceFormat, AudioError> {
+        Ok(self.open_silent())
     }
 
     fn queued_frames(&mut self) -> Result<u32, AudioError> {

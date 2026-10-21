@@ -194,9 +194,7 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   that key's wait; renaming cannot remove it, since the targets are
   `explorer_folder_window`'s.
 - Scheduled for later (Dickson, 2026-10-11, from the communication
-  design): the mixer's retry after a failed audio device open is a timed
-  deadline, to be replaced by waiting for evidence such as a device
-  notification; and the keyboard hook drops a gesture when the router's
+  design): the keyboard hook drops a gesture when the router's
   channel is full (`try_send` in `crates/verbatim-input-windows/src/lib.rs`),
   which must never lose a key.
 - `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's

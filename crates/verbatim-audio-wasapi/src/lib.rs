@@ -6,22 +6,27 @@
 //! 40 ms) so a discarded queue is a short one; the mixer measures underruns
 //! to check that it is not too small.
 //!
-//! Recovery. The device asks to be reopened when Windows reports that the
-//! default render device changed, and any failure of the stream (a headset
-//! unplugged reports `AUDCLNT_E_DEVICE_INVALIDATED`) is an error the mixer
-//! answers by reopening. When no render device exists at all, the device
-//! plays at real-time speed into silence, as [`verbatim_audio::SilentDevice`]
-//! does, until Windows reports a new default device.
+//! Recovery. The device registers once, on the audio thread, for Windows'
+//! endpoint notifications, and passes them to [`DeviceNotices`]: an open
+//! stream is reopened when the default render device changes, and any
+//! failure of the stream (a headset unplugged reports
+//! `AUDCLNT_E_DEVICE_INVALIDATED`) is an error the mixer answers by
+//! reopening. When an open fails, the mixer plays real-time silence in the
+//! device's place, and the device asks to be opened again on the evidence
+//! for its failure ([`open_failure`]): when there is no render device, or
+//! the one there was went away, at the next notification that a device
+//! arrived, became active, or became the default; when an active device
+//! refused the stream, which Windows sends no notification for clearing,
+//! also a second later.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tracing::{info, warn};
-use verbatim_audio::{AudioDevice, AudioError, ClockReading, DeviceFormat, SilentDevice, Waker};
+use verbatim_audio::{AudioDevice, AudioError, ClockReading, DeviceFormat, DeviceNotices, Waker};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, RPC_E_CHANGED_MODE};
 use windows::Win32::Media::Audio::{
-    AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
+    AUDCLNT_E_DEVICE_INVALIDATED, AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM,
     AUDCLNT_STREAMFLAGS_EVENTCALLBACK, AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY, IAudioClient,
     IAudioClock, IAudioRenderClient, IMMDeviceEnumerator, IMMNotificationClient,
     MMDeviceEnumerator, WAVEFORMATEX, WAVEFORMATEXTENSIBLE, WAVEFORMATEXTENSIBLE_0, eConsole,
@@ -37,7 +42,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::core::{GUID, HRESULT, PCWSTR, w};
 
-use watcher::DefaultDeviceWatcher;
+use watcher::DeviceWatcher;
 
 /// Requested render buffer, in 100-nanosecond units: about 40 ms.
 const BUFFER_DURATION_HNS: i64 = 400_000;
@@ -56,13 +61,10 @@ const SUBTYPE_IEEE_FLOAT: GUID = GUID::from_u128(0x0000_0003_0000_0010_8000_00aa
 )]
 const E_NOTFOUND: HRESULT = HRESULT(0x8007_0490_u32 as i32);
 
-/// How long to play silently after a device failed to open before trying
-/// it again.
+/// How long after an active device refused the stream to try it again,
+/// since Windows sends no notification when what refused it clears
+/// ([`open_failure`]).
 const OPEN_RETRY: Duration = Duration::from_secs(1);
-
-/// How often the silent fallback wakes while playing: 10 ms, a typical
-/// device period.
-const SILENT_PERIOD_MS: u32 = 10;
 
 fn device_error(context: &str, error: &windows::core::Error) -> AudioError {
     AudioError::Device(format!("{context}: {error}"))
@@ -103,38 +105,40 @@ impl Drop for Event {
 mod watcher {
     #![allow(clippy::inline_always, clippy::ref_as_ptr)]
 
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
+    use verbatim_audio::{DeviceNotice, DeviceNotices};
     use windows::Win32::Foundation::PROPERTYKEY;
     use windows::Win32::Media::Audio::{
-        DEVICE_STATE, EDataFlow, ERole, IMMNotificationClient, IMMNotificationClient_Impl,
-        eConsole, eRender,
+        DEVICE_STATE, DEVICE_STATE_ACTIVE, EDataFlow, ERole, IMMNotificationClient,
+        IMMNotificationClient_Impl, eConsole, eRender,
     };
-    use windows::Win32::System::Threading::SetEvent;
     use windows::core::PCWSTR;
     use windows_core::implement;
 
-    use super::Event;
-
-    /// Sets the reopen flag, and wakes the audio thread, when the default
-    /// render device changes.
+    /// Passes Windows' endpoint notifications to the device's notices,
+    /// which ask for a reopen and wake the audio thread when one could
+    /// help. An arrival or activation is not filtered by data flow, since
+    /// telling a capture device from a render one would take a call into
+    /// the enumerator from the callback; it costs a reopen only while an
+    /// open has failed.
     #[implement(IMMNotificationClient)]
-    pub(super) struct DefaultDeviceWatcher {
-        pub(super) changed: Arc<AtomicBool>,
-        pub(super) wake: Arc<Event>,
+    pub(super) struct DeviceWatcher {
+        pub(super) notices: DeviceNotices,
     }
 
-    impl IMMNotificationClient_Impl for DefaultDeviceWatcher_Impl {
+    impl IMMNotificationClient_Impl for DeviceWatcher_Impl {
         fn OnDeviceStateChanged(
             &self,
             _device: &PCWSTR,
-            _state: DEVICE_STATE,
+            state: DEVICE_STATE,
         ) -> windows::core::Result<()> {
+            if state == DEVICE_STATE_ACTIVE {
+                self.notices.notify(DeviceNotice::Available);
+            }
             Ok(())
         }
 
         fn OnDeviceAdded(&self, _device: &PCWSTR) -> windows::core::Result<()> {
+            self.notices.notify(DeviceNotice::Available);
             Ok(())
         }
 
@@ -149,11 +153,7 @@ mod watcher {
             _device: &PCWSTR,
         ) -> windows::core::Result<()> {
             if flow == eRender && role == eConsole {
-                self.changed.store(true, Ordering::SeqCst);
-                // SAFETY: the event outlives the watcher, which holds it.
-                unsafe {
-                    let _ = SetEvent(self.wake.0);
-                }
+                self.notices.notify(DeviceNotice::DefaultChanged);
             }
             Ok(())
         }
@@ -182,26 +182,69 @@ struct Stream {
     running: bool,
 }
 
-/// Why a stream could not be opened.
-enum OpenFailure {
-    /// The system has no render device at all.
-    NoDevice(AudioError),
-    /// A render device exists but could not be opened; this may pass.
-    Failed(AudioError),
+/// What a failed open waits for before it is tried again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Evidence {
+    /// A notification: a device arrived, became active, or became the
+    /// default.
+    Notification,
+    /// A deadline as well as a notification, since Windows sends none when
+    /// the failure clears.
+    Deadline,
+}
+
+/// What evidence an open that failed with `error` waits for.
+///
+/// - No render device (`GetDefaultAudioEndpoint` returns `E_NOTFOUND`):
+///   Windows reports the next one as it arrives (`OnDeviceAdded`), becomes
+///   active (`OnDeviceStateChanged`) and becomes the default
+///   (`OnDefaultDeviceChanged`).
+/// - The device went away or was disabled while it was being opened
+///   (`AUDCLNT_E_DEVICE_INVALIDATED`): its removal changes the default
+///   device, and a device enabled again becomes active, both notified.
+/// - Anything else, an active device that refused the stream: another
+///   program holding it in exclusive mode (`AUDCLNT_E_DEVICE_IN_USE`), the
+///   audio service not running, or a resource the engine lacked. The
+///   endpoint notifications report endpoints arriving, leaving, changing
+///   state or becoming the default, and an endpoint's properties changing,
+///   never that one became free, so these alone are tried again at a
+///   deadline, [`OPEN_RETRY`]. Checked on 2026-10-21: with the default
+///   device held in exclusive mode, a shared open failed with
+///   `AUDCLNT_E_DEVICE_IN_USE`, releasing the device raised no
+///   notification in the five seconds after, and a shared open then
+///   succeeded.
+fn open_failure(error: &windows::core::Error) -> Evidence {
+    let code = error.code();
+    if code == E_NOTFOUND || code == AUDCLNT_E_DEVICE_INVALIDATED {
+        Evidence::Notification
+    } else {
+        Evidence::Deadline
+    }
+}
+
+/// A stream that could not be opened: the error, and what the next open
+/// waits for.
+struct OpenFailure {
+    error: AudioError,
+    evidence: Evidence,
 }
 
 impl From<AudioError> for OpenFailure {
     fn from(error: AudioError) -> Self {
-        Self::Failed(error)
+        Self {
+            error,
+            evidence: Evidence::Deadline,
+        }
     }
 }
 
-/// What the device is playing through.
-enum Output {
-    Closed,
-    Stream(Stream),
-    /// No render device exists; real time into silence.
-    Silent(SilentDevice),
+/// `context` and the Windows `error`, as a failed open, with the evidence
+/// its next open waits for.
+fn open_error(context: &str, error: &windows::core::Error) -> OpenFailure {
+    OpenFailure {
+        error: device_error(context, error),
+        evidence: open_failure(error),
+    }
 }
 
 /// The WASAPI implementation of [`AudioDevice`].
@@ -210,11 +253,10 @@ enum Output {
 /// [`AudioDevice::open`], which initializes COM on that thread.
 pub struct WasapiDevice {
     enumerator: Option<IMMDeviceEnumerator>,
+    /// The notification client, once registered with `enumerator`.
     watcher: Option<IMMNotificationClient>,
-    output: Output,
-    default_changed: Arc<AtomicBool>,
-    /// When to try opening a real device again after one failed to open.
-    retry_at: Option<Instant>,
+    stream: Option<Stream>,
+    notices: DeviceNotices,
     wake: Arc<Event>,
 }
 
@@ -232,18 +274,18 @@ impl WasapiDevice {
     ///
     /// Returns [`AudioError::Device`] when the wake event cannot be created.
     pub fn new() -> Result<Self, AudioError> {
+        let wake = Arc::new(Event::new()?);
         Ok(Self {
             enumerator: None,
             watcher: None,
-            output: Output::Closed,
-            default_changed: Arc::new(AtomicBool::new(false)),
-            retry_at: None,
-            wake: Arc::new(Event::new()?),
+            stream: None,
+            notices: DeviceNotices::new(waker(&wake)),
+            wake,
         })
     }
 
-    /// The device enumerator, created on first use with a watcher for
-    /// default-device changes registered on it.
+    /// The device enumerator, created on first use with the watcher for
+    /// endpoint notifications registered on it.
     fn enumerator(&mut self) -> Result<IMMDeviceEnumerator, AudioError> {
         if let Some(enumerator) = &self.enumerator {
             return Ok(enumerator.clone());
@@ -273,42 +315,36 @@ impl WasapiDevice {
         let enumerator: IMMDeviceEnumerator =
             unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) }
                 .map_err(|error| device_error("create device enumerator", &error))?;
-        let watcher: IMMNotificationClient = DefaultDeviceWatcher {
-            changed: Arc::clone(&self.default_changed),
-            wake: Arc::clone(&self.wake),
+        let watcher: IMMNotificationClient = DeviceWatcher {
+            notices: self.notices.clone(),
         }
         .into();
         // SAFETY: the watcher is kept alive in `self` for as long as the
         // enumerator it is registered with.
-        if let Err(error) = unsafe { enumerator.RegisterEndpointNotificationCallback(&watcher) } {
-            warn!(target: "verbatim::audio", %error, "default device changes will not be followed");
+        match unsafe { enumerator.RegisterEndpointNotificationCallback(&watcher) } {
+            Ok(()) => self.watcher = Some(watcher),
+            Err(error) => {
+                warn!(target: "verbatim::audio", %error, "device changes will not be followed, and a failed open is tried again each second");
+            }
         }
-        self.watcher = Some(watcher);
         self.enumerator = Some(enumerator.clone());
         Ok(enumerator)
     }
 
     /// Opens a shared-mode stream on the current default render device.
     fn open_stream(&mut self) -> Result<(Stream, DeviceFormat), OpenFailure> {
-        let enumerator = self.enumerator().map_err(OpenFailure::Failed)?;
+        let enumerator = self.enumerator()?;
         // The COM calls below are plain calls on objects this thread owns.
         // SAFETY: as above.
-        let device =
-            unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }.map_err(|error| {
-                let failure = device_error("no default render device", &error);
-                if error.code() == E_NOTFOUND {
-                    OpenFailure::NoDevice(failure)
-                } else {
-                    OpenFailure::Failed(failure)
-                }
-            })?;
+        let device = unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) }
+            .map_err(|error| open_error("no default render device", &error))?;
         // SAFETY: as above.
         let client: IAudioClient = unsafe { device.Activate(CLSCTX_ALL, None) }
-            .map_err(|error| device_error("activate audio client", &error))?;
+            .map_err(|error| open_error("activate audio client", &error))?;
         // SAFETY: as above; the mix format pointer is read once and freed
         // with CoTaskMemFree below.
         let mix = unsafe { client.GetMixFormat() }
-            .map_err(|error| device_error("read the mix format", &error))?;
+            .map_err(|error| open_error("read the mix format", &error))?;
         // SAFETY: `mix` points to the format the call allocated, at least a
         // WAVEFORMATEX, which is packed, so any alignment will do.
         let header = unsafe { mix.read_unaligned() };
@@ -356,24 +392,24 @@ impl WasapiDevice {
                 None,
             )
         }
-        .map_err(|error| device_error("initialize the stream", &error))?;
+        .map_err(|error| open_error("initialize the stream", &error))?;
         let event = Event::new()?;
         // SAFETY: as above; the event outlives the client, as `Stream`'s
         // field order ensures.
         unsafe { client.SetEventHandle(event.0) }
-            .map_err(|error| device_error("set the render event", &error))?;
+            .map_err(|error| open_error("set the render event", &error))?;
         // SAFETY: as above.
         let buffer_frames = unsafe { client.GetBufferSize() }
-            .map_err(|error| device_error("read the buffer size", &error))?;
+            .map_err(|error| open_error("read the buffer size", &error))?;
         // SAFETY: as above.
         let render: IAudioRenderClient = unsafe { client.GetService() }
-            .map_err(|error| device_error("get the render client", &error))?;
+            .map_err(|error| open_error("get the render client", &error))?;
         // SAFETY: as above.
         let clock: IAudioClock = unsafe { client.GetService() }
-            .map_err(|error| device_error("get the stream's clock", &error))?;
+            .map_err(|error| open_error("get the stream's clock", &error))?;
         // SAFETY: a plain COM call on the clock just obtained.
         let clock_frequency = unsafe { clock.GetFrequency() }
-            .map_err(|error| device_error("read the clock's frequency", &error))?;
+            .map_err(|error| open_error("read the clock's frequency", &error))?;
         Ok((
             Stream {
                 client,
@@ -405,12 +441,31 @@ impl Drop for WasapiDevice {
     }
 }
 
+/// A waker that signals `wake`.
+fn waker(wake: &Arc<Event>) -> Waker {
+    let wake = Arc::clone(wake);
+    Arc::new(move || {
+        // SAFETY: signalling an event this closure keeps alive.
+        unsafe {
+            let _ = SetEvent(wake.0);
+        }
+    })
+}
+
+impl WasapiDevice {
+    /// The open stream, or the error for a device that is not open.
+    fn stream(&mut self) -> Result<&mut Stream, AudioError> {
+        self.stream
+            .as_mut()
+            .ok_or_else(|| AudioError::Device("the device is not open".to_owned()))
+    }
+}
+
 impl AudioDevice for WasapiDevice {
     fn open(&mut self) -> Result<DeviceFormat, AudioError> {
         self.stop();
-        self.output = Output::Closed;
-        self.default_changed.store(false, Ordering::SeqCst);
-        self.retry_at = None;
+        self.stream = None;
+        self.notices.opening();
         match self.open_stream() {
             Ok((stream, format)) => {
                 info!(
@@ -420,111 +475,85 @@ impl AudioDevice for WasapiDevice {
                     buffer_frames = format.buffer_frames,
                     "audio device opened"
                 );
-                self.output = Output::Stream(stream);
+                self.notices.opened();
+                self.stream = Some(stream);
                 Ok(format)
             }
-            Err(failure) => {
-                // Speech must go on whatever the device does, so a device
-                // that cannot be opened is replaced by real-time silence:
-                // until Windows reports a new default device when there is
-                // none, or for a second when the open failed.
-                match failure {
-                    OpenFailure::NoDevice(error) => {
-                        warn!(target: "verbatim::audio", %error, "no audio device; playing silently in real time until one appears");
-                    }
-                    OpenFailure::Failed(error) => {
-                        warn!(target: "verbatim::audio", %error, "the audio device could not be opened; playing silently and trying again in a second");
-                        self.retry_at = Some(Instant::now() + OPEN_RETRY);
-                    }
+            Err(OpenFailure { error, evidence }) => {
+                // Without a registered watcher no notification comes, so
+                // every failure waits for the deadline.
+                if evidence == Evidence::Notification && self.watcher.is_some() {
+                    info!(target: "verbatim::audio", "the audio device will be opened again when Windows reports a device that could open");
+                    self.notices.failed(None);
+                } else {
+                    info!(target: "verbatim::audio", "the audio device will be opened again in a second, since Windows reports nothing when this failure clears");
+                    self.notices.failed(Some(OPEN_RETRY));
                 }
-                let mut silent = SilentDevice::new();
-                let format = silent.open()?;
-                self.output = Output::Silent(silent);
-                Ok(format)
+                Err(error)
             }
         }
     }
 
     fn queued_frames(&mut self) -> Result<u32, AudioError> {
-        match &mut self.output {
-            Output::Closed => Err(AudioError::Device("the device is not open".to_owned())),
-            // SAFETY: a plain COM call on the stream this device owns.
-            Output::Stream(stream) => unsafe { stream.client.GetCurrentPadding() }
-                .map_err(|error| device_error("read the queue length", &error)),
-            Output::Silent(silent) => silent.queued_frames(),
-        }
+        let stream = self.stream()?;
+        // SAFETY: a plain COM call on the stream this device owns.
+        unsafe { stream.client.GetCurrentPadding() }
+            .map_err(|error| device_error("read the queue length", &error))
     }
 
     fn write(&mut self, samples: &[f32]) -> Result<(), AudioError> {
-        match &mut self.output {
-            Output::Closed => Err(AudioError::Device("the device is not open".to_owned())),
-            Output::Stream(stream) => {
-                let frames = samples.len() / stream.channels;
-                if frames == 0 {
-                    // Less than a frame is nothing to play, and GetBuffer(0)
-                    // need not return a pointer to copy into.
-                    return Ok(());
-                }
-                let frame_count = u32::try_from(frames)
-                    .map_err(|_| AudioError::Stream("write larger than the buffer".to_owned()))?;
-                let bytes = frames * stream.channels * std::mem::size_of::<f32>();
-                // SAFETY: GetBuffer returns room for `frames` frames of the
-                // stream's float format, `bytes` bytes, which is exactly what
-                // is copied, byte by byte, so the buffer's alignment, which
-                // WASAPI does not document, does not matter; `frames` is not
-                // zero, so the pointer is valid. The buffer is released with
-                // the same frame count.
-                let buffer = unsafe { stream.render.GetBuffer(frame_count) }
-                    .map_err(|error| device_error("get the render buffer", &error))?;
-                // SAFETY: as above: `buffer` has room for `bytes` bytes, and
-                // `samples` holds at least that many.
-                unsafe {
-                    std::ptr::copy_nonoverlapping(samples.as_ptr().cast::<u8>(), buffer, bytes);
-                }
-                // SAFETY: as above.
-                unsafe { stream.render.ReleaseBuffer(frame_count, 0) }
-                    .map_err(|error| device_error("release the render buffer", &error))
-            }
-            Output::Silent(silent) => silent.write(samples),
+        let stream = self.stream()?;
+        let frames = samples.len() / stream.channels;
+        if frames == 0 {
+            // Less than a frame is nothing to play, and GetBuffer(0) need
+            // not return a pointer to copy into.
+            return Ok(());
         }
+        let frame_count = u32::try_from(frames)
+            .map_err(|_| AudioError::Stream("write larger than the buffer".to_owned()))?;
+        let bytes = frames * stream.channels * std::mem::size_of::<f32>();
+        // SAFETY: GetBuffer returns room for `frames` frames of the stream's
+        // float format, `bytes` bytes, which is exactly what is copied, byte
+        // by byte, so the buffer's alignment, which WASAPI does not
+        // document, does not matter; `frames` is not zero, so the pointer is
+        // valid. The buffer is released with the same frame count.
+        let buffer = unsafe { stream.render.GetBuffer(frame_count) }
+            .map_err(|error| device_error("get the render buffer", &error))?;
+        // SAFETY: as above: `buffer` has room for `bytes` bytes, and
+        // `samples` holds at least that many.
+        unsafe {
+            std::ptr::copy_nonoverlapping(samples.as_ptr().cast::<u8>(), buffer, bytes);
+        }
+        // SAFETY: as above.
+        unsafe { stream.render.ReleaseBuffer(frame_count, 0) }
+            .map_err(|error| device_error("release the render buffer", &error))
     }
 
     fn start(&mut self) -> Result<(), AudioError> {
-        match &mut self.output {
-            Output::Closed => Err(AudioError::Device("the device is not open".to_owned())),
-            Output::Stream(stream) => {
-                if !stream.running {
-                    // SAFETY: a plain COM call on the stream this device owns.
-                    unsafe { stream.client.Start() }
-                        .map_err(|error| device_error("start the stream", &error))?;
-                    stream.running = true;
-                }
-                Ok(())
-            }
-            Output::Silent(silent) => silent.start(),
+        let stream = self.stream()?;
+        if !stream.running {
+            // SAFETY: a plain COM call on the stream this device owns.
+            unsafe { stream.client.Start() }
+                .map_err(|error| device_error("start the stream", &error))?;
+            stream.running = true;
         }
+        Ok(())
     }
 
     fn stop(&mut self) {
-        match &mut self.output {
-            Output::Closed => {}
-            Output::Stream(stream) => {
-                // A stream that fails these is already broken, and the mixer
-                // reopens it on the next error it sees.
-                // SAFETY: a plain COM call on the stream this device owns.
-                let _ = unsafe { stream.client.Stop() };
-                // SAFETY: as above.
-                let _ = unsafe { stream.client.Reset() };
-                stream.running = false;
-            }
-            Output::Silent(silent) => silent.stop(),
+        if let Some(stream) = &mut self.stream {
+            // A stream that fails these is already broken, and the mixer
+            // reopens it on the next error it sees.
+            // SAFETY: a plain COM call on the stream this device owns.
+            let _ = unsafe { stream.client.Stop() };
+            // SAFETY: as above.
+            let _ = unsafe { stream.client.Reset() };
+            stream.running = false;
         }
     }
 
     fn clock_position(&mut self) -> Option<ClockReading> {
-        let Output::Stream(stream) = &self.output else {
-            return None;
-        };
+        let stream = self.stream.as_ref()?;
         let mut position = 0u64;
         // The performance counter's value when the position was taken, in
         // 100-nanosecond units.
@@ -554,27 +583,19 @@ impl AudioDevice for WasapiDevice {
     }
 
     fn wait(&mut self, timeout: Duration) {
-        // A failed open is retried at `retry_at`, which `needs_reopen`
-        // reports, so no wait lasts past it; a new default device signals
-        // `wake` from its callback.
-        let timeout = self.retry_at.map_or(timeout, |at| {
-            timeout.min(at.saturating_duration_since(Instant::now()))
-        });
+        // A notification that asks for a reopen signals `wake` from its
+        // callback; a failure retried at a deadline ends the wait by then.
+        let timeout = self.notices.wait_limit(timeout);
         let timeout_ms = u32::try_from(timeout.as_millis()).unwrap_or(INFINITE);
         // Each wait is on event handles this device owns.
-        match &self.output {
-            Output::Stream(stream) if stream.running => {
+        match &self.stream {
+            Some(stream) if stream.running => {
                 // SAFETY: as above.
                 let _ = unsafe {
                     WaitForMultipleObjects(&[stream.event.0, self.wake.0], false, timeout_ms)
                 };
             }
-            Output::Silent(silent) if silent.is_playing() => {
-                // SAFETY: as above.
-                let _ =
-                    unsafe { WaitForSingleObject(self.wake.0, timeout_ms.min(SILENT_PERIOD_MS)) };
-            }
-            Output::Closed | Output::Stream(_) | Output::Silent(_) => {
+            Some(_) | None => {
                 // SAFETY: as above.
                 let _ = unsafe { WaitForSingleObject(self.wake.0, timeout_ms) };
             }
@@ -582,17 +603,10 @@ impl AudioDevice for WasapiDevice {
     }
 
     fn waker(&self) -> Waker {
-        let wake = Arc::clone(&self.wake);
-        Arc::new(move || {
-            // SAFETY: signalling an event this closure keeps alive.
-            unsafe {
-                let _ = SetEvent(wake.0);
-            }
-        })
+        waker(&self.wake)
     }
 
     fn needs_reopen(&self) -> bool {
-        self.default_changed.load(Ordering::SeqCst)
-            || self.retry_at.is_some_and(|at| Instant::now() >= at)
+        self.notices.needs_reopen()
     }
 }

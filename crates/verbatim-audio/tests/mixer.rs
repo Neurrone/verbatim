@@ -2,14 +2,14 @@
 //! advances by hand, so every ending and mark can be checked against
 //! exactly how much audio has played.
 
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use verbatim_audio::{
-    AudioDevice, AudioError, AudioTap, ClockReading, DeviceFormat, Mixer, PcmFormat, PlaybackEvent,
-    Sound, Source, Waker,
+    AudioDevice, AudioError, AudioTap, ClockReading, DeviceFormat, DeviceNotice, DeviceNotices,
+    Mixer, PcmFormat, PlaybackEvent, Sound, Source, Waker,
 };
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
@@ -39,10 +39,14 @@ struct DeviceState {
     /// How many times the mixer has begun to wait for the device: once at
     /// the end of every pass, when it has done all it could.
     waits: u64,
+    /// The time limit of the wait the mixer began last.
+    last_wait: Option<Duration>,
+    /// How many times the mixer has opened the device.
+    opens: u32,
 }
 
 /// A device that plays only when the test says so.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 struct ManualDevice {
     state: Arc<(Mutex<DeviceState>, Condvar)>,
     reopen: Arc<AtomicBool>,
@@ -54,6 +58,31 @@ struct ManualDevice {
     clock: Arc<Mutex<Option<ClockReading>>>,
     /// How many times the mixer's waker has been called.
     wakes: Arc<AtomicU64>,
+    /// How many of the next opens fail.
+    open_failures: Arc<AtomicU32>,
+    /// The production notices, which the test notifies as Windows would.
+    notices: DeviceNotices,
+}
+
+impl Default for ManualDevice {
+    fn default() -> Self {
+        let state: Arc<(Mutex<DeviceState>, Condvar)> = Arc::default();
+        let woken = Arc::clone(&state);
+        Self {
+            state,
+            reopen: Arc::default(),
+            fail: Arc::default(),
+            reopened_format: Arc::default(),
+            clock: Arc::default(),
+            wakes: Arc::default(),
+            open_failures: Arc::default(),
+            notices: DeviceNotices::new(Arc::new(move || {
+                let (state, condvar) = &*woken;
+                state.lock().unwrap().woken = true;
+                condvar.notify_all();
+            })),
+        }
+    }
 }
 
 impl ManualDevice {
@@ -77,6 +106,17 @@ impl ManualDevice {
         let state = state.lock().unwrap();
         let (_state, wait) = condvar
             .wait_timeout_while(state, WAIT, |state| state.written.len() < frames)
+            .unwrap();
+        assert!(!wait.timed_out(), "{what} within {WAIT:?}");
+    }
+
+    /// Returns once the mixer has opened the device `opens` times in all.
+    /// Fails at [`WAIT`], saying `what` did not happen.
+    fn wait_opened(&self, opens: u32, what: &str) {
+        let (state, condvar) = &*self.state;
+        let state = state.lock().unwrap();
+        let (_state, wait) = condvar
+            .wait_timeout_while(state, WAIT, |state| state.opens < opens)
             .unwrap();
         assert!(!wait.timed_out(), "{what} within {WAIT:?}");
     }
@@ -108,7 +148,22 @@ impl ManualDevice {
 impl AudioDevice for ManualDevice {
     fn open(&mut self) -> Result<DeviceFormat, AudioError> {
         self.reopen.store(false, Ordering::SeqCst);
-        self.state.0.lock().unwrap().queued = 0;
+        self.notices.opening();
+        {
+            let (state, condvar) = &*self.state;
+            let mut state = state.lock().unwrap();
+            state.queued = 0;
+            state.opens += 1;
+            // For `wait_opened`, which waits on the same condition variable.
+            condvar.notify_all();
+        }
+        let failures = self.open_failures.load(Ordering::SeqCst);
+        if failures > 0 {
+            self.open_failures.store(failures - 1, Ordering::SeqCst);
+            self.notices.failed(None);
+            return Err(AudioError::Device("no audio device".to_owned()));
+        }
+        self.notices.opened();
         Ok(self.reopened_format.lock().unwrap().unwrap_or(FORMAT))
     }
 
@@ -143,6 +198,7 @@ impl AudioDevice for ManualDevice {
         let (state, condvar) = &*self.state;
         let mut state = state.lock().unwrap();
         state.waits += 1;
+        state.last_wait = Some(timeout);
         // For `settle`, which waits on the same condition variable.
         condvar.notify_all();
         let (mut state, _) = condvar
@@ -160,7 +216,7 @@ impl AudioDevice for ManualDevice {
     }
 
     fn needs_reopen(&self) -> bool {
-        self.reopen.load(Ordering::SeqCst)
+        self.reopen.load(Ordering::SeqCst) || self.notices.needs_reopen()
     }
 
     fn clock_position(&mut self) -> Option<ClockReading> {
@@ -176,8 +232,11 @@ struct Harness {
 }
 
 fn harness() -> Harness {
-    let device = ManualDevice::default();
-    let mixer = Mixer::start(Box::new(device.clone())).expect("the manual device opens");
+    harness_on(ManualDevice::default())
+}
+
+fn harness_on(device: ManualDevice) -> Harness {
+    let mixer = Mixer::start(Box::new(device.clone())).expect("the mixer starts");
     let (sender, events) = mpsc::channel();
     let sender = Mutex::new(sender);
     let source = mixer.add_source(Arc::new(move |event| {
@@ -548,6 +607,54 @@ fn a_device_that_comes_back_in_another_format_fails_the_unheard_utterance() {
         )
     );
     harness.nothing_more();
+}
+
+#[test]
+fn a_device_that_fails_to_open_is_replaced_by_silence_until_a_notice_and_then_opened() {
+    let device = ManualDevice::default();
+    device.open_failures.store(1, Ordering::SeqCst);
+    let harness = harness_on(device);
+
+    // Real-time silence plays in the device's place, in its own format, so
+    // an utterance still takes its time and completes.
+    assert_eq!(
+        harness.mixer.format(),
+        DeviceFormat {
+            sample_rate: 48_000,
+            channels: 2,
+            buffer_frames: 1_920,
+        }
+    );
+    let trace = harness.speak(1, 20);
+    assert_eq!(harness.next(), started(1, trace));
+    assert_eq!(harness.next(), ended(1, trace, UtteranceEnding::Completed));
+    harness.nothing_more();
+
+    // Idle, the mixer waits on the device with no time limit and has not
+    // tried it again: only a notice ends that wait.
+    {
+        let state = harness.device.state.0.lock().unwrap();
+        assert_eq!(state.opens, 1);
+        assert_eq!(state.last_wait, Some(Duration::MAX));
+        assert_eq!(state.written, []);
+    }
+
+    // A device became available: the mixer opens the device again, in its
+    // format, and plays through it.
+    harness.device.notices.notify(DeviceNotice::Available);
+    harness
+        .device
+        .wait_opened(2, "the device is opened again on the notice");
+    harness.device.settle();
+    assert_eq!(harness.mixer.format(), FORMAT);
+    let trace = harness.speak(2, 10);
+    harness.play(1);
+    assert_eq!(harness.next(), started(2, trace));
+    harness.play(9);
+    assert_eq!(harness.next(), ended(2, trace, UtteranceEnding::Completed));
+    harness.nothing_more();
+    assert_eq!(harness.device.written(), [SPOKEN; 10]);
+    assert_eq!(harness.device.state.0.lock().unwrap().opens, 2);
 }
 
 /// Collects what the tap is given, and wakes whoever waits on the

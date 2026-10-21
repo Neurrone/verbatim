@@ -40,6 +40,7 @@ use tracing::warn;
 use verbatim_model::{TraceId, UtteranceEnding, UtteranceId};
 
 use crate::convert::Converter;
+use crate::fallback::Fallback;
 use crate::{AudioDevice, AudioError, DeviceFormat, PcmFormat, Sound, Waker};
 
 /// How far ahead of the device a source may write, beyond the device's own
@@ -68,9 +69,6 @@ const PLAYING_WAIT: Duration = Duration::from_millis(100);
 /// itself ([`AudioDevice::needs_reopen`]), so idle the thread does not wake
 /// to look.
 const IDLE_WAIT: Duration = Duration::MAX;
-
-/// How long to wait before trying again to open a device that failed.
-const REOPEN_RETRY: Duration = Duration::from_secs(1);
 
 /// Something the mixer reports about one utterance, on its audio thread.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -285,12 +283,13 @@ struct SourceState {
 }
 
 impl Mixer {
-    /// Starts the audio thread and opens `device` on it.
+    /// Starts the audio thread and opens `device` on it. When `device`
+    /// cannot be opened, the mixer plays real-time silence in its place
+    /// until it asks to be reopened ([`AudioDevice::open`]).
     ///
     /// # Errors
     ///
-    /// Returns the device's error when it cannot be opened, or
-    /// [`AudioError::Device`] when the thread cannot start.
+    /// Returns [`AudioError::Device`] when the thread cannot start.
     pub fn start(device: Box<dyn AudioDevice>) -> Result<Self, AudioError> {
         Self::start_inner(device, None)
     }
@@ -311,9 +310,10 @@ impl Mixer {
     }
 
     fn start_inner(
-        mut device: Box<dyn AudioDevice>,
+        device: Box<dyn AudioDevice>,
         tap: Option<Box<dyn AudioTap>>,
     ) -> Result<Self, AudioError> {
+        let mut device = Fallback::new(device);
         let shared = Arc::new(Shared {
             state: Mutex::new(State {
                 // Replaced by the opened device's format before anything
@@ -341,26 +341,18 @@ impl Mixer {
             let shared = Arc::clone(&shared);
             std::thread::Builder::new()
                 .name("verbatim-audio".to_owned())
-                .spawn(move || match device.open() {
-                    Ok(format) => {
-                        shared.lock().format = format;
-                        let _ = opened_tx.send(Ok(()));
-                        run(&shared, device.as_mut(), tap);
-                    }
-                    Err(error) => {
-                        let _ = opened_tx.send(Err(error));
-                    }
+                .spawn(move || {
+                    shared.lock().format = device.open_or_silence();
+                    let _ = opened_tx.send(());
+                    run(&shared, &mut device, tap);
                 })
                 .map_err(|error| AudioError::Device(format!("start audio thread: {error}")))?
         };
-        let opened = opened_rx.recv().unwrap_or_else(|_| {
-            Err(AudioError::Device(
-                "audio thread exited while opening".to_owned(),
-            ))
-        });
-        if let Err(error) = opened {
+        if opened_rx.recv().is_err() {
             let _ = thread.join();
-            return Err(error);
+            return Err(AudioError::Device(
+                "audio thread exited while opening".to_owned(),
+            ));
         }
         Ok(Self {
             shared,
@@ -1026,7 +1018,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 /// The audio thread.
-fn run(shared: &Shared, device: &mut dyn AudioDevice, mut tap: Option<Box<dyn AudioTap>>) {
+fn run(shared: &Shared, device: &mut Fallback, mut tap: Option<Box<dyn AudioTap>>) {
     let mut written: u64 = 0;
     let mut played: u64 = 0;
     // For the tap: mixed frames written to the device and not yet played,
@@ -1441,7 +1433,7 @@ fn poll_device(
     Ok(queued)
 }
 
-fn recover(shared: &Shared, device: &mut dyn AudioDevice, played: u64, error: &AudioError) {
+fn recover(shared: &Shared, device: &mut Fallback, played: u64, error: &AudioError) {
     warn!(target: "verbatim::audio", %error, "reopening the audio device");
     device.stop();
     let mut notes = Vec::new();
@@ -1454,18 +1446,7 @@ fn recover(shared: &Shared, device: &mut dyn AudioDevice, played: u64, error: &A
         }
     }
     deliver(notes);
-    let format = loop {
-        match device.open() {
-            Ok(format) => break format,
-            Err(error) => {
-                warn!(target: "verbatim::audio", %error, "the audio device could not be opened; trying again");
-                if shared.lock().shutdown {
-                    return;
-                }
-                std::thread::sleep(REOPEN_RETRY);
-            }
-        }
-    };
+    let format = device.open_or_silence();
     let mut notes = Vec::new();
     {
         let mut state = shared.lock();

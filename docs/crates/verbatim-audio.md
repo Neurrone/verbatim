@@ -2,8 +2,8 @@
 
 Audio output (architecture section 6, decisions D5, D16 and D17): the
 mixer that everything audible goes through, speech and sounds alike, the
-`AudioDevice` seam it writes to, `Sound`, `SilentDevice`, and
-`WavRecorder`, which records what the mixer plays. The WASAPI device is
+`AudioDevice` seam it writes to, `DeviceNotices`, `Sound`,
+`SilentDevice`, and `WavRecorder`, which records what the mixer plays. The WASAPI device is
 [verbatim-audio-wasapi](verbatim-audio-wasapi.md); this crate has no
 Windows dependency.
 
@@ -17,17 +17,30 @@ Public API:
 - `AudioError` — `Device` (missing, failed, or must be reopened) and
   `Stream` (converting or writing failed).
 - `AudioDevice` — the device seam, driven only by the mixer's audio
-  thread: `open` (or reopen) returning the `DeviceFormat`,
+  thread: `open` (or reopen) returning the `DeviceFormat`, or an error
+  after which the mixer plays silence until `needs_reopen` asks,
   `queued_frames` (written but not yet played), `write`, `start`, `stop`
   (which discards everything queued), `wait` (until frames play, the
   waker is called, or a timeout passes), `waker` (a `Waker` handle that
   ends a `wait` early from any thread), `needs_reopen` (for example
-  after the system's default device changed; defaults to `false`), and
+  after the system's default device changed, or a device became
+  available after an open failed; defaults to `false`), and
   `clock_position` (the device's own clock as a `ClockReading`: frames
   played since it last started, and how long ago that held; defaults to
   `None`, and only the latency ledger's device clock stage uses it).
+- `DeviceNotice` and `DeviceNotices` — the system's notifications about
+  its output devices (`DefaultChanged`, `Available`: a device arrived or
+  became usable) turned into requests to reopen. A device's notification
+  thread calls `notify`; its audio thread calls `opening` before an
+  open and `opened` or `failed(retry_after)` after it, and reports
+  `needs_reopen` and shortens its waits with `wait_limit`. An open device
+  asks to be reopened on `DefaultChanged`; after a failed open, also on
+  `Available`, or once `retry_after` has passed for a failure the system
+  sends no notification for. A notification that comes during an open is
+  kept, so it is answered by another open. `notify` calls the waker only
+  when it asks for a reopen.
 - `Mixer` — `start(device)` spawns the `verbatim-audio` thread and opens
-  the device on it, returning the open error if there is one;
+  the device on it, failing only when the thread cannot start;
   `start_with_tap(device, tap)` does the same and also gives `tap` every
   frame once it has played;
   `add_source(listener)` adds a `Source`; `format` reports the current
@@ -158,8 +171,12 @@ is mixed from again, is not counted as an underrun.
 
 Device recovery. On any device error, or when `needs_reopen` is set, the
 mixer rewinds as above and calls `open` again, with the shared state
-unlocked, retrying once a second until it succeeds or the mixer shuts
-down.
+unlocked. When `open` fails, at start or later, the mixer plays through a
+`SilentDevice` in the device's place (`fallback.rs`), so speech goes on
+and every utterance still ends, and keeps waiting on the device's own
+`wait`, so that the waker and the device's notifications still end it.
+It tries the device again only when `needs_reopen` asks: it keeps no
+timer of its own, and waits idle with no time limit.
 
 Starting and gaps. A stopped device is started only once 10 ms of audio
 is ready, or once the utterance is completely written: an utterance
@@ -212,8 +229,8 @@ shared-mode format, whose frames leave the queue at the rate a real
 device would play them. An utterance played through it still takes its
 real duration, and its ending still means it would have been heard by
 then. It is used when a machine has no audio device (GitHub's hosted
-runners have none), by `verbatim-audio-wasapi` as its fallback, and by
-`verbatim-app` under `VERBATIM_TEST_AUDIO=null`.
+runners have none), by the mixer in place of a device that failed to
+open, and by `verbatim-app` under `VERBATIM_TEST_AUDIO=null`.
 
 Tests: `tests/mixer.rs` drives the mixer against a scripted device and
 covers completion only after the last frame plays, marks, utterances
@@ -225,7 +242,13 @@ end without delaying it, one reached before what follows it was written
 waiting for that audio and going no further than it until the utterance
 is finished, one stopped or never mixed when its utterance is
 cancelled, one played at once over another source's speech and alone,
-and one partly heard going on from where it was after a reopen. Unit
+and one partly heard going on from where it was after a reopen; and a
+device that fails to open replaced by real-time silence, waited for with
+no time limit and no second open, then opened again on a notice that a
+device is available. Unit tests in `notices.rs` check that a failed open
+asks for a reopen only once a device is available or its deadline has
+passed, that an open device is reopened on a default change and not on an
+arrival, and that an arrival during a failing open is not lost. Unit
 tests in `sound.rs` decode WAV files of each sample format, refuse what is
 not one, and check a tone's fades and a sound's conversion. A unit test in `wav.rs`
 checks that the recorder writes a valid WAV with silence where nothing

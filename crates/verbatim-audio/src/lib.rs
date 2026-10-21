@@ -10,12 +10,16 @@
 //!
 //! The WASAPI device lives in `verbatim-audio-wasapi`, so nothing here
 //! depends on Windows. [`SilentDevice`] plays at real-time speed without a
-//! sound card, for machines that have none and for test audio.
+//! sound card, for machines that have none and for test audio, and the mixer
+//! plays through one in the real device's place while that cannot be
+//! opened, until [`DeviceNotices`] report that an open could now succeed.
 
 #![forbid(unsafe_code)]
 
 mod convert;
+mod fallback;
 mod mixer;
+mod notices;
 mod silent;
 mod sound;
 mod wav;
@@ -25,6 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub use mixer::{AudioTap, Mixer, PlaybackEvent, PlaybackListener, Source};
+pub use notices::{DeviceNotice, DeviceNotices};
 pub use silent::SilentDevice;
 pub use sound::Sound;
 pub use wav::WavRecorder;
@@ -99,6 +104,10 @@ pub trait AudioDevice: Send {
     /// # Errors
     ///
     /// Returns [`AudioError::Device`] when no usable device can be opened.
+    /// The mixer then plays real-time silence in the device's place and
+    /// calls `open` again only once [`needs_reopen`](Self::needs_reopen)
+    /// asks, so a device that fails to open must ask when there is evidence
+    /// an open could succeed ([`DeviceNotices`]).
     fn open(&mut self) -> Result<DeviceFormat, AudioError>;
 
     /// Frames written but not yet played.
@@ -133,9 +142,11 @@ pub trait AudioDevice: Send {
     fn waker(&self) -> Waker;
 
     /// Whether the device asks to be reopened, for example because the
-    /// system's default output device changed. A device ends any
+    /// system's default output device changed, or because a device became
+    /// available after an open failed. A device ends any
     /// [`wait`](Self::wait) once it asks, by its waker or by a deadline of
-    /// its own, since the mixer waits idle with no time limit.
+    /// its own, since the mixer waits idle with no time limit; the mixer
+    /// waits on the device's `wait` even while silence plays in its place.
     fn needs_reopen(&self) -> bool {
         false
     }

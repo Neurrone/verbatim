@@ -28,17 +28,29 @@ event that the mixer's `Waker` signals. `clock_position` reads the
 stream's `IAudioClock` position, converted to frames, and how long ago it
 was taken, from the performance counter's value the position carries.
 
-Recovery. An `IMMNotificationClient` registered with the device
-enumerator sets a flag and wakes the audio thread when the default render
-device changes; `needs_reopen` reports the flag and the mixer reopens.
-Any failure of the stream (an unplugged headset reports
-`AUDCLNT_E_DEVICE_INVALIDATED`) is an error the mixer also answers by
-reopening. `open` never fails: when no stream can be opened it falls
-back to an internal `SilentDevice` that plays at real-time speed into
-silence, and logs a warning. When the system has no render device at all
-(`GetDefaultAudioEndpoint` returns `E_NOTFOUND`), the next default-device
-change brings a real device back. When a device exists but failed to
-open, which can happen briefly after a device change, `needs_reopen`
-asks for another attempt a second later, and `wait` ends by then; the
-default-device callback signals the wait's event itself. The mixer reopens with its
-shared state unlocked, so speech is never held up behind the device.
+Recovery. An `IMMNotificationClient`, registered once with the device
+enumerator on the audio thread, passes Windows' endpoint notifications
+to the device's `DeviceNotices` (see [verbatim-audio](verbatim-audio.md)):
+a default render device change (console role) as `DefaultChanged`, and a
+device added or changed to the active state as `Available`, not filtered
+by data flow, since that would take a call into the enumerator from the
+callback, and an arrival costs a reopen only while an open has failed.
+`needs_reopen` reports the notices, and a notice that asks for a reopen
+signals the wait's event itself. Any failure of the stream (an unplugged
+headset reports `AUDCLNT_E_DEVICE_INVALIDATED`) is an error the mixer
+also answers by reopening.
+
+When no stream can be opened, `open` returns the error, and the mixer
+plays real-time silence in the device's place until `needs_reopen` asks.
+What the next open waits for depends on the failure (`open_failure`):
+when the system has no render device (`GetDefaultAudioEndpoint` returns
+`E_NOTFOUND`), or the device went away during the open
+(`AUDCLNT_E_DEVICE_INVALIDATED`), only a notification, with no timer.
+Any other failure is an active device refusing the stream, such as
+another program holding it in exclusive mode (`AUDCLNT_E_DEVICE_IN_USE`),
+the audio service not running, or a resource the engine lacked; Windows
+sends no notification when such a failure clears (checked on 2026-10-21
+by holding the device exclusively and releasing it), so the device also
+asks a second later, and `wait` ends by then. So does every failure when
+the notification client could not be registered. The mixer reopens with
+its shared state unlocked, so speech is never held up behind the device.
