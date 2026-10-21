@@ -306,140 +306,61 @@ the next other event comes; the menu event is tried last. Verbatim:
 **matched (unverified)** (`docs/design/focus-pipeline.md` section 5;
 [verbatim-outpost](../crates/verbatim-outpost.md), the queue under
 `Outpost`), in each outpost's intake. Every MSAA event is counted by the
-thread it carries, whichever hook took it in; every foreground change
-of a batch is tried with the focus events of the run it is in (Dickson,
-2026-10-20), and of
-two changes of the same window from the same thread the later raised
-is kept, whichever arrived first: a change arriving during a hand-over
-after a later-raised change of its window and thread, waiting, planned
-or handed out, is dropped against the intake's record of the newest
-change per window and thread, written as each change arrives until the
-listener's "forwarding ended" reaches the outpost, as NVDA's limiter,
-adding events in raised order, keeps the newest per window, object and
-thread; a run whose events all carry the
-time Windows raised them is tried in that order, the order NVDA's one
-hook receives them in, since an outpost can receive the focus listener's
-copy of an event after its own hook's copy of a later one during a
-hand-over. Events of one tick of that clock, about 15.6 ms, are ordered
-by what the hand-over knows: a listener copy known to have been raised
-before the outpost's hook went in, and every listener copy of the batch
-that arrived before it, go ahead of the rest, which keep their arrival
-order. A copy is known so when it was raised before the clock reading
-taken just before the hook went in, or when it has no twin while the
-hook has an unmatched copy of an event raised in the same tick, whose
-own listener copy would otherwise have arrived first. The two sources
-can lose different copies of one event, and the order can then be
-wrong for events of that tick. The listener loses its copy, leaving the
-hook's unmatched so that a later listener copy of the tick is taken as
-raised before the hook, when its backlog replaces a waiting fact with a
-newer one of the same element and kind, and of the same raising thread
-for an MSAA event other than a menu opening, while a write is in flight, or
-when it finds no process to route the event to. A window destroyed
-between the two callbacks' reads of its owner loses a copy in either
-direction: when the outpost's hook reads first, the listener drops its
-copy and the hook keeps its own, with the same effect; when the
-listener reads first, it forwards its copy and the hook drops its own,
-so the listener copy has no twin, and while the hook holds an unmatched
-copy of a later event of the same tick, as it usually does since hook
-copies arrive first, it is taken as raised before the hook and goes
-ahead of the hook copies of the tick raised before it, with every
-listener copy that arrived before it in that tick. The outpost's hook drops an event whose window has no owner, as the
-listener does and as NVDA's callback drops an invalid window, so a
-window already gone when both callbacks run loses no copy. Each copy is
-queued under the lock it is judged under, so the intake receives the
-copies in the order they were judged. NVDA's limiter removes a
-waiting focus event on a window's client object from the same thread
-when it adds the window's foreground event (`orderedWinEventLimiter.py`,
-`addEvent`, 65 to 67), and the outpost matches that exactly: a
-foreground change removes such a focus waiting from the same thread
-raised no later than the change, comparing raise times in either
-arrival order. Such a focus that arrives after a foreground change of
-its window and thread raised after it, an order NVDA's one hook never
-sees, is dropped as it arrives against the same record, whether the
-change waits, is planned or was handed out; the one case left is a
-listener copy the listener's hook receives only after it read the tick
-that message names; when the later change of its window and thread
-still waits, such a late copy of an older change replaces it by key and
-takes its place at the back, so the older change is handed out instead
-and removes waiting client focuses by its own, older raise time. The
-window is the same, but a focus raised between the two that waits after
-the later change is then the newest of their run and is reported in
-place of the window; this needs two late listener copies, the focus's
-and the older change's, so it is rare. And the foreground report can
-come after the speech of an event that ends a run and arrived after the
-later change. NVDA pumps a focus event at once
-(`IAccessibleHandler/internalWinEventHandler.py` 193; `core.py`,
-`requestPump` and `processRequest`) and then says exactly one of the
-two, never both. NVDA says the foreground change only when its pump
-filters or refuses the focus, and the drop matches that case:
-`eventHandler.shouldAcceptEvent` (`eventHandler.py` 481 to 599, from
-`IAccessibleHandler/__init__.py` 1056) accepts the focus, among other
-cases, when its window is the foreground window or descends from it, has
-the foreground window's root owner, or is topmost or has a topmost root
-(544 to 566); the other cases are an event an app module registered
-through `requestEvents` (497 to 498), the desktop window (529 to 531), a
-`Windows.UI.Core` window that descends from the active window (535 to
-538), and a Chromium document under the focused Chrome window (569 to
-598). An accepted focus can still be refused, as by
-`winEventToNVDAEvent` failing (`IAccessibleHandler/__init__.py` 737 to
-739), by the focused-state test (`processFocusNVDAEvent`'s
-`shouldAllowIAccessibleFocusEvent`, whose base is at
-`NVDAObjects/IAccessible/__init__.py` 874 to 892 and which app modules
-override), or by the SDM test (`processFocusWinEvent`,
-`IAccessibleHandler/__init__.py` 710 to 720). Otherwise NVDA says the
-focus only, as `processForegroundWinEvent`'s descendant and address
-tests then drop the change (`IAccessibleHandler/__init__.py` 845 to
-867), and here the drop differs, since NVDA ends on the focus's object
-and Verbatim on the window's. A dialog the window in front owns, as an
-application's own dialog is, falls in this second case, since the
-root-owner test accepts its focus before it comes to the front;
-`docs/roadmap.md`, M4.2, records the capture to take. The drop also
-loses a focused child, only for a window read through MSAA and only in
-the two cases `verbatim-ia2`'s `redirect_focus_to_child` reaches: the
-window's client is a list or a `SysListView32` window's client, or its
-`accFocus` answers a child id whose child has the focused state. A
-client focus that would have been sent on to that child is lost with
-it, where the foreground report is the window's node only. Within one tick the copy that
-arrived first counts as raised first, except that a hook copy was
-raised after a listener copy known to have been raised before the hook
-went in. The hook takes an event on a window object as the client object, as NVDA's
-callback does, so that is the address NVDA's foreground event has.
-The limiter so keeps, in one run, the newest 4 focus and foreground
-events and every older foreground change of another window, or of the
-same window from another thread, that its thread's limit of 10 keeps. The outpost's foreground handling
-makes NVDA's two tests against the last focus queued, after its
-in-front test and before any read, and a change they drop lets the
-run's next older event be tried (`processForegroundWinEvent`, lines 842
-to 867): the last focus or foreground change the outpost reported, while
-no focus Core queued from another application has replaced it, is in
-the change's window or a child window of it (`isDescendantWindow`, which
-follows parents only), or came from the change's own event address. The
-fact the hook forwards carries the window alone, so the change's object
-and child ids are taken as the system raises them, on the window object,
-which the hook, as NVDA's event callback, takes as the client object
-(`OBJID_CLIENT`, `CHILDID_SELF`). A last focus Core took from another outpost inside the
+thread it carries, whichever hook took it in. Every foreground change of
+a batch is tried with the focus events of the run it is in (Dickson,
+2026-10-20), and a newer change of the same window from the same thread
+replaces one waiting, as NVDA's limiter keeps one per window, object and
+thread. A run whose events all carry the time Windows raised them is
+tried in that order, the order NVDA's one hook receives them in, since an
+outpost can receive the focus listener's copy of an event after its own
+hook's copy of a later one during a hand-over. Events of one tick of that
+clock, about 15.6 ms, are ordered by what the hand-over knows: a listener
+copy known to have been raised before the outpost's hook went in, and
+every listener copy of the batch that arrived before it, go ahead of the
+rest, which keep their arrival order. The hand-over's module
+documentation (`outpost/handover.rs`) gives the reasoning and its one
+limit. Each copy is queued under the lock it is judged under, so the
+intake receives the copies in the order they were judged.
+
+A foreground change removes a focus event waiting on its window's client
+object from the same thread when the focus was not raised after it, as
+NVDA's limiter pops it when it adds the foreground event
+(`orderedWinEventLimiter.py`, `addEvent`, 65 to 67); the two are compared
+by raise time, since during a hand-over either can arrive first. The hook
+takes an event on a window object as the client object, as NVDA's
+callback does, so that is the address NVDA's foreground event has. The
+limiter so keeps, in one run, the newest 4 focus and foreground events
+and every older foreground change of another window, or of the same
+window from another thread, that its thread's limit of 10 keeps.
+
+The outpost's foreground handling makes NVDA's two tests against the
+last focus queued, after its in-front test and before any read, and a
+change they drop lets the run's next older event be tried
+(`processForegroundWinEvent`, lines 842 to 867): the last focus or
+foreground change the outpost reported, while no focus Core queued from
+another application has replaced it, is in the change's window or a
+child window of it (`isDescendantWindow`, which follows parents only), or
+came from the change's own event address. The fact the hook forwards
+carries the window alone, so the change's object and child ids are taken
+as the system raises them, on the window object, which the hook, as
+NVDA's event callback, takes as the client object (`OBJID_CLIENT`,
+`CHILDID_SELF`). A last focus Core took from another outpost inside the
 window, which this outpost cannot see, is left to the reducer, which
 ignores a foreground change of the window the focus is already in.
 Mockapp's `msaa_events` tests pin the first test and the replacement by
 another application's focus, and the worker's unit tests both tests.
+
 Entries NVDA's pump never receives neither join a run nor end it, and
 are handled at their own places: UIA events and UIA focus reads, Core's
 queries and its list of held nodes, the worker's own caret follow-up
 after a focus it reported, the outpost's settle request, an object
 destroyed, the console host's events, and a text control's selection
-change (Dickson, 2026-10-20). What is heard changes from the time a run
-was ended by any entry, in three shapes, none yet captured from NVDA:
-a focus fact and a foreground change of its window with Core's list of
-held nodes between them, after a focus in another application, now
-announce the window, as NVDA does, where the focus was reported first;
-two focuses of one window with a UIA event or Core's entry between them
-now report only the newer, as NVDA's one pump does; and when the focus
-moves twice quickly, as [focus A, the caret follow-up for the focus N
-reported before, focus B], N's caret is now read and its line or value
-spoken before B alone is reported, where A was reported and the
-follow-up found N gone. Each is closer to NVDA's one pump; the third
-puts a read of N's caret on the way to B's report, and awaits a capture
-of rapid tabbing out of an edit field.
+change (Dickson, 2026-10-20). None of the sequences this decides is yet
+captured from NVDA; the one that adds work is rapid tabbing out of an
+edit field, where [focus A, the caret follow-up of the focus N reported
+before, focus B] reads N's caret and speaks its line or value before B
+alone is reported, and its capture is the one to take.
+
 Different: events from a window the system reports hung are dropped
 before any read; an MSAA event the outpost's acceptance test will drop
 ends a run, where NVDA's pump filters it out before its run, since the
@@ -458,35 +379,25 @@ switch, caret show and hide, and the shows NVDA accepts besides
 tooltips. For an application with an MSAA tree beside a UIA item view,
 [focus A in the tree, a name change in the item view, focus B in the
 tree] is heard "A, B" in NVDA, whose pump the name change ends a run
-in, and "B" in Verbatim. NVDA's limiter keeps its newest menu event in
-one slot for all four of its menu events, menu start and end and popup
-start and end (`MENU_EVENTIDS`, `orderedWinEventLimiter.py` 12 to 17;
-`_lastMenuEvent`, 76 to 78), and its one limiter covers every
-application; an outpost's intake keeps a batch's newest popup start, per
-application. Three cases differ. A popup start followed in one flush
-by a popup end or a menu end of any application, the same one or
-another, since the slot covers every application: NVDA's slot keeps only
-the end, which `pumpAll` handles as a fake focus only when no focus of
-the flush was valid (`IAccessibleHandler/__init__.py` 1093 and 1101 to 1103), so
-the popup is never announced, where the outpost still handles the popup
-start. A popup start followed in one flush by a menu start of any
-application: NVDA's slot keeps only the menu start, and `pumpAll` hands
-it to `processMenuStartWinEvent` whether or not a focus of the flush was
-valid ("menuStart needs to be handled specially and might act even if
-there was a valid focus event", 1093 to 1100), which acts on the menu
-start's own object, so the popup is never announced either, where the
-outpost, which takes popup starts and no menu start
-(`acceptance.rs`, `EventName::of_win_event`), still announces it. And two
-applications' popup starts in one flush: NVDA handles only the later,
-where each application's outpost handles its own. All three need menu
-events of two kinds, or of two applications, within one flush, so they
-are rare; none is changed (Fable, 2026-10-21, pending Dickson's
-acceptance). Before an outpost hears
-them, the focus listener coalesces its facts one per object and kind,
-and for an MSAA event other than a menu opening, the thread that raised
-it, and the supervisor holds the facts that arrive while an outpost
-starts by that rule too, and lets a newer fact replace a waiting one
-when an outpost's queue is full.
+in, and "B" in Verbatim.
+
+NVDA's limiter keeps its newest menu event in one slot for all four of
+its menu events, menu start and end and popup start and end
+(`MENU_EVENTIDS`, `orderedWinEventLimiter.py` 12 to 17; `_lastMenuEvent`,
+76 to 78), and its one limiter covers every application; an outpost's
+intake keeps a batch's newest popup start, per application. So a popup
+start followed in one flush by a popup end, a menu end or a menu start
+of any application, or by another application's popup start, is
+announced by Verbatim and not by NVDA, whose slot keeps only the later
+event (`IAccessibleHandler/__init__.py` 1093 to 1103). Each needs two
+menu events within one flush, so they are rare, and none is changed
+(Fable, 2026-10-21, pending Dickson's acceptance).
+
+Before an outpost hears them, the focus listener coalesces its facts one
+per object and kind, and for an MSAA event other than a menu opening,
+the thread that raised it, and the supervisor holds the facts that
+arrive while an outpost starts by that rule too, and lets a newer fact
+replace a waiting one when an outpost's queue is full.
 
 ### IA2 upgrade of MSAA objects
 

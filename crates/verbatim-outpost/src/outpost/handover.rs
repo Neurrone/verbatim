@@ -35,82 +35,29 @@
 //!   listener's can have copies from both sources still to meet, so only
 //!   those are counted from then on: a handful of events, raised in the
 //!   few milliseconds of the hand-over.
-//! - Those are counted for [`TWIN_BOUND`], 15 seconds, after the
-//!   "forwarding ended" arrived, the longest a late copy can trail it, as
-//!   the constant's documentation shows. Once that has passed, the counts
-//!   are dropped and no copy is counted again, so every copy is handled.
-//!   Measuring this on the outpost's own monotonic clock, not by raise
-//!   times, keeps the comparison of raise times, which wraps once two
-//!   ticks are 2^31 ms (about 24.8 days) apart, to copies raised within
-//!   seconds of the tick "forwarding ended" names, so an outpost that
-//!   runs for weeks never counts its hook's copies as raised before it.
+//! - Those are counted for [`TWIN_BOUND`] after the "forwarding ended"
+//!   arrived, measured on the outpost's monotonic clock so that raise
+//!   times, which wrap after about 24.8 days, are compared only within
+//!   seconds of that tick; after it nothing is counted and every copy is
+//!   handled.
 //!
-//! The hand-over also tells which of the listener's copies it handles were
-//! raised before the hook went in ([`Arrival::ListenerBeforeHook`]), so
-//! that the intake can order a run of events raised in one tick of the
-//! clock as they were raised (`intake::in_raised_order`): an outpost can
-//! receive the listener's copy of an event after its own hook's copy of a
-//! later one raised in the same tick, and the tick alone cannot order the
-//! two. It is known in two cases:
-//!
-//! - The event was raised before the clock reading taken just before the
-//!   hook went in.
-//! - The copy has no twin while the hook has an unmatched copy of an event
-//!   raised in the same tick. The listener's hook receives an
-//!   application's events in the order they were raised, the listener
-//!   sends them in that order and the supervisor relays them in order, so
-//!   had the hooked event been raised first, its listener copy would have
-//!   arrived first and matched it. And the outpost's hook receives them in
-//!   that order too, so had it received this event, raised before the one
-//!   it has, its copy would already be here as this one's twin. This rests
-//!   on every listener copy of a hooked event raised in the tick reaching
-//!   the outpost, and on the outpost's hook keeping every event the
-//!   listener forwards. The outpost's hook drops what the listener drops
-//!   for having no window or a window with no owner, as NVDA's callback
-//!   drops an invalid window, but the two sources can still lose different
-//!   copies of one event:
-//!   - the listener's backlog replaces a waiting fact with a newer one of
-//!     the same element and kind, and for an MSAA event other than a menu
-//!     opening of the same raising thread, while a write to Core is in flight, which loses the
-//!     listener's copy;
-//!   - the listener drops an event when it finds no process to route it
-//!     to, as for a console window whose console host it cannot find,
-//!     which loses the listener's copy;
-//!   - the window is destroyed between the two callbacks' reads of its
-//!     owner, each callback reading it when it runs. When the outpost's
-//!     hook reads first, the listener drops its copy and the hook keeps
-//!     its own. When the listener reads first, it forwards its copy and
-//!     the outpost's hook drops its own.
-//!
-//!   A lost listener copy leaves its hook copy unmatched, so a later
-//!   listener copy raised in the same tick is taken as raised before the
-//!   hook. A lost hook copy leaves its listener copy with no twin, and
-//!   while the hook holds an unmatched copy of a later event of the same
-//!   tick, as it usually does since hook copies arrive first, the listener
-//!   copy is taken as raised before the hook, so it and every listener copy
-//!   that arrived before it in that tick go ahead of the hook copies of
-//!   the tick raised before it. In each case the order can be wrong only
-//!   among the events of that tick, but for one loss: a focus on a
-//!   window's client object wrongly judged raised before the hook, arriving
-//!   after a hook copy of its window's foreground change from the same
-//!   thread in that tick, is dropped, not reordered, since the intake drops
-//!   a focus raised before its window's change (`intake::focus_behind_its_foreground_change`),
-//!   and its hook copy is then dropped as its twin. That holds only until
-//!   the listener's "forwarding ended" is in, after which the intake drops
-//!   nothing behind a later change (`Intake::forwarding_ended`), while such
-//!   a copy can still be judged until [`TWIN_BOUND`] runs out: the focus is
-//!   then kept but ordered before the change in their run, which is tried
-//!   newest first, so while the change waits the change is tried first and,
-//!   when it is reported, the focus is not, the same outcome as the drop,
-//!   where NVDA tries the focus first; only when the change was already
-//!   handed out is the focus reported, after it. For example, the
-//!   window's thread raises foreground changes G1 and G2 of the window and
-//!   then the focus, in one tick; the listener's backlog replaces G1's
-//!   copy with G2's; G2's copies meet, and G1's hook copy stays unmatched;
-//!   the focus's listener copy, arriving before its hook copy, is judged
-//!   raised before the hook, and the hook's copy of G2, which replaced G1's
-//!   in the intake, drops it, where NVDA, seeing G1, G2 and the focus in
-//!   that order, keeps the focus.
+//! The hand-over also tells which of the listener's copies were raised
+//! before the hook went in ([`Arrival::ListenerBeforeHook`]), so that the
+//! intake can order a run of events raised in one tick of the clock as they
+//! were raised (`intake::in_raised_order`): the listener's copy of an event
+//! can arrive after the hook's copy of a later one of the same tick. It is
+//! known when the event was raised before the clock reading taken just
+//! before the hook went in, or when the copy has no twin while the hook has
+//! an unmatched copy of an event raised in the same tick: both hooks
+//! receive an application's events in the order they were raised and the
+//! listener's copies are relayed in that order, so had the hooked event
+//! been raised first, its listener copy would have arrived first and
+//! matched it. This assumes both sources keep every event of the tick.
+//! When one loses a copy, as the listener's backlog does when it replaces a
+//! waiting fact with a newer one of the same element, kind and thread while
+//! a write to Core is in flight, the order can be wrong among that tick's
+//! events only; a twin trails its first copy by at most 6.3 ms in the
+//! measurements.
 //!
 //! Pure, so the rules are tested on their own; the outpost holds one under
 //! a lock that its hook's callback and its reader take in turn, and queues
@@ -126,20 +73,10 @@ use std::time::{Duration, Instant};
 use crate::protocol::{FactKey, WinEventStamp, tick_is_after};
 
 /// How long after the listener's "forwarding ended" reaches the outpost a
-/// copy can still meet its twin: the longest a late copy can trail that
-/// message. A listener copy arrives after it only when the listener's hook
-/// thread received the event after the listener read its tick; that copy
-/// then passes the listener's backlog and the supervisor's relay. The hook
-/// thread makes no cross-process call, and delivered every event within
-/// one tick of its raise (at most 16 ms in the 578 hook deliveries logged
-/// in the end-to-end evidence of fixes rounds three to seven, where a twin
-/// trailed its first copy by at most 6.3 ms). The relay's maximum
-/// measured is 146 ms (`docs/design/focus-pipeline.md`, section 12.4). A
-/// write stalled in the listener's backlog holds its pongs too, and the
-/// supervisor replaces a listener that has answered no ping for three
-/// intervals of 3 seconds, checked at each ping, so within 12 seconds,
-/// after which nothing more comes from it. 15 seconds covers those with a
-/// margin. A copy that came later still would be handled a second time.
+/// copy can still meet its twin: a late listener copy trails that message
+/// by at most the 12 seconds within which the supervisor replaces a
+/// listener whose backlog has stalled, and 15 seconds covers that with a
+/// margin.
 pub(super) const TWIN_BOUND: Duration = Duration::from_secs(15);
 
 /// Where a copy of a `WinEvent` came from.

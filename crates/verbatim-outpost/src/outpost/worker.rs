@@ -2891,15 +2891,18 @@ impl Worker<'_> {
     /// ("Selection in a list the focus controls" in `docs/nvda/events.md`).
     /// When the selected one is inside none, the first controlled element's
     /// current selection is reported in its place
-    /// (`verbatim_uia_rops::Controlled::selected`), unless the selection is
-    /// the focus's own ([`Worker::selection_of_focus`]).
+    /// (`verbatim_uia_rops::Controlled::selected`), unless the selection
+    /// names the focus itself, which the reducer reads as the focus's own
+    /// (`reduce_selection_changed`): NVDA's base `event_selection` finds the
+    /// focus in none of the elements it controls and falls through to its
+    /// state change handler (`NVDAObjects/__init__.py` 1314 to 1339).
     fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
         // The focus this outpost last reported, as NVDA uses its focus
         // object; found by its path when its element is not known.
         let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
             return None;
         };
-        let current_instead = !self.selection_of_focus(runtime_id, &focus_id);
+        let current_instead = runtime_id != focus_id.as_slice();
         let registry = &self.context.uia_registry;
         let known = registry
             .existing_id(&focus_id)
@@ -2965,38 +2968,6 @@ impl Worker<'_> {
             controller: registry.id_for_element(&controller, &focused),
             node: selected.snapshot(registry),
         })
-    }
-
-    /// Whether a UIA selection of the element `runtime_id` names is one the
-    /// reducer reads as the focus's own (`reduce_selection_changed`), told
-    /// from runtime ids and roles already in hand, with no call: the focus
-    /// itself (`focus_id`), one of the ancestors last reported with it, or
-    /// any selection while the focus is a list or tab control (Core's
-    /// `is_selection_container`), which the reducer reads as one in the
-    /// focus, without asking whether the element is one of its items: a
-    /// focused list whose relation names another list that replaces its
-    /// items therefore loses the route, where NVDA reports the item as a
-    /// suggestion (`docs/parity/changes-and-selection.md`). NVDA's base
-    /// `event_selection` finds such an element in none of the elements the
-    /// focus controls and falls through to its state change handler
-    /// (`NVDAObjects/__init__.py` 1314 to 1339), as the reducer's own
-    /// selection handling does, so none of these is answered with the
-    /// controlled element's current selection.
-    fn selection_of_focus(&self, runtime_id: &[i32], focus_id: &[i32]) -> bool {
-        if runtime_id == focus_id {
-            return true;
-        }
-        let tracking = self.context.tracking();
-        if tracking
-            .focus_role
-            .is_some_and(verbatim_core::is_selection_container)
-        {
-            return true;
-        }
-        self.context
-            .uia_registry
-            .existing_id(runtime_id)
-            .is_some_and(|node| tracking.chain.iter().any(|known| known.id == node))
     }
 
     /// The selection of the item `parts` names as a change of the focus's

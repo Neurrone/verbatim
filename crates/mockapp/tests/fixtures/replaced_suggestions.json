@@ -33,23 +33,6 @@
           "set_size": 2
         }
       ]
-    },
-    {
-      "id": "categories",
-      "role": "list",
-      "name": "Categories",
-      "states": ["focusable"],
-      "controller_for": "suggestions",
-      "children": [
-        {
-          "id": "general",
-          "role": "list_item",
-          "name": "General",
-          "states": ["focusable", "selectable"],
-          "position_in_set": 1,
-          "set_size": 1
-        }
-      ]
     }
   ]
 }

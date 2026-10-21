@@ -108,48 +108,6 @@ impl CaretRead {
     }
 }
 
-/// The fact the outpost's hook takes in for a focus, foreground change,
-/// menu opening, alert, or tooltip at `address`, as the focus listener
-/// forwards one: `None` for an event with no window, or whose window has
-/// no owner, which `owner` reads (0 for none), as for a window destroyed
-/// before the callback ran. The listener drops such an event before it
-/// forwards it, and NVDA's `WinEvent` callback drops an event whose window
-/// is no longer a window (`internalWinEventHandler.py`, "Invalid window");
-/// dropping it here too keeps the hook from holding a copy the listener
-/// never sends, which the hand-over would count as unmatched
-/// ([`handover`]). One local call (`GetWindowThreadProcessId`) per such
-/// event.
-fn hooked_fact(
-    kind: WinEventKind,
-    address: (isize, i32, i32),
-    owner: impl FnOnce(isize) -> u32,
-) -> Option<DeliveredFact> {
-    let fact = DeliveredFact::from_win_event(kind, address)?;
-    (owner(address.0) != 0).then_some(fact)
-}
-
-#[cfg(test)]
-mod hook_tests {
-    use super::{DeliveredFact, WinEventKind, hooked_fact};
-
-    /// A focus on a window with no owner, as a window destroyed before the
-    /// hook's callback ran has, is dropped, as the listener drops it; on a
-    /// window with an owner it is taken in.
-    #[test]
-    fn the_hook_drops_a_focus_on_a_window_with_no_owner() {
-        let address = (0x40, -4, 1);
-        assert_eq!(hooked_fact(WinEventKind::Focus, address, |_| 0), None);
-        assert_eq!(
-            hooked_fact(WinEventKind::Focus, address, |_| 42),
-            Some(DeliveredFact::MsaaFocus {
-                hwnd: 0x40,
-                id_object: -4,
-                id_child: 1,
-            })
-        );
-    }
-}
-
 #[cfg(test)]
 mod caret_read_tests {
     use super::CaretRead;
@@ -606,10 +564,8 @@ impl Context {
     /// Takes in a `WinEvent` the outpost's own hook delivered. A focus,
     /// foreground change, menu opening, alert, or tooltip becomes the fact
     /// the listener forwards for one, queued unless it is the twin of the
-    /// listener's copy, already queued ([`handover`]); one with no window,
-    /// or whose window has no owner, is dropped, as the listener drops it
-    /// ([`hooked_fact`]). Any other event is queued as
-    /// it is, unless its window is already known to be read through UIA:
+    /// listener's copy, already queued ([`handover`]); one with no window
+    /// is dropped. Any other event is queued as it is, unless its window is already known to be read through UIA:
     /// the worker would drop it at its window's UIA test, after acceptance
     /// and the window's state, which have no effect but a log line, so it
     /// is dropped here instead, and the worker is not woken for it. NVDA
@@ -671,9 +627,7 @@ impl Context {
             );
             return;
         }
-        let Some(fact) = hooked_fact(kind, (hwnd, id_object, id_child), |hwnd| {
-            window::window_owner(hwnd).1
-        }) else {
+        let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
             return;
         };
         let stamp = WinEventStamp { thread, time };
@@ -1300,7 +1254,6 @@ impl Outpost {
                 context
                     .handover()
                     .forwarding_ended(*through, std::time::Instant::now());
-                context.intake.forwarding_ended();
             }
             SupervisorToOutpost::Query {
                 trace_id,
@@ -1693,7 +1646,6 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
     // No listener forwards anything here: the outpost's own hook takes in
     // every `WinEvent`.
     outpost.context.handover().without_listener();
-    outpost.context.intake.forwarding_ended();
     outpost.handle_command(&SupervisorToOutpost::Query {
         trace_id: TraceId::mint(),
         request_id: 0,

@@ -10,13 +10,11 @@
 //! application's focus itself instead: once the worker's bound has passed,
 //! counted from the copy's observation, with no marker waiting, or at once
 //! when a focus marker is dropped because its sender has no window above
-//! it. Only a focus marker's resolution answers a gap, and its drop in one
-//! of three ways ([`DropEvidence`](crate::protocol::DropEvidence)): a
-//! verdict of NVDA's checks, or the listener giving up on the application,
-//! closes it, a drop that could not establish the focus, such as one no
-//! longer focused or one in a window that does not use UIA, leaves it to its
-//! bound, and a drop for no window reads it at once; a selection's, a
-//! notification's, or a menu opening's neither closes it nor reads it
+//! it. Only a focus marker's resolution answers a gap
+//! ([`DropEvidence`](crate::protocol::DropEvidence)): a drop that ends the
+//! wait closes it, a drop that could not establish the focus leaves it to
+//! its bound, a drop for no window reads it at once, and a selection's, a
+//! notification's or a menu opening's neither closes it nor reads it
 //! (Fable, 2026-10-21, pending Dickson's acceptance). At most one read is
 //! made for a gap.
 //!

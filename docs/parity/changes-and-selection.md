@@ -130,161 +130,78 @@ Selection in a list the focus controls (search suggestions and
 results). NVDA: when an item is selected inside an element the focus
 names in its UIA ControllerFor relation, NVDA reports that item as it
 reports a focus, without moving focus; this is how it reads the Start
-menu's search results and the Settings app's search suggestions as
-the user types and arrows ("Selection in a list the focus controls"
-in [Event handling](../nvda/events.md)). Verbatim: **partial**. For
-UIA suggestions, **matched (verified)** for the arrows and the first
-suggestion, by a different mechanism when Settings replaces the list's
-items as it opens it (the replacing state below), with reducer tests and
-the `settings_search_suggestions` scenario (10 of 10 runs on 2026-10-21, one of them in the replacing state). The
-scenario checks: "sound" typed in one injection
-gives each character's echo, "Suggestions available" cut off by the
-first suggestion, and the suggestions as Down Arrow twice and Up Arrow
-move through them, what NVDA says in the scenario's comparison of
-2026-10-20 (NVDA alpha-58022, the pin), apart from two recorded
-differences below. The scenario is local-only because Settings'
-search index on GitHub's runner is untested, and because whether
-Settings is in the replacing state, which decides how its first
-suggestion is found, is Settings' own ([the end-to-end
-guide](../tooling/e2e.md), the local-only scenarios). The scenario's expectations take the list's size, as
-its first item's set size (`SizeOfSet`, the property Verbatim's "of N"
-comes from), and its first three names from the agent, read through UI
-Automation once the list is open, since Settings' search index differs between editions.
-An earlier comparison that typed one character a step, with compare
-mode's second of quiet after each, had Settings open its suggestions
-after every character, NVDA saying them each time; that came from the
-pacing, and typing in one injection, before Settings' search delay,
-opens them once.
+menu's search results and the Settings app's search suggestions as the
+user types and arrows ("Selection in a list the focus controls" in
+[Event handling](../nvda/events.md)). Its test walks up from the
+event's element to an element the relation names (`isDescendantOf`,
+`NVDAObjects/UIA/__init__.py` 2444 to 2463). Verbatim: **partial**.
+UIA suggestions match, verified for the arrows and the first suggestion
+by reducer tests and the `settings_search_suggestions` scenario: "sound"
+typed in one injection gives each character's echo, "Suggestions
+available" cut off by the first suggestion, and the suggestions as Down
+Arrow twice and Up Arrow move through them, as NVDA says them in the
+scenario's comparison (NVDA alpha-58022, the pin), apart from the
+differences below. The scenario's expectations take the list's size and
+its first three names from the agent, read through UI Automation once
+the list is open, since Settings' search index differs between
+editions. It is local-only, because Settings' search index on GitHub's
+runner is untested and because whether Settings is in the replacing
+state, below, is Settings' own ([the end-to-end
+guide](../tooling/e2e.md), the local-only scenarios). Start's results
+that are in a Chromium document NVDA reads through IA2 are not yet
+built; they belong to the phase that implements IA2 (browsers, M7).
 
-Different, each a deliberate difference:
+Verbatim reads the relation live for each selection event, as NVDA
+reads it (Dickson, 2026-10-10), and searches down from each element it
+names for the selected element, both in one remote operation. When the
+selected element is inside none of them, Verbatim reports the first
+controlled element's current selection instead, read through its
+`Selection` property in the same operation, unless the selection names
+the focus itself, which the reducer reads as the focus's own selection,
+as NVDA's base selection handler falls through to its state change
+handler (`NVDAObjects/__init__.py` 1314 to 1339). This covers Settings'
+replacing state: in some launches Settings replaces the list's item
+elements within about 60 ms of raising the first item's selected event,
+with no event for the replacement, so the search from the relation
+finds nothing, while the list's current selection is the new first
+item, which Verbatim says as it says it without replacement
+(`target/e2e-evidence/fixes-round-eight-2026-10-21/route-logs`). A
+mockapp test pins the replacing state through a real outpost
+(`crates/mockapp/tests/controller_for.rs`, mockapp's `replace-items`).
+The first suggestion comes before the suggestions-opened sound because
+its selection reaches the outpost's queue about 50 ms before Settings'
+second change of the search box's relation; a delay of that much in the
+listener's handling puts the sound first.
 
-- The first suggestion, which the Settings app selects itself as its
-  list opens, is spoken by NVDA with the name its event's element
-  carried, which Settings has not set yet ("list item 1 of 22"), and by
-  Verbatim with the name read when the selection is handled ("Sound
-  settings 1 of 22"), since NVDA's word tells the user nothing (Dickson,
-  2026-10-20).
+Different:
+
+- The first suggestion, which Settings selects itself as its list
+  opens, is spoken by NVDA with the name its event's element carried,
+  which Settings has not set yet ("list item 1 of 22"), and by Verbatim
+  with the name read when the selection is handled ("Sound settings 1 of
+  22"), since NVDA's word tells the user nothing (Dickson, 2026-10-20).
 - For each arrow NVDA also says the search box's line, which Verbatim
   leaves unsaid for a caret key that moves nothing ([text](text.md),
   "TextInfo-equivalent layer").
+- A selection of an element outside every element the relation names,
+  while the first of them has a selection, is reported by Verbatim as
+  that selection and not reported as a suggestion by NVDA (pinned in
+  `crates/mockapp/tests/controller_for.rs`).
 
-Settings is in the replacing state in some launches, of a frequency
-not known: 2 of about 36 scenario runs on 2026-10-20, and, of 17
-launches by `cargo xtask nvda capture --verbatim --launch explorer.exe
---arg ms-settings:system` on 2026-10-21, 10 confirmed in it by the
-outpost's log, 1 by its symptom alone, 4 whose state is unknown because
-the outpost took no focus in Settings and made no search, and 2 not in
-it. No runtime id of the search box marks these launches. In them Settings replaces the
-list's item elements within about 60 ms of raising the first item's
-element selected event, and raises no event for the replacement. Every
-call into Settings then waits until it has rebuilt the list, 60 to 80 ms
-after the event; by then the relation names a list whose children carry
-new runtime ids, so Verbatim's search down from it finds nothing. NVDA's test walks up instead, from the
-event's own element to an element the relation names (`isDescendantOf`,
-`NVDAObjects/UIA/__init__.py` 2444 to 2463), and in that state it
-reaches the list: the replaced item still names the list as its parent,
-one step, which NVDA's walk took 199 to 260 microseconds to find once
-the relation's read had waited for Settings, in the two launches
-confirmed in the replacing state, and in the two whose state is unknown
-(`target/e2e-evidence/fixes-round-six-2026-10-21/finding1-walk.txt`).
-NVDA said "list item 1 of 22" in every capture taken in the same mode.
-Verbatim, finding the event's element in none of the elements the
-relation names, reports the first one's current selection instead, read
-through its `Selection` property in the same remote operation, with no
-further call: in the replacing state that is the new first item, "Sound
-settings", 1 of 22, which Verbatim says, as it says it without
-replacement (in 4 by-hand launches confirmed in the state, logged at
-debug as "the first one's current selection is reported",
-`target/e2e-evidence/fixes-round-eight-2026-10-21/route-logs`). A
-temporary diagnostic in 4 earlier launches confirmed in the state read
-the list's selection there, and the replaced item live from the event's
-element on the listener's reading thread after its nearest-window call;
-both answered "Sound settings", 1 of 22 (`diag-logs` beside it). This is
-a difference in mechanism from NVDA's test, with the same item spoken.
-A mockapp test pins the replacing state through a real outpost: an item
-selected, its selection event captured and checked as the listener
-does while the item still answers, the list's items replaced under new
-runtime ids, and the old item's selection then delivered is reported as
-the new item, with its name and position (`crates/mockapp/tests/controller_for.rs`, mockapp's
-`replace-items`).
-The two differ for a selection of an element outside every element the
-relation names while the first of them has a selection: NVDA says
-nothing of it as a suggestion, and Verbatim reports the list's current
-selection (pinned as this difference in
-`crates/mockapp/tests/controller_for.rs`). Excepted is a selection of
-the focus itself, of one of the ancestors last reported with it, and any
-selection while the focus is a list or tab control, which the reducer
-reads as one in the focus: Verbatim reads it as the focus's own, from
-runtime ids and roles it already holds, with no call, reads no current
-selection, and handles it as other selections, as NVDA's base selection
-handler falls through to its state change handler
-(`NVDAObjects/__init__.py` 1314 to 1339); each of the three cases is
-pinned in `crates/mockapp/tests/controller_for.rs`. The last case does not ask
-whether the element is one of the focus's items, since that needs a
-call, so a focused list whose relation names another list that replaces
-its items loses the route: the stale selection of the replaced item goes
-to the other selection handling, which reads a dead element, where
-NVDA's walk up from the item reaches the controlled list and reports it
-as a suggestion. No application is known to do this. By-hand
-captures of the two Settings sequences that could take that route by
-mistake, on 2026-10-21 (NVDA alpha-58022, the pin, twice each, and
-Verbatim three times each, `target/e2e-evidence/fixes-round-ten-2026-10-21/`,
-the `nvda-*-capture-*.txt` and `verbatim-*-capture-*.txt` files, with
-Verbatim's logs beside them), found no such report. Enter on a
-suggestion from another category ("mouse" typed on the System page,
-"Mouse settings") makes Settings raise three selection events while the
-search box is still the focus, and by then the box's relation names
-nothing, so neither the search nor the route runs; both screen readers
-then say "Mouse" and "Primary mouse button combo box Left collapsed".
-Shift+Tab out of the open list ("sound" typed) gives "list" and
-"Display 1 of 19" from both. In both sequences the only difference in
-speech is the first suggestion's name, the deliberate difference above. Porting NVDA's walk instead needs the event's
-element, which only the focus listener holds, and a live read of the
-replaced item's name, position and set size: about 8 more wake-ups in
-the listener and 2 in the application for each selection event. When
-the list has nothing selected, or the selection is the focus's own, the
-event is no controlled selection, as before, logged at debug as "a
-selection in none of the elements the focus controls, and no current
-selection read from the first" when the relation names something.
+Known from the source and not captured:
 
-Three more differences are known from the source and not captured:
-
-- NVDA tests the event's element against every element the relation
-  names, and Verbatim reads only the first one's current selection, so a
-  selection in a second controlled element that the search cannot find
-  is reported as the first controlled element's current selection when
-  it has one, and is silent otherwise, where NVDA's walk from the
-  event's element reaches the second element and reports the event's
-  element. Settings' search box names one.
-- A selection event left stale by a second replacement of the list, as a
-  second burst of typing while the list is open could cause, is reported
-  by Verbatim as the current list's selection, and when the new list's
-  own selection event follows, Verbatim says the same item again, the
-  first report cut off. NVDA's walk from the stale event's element
-  reaches the list, as after the first replacement, and NVDA reports the
-  event's element.
-- NVDA's test (`isDescendantOf`, `NVDAObjects/UIA/__init__.py` 2444 to
-  2463) is a tree walker's `NormalizeElement` from the event's element
-  with a condition on the controlled element's runtime id, which by
-  Microsoft's documentation answers the element itself when it meets the
-  condition, so NVDA reports a selection event raised on the controlled
-  list itself as a controlled selection. Verbatim does not count the
-  list as its own descendant and reports no controlled selection for it
-  (`crates/mockapp/tests/controller_for.rs`). No Settings sequence has
-  been seen to raise one.
-
-The first suggestion comes before the suggestions-opened sound only
-because the selection's place in the outpost's queue arrives before
-Settings' second change of the search box's relation, by about 50 ms in
-the runs of 2026-10-20; anything that delays the listener's handling of
-the selection by that much puts the sound first, as temporary
-diagnostics in the listener's callback did in two runs that day
-(`target/e2e-evidence/fixes-item-11-2026-10-20/finding1-diagnosis.txt`).
-The ControllerFor relation is read live for each selection event,
-as NVDA reads it (Dickson, 2026-10-10), in one remote operation with
-the search for the selected element. Not yet built: Start's results
-that are in a Chromium document NVDA reads through IA2, which belong to
-the phase that implements IA2 (browsers, M7).
+- A selection in a second controlled element that the search cannot
+  find is reported as the first controlled element's current selection,
+  where NVDA's walk reports the event's element; Settings' search box
+  names one element.
+- A selection event left stale by a second replacement of the list is
+  reported as the current list's selection, and said again when the new
+  list's own selection event follows, where NVDA reports the event's
+  element.
+- A selection event raised on the controlled list itself is a
+  controlled selection in NVDA, whose tree walker's `NormalizeElement`
+  answers the element itself, and none in Verbatim
+  (`crates/mockapp/tests/controller_for.rs`).
 
 ### Suggestions appearing and going away
 

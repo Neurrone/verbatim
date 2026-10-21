@@ -473,7 +473,7 @@ const VERDICTS: [&str; 6] = [
 /// failed to answer, so the wait ends without one (Fable, 2026-10-21,
 /// pending Dickson's acceptance). The drop whose event said it lacked the
 /// keyboard focus when the read's time was up is among them, a judgement
-/// call of its own (Fable, 2026-10-21, pending Dickson's acceptance): its
+/// call of its own (Dickson, 2026-10-21): its
 /// time ran out as the others' did.
 const GAVE_UP: [&str; 5] = [
     NOT_IN_TIME,

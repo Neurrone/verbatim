@@ -61,17 +61,12 @@ hand-over, step by step:
   thread in one tick are two copies from each source, matched pair by
   pair, so both are handled; nothing that came from one source alone is
   dropped. Each copy is queued under the hand-over's lock, so the intake
-  receives the copies in the order they were judged, and the outpost's
-  hook drops an event whose window has no owner, as the listener does
-  (`hooked_fact`). A listener copy raised before the outpost's first clock reading
-  has no twin and is not counted; after `ForwardingEnded`, only copies
-  raised between the two readings are counted, a handful at most, and
-  only for `handover::TWIN_BOUND` (15 seconds, the longest a late copy can
-  trail that message) after it arrived, measured on the outpost's
-  monotonic clock: then the counts are dropped and nothing is counted
-  again, so the comparison of raise times, which wraps at 2^31 ms, is
-  never made across weeks. A late copy that trails the message by more
-  than that bound is handled a second time.
+  receives the copies in the order they were judged. A listener copy
+  raised before the outpost's first clock reading has no twin and is not
+  counted; after `ForwardingEnded`, only copies raised between the two
+  readings are counted, a handful at most, and only for
+  `handover::TWIN_BOUND` (15 seconds) after it arrived, by the outpost's
+  monotonic clock, after which nothing is counted again.
 - When an application's ready outpost ends, for any reason, the
   supervisor sends the listener `SupervisorToOutpost::HookRemoved`, and the
   listener forwards that application's events again. A listener that
@@ -203,7 +198,7 @@ event's own element:
   `NoWindow`, its sender with no window above it
   (`focus_read::NO_WINDOW`), as a sender gone before its read has; or
   `NotFocus`, not a focus at all. Two of these are judgement calls of
-  their own (Fable, 2026-10-21, pending Dickson's acceptance): the drop
+  their own (Dickson, 2026-10-21): the drop
   whose event said it lacked the keyboard focus when the read's time was
   up ends the wait, and the one a newer event replaced is inconclusive. A read says, in `focus`, whether it was
   a focus's rather than a menu opening's. Both go on the pipe as JSON,
@@ -749,86 +744,45 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     move is logged at debug level, by the worker and by the subscription's
     thread with every call it makes.
   - The queue applies NVDA's limiter rules to MSAA events only
-    (`docs/design/focus-pipeline.md` section 5): one
-    waiting entry per object and kind, and for an MSAA event other than a
-    menu opening, the thread that raised it, as NVDA's limiter keys them
-    (a menu opening waits per address alone, and the console host's
-    events merge per window and kind), a newer one replacing it and moving
-    to the back, which is all that limits UIA events; a batch is everything
-    that accumulated while the worker handled the previous one, planned in
-    the order it arrived, but for a focused terminal's caret event waiting
-    ahead of a text change of the terminal (its console update or UIA text
-    change) with only events between them, which is planned just after the
-    newest such change, since that change's read reads the caret too and
-    the caret event then reads nothing (`caret_after_update`); per batch the newest 4 MSAA focus events and the
-    newest 10 other MSAA events per thread that raised them are kept (each
-    MSAA event carries its own thread, from the outpost's hook or the
-    listener's), the focused object's other
-    events beyond the limit though they count, and a foreground change by
-    either limit, since it counts among both; UIA events and menu openings
-    are not counted; events from a window the system reports hung
-    (`IsHungAppWindow`) are dropped before any read. Each consecutive run
-    of MSAA focus events and foreground changes, every foreground change
-    of the batch among them, is tried newest first until one is reported,
-    at the place of the run's newest, as NVDA's `pumpAll` does (only an
-    MSAA event NVDA's pump receives ends a run, and every other entry is
-    handled at its own place, `ends_a_run`; `Planned::handle` dispatches
-    each planned item); of
-    two foreground changes of the same window from the same thread
-    (`Key::Foreground` names both), the later raised is kept, whichever
-    arrived first: until the listener's "forwarding ended" is in, the
-    intake records, as each change arrives, the newest raised per window
-    and thread (`ForegroundTaken`), whether it then waits, is planned or
-    is handed out, and one arriving after a later-raised change recorded
-    is dropped by one lookup, as NVDA's limiter, adding events in raised
-    order, keeps the newest per window, object and thread; a foreground change removes
-    a focus event waiting on its window's client object from the same
-    thread, raised no later than the change (at one tick, unless the focus
-    is the hook's copy and the change is known to have been raised before
-    the hook went in), as NVDA's limiter removes a waiting focus when it
-    adds the change; such a focus that arrives after a foreground change
-    of its window and thread raised after it is dropped as it arrives (at
-    one tick, only when the focus is known to have been raised before the
-    hook went in and the change is the hook's copy), against the same
-    record, whether the change waits, is planned or was handed out,
-    leaving only a listener copy the listener's hook receives after it
-    read the tick that message names (`Intake::forwarding_ended`) to
-    arrive so after it, which, when the later change of its window and
-    thread still waits, replaces it by key and takes its place at the
-    back, so the older change is handed out instead and removes waiting
-    client focuses by its own, older raise time: the window is the same,
-    but a focus raised between the two that waits after the later change
-    is then the newest of their run and is reported in place of the window
-    (rare, as it needs two late listener copies, the focus's and the older
-    change's), and the foreground report can come after the speech of an
-    event that ends a run and arrived after the later change; NVDA pumps a focus at
-    once and then says exactly one of the two: the change only when its
-    pump filters or refuses the focus (`shouldAcceptEvent`,
-    `eventHandler.py` 481 to 599, accepts it, among other cases, when its
-    window is the foreground window or descends from it, has the
-    foreground window's root owner, or is topmost or has a topmost root,
-    and also for an event an app module registered through
-    `requestEvents`, the desktop window, a `Windows.UI.Core` window that
-    descends from the active window, and a Chromium document under the
-    focused Chrome window; an accepted focus can still be refused, as by
-    `winEventToNVDAEvent` failing, the focused-state test, which app
-    modules override, or the SDM test), which the
-    drop matches, and the focus otherwise, as
-    `processForegroundWinEvent`'s descendant and address tests drop the
-    change, where the drop differs by ending on the window's object and
-    not the focus's (a dialog the window in front owns falls here; the
-    roadmap's M4.2 records the capture to take), and, only for a window
-    read through MSAA, loses a focused child in the two cases
-    `redirect_focus_to_child` reaches (the window's client is a list or a
-    `SysListView32` window's client, or its `accFocus` answers a child id
-    whose child has the focused state); a run whose events all carry their raise time is tried in
-    that order (`in_raised_order`), events of one clock tick ordered by
-    the hand-over's `Arrival` (`outpost::handover`): a listener copy known
-    to have been raised before the outpost's hook went in, and every
-    listener copy of the batch that arrived before it, go ahead of the
-    rest, which keep their arrival order;
-    every UIA focus event is handled at its own place; and the newest menu
-    opening from each backend is handled last. A UIA
+    (`docs/design/focus-pipeline.md` section 5). One entry waits per
+    object and kind, and for an MSAA event other than a menu opening, per
+    thread that raised it, as NVDA's limiter keys them (a menu opening
+    waits per address alone, and the console host's events merge per
+    window and kind); a newer one replaces it and moves to the back, which
+    is all that limits UIA events. A batch is everything that accumulated
+    while the worker handled the previous one, planned in the order it
+    arrived, but for a focused terminal's caret event waiting ahead of a
+    text change of the terminal (its console update or UIA text change)
+    with only events between them, which is planned just after the newest
+    such change, since that change's read reads the caret too
+    (`caret_after_update`). Per batch the newest 4 MSAA focus events and
+    the newest 10 other MSAA events per thread that raised them are kept
+    (each MSAA event carries its own thread, from the outpost's hook or
+    the listener's), the focused object's other events beyond the limit
+    though they count, and a foreground change by either limit, since it
+    counts among both; UIA events and menu openings are not counted;
+    events from a window the system reports hung (`IsHungAppWindow`) are
+    dropped before any read. Each consecutive run of MSAA focus events and
+    foreground changes, every foreground change of the batch among them,
+    is tried newest first until one is reported, at the place of the run's
+    newest, as NVDA's `pumpAll` does (only an MSAA event NVDA's pump
+    receives ends a run, and every other entry is handled at its own
+    place, `ends_a_run`; `Planned::handle` dispatches each planned item).
+    Of two foreground changes of the same window from the same thread
+    (`Key::Foreground` names both), the later to arrive replaces the one
+    waiting. A foreground change removes a focus event waiting on its
+    window's client object from the same thread when the focus was not
+    raised after it (in one tick, unless the focus is the hook's copy and
+    the change is known to have been raised before the hook went in), as
+    NVDA's limiter removes a waiting focus when it adds the change. A run
+    whose events all carry their raise time is tried in that order
+    (`in_raised_order`), events of one clock tick ordered by the
+    hand-over's `Arrival` (`outpost::handover`): a listener copy known to
+    have been raised before the outpost's hook went in, and every listener
+    copy of the batch that arrived before it, go ahead of the rest, which
+    keep their arrival order. Every UIA focus event is handled at its own
+    place, and the newest menu opening from each backend is handled last.
+    A UIA
     focus's marker holds its place: nothing that arrives after it is
     planned until the listener's read takes its place, or its drop, or the
     end of the listener's reads, removes it, so an event raised after a
@@ -2100,12 +2054,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   instead, carrying the focus's id, as NVDA reports a search suggestion,
   and so does one inside none of them, with the first controlled
   element's current selection as its node, logged at debug ("the first
-  one's current selection is reported"), unless the selection is the
-  focus's own (`Worker::selection_of_focus`, from runtime ids and roles
-  in hand, with no call: the focus itself, an ancestor last reported with
-  it, or any selection while the focus is a list or tab control, which
-  the reducer reads as one in the focus), which then goes on to
-  the other selection handling, as NVDA's base selection handler falls
+  one's current selection is reported"), unless the selection names the
+  focus itself (compared by runtime id, with no call), which then goes on
+  to the other selection handling, as NVDA's base selection handler falls
   through to its state change handler; one found in none with no current
   selection read is logged at debug ("a selection in none of the elements
   the focus controls, and no current selection read from the first"):

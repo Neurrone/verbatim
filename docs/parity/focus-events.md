@@ -461,31 +461,20 @@ follows a `WinEvent` focus in a UIA window within a second of the
 focus-now query does, and reports it, once. The listener's drops of the
 UIA focus it waits for fall into three classes:
 
-- A drop that ends the wait. A verdict of NVDA's checks on the event: its
-  window hung, not related to the foreground window, the console window's
-  own, or a shell window that only stages a switch, or a repeat of the
-  focus that still has the keyboard focus; NVDA drops the event for the
-  same reason and nothing more is lost. Or the listener giving up on the
-  application: the read did not return in time, waited too long behind
-  the application's abandoned reads, or ran out of time before its window
-  was looked up or judged, or the event said it lacked the keyboard focus
-  when the read's time was up; a read into an application that has just
-  failed to answer is not made (Fable, 2026-10-21, pending Dickson's
-  acceptance).
+- A drop that ends the wait: a verdict of NVDA's checks on the event, for
+  which NVDA drops it too, or the listener giving up on the application
+  when its read's time ran out, a read into an application that has just
+  failed to answer not being made (Fable, 2026-10-21, pending Dickson's
+  acceptance). The drop whose event said it lacked the keyboard focus
+  when the read's time was up is among these (Dickson, 2026-10-21).
 - A drop that could not establish the focus: its element no longer has
   the keyboard focus (NVDA's drop at lines 1632 to 1637), its window does
-  not use UIA, the read was abandoned when the user moved on or never
-  started, its element could not be kept or resolved, or a newer event of
-  its element replaced it. The wait goes on to its second, with nothing
-  read at once: these drops come in ordinary fast navigation, where the
-  next key's focus event follows, so a read at once would cost a read per
-  key, and could speak a focus out of order beside the next key's. A
-  window that does not use UIA is not the copy's, which the outpost judged
-  UIA, so such a drop is of another window of the application, as a new
-  File Explorer window's frame's focus is dropped just before its items
-  view's, and says nothing of the copy's focus (Fable, 2026-10-21, pending
-  Dickson's acceptance). One resolved after the second has passed lets the
-  read happen then, as any resolution does once the second is up.
+  not use UIA, so it is another window than the copy's, its read was
+  abandoned or never started, its element could not be kept or resolved,
+  or a newer event of its element replaced it (Dickson, 2026-10-21). The
+  wait goes on to its second with nothing read at once, since these drops
+  come in ordinary fast navigation, where the next key's focus event
+  follows (Fable, 2026-10-21, pending Dickson's acceptance).
 - A sender with no window above it, as in a new window's first burst of
   focus events after their senders are gone: the event came and cannot
   be read, and the event for where the focus went may never come, so the
@@ -495,11 +484,7 @@ Where NVDA drops a gone sender's focus event and speaks nothing until the
 next one comes, Verbatim speaks where the focus now is. A read answers
 only a copy in its own top-level window, so a UIA focus in another
 window of the application answers nothing of it; a drop carries no window
-and is matched by when it was observed alone, a limit. Two of the classes
-above are judgement calls of their own (Fable, 2026-10-21, pending
-Dickson's acceptance): the drop whose event said it lacked the keyboard
-focus when the read's time was up ends the wait, and the one a newer
-event replaced does not end it. So where UIA delivers late, Verbatim speaks
+and is matched by when it was observed alone, a limit. So where UIA delivers late, Verbatim speaks
 the same words a second after the `WinEvent`, earlier than NVDA would;
 where it never delivers, and for a burst of gone elements, Verbatim
 speaks the focus where NVDA, by its source, is silent. A late UIA focus
