@@ -35,6 +35,22 @@
 //! bug not copied (Dickson, 2026-10-09,
 //! `docs/parity/terminals.md`, "New terminal output").
 //!
+//! A second window opened in the running Windows Terminal raises its
+//! terminal's focus under more than one runtime id in some launches, and
+//! each repeat reads the caret's line on its own: "<title> terminal" and
+//! "blank", or the terminal alone for an identity whose element the
+//! outpost cannot find, before or after the announcement heard in full.
+//! NVDA announces each repeated focus too, the line only with the one
+//! whose text it could read: "<title> window", "<title> terminal" twice,
+//! and "<title> terminal blank"
+//! (`target/e2e-evidence/m42-desktop-2-2026-10-22/`,
+//! `part2c-windows_terminal_two_windows-run1.txt` and
+//! `part2c-windows_terminal_leave_flood-run1.txt` and `-run6.txt`, step
+//! 5). `windows_terminal_two_windows` and `windows_terminal_leave_flood`
+//! accept the repeats as optional utterances and require the window, the
+//! terminal heard in full with its line, and then the prompt
+//! (`terminal::expect_second_windows_terminal_prompt_read`).
+//!
 //! Switching tabs holds Control, as a person does through Windows
 //! Terminal's tab switcher, and releases it once the tab is chosen
 //! (`Scenario::hold_key`): a single Control+Shift+Tab, with Control
@@ -259,11 +275,7 @@ pub(crate) fn body_leave_windows_terminal(scenario: &mut Scenario, state: &mut S
     let second_state = terminal::open_windows_terminal_window(scenario, "leave-b", state)
         .expect("opens a second Windows Terminal window");
     let second = terminal::title(&second_state).to_owned();
-    terminal::expect_windows_terminal_prompt_read(
-        scenario,
-        &second_state,
-        terminal::SECOND_WINDOW_REPEATS,
-    );
+    terminal::expect_second_windows_terminal_prompt_read(scenario, &second_state);
     scenario
         .bring_window_forward(&first)
         .expect("brings the first window forward");
@@ -356,11 +368,7 @@ pub(crate) fn body_two_windows_terminal(scenario: &mut Scenario, state: &mut Sce
     let second_state = terminal::open_windows_terminal_window(scenario, "two-b", state)
         .expect("opens a second Windows Terminal window");
     let second = terminal::title(&second_state).to_owned();
-    terminal::expect_windows_terminal_prompt_read(
-        scenario,
-        &second_state,
-        terminal::SECOND_WINDOW_REPEATS,
-    );
+    terminal::expect_second_windows_terminal_prompt_read(scenario, &second_state);
     scenario
         .bring_window_forward(&first)
         .expect("brings the first window forward");

@@ -182,6 +182,25 @@ last (matched; `*_review_output`).
   "blank" for the second window and the second tab, and every Windows
   Terminal scenario for its first window. The two-window scenarios
   switch windows by bringing them to the front.
+- A second window opened in the running Windows Terminal has its
+  terminal's focus raised under more than one runtime id in some
+  launches, and both readers announce each repeat (matched). Verbatim
+  reads the caret's line with each, so a repeat says "<title> terminal"
+  and "blank", or the terminal alone for an identity whose element the
+  outpost cannot find, before or after the announcement heard in full.
+  NVDA, in its compare runs of 2026-10-21, said "<title> window",
+  "<title> terminal" twice, and "<title> terminal blank", the line only
+  with the identity whose text it could read
+  (`target/e2e-evidence/m42-desktop-2-2026-10-22/`,
+  `part2c-windows_terminal_two_windows-run1.txt`,
+  `part2c-windows_terminal_leave_flood-run1.txt` and `-run6.txt`, step
+  5); in its other runs, a single "<title> terminal", in two of them
+  with "blank".
+  `windows_terminal_two_windows` and `windows_terminal_leave_flood`
+  accept the repeats as optional utterances (`docs/testing.md`,
+  "Optional utterances") and require the window, the terminal heard in
+  full with its line, and then the prompt. Telling the identities apart
+  is left to Windows Terminal's app module (`docs/roadmap.md`, M5).
 - Switching tabs with Control+Tab or Control+Shift+Tab (matched;
   `docs/design/focus-pipeline.md`, section 10.1, items 2 and 3).
   Windows Terminal gives the tab the keyboard focus only until it moves

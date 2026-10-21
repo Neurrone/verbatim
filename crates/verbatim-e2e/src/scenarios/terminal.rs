@@ -81,7 +81,7 @@ use verbatim_model::NormalizedEvent;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
-use crate::speech::{Expected, heard, optional_up_to};
+use crate::speech::{Expected, heard, optional, optional_up_to};
 use crate::windows_terminal;
 
 /// The prompt line as Verbatim speaks it, without its trailing space.
@@ -632,7 +632,7 @@ pub(crate) fn expect_prompt_read(
     announcement: &[&str],
 ) {
     let announcement: Vec<Expected> = announcement.iter().map(|text| heard(text)).collect();
-    prompt_read(scenario, state, &announcement);
+    prompt_read(scenario, state, &announcement, &[]);
 }
 
 /// How many times more a Windows Terminal window's terminal may be
@@ -643,8 +643,10 @@ pub(crate) fn expect_prompt_read(
 /// scenarios.
 pub(crate) const LAUNCH_REPEATS: usize = 1;
 
-/// [`LAUNCH_REPEATS`] for a second window opened in the running Windows
-/// Terminal ([`open_windows_terminal_window`]), whose terminal has been
+/// How many times more a second window opened in the running Windows
+/// Terminal ([`open_windows_terminal_window`]) may have its terminal
+/// announced, before and after the announcement heard in full together
+/// ([`expect_second_windows_terminal_prompt_read`]): its terminal has been
 /// said three times at most, in `windows_terminal_two_windows` and
 /// `windows_terminal_leave_flood`.
 pub(crate) const SECOND_WINDOW_REPEATS: usize = 2;
@@ -671,12 +673,84 @@ pub(crate) fn expect_windows_terminal_prompt_read(
             heard(&terminal),
             heard("blank"),
         ],
+        &[],
     );
 }
 
+/// [`expect_windows_terminal_prompt_read`] for a second window opened in
+/// the running Windows Terminal ([`open_windows_terminal_window`]), whose
+/// terminal's focus Windows Terminal raises under more than one runtime
+/// id. Each repeat of it reads the caret's line on its own, so a repeat is
+/// "<title> terminal" with its line, "blank", or, for an identity whose
+/// element the outpost cannot find, without it, and it comes before or
+/// after the announcement heard in full. The repeats are optional
+/// utterances (`docs/testing.md`, "Optional utterances"): before the
+/// announcement, "<title> terminal" up to [`SECOND_WINDOW_REPEATS`] times,
+/// each repeat cutting off the one before it; after it, until the first
+/// prompt, up to as many times "<title> terminal" each optionally followed
+/// by "blank". The terminal is said at most [`SECOND_WINDOW_REPEATS`]
+/// times more in all, and a "blank" after the announcement only after a
+/// repeat of the terminal. The required sequence stays exact: the window,
+/// the terminal heard in full, "blank", and then the prompt.
+pub(crate) fn expect_second_windows_terminal_prompt_read(
+    scenario: &mut Scenario,
+    state: &ScenarioState,
+) {
+    let title = title(state);
+    let terminal = format!("{title} terminal");
+    let before = scenario.speech().optional_outcomes().len();
+    let after: Vec<Expected> = (0..SECOND_WINDOW_REPEATS)
+        .flat_map(|_| {
+            [
+                optional_up_to(&terminal, SECOND_WINDOW_REPEATS),
+                optional("blank"),
+            ]
+        })
+        .collect();
+    prompt_read(
+        scenario,
+        state,
+        &[
+            heard(&format!("{title} window")),
+            optional_up_to(&terminal, SECOND_WINDOW_REPEATS),
+            heard(&terminal),
+            heard("blank"),
+        ],
+        &after,
+    );
+    let outcomes = &scenario.speech().optional_outcomes()[before..];
+    // In compare mode no optional utterance is matched or recorded.
+    if outcomes.is_empty() {
+        return;
+    }
+    let repeats: usize = outcomes
+        .iter()
+        .filter(|outcome| outcome.text == terminal)
+        .map(|outcome| outcome.endings.len())
+        .sum();
+    assert!(
+        repeats <= SECOND_WINDOW_REPEATS,
+        "{terminal:?} was said {repeats} times more than once as the window opened, where at most {SECOND_WINDOW_REPEATS} are accepted"
+    );
+    // The optional utterances after the announcement come in pairs, the
+    // terminal and then its line.
+    for pair in outcomes[1..].chunks(2) {
+        assert!(
+            pair[1].endings.is_empty() || !pair[0].endings.is_empty(),
+            "\"blank\" was said after the window's announcement with no repeat of {terminal:?} before it"
+        );
+    }
+}
+
 /// [`expect_prompt_read`] with the announcement's utterances given as
-/// [`Expected`].
-fn prompt_read(scenario: &mut Scenario, state: &ScenarioState, announcement: &[Expected]) {
+/// [`Expected`], and `before_prompt` expected ahead of the first prompt in
+/// the same sequence.
+fn prompt_read(
+    scenario: &mut Scenario,
+    state: &ScenarioState,
+    announcement: &[Expected],
+    before_prompt: &[Expected],
+) {
     let ScenarioState::Window {
         directory, title, ..
     } = state
@@ -704,7 +778,9 @@ fn prompt_read(scenario: &mut Scenario, state: &ScenarioState, announcement: &[E
     scenario
         .wait_for_agent_file(&format!(r"{directory}\{READY_FILE}"), READY_TIMEOUT)
         .expect("the shell shows its first prompt");
-    scenario.speech().expect(&[PROMPT]);
+    let mut prompt = before_prompt.to_vec();
+    prompt.push(heard(PROMPT));
+    scenario.speech().expect_sequence(&prompt);
     if let Some(events) = &mut events {
         wait_for_caret_on(events, PROMPT, STEP_TIMEOUT)
             .expect("Core receives the caret on the prompt");

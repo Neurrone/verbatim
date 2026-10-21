@@ -761,8 +761,12 @@ The groups:
   `expect_windows_terminal_prompt_read(state, repeats)` instead, which
   builds that announcement with "<title> terminal" also an optional
   utterance up to `repeats` times before the one heard in full
-  (`LAUNCH_REPEATS`, 1, as a window opens; `SECOND_WINDOW_REPEATS`, 2,
-  for a second window opened in the running Windows Terminal). `type_hearing(text, echo)` types one
+  (`LAUNCH_REPEATS`, 1, as a window opens). A second window opened in
+  the running Windows Terminal uses
+  `expect_second_windows_terminal_prompt_read(state)`, which also accepts
+  the repeats after the one heard in full, until the first prompt, each
+  with or without its line, "blank", up to `SECOND_WINDOW_REPEATS`, 2,
+  in all. `type_hearing(text, echo)` types one
   character at a time: with `Echo::Shown`, the echo is what the terminal
   shows, and a space at the end of a line cannot be told from padding
   until something follows it, so a space is typed with the next character
