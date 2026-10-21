@@ -247,8 +247,10 @@ pub(crate) enum TextFollowUp {
     Land(Landing),
     /// A select then copy selected the text.
     Selected,
-    /// A select then copy read the text to copy.
-    Copy,
+    /// A select then copy read the text to copy, for the start marker
+    /// whose [`SrState::start_marker_generation`] this is: the copy clears
+    /// that marker only, not one set while the read was in flight.
+    Copy { marker: u64 },
     /// A location report.
     Location,
     /// The selected text of the navigator object was read: use it, or with
@@ -534,6 +536,12 @@ pub struct SrState {
     /// The select-then-copy start marker.
     #[serde(default)]
     pub(crate) start_marker: Option<StartMarker>,
+    /// How many times a start marker has been set: which marker a copy's
+    /// read was made for, so its reply clears that one and keeps a marker
+    /// set since (`docs/parity/review.md`, "Select then copy from the
+    /// review cursor").
+    #[serde(default)]
+    pub(crate) start_marker_generation: u64,
     /// The say-all in progress.
     #[serde(default)]
     pub(crate) say_all: Option<SayAll>,

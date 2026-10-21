@@ -407,6 +407,7 @@ fn execute(
             landing(LandingPlace::BeforePoint, TextUnit::Character, None),
         ),
         ReviewCommand::SetStartMarker => {
+            state.start_marker_generation += 1;
             state.start_marker = Some(StartMarker::Text {
                 node,
                 at: cursor,
@@ -489,7 +490,9 @@ fn execute(
                         end,
                         through,
                     },
-                    TextFollowUp::Copy,
+                    TextFollowUp::Copy {
+                        marker: state.start_marker_generation,
+                    },
                 )
             }
         }
@@ -634,12 +637,15 @@ pub(crate) fn reply(
                 Phrase::Positioned { x, y },
             ))],
         )],
-        // A copy clears the start marker whatever it found, so a further
-        // press has none; a range with nothing in it copies nothing and
+        // A copy clears the start marker it copied from whatever it found,
+        // so a further press has none, but keeps a marker set while the
+        // read was in flight; a range with nothing in it copies nothing and
         // says nothing (`docs/parity/review.md`, "Select then copy from
         // the review cursor").
-        (TextFollowUp::Copy, reply) => {
-            state.start_marker = None;
+        (TextFollowUp::Copy { marker }, reply) => {
+            if state.start_marker_generation == marker {
+                state.start_marker = None;
+            }
             match reply {
                 TextReply::Range { text, .. } if !text.is_empty() => {
                     vec![Effect::CopyToClipboard(text)]
@@ -811,6 +817,7 @@ pub(crate) fn flat_extra(
             vec![speak(trace_id, text::text_segments(rest, None))]
         }
         ReviewCommand::SetStartMarker => {
+            state.start_marker_generation += 1;
             state.start_marker = Some(StartMarker::Flat {
                 node,
                 offset,

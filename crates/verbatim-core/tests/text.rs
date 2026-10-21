@@ -1548,6 +1548,47 @@ fn a_first_press_after_a_selection_not_yet_copied_asks_for_the_second() {
 }
 
 #[test]
+fn a_copy_keeps_a_start_marker_set_while_its_read_was_in_flight() {
+    // The copy clears the marker it copied from, not one set after the
+    // second press and before its read was answered
+    // (`docs/parity/review.md`, "Select then copy from the review cursor").
+    let mut state = reviewing(
+        "hello world
+",
+        0,
+    );
+    let _ = selected_from_the_marker(&mut state);
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
+    let copy = request(&effects);
+    let effects = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
+    assert_eq!(spoken(&effects), vec![message(Message::StartMarked)]);
+    let effects = reduce(
+        &mut state,
+        &completed(
+            copy.query_id,
+            TextReply::Range {
+                text: "hello w".to_owned(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(effects, vec![Effect::CopyToClipboard("hello w".to_owned())]);
+    // The new marker, on "w", is kept: a first press selects from it.
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::Select {
+            start: at(6),
+            end: at(6),
+            through: Some(TextThrough {
+                start: at(7),
+                end: at(7),
+            }),
+        }
+    );
+}
+
+#[test]
 fn a_copy_of_nothing_clears_the_start_marker_and_says_nothing() {
     let mut state = reviewing("hello world\n", 0);
     let _ = selected_from_the_marker(&mut state);
