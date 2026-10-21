@@ -445,6 +445,41 @@ fn focus_dropped_first(
     is_stale_focus(state, node.id.outpost(), observed_at_ms, window)
 }
 
+/// A caret report of `node`: keeps Core's caret current, ends the focus's
+/// announcement when it was waiting for it, and, once the announcement was
+/// complete, speaks the selection changes it carries, a selection no key
+/// made (`editing::selection_changed`). The report that completes the
+/// announcement sets the selection later ones are compared with, and
+/// carries no change.
+fn reduce_caret_moved(
+    state: &mut SrState,
+    (trace_id, observed_at_ms): (TraceId, u64),
+    moved: &NormalizedEvent,
+) -> Vec<Effect> {
+    let NormalizedEvent::CaretMoved {
+        node_id: node,
+        caret,
+        selection_changes,
+    } = moved
+    else {
+        return Vec::new();
+    };
+    let node = *node;
+    let announced = state.focus_text.is_none_or(|pending| pending.node != node);
+    let mut effects = terminal::caret_shows_typing(state, trace_id, node, caret);
+    editing::update_caret(state, node, caret.clone(), observed_at_ms);
+    effects.extend(editing::focus_caret(state, trace_id, node));
+    if announced {
+        effects.extend(editing::selection_changed(
+            state,
+            trace_id,
+            (node, observed_at_ms),
+            selection_changes,
+        ));
+    }
+    effects
+}
+
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
@@ -513,11 +548,8 @@ fn reduce_event(
         NormalizedEvent::ValueChanged { node_id, value } => {
             reduce_value_changed(state, trace_id, *node_id, value.clone())
         }
-        NormalizedEvent::CaretMoved { node_id, caret } => {
-            let mut effects = terminal::caret_shows_typing(state, trace_id, *node_id, caret);
-            editing::update_caret(state, *node_id, caret.clone(), observed_at_ms);
-            effects.extend(editing::focus_caret(state, trace_id, *node_id));
-            effects
+        moved @ NormalizedEvent::CaretMoved { .. } => {
+            reduce_caret_moved(state, (trace_id, observed_at_ms), moved)
         }
         NormalizedEvent::NoText { node_id } => editing::focus_value(state, trace_id, *node_id),
         NormalizedEvent::TextChanged { node_id } => {

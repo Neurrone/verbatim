@@ -530,6 +530,12 @@ pub struct SrState {
     /// The caret key waiting for evidence.
     #[serde(default)]
     pub(crate) pending_caret: Option<PendingCaret>,
+    /// The node and the observed time of the last caret report whose
+    /// selection changes Core spoke without a key (`editing::selection_changed`):
+    /// a caret key pressed no later reaches Core after the change it made was
+    /// spoken, so its watch compares with the selection now known.
+    #[serde(default)]
+    pub(crate) selection_spoken: Option<(NodeId, u64)>,
     /// The review or text command's request in flight.
     #[serde(default)]
     pub(crate) pending_text: Option<PendingText>,

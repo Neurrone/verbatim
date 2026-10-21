@@ -1073,6 +1073,7 @@ fn caret_at(text: &str, offset: u32) -> Input {
             },
             selection: None,
         },
+        selection_changes: Vec::new(),
     })
 }
 

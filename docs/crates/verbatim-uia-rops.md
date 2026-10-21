@@ -469,7 +469,10 @@ failure, a second wait for a stalled application. A `CaretQuery` gives
 the element with the text (a program starts from it), its text pattern
 and `TextPattern2` (the classic reads use them), where the caret was
 known to be (`since`, a `RangeEnd`: a range and which of its ends), the
-selection's ends as they were known, a unit to read at the caret besides
+selection's ends as they were known, whether that selection held nothing
+(`previous_collapsed`, which a caret report sets so that with nothing
+selected now nothing is compared or read, and a caret key's watch leaves
+false, a moved caret being its evidence), a unit to read at the caret besides
 the line (a word, a paragraph, a page), whose formatting to read
 (`FormatSpan`: the character at the caret, that unit, or the line),
 which attributes to read (`attributes`, an `Attributes` set of

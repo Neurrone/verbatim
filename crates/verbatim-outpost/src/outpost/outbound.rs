@@ -407,8 +407,9 @@ impl Outbound {
 }
 
 /// `newer` in place of `older`, the waiting message with the same key: a
-/// terminal's output combined with what was waiting, anything else
-/// replacing it.
+/// terminal's output combined with what was waiting, a caret report
+/// carrying the waiting one's selection changes before its own, each
+/// change being from the report before, and anything else replacing it.
 fn merged(
     older: OutpostToSupervisor,
     newer: OutpostToSupervisor,
@@ -444,6 +445,45 @@ fn merged(
                 output: crate::terminal::combine(waiting, output, terminal_lines),
             },
         },
+        (
+            OutpostToSupervisor::Event {
+                event:
+                    NormalizedEvent::CaretMoved {
+                        selection_changes: mut waiting,
+                        ..
+                    },
+                ..
+            },
+            OutpostToSupervisor::Event {
+                trace_id,
+                observed_at_ms,
+                backend,
+                window,
+                application,
+                timing,
+                event:
+                    NormalizedEvent::CaretMoved {
+                        node_id,
+                        caret,
+                        selection_changes,
+                    },
+            },
+        ) => {
+            waiting.extend(selection_changes);
+            OutpostToSupervisor::Event {
+                trace_id,
+                observed_at_ms,
+                backend,
+                window,
+                application,
+                timing,
+                event: NormalizedEvent::CaretMoved {
+                    node_id,
+                    caret,
+                    selection_changes: waiting,
+                },
+            }
+        }
         (_, newer) => newer,
     }
 }
@@ -649,6 +689,52 @@ mod tests {
                 skipped: None,
                 lines: vec!["four".to_owned()],
             }
+        );
+    }
+
+    #[test]
+    fn a_waiting_caret_reports_selection_changes_come_before_the_newer_ones() {
+        let report = |offset: u32, changes: &[(bool, &str)]| {
+            event(NormalizedEvent::CaretMoved {
+                node_id: node(1),
+                caret: verbatim_model::CaretReport {
+                    line: verbatim_model::TextChunk {
+                        unit: verbatim_model::TextUnit::Line,
+                        text: "alpha beta\n".to_owned(),
+                        start: verbatim_model::TextAnchor(1),
+                        offset,
+                        languages: Vec::new(),
+                        first: true,
+                        last: true,
+                        truncated: false,
+                        formats: Vec::new(),
+                    },
+                    selection: None,
+                },
+                selection_changes: changes
+                    .iter()
+                    .map(|&(selected, text)| verbatim_model::SelectionChange {
+                        selected,
+                        text: text.to_owned(),
+                        characters: 5,
+                    })
+                    .collect(),
+            })
+        };
+        let mut pending = pending();
+        push(&mut pending, report(5, &[(true, "alpha")]), &[]);
+        push(
+            &mut pending,
+            report(10, &[(false, "alpha"), (true, "beta ")]),
+            &[],
+        );
+        let written: Vec<String> = write(&mut pending).iter().map(summary).collect();
+        assert_eq!(
+            written,
+            vec![summary(&report(
+                10,
+                &[(true, "alpha"), (false, "alpha"), (true, "beta ")]
+            ))]
         );
     }
 

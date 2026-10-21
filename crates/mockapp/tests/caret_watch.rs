@@ -7,7 +7,9 @@
 //! and the system caret's move is the caret event of a UIA focus that
 //! raises none of its own, as its show is a classic edit control's; and a
 //! watch's end at its bound reads no focus for the wait for a UIA focus
-//! after a `WinEvent` focus while a UIA focus's marker waits for its read.
+//! after a `WinEvent` focus while a UIA focus's marker waits for its read;
+//! and a selection no key made is reported with its change, one a key or
+//! Verbatim made is not.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -18,8 +20,8 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    CaretReply, CaretReport, CaretWatch, NodeId, NormalizedEvent, TextOp, TextPosition, TextReply,
-    TextUnit,
+    CaretReply, CaretReport, CaretWatch, NodeId, NormalizedEvent, PreviousSelection,
+    SelectionChange, TextOp, TextPoint, TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::{
@@ -69,7 +71,7 @@ fn focus_notes(
     assert_eq!(node.name.as_deref(), Some("Notes"));
     let caret = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == node.id => caret,
         other => panic!("the outpost said {other:?}, not the document's caret"),
@@ -336,7 +338,7 @@ fn the_system_carets_move_is_the_uia_focuss_caret_event() {
     app.send("system-caret");
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == notes => {
             assert_eq!(
@@ -362,7 +364,7 @@ fn a_focus_with_uia_caret_events_has_no_system_caret_events() {
     app.send("caret-event doc");
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == notes => assert_eq!(caret.line.offset, 1),
         other => panic!("the outpost said {other:?}, not the document's caret"),
@@ -408,7 +410,7 @@ fn a_new_focus_uses_the_system_caret_again() {
     app.send("system-caret");
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == notes => assert_eq!(caret.line.offset, 6),
         other => panic!("the outpost said {other:?}, not the document's caret"),
@@ -458,7 +460,7 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
     };
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == node.id => assert_eq!(caret.line.offset, 0),
         other => panic!("the outpost said {other:?}, not the edit control's caret"),
@@ -470,7 +472,7 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
     app.send("system-caret show");
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == node.id => {
             assert_eq!(
@@ -481,6 +483,124 @@ fn a_classic_edit_controls_caret_show_is_its_caret_event() {
         other => panic!("the outpost said {other:?}, not the edit control's caret"),
     }
     outpost.heard(&[Heard::Msaa(WinEventKind::Caret)]);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The selection changes of the outpost's next message, which must be the
+/// caret report of `node`.
+fn reported_changes(outpost: &OutpostUnderTest, node: NodeId) -> Vec<SelectionChange> {
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::CaretMoved {
+                    node_id,
+                    selection_changes,
+                    ..
+                },
+            ..
+        } if node_id == node => selection_changes,
+        other => panic!("the outpost said {other:?}, not the document's caret"),
+    }
+}
+
+/// A change of `text`, five characters, selected or not.
+fn change(selected: bool, text: &str) -> SelectionChange {
+    SelectionChange {
+        selected,
+        text: text.to_owned(),
+        characters: 5,
+    }
+}
+
+/// A selection no key made, as the mouse or the application makes it, is
+/// reported with the caret event that follows it, as how it changed from
+/// the selection in the outpost's last report: "alpha" selected from the
+/// caret at the start, then unselected as the caret collapses at its end.
+fn a_selection_no_key_made_is_reported_with_its_change() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-selection");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 0 5");
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), [change(true, "alpha")]);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    app.send("caret doc 5");
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), [change(false, "alpha")]);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A selection a caret key made is answered to the key's watch, which takes
+/// the key's caret event, so no caret report carries it; nor does the
+/// report of a later caret event, the key's answer being the last report.
+fn a_selection_a_key_made_is_reported_to_the_key_alone() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-key-selection");
+    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
+    let caret = TextPosition {
+        anchor: before.line.start,
+        offset: before.line.offset,
+    };
+    let key = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(caret),
+            pressed_at_ms: 0,
+            unit: TextUnit::Character,
+            compare: None,
+            previous_selection: Some(PreviousSelection {
+                start: caret,
+                end: caret,
+            }),
+        }),
+    });
+    outpost.settled();
+    app.send("caret doc 0 5");
+    app.send("caret-event doc");
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(reply.selection_changes, [change(true, "alpha")]);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), []);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A selection Verbatim made, as the review copy's first press makes it, is
+/// answered to Verbatim, and the caret event that follows carries no change.
+fn a_selection_verbatim_made_is_not_reported_again() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-own-selection");
+    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
+    let at = |offset| {
+        TextPoint::At(TextPosition {
+            anchor: before.line.start,
+            offset,
+        })
+    };
+    let select = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::Select {
+            start: at(0),
+            end: at(5),
+            through: None,
+        },
+    });
+    assert_eq!(
+        answer_to(&outpost, select),
+        TextReply::Selected(vec![change(true, "alpha")])
+    );
+    outpost.settled();
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), []);
+    heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -524,6 +644,18 @@ fn main() {
         (
             "a_classic_edit_controls_caret_show_is_its_caret_event",
             a_classic_edit_controls_caret_show_is_its_caret_event,
+        ),
+        (
+            "a_selection_no_key_made_is_reported_with_its_change",
+            a_selection_no_key_made_is_reported_with_its_change,
+        ),
+        (
+            "a_selection_a_key_made_is_reported_to_the_key_alone",
+            a_selection_a_key_made_is_reported_to_the_key_alone,
+        ),
+        (
+            "a_selection_verbatim_made_is_not_reported_again",
+            a_selection_verbatim_made_is_not_reported_again,
         ),
     ]);
 }

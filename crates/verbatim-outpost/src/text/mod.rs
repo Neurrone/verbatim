@@ -93,6 +93,11 @@ pub struct CaretRequest<'a, P> {
     /// The selection's ends as they were known (both the caret when nothing
     /// was selected), to compare it with.
     pub previous: Option<&'a (P, P)>,
+    /// `previous` held nothing: with nothing selected now either, there is
+    /// no change to tell, so the selection is not compared (a caret
+    /// report's comparison; a caret key's watch, for which a caret that
+    /// moved is a selection that moved, leaves it false).
+    pub previous_collapsed: bool,
     /// A unit to read at the caret besides its line: a word, a paragraph, a
     /// page.
     pub unit: Option<TextUnit>,
@@ -503,6 +508,19 @@ pub struct NodeAnchors<P> {
     /// The carets the outpost last reported for the node, oldest first,
     /// each with when it was read, in milliseconds since the Unix epoch.
     carets: VecDeque<(u64, TextPosition)>,
+    /// The selection in the outpost's last caret report for the node, which
+    /// the next report's selection changes are worked out from
+    /// ([`caret_report_since`]); `None` when there is none to compare with.
+    selection: Option<LastSelection<P>>,
+}
+
+/// The selection of a caret report, as the next report compares with it.
+#[derive(Clone)]
+struct LastSelection<P> {
+    /// Its ends, both the caret when nothing was selected.
+    ends: (P, P),
+    /// Nothing was selected.
+    collapsed: bool,
 }
 
 impl<P> Default for NodeAnchors<P> {
@@ -511,6 +529,7 @@ impl<P> Default for NodeAnchors<P> {
             anchors: BTreeMap::new(),
             reported: HashMap::new(),
             carets: VecDeque::new(),
+            selection: None,
         }
     }
 }
@@ -558,6 +577,14 @@ impl<P: Clone> Anchors<P> {
     /// Forgets a node's anchors, when the node is released.
     pub fn forget_node(&mut self, node: u64) {
         self.nodes.remove(&node);
+    }
+
+    /// Forgets the selection node `node`'s next caret report would be
+    /// compared with ([`NodeText::forget_selection`]).
+    pub fn forget_selection(&mut self, node: u64) {
+        if let Some(anchors) = self.nodes.get_mut(&node) {
+            anchors.selection = None;
+        }
     }
 
     /// The anchors of node `node`, with what minting needs.
@@ -610,6 +637,16 @@ impl<P: Clone> NodeText<'_, P> {
             reported.retain(|(anchor, _), _| anchors.contains_key(anchor));
         }
         TextAnchor(number)
+    }
+
+    /// Forgets the selection the next caret report would be compared with,
+    /// so that report carries no selection changes and is compared with
+    /// from then on: at a new focus, whose first report sets it; once the
+    /// node's text changed, when the selection's old ends may no longer
+    /// hold the text that was selected; and once the outpost selected or
+    /// moved the caret for Core, which speaks that itself.
+    pub fn forget_selection(&mut self) {
+        self.anchors.selection = None;
     }
 
     /// The text of the chunk `anchor` started, when the anchor is kept.
@@ -794,15 +831,25 @@ pub fn perform<S: TextSource>(
             start,
             end,
             through,
-        } => select_text(source, anchors, (*start, *end), *through),
+        } => {
+            let selected = select_text(source, anchors, (*start, *end), *through);
+            // Core speaks the selection it made from this reply, so the
+            // application's caret event for it carries no change of it.
+            if matches!(selected, Ok(TextReply::Selected(_))) {
+                anchors.forget_selection();
+            }
+            selected
+        }
         TextOp::MoveCaret(point) => {
             let moved = select(source, anchors, *point, None);
             // The carets reported before are no longer where the caret is,
             // so a caret key's watch takes its baseline from Core, which
             // takes the move as its caret (say-all's), or from a caret read
-            // after the move.
+            // after the move; and a selection the move cleared is not
+            // reported as unselected.
             if matches!(moved, Ok(TextReply::Done)) {
                 anchors.anchors.carets.clear();
+                anchors.forget_selection();
             }
             moved
         }
@@ -967,13 +1014,32 @@ pub fn caret_report<S: TextSource>(
     now_ms: &mut dyn FnMut() -> u64,
     formats: bool,
 ) -> TextResult<(CaretReport, CaretState<S::Pos>)> {
-    caret_report_since(source, anchors, now_ms, (formats, None))
-        .map(|(report, state, _)| (report, state))
+    caret_report_since(source, anchors, now_ms, (formats, None, false))
+        .map(|read| (read.report, read.state))
+}
+
+/// What [`caret_report_since`] read.
+pub struct ReportedCaret<P> {
+    /// The report.
+    pub report: CaretReport,
+    /// The caret and the selection it reports.
+    pub state: CaretState<P>,
+    /// The caret is no longer at the `since` given.
+    pub moved: bool,
+    /// How the selection changed from the one last reported, when asked.
+    pub selection_changes: Vec<SelectionChange>,
 }
 
 /// [`caret_report`], and, given `since`, whether the caret is no longer
 /// there: in the same round trip where the source reads the caret in one
-/// go, and with one comparison otherwise.
+/// go, and with one comparison otherwise. With `changes`, also how the
+/// selection changed from the one in the node's last caret report, by the
+/// rule a caret key's reply follows, in the same round trip where the
+/// source reads the caret in one go: nothing when there is no last report
+/// to compare with ([`NodeText::forget_selection`]), and, read call by
+/// call, no comparison when neither selection holds anything, which has no
+/// change to speak (NVDA's `speakSelectionChange`,
+/// `nvda/source/speech/speech.py` 1358 to 1359).
 ///
 /// # Errors
 ///
@@ -982,33 +1048,51 @@ pub fn caret_report_since<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     now_ms: &mut dyn FnMut() -> u64,
-    (formats, since): (bool, Option<&S::Pos>),
-) -> TextResult<(CaretReport, CaretState<S::Pos>, bool)> {
+    (formats, since, changes): (bool, Option<&S::Pos>, bool),
+) -> TextResult<ReportedCaret<S::Pos>> {
+    let last = if changes {
+        anchors.anchors.selection.clone()
+    } else {
+        None
+    };
     let request = CaretRequest {
         since,
-        previous: None,
+        previous: last.as_ref().map(|last| &last.ends),
+        previous_collapsed: last.as_ref().is_some_and(|last| last.collapsed),
         unit: None,
         formats: formats.then_some(FormatSpan::Line),
         recheck: false,
     };
-    if let Some(read) = source.caret_read(&request)? {
-        let read_at_ms = now_ms();
-        let report = report_for(
-            source,
-            anchors,
-            (&read.state, read_at_ms),
-            Some((read.line.0, read.line.1, read.formats)),
-        )?;
-        return Ok((report, read.state, read.moved));
-    }
-    let state = source.caret()?;
-    let read_at_ms = now_ms();
-    let moved = match since {
-        Some(since) => source.compare(&state.caret, since)? != Ordering::Equal,
-        None => false,
+    let (state, moved, read_at_ms, line, read_changes) =
+        if let Some(read) = source.caret_read(&request)? {
+            let line = Some((read.line.0, read.line.1, read.formats));
+            (read.state, read.moved, now_ms(), line, read.changes)
+        } else {
+            let state = source.caret()?;
+            let read_at_ms = now_ms();
+            let moved = match since {
+                Some(since) => source.compare(&state.caret, since)? != Ordering::Equal,
+                None => false,
+            };
+            (state, moved, read_at_ms, None, None)
+        };
+    let selection_changes = match (&last, read_changes) {
+        (Some(_), Some(read)) => read
+            .into_iter()
+            .filter_map(|(selected, text)| change_of(selected, &text))
+            .collect(),
+        (Some(last), None) if !(last.collapsed && state.selection.is_none()) => {
+            selection_changes(source, &last.ends, &state)?
+        }
+        _ => Vec::new(),
     };
-    let report = report_for(source, anchors, (&state, read_at_ms), None)?;
-    Ok((report, state, moved))
+    let report = report_for(source, anchors, (&state, read_at_ms), line)?;
+    Ok(ReportedCaret {
+        report,
+        state,
+        moved,
+        selection_changes,
+    })
 }
 
 /// Whether two caret reports say the same, whatever anchors they were
@@ -1104,6 +1188,13 @@ fn report_for<S: TextSource>(
     let selection = state.selection.as_ref().map(|(start, end)| Selection {
         start: anchors.position_of(start.clone()),
         end: anchors.position_of(end.clone()),
+    });
+    anchors.anchors.selection = Some(LastSelection {
+        ends: state
+            .selection
+            .clone()
+            .unwrap_or_else(|| (state.caret.clone(), state.caret.clone())),
+        collapsed: state.selection.is_none(),
     });
     Ok(CaretReport { line, selection })
 }
@@ -1297,6 +1388,7 @@ fn evidence<S: TextSource>(
     let request = CaretRequest {
         since: since.as_ref(),
         previous: previous.as_ref(),
+        previous_collapsed: false,
         unit: extra_unit(source, watch.unit),
         formats: format_span(watch.unit),
         recheck: true,

@@ -627,6 +627,7 @@ impl TextSource for UiaText {
             previous_selection: previous
                 .as_ref()
                 .map(|(start, end)| (end_of(start), end_of(end))),
+            previous_collapsed: request.previous_collapsed,
             unit,
             formats: request.formats.map(|span| match span {
                 FormatSpan::Character => verbatim_uia_rops::FormatSpan::Character,

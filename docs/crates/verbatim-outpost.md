@@ -944,7 +944,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   the reads, for the caller to keep. `caret_report` reads
   the caret's line and the selection, for `CaretMoved`, with the line's
   formatting when asked (the report after a focus), and remembers when
-  its read finished. `Anchors` keeps one backend's anchors, by node, numbered
+  its read finished; `caret_report_since` also says whether the caret left
+  a given position and, when asked, how the selection changed from the
+  node's last report (`ReportedCaret`), and `NodeText::forget_selection`
+  and `Anchors::forget_selection` make the next report carry no change. `Anchors` keeps one backend's anchors, by node, numbered
   from a counter both of an outpost's backends share, and never forgets
   those in its `HeldAnchors`, the anchors Core holds, which both of an
   outpost's backends share too (`Anchors::sharing`); `NodeText` is one
@@ -1894,6 +1897,34 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     out and reads their text in the same round trip when the selection
     moved (`CaretRead::changes`), and the edit controls work them out call
     by call.
+  - A selection no key made, such as the mouse's or the application's, is
+    reported with the caret event that follows it, as NVDA's auto-select
+    detection reports any selection change of a UIA or classic edit focus
+    (`docs/parity/text.md`, "TextInfo-equivalent layer"). Each node keeps
+    the selection of the outpost's last caret report for it, its ends and
+    whether it held nothing (`NodeAnchors`), set by every report, a caret
+    key's answer included. A caret event's report of a focus that is not
+    a terminal (`text_reads::CaretFor::Event`) asks the caret read to
+    compare with it (`caret_report_since`'s `changes`), and its changes
+    travel in `CaretMoved`'s `selection_changes`, by the caret watch's
+    rule. Through UIA the comparison and the change's text are part of
+    the caret read's one round trip; when the last selection held nothing
+    (`CaretRequest::previous_collapsed`) and nothing is selected now, the
+    program compares nothing, so a typed character's report costs what it
+    did. The edit controls compare offsets, with no message, and read a
+    change's text with the window's text. The selection compared with is
+    forgotten, so the next report carries no change and sets it anew, at a
+    new focus (the report after it, whose selection Core already speaks
+    as the focus's), when the node's text changes (UIA's text changed, an
+    edit control's value change: NVDA then speaks the change in general
+    terms, "selected instead" or "selection removed", which Verbatim does
+    not yet say), and when the outpost selects or moves the caret for Core
+    (`Select`, `MoveCaret`), whose own reply speaks what it did. A key's
+    selection reaches Core only in the key's answer, since the watch takes
+    the key's caret event. A terminal's reports carry no changes: NVDA's
+    console class replaces the detection, which is not yet traced. Two
+    caret reports merged while they wait to be written
+    (`outbound::merged`) carry both reports' changes in order.
   - Which applications raise the evidence, as checked live on
     2026-10-08 (`docs/design/phase6-design.md`, "Live caret event
     checks"): the focused Windows Forms text box raises, for every caret

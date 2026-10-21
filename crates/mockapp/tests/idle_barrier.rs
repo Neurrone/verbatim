@@ -126,7 +126,7 @@ fn notes_focus(
     assert_eq!(node.name.as_deref(), Some("Notes"));
     let caret = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == node.id => caret,
         other => panic!("the outpost said {other:?}, not the document's caret"),

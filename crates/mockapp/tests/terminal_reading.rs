@@ -572,7 +572,7 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     app.send("caret-event term");
     let since = match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, caret },
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
             ..
         } if node_id == term => TextPosition {
             anchor: caret.line.start,

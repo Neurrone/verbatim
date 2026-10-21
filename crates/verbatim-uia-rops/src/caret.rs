@@ -212,6 +212,12 @@ pub struct CaretQuery<'a> {
     /// The selection's ends as they were known (both the caret when
     /// nothing was selected), to say whether the selection changed.
     pub previous_selection: Option<(RangeEnd<'a>, RangeEnd<'a>)>,
+    /// The previous selection held nothing, its ends being one position: a
+    /// caret report's comparison, for which a selection that holds nothing
+    /// now either has no change to tell, so nothing is compared or read and
+    /// [`CaretAnswer::selection_moved`] is false. A caret key's watch, for
+    /// which a caret that moved is a selection that moved, leaves it false.
+    pub previous_collapsed: bool,
     /// A unit to read at the caret besides the line: a word, a paragraph,
     /// or a page.
     pub unit: Option<TextUnit>,
@@ -458,6 +464,7 @@ pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnsw
         pattern2: query.pattern2,
         since: query.since,
         previous_selection: None,
+        previous_collapsed: false,
         unit: None,
         formats: None,
         attributes: Attributes::NONE,
@@ -977,11 +984,17 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
             let either = b.or(first, second);
             b.set(selection_moved, either);
         };
-        b.if_else(
-            has_selection,
-            |b| compare_ends(b, selection, c.start, c.end),
-            |b| compare_ends(b, point, c.start, c.start),
-        );
+        if query.previous_collapsed {
+            b.if_(has_selection, |b| {
+                compare_ends(b, selection, c.start, c.end);
+            });
+        } else {
+            b.if_else(
+                has_selection,
+                |b| compare_ends(b, selection, c.start, c.end),
+                |b| compare_ends(b, point, c.start, c.start),
+            );
+        }
         changes = Some(emit_changes(
             b,
             &c,
@@ -1053,6 +1066,7 @@ struct ProgramKey {
     pattern2: bool,
     since: Option<i32>,
     previous_selection: Option<(i32, i32)>,
+    previous_collapsed: bool,
     unit: Option<i32>,
     formats: Option<FormatSpan>,
     attributes: Attributes,
@@ -1073,6 +1087,7 @@ impl ProgramKey {
                     endpoint_number(end.endpoint),
                 )
             }),
+            previous_collapsed: query.previous_collapsed,
             unit: query.unit.map(|unit| unit.0),
             formats: query.formats,
             attributes: query.attributes,
@@ -1617,6 +1632,7 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         None => false,
     };
     let selection_moved = match query.previous_selection {
+        Some(_) if query.previous_collapsed && selection.is_none() => false,
         Some((old_start, old_end)) => {
             let (range, start, end) = match &selection {
                 Some(selection) => (selection, Endpoint::Start, Endpoint::End),

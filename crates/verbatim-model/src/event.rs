@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::settings::ReaderSettings;
 use crate::speech::{SpeechMark, Utterance};
-use crate::text::{CaretKey, CaretReport, TextPosition, TextReply, TextRequest};
+use crate::text::{CaretKey, CaretReport, SelectionChange, TextPosition, TextReply, TextRequest};
 use crate::tree::{Backend, NodeSnapshot, Rect, StateSet};
 use crate::{NodeId, OutpostId, TraceId};
 
@@ -213,15 +213,27 @@ pub enum NormalizedEvent {
     /// in the focus, coalesced so a burst sends the latest only. It keeps
     /// Core's copy of the caret current. The first one after a focus ends
     /// the focus announcement with the selection or the caret's line, as
-    /// NVDA reads an object with text in place of its value; any later one
-    /// speaks nothing by itself. A caret key's speech comes from the reply
-    /// to Core's own [`TextOp::AwaitCaret`](crate::TextOp::AwaitCaret)
-    /// request.
+    /// NVDA reads an object with text in place of its value; a later one
+    /// speaks only the selection changes it carries, a selection no key made
+    /// (the mouse's or the application's), as NVDA reports any selection
+    /// change of the focus after its caret event
+    /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes"). A
+    /// caret key's speech comes from the reply to Core's own
+    /// [`TextOp::AwaitCaret`](crate::TextOp::AwaitCaret) request, whose
+    /// watch takes the key's caret event, so no `CaretMoved` is sent for it.
     CaretMoved {
         /// The node whose caret moved.
         node_id: NodeId,
         /// Where the caret now is.
         caret: CaretReport,
+        /// How the selection changed from the one the outpost last reported
+        /// for the node, by the rule of [`CaretReply`](crate::CaretReply)'s
+        /// `selection_changes`. Always empty for the report after a focus,
+        /// which sets the selection later reports are compared with, for a
+        /// terminal, and for the first report after the node's text changed
+        /// or Verbatim itself selected or moved the caret.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        selection_changes: Vec<SelectionChange>,
     },
     /// A newly focused node whose role may have text (an edit field, a
     /// document, or a terminal) has no text the outpost can read, or its

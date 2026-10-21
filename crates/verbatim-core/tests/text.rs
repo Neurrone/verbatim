@@ -81,6 +81,7 @@ fn caret_event(state: &mut SrState, number: u64, line: TextChunk) {
                 line,
                 selection: None,
             },
+            selection_changes: Vec::new(),
         }),
     );
 }
@@ -662,6 +663,7 @@ fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> 
                     line,
                     selection: None,
                 },
+                selection_changes: Vec::new(),
             },
         },
     )
@@ -2212,6 +2214,7 @@ fn caret_moved(selection: Option<Selection>, text: &str) -> Input {
             line: line(text, 100, 0),
             selection,
         },
+        selection_changes: Vec::new(),
     })
 }
 
@@ -2280,6 +2283,159 @@ fn a_focused_field_with_text_selected_says_the_selection() {
         vec![UtteranceSegment::new(SegmentContent::Phrase(
             Phrase::Preselected(SelectionText::Text("delta epsilon".to_owned()))
         ))]
+    );
+}
+
+/// A caret report of the focused field, observed at `observed_at_ms`, with
+/// `selection` and the selection changes `changes` (each selected or not,
+/// and its text, of as many characters as it has bytes).
+fn selection_report(
+    observed_at_ms: u64,
+    selection: Option<Selection>,
+    changes: &[(bool, &str)],
+) -> Input {
+    Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::CaretMoved {
+            node_id: id(5),
+            caret: CaretReport {
+                line: line("alpha beta\r", 100, 5),
+                selection,
+            },
+            selection_changes: changes
+                .iter()
+                .map(|&(selected, text)| SelectionChange {
+                    selected,
+                    text: text.to_owned(),
+                    characters: u32::try_from(text.len()).expect("a short text"),
+                })
+                .collect(),
+        },
+    }
+}
+
+/// The selection of "alpha" in [`selection_report`]'s line.
+fn alpha_selected() -> Selection {
+    Selection {
+        start: TextPosition::at(TextAnchor(100)),
+        end: TextPosition {
+            anchor: TextAnchor(100),
+            offset: 5,
+        },
+    }
+}
+
+/// A focused field whose announcement has ended with its caret's line.
+fn announced_field() -> SrState {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "alpha beta\r");
+    let effects = reduce(&mut state, &caret_moved(None, "alpha beta\r"));
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("alpha beta")]);
+    state
+}
+
+#[test]
+fn a_selection_no_key_made_says_what_was_selected() {
+    let mut state = announced_field();
+    let effects = reduce(
+        &mut state,
+        &selection_report(0, Some(alpha_selected()), &[(true, "alpha")]),
+    );
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
+        ))]
+    );
+}
+
+#[test]
+fn a_caret_report_with_no_selection_change_says_nothing() {
+    let mut state = announced_field();
+    let effects = reduce(&mut state, &selection_report(0, None, &[]));
+    assert_eq!(effects, []);
+}
+
+#[test]
+fn the_report_that_ends_a_focus_announcement_says_its_line_not_a_selection_change() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "alpha beta\r");
+    let effects = reduce(&mut state, &selection_report(0, None, &[(true, "alpha")]));
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(spoken(&effects), vec![UtteranceSegment::text("alpha beta")]);
+}
+
+#[test]
+fn a_selecting_keys_change_reported_before_its_answer_is_spoken_once() {
+    // The key's caret event reaches Core while its watch waits: the
+    // answer speaks the change.
+    let mut state = announced_field();
+    let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
+    let asked = request(&effects);
+    let effects = reduce(
+        &mut state,
+        &selection_report(
+            KEY_PRESSED_AT + 5,
+            Some(alpha_selected()),
+            &[(true, "alpha")],
+        ),
+    );
+    assert_eq!(effects, []);
+    let mut answer = caret_reply(true, line("alpha beta\r", 100, 0), None);
+    if let TextReply::Caret(reply) = &mut answer {
+        reply.selection_changes = vec![SelectionChange {
+            selected: true,
+            text: "alpha".to_owned(),
+            characters: 5,
+        }];
+    }
+    let effects = reduce(&mut state, &completed(asked.query_id, answer));
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
+        ))]
+    );
+
+    // The key's caret event reaches Core before the key: the change is
+    // spoken, and the key's watch compares with the selection it made,
+    // not with the caret last reported before the key.
+    let mut state = announced_field();
+    let effects = reduce(
+        &mut state,
+        &selection_report(KEY_PRESSED_AT - 100, None, &[]),
+    );
+    assert_eq!(effects, []);
+    let effects = reduce(
+        &mut state,
+        &selection_report(
+            KEY_PRESSED_AT + 5,
+            Some(alpha_selected()),
+            &[(true, "alpha")],
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
+        ))]
+    );
+    let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
+    let TextOp::AwaitCaret(watch) = request(&effects).op else {
+        panic!("a caret watch in {effects:?}");
+    };
+    let selection = alpha_selected();
+    assert_eq!(
+        watch.previous_selection,
+        Some(PreviousSelection {
+            start: selection.start,
+            end: selection.end,
+        })
     );
 }
 
@@ -2484,6 +2640,7 @@ fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
                 line,
                 selection: None,
             },
+            selection_changes: Vec::new(),
         }),
     );
     assert_eq!(

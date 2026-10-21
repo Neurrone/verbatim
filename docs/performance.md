@@ -1079,11 +1079,26 @@ and in its edit control.
 ### A caret report, UIA
 
 The caret reported without a key: a caret event's report (`CaretMoved`),
-which follows every typed character, and which nothing speaks.
+which follows every typed character, compared with the selection of the
+outpost's last report for the node, for a selection no key made, which
+Core speaks. Measured in mockapp's text by
+`crates/mockapp/tests/call_counts.rs`, both ways: the caret moved one
+character with nothing selected before or after, and then "al" selected
+from the caret.
 
 - Minimum: 1 UIA call remotely; classically 8, a caret move's without the
-  comparison or the formatting.
-- Today: 1 remotely, 8 before remote operations and classically.
+  comparison or the formatting, when nothing is selected before or after,
+  since NVDA's comparison has nothing to say then; with a selection, the
+  comparison and the change's text.
+- Today: 1 remotely, in either case: the comparison with the last
+  selection and the change's text are part of the caret read's program,
+  which compares nothing when the last selection and the new one both hold
+  nothing. Classically 8 with nothing selected (8 before remote
+  operations), and 18 for the selection of "al": the read of a caret with
+  text selected, which asks for the selection's caret (`GetCaretRange`),
+  six comparisons in all, among them the selection's ends with the old
+  caret's and the comparisons that place the change, and the change's
+  text (a copy, its two ends moved, its text).
 - Target: 1.
 
 ### The system caret's events
@@ -1415,9 +1430,12 @@ The same caret key in a standard edit control, read through its messages.
 ### A caret report, Win32 edit control
 
 - Minimum: 5 window messages, as for a caret move, whose comparison is
-  local for offsets.
-- Today: 5.
-- Target: 5.
+  local for offsets, and the text of a selection change when there is one.
+- Today: 5 with nothing selected before or after; 7 for a selection no
+  key made (mockapp's "al" from the caret), the change's text read with
+  `WM_GETTEXTLENGTH` and `WM_GETTEXT`, its comparisons of offsets making
+  no call.
+- Target: the minimum.
 
 ### Typed-character echo
 

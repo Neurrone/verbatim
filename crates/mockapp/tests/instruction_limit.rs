@@ -413,6 +413,7 @@ fn caret_query<'a>(
         pattern2,
         since: old,
         previous_selection: old.map(|old| (old, old)),
+        previous_collapsed: false,
         unit: None,
         formats: Some(FormatSpan::Line),
         attributes: Attributes::ALL,

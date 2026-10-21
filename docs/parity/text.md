@@ -210,11 +210,39 @@ Differences:
   "git", the text typed, in Verbatim. Escape on a typed line that had
   wrapped onto a second row says all it removed, as on a line of one
   row, though the caret went up a row; NVDA is silent.
-- NVDA reports any selection change of the focus after its caret event,
-  such as one made with the mouse; Verbatim reports those that keys
-  make and those it makes itself (select then copy's first press);
-  those the mouse or the application makes are not yet reported (M4.2)
-  (Dickson, 2026-10-15).
+- NVDA reports any selection change of a UIA or classic edit focus after
+  its caret event, whatever made it ("Selection changes" in
+  [Editable text and terminals](../nvda/editable-text-and-terminals.md)),
+  comparing with the selection it last saw, which it takes when the
+  object gains the focus and forgets when it loses it. Verbatim does the
+  same for a selection no key made, such as one made with the mouse or by
+  the application (Dickson, 2026-10-15): the outpost compares the
+  selection each caret event finds with the one in its last caret report
+  for the focus, in the caret read's own round trip, the report after a
+  focus setting it, and Core speaks the changes with a selecting key's
+  words, "alpha selected" and "alpha unselected" (mockapp's
+  `a_selection_no_key_made_is_reported_with_its_change`). A key's
+  selection is spoken once, by the key's answer, since its watch takes
+  the key's caret event; one Verbatim makes itself (select then copy's
+  first press, a caret moved by say-all) is spoken by its own reply, and
+  the caret event after it carries no change. Not yet built:
+  - After the focus's text changed, NVDA speaks the next selection change
+    in general terms, the whole new selection followed by "selected",
+    "<text> selected instead" when one replaced another, or "selection
+    removed" (`speech.speakSelectionChange`'s `generalize`); Verbatim says
+    nothing for that change and compares with the selection after it.
+  - NVDA's classic edit control drops a caret event whose selection
+    offsets equal the last one's (`NVDAObjects/window/edit.py` 1070 to
+    1080); Verbatim reads each.
+  - NVDA speaks the whole new selection when the old one held nothing,
+    and the whole old one when the new one holds nothing; Verbatim splits
+    either at the caret by the rule a selecting key's answer follows,
+    which differs only when the caret was inside the selection, as a
+    click inside a selection or a double-click inside a word leaves it:
+    two changes where NVDA speaks one.
+  - Terminals are unresolved: NVDA's console class replaces the detection
+    (`NVDAObjects/UIA/winConsoleUIA.py` line 416), which is not yet
+    traced, and Verbatim reports no selection change in a terminal.
 
 ### A text pattern missing at the focus
 

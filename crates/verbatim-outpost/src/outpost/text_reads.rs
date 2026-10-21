@@ -26,7 +26,7 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    CallCounts, CaretReport, CaretWatch, NodeId, Role, TextOp, TextReply, TraceId,
+    CallCounts, CaretReport, CaretWatch, NodeId, Role, SelectionChange, TextOp, TextReply, TraceId,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Kept};
@@ -441,27 +441,50 @@ pub(super) enum NoCaret {
     NotRead,
 }
 
-/// The caret of `node_id`, for a `CaretMoved` event, with the line's
-/// formatting when `formats` (the report after a focus, whose line is
-/// spoken); otherwise why there is none. With `compare` (a terminal's
-/// report), whether the caret is the one last sent to Core for the
-/// terminal: at the same place, the read says, with the same line.
+/// What a caret report is for ([`report_caret`]).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CaretFor {
+    /// The report after a focus, whose line is spoken with its formatting,
+    /// and whose selection the next reports' changes are worked out from.
+    Focus,
+    /// A caret event of a text focus that is not a terminal, with how the
+    /// selection changed since the last report, as NVDA's auto-select
+    /// detection reports it (`EditableTextWithAutoSelectDetection.event_caret`,
+    /// `nvda/source/NVDAObjects/behaviors.py` 346 to 349;
+    /// `detectPossibleSelectionChange`, `nvda/source/editableText.py` 417 to
+    /// 471).
+    Event,
+    /// A caret event of a terminal, compared with the caret last sent to
+    /// Core for it. NVDA's console class replaces the selection detection
+    /// (`nvda/source/NVDAObjects/UIA/winConsoleUIA.py` 416), not yet traced,
+    /// so a terminal's report carries no selection changes.
+    Terminal,
+}
+
+/// The caret of `node_id`, for a `CaretMoved` event, read as `purpose`
+/// says, with how the selection changed for [`CaretFor::Event`];
+/// otherwise why there is none. For [`CaretFor::Terminal`], also whether
+/// the caret is the one last sent to Core for the terminal: at the same
+/// place, the read says, with the same line.
 pub(super) fn report_caret(
     context: &Context,
     node_id: NodeId,
-    formats: bool,
-    compare: bool,
-) -> Result<(CaretReport, bool), NoCaret> {
+    purpose: CaretFor,
+) -> Result<(CaretReport, bool, Vec<SelectionChange>), NoCaret> {
+    if purpose == CaretFor::Focus {
+        forget_selection(context, node_id);
+    }
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(TextReply::NoText) => return Err(NoCaret::NoText),
         Err(_) => return Err(NoCaret::NotRead),
     };
-    let sent = if compare {
+    let sent = if purpose == CaretFor::Terminal {
         sent_caret_point(context, node_id)
     } else {
         None
     };
+    let (formats, changes) = (purpose == CaretFor::Focus, purpose == CaretFor::Event);
     context.caret_read(node_id);
     let report = match source {
         Source::Uia(mut source) => {
@@ -470,14 +493,14 @@ pub(super) fn report_caret(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
-                (formats, sent.as_ref().map(|(_, point)| point)),
+                (formats, sent.as_ref().map(|(_, point)| point), changes),
             )
-            .map(|(report, _, moved)| {
-                let unchanged = !moved
+            .map(|read| {
+                let unchanged = !read.moved
                     && sent
                         .as_ref()
-                        .is_some_and(|(sent, _)| text::same_caret(sent, &report));
-                (report, unchanged)
+                        .is_some_and(|(sent, _)| text::same_caret(sent, &read.report));
+                (read.report, unchanged, read.selection_changes)
             });
             drop(anchors);
             note_fallback(context, &mut source);
@@ -486,13 +509,13 @@ pub(super) fn report_caret(
         }
         Source::Edit(mut source) => {
             let mut anchors = context.edit_anchors();
-            text::caret_report(
+            text::caret_report_since(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
-                formats,
+                (formats, None, changes),
             )
-            .map(|(report, _)| (report, false))
+            .map(|read| (read.report, false, read.selection_changes))
         }
     };
     match report {
@@ -503,6 +526,19 @@ pub(super) fn report_caret(
             Err(NoCaret::NotRead)
         }
     }
+}
+
+/// Forgets the selection `node_id`'s next caret report would be compared
+/// with ([`text::NodeText::forget_selection`]): at a new focus, and when its
+/// text changed, after which NVDA speaks a selection change in general terms
+/// ("selected instead", "selection removed": `hasContentChangedSinceLastSelection`,
+/// `nvda/source/NVDAObjects/behaviors.py` 351 to 358, and
+/// `speech.speakSelectionChange`'s `generalize`, `nvda/source/speech/speech.py`
+/// 1340 to 1416), which Verbatim does not yet say: the next report carries no
+/// change.
+pub(super) fn forget_selection(context: &Context, node_id: NodeId) {
+    context.uia_anchors().forget_selection(node_id.number());
+    context.edit_anchors().forget_selection(node_id.number());
 }
 
 /// A terminal's caret as a read found it ([`terminal_output`]).

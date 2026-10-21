@@ -503,6 +503,15 @@ then speaks, queued:
   movement without Shift that leaves a selection speaks its unit, then
   the text it unselected; a deletion does not. Text an object already has
   selected when it is announced puts the word first, "selected hello".
+- A selection no key made, the mouse's or the application's, arrives as
+  the selection changes of a `CaretMoved` once the focus's announcement is
+  complete, and is spoken with the same words (`editing::selection_changed`).
+  While a caret key's answer is awaited for the node, the answer speaks
+  the change instead. A key's caret event can reach Core before the key
+  does; once a change from a report observed no earlier than the key was
+  spoken (`SrState::selection_spoken`), the key's watch compares with the
+  selection Core now knows rather than the one before the key, so the
+  change is not spoken twice.
 
 Formatting (milestone M4 item 7, `docs/nvda/document-formatting.md`).
 A caret key's character, word, or line, and a new focus's first line,

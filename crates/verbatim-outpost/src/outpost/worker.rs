@@ -1473,8 +1473,14 @@ impl Worker<'_> {
         }
         let started = std::time::Instant::now();
         let terminal = self.focused_terminal(node_id);
-        let report =
-            text_reads::report_caret(self.context, node_id, after_focus, terminal && !after_focus);
+        let purpose = if after_focus {
+            text_reads::CaretFor::Focus
+        } else if terminal {
+            text_reads::CaretFor::Terminal
+        } else {
+            text_reads::CaretFor::Event
+        };
+        let report = text_reads::report_caret(self.context, node_id, purpose);
         // A caret event's read, which a terminal's output causes too, as
         // its cursor moves.
         tracing::debug!(
@@ -1483,15 +1489,19 @@ impl Worker<'_> {
             "caret read timing"
         );
         let event = match report {
-            Ok((_, true)) => {
+            Ok((_, true, _)) => {
                 tracing::debug!("the terminal's caret is the one last sent; it is not sent again");
                 return;
             }
-            Ok((caret, false)) => {
+            Ok((caret, false, selection_changes)) => {
                 if terminal {
                     self.sent_caret(node_id, &caret);
                 }
-                NormalizedEvent::CaretMoved { node_id, caret }
+                NormalizedEvent::CaretMoved {
+                    node_id,
+                    caret,
+                    selection_changes,
+                }
             }
             Err(text_reads::NoCaret::NoText) if after_focus => NormalizedEvent::NoText { node_id },
             Err(text_reads::NoCaret::NotRead) if after_focus => {
@@ -1777,6 +1787,7 @@ impl Worker<'_> {
                 caret_moved = Some(NormalizedEvent::CaretMoved {
                     node_id,
                     caret: caret.report,
+                    selection_changes: Vec::new(),
                 });
             }
         }
@@ -2529,6 +2540,7 @@ impl Worker<'_> {
                     self.context
                         .msaa_registry
                         .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
+                text_reads::forget_selection(self.context, node_id);
                 self.check_open_watch(node_id, false);
                 self.emit(
                     trace,
@@ -2843,6 +2855,7 @@ impl Worker<'_> {
             return;
         };
         text_reads::text_event_from(self.context, node_id, element);
+        text_reads::forget_selection(self.context, node_id);
         self.check_open_watch(node_id, false);
         if self.focused_terminal(node_id) {
             self.terminal_output(node_id, trace, observed_at_ms);

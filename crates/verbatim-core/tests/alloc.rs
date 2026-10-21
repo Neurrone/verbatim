@@ -227,6 +227,7 @@ fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
                 line,
                 selection: None,
             },
+            selection_changes: Vec::new(),
         },
     }
 }

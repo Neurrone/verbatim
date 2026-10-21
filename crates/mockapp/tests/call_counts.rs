@@ -61,8 +61,9 @@ use verbatim_model::{
     CallCounts, Fetches, NodeSnapshot, NormalizedEvent, QueryKind, Role, TreeNode, WindowHandle,
 };
 use verbatim_model::{
-    CaretWatch, LineStyle, PreviousSelection, TextAttributes, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit, Theme,
+    CaretWatch, LineStyle, PreviousSelection, SelectionChange, TextAttributes, TextMovement,
+    TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit,
+    Theme,
 };
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
@@ -72,7 +73,8 @@ use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorT
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
-    Anchors, CaretSignal, TextSource, Watched, caret_report, check_caret, perform,
+    Anchors, CaretSignal, TextSource, Watched, caret_report, caret_report_since, check_caret,
+    perform,
 };
 use verbatim_uia::{
     Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
@@ -2641,14 +2643,17 @@ fn right_arrow(before: &verbatim_model::CaretReport) -> CaretWatch {
 /// Right Arrow moves it, and the watch's first check finds the evidence and
 /// reports the line and the character there. Then the caret moves on again
 /// and is reported alone, as the worker reports it for a caret event, after
-/// a typed character above all, with `text_reads::report_caret`. Returns
-/// the calls and hits of the answer, and of the report.
+/// a typed character above all, with `text_reads::report_caret`: compared
+/// with the selection last reported, the answer's, for how it changed.
+/// Then a selection no key made is reported the same way, with how it
+/// changed. Returns the calls and hits of the answer, of the report, and of
+/// the report with a selection change.
 fn measure_caret_move<S: TextSource>(
     app: &mut common::MockApp,
     hwnd: HWND,
     source: &mut S,
     take: fn() -> CallCounts,
-) -> (Cost, Cost) {
+) -> (Cost, Cost, Cost) {
     let mut store = Anchors::new(Arc::default());
     let mut anchors = store.node(1);
     common::apply(app, hwnd, "caret doc 0");
@@ -2674,15 +2679,38 @@ fn measure_caret_move<S: TextSource>(
     common::apply(app, hwnd, "caret doc 2");
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
-    let (report, _) = caret_report(source, &mut anchors, &mut || 0, false).expect("the caret");
+    let read = caret_report_since(source, &mut anchors, &mut || 0, (false, None, true))
+        .expect("the caret");
     let calls = take();
-    assert_eq!(report.line.offset, 2);
+    assert_eq!(read.report.line.offset, 2);
+    assert_eq!(read.selection_changes, []);
     let report = Cost {
         calls,
         hits: common::read_hits(hwnd),
         failed_reads: verbatim_uia::calls::take_failed_reads(),
     };
-    (answer, report)
+
+    // A selection no key made, from the caret: "al" selected.
+    common::apply(app, hwnd, "caret doc 0 2");
+    let _ = take();
+    let _ = verbatim_uia::calls::take_failed_reads();
+    let read = caret_report_since(source, &mut anchors, &mut || 0, (false, None, true))
+        .expect("the caret");
+    let calls = take();
+    assert_eq!(
+        read.selection_changes,
+        [SelectionChange {
+            selected: true,
+            text: "al".to_owned(),
+            characters: 2,
+        }]
+    );
+    let selected = Cost {
+        calls,
+        hits: common::read_hits(hwnd),
+        failed_reads: verbatim_uia::calls::take_failed_reads(),
+    };
+    (answer, report, selected)
 }
 
 /// What a remote caret read costs the provider beyond its text calls: the
@@ -2801,7 +2829,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
     let mut app = common::spawn("text.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let mut source = uia_notes(hwnd).remote(remote);
-    let (answer, report) =
+    let (answer, report, selected) =
         measure_caret_move(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
     let (nothing, later) = measure_watch(&mut app, hwnd, &mut source, verbatim_uia::calls::take);
     let focus_report = measure_focus_report(hwnd, &mut source, errors_only);
@@ -2893,6 +2921,31 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             0,
             &remote_hits(1, &plus_copy(&report_hits)),
         );
+        // Still one round trip: the program compares the selection with
+        // the one last reported and reads the change it finds. Inside the
+        // provider, the classic read's calls (below), the program's copy of
+        // the caret (`plus_copy`), one comparison and one pattern request
+        // more, and the element's import.
+        ratchet.check(
+            "UIA caret report with a selection change, remotely",
+            &selected,
+            calls(1, 0, 0),
+            0,
+            &[
+                ("ProviderOptions", 2),
+                ("GetPatternProvider", 2),
+                ("GetPropertyValue", 1),
+                ("HostRawElementProvider", 1),
+                ("Navigate", 1),
+                ("ITextProvider::GetSelection", 1),
+                ("GetCaretRange", 1),
+                ("Clone", 4),
+                ("CompareEndpoints", 7),
+                ("ExpandToEnclosingUnit", 1),
+                ("GetText", 3),
+                ("MoveEndpointByRange", 4),
+            ],
+        );
         ratchet.check(
             "UIA caret report after a focus, remotely",
             &focus_report,
@@ -2952,6 +3005,27 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             calls(8, 0, 0),
             0,
             &report_hits,
+        );
+        // The caret report's 8 with the selection's caret
+        // (`GetCaretRange`); its ends compared with the old caret's (2); the
+        // two comparisons for whether the selections are apart and one for
+        // each side; and the change's text read (a copy, its two ends moved,
+        // its text): 18. The report of a caret with nothing selected, after
+        // one with nothing selected, compares nothing (8, above).
+        ratchet.check(
+            "UIA caret report with a selection change, classically",
+            &selected,
+            calls(18, 0, 0),
+            0,
+            &[
+                ("ITextProvider::GetSelection", 1),
+                ("GetCaretRange", 1),
+                ("Clone", 3),
+                ("CompareEndpoints", 6),
+                ("ExpandToEnclosingUnit", 1),
+                ("GetText", 3),
+                ("MoveEndpointByRange", 3),
+            ],
         );
         // The caret report's 8, one call asking the line for its
         // annotation types and the attributes being learned, and the walk's
@@ -3905,12 +3979,21 @@ fn caret_moves_cost_exactly() {
     }
     .expect("mockapp's edit control");
     let mut source = EditText::new(edit.0 as isize, 0);
-    let (answer, report) =
+    let (answer, report, selected) =
         measure_caret_move(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);
     // The answer reads the selection again (`EM_GETSEL`), so a caret read
     // before the key's effect is never paired with a line read after it.
     ratchet.check("Edit control caret move", &answer, calls(0, 0, 6), 0, &[]);
     ratchet.check("Edit control caret report", &report, calls(0, 0, 5), 0, &[]);
+    // The report's 5 and the change's text (`WM_GETTEXTLENGTH`,
+    // `WM_GETTEXT`); the comparisons are of offsets, with no message.
+    ratchet.check(
+        "Edit control caret report with a selection change",
+        &selected,
+        calls(0, 0, 7),
+        0,
+        &[],
+    );
     // A caret move's messages for each check; 55 for the wait that found
     // nothing before 2026-10-08.
     let (nothing, later) = measure_watch(&mut app, hwnd, &mut source, verbatim_ia2::calls::take);

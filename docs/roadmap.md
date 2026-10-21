@@ -366,12 +366,6 @@ NVDA capture.
   the Windows Forms text box, to confirm or correct the source reading in
   [text parity](parity/text.md), "The review cursor's bottom in a
   standard edit control".
-- Announce a selection change of the focus that no key and no Verbatim
-  command made, such as one made with the mouse or by the application,
-  as NVDA reports any selection change after its caret event (Dickson,
-  2026-10-15; [text parity](parity/text.md), "TextInfo-equivalent
-  layer"). The pieces are the outpost's caret watch and the
-  selection-change reporting path built on 2026-10-15 (f964ba30).
 - A foreground UIA progress bar that is not the focus is reported, as
   NVDA does (Dickson, 2026-10-10, as a separate fix); background progress
   bars are not yet reported (M4.3).
