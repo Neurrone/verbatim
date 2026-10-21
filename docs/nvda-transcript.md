@@ -310,8 +310,13 @@ that take speech until a given line or until Verbatim is idle
 (`rapid_tabbing_in_settings`, the `*_control_flood` scenarios); those that
 drive Verbatim's own menu and settings dialog, which do not exist without
 Verbatim (`menu_and_settings_dialog`, `object_navigation_in_settings`,
-`settings_dialog_keys`, `theme_panel`, `terminal_settings_page`); and the
-demonstrations and the measure set. Where a scenario waits for one of
+`settings_dialog_keys`, `theme_panel`, `terminal_settings_page`); those
+that write their go file while a group of lines is still being spoken
+(the `*_during_group` scenarios), since compare mode waits for NVDA to go
+quiet before each step, so NVDA hears the second part only after the
+group, and Verbatim's reading during a group is a declared difference
+(`docs/parity/terminals.md`, "The backlog"); and the demonstrations and
+the measure set. Where a scenario waits for one of
 Verbatim's events, such as Core receiving a terminal's caret on its
 prompt, compare mode has no such evidence and relies on the quiet period
 each assertion waits for instead.

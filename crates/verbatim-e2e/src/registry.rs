@@ -1039,7 +1039,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
-        comparable: Comparable::Yes,
+        comparable: Comparable::No(
+            "it writes its go file while a group of lines is still being spoken, and compare mode waits for NVDA to go quiet before each step, so NVDA hears the second part only after the group; Verbatim's reading during a group is a declared difference (docs/parity/terminals.md, \"The backlog\")",
+        ),
         setup: terminal_overflow::setup_windows_terminal,
         body: terminal_overflow::body_history_during_group_windows_terminal,
         teardown: terminal_overflow::teardown,
@@ -1050,7 +1052,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
-        comparable: Comparable::Yes,
+        comparable: Comparable::No(
+            "it writes its go file while a group of lines is still being spoken, and compare mode waits for NVDA to go quiet before each step, so NVDA hears the second part only after the group; Verbatim's reading during a group is a declared difference (docs/parity/terminals.md, \"The backlog\")",
+        ),
         setup: terminal_overflow::setup_console_host,
         body: terminal_overflow::body_history_during_group_console_host,
         teardown: terminal_overflow::teardown,
@@ -1083,7 +1087,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
-        comparable: Comparable::Yes,
+        comparable: Comparable::No(
+            "it writes its go file while a group of lines is still being spoken, and compare mode waits for NVDA to go quiet before each step, so NVDA hears the second part only after the group; Verbatim's reading during a group is a declared difference (docs/parity/terminals.md, \"The backlog\")",
+        ),
         setup: terminal_overflow::setup_windows_terminal,
         body: terminal_overflow::body_overflow_during_group_windows_terminal,
         teardown: terminal_overflow::teardown,
@@ -1094,7 +1100,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         settings: None,
         local_only: false,
         document: None,
-        comparable: Comparable::Yes,
+        comparable: Comparable::No(
+            "it writes its go file while a group of lines is still being spoken, and compare mode waits for NVDA to go quiet before each step, so NVDA hears the second part only after the group; Verbatim's reading during a group is a declared difference (docs/parity/terminals.md, \"The backlog\")",
+        ),
         setup: terminal_overflow::setup_console_host,
         body: terminal_overflow::body_overflow_during_group_console_host,
         teardown: terminal_overflow::teardown,

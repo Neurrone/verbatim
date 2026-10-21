@@ -2414,20 +2414,31 @@ mod tests {
             pin_matches: Some(true),
             quiet: QuietPeriod::from_asked(Duration::from_secs(1)),
         };
-        let report = render_report(&header, &steps);
-        assert!(
-            report.contains(
-                "\nStep 1: keys [insert+f10]; keys [insert+f10]\n\
-                 Verbatim:\n\
-                 \x20 Name selected\n\
-                 \x20 Copied to clipboard: Name\n\
-                 NVDA:\n\
-                 \x20 Name selected\n\
-                 \x20 Copied to clipboard: Name\n\
-                 Note: the next input or action follows at once and cuts this speech off, so the two are compared as one\n\
-                 Verdict: same\n"
-            ),
-            "{report}"
+        assert_eq!(
+            render_report(&header, &steps),
+            "Comparing text_box_review_cursor with NVDA\n\
+             Date: 2026-10-15\n\
+             NVDA: alpha-58022,732d1ce2\n\
+             Submodule pin: 732d1ce2f\n\
+             The pin is the installed build.\n\
+             Quiet period: 1000 ms\n\
+             \n\
+             Step 1: keys [insert+f10]; keys [insert+f10]\n\
+             Verbatim:\n\
+             \x20 Name selected\n\
+             \x20 Copied to clipboard: Name\n\
+             NVDA:\n\
+             \x20 Name selected\n\
+             \x20 Copied to clipboard: Name\n\
+             Note: the next input or action follows at once and cuts this speech off, so the two are compared as one\n\
+             Verdict: same\n\
+             \n\
+             Summary of 1 steps:\n\
+             \x20 same: 1\n\
+             \x20 differs: 0\n\
+             \x20 declared deviation: 0\n\
+             \x20 declared, but NVDA agrees: 0\n\
+             \x20 not compared: 0\n"
         );
     }
 

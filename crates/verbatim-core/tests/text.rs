@@ -1664,6 +1664,30 @@ fn the_start_marker_in_another_object_is_no_start_marker_and_is_kept() {
     );
 }
 
+#[test]
+fn moving_to_the_start_marker_in_another_object_is_no_start_marker_and_keeps_it() {
+    // Verbatim+Shift+F9 with the navigator elsewhere says "No start marker
+    // set" and asks for no text; back in the text, the marker on "w" is
+    // there to move to, though the caret is now on "h".
+    let mut state = reviewing("hello world\n", 6);
+    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
+    focus(&mut state, node(6, Role::Button, StateSet::new()));
+    let effects = reduce(&mut state, &command(ReviewCommand::MoveToStartMarker, 0));
+    assert!(!requests_text(&effects));
+    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let effects = reduce(&mut state, &command(ReviewCommand::MoveToStartMarker, 0));
+    let effects = read_at_caret(&mut state, &effects, line("hello world\n", 100, 0));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::Read(TextRead {
+            at: at(6),
+            movement: None,
+            unit: TextUnit::Line,
+        })
+    );
+}
+
 /// The point `offset` bytes into the line [`reviewing`] reads, anchor 100.
 fn at(offset: u32) -> TextPoint {
     TextPoint::At(TextPosition {

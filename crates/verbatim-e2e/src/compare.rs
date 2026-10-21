@@ -763,6 +763,7 @@ mod tests {
         );
         start.input = "start".to_owned();
         start.start = true;
+        let same = step(&["Name edit"], &[cancel(), speech("Name edit")]);
         let mut cut = declared(step(
             &["3"],
             &[Said::Event("cancel".to_owned()), speech("")],
@@ -770,7 +771,7 @@ mod tests {
         cut.notes
             .push("NVDA's speech did not settle within 15s".to_owned());
         assert_eq!(
-            render_report(&header(), &[start, cut]),
+            render_report(&header(), &[start, same, cut]),
             "Comparing text_box_review_cursor with NVDA\n\
              Date: 2026-10-15\n\
              NVDA: alpha-58022,732d1ce2\n\
@@ -788,6 +789,14 @@ mod tests {
              \n\
              Step 2: keys [tab]\n\
              Verbatim:\n\
+             \x20 Name edit\n\
+             NVDA:\n\
+             \x20 cancel\n\
+             \x20 Name edit\n\
+             Verdict: same\n\
+             \n\
+             Step 3: keys [tab]\n\
+             Verbatim:\n\
              \x20 3\n\
              NVDA:\n\
              \x20 cancel\n\
@@ -796,8 +805,8 @@ mod tests {
              Note: NVDA's speech did not settle within 15s\n\
              Verdict: declared deviation: Review cursor columns\n\
              \n\
-             Summary of 2 steps:\n\
-             \x20 same: 0\n\
+             Summary of 3 steps:\n\
+             \x20 same: 1\n\
              \x20 differs: 0\n\
              \x20 declared deviation: 1\n\
              \x20 declared, but NVDA agrees: 0\n\
