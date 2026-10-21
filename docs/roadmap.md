@@ -266,7 +266,7 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     then, beyond a name change and three state changes on the items view
     whose states the hook's debug line does not show, is to be found.
   - No outpost connects to a new window after its probe, so the worker is
-    not held while File Explorer builds the window: a new folder window's
+    held only by the probe while File Explorer builds the window: a new folder window's
     first item was queued 62 to 323 ms after its event in 50 windows on
     2026-10-21, against up to 2,280 ms with that connection
     ([the listener design](design/listener-without-connections.md), risk 11).
