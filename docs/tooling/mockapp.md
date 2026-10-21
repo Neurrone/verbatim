@@ -33,14 +33,88 @@ field, a slider, a spin button, a tab control, a link, a toolbar, a status
 bar, and a menu — and doubles as the reference for every role and state
 name the fixture format accepts.
 
-Stdin commands, one per line, once `ready` has printed:
+Stdin commands, one per line, once `ready` has printed. Each is
+acknowledged on stdout once it has taken effect, `applied` or `rejected:
+<reason>`; `stall` prints its own two lines instead, and `quit` prints
+nothing. `crates/mockapp/src/stdin.rs` documents each command in full.
 
 - `focus <id>` raises the backend's real focus-changed notification for
   that node (`UiaRaiseAutomationEvent` under UIA,
   `NotifyWinEvent(EVENT_OBJECT_FOCUS, ...)` under MSAA).
+- `set-focus <id>` moves the focused state as `focus` does but raises no
+  event, for tests that count an operation's provider calls exactly.
 - `set-name <id> <text>` and `set-value <id> <text>` update the scripted
   tree in place and raise the matching name-changed, value-changed, or
-  property-changed notification.
+  property-changed notification; with no text they clear it.
+- `set-description <id> <text>` sets the node's description, served as
+  both its full description and its help text, and raises
+  `EVENT_OBJECT_DESCRIPTIONCHANGE`, or under UIA a help text change.
+- `set-controller-for <id> [<controlled>]` (UIA only) makes the node's
+  `ControllerFor` relation name node `controlled`, or nothing when it is
+  left out, and raises its property change.
+- `set-states <id> <state>...` (MSAA only) replaces the node's states with
+  those named, in the fixture's snake case, and raises
+  `EVENT_OBJECT_STATECHANGE`.
+- `select <id>` marks the node selected, moving the state off any other,
+  and raises `SelectionItem_ElementSelected` under UIA or
+  `EVENT_OBJECT_SELECTION` under MSAA.
+- `caret <id> <start> [<end>]` selects a text node's text between two
+  UTF-16 offsets, or puts the caret alone at `start`, raising no event.
+- `caret-event <id>` raises the backend's caret event for a text node:
+  UIA's text selection changed event, or under MSAA
+  `EVENT_OBJECT_TEXTSELECTIONCHANGED` from the edit control's client
+  object.
+- `console-caret <column> <row>` raises `EVENT_CONSOLE_CARET` from the
+  window, its cursor visible at that cell, as the console host raises it
+  for its console window.
+- `system-caret` and `system-caret show` raise
+  `EVENT_OBJECT_LOCATIONCHANGE`, or `EVENT_OBJECT_SHOW`, on the system
+  caret from the window that owns it, as Windows does for an application
+  whose text raises no caret event of its own.
+- `set-text <id> <text>` (UIA only) replaces a text node's text, raising
+  no event; `\n` in the text is a line feed and `\\` a backslash.
+- `write-on-read <id> <text>` (UIA only) writes the text at the caret,
+  and moves the caret past it, the next time any range of the node's text
+  is read, as a terminal writes a typed character in the middle of a
+  client's read.
+- `text-changed <id>` (UIA only) raises UIA's text changed event from a
+  text node.
+- `screen <id> <rows>` (UIA only) puts only the last `rows` lines of a
+  text node's text on screen, its visible range, as a terminal shows the
+  end of its buffer; 0 shows the whole text again. It raises no event.
+- `active-text-position <id> <start> <end>` (UIA only) raises UIA's
+  active text position changed event from a text node, with the range
+  between those UTF-16 offsets.
+- `notify <text>` (UIA only) raises an `AutomationNotification` carrying
+  the text from the root provider; the MSAA backend reports it as
+  unsupported.
+- `stall <ms> [<at> <command>]` blocks the window thread for that many
+  milliseconds, so every cross-process call into the window waits,
+  printing `stall started` as it begins and `stall ended <us>` as it ends.
+  With `<at> <command>`, the command is applied `at` milliseconds into the
+  stall and acknowledged between the two lines.
+- `on-activate <command>` applies the command once the window is next
+  activated, after the activation's window messages; it is acknowledged
+  when armed and again when the command runs.
+- `slow <ms>` answers every provider call from then on that many
+  milliseconds late, as an application busy building a window does; 0
+  answers at once again.
+- `slow-patterns <ms>` answers every pattern request
+  (`GetPatternProvider`) that many milliseconds late from then on, as
+  `slow <ms>` does for every provider call; filling an element's cache
+  makes such requests and a walk to its nearest window does not. 0
+  answers them at once again.
+- `refuse-text on` and `refuse-text off` (UIA only): while on, every
+  request for a node's text pattern fails with `E_FAIL`, as a provider not
+  yet ready does.
+- `answer-property <property id> <fail|empty|usual>` (UIA only) makes
+  every provider's `GetPropertyValue` for that numeric property id fail,
+  answer `VT_EMPTY`, or answer as usual again; one property at a time.
+- `take-runtime-id <id> <from>` (UIA only) removes node `from` from the
+  tree, every call on its elements failing with
+  `UIA_E_ELEMENTNOTAVAILABLE`, and gives node `id` its runtime id, as File
+  Explorer gives a new item the runtime id of one it destroyed. It raises
+  no event.
 - `replace-items <id>` (UIA only) replaces every child of that node, with
   everything under it, by a copy with a runtime id of its own, under the
   same fixture id and with the same states, so the copy of the selected
@@ -48,14 +122,25 @@ Stdin commands, one per line, once `ready` has printed:
   with `UIA_E_ELEMENTNOTAVAILABLE`. It raises no event, as the Settings
   app replaces its search suggestions' items after raising a selection
   for one of the old ones.
-- `console-caret <column> <row>` raises `EVENT_CONSOLE_CARET` from the
-  window, its cursor visible at that cell, as the console host raises it
-  for its console window.
-- `slow-patterns <ms>` answers every pattern request
-  (`GetPatternProvider`) that many milliseconds late from then on, as
-  `slow <ms>` does for every provider call; filling an element's cache
-  makes such requests and a walk to its nearest window does not. 0
-  answers them at once again.
+- `focus-child <container> <child>` (MSAA only) addresses the container's
+  children as numbered simple children, moves the focused state to
+  `child`, and raises `EVENT_OBJECT_FOCUS` on the container and then on
+  the child in one turn of the window thread, as a Win32 tree view does.
+- `client-name <text>` (MSAA only) names the window's client area, the
+  root node, leaving the window's text as it is, and raises
+  `EVENT_OBJECT_NAMECHANGE` on it, as Windows 11 Notepad does when first
+  activated.
+- `client-identity` (MSAA only) makes the client area answer as Windows'
+  own client object does: `IAccIdentity` with the window's `OBJID_CLIENT`
+  address, and `accParent` with the window object.
+- `disable-client` (MSAA only) disables the window, as a modal dialog's
+  owner is: the root node gains the unavailable state and
+  `EVENT_OBJECT_STATECHANGE` is raised on the client area.
+- `hold` makes the next provider call, whichever client makes it, print
+  `held <method>` as it begins and wait until `release`.
+- `release` lets the call `hold` held go on; it is applied and
+  acknowledged by the stdin thread, since the window thread is the one
+  held.
 - `quit` exits the process.
 
 A typical by-hand session: start `mockapp` with a fixture, point a real

@@ -105,7 +105,8 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
   dropped (mockapp's
   `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`);
   a live read that fails, by UIA's transaction timeout or otherwise, lets
-  the focus through, as NVDA's does (Dickson, 2026-10-20; mockapp's
+  the focus through, as NVDA's does (Fable, 2026-10-20, pending Dickson's
+  acceptance; mockapp's
   `a_focus_whose_keyboard_focus_read_times_out_is_reported`). A provider that answers the property empty, or whose answer
   fails, leaves UIA's default, `false`, in the event's cache, the same
   for both (mockapp's events test
@@ -306,7 +307,8 @@ the next other event comes; the menu event is tried last. Verbatim:
 [verbatim-outpost](../crates/verbatim-outpost.md), the queue under
 `Outpost`), in each outpost's intake. Every MSAA event is counted by the
 thread it carries, whichever hook took it in; every foreground change
-of a batch is tried with the focus events of the run it is in, and of
+of a batch is tried with the focus events of the run it is in (Dickson,
+2026-10-20), and of
 two changes of the same window from the same thread the later raised
 is kept, whichever arrived first: a change arriving during a hand-over
 after a later-raised change of its window and thread, waiting, planned
@@ -314,7 +316,7 @@ or handed out, is dropped against the intake's record of the newest
 change per window and thread, written as each change arrives until the
 listener's "forwarding ended" reaches the outpost, as NVDA's limiter,
 adding events in raised order, keeps the newest per window, object and
-thread (Dickson, 2026-10-20); a run whose events all carry the
+thread; a run whose events all carry the
 time Windows raised them is tried in that order, the order NVDA's one
 hook receives them in, since an outpost can receive the focus listener's
 copy of an event after its own hook's copy of a later one during a
@@ -456,12 +458,26 @@ switch, caret show and hide, and the shows NVDA accepts besides
 tooltips. For an application with an MSAA tree beside a UIA item view,
 [focus A in the tree, a name change in the item view, focus B in the
 tree] is heard "A, B" in NVDA, whose pump the name change ends a run
-in, and "B" in Verbatim. Before an
-outpost hears them, the focus
-listener coalesces its facts by the same one-per-object-and-kind rule,
-and the supervisor holds the facts that arrive while an outpost starts
-by that rule too, and lets a newer fact replace a waiting one when an
-outpost's queue is full.
+in, and "B" in Verbatim. NVDA's limiter keeps its newest menu event in
+one slot for all four of its menu events, menu start and end and popup
+start and end (`MENU_EVENTIDS`, `orderedWinEventLimiter.py` 12 to 17;
+`_lastMenuEvent`, 76 to 78), and its one limiter covers every
+application; an outpost's intake keeps a batch's newest popup start, per
+application. Two cases differ. A popup start followed in one flush by a
+popup end or a menu end of the same application: NVDA's slot keeps only
+the end, which `pumpAll` handles as a fake focus only when no focus of
+the flush was valid (`IAccessibleHandler/__init__.py` 1093 to 1103), so
+the popup is never announced, where the outpost still handles the popup
+start. And two applications' popup starts in one flush: NVDA handles
+only the later, where each application's outpost handles its own. Both
+need a menu opened and closed, or two applications' menus opened,
+within one flush, so they are rare; neither is changed (Fable,
+2026-10-21, pending Dickson's acceptance). Before an outpost hears
+them, the focus listener coalesces its facts one per object and kind,
+and for an MSAA event other than a menu opening, the thread that raised
+it, and the supervisor holds the facts that arrive while an outpost
+starts by that rule too, and lets a newer fact replace a waiting one
+when an outpost's queue is full.
 
 ### IA2 upgrade of MSAA objects
 

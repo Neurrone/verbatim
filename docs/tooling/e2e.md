@@ -432,7 +432,12 @@ describes every video). Like any local run, it takes over the desktop.
 Every scenario run, pass or fail, keeps its artifacts, and losing any of
 them fails the run. It writes a one-line-per-fact summary (name,
 pass or fail, latency counts, and the outpost crashes it saw) to `target/e2e-artifacts/<scenario name>/
-summary.txt` under the workspace root (`VERBATIM_E2E_ARTIFACTS_DIR`
+summary.txt` under the workspace root; its latency counts and maxima
+cover every utterance of the run that carries its event's time, from
+startup to the last step, the rows `latency.csv` holds
+(`latency_records` utterances, `latency_reached_audio` of them played,
+and the worst event to queue and event to audio among them, in
+milliseconds) (`VERBATIM_E2E_ARTIFACTS_DIR`
 overrides the root), whether run runner-direct or through `cargo xtask vm
 test`; `xtask vm test` reads this back to build its own run summary rather
 than parsing test output. Every scenario run, pass or fail, also writes into
@@ -441,11 +446,11 @@ the same directory the interleaved timeline
 what held the foreground before setup and after teardown (`foreground.txt`,
 so a failure can be read against the desktop it started from; after
 teardown, a `SystemSettings.exe` whose every window is cloaked is named
-as the Settings app suspended, Windows' prelaunch or the scenario's own
-Settings left suspended, rather than listed among the visible windows,
-since Windows starts that app ahead of use and keeps it suspended with its
-window cloaked, and keeps the Settings a scenario opened so once its
-window closes, so it is nothing a scenario left; which of the two it is
+as the Settings app suspended, rather than listed among the visible
+windows: it is Windows' prelaunch or a Settings left suspended by this or
+an earlier scenario, no window a scenario left, since Windows starts that
+app ahead of use and keeps it suspended with its window cloaked, and keeps
+a Settings a scenario opened so once its window closes; which it is
 cannot be told, since a scenario opens Settings through `explorer.exe`
 and records the frame host's process, not `SystemSettings.exe`. The
 cloaked "Settings" frame of `ApplicationFrameHost.exe`
@@ -563,15 +568,24 @@ The eight scenarios, all named `measure_`:
   announcements is part of an input Verbatim reports handled, and each
   can come after Verbatim is idle, so the scenario waits for the
   announcement itself, as `explorer_folder_window` does. It writes
-  `measure-summary.txt` to its artifacts: its samples by kind, keys, new
+  `measure-summary.txt` to its artifacts: its samples by kind, each with
+  its count and figures in milliseconds, and no figure over all of them,
+  since the new windows' first focus, which includes a new outpost's
+  start, sets any overall percentile alone. The kinds are keys (each
+  key's item; their audio figures cover the arrow keys alone, n 80 of
+  120, since the items after Enter and Backspace never play), new
   windows (each window's title, once per window, though its list and
-  item share its latency) and returns (the folder window's title after
-  each close, likewise), each with its count and
-  figures, and no figure over all of them, since the new windows' first
-  focus, which includes a new outpost's start, sets any overall
-  percentile alone. Runs before 3de02d37 (2026-10-21) closed each new
-  window before it was announced, so they carried no new-window samples,
-  and their figures compare with the keys' figures only.
+  item share its latency) and returns (the folder window's title heard
+  between each close and the folder window's item, measuring the title's
+  event to the title being queued; the list and the item come from a
+  later focus event, 8 to 36 ms after the title's in the runs of
+  2026-10-21). At the nearest rank a kind's P95 is its maximum with 11
+  samples or fewer, and its P99 with 51 or fewer, so the new windows'
+  and returns' 10 samples give both as the maximum, as the file says.
+  Runs before 3de02d37 (2026-10-21) closed each new window without
+  waiting for its announcement, so they carried few or no new-window
+  samples, none waited for: their P50 and P95 compare with the keys'
+  figures, while their P99 and maximum can hold a new window.
 - `measure_focus_text_box`: two Windows Forms text boxes, brought forward
   20 times by turns.
 - `measure_focus_new_application`: 12 newly started applications, each

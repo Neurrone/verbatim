@@ -186,7 +186,13 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
 - An audit of every end-to-end scenario for timing races (2026-10-11),
   each race fixed by waiting for evidence, not a longer bound; and the
   agent's bring-forward, which always takes its slowest path (once 1.4
-  seconds), its cause open.
+  seconds), its cause open. A known weakness of `measure_focus_explorer`'s
+  key waits: each ends on its key's item, and "alpha 2 of 4" ends both
+  Down 1 and Up 1, as "Inner 1 of 4" ends both Up 2 and Backspace, so a
+  late repeat of one step's item arriving after the next key would end
+  that key's wait. It has not been seen (exactly 120 key items in each
+  run of 2026-10-21), and renaming cannot remove it, since the targets
+  are `explorer_folder_window`'s.
 - Scheduled for later (Dickson, 2026-10-11, from the communication
   design): the mixer's retry after a failed audio device open is a timed
   deadline, to be replaced by waiting for evidence such as a device

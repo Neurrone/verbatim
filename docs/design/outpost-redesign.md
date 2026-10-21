@@ -172,8 +172,10 @@ these parts.
      other than the console host's or a menu opening, per thread that
      raised it, as NVDA's limiter keys it (the console host's events merge
      per window and kind whatever the thread, and a batch handles only its
-     newest menu opening, as NVDA keeps only its most recent menu event); a newer one
-     replaces it and takes its place at the back;
+     newest menu opening, as NVDA keeps only its most recent menu event,
+     per application and for popup starts, where NVDA's one slot also
+     holds menu starts and ends and covers every application); a newer
+     one replaces it and takes its place at the back;
    - a batch is everything that accumulated while the worker handled the
      previous batch;
    - per batch, keep the newest 4 focus events and the newest 10 other
@@ -347,7 +349,8 @@ The supervisor stays inside Core.
 - Each outpost has a writer thread in Core with a bounded queue. The
   supervisor never writes to a pipe while making a decision. When the
   queue is full: a routed fact replaces any older fact still waiting for
-  the same object and kind; a query fails at once; a "nodes I hold"
+  the same object and kind, and for an MSAA event other than a menu
+  opening, the thread that raised it; a query fails at once; a "nodes I hold"
   update replaces any older one; pings always get through. Core's thread
   count is two per outpost.
 - Facts that arrive while an outpost is starting are held in arrival

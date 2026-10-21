@@ -527,8 +527,11 @@ impl DeliveredFact {
     /// to 75 and 79), so the facts of one address from two threads are not
     /// merged. A menu opening is keyed by its address alone: NVDA's limiter
     /// keeps only its most recent menu event, whatever its address or
-    /// thread (76 to 78), which the outpost's intake follows by handling
-    /// only a batch's newest menu opening.
+    /// thread (76 to 78), which the outpost's intake follows per
+    /// application, for popup starts, by handling only a batch's newest
+    /// menu opening (NVDA's one slot also holds menu starts and ends and
+    /// covers every application: `docs/parity/backends.md`, the limiter's
+    /// entry).
     /// `None` for the parts of a UIA focus's read, which are never replaced
     /// on the way: the outpost coalesces a read only where it takes its
     /// marker's place.

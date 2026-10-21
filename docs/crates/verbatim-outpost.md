@@ -698,8 +698,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     thread with every call it makes.
   - The queue applies NVDA's limiter rules to MSAA events only
     (`docs/design/focus-pipeline.md` section 5): one
-    waiting entry per object and kind, and for an MSAA event per thread
-    that raised it too, as NVDA's limiter keys them (the console host's
+    waiting entry per object and kind, and for an MSAA event other than a
+    menu opening, the thread that raised it, as NVDA's limiter keys them
+    (a menu opening waits per address alone, and the console host's
     events merge per window and kind), a newer one replacing it and moving
     to the back, which is all that limits UIA events; a batch is everything
     that accumulated while the worker handled the previous one, planned in
@@ -1033,9 +1034,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   Fable, 2026-10-21, pending Dickson's acceptance); a menu opening is
   keyed by its address alone, since NVDA's limiter keeps only its most
   recent menu event, whatever its address or thread, and the outpost's
-  intake handles only a batch's newest; notifications
-  and a focus's
-  marker, read, and drop are never merged), with pongs
+  intake handles only a batch's newest, which follows NVDA per
+  application, for popup starts (the difference is recorded in
+  `docs/parity/backends.md`, the limiter's entry); notifications and a
+  focus's marker, read, and drop are never merged), with pongs
   and `Ready` first, while a write is in flight; this backlog of the
   sender's (`listener::Waiting`) also judges, under the sender's lock,
   whether a `WinEvent`'s fact was raised after its outpost's hook went in,

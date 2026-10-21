@@ -110,8 +110,9 @@ arguments for the full verb list printed from the source of truth.
     which short-circuits before any of the others matter).
   - At the end of a run selecting more than one scenario, `cargo xtask vm
     test` prints a run summary: one line per scenario, pass or fail, and how
-    many of that scenario's latency timelines reached audio — read back from
-    the `verbatim_e2e::artifacts::ScenarioSummary` each scenario's own
+    many of that scenario's utterances with an event time reached audio, of
+    how many — read back from the `verbatim_e2e::artifacts::ScenarioSummary`
+    each scenario's own
     subprocess wrote (see the note on failure artifacts above), not scraped
     from subprocess output. There is no retry of any kind anywhere in this
     path: a scenario that fails is reported failed, once, and the run moves

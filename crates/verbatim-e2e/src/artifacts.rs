@@ -22,8 +22,9 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use verbatim_control::protocol::LatencyRecord;
 use verbatim_model::TraceId;
+
+use crate::speech::LatencyRow;
 
 /// Environment variable overriding [`artifacts_root`]'s default. Read by both
 /// a scenario subprocess (`crates/verbatim-e2e`) and, when set in the same
@@ -81,23 +82,23 @@ pub struct ScenarioSummary {
     /// Whether the scenario (setup, body, teardown, and the final clean
     /// quit) completed without error.
     pub passed: bool,
-    /// How many latency timelines were on record when the scenario finished,
-    /// when the fetch itself succeeded — see
-    /// [`crate::scenario::Scenario::latency_snapshot`], called best-effort so
-    /// a broken control connection after a failed scenario cannot also break
-    /// summary writing.
+    /// How many of the run's utterances carry the time of the event behind
+    /// them: every one, from the start of the run to its end, the rows of
+    /// `latency.csv` ([`crate::speech::SpeechCollector::latency_rows`]).
+    /// `None` when the run read no speech, as in compare mode.
     pub latency_records: Option<usize>,
-    /// How many of those timelines had reached audio.
+    /// How many of those utterances started to play.
     pub latency_reached_audio: Option<usize>,
-    /// The worst event-to-queue latency (milliseconds) across the timelines,
-    /// or `None` when there were no timelines or the fetch failed. This is
-    /// the deterministic pipeline latency — event observed to speech
-    /// queued — independent of the synthesizer.
+    /// The worst event-to-queue latency (milliseconds) across those
+    /// utterances, or `None` when there were none. This is the
+    /// deterministic pipeline latency — event observed to speech queued —
+    /// independent of the synthesizer.
     pub max_event_to_queue_ms: Option<u64>,
-    /// The worst event-to-audio latency (milliseconds) across the timelines
-    /// that reached audio, or `None` when none did. Under the capture synth's
-    /// instant sink this is close to the pipeline latency; under a real synth
-    /// it includes synthesis and is the looser end-to-end smoke number.
+    /// The worst event-to-audio latency (milliseconds) across those
+    /// utterances that played, or `None` when none did. Under the capture
+    /// synth's instant sink this is close to the pipeline latency; under a
+    /// real synth it includes synthesis and is the looser end-to-end smoke
+    /// number.
     pub max_event_to_audio_ms: Option<u64>,
     /// The outposts that crashed during the run, whether or not its steps
     /// passed ([`crate::scenario::Scenario::outpost_crashes`]), or `None`
@@ -144,40 +145,23 @@ impl std::fmt::Display for OutpostCrash {
 }
 
 impl ScenarioSummary {
-    /// Builds a summary from a scenario's outcome and, when the fetch
-    /// succeeded, its latency records.
+    /// Builds a summary from a scenario's outcome and, when the run read
+    /// its speech, the latency rows of every utterance it heard.
     #[must_use]
-    pub fn new(name: &str, passed: bool, latency: Option<&[LatencyRecord]>) -> Self {
+    pub fn new(name: &str, passed: bool, latency: Option<&[LatencyRow]>) -> Self {
         Self {
             name: name.to_owned(),
             passed,
-            latency_records: latency.map(<[LatencyRecord]>::len),
-            latency_reached_audio: latency.map(|records| {
-                records
-                    .iter()
-                    .filter(|record| record.audio_started_at_ms.is_some())
+            latency_records: latency.map(<[LatencyRow]>::len),
+            latency_reached_audio: latency.map(|rows| {
+                rows.iter()
+                    .filter(|row| row.event_to_audio_ms.is_some())
                     .count()
             }),
-            max_event_to_queue_ms: latency.and_then(|records| {
-                records
-                    .iter()
-                    .filter_map(|record| {
-                        record
-                            .speech_queued_at_ms
-                            .map(|queued| queued.saturating_sub(record.event_observed_at_ms))
-                    })
-                    .max()
-            }),
-            max_event_to_audio_ms: latency.and_then(|records| {
-                records
-                    .iter()
-                    .filter_map(|record| {
-                        record
-                            .audio_started_at_ms
-                            .map(|audio| audio.saturating_sub(record.event_observed_at_ms))
-                    })
-                    .max()
-            }),
+            max_event_to_queue_ms: latency
+                .and_then(|rows| rows.iter().map(|row| row.event_to_queue_ms).max()),
+            max_event_to_audio_ms: latency
+                .and_then(|rows| rows.iter().filter_map(|row| row.event_to_audio_ms).max()),
             outpost_crashes: None,
             optional_utterances: Vec::new(),
         }
@@ -812,21 +796,20 @@ mod tests {
         assert_eq!(summary.latency_reached_audio, Some(2));
     }
 
-    fn sample_records() -> Vec<LatencyRecord> {
+    fn sample_records() -> Vec<LatencyRow> {
         vec![
-            latency_record(Some(10)),
-            latency_record(Some(20)),
-            latency_record(None),
+            latency_row(Some(10)),
+            latency_row(Some(20)),
+            latency_row(None),
         ]
     }
 
-    fn latency_record(audio_started_at_ms: Option<u64>) -> LatencyRecord {
-        LatencyRecord {
-            trace_id: verbatim_model::TraceId::mint(),
-            event_observed_at_ms: 0,
-            speech_queued_at_ms: Some(5),
-            audio_started_at_ms,
-            stages: Vec::new(),
+    fn latency_row(event_to_audio_ms: Option<u64>) -> LatencyRow {
+        LatencyRow {
+            step: None,
+            text: "OK button".to_owned(),
+            event_to_queue_ms: 5,
+            event_to_audio_ms,
         }
     }
 }

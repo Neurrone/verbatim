@@ -49,7 +49,7 @@ use verbatim_agent::protocol::{
 };
 use verbatim_config::{ConfigStore, Settings};
 use verbatim_control::client::{Client as ControlClient, ok_or_error};
-use verbatim_control::protocol::{Frame, LatencyRecord, ReplyPayload, Request, StatusInfo};
+use verbatim_control::protocol::{Frame, ReplyPayload, Request, StatusInfo};
 
 use crate::agent_client::{AgentClient, Launched as AgentLaunch};
 use crate::artifacts::OutpostCrash;
@@ -1536,8 +1536,9 @@ impl Scenario {
             .map(|window| format!("pid {} ({:?}, cloaked)", window.pid, window.title))
             .collect();
         format!(
-            "{}; the Settings app suspended with every window cloaked, Windows' prelaunch or the \
-             scenario's own Settings left suspended: {}",
+            "{}; the Settings app suspended with every window cloaked, Windows' prelaunch or a \
+             Settings left suspended by this or an earlier scenario, no window a scenario \
+             left: {}",
             describe_foreground(&info),
             named.join(", ")
         )
@@ -1814,15 +1815,6 @@ impl Scenario {
     /// Returns an error if the agent cannot be asked.
     pub fn foreign_terminal_windows(&mut self) -> io::Result<Vec<WindowInfo>> {
         self.agent.take_foreign_terminal_windows()
-    }
-
-    /// Fetches the scenario's recent latency timelines.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub fn latency_snapshot(&mut self, last_n: u32) -> io::Result<Vec<LatencyRecord>> {
-        crate::latency::fetch(self.control_client("fetch the latency of")?, last_n)
     }
 
     /// Saves Core's focus, its ancestors, and the navigator object into
@@ -2977,9 +2969,11 @@ fn minimize_failure(
 /// The processes among `windows` that are a suspended Settings app: a
 /// `SystemSettings.exe` whose every window listed is cloaked. Windows
 /// starts the app ahead of use and keeps it suspended with its window
-/// cloaked, and keeps the Settings a scenario opened so once its window
-/// closes, so it is no window a scenario left (`docs/tooling/e2e.md`, on
-/// `foreground.txt`). Which of the two it is cannot be told: a scenario
+/// cloaked, and keeps a Settings a scenario opened so once its window
+/// closes, so it is Windows' prelaunch or a Settings left suspended by this
+/// or an earlier scenario, and no window a scenario left
+/// (`docs/tooling/e2e.md`, on `foreground.txt`). Which it is cannot be
+/// told: a scenario
 /// opens Settings through `explorer.exe`, and the window it waits for is
 /// the frame host's, so no `SystemSettings.exe` is among the processes it
 /// records as started.

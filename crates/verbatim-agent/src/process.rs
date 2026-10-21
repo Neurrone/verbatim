@@ -611,8 +611,9 @@ fn job_has_processes(job: &OwnedHandle) -> bool {
 /// the code can be read: [`wait_for_exit`]'s answer once its wait ends.
 ///
 /// A child [`launch`] started is answered from its kept handle, so its exit
-/// code is reported for as long as the entry is kept (a later launch drops
-/// entries finished more than five minutes earlier).
+/// code is reported for as long as the entry is kept (a launch drops an
+/// entry five minutes or more after the first launch that found its child,
+/// and everything in its job, finished).
 ///
 /// A pid that cannot be opened at all — already exited and its process
 /// object gone, or one that never named a live process — is reported as

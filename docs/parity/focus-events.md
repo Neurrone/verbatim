@@ -70,7 +70,7 @@ difference when a read's time is up.
   what UIA stores for an empty or failed answer, and `verbatim-uia`'s
   `a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true` the
   reading of it.
-- Matched (Dickson, 2026-10-20): within the budget, a live read of the
+- Matched (Fable, 2026-10-20, pending Dickson's acceptance): within the budget, a live read of the
   sender's keyboard focus that fails, by UIA's transaction timeout or
   otherwise, lets the focus through, as NVDA's
   `except COMError: return True` does
@@ -322,7 +322,7 @@ watchdog: detection" and "What a live capture shows").
 
 Verbatim: **matched for the read after a focus's judgement; different,
 deliberately, for the judgement's calls once the read's window is known;
-not judged for the rest (Dickson, 2026-10-20)**; unit tests of the
+not judged for the rest (Fable, 2026-10-20, pending Dickson's acceptance)**; unit tests of the
 outposts' worker and of the listener's reading threads pin the rule, and
 no end-to-end scenario makes an application slow enough to show it. An
 outpost's worker and the focus listener's reading thread for an
@@ -373,8 +373,8 @@ abandoned thread's call returns and takes the queue, which ends the
 bound. The bound is one per application, not one per event, so the
 application's outpost, whose later events wait behind each focus's
 marker, runs at most `READ_DEADLINE` behind the hung reads, once, and a
-stream of events from the application cannot keep it behind (Dickson,
-2026-10-20). The limit is Verbatim's own, since NVDA has no reading
+stream of events from the application cannot keep it behind (Fable,
+2026-10-20, pending Dickson's acceptance). The limit is Verbatim's own, since NVDA has no reading
 threads to abandon.
 
 A focus waiting so is a pending focus, for NVDA's rule that drops a
@@ -385,7 +385,7 @@ lines 772 to 777): any queued focus drops any application's menu
 opening. Verbatim's is per application for a waiting focus, so that a
 hung window cannot silence every other application's menus while its
 reads stay stuck; a focus being read, or waiting for a live thread,
-still counts for every application, as in NVDA (Dickson, 2026-10-20).
+still counts for every application, as in NVDA (Fable, 2026-10-20, pending Dickson's acceptance).
 
 The rule is narrower than NVDA's by design: NVDA's one main thread serves
 every application, so a move to any other window frees it, while each of

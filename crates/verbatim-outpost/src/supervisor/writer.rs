@@ -760,14 +760,22 @@ mod tests {
     /// An alert and a tooltip shown are keyed by the thread that raised
     /// them too, as NVDA's limiter keys those `WinEvent`s: one of an
     /// address from another thread waits beside the one waiting, and a
-    /// newer one from the same thread replaces it and moves to the back.
+    /// newer one from the same thread replaces it and moves to the back. A
+    /// menu opening is keyed by its address alone, as NVDA's limiter keeps
+    /// one menu event whatever its thread: one from another thread
+    /// replaces the one waiting and moves to the back.
     #[test]
-    fn an_alert_or_tooltip_replaces_only_the_one_its_thread_raised() {
+    fn alerts_and_tooltips_are_replaced_per_thread_and_menu_openings_per_address() {
         let raised = |fact, thread, time| {
             Outgoing::delivered(HeldFact {
                 win_event: Some(crate::protocol::WinEventStamp { thread, time }),
                 ..held(fact)
             })
+        };
+        let menu = || DeliveredFact::MenuPopup {
+            hwnd: 8,
+            id_object: -4,
+            id_child: 0,
         };
         let alert = || DeliveredFact::Alert {
             hwnd: 8,
@@ -781,8 +789,10 @@ mod tests {
         };
         let mut queue = Queue::default();
         for (fact, thread, time) in [
+            (menu(), 7, 100),
             (alert(), 7, 101),
             (shown(), 7, 102),
+            (menu(), 9, 110),
             (alert(), 9, 111),
             (shown(), 9, 112),
             (alert(), 7, 121),
@@ -803,6 +813,7 @@ mod tests {
         assert_eq!(
             order,
             [
+                "MenuPopup { hwnd: 8, id_object: -4, id_child: 0 } thread 9 at 110",
                 "Alert { hwnd: 8, id_object: -4, id_child: 0 } thread 9 at 111",
                 "Show { hwnd: 8, id_object: -4, id_child: 0 } thread 9 at 112",
                 "Alert { hwnd: 8, id_object: -4, id_child: 0 } thread 7 at 121",

@@ -1207,10 +1207,10 @@ impl FocusReader {
         // the event was raised: a sender that did not have it then is
         // dropped. A live read that fails, by UIA's transaction timeout or
         // otherwise, lets the focus through, as NVDA's `except COMError:
-        // return True` does (Dickson, 2026-10-20). A menu opening
-        // redirected to the current focus is judged by the focus's
-        // element, whose keyboard focus no cache of this event holds, so
-        // it is let through.
+        // return True` does (Fable, 2026-10-20, pending Dickson's
+        // acceptance). A menu opening redirected to the current focus is
+        // judged by the focus's element, whose keyboard focus no cache of
+        // this event holds, so it is let through.
         let lacked_by_its_event =
             || std::ptr::eq(subject, element) && sender.lacked_keyboard_focus();
         if out_of_time() {

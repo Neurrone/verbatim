@@ -336,9 +336,12 @@ pub(crate) fn setup_focus_explorer(scenario: &mut Scenario) -> io::Result<Scenar
 ///   window's announcement cannot end the next window's wait.
 /// - After each new window closes, the folder window's item again, which
 ///   its title and list precede on every return, so that every new window
-///   opens on the same desktop. Waiting for the title alone left the item
-///   arriving in the next window's step on 3 to 4 of the 10 returns of
-///   each run (2026-10-21).
+///   opens on the same desktop (Fable, 2026-10-21, pending Dickson's
+///   acceptance). Waiting for the title alone left the item arriving in a
+///   later step on 1 to 4 of each run's 10 returns (4, 1, 4, 3 and 3 in
+///   five runs, 15 of 50): in the next window's step, but for run 2's one
+///   miss, the last return, whose item came in the steady state's first
+///   step.
 /// - Each key, the item `explorer_folder_window` asserts for it.
 ///
 /// It writes its samples by kind to `measure-summary.txt`
@@ -355,6 +358,7 @@ pub(crate) fn body_focus_explorer(scenario: &mut Scenario, state: &mut ScenarioS
     truth.drain_until(scenario, "opened", FOLDER_ITEM);
     // The first focus in a new File Explorer window, each closed again.
     let mut new_windows = Vec::new();
+    let mut returns = Vec::new();
     for index in 0..NEW_EXPLORER_WINDOWS {
         let first = format!("one {index}");
         let second = format!("two {index}");
@@ -367,11 +371,20 @@ pub(crate) fn body_focus_explorer(scenario: &mut Scenario, state: &mut ScenarioS
             "after opening",
             &format!("{first} not selected 1 of 2"),
         );
+        let before_closing = scenario.speech().latency_rows().len();
         scenario
             .close_windows_titled(&opened)
             .expect("closes the folder window");
         new_windows.push(format!("{opened} - File Explorer"));
         truth.drain_until(scenario, "after closing", FOLDER_ITEM);
+        // The return: the folder window's title among what was heard from
+        // the close to its item.
+        returns.extend(
+            scenario.speech().latency_rows()[before_closing..]
+                .iter()
+                .filter(|row| row.text == folder_window)
+                .cloned(),
+        );
     }
     for _ in 0..REPEATS {
         for (key, front, said) in EXPLORER_KEYS {
@@ -382,7 +395,7 @@ pub(crate) fn body_focus_explorer(scenario: &mut Scenario, state: &mut ScenarioS
             truth.drain_until(scenario, "after key", said);
         }
     }
-    write_explorer_summary(scenario, &truth, &folder_window, &new_windows);
+    write_explorer_summary(scenario, &truth, &new_windows, &returns);
 }
 
 /// The item focused in `measure_focus_explorer`'s folder window whenever it
@@ -403,24 +416,34 @@ const EXPLORER_KEYS: [(&str, Option<&str>, &str); 6] = [
 
 /// Writes `measure_focus_explorer`'s samples to `measure-summary.txt`, one
 /// line per kind, each with its own count and its event-to-queue and
-/// event-to-audio minimum, P50, P95, P99 and maximum
+/// event-to-audio minimum, P50, P95, P99 and maximum in milliseconds
 /// (`docs/tooling/measuring.md`), and no figure over all of them, since
 /// they measure different things:
 ///
-/// - keys: each key's item (the utterances in [`EXPLORER_KEYS`]).
+/// - keys: each key's item (the utterances in [`EXPLORER_KEYS`]). Its
+///   audio figures cover the arrow keys alone: the items after Enter and
+///   Backspace never play, since the next key's speech ends them.
 /// - new windows: each new window's title (`new_windows`), once per
 ///   window. Its list and its first item are announced from the same
 ///   event, with the same latency, so counting them too would weigh each
 ///   window three times; the title is the one of the three that starts to
 ///   play, since the window is closed once its item is queued.
-/// - returns: the folder window's title after each new window closes,
-///   once per return, for the same reason; the title announced when setup
-///   opened it is not one.
+/// - returns: the folder window's title heard between closing each new
+///   window and the folder window's item (`returns`), so a title said in
+///   another phase is not counted. It measures the title's event to the
+///   title being queued: the list and the item come from a later focus
+///   event, 8 to 36 ms after the title's in the runs of 2026-10-21, so the
+///   return is not finished when its title is queued.
+///
+/// The file gives its unit and notes where a percentile is only the
+/// maximum: at the nearest rank, a kind's P95 is its maximum with 11
+/// samples or fewer, and its P99 with 51 or fewer, so the new windows' and
+/// returns' 10 samples give both as the maximum.
 fn write_explorer_summary(
     scenario: &mut Scenario,
     truth: &Truth,
-    folder_window: &str,
     new_windows: &[String],
+    returns: &[LatencyRow],
 ) {
     let rows = scenario.speech().latency_rows();
     let keys: Vec<&LatencyRow> = rows
@@ -431,12 +454,11 @@ fn write_explorer_summary(
         .iter()
         .filter(|row| new_windows.contains(&row.text))
         .collect();
-    let returns: Vec<&LatencyRow> = rows
-        .iter()
-        .filter(|row| row.text == folder_window)
-        .skip(1)
-        .collect();
-    let mut text = String::new();
+    let returns: Vec<&LatencyRow> = returns.iter().collect();
+    let mut text = String::from(
+        "All figures in milliseconds. A kind's P95 is its maximum with 11 samples or fewer, and \
+         its P99 with 51 or fewer.\n",
+    );
     for (kind, samples) in [
         ("keys", keys),
         ("new windows", windows),

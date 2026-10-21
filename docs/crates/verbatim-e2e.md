@@ -544,14 +544,18 @@ Verbatim's log folder holds an outpost log named for one of them
 
 `registry::run_named` is what every `#[test]` wrapper calls; its `run`
 does, in order: launch; assert the startup speech and the desktop; run
-setup and the body, which ends with `expect_nothing_more`; save the
-latency timelines, Core's focus (`collect_focus`, `focus.txt`: the focus,
+setup and the body, which ends with `expect_nothing_more`; save Core's
+focus (`collect_focus`, `focus.txt`: the focus,
 its ancestors, and the navigator, from the control plane's `DumpFocus`),
 and the flight recorder while Verbatim is up; check for unexpected exits;
 quit Verbatim and check that its outposts and listener shut down cleanly;
 run the teardown; clean up; collect the artifacts; finish the recording;
 check that no Windows Terminal window the run did not open appeared;
-write `foreground.txt`, the summary, and archive the run.
+write `foreground.txt`, the summary, and archive the run. The summary's
+latency lines (`ScenarioSummary::new`) are built from the speech
+collector's `latency_rows`, the rows `latency.csv` holds: every utterance
+of the run that carries its event's time, from startup to the last step,
+so its maximum is the run's.
 Every step after the body runs whatever happened before it, and every
 problem is a failure reported together with the body's own panic.
 
@@ -862,10 +866,11 @@ debug log can be larger than one read of the agent's.
 - `artifacts`: `artifacts_root`, `scenario_dir`, `ScenarioSummary` (with
   its `OutpostCrash` list), and `archive_run`, shared with `xtask vm test`
   without argument passing.
-- `latency`: `fetch` reads the control plane's latency timelines; no
-  budget is enforced. Enforcing them by
-  default in local runs, and only recording them on GitHub's runners, is
-  decided but not yet built (`docs/testing.md`).
+- Latency: each run records every utterance's event-to-queue and
+  event-to-audio times (`latency_rows`, `latency.csv`, the summary); no
+  budget is enforced. Enforcing them by default in local runs, and only
+  recording them on GitHub's runners, is decided but not yet built
+  (`docs/testing.md`).
 - `recording`: described above.
 - `windows_terminal`: the Windows Terminal the terminal scenarios drive,
   kept apart from the machine's own, which runs every window in one

@@ -1884,13 +1884,6 @@ fn run(def: &ScenarioDef) {
     // with a modifier down.
     problems.extend(scenario.release_held_keys());
 
-    let latency = match scenario.latency_snapshot(LATENCY_RECORDS) {
-        Ok(latency) => Some(latency),
-        Err(error) => {
-            problems.push(format!("could not fetch the latency timelines: {error}"));
-            None
-        }
-    };
     if let Err(error) = scenario.collect_focus(&dir) {
         problems.push(format!("could not save Core's focus: {error}"));
     }
@@ -1979,6 +1972,9 @@ fn run(def: &ScenarioDef) {
         .iter()
         .map(ToString::to_string)
         .collect();
+    // Every utterance of the run with its event's time, the rows
+    // `latency.csv` holds.
+    let latency = scenario.speech().latency_rows();
     drop(scenario);
     if let Err(error) = write_foreground(&dir, &foreground) {
         problems.push(format!("could not write the foreground record: {error}"));
@@ -1987,7 +1983,7 @@ fn run(def: &ScenarioDef) {
     let passed = body_outcome.is_ok() && problems.is_empty();
     report_outpost_crashes(def.name, outpost_crashes.as_deref());
     report_optional_utterances(def.name, &optional_utterances);
-    let mut summary = ScenarioSummary::new(def.name, passed, latency.as_deref());
+    let mut summary = ScenarioSummary::new(def.name, passed, Some(&latency));
     summary.outpost_crashes = outpost_crashes;
     summary.optional_utterances = optional_utterances;
     if let Err(error) = summary.write(&dir) {
@@ -2075,9 +2071,6 @@ fn report_optional_utterances(name: &str, outcomes: &[String]) {
     }
     let _ = io::stderr().write_all(lines.as_bytes());
 }
-
-/// How many latency timelines a scenario's summary is built from.
-const LATENCY_RECORDS: u32 = 200;
 
 /// The message a panic carried, for reporting it beside other problems.
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {

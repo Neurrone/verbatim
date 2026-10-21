@@ -11,10 +11,13 @@
 //!   of one address both wait: a newer one replaces it and takes its place
 //!   at the back. A menu opening waits per address alone, and a batch
 //!   handles only its newest, whatever its address or thread, as NVDA's
-//!   limiter keeps only its most recent menu event (76 to 78). The console host's events, which NVDA hooks apart, merge
-//!   per window and kind whatever the thread. UIA events are limited by this alone, as
-//!   NVDA's UIA event limiter keeps one event per element and kind and
-//!   counts nothing.
+//!   limiter keeps only its most recent menu event (76 to 78): per
+//!   application, for popup starts, where NVDA's one slot also holds menu
+//!   starts and ends and covers every application (`docs/parity/backends.md`,
+//!   the limiter's entry). The console host's events, which NVDA hooks
+//!   apart, merge per window and kind whatever the thread. UIA events are
+//!   limited by this alone, as NVDA's UIA event limiter keeps one event
+//!   per element and kind and counts nothing.
 //! - A batch is everything that accumulated while the worker handled the
 //!   previous batch, planned in the order it arrived: nothing moves ahead
 //!   of what came before it. The one exception is the focused terminal's
