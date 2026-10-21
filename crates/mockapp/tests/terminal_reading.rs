@@ -26,7 +26,8 @@
 //! - A caret key's watch whose read finds the caret moved while the
 //!   terminal writes between the read's calls, so that the line shows a
 //!   character the caret was read before, answers nothing; the text change
-//!   that follows answers it.
+//!   that follows answers it, whether the read is one remote operation or
+//!   the classic read's separate calls.
 //! - While the console's window is the application's focus window and its
 //!   foreground window, both read through UI Automation, the outpost's
 //!   hook leaves out the change events of windows read through MSAA, UI
@@ -53,9 +54,9 @@ use verbatim_model::{
     CaretWatch, LineChange, NodeId, NormalizedEvent, PropertyChange, Role, TerminalOutput, TextOp,
     TextPosition, TextReply, TextUnit,
 };
-use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::DeliveredFact;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
+use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::UIA_HelpTextPropertyId;
@@ -88,16 +89,27 @@ fn caret_read(outpost: &OutpostUnderTest, node: NodeId) {
 /// mockapp's terminal fixture in its UIA backend, with an outpost watching
 /// it and the terminal focused: its focus and caret said, and nothing else.
 fn start(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
-    start_with(name, "terminal_reading.json", "term")
+    start_with(
+        name,
+        "terminal_reading.json",
+        "term",
+        OutpostOptions::default(),
+    )
 }
 
-/// [`start`] for the terminal `id` of fixture `fixture`.
-fn start_with(name: &str, fixture: &str, id: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
+/// [`start`] for the terminal `id` of fixture `fixture`, the outpost
+/// reading as `options` say.
+fn start_with(
+    name: &str,
+    fixture: &str,
+    id: &str,
+    options: OutpostOptions,
+) -> (common::MockApp, OutpostUnderTest, NodeId) {
     common::init_com();
     let title = common::unique_title(name);
     let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::with_options(&app, options);
     app.send(&format!("set-focus {id}"));
     let element = focused(hwnd);
     outpost.deliver(outpost.listener_fact(&element));
@@ -329,8 +341,12 @@ fn a_held_terminals_caret_event_is_read_with_the_text() {
 /// console's own caret event (`EVENT_CONSOLE_CARET`) has the caret read
 /// and reported.
 fn the_console_hosts_caret_comes_from_its_console() {
-    let (mut app, outpost, text) =
-        start_with("mockapp-console-caret", "console_terminal.json", "text");
+    let (mut app, outpost, text) = start_with(
+        "mockapp-console-caret",
+        "console_terminal.json",
+        "text",
+        OutpostOptions::default(),
+    );
     app.send("caret text 1");
     app.send("caret-event text");
     app.send("set-description text moved");
@@ -367,6 +383,7 @@ fn the_console_hosts_system_caret_is_not_its_caret_event() {
         "mockapp-console-system-caret",
         "console_terminal.json",
         "text",
+        OutpostOptions::default(),
     );
     app.send("caret text 1");
     app.send("system-caret");
@@ -468,6 +485,7 @@ fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
         "mockapp-console-narrowed",
         "console_terminal_button.json",
         "text",
+        OutpostOptions::default(),
     );
     let console = common::find_window(&app.title);
     // UI Automation owns the window: neither is reported.
@@ -522,8 +540,31 @@ fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
 /// nothing. The text change that follows reads again, and the watch is
 /// answered with the caret past the "x"; the caret read with the text is
 /// that answer's, so it is not reported again, and the output follows.
+/// The read is one remote operation.
 fn a_watch_read_while_the_terminal_writes_waits_for_its_change() {
-    let (mut app, mut outpost, term) = start("mockapp-terminal-written-while-read");
+    watch_read_while_the_terminal_writes(
+        "mockapp-terminal-written-while-read",
+        OutpostOptions::default(),
+    );
+}
+
+/// [`a_watch_read_while_the_terminal_writes_waits_for_its_change`] with
+/// remote operations off, so the read is the classic one, its caret and
+/// its line separate cross-process calls, and the "x" is written between
+/// them as the line's text is read.
+fn a_classic_watch_read_while_the_terminal_writes_waits_for_its_change() {
+    watch_read_while_the_terminal_writes(
+        "mockapp-terminal-written-while-read-classic",
+        OutpostOptions {
+            remote_operations: false,
+        },
+    );
+}
+
+/// The body of the two tests of a watch read while the terminal writes,
+/// the outpost reading as `options` say.
+fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
+    let (mut app, mut outpost, term) = start_with(name, "terminal_reading.json", "term", options);
     let padding = " ".repeat(10);
     let prompt = format!("{START} {padding}\n");
     app.send(&format!("set-text term {}", prompt.replace('\n', r"\n")));
@@ -625,6 +666,10 @@ fn main() {
         (
             "a_watch_read_while_the_terminal_writes_waits_for_its_change",
             a_watch_read_while_the_terminal_writes_waits_for_its_change,
+        ),
+        (
+            "a_classic_watch_read_while_the_terminal_writes_waits_for_its_change",
+            a_classic_watch_read_while_the_terminal_writes_waits_for_its_change,
         ),
         (
             "an_unchanged_caret_is_not_reported_again",

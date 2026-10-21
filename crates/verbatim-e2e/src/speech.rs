@@ -2334,7 +2334,7 @@ mod tests {
         let timeline = Timeline::new();
         let (mut speech, mut script) = scripted(timeline.clone());
         speech.compare_mode();
-        // Before any input: the desktop, said the same.
+        // Before any input: the desktop, not compared.
         script.feed(vec![
             queued(1, "Desktop list"),
             ended(1, UtteranceEnding::Completed),
@@ -2363,7 +2363,7 @@ mod tests {
         assert_eq!(
             verdicts,
             [
-                ("start", Verdict::Same),
+                ("start", Verdict::NotCompared),
                 (
                     "keys [numpad2]",
                     Verdict::Declared("Review cursor columns".to_owned())

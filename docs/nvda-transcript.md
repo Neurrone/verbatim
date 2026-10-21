@@ -279,6 +279,10 @@ heard. The verdicts are:
 - "declared, but NVDA agrees: <entry>": the scenario declares a
   difference, but NVDA said the same; worth a look, since the difference
   may have gone, or the declaration may be on the wrong step.
+- "not compared: NVDA says nothing about a desktop already in front":
+  the run's start, its first step when that has no input, which is not
+  judged, since NVDA, started before the scenario, announces nothing
+  about the desktop the scenario starts from.
 
 A gesture with the Verbatim modifier is judged like any other step:
 `kb:verbatim+f9`, for example, is pressed as `insert+f9`, "same" when

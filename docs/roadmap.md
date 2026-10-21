@@ -405,13 +405,6 @@ NVDA capture.
   the focus controls"): a stale selection after a second replacement of
   the list, a selection in a second controlled element, and a selection
   raised on the controlled list itself.
-- Text fields: on the classic text path `UiaText::caret_read`
-  (`verbatim-outpost` `text/mod.rs` and `text/uia.rs`) answers as if it
-  had read the caret, so the caret recheck added in 676d127 is skipped
-  there; and the `(Some(Removal::Joined) | None, Some(deleted))` arm in
-  Core's `editing.rs` has a case that cannot occur.
-- A test that UIA text fields are read by parts (coherence review,
-  2026-10-09).
 - The review cursor on objects that no longer exist (the section of that
   name, 2026-10-08): review commands read live from the application
   rather than from Core's cache; a Gone answer for the navigator's node
@@ -428,11 +421,6 @@ NVDA capture.
   first, as docs/nvda-transcript.md's settings note says); and the
   phonetic words after a character on some review gestures, to be checked
   again with NVDA's delayed character descriptions off.
-- Two compare-mode limits, fixed when they get in the way: every
-  comparison's start step differs because NVDA says nothing about a
-  desktop already in front, so the report could treat the start step as
-  not compared; and `terminal_overflow`'s go files (`phased-go`,
-  `phased-go-2`) do not start their own step.
 
 Exit: each entry is matched (verified) by a scenario, with a declared
 deviation where Dickson chose one, checked with compare mode.

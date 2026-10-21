@@ -159,6 +159,10 @@ pub struct CompareStep {
     pub deviations: Vec<(String, String)>,
     /// The harness's remarks, such as NVDA's speech not settling.
     pub notes: Vec<String>,
+    /// Whether the step is the run's start: its first step, with no input.
+    /// It is not compared, since NVDA says nothing about a desktop already
+    /// in front.
+    pub start: bool,
 }
 
 /// How a step compares.
@@ -172,6 +176,8 @@ pub enum Verdict {
     Declared(String),
     /// A difference was declared, but NVDA said the same: worth a look.
     DeclaredButAgrees(String),
+    /// The run's start, which is not compared.
+    NotCompared,
 }
 
 impl Verdict {
@@ -183,6 +189,9 @@ impl Verdict {
             Self::Differs => "differs".to_owned(),
             Self::Declared(entry) => format!("declared deviation: {entry}"),
             Self::DeclaredButAgrees(entry) => format!("declared, but NVDA agrees: {entry}"),
+            Self::NotCompared => {
+                "not compared: NVDA says nothing about a desktop already in front".to_owned()
+            }
         }
     }
 }
@@ -227,6 +236,7 @@ impl CompareStep {
         {
             return None;
         }
+        let start = first && step.inputs.is_empty();
         let input = if !step.inputs.is_empty() {
             step.inputs.join("; ")
         } else if first {
@@ -240,6 +250,7 @@ impl CompareStep {
             heard: step.said,
             deviations: step.deviations,
             notes: step.notes,
+            start,
         })
     }
 
@@ -262,11 +273,14 @@ impl CompareStep {
         (expected.join(" "), normalized(heard))
     }
 
-    /// The step's verdict: whether the two strings [`Self::compared`] gives
-    /// are equal, judged against the first declared deviation when there
-    /// is one.
+    /// The step's verdict: not compared for the run's start; otherwise
+    /// whether the two strings [`Self::compared`] gives are equal, judged
+    /// against the first declared deviation when there is one.
     #[must_use]
     pub fn verdict(&self) -> Verdict {
+        if self.start {
+            return Verdict::NotCompared;
+        }
         let (expected, heard) = self.compared();
         let same = expected == heard;
         match (self.deviations.first(), same) {
@@ -394,7 +408,7 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
             QUIET_FLOOR.as_millis()
         );
     }
-    let mut counts = [0_usize; 4];
+    let mut counts = [0_usize; 5];
     for (index, step) in steps.iter().enumerate() {
         let verdict = step.verdict();
         counts[match verdict {
@@ -402,6 +416,7 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
             Verdict::Differs => 1,
             Verdict::Declared(_) => 2,
             Verdict::DeclaredButAgrees(_) => 3,
+            Verdict::NotCompared => 4,
         }] += 1;
         let _ = writeln!(out, "\nStep {}: {}", index + 1, step.input);
         out.push_str("Verbatim:\n");
@@ -455,6 +470,7 @@ pub fn render_report(header: &ReportHeader, steps: &[CompareStep]) -> String {
         "differs",
         "declared deviation",
         "declared, but NVDA agrees",
+        "not compared",
     ]
     .iter()
     .zip(counts)
@@ -485,6 +501,7 @@ mod tests {
             heard: heard.to_vec(),
             deviations: Vec::new(),
             notes: Vec::new(),
+            start: false,
         }
     }
 
@@ -593,6 +610,19 @@ mod tests {
     }
 
     #[test]
+    fn the_first_step_with_no_input_is_not_compared() {
+        let expected = || vec!["Desktop list".to_owned()];
+        let start = CompareStep::new(StepEntries::default(), expected(), true)
+            .expect("a step with speech expected is reported");
+        assert_eq!(start.input, "start");
+        assert_eq!(start.verdict(), Verdict::NotCompared);
+        let later = CompareStep::new(StepEntries::default(), expected(), false)
+            .expect("a step with speech expected is reported");
+        assert_eq!(later.input, "no input since the step before");
+        assert_eq!(later.verdict(), Verdict::Differs);
+    }
+
+    #[test]
     fn sounds_and_nvda_s_cancels_are_left_out_of_the_comparison() {
         let sounded = step(&["sound: start", "x"], &[cancel(), speech("x")]);
         assert_eq!(sounded.compared(), compared("x", "x"));
@@ -692,7 +722,8 @@ mod tests {
              \x20 same: 0\n\
              \x20 differs: 1\n\
              \x20 declared deviation: 0\n\
-             \x20 declared, but NVDA agrees: 0\n"
+             \x20 declared, but NVDA agrees: 0\n\
+             \x20 not compared: 0\n"
         );
     }
 
@@ -731,6 +762,7 @@ mod tests {
             &[speech("Desktop  list")],
         );
         start.input = "start".to_owned();
+        start.start = true;
         let mut cut = declared(step(
             &["3"],
             &[Said::Event("cancel".to_owned()), speech("")],
@@ -752,7 +784,7 @@ mod tests {
              \x20 Desktop list\n\
              NVDA:\n\
              \x20 Desktop  list\n\
-             Verdict: same\n\
+             Verdict: not compared: NVDA says nothing about a desktop already in front\n\
              \n\
              Step 2: keys [tab]\n\
              Verbatim:\n\
@@ -765,10 +797,11 @@ mod tests {
              Verdict: declared deviation: Review cursor columns\n\
              \n\
              Summary of 2 steps:\n\
-             \x20 same: 1\n\
+             \x20 same: 0\n\
              \x20 differs: 0\n\
              \x20 declared deviation: 1\n\
-             \x20 declared, but NVDA agrees: 0\n"
+             \x20 declared, but NVDA agrees: 0\n\
+             \x20 not compared: 1\n"
         );
     }
 }

@@ -133,16 +133,19 @@ fn start_script_with(scenario: &mut Scenario, state: &ScenarioState, arguments: 
     directory
 }
 
-/// Writes the go file, letting the script write its second part.
+/// Writes the go file, letting the script write its second part: in
+/// compare mode a step of its own, apart from the command's.
 fn go(scenario: &mut Scenario, directory: &str) {
+    scenario.begin_action("let the script write its second part");
     scenario
         .write_agent_file(&format!(r"{directory}\{GO_FILE}"), b"")
         .expect("lets the script write its second part");
 }
 
 /// Writes the second go file, letting a script that split its second part
-/// write the rest.
+/// write the rest: in compare mode a step of its own.
 fn second_go(scenario: &mut Scenario, directory: &str) {
+    scenario.begin_action("let the script write the rest of its second part");
     scenario
         .write_agent_file(&format!(r"{directory}\{SECOND_GO_FILE}"), b"")
         .expect("lets the script write the rest of its second part");

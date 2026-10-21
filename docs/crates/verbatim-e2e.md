@@ -346,8 +346,11 @@ inputs of two steps are never a repeated press for NVDA.
   the add-on records NVDA's speech sequence parts rather than utterance
   boundaries, so boundaries and spacing are not evidence of a difference.
   The verdict is "same" when the two strings are equal; "differs";
-  "declared deviation: <entry>"; or "declared, but NVDA agrees:
-  <entry>", worth a look. A summary counts each verdict.
+  "declared deviation: <entry>"; "declared, but NVDA agrees: <entry>",
+  worth a look; or, for the run's start (`CompareStep::start`, its first
+  step when that has no input), "not compared: NVDA says nothing about a
+  desktop already in front", given before anything is judged. A summary
+  counts each verdict.
 
 ## Input
 

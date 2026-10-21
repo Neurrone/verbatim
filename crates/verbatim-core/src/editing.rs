@@ -386,7 +386,7 @@ pub(crate) fn caret_reply(
     let grid = is_grid(focus.snapshot.role);
     let terminal = focus.snapshot.role == verbatim_model::Role::Terminal;
     let CaretReply {
-        moved,
+        moved: _,
         caret,
         read_at_ms,
         unit,
@@ -412,12 +412,13 @@ pub(crate) fn caret_reply(
                     }
                     // A line joined to the one before it: the line break
                     // went, as predicted.
-                    (Some(Removal::Joined) | None, Some(deleted)) if moved => {
+                    (Some(Removal::Joined) | None, Some(deleted)) => {
                         deleted_segments(deleted, pending.key.motion)
                     }
                     // Nothing removed (a control that inserted a character
                     // instead, as the classic edit control does for
-                    // Control+Backspace), or nothing known.
+                    // Control+Backspace), or no deletion predicted before
+                    // the key.
                     _ => Vec::new(),
                 }
             }
