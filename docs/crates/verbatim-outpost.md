@@ -945,8 +945,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   the caret's line and the selection, for `CaretMoved`, with the line's
   formatting when asked (the report after a focus), and remembers when
   its read finished; `caret_report_since` also says whether the caret left
-  a given position and, when asked, how the selection changed from the
-  node's last report (`ReportedCaret`), and `NodeText::forget_selection`
+  a given position and, as its `LastSelection` asks, how the selection
+  changed from the node's last report (`ReportedCaret`), with whether the
+  report's selection is kept for the next to compare with, and
+  `NodeText::forget_selection`
   and `Anchors::forget_selection` make the next report carry no change. `Anchors` keeps one backend's anchors, by node, numbered
   from a counter both of an outpost's backends share, and never forgets
   those in its `HeldAnchors`, the anchors Core holds, which both of an
@@ -1903,9 +1905,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     (`docs/parity/text.md`, "TextInfo-equivalent layer"). Each node keeps
     the selection of the outpost's last caret report for it, its ends and
     whether it held nothing (`NodeAnchors`), set by every report, a caret
-    key's answer included. A caret event's report of a focus that is not
-    a terminal (`text_reads::CaretFor::Event`) asks the caret read to
-    compare with it (`caret_report_since`'s `changes`), and its changes
+    key's answer included, but a terminal's after its focus. A caret
+    event's report of a focus that is not a terminal
+    (`text_reads::CaretFor::Event`) asks the caret read to compare with it
+    (`caret_report_since`'s `LastSelection::Compare`), and its changes
     travel in `CaretMoved`'s `selection_changes`, by the caret watch's
     rule. Through UIA the comparison and the change's text are part of
     the caret read's one round trip; when the last selection held nothing
@@ -1918,13 +1921,19 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     as the focus's), when the node's text changes (UIA's text changed, an
     edit control's value change: NVDA then speaks the change in general
     terms, "selected instead" or "selection removed", which Verbatim does
-    not yet say), and when the outpost selects or moves the caret for Core
+    not yet say), also when that change still waits in the intake behind
+    the caret event (`text_reads::text_change_waiting`, as NVDA's edit
+    control checks for a pending value change: the Windows Forms text box
+    raises its caret's move before its value change), and when the outpost selects or moves the caret for Core
     (`Select`, `MoveCaret`), whose own reply speaks what it did. A key's
     selection reaches Core only in the key's answer, since the watch takes
     the key's caret event. A terminal's reports carry no changes: NVDA's
-    console class replaces the detection, which is not yet traced. Two
-    caret reports merged while they wait to be written
-    (`outbound::merged`) carry both reports' changes in order.
+    console class replaces the detection, which is not yet traced, so a
+    terminal's text change forgets nothing. Two caret reports merged while
+    they wait to be written (`outbound::merged`) carry both reports'
+    changes in order, and a waiting report that carries changes is never
+    merged across a reply (`Pending::waiting_with`), which would have it
+    reach Core after the reply to a key pressed before Core saw it.
   - Which applications raise the evidence, as checked live on
     2026-10-08 (`docs/design/phase6-design.md`, "Live caret event
     checks"): the focused Windows Forms text box raises, for every caret
@@ -2128,7 +2137,9 @@ abandon a hung worker.
   and the supervisor merge what reaches the outpost and as NVDA's limiters
   do. An event replaces a waiting event of the same kind for the same node
   (for a property change, the same property; for a focus, the same kind of
-  focus) and goes to the back. A terminal's new output is combined with
+  focus) and goes to the back, unless the waiting one is a caret report
+  carrying selection changes with a reply after it, when both are kept in
+  order. A terminal's new output is combined with
   its output still waiting (`terminal::combine`): every line in order (what
   either found above its last line taking its place in the stream), a
   change to a line still waiting putting the whole line in its place as

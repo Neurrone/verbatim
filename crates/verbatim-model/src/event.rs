@@ -220,7 +220,8 @@ pub enum NormalizedEvent {
     /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes"). A
     /// caret key's speech comes from the reply to Core's own
     /// [`TextOp::AwaitCaret`](crate::TextOp::AwaitCaret) request, whose
-    /// watch takes the key's caret event, so no `CaretMoved` is sent for it.
+    /// watch takes the key's caret event, so no `CaretMoved` is sent for it
+    /// unless the outpost handled the event before the watch arrived.
     CaretMoved {
         /// The node whose caret moved.
         node_id: NodeId,
@@ -231,7 +232,8 @@ pub enum NormalizedEvent {
         /// `selection_changes`. Always empty for the report after a focus,
         /// which sets the selection later reports are compared with, for a
         /// terminal, and for the first report after the node's text changed
-        /// or Verbatim itself selected or moved the caret.
+        /// (or with its change waiting behind the caret event) or Verbatim
+        /// itself selected or moved the caret.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         selection_changes: Vec<SelectionChange>,
     },

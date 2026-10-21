@@ -2540,7 +2540,7 @@ impl Worker<'_> {
                     self.context
                         .msaa_registry
                         .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
-                text_reads::forget_selection(self.context, node_id);
+                text_reads::forget_selection(self.context, node_id, Backend::Msaa);
                 self.check_open_watch(node_id, false);
                 self.emit(
                     trace,
@@ -2855,9 +2855,13 @@ impl Worker<'_> {
             return;
         };
         text_reads::text_event_from(self.context, node_id, element);
-        text_reads::forget_selection(self.context, node_id);
+        let terminal = self.focused_terminal(node_id);
+        // A terminal's caret reports compare no selection.
+        if !terminal {
+            text_reads::forget_selection(self.context, node_id, Backend::Uia);
+        }
         self.check_open_watch(node_id, false);
-        if self.focused_terminal(node_id) {
+        if terminal {
             self.terminal_output(node_id, trace, observed_at_ms);
             return;
         }

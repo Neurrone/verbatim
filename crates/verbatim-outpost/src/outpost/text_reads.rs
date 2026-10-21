@@ -26,7 +26,8 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    CallCounts, CaretReport, CaretWatch, NodeId, Role, SelectionChange, TextOp, TextReply, TraceId,
+    Backend, CallCounts, CaretReport, CaretWatch, NodeId, Role, SelectionChange, TextOp, TextReply,
+    TraceId,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Kept};
@@ -36,7 +37,7 @@ use crate::arbitration::{normalize_class_name, window_class_name};
 use crate::protocol::EventTiming;
 use crate::text::edit::EditText;
 use crate::text::uia::UiaText;
-use crate::text::{self, CaretSignal, TextError, Watched};
+use crate::text::{self, CaretSignal, LastSelection, TextError, Watched};
 
 use super::Context;
 
@@ -471,20 +472,43 @@ pub(super) fn report_caret(
     node_id: NodeId,
     purpose: CaretFor,
 ) -> Result<(CaretReport, bool, Vec<SelectionChange>), NoCaret> {
-    if purpose == CaretFor::Focus {
-        forget_selection(context, node_id);
-    }
     let source = match source(context, node_id) {
         Ok(source) => source,
-        Err(TextReply::NoText) => return Err(NoCaret::NoText),
-        Err(_) => return Err(NoCaret::NotRead),
+        Err(reply) => {
+            if purpose == CaretFor::Focus {
+                // A new focus's selection is not compared with one from
+                // before it, though its own could not be read.
+                forget_selection(context, node_id, Backend::Uia);
+                forget_selection(context, node_id, Backend::Msaa);
+            }
+            return Err(if reply == TextReply::NoText {
+                NoCaret::NoText
+            } else {
+                NoCaret::NotRead
+            });
+        }
     };
     let sent = if purpose == CaretFor::Terminal {
         sent_caret_point(context, node_id)
     } else {
         None
     };
-    let (formats, changes) = (purpose == CaretFor::Focus, purpose == CaretFor::Event);
+    let last = match purpose {
+        CaretFor::Focus => LastSelection::Restart,
+        CaretFor::Terminal => LastSelection::Ignore,
+        // The text changed since the selection was last reported, its
+        // change waiting behind this caret event: compared with the old
+        // selection's ends, the new text would be spoken as the selection
+        // that changed. NVDA's edit control notes the content changed when
+        // a value change for it is pending at its caret event
+        // (`Edit.event_caret`, `nvda/source/NVDAObjects/window/edit.py`
+        // 1068 to 1082), and so speaks the change in general terms, as
+        // after a text change handled first; Verbatim says nothing for it
+        // in either order ([`forget_selection`]).
+        CaretFor::Event if text_change_waiting(context, node_id) => LastSelection::Restart,
+        CaretFor::Event => LastSelection::Compare,
+    };
+    let formats = purpose == CaretFor::Focus;
     context.caret_read(node_id);
     let report = match source {
         Source::Uia(mut source) => {
@@ -493,7 +517,7 @@ pub(super) fn report_caret(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
-                (formats, sent.as_ref().map(|(_, point)| point), changes),
+                (formats, sent.as_ref().map(|(_, point)| point), last),
             )
             .map(|read| {
                 let unchanged = !read.moved
@@ -513,7 +537,7 @@ pub(super) fn report_caret(
                 &mut source,
                 &mut anchors.node(node_id.number()),
                 &mut super::now_ms,
-                (formats, None, changes),
+                (formats, None, last),
             )
             .map(|read| (read.report, false, read.selection_changes))
         }
@@ -528,17 +552,52 @@ pub(super) fn report_caret(
     }
 }
 
-/// Forgets the selection `node_id`'s next caret report would be compared
-/// with ([`text::NodeText::forget_selection`]): at a new focus, and when its
-/// text changed, after which NVDA speaks a selection change in general terms
-/// ("selected instead", "selection removed": `hasContentChangedSinceLastSelection`,
+/// Forgets the selection `node_id`, read through `backend`, would have its
+/// next caret report compared with ([`text::NodeText::forget_selection`]):
+/// at a new focus, and when its text changed, after which NVDA speaks a
+/// selection change in general terms ("selected instead", "selection
+/// removed": `hasContentChangedSinceLastSelection`,
 /// `nvda/source/NVDAObjects/behaviors.py` 351 to 358, and
-/// `speech.speakSelectionChange`'s `generalize`, `nvda/source/speech/speech.py`
-/// 1340 to 1416), which Verbatim does not yet say: the next report carries no
-/// change.
-pub(super) fn forget_selection(context: &Context, node_id: NodeId) {
-    context.uia_anchors().forget_selection(node_id.number());
-    context.edit_anchors().forget_selection(node_id.number());
+/// `speech.speakSelectionChange`'s `generalize`,
+/// `nvda/source/speech/speech.py` 1340 to 1416), which Verbatim does not
+/// yet say: the next report carries no change. Only that backend's anchors
+/// are locked.
+pub(super) fn forget_selection(context: &Context, node_id: NodeId, backend: Backend) {
+    match backend {
+        Backend::Uia => context.uia_anchors().forget_selection(node_id.number()),
+        Backend::Msaa => context.edit_anchors().forget_selection(node_id.number()),
+    }
+}
+
+/// Whether a change of `node_id`'s text waits in the intake: UIA's text
+/// changed event from the node's element, or, for an edit control's client
+/// area, its value change.
+fn text_change_waiting(context: &Context, node_id: NodeId) -> bool {
+    use super::intake::{Item, UiaKind};
+    use verbatim_ia2::WinEventKind;
+    let runtime_id = context.uia_registry.runtime_id_of(node_id);
+    let edit = match runtime_id {
+        Some(_) => None,
+        None => context
+            .msaa_registry
+            .key_of(node_id)
+            .filter(|&(_, object, child)| object == OBJID_CLIENT.0 && child == CHILDID_SELF)
+            .map(|(hwnd, ..)| hwnd),
+    };
+    context.intake.any_waiting(|entry| match &entry.item {
+        Item::Uia(event) => {
+            matches!(event.kind, UiaKind::TextChanged)
+                && runtime_id.as_ref() == Some(&event.parts.runtime_id)
+        }
+        Item::Msaa {
+            kind: WinEventKind::ValueChange,
+            hwnd,
+            id_object,
+            id_child,
+            ..
+        } => edit == Some(*hwnd) && *id_object == OBJID_CLIENT.0 && *id_child == CHILDID_SELF,
+        _ => false,
+    })
 }
 
 /// A terminal's caret as a read found it ([`terminal_output`]).

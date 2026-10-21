@@ -12,7 +12,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Controls::EM_SETSEL;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, ES_AUTOVSCROLL, ES_MULTILINE, FindWindowExW, HMENU, SendMessageW,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WM_SETTEXT, WS_CHILD, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::{PCWSTR, w};
 
@@ -35,14 +35,7 @@ pub(crate) fn create(parent: HWND, text: &[u16], version_6: bool) -> windows::co
     } else {
         None
     };
-    let mut contents = Vec::with_capacity(text.len() + 1);
-    for &unit in text {
-        if unit == u16::from(b'\n') {
-            contents.push(u16::from(b'\r'));
-        }
-        contents.push(unit);
-    }
-    contents.push(0);
+    let contents = contents(text);
     let style = WINDOW_STYLE(
         WS_CHILD.0
             | WS_VISIBLE.0
@@ -68,6 +61,38 @@ pub(crate) fn create(parent: HWND, text: &[u16], version_6: bool) -> windows::co
             None,
             None,
         )
+    }
+}
+
+/// `text` (UTF-16, with bare line feeds) as the control holds it, each line
+/// feed after a carriage return, NUL-terminated.
+fn contents(text: &[u16]) -> Vec<u16> {
+    let mut contents = Vec::with_capacity(text.len() + 1);
+    for &unit in text {
+        if unit == u16::from(b'\n') {
+            contents.push(u16::from(b'\r'));
+        }
+        contents.push(unit);
+    }
+    contents.push(0);
+    contents
+}
+
+/// Replaces the edit control's text with `text`, line feeds becoming
+/// carriage return and line feed pairs (`WM_SETTEXT`), on the thread that
+/// owns it.
+pub(crate) fn set_text(edit: HWND, text: &str) {
+    let text: Vec<u16> = text.encode_utf16().collect();
+    let contents = contents(&text);
+    // SAFETY: `contents` is a live, NUL-terminated buffer for the duration
+    // of the call; `edit` is this thread's own control.
+    unsafe {
+        SendMessageW(
+            edit,
+            WM_SETTEXT,
+            None,
+            Some(LPARAM(contents.as_ptr() as isize)),
+        );
     }
 }
 

@@ -73,8 +73,8 @@ use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorT
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
 use verbatim_outpost::text::{
-    Anchors, CaretSignal, TextSource, Watched, caret_report, caret_report_since, check_caret,
-    perform,
+    Anchors, CaretSignal, LastSelection, TextSource, Watched, caret_report, caret_report_since,
+    check_caret, perform,
 };
 use verbatim_uia::{
     Ancestor, BoundedClient, Cached, DialogText, FOCUS_PROPERTIES, Fill, FocusInput, ListenerEvent,
@@ -2679,8 +2679,13 @@ fn measure_caret_move<S: TextSource>(
     common::apply(app, hwnd, "caret doc 2");
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
-    let read = caret_report_since(source, &mut anchors, &mut || 0, (false, None, true))
-        .expect("the caret");
+    let read = caret_report_since(
+        source,
+        &mut anchors,
+        &mut || 0,
+        (false, None, LastSelection::Compare),
+    )
+    .expect("the caret");
     let calls = take();
     assert_eq!(read.report.line.offset, 2);
     assert_eq!(read.selection_changes, []);
@@ -2694,8 +2699,13 @@ fn measure_caret_move<S: TextSource>(
     common::apply(app, hwnd, "caret doc 0 2");
     let _ = take();
     let _ = verbatim_uia::calls::take_failed_reads();
-    let read = caret_report_since(source, &mut anchors, &mut || 0, (false, None, true))
-        .expect("the caret");
+    let read = caret_report_since(
+        source,
+        &mut anchors,
+        &mut || 0,
+        (false, None, LastSelection::Compare),
+    )
+    .expect("the caret");
     let calls = take();
     assert_eq!(
         read.selection_changes,

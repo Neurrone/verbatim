@@ -159,7 +159,10 @@ does), `set-text <id> <text>` (replaces a UIA
 text node's text, with `\n` for a line feed and `\\` for a backslash,
 raising no event, as a terminal's buffer changes before a client reads it;
 the terminal tests write lines, discard the oldest, and clear the screen
-with it; UIA only), `screen <id> <rows>` (only the last `rows` lines of a
+with it; on the MSAA backend it replaces the edit control's text with
+`WM_SETTEXT`), `text-changed <id>` (raises UIA's text changed event from a
+text node, or on the MSAA backend `EVENT_OBJECT_VALUECHANGE` from the edit
+control's client object), `screen <id> <rows>` (only the last `rows` lines of a
 UIA text node's text are on screen, its visible range, as a terminal shows
 the end of its buffer, 0 the whole text again; raises no event; UIA only),
 `write-on-read <id> <text>` (the next time any range of a UIA text node's

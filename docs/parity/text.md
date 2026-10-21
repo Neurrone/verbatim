@@ -223,17 +223,34 @@ Differences:
   words, "alpha selected" and "alpha unselected" (mockapp's
   `a_selection_no_key_made_is_reported_with_its_change`). A key's
   selection is spoken once, by the key's answer, since its watch takes
-  the key's caret event; one Verbatim makes itself (select then copy's
-  first press, a caret moved by say-all) is spoken by its own reply, and
-  the caret event after it carries no change. Not yet built:
+  the key's caret event; one Verbatim makes itself, select then copy's
+  first press, is spoken by its own reply, and the caret event after it
+  carries no change, as does the one after say-all moves the caret. When
+  the outpost merges a caret report waiting to be written with a newer one
+  for the same node, the merged report carries both reports' changes, so
+  every intermediate change is spoken, where NVDA, whose event limiter
+  keeps one caret event per object (`IAccessibleHandler/orderedWinEventLimiter.py`),
+  compares only the last selection with the one it last saw. Not yet built:
   - After the focus's text changed, NVDA speaks the next selection change
     in general terms, the whole new selection followed by "selected",
     "<text> selected instead" when one replaced another, or "selection
     removed" (`speech.speakSelectionChange`'s `generalize`); Verbatim says
-    nothing for that change and compares with the selection after it.
+    nothing for that change and compares with the selection after it. A
+    caret event whose text change still waits behind it counts as after
+    the change (mockapp's
+    `an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change`
+    and `a_caret_event_before_its_text_change_carries_no_selection_change`).
   - NVDA's classic edit control drops a caret event whose selection
-    offsets equal the last one's (`NVDAObjects/window/edit.py` 1070 to
-    1080); Verbatim reads each.
+    offsets equal the last one's, and takes its content as changed when a
+    value change for it is pending at the caret event
+    (`NVDAObjects/window/edit.py` 1068 to 1082), as when the Windows Forms
+    text box raises its caret's move before its value change for a key
+    that types over a selection; Verbatim reads each caret event, and
+    compares nothing when the control's value change waits behind it.
+    NVDA's UIA objects take the content as changed only as the text change
+    is handled (`NVDAObjects/behaviors.py` 351 to 352), so for a caret
+    event raised before its text change NVDA compares the selections;
+    Verbatim applies the edit control's rule there too and says nothing.
   - NVDA speaks the whole new selection when the old one held nothing,
     and the whole old one when the new one holds nothing; Verbatim splits
     either at the caret by the rule a selecting key's answer follows,

@@ -173,14 +173,23 @@ impl Pending {
     }
 
     /// Where the waiting message with `key` is, if one is waiting since the
-    /// last flush marker and the last answer to the idle barrier: a message
-    /// merged across an answer would move what it reports behind it.
+    /// last flush marker and the last answer to the idle barrier, and, for
+    /// a caret report that carries selection changes, since the last reply:
+    /// a message merged across an answer would move what it reports behind
+    /// it, and a change moved behind a reply would reach Core after the
+    /// reply to a key pressed before Core saw it, whose own selection
+    /// changes, compared with the selection Core knew, already include it.
     fn waiting_with(&self, key: &Key) -> Option<usize> {
+        let mut past_reply = false;
         for (index, waiting) in self.ordinary.iter().enumerate().rev() {
             match waiting {
-                Waiting::Message(Some(other), ..) if other == key => return Some(index),
+                Waiting::Message(Some(other), message, _) if other == key => {
+                    return (!past_reply || !carries_selection_changes(message)).then_some(index);
+                }
                 Waiting::Message(_, message, _) if message.is_idle_answer() => return None,
-                Waiting::Message(..) => {}
+                Waiting::Message(_, message, _) => {
+                    past_reply |= matches!(**message, OutpostToSupervisor::Reply { .. });
+                }
                 Waiting::Flushed(_) => return None,
             }
         }
@@ -404,6 +413,17 @@ impl Outbound {
             let _ = done_rx.recv();
         }
     }
+}
+
+/// Whether `message` is a caret report that carries selection changes.
+fn carries_selection_changes(message: &OutpostToSupervisor) -> bool {
+    matches!(
+        message,
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { selection_changes, .. },
+            ..
+        } if !selection_changes.is_empty()
+    )
 }
 
 /// `newer` in place of `older`, the waiting message with the same key: a
@@ -692,49 +712,73 @@ mod tests {
         );
     }
 
+    /// A caret report of node 1 at `offset`, carrying `changes`, each of
+    /// five characters.
+    fn caret_moved(offset: u32, changes: &[(bool, &str)]) -> OutpostToSupervisor {
+        event(NormalizedEvent::CaretMoved {
+            node_id: node(1),
+            caret: verbatim_model::CaretReport {
+                line: verbatim_model::TextChunk {
+                    unit: verbatim_model::TextUnit::Line,
+                    text: "alpha beta\n".to_owned(),
+                    start: verbatim_model::TextAnchor(1),
+                    offset,
+                    languages: Vec::new(),
+                    first: true,
+                    last: true,
+                    truncated: false,
+                    formats: Vec::new(),
+                },
+                selection: None,
+            },
+            selection_changes: changes
+                .iter()
+                .map(|&(selected, text)| verbatim_model::SelectionChange {
+                    selected,
+                    text: text.to_owned(),
+                    characters: 5,
+                })
+                .collect(),
+        })
+    }
+
     #[test]
     fn a_waiting_caret_reports_selection_changes_come_before_the_newer_ones() {
-        let report = |offset: u32, changes: &[(bool, &str)]| {
-            event(NormalizedEvent::CaretMoved {
-                node_id: node(1),
-                caret: verbatim_model::CaretReport {
-                    line: verbatim_model::TextChunk {
-                        unit: verbatim_model::TextUnit::Line,
-                        text: "alpha beta\n".to_owned(),
-                        start: verbatim_model::TextAnchor(1),
-                        offset,
-                        languages: Vec::new(),
-                        first: true,
-                        last: true,
-                        truncated: false,
-                        formats: Vec::new(),
-                    },
-                    selection: None,
-                },
-                selection_changes: changes
-                    .iter()
-                    .map(|&(selected, text)| verbatim_model::SelectionChange {
-                        selected,
-                        text: text.to_owned(),
-                        characters: 5,
-                    })
-                    .collect(),
-            })
-        };
         let mut pending = pending();
-        push(&mut pending, report(5, &[(true, "alpha")]), &[]);
+        push(&mut pending, caret_moved(5, &[(true, "alpha")]), &[]);
         push(
             &mut pending,
-            report(10, &[(false, "alpha"), (true, "beta ")]),
+            caret_moved(10, &[(false, "alpha"), (true, "beta ")]),
             &[],
         );
         let written: Vec<String> = write(&mut pending).iter().map(summary).collect();
         assert_eq!(
             written,
-            vec![summary(&report(
+            vec![summary(&caret_moved(
                 10,
                 &[(true, "alpha"), (false, "alpha"), (true, "beta ")]
             ))]
+        );
+    }
+
+    /// A waiting caret report that carries selection changes is not merged
+    /// across a reply: the merged report would be written after the reply,
+    /// and its change, which Core had not seen when the key the reply
+    /// answers was pressed, would be spoken a second time.
+    #[test]
+    fn a_caret_report_with_selection_changes_is_not_moved_past_a_reply() {
+        let mut pending = pending();
+        push(&mut pending, caret_moved(5, &[(true, "alpha")]), &[]);
+        push(&mut pending, reply(7), &[]);
+        push(&mut pending, caret_moved(10, &[]), &[]);
+        let order: Vec<String> = write(&mut pending).iter().map(summary).collect();
+        assert_eq!(
+            order,
+            vec![
+                summary(&caret_moved(5, &[(true, "alpha")])),
+                "reply 7".to_owned(),
+                summary(&caret_moved(10, &[])),
+            ]
         );
     }
 

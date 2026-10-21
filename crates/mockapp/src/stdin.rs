@@ -95,10 +95,11 @@ pub(crate) enum Command {
     /// else: an application whose text raises no caret event of its own.
     /// `true` for the show.
     SystemCaret(bool),
-    /// `set-text <id> <text>`: replaces a UIA text node's text, raising no
-    /// event, as a terminal's text changes before a client reads it; `\n`
-    /// in `text` is a line feed and `\\` a backslash, so one stdin line can
-    /// carry many lines. UIA-only.
+    /// `set-text <id> <text>`: replaces a text node's text, raising no
+    /// event of mockapp's own, as a terminal's text changes before a client
+    /// reads it; `\n` in `text` is a line feed and `\\` a backslash, so one
+    /// stdin line can carry many lines. In the MSAA backend, the edit
+    /// control's text is replaced (`WM_SETTEXT`).
     SetText(String, String),
     /// `write-on-read <id> <text>`: the next time any range of a UIA text
     /// node's text is read, `text` is first written over the text at the
@@ -107,7 +108,9 @@ pub(crate) enum Command {
     /// UIA-only.
     WriteOnRead(String, String),
     /// `text-changed <id>`: raises UIA's text changed event from a text
-    /// node, as a terminal reports that its text changed. UIA-only.
+    /// node, as a terminal reports that its text changed, or, in the MSAA
+    /// backend, `EVENT_OBJECT_VALUECHANGE` from the edit control's client
+    /// object, as an edit control reports that its text changed.
     TextChanged(String),
     /// `screen <id> <rows>`: only the last `rows` lines of a UIA text
     /// node's text are on screen (its visible range), as a terminal shows

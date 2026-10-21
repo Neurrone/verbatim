@@ -511,12 +511,12 @@ pub struct NodeAnchors<P> {
     /// The selection in the outpost's last caret report for the node, which
     /// the next report's selection changes are worked out from
     /// ([`caret_report_since`]); `None` when there is none to compare with.
-    selection: Option<LastSelection<P>>,
+    selection: Option<KeptSelection<P>>,
 }
 
 /// The selection of a caret report, as the next report compares with it.
 #[derive(Clone)]
-struct LastSelection<P> {
+struct KeptSelection<P> {
     /// Its ends, both the caret when nothing was selected.
     ends: (P, P),
     /// Nothing was selected.
@@ -1014,8 +1014,29 @@ pub fn caret_report<S: TextSource>(
     now_ms: &mut dyn FnMut() -> u64,
     formats: bool,
 ) -> TextResult<(CaretReport, CaretState<S::Pos>)> {
-    caret_report_since(source, anchors, now_ms, (formats, None, false))
-        .map(|read| (read.report, read.state))
+    caret_report_since(
+        source,
+        anchors,
+        now_ms,
+        (formats, None, LastSelection::Restart),
+    )
+    .map(|read| (read.report, read.state))
+}
+
+/// What a caret report does with the selection in the node's last caret
+/// report ([`caret_report_since`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LastSelection {
+    /// Neither compared with nor replaced: a terminal's report, whose
+    /// selection no later report compares with.
+    Ignore,
+    /// Forgotten, and replaced by the report's, which carries no change:
+    /// the report after a focus, and the first after the node's text
+    /// changed.
+    Restart,
+    /// Compared with, for how the selection changed, and replaced by the
+    /// report's: a caret event's report.
+    Compare,
 }
 
 /// What [`caret_report_since`] read.
@@ -1032,14 +1053,16 @@ pub struct ReportedCaret<P> {
 
 /// [`caret_report`], and, given `since`, whether the caret is no longer
 /// there: in the same round trip where the source reads the caret in one
-/// go, and with one comparison otherwise. With `changes`, also how the
-/// selection changed from the one in the node's last caret report, by the
-/// rule a caret key's reply follows, in the same round trip where the
-/// source reads the caret in one go: nothing when there is no last report
-/// to compare with ([`NodeText::forget_selection`]), and, read call by
-/// call, no comparison when neither selection holds anything, which has no
-/// change to speak (NVDA's `speakSelectionChange`,
-/// `nvda/source/speech/speech.py` 1358 to 1359).
+/// go, and with one comparison otherwise. With [`LastSelection::Compare`],
+/// also how the selection changed from the one in the node's last caret
+/// report, by the rule a caret key's reply follows, in the same round trip
+/// where the source reads the caret in one go: nothing when there is no
+/// last report to compare with ([`NodeText::forget_selection`]), and, read
+/// call by call, no comparison when neither selection holds anything, which
+/// has no change to speak (NVDA's `speakSelectionChange`,
+/// `nvda/source/speech/speech.py` 1358 to 1359). The report's selection is
+/// kept for the next report to compare with unless `last` is
+/// [`LastSelection::Ignore`].
 ///
 /// # Errors
 ///
@@ -1048,9 +1071,13 @@ pub fn caret_report_since<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     now_ms: &mut dyn FnMut() -> u64,
-    (formats, since, changes): (bool, Option<&S::Pos>, bool),
+    (formats, since, last): (bool, Option<&S::Pos>, LastSelection),
 ) -> TextResult<ReportedCaret<S::Pos>> {
-    let last = if changes {
+    if last == LastSelection::Restart {
+        anchors.forget_selection();
+    }
+    let keep = last != LastSelection::Ignore;
+    let last = if last == LastSelection::Compare {
         anchors.anchors.selection.clone()
     } else {
         None
@@ -1086,7 +1113,7 @@ pub fn caret_report_since<S: TextSource>(
         }
         _ => Vec::new(),
     };
-    let report = report_for(source, anchors, (&state, read_at_ms), line)?;
+    let report = report_for(source, anchors, (&state, read_at_ms), line, keep)?;
     Ok(ReportedCaret {
         report,
         state,
@@ -1131,6 +1158,7 @@ pub fn caret_report_from<S: TextSource>(
         anchors,
         (&read.state, read_at_ms),
         Some((read.line.0, read.line.1, read.formats)),
+        false,
     )
 }
 
@@ -1154,12 +1182,16 @@ type UnitAt<P> = (Unit<P>, usize);
 type ReadUnit<P> = (Unit<P>, usize, Vec<Formatting>);
 
 /// The report for a caret state already read, and the time its read
-/// finished, with its line when that was read already.
+/// finished, with its line when that was read already. With `keep`, its
+/// selection is kept for the node's next caret report to compare with
+/// ([`caret_report_since`]); a terminal's reports leave it, since none
+/// compares with it.
 fn report_for<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (state, read_at_ms): (&CaretState<S::Pos>, u64),
     line: Option<ReadUnit<S::Pos>>,
+    keep: bool,
 ) -> TextResult<CaretReport> {
     let (line, offset, formats) = if let Some(read) = line {
         read
@@ -1189,13 +1221,15 @@ fn report_for<S: TextSource>(
         start: anchors.position_of(start.clone()),
         end: anchors.position_of(end.clone()),
     });
-    anchors.anchors.selection = Some(LastSelection {
-        ends: state
-            .selection
-            .clone()
-            .unwrap_or_else(|| (state.caret.clone(), state.caret.clone())),
-        collapsed: state.selection.is_none(),
-    });
+    if keep {
+        anchors.anchors.selection = Some(KeptSelection {
+            ends: state
+                .selection
+                .clone()
+                .unwrap_or_else(|| (state.caret.clone(), state.caret.clone())),
+            collapsed: state.selection.is_none(),
+        });
+    }
     Ok(CaretReport { line, selection })
 }
 
@@ -1574,7 +1608,9 @@ fn answer_caret<S: TextSource>(
         (Vec::new(), formats)
     };
     let line = line.map(|(unit, offset)| (unit, offset, line_formats));
-    let caret = report_for(source, anchors, (&state, read_at_ms), line)?;
+    // A key's answer is the last report the next caret event's compares
+    // with.
+    let caret = report_for(source, anchors, (&state, read_at_ms), line, true)?;
     let unit = unit_at_caret(
         source,
         anchors,

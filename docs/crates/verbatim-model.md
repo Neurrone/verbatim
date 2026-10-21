@@ -278,18 +278,21 @@ the contract the Windows side implements.
   soon after the focus event as possible, and on every later caret or
   selection change in the focus, coalesced so a burst sends only the
   latest, with the selection changes of every report it replaces before
-  its own. It keeps Core's copy of the caret current (Backspace knows what
+  its own; a report carrying changes is not replaced across a reply. It keeps Core's copy of the caret current (Backspace knows what
   it deleted, the review cursor follows the caret). The first one after a
   focus ends the focus announcement with the selected text or the caret's
   line, in place of the value the announcement left out. `selection_changes`
   (`serde(default)`, left out when empty) is how the selection changed
   from the one in the outpost's last report for the node, by the rule of
   `CaretReply`'s: empty for the report after a focus, for a terminal, and
-  for the first report after the node's text changed or Verbatim selected
-  or moved the caret itself. A later report speaks only these changes, as
+  for the first report after the node's text changed (or with its change
+  waiting behind the caret event) or Verbatim selected or moved the caret
+  itself. A later report speaks only these changes, as
   "selected" and "unselected" with the words a selecting key's reply uses,
   unless a caret key's answer is awaited for the node, which speaks them;
-  a key's own caret event is taken by its watch and never sent.
+  a key's own caret event is taken by its watch, and reaches Core as a
+  `CaretMoved` only when the outpost handled it before the key's watch
+  arrived.
 - `NormalizedEvent::NoText { node_id }`: sent in place of that first
   `CaretMoved` when a focus whose role may have text (edit field, document,
   terminal) has no text the outpost can read, or its caret could not be

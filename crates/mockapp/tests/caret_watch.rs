@@ -606,6 +606,110 @@ fn a_selection_verbatim_made_is_not_reported_again() {
     app.quit();
 }
 
+/// The caret's report and the text change of `node` that the outpost said
+/// next: a caret event raised before its text's change, both waiting when
+/// the outpost took the caret event, as a key typed over a selection
+/// raises them. The text changed since the selection was last reported, so
+/// the report carries no change, as it carries none when the text change
+/// comes first (NVDA's `hasContentChangedSinceLastSelection`, set when a
+/// value change waits at the caret event, words Verbatim does not yet say).
+fn typed_over_the_selection(outpost: &OutpostUnderTest, node: NodeId) {
+    assert_eq!(reported_changes(outpost, node), []);
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::TextChanged { node_id },
+            ..
+        } if node_id == node => {}
+        other => panic!("the outpost said {other:?}, not the text's change"),
+    }
+    outpost.settled();
+}
+
+/// "x" typed over the selected "alpha" in a document read through UIA, its
+/// caret event raised before its text change.
+fn a_caret_event_before_its_text_change_carries_no_selection_change() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-typed-over");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 0 5");
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), [change(true, "alpha")]);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    outpost.hold_worker();
+    app.send(r"set-text doc x beta\ngamma\n");
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    app.send("text-changed doc");
+    // UIA raises a value change `WinEvent` alongside the text change.
+    outpost.heard(&[
+        Heard::UiaTextSelection,
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::UiaTextChanged,
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    outpost.release_worker();
+    typed_over_the_selection(&outpost, notes);
+    drop(outpost);
+    app.quit();
+}
+
+/// "x" typed over the selected "alpha" in a classic edit control, its
+/// caret event raised before its value change, as the Windows Forms text
+/// box raises the caret's location change before the client's value
+/// change (`docs/design/phase6-design.md`, "Live caret event checks").
+fn an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change() {
+    common::init_com();
+    let title = common::unique_title("mockapp-caret-watch-edit-typed-over");
+    let mut app = common::spawn("text.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    // The host has the focused state, as in
+    // `a_classic_edit_controls_caret_show_is_its_caret_event`.
+    app.send("set-focus root");
+    let outpost = OutpostUnderTest::new(&app);
+    // SAFETY: a local search of mockapp's window's children by class.
+    let edit = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::FindWindowExW(
+            Some(hwnd),
+            None,
+            windows::core::w!("EDIT"),
+            None,
+        )
+    }
+    .expect("mockapp's edit control");
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: edit.0 as isize,
+        id_object: windows::Win32::UI::WindowsAndMessaging::OBJID_CLIENT.0,
+        id_child: 0,
+    });
+    let node = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::FocusChanged { node, .. },
+            ..
+        } => node.id,
+        other => panic!("the outpost said {other:?}, not the edit control's focus"),
+    };
+    assert_eq!(reported_changes(&outpost, node), []);
+    outpost.settled();
+    app.send("caret doc 0 5");
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, node), [change(true, "alpha")]);
+    outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
+    outpost.settled();
+    outpost.hold_worker_on(common::another_applications_window().0 as isize);
+    app.send(r"set-text doc x beta\ngamma\n");
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    app.send("text-changed doc");
+    outpost.heard(&[
+        Heard::Msaa(WinEventKind::TextSelectionChange),
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    outpost.release_worker();
+    typed_over_the_selection(&outpost, node);
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -656,6 +760,14 @@ fn main() {
         (
             "a_selection_verbatim_made_is_not_reported_again",
             a_selection_verbatim_made_is_not_reported_again,
+        ),
+        (
+            "a_caret_event_before_its_text_change_carries_no_selection_change",
+            a_caret_event_before_its_text_change_carries_no_selection_change,
+        ),
+        (
+            "an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change",
+            an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change,
         ),
     ]);
 }

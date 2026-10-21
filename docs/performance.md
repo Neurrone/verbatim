@@ -1101,6 +1101,18 @@ from the caret.
   text (a copy, its two ends moved, its text).
 - Target: 1.
 
+Local work beside the calls, which by "What counts as a call" counts as
+none: each report looks the node up in the registry and scans the
+outpost's intake once under its lock for a text change of the node
+waiting behind the caret event, after which the report compares nothing;
+and each report, a caret key's answer included, keeps its selection's
+ends for the next report to compare with, a copy of two text positions,
+which for UIA adds two references to ranges the outpost already holds
+(reference counting is not counted). A terminal's caret event's report
+does neither, since none of its reports compares a selection; a key's answer
+in a terminal still keeps the ends, its watch not knowing the node is a
+terminal.
+
 ### The system caret's events
 
 The system caret's location change or show (`OBJID_CARET`), which NVDA
@@ -1437,6 +1449,12 @@ The same caret key in a standard edit control, read through its messages.
   no call.
 - Target: the minimum.
 
+The same local work as through UIA: the intake scanned once for the
+control's value change waiting, and the selection's two offsets kept.
+Each value change of the focused control locks the edit controls' anchors
+once to forget the selection kept, and nothing else; a UIA text change of
+a focus that is not a terminal likewise locks the UIA anchors once.
+
 ### Typed-character echo
 
 - Minimum: none for the echo itself: the keyboard hook translates the key
@@ -1481,6 +1499,10 @@ lines on screen.
   view down a row for each line written into a scroll region above a
   footer, and a read between the two had the rows above the view).
 - Target: 1.
+
+A terminal's text change forgets no selection, so it takes no lock on the
+anchors for it, and a terminal's caret reports, the one after its focus
+aside, keep no selection.
 
 The read it replaced (an anchor at the last line read, its two-line
 fingerprint, and a read afresh when it did not match) cost the same one
