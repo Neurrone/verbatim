@@ -793,13 +793,16 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     held, as when the outpost started after it, is taken where it
     arrives. When the read takes its marker's place and the focus last
     reported is among the read's ancestors, the old focus's own UIA
-    events that the outpost's subscriptions queued after the marker, up to
-    the next marker or idle query, are planned ahead of the read, in their
-    order (`old_focus_events_first`): a provider moving the focus into a
-    child of the old focus, as a combo box opening into its list, raises
-    the old focus's state change first, but the change comes by the
-    outpost's own route and the focus by the listener's, so the change can
-    be queued behind the marker. Events of other elements, the listener's
+    state changes that the outpost's subscriptions queued after the
+    marker, up to the next marker or idle query, are planned ahead of the
+    read, in their order (`old_focus_events_first`): a provider moving the
+    focus into a child of the old focus, as a combo box opening into its
+    list, raises the old focus's state change first, but the change comes
+    by the outpost's own route and the focus by the listener's, so the
+    change can be queued behind the marker. A state change raised after
+    the focus is moved too, and spoken, as NVDA speaks a state change of
+    the focus or of any focus ancestor in either order. The old focus's
+    name and value changes, events of other elements, the listener's
     facts, and every event when the new focus is not inside the old keep
     their places (`docs/design/focus-pipeline.md`, section 12.4). The
     check compares runtime ids the read carries and makes no call.

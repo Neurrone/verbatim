@@ -423,12 +423,14 @@ verdict for the focus's window rather than asking the window again.
   is made only for a focus or a menu opening whose sender is windowless,
   never for a selection or a notification, whose reads are not judged. No call
   into the application, and no wake-up beyond the start's.
-- In the outpost's intake, as the read takes its marker's place, one
-  comparison of the focus before's runtime id with the runtime ids of
-  the read's ancestors, which the read already carries, under the lock
-  the push takes anyway; only when the new focus is inside the old does
-  the intake scan the entries behind the marker and move the old focus's
-  own UIA events ahead of the read (`docs/design/focus-pipeline.md`,
+- In the outpost's intake, as the read takes its marker's place, a
+  comparison of the focus before's runtime id with each of the read's
+  ancestors' runtime ids, which the read already carries (about six in
+  Settings' Date and time page), under the lock the push takes anyway;
+  only when the new focus is inside the old does the intake clone the old
+  focus's runtime id once, scan the entries behind the marker up to the
+  next marker or idle query, and move the old focus's own UIA state
+  changes ahead of the read (`docs/design/focus-pipeline.md`,
   section 12.4). No call and no wake-up. The focus report is delayed only
   when events are moved, by their handling time, 0.2 to 1.8 ms for each
   property change in Settings' Date and time page traces of 2026-10-21;

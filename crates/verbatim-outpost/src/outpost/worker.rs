@@ -928,6 +928,21 @@ fn uia_event_name(kind: &UiaKind) -> Option<EventName> {
     }
 }
 
+/// Whether a change of UIA property `id` is reported as a change of the
+/// element's states ([`property_event`]): every property but the name, the
+/// value, the range value, the help text and `ControllerFor`, such as the
+/// expand state and the toggle state.
+pub(super) fn is_state_property(id: i32) -> bool {
+    ![
+        UIA_NamePropertyId.0,
+        UIA_ValueValuePropertyId.0,
+        UIA_RangeValueValuePropertyId.0,
+        UIA_HelpTextPropertyId.0,
+        UIA_ControllerForPropertyId.0,
+    ]
+    .contains(&id)
+}
+
 /// The event for a change of property `id` of the node read as `node`,
 /// whose element, for a help text or `ControllerFor` change, is
 /// `refreshed` with what that change reads ([`refreshed_for`]), or `None`
@@ -938,6 +953,11 @@ fn property_event(
     refreshed: Option<&Refreshed>,
 ) -> Option<NormalizedEvent> {
     Some(match id {
+        id if is_state_property(id) => NormalizedEvent::PropertyChanged {
+            node_id: node.id,
+            change: PropertyChange::States(node.states),
+            child_count: None,
+        },
         id if id == UIA_NamePropertyId.0 => NormalizedEvent::PropertyChanged {
             node_id: node.id,
             change: PropertyChange::Name(node.name),
@@ -971,11 +991,7 @@ fn property_event(
                 child_count: None,
             }
         }
-        _ => NormalizedEvent::PropertyChanged {
-            node_id: node.id,
-            change: PropertyChange::States(node.states),
-            child_count: None,
-        },
+        _ => return None,
     })
 }
 

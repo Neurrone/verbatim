@@ -9,8 +9,8 @@
 //! finds its own copy of the element by its path and follows it, and
 //! follows nothing when it has no path, until a later focus brings one;
 //! how a change raised after a focus event waits for the focus's read,
-//! and how the old focus's change queued behind a focus inside it is
-//! handled before that focus;
+//! how the old focus's state change queued behind a focus inside it is
+//! handled before that focus, and its value change after it;
 //! that a text change raised after the focus leaves a document and returns
 //! to it is heard; that a foreground event for a window read through
 //! UIA is dropped, the window met only among the focus's ancestors; and
@@ -44,7 +44,7 @@ use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
     IUIAutomation2, UIA_ControllerForPropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
-    UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    UIA_HelpTextPropertyId, UIA_NamePropertyId, UIA_ValueValuePropertyId,
 };
 use windows::core::Interface;
 
@@ -852,6 +852,74 @@ fn a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first() 
     assert_eq!(
         reduced(&mut state, item).1,
         [vec![SegmentContent::Label("Nine".to_owned())]]
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A value change the old focus raises after the focus has moved into it
+/// keeps its place behind the focus, though the outpost's subscription
+/// queues it between the focus's marker and its read: only the old
+/// focus's state changes are planned ahead of a focus inside it
+/// (`docs/design/focus-pipeline.md`, section 12.4), since NVDA speaks a
+/// value change only for the focus itself and so says nothing for this
+/// one. mockapp moves the focus from the combo box to its item and then
+/// changes the combo box's value; the test delivers the item's marker
+/// before both and its read after the change is heard. The outpost reports
+/// the item first and the combo box's value change after it, which says
+/// nothing.
+fn a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_place() {
+    let title = common::unique_title("mockapp-expand-value");
+    let mut app = common::spawn("combo_box.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    app.send("set-focus hour");
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let combo_box = focus_changed(outpost.next());
+    outpost.settled();
+    let NormalizedEvent::FocusChanged { node, .. } = &combo_box else {
+        unreachable!("a focus change");
+    };
+    let combo_box_id = node.id;
+    reduced(&mut state, combo_box);
+
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 3 });
+    app.send("set-focus nine");
+    app.send("set-value hour Ten");
+    // UIA raises a value change `WinEvent` alongside the property change.
+    outpost.heard(&[
+        Heard::UiaProperty(UIA_ValueValuePropertyId.0),
+        Heard::Msaa(WinEventKind::ValueChange),
+    ]);
+    let (read, _) = outpost.listener_read(&client.focused());
+    outpost.deliver(read.into_fact(3, FocusEvent::Focus));
+    let item = focus_changed(outpost.next());
+    let NormalizedEvent::FocusChanged { node, .. } = &item else {
+        unreachable!("a focus change");
+    };
+    assert_eq!(node.name.as_deref(), Some("Nine"));
+    assert_eq!(
+        reduced(&mut state, item).1,
+        [vec![SegmentContent::Label("Nine".to_owned())]]
+    );
+    let change = match outpost.next() {
+        OutpostToSupervisor::Event { event, .. } => event,
+        other => panic!("the outpost said {other:?}, not the combo box's value change"),
+    };
+    outpost.settled();
+    assert_eq!(
+        change,
+        NormalizedEvent::ValueChanged {
+            node_id: combo_box_id,
+            value: Some("Ten".to_owned()),
+        }
+    );
+    assert_eq!(
+        reduced(&mut state, change).1,
+        Vec::<Vec<SegmentContent>>::new()
     );
 
     drop(outpost);
@@ -2362,6 +2430,10 @@ fn main() {
         (
             "a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first",
             a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first,
+        ),
+        (
+            "a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_place",
+            a_value_change_of_the_old_focus_queued_behind_a_focus_inside_it_keeps_its_place,
         ),
         (
             "a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is",

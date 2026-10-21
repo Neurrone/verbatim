@@ -110,23 +110,33 @@
 //!   outpost started after it, is taken in where it arrives.
 //! - When a UIA focus's read takes its marker's place and the focus last
 //!   reported ([`Intake::set_focused`]) is among the read's ancestors, the
-//!   old focus's own UIA events that the outpost's subscriptions queued
-//!   after the marker, up to the next marker or idle query, are planned
-//!   ahead of the read, in their order (`old_focus_events_first`). The
-//!   listener sends the marker the moment the focus event arrives, while
-//!   the outpost's own subscriptions receive the old focus's events on a
-//!   route of their own, so a state change the provider raised before
+//!   old focus's own UIA state changes that the outpost's subscriptions
+//!   queued after the marker, up to the next marker or idle query, are
+//!   planned ahead of the read, in their order (`old_focus_events_first`).
+//!   The listener sends the marker the moment the focus event arrives,
+//!   while the outpost's own subscriptions receive the old focus's events
+//!   on a route of their own, so a state change the provider raised before
 //!   moving the focus into a child, as a combo box opening into its list
 //!   raises its expand state's change before its item's focus, can be
 //!   queued a few milliseconds behind the marker; handled after the
 //!   focus, it would be a change of an ancestor the focus report already
-//!   read, and go unsaid. This restores the provider's order, which
-//!   NVDA's one UIA client and one event queue always see
-//!   (`docs/design/focus-pipeline.md`, section 12.4). Events of other elements, the listener's facts (already in the
-//!   listener's order), and every event when the new focus is not inside
-//!   the old keep their places, so a change raised as an element loses the
-//!   focus is still handled after the new focus. The check compares
-//!   runtime ids already in hand and makes no call.
+//!   read, and go unsaid. The intake cannot tell a state change raised
+//!   before the focus from one raised after it, and moves both, so either
+//!   is spoken, as NVDA speaks a state change of the focus or of any of
+//!   its ancestors in either order (`docs/design/focus-pipeline.md`,
+//!   section 12.4). A state change is a change of any property the worker
+//!   reports as the element's states (`worker::is_state_property`), such
+//!   as the expand and toggle states. The old focus's name and value
+//!   changes keep their places, since NVDA speaks those only for the
+//!   focus, so one raised after the focus goes unsaid in both. Events of
+//!   other elements, the listener's facts (already in the listener's
+//!   order), and every event when the new focus is not inside the old keep
+//!   their places, so a change raised as an element loses the focus is
+//!   still handled after the new focus. The check compares runtime ids
+//!   already in hand and makes no call. Its reference is the focus last
+//!   reported, which lags a focus read taken in but not yet handled, so
+//!   a state change of that read's element queued behind the next focus
+//!   inside it is not moved: a stated limit.
 //! - A batch that holds a foreground change is handed out at once, never
 //!   held for its window to become the foreground window: Windows raises
 //!   the foreground event once the change is made, so a foreground event
@@ -155,6 +165,7 @@ use verbatim_uia::{Agile, Cached, Kept, PropertyEvent, TextEvent};
 use crate::protocol::{DeliveredFact, DropEvidence, Query, UiaSnapshotFact, WinEventStamp};
 
 use super::handover::Arrival;
+use super::worker::is_state_property;
 
 /// The object id of a window's client area (`OBJID_CLIENT`), which the
 /// hook gives an event on a window object, as NVDA's event callback does.
@@ -1085,13 +1096,18 @@ fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option
     remove_waiting(waiting, at, |waiting| waiting.key.as_ref() == Some(key))
 }
 
-/// Moves each of the old focus `old`'s own UIA events that waits behind the
-/// focus marker at `place`, before the next marker or idle query, to just
-/// before that marker, in their order; the marker's new place. Called when
-/// the marker's read is a focus inside `old`, so a state change the
-/// provider raised before moving the focus into the old focus's child, but
-/// which the outpost's own subscription queued after the listener's marker,
-/// is handled before the focus, in the provider's order. Events of other
+/// Moves each of the old focus `old`'s own UIA state changes that waits
+/// behind the focus marker at `place`, before the next marker or idle
+/// query, to just before that marker, in their order; the marker's new
+/// place. Called when the marker's read is a focus inside `old`, so a state
+/// change the provider raised before moving the focus into the old focus's
+/// child, but which the outpost's own subscription queued after the
+/// listener's marker, is handled before the focus. A state change raised
+/// after the focus is moved too, since the intake cannot tell the two
+/// apart, and is spoken either way, as NVDA speaks a state change of the
+/// focus or of any of its ancestors. A name or value change keeps its
+/// place, as NVDA speaks one only for the focus itself, so one raised after
+/// the focus goes unsaid. Other events of the old focus, events of other
 /// elements and the listener's facts keep their places.
 fn old_focus_events_first(waiting: &mut VecDeque<Waiting>, place: usize, old: &[i32]) -> usize {
     let end = waiting
@@ -1103,12 +1119,15 @@ fn old_focus_events_first(waiting: &mut VecDeque<Waiting>, place: usize, old: &[
         .map_or(waiting.len(), |at| place + 1 + at);
     let mut place = place;
     for at in place + 1..end {
-        let of_old = matches!(waiting[at].entry.item, Item::Uia(_))
-            && matches!(
-                &waiting[at].key,
-                Some(Key::Uia(_, _, runtime_id) | Key::UiaNotification(runtime_id, ..))
-                    if runtime_id.as_slice() == old
-            );
+        // The outpost's own events only: the listener's selections and
+        // notifications share their keys, but arrive in the listener's
+        // order already.
+        let of_old = matches!(
+            &waiting[at].entry.item,
+            Item::Uia(event)
+                if matches!(event.kind, UiaKind::Property(id) if is_state_property(id))
+                    && event.parts.runtime_id.as_slice() == old
+        );
         if of_old && let Some(moved) = waiting.remove(at) {
             // Removing it and inserting it ahead leaves every later index
             // where it was.
@@ -3214,9 +3233,10 @@ mod tests {
     }
 
     /// A combo box `[42, 1]` focused opens into its item `[42, 2]`: the
-    /// combo box's state change, queued after the item's marker, is planned
-    /// ahead of the item's read, and another element's change keeps its
-    /// place behind it.
+    /// combo box's state changes (its expand and toggle states), queued
+    /// after the item's marker, are planned ahead of the item's read, in
+    /// their order, while another element's change and the combo box's
+    /// own value change keep their places behind it.
     #[test]
     fn the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first() {
         let intake = Intake::default();
@@ -3224,13 +3244,82 @@ mod tests {
         push_item(&intake, marker(7), 1);
         push_item(&intake, property_change(30070, &[42, 1]), 2);
         push_item(&intake, property_change(30005, &[42, 5]), 3);
-        push_item(&intake, property_change(30005, &[42, 1]), 4);
+        push_item(&intake, property_change(30045, &[42, 1]), 4);
+        push_item(&intake, property_change(30086, &[42, 1]), 5);
+        push_item(
+            &intake,
+            uia_focus_inside(7, vec![42, 2], &[&[42, 3], &[42, 1]]),
+            6,
+        );
+        assert_eq!(handed_out(&intake), [2, 5, 6, 3, 4]);
+    }
+
+    /// The old focus's state change behind a second focus marker keeps its
+    /// place behind that marker when the first marker's read is a focus
+    /// inside the old focus: the move looks no further than the next
+    /// marker.
+    #[test]
+    fn the_old_focus_state_change_behind_the_next_marker_keeps_its_place() {
+        let intake = Intake::default();
+        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        push_item(&intake, marker(7), 1);
+        push_item(&intake, property_change(30070, &[42, 1]), 2);
+        push_item(&intake, marker(8), 3);
+        push_item(&intake, property_change(30086, &[42, 1]), 4);
         push_item(
             &intake,
             uia_focus_inside(7, vec![42, 2], &[&[42, 3], &[42, 1]]),
             5,
         );
-        assert_eq!(handed_out(&intake), [2, 4, 5, 3]);
+        push_item(&intake, uia_focus_inside(8, vec![42, 4], &[&[42, 3]]), 6);
+        assert_eq!(handed_out(&intake), [2, 5, 6, 4]);
+    }
+
+    /// The listener's selection and notification on the old focus, which
+    /// share their keys with the outpost's own events, keep their places
+    /// behind a focus inside it, already in the listener's order; the old
+    /// focus's own state change behind them is still planned first.
+    #[test]
+    fn the_listener_facts_on_the_old_focus_keep_their_places_behind_a_focus_inside_it() {
+        let intake = Intake::default();
+        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        push_item(&intake, marker(7), 1);
+        push_item(
+            &intake,
+            Item::Fact(
+                DeliveredFact::UiaSelection {
+                    hwnd: 3,
+                    focus_window: 0,
+                    snapshot: snapshot(vec![42, 1]),
+                },
+                None,
+            ),
+            2,
+        );
+        push_item(
+            &intake,
+            Item::Fact(
+                DeliveredFact::UiaNotification {
+                    hwnd: 3,
+                    snapshot: snapshot(vec![42, 1]),
+                    notification: Notification {
+                        kind: NotificationKind::ActionCompleted,
+                        processing: NotificationProcessing::All,
+                        display_string: Some("Opened".to_owned()),
+                        activity_id: None,
+                    },
+                },
+                None,
+            ),
+            3,
+        );
+        push_item(&intake, property_change(30070, &[42, 1]), 4);
+        push_item(
+            &intake,
+            uia_focus_inside(7, vec![42, 2], &[&[42, 3], &[42, 1]]),
+            5,
+        );
+        assert_eq!(handed_out(&intake), [4, 5, 2, 3]);
     }
 
     /// A focus that is not inside the old focus keeps its place ahead of
