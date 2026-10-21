@@ -244,10 +244,11 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   `explorer_folder_window` placeholder (80 of 83 passed). Root-cause each
   from the run logs (`gh run view <id> --log-failed`) rather than from a
   local run, since neither reproduces here.
-- The next run of GitHub's `e2e` job, the first to include
-  `settings_search_suggestions`, checks whether the runner's Settings
-  search index gives at least three suggestions for "sound", as the
-  scenario requires.
+- GitHub's `e2e` job in run 39558690998 showed that the runner's
+  Settings opens the suggestions list and sets the search box's
+  ControllerFor relation but raises no selection event for a first
+  suggestion within 1.6 seconds, so `settings_search_suggestions` is
+  local-only.
 
 - The focus pipeline's follow-ups (2026-10-17):
   - UIA's late or missing delivery of a new process's focus events, and

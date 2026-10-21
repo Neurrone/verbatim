@@ -19,6 +19,12 @@
 //! property Verbatim's "of N" comes from, not the count of the list's
 //! realized children, which a virtualized list would make smaller.
 //!
+//! Local-only: GitHub's runner's Settings raises no selection event for a
+//! first suggestion as the list opens, so "Suggestions available" plays to
+//! completion there, while this machine's Settings selects the first
+//! suggestion as the list opens and the scenario expects it to cut the
+//! sound off.
+//!
 //! In some launches Settings replaces the list's items as it opens, when
 //! the first suggestion is the list's current selection rather than the
 //! item its event named (`docs/parity/changes-and-selection.md`,

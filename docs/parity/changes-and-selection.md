@@ -144,7 +144,10 @@ scenario's comparison (NVDA alpha-58022, the pin), apart from the
 differences below. The scenario's expectations take the list's size and
 its first three names from the agent, read through UI Automation once
 the list is open, since Settings' search index differs between
-editions. It runs on GitHub's runner as well as locally. Start's results
+editions. It is local-only, because GitHub's runner's Settings raises
+no selection event for a first suggestion as the list opens, so there
+"Suggestions available" plays to completion ([the end-to-end
+guide](../tooling/e2e.md), the local-only scenarios). Start's results
 that are in a Chromium document NVDA reads through IA2 are not yet
 built; they belong to the phase that implements IA2 (browsers, M7).
 

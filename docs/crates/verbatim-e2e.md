@@ -22,15 +22,18 @@ and how to read a failure.
   `#[ignore]`d with the reason "live", so a workspace test run (and
   `cargo xtask ci`) lists them as ignored rather than reporting them as
   passed. The end-to-end job runs them with
-  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1`.
+  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --test-threads=1`.
 - `endpoint()` reads `ENDPOINT_ENV` (`VERBATIM_E2E_ENDPOINT`). A live test
   run without it fails: a scenario that cannot reach an agent has not
   passed. `session_info`, the precondition check that the agent runs in an
   interactive session on the `Default` input desktop, is a plain ignored
   `#[test]` outside the registry and fails the same way.
 - Local-only scenarios test Windows 11 Notepad, which GitHub's Windows
-  Server runner lacks. Their names, and only theirs, start with one of
-  `LOCAL_ONLY_FILTERS` (`notepad_`), so a run off a Windows 11 desktop
+  Server runner lacks, or, for `settings_search_suggestions`, a Settings
+  app that selects the first search suggestion as the list opens, which
+  the runner's Settings does not. Their names, and only theirs, start with
+  one of `LOCAL_ONLY_FILTERS` (`notepad_` and
+  `settings_search_suggestions`), so a run off a Windows 11 desktop
   deselects them with a `--skip` for each; a unit test checks that CI's
   `e2e` job skips exactly these, and that no other scenario's name
   contains one. A run with `SKIP_LOCAL_ONLY_ENV`

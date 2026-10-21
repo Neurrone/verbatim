@@ -85,7 +85,7 @@ would each think they own an instance the other just replaced out from
 under it (`single_instance::acquire_replacing`'s own algorithm).
 `.github/workflows/ci.yml`'s `e2e` job runs, on a plain `windows-latest`
 runner with the same environment variable,
-`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --test-threads=1`,
+`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --test-threads=1`,
 with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
 below). Started by hand, as `gh workflow run ci.yml -f scenario=<name> -f
 repeat=<n>`, the workflow runs only its `e2e` job, which runs that one
@@ -220,7 +220,7 @@ More environment variables matter for less common cases:
   the artifacts.
 - `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` says the run is not on a Windows 11
   desktop: a local-only scenario run with it set fails, since such a run
-  deselects them with `--skip notepad_`; unset, empty, or `0` runs them,
+  deselects them with `--skip notepad_ --skip settings_search_suggestions`; unset, empty, or `0` runs them,
   and any other value fails each test saying so. CI's `e2e` job sets it; see the
   local-only scenarios below.
 
@@ -391,14 +391,17 @@ Some scenarios are local-only, marked `local_only` in the registry. Most
 test Windows 11 Notepad, which GitHub's Windows Server runner lacks (it
 has classic Notepad, a Win32 edit control), and their names start with
 `notepad_`; editing behaviour is also covered in the harness's Windows
-Forms text box, which runs everywhere. `settings_search_suggestions`
-runs on the runner too (Dickson, 2026-10-21), so that the runner shows
-whether its Settings search index gives the scenario's suggestions. The
+Forms text box, which runs everywhere. `settings_search_suggestions` is
+local-only because the runner's Settings raises no selection event for a
+first suggestion as the suggestions list opens, so "Suggestions
+available" plays to completion there, while the scenario expects the
+first suggestion, which this machine's Settings selects as the list
+opens, to cut it off (Dickson, 2026-10-21). The
 registry's `LOCAL_ONLY_FILTERS` lists the filters, and only local-only
 scenarios' names start with them. A local-only
 scenario is part of the suite: every local run and every
 `cargo xtask vm test` run includes it. CI's `e2e` job deselects them with
-`--skip notepad_` and sets
+`--skip notepad_ --skip settings_search_suggestions` and sets
 `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`, so one that
 ran there anyway would fail rather than report a pass. The skip comes from
 that setting alone, never from detecting the machine, so a local run
