@@ -697,18 +697,17 @@ impl SpeechCollector {
 
     /// [`expect_sequence`](Self::expect_sequence) for a step whose speech
     /// may end with optional utterances ([`optional`]), which no utterance
-    /// always said follows: once the rest is matched, Verbatim is asked to
-    /// report that it has handled the input numbered `after_input` and is
-    /// idle, and each trailing optional utterance is matched, in order,
-    /// against the utterances queued by then, without waiting for more. One
-    /// queued after that is unmatched, and fails the next input's check as
-    /// any speech no assertion matched does
+    /// always said follows: once the rest is matched and has ended, each
+    /// trailing optional utterance is matched, in order, against the
+    /// utterances that have reached the harness by then, without waiting
+    /// for more. One that arrives later is unmatched, and fails the next
+    /// input's check as any speech no assertion matched does
     /// ([`require_all_asserted`](Self::require_all_asserted)).
     ///
     /// # Panics
     ///
-    /// As [`expect`](Self::expect), and if Verbatim does not become idle.
-    pub fn expect_sequence_until_idle(&mut self, expected: &[Expected], after_input: Option<u64>) {
+    /// As [`expect`](Self::expect).
+    pub fn expect_sequence_with_trailing_optional(&mut self, expected: &[Expected]) {
         let split = expected
             .iter()
             .rposition(|want| want.said == Said::Once)
@@ -718,7 +717,7 @@ impl SpeechCollector {
         if self.compare.is_some() {
             return;
         }
-        self.await_idle(after_input);
+        self.read_arrived();
         let mut runs = Vec::new();
         for want in trailing {
             let Said::UpTo(times) = want.said else {
@@ -2031,20 +2030,17 @@ mod tests {
     }
 
     #[test]
-    fn a_trailing_optional_utterance_queued_before_idle_passes_and_is_reported_in_full() {
+    fn a_trailing_optional_utterance_arrived_by_the_steps_end_passes_and_is_reported_in_full() {
         let mut speech = collector(vec![
             queued(1, "sound: suggestions-closed"),
             queued(2, "sound: suggestions-closed"),
             ended(1, UtteranceEnding::Completed),
             ended(2, UtteranceEnding::Completed),
         ]);
-        speech.expect_sequence_until_idle(
-            &[
-                heard("sound: suggestions-closed"),
-                optional("sound: suggestions-closed"),
-            ],
-            None,
-        );
+        speech.expect_sequence_with_trailing_optional(&[
+            heard("sound: suggestions-closed"),
+            optional("sound: suggestions-closed"),
+        ]);
         speech.require_all_asserted("before the next key");
         assert_eq!(
             speech.optional_outcomes()[0].to_string(),

@@ -77,9 +77,9 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // log received the second in one Escape of three,
     // `target/e2e-evidence/m42-desktop-2-2026-10-22/part3a-nvda-2.log`):
     // an optional utterance at the end of the step (`docs/testing.md`,
-    // "Optional utterances"), matched against what Verbatim queued before
-    // it reports Escape handled and itself idle.
-    scenario.expect_sequence_until_idle(&[
+    // "Optional utterances"), matched against what has arrived once the
+    // first has been heard in full.
+    scenario.speech().expect_sequence_with_trailing_optional(&[
         heard("sound: suggestions-closed"),
         optional("sound: suggestions-closed"),
     ]);
