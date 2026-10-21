@@ -19,6 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{BOOL, HSTRING, s, w};
 
 use verbatim_model::{HIDDEN_FRAME_WINDOW_PROP, Pid, WindowFacts, WindowHandle};
+use verbatim_uia::provider_process;
 
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::arbitration::window_class_name;
@@ -406,18 +407,28 @@ pub(crate) const MOVED_ON_GRACE: Duration = Duration::from_millis(500);
 /// NVDA's watchdog asks whether the user has moved on from the window it is
 /// waiting on (`_shouldRecoverAfterMinTimeout`), because its one core thread
 /// serves every application; an outpost, or a reading thread, serves one,
-/// so only that application's other threads are held up. `false` when
-/// either window's owner cannot be told. Local calls only.
+/// so only that application's other threads are held up. The application
+/// is the window's provider process ([`provider_process`]), so a console
+/// window is its console host's, never its client's. `false` when either
+/// window's owner or provider cannot be told. Local calls only.
 pub(crate) fn front_is_another_thread_of_its_application(handle: isize) -> bool {
     focus_window().is_some_and(|front| is_another_thread_of_its_application(handle, front))
 }
 
-/// Whether `other` belongs to the same application as `handle` but another
-/// UI thread. `false` when either window's owner cannot be told.
+/// Whether `other` is served by the same process as `handle`, by
+/// [`provider_process`], on another UI thread than `handle`'s. `false` when
+/// either window's owner or provider cannot be told. The providers are read
+/// only for windows on different threads: `GetClassNameW` and
+/// `GetWindowThreadProcessId` for each, and for a console window its
+/// client's `OpenProcess`, `NtQueryInformationProcess` and `CloseHandle`.
 fn is_another_thread_of_its_application(handle: isize, other: isize) -> bool {
-    let (thread, pid) = window_owner(handle);
-    let (other_thread, other_pid) = window_owner(other);
-    thread != 0 && other_thread != 0 && other_pid == pid && other_thread != thread
+    let (thread, _) = window_owner(handle);
+    let (other_thread, _) = window_owner(other);
+    thread != 0
+        && other_thread != 0
+        && other_thread != thread
+        && provider_process(handle)
+            .is_some_and(|provider| provider_process(other) == Some(provider))
 }
 
 /// The thread and process that own `handle`, zeros for an invalid window.
@@ -618,5 +629,29 @@ mod tests {
         other_thread.join().expect("the other thread ends");
         destroy_window(same_thread);
         destroy_window(slow);
+    }
+
+    #[test]
+    fn a_console_window_and_its_clients_own_window_are_not_one_application() {
+        let console = verbatim_test_console::Console::start_with_client_window();
+        let (console_thread, client) = window_owner(console.window);
+        let (window_thread, window_owner_pid) = window_owner(console.client_window);
+        assert_eq!(
+            window_owner_pid, client,
+            "Windows names the client as both windows' owner"
+        );
+        assert_ne!(
+            window_thread, console_thread,
+            "the client's window is on another thread than the console window's"
+        );
+
+        assert!(
+            !is_another_thread_of_its_application(console.client_window, console.window),
+            "a console window in front is its console host's"
+        );
+        assert!(
+            !is_another_thread_of_its_application(console.window, console.client_window),
+            "a console window being read is its console host's"
+        );
     }
 }

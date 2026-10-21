@@ -303,7 +303,10 @@ event's own element:
   abandons a read, as NVDA's watchdog cancels a slow call
   (`_shouldRecoverAfterMinTimeout`), once it has taken `MOVED_ON_GRACE`,
   half a second, and the window in front belongs to the read's
-  application on another UI thread than the window being read
+  application on another UI thread than the window being read, the
+  application being each window's provider process
+  (`verbatim_uia::provider_process`), so a console window is its console
+  host's, never its client's
   (`outpost::window::front_is_another_thread_of_its_application`, local
   calls, which an outpost's worker shares): File Explorer's folder
   windows, the taskbar and the Alt+Tab switcher are one process on
@@ -814,9 +817,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     timeout, since an application that is starting up can take seconds to
     answer a read that then succeeds; a navigation or activation 400 ms; an
     ancestor walk or tree dump 5 s), or, after half a second, once the user
-    has moved to a window of the same application on another UI thread
-    (the decision is `abandon_reason` and `next_check`, the window test
-    `is_another_thread_of_its_application`, each unit-tested), answers the stuck query
+    has moved to a window served by the same process, by its provider
+    process, on another UI thread (the decision is `abandon_reason` and
+    `next_check`, the window test `is_another_thread_of_its_application`,
+    each unit-tested), answers the stuck query
     `Abandoned`, and starts a replacement that continues with the queue. An
     abandoned worker that returns publishes nothing, since publishing checks
     under the watchdog's lock that the worker is still in charge, lowers the

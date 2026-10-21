@@ -409,7 +409,12 @@ verdict for the focus's window rather than asking the window again.
   user has already moved on from the read's window when that becomes
   known (0b5826cd): for a sender that is a window, as the read starts,
   one run of the moved-on rule's local calls (`GetGUIThreadInfo` and two
-  `GetWindowThreadProcessId`) by the watchdog under the readers' lock, on
+  `GetWindowThreadProcessId`, then, when the two windows are on different
+  threads, each window's provider process: `GetClassNameW` and
+  `GetWindowThreadProcessId` for each, and for a console window its
+  client's `OpenProcess`, `NtQueryInformationProcess` and `CloseHandle`,
+  kernel calls that wake no other thread, as the window filters pay) by
+  the watchdog under the readers' lock, on
   the wake-up the read's start already makes; for a windowless sender,
   the same calls on the reading thread once its nearest window is found,
   and only then one boxed closure for the read, made as it starts, which

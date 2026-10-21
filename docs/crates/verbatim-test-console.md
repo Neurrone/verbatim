@@ -19,3 +19,10 @@ Public API:
 - `Console::host`, the console host's process id, and `Console::window`,
   the console window, whose owner by `GetWindowThreadProcessId` is the
   client, PowerShell, while the host serves it.
+- `Console::start_with_client_window()` starts the console as `start`
+  does, its client first making a hidden Windows Forms window of its own
+  on PowerShell's pipeline thread, another thread than the one Windows
+  names as the console window's, and finds it by a title unique to the
+  test process; it panics as `start` does, or when that window is not
+  found. `Console::client_window` is that window, 0 for a console started
+  with `start`. The moved-on rule's test in `verbatim-outpost` uses it.

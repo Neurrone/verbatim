@@ -1,5 +1,6 @@
 //! A console the tests start: `conhost.exe` running PowerShell in a hidden
-//! console window, for the tests of a console window's provider process in
+//! console window, optionally with a hidden window of the client's own on
+//! another thread, for the tests of a console window's provider process in
 //! `verbatim-uia` and `verbatim-outpost`. A dev-dependency only, so the
 //! crates it serves are built once for their tests and their builds alike.
 
@@ -20,10 +21,11 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EVENT_OBJECT_NAMECHANGE, GetWindowTextW, MSG, MsgWaitForMultipleObjects,
-    OBJID_WINDOW, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SW_HIDE, WINEVENT_OUTOFCONTEXT,
+    DispatchMessageW, EVENT_OBJECT_NAMECHANGE, FindWindowW, GetWindowTextW, MSG,
+    MsgWaitForMultipleObjects, OBJID_WINDOW, PM_REMOVE, PeekMessageW, QS_ALLINPUT, SW_HIDE,
+    WINEVENT_OUTOFCONTEXT,
 };
-use windows::core::{PCWSTR, PWSTR};
+use windows::core::{HSTRING, PCWSTR, PWSTR};
 
 /// How long the console's client is waited for.
 const WAIT: Duration = Duration::from_secs(10);
@@ -66,6 +68,11 @@ pub struct Console {
     pub host: u32,
     /// The console's window.
     pub window: isize,
+    /// A hidden window of the console's client, PowerShell, made on its
+    /// pipeline thread, another thread than the one Windows names as the
+    /// console window's ([`Console::start_with_client_window`]); 0 for a
+    /// console started with [`Console::start`].
+    pub client_window: isize,
     _job: OwnedHandle,
 }
 
@@ -83,6 +90,37 @@ impl Console {
     /// title within ten seconds.
     #[must_use]
     pub fn start() -> Self {
+        Self::launch("")
+    }
+
+    /// Starts the console as [`Console::start`] does, with a hidden
+    /// Windows Forms window of the client's own, made before the client
+    /// sets the console's title, so the window exists once the title is
+    /// seen and is found by its own title.
+    ///
+    /// # Panics
+    ///
+    /// As [`Console::start`], and when the client's window is not found.
+    #[must_use]
+    pub fn start_with_client_window() -> Self {
+        let marker = format!("verbatim-console-client-window-{}", std::process::id());
+        let mut console = Self::launch(&format!(
+            "Add-Type -AssemblyName System.Windows.Forms; \
+             $form=[Windows.Forms.Form]::new(); $form.Text='{marker}'; \
+             $null=$form.Handle; "
+        ));
+        let marker = HSTRING::from(marker);
+        // SAFETY: no class, a nul-terminated title; answers an error when
+        // no top-level window has it.
+        let window = unsafe { FindWindowW(PCWSTR::null(), &marker) }
+            .expect("the client's window was made before the title was set");
+        console.client_window = window.0 as isize;
+        console
+    }
+
+    /// Starts the console, its client running `prelude` before it sets
+    /// the window's title.
+    fn launch(prelude: &str) -> Self {
         let title = format!("verbatim-console-test-{}", std::process::id());
         TITLE.with(|cell| cell.borrow_mut().clone_from(&title));
         RENAMED.with(|renamed| renamed.set(0));
@@ -104,7 +142,7 @@ impl Console {
         .expect("the job's limit");
         let mut command: Vec<u16> = format!(
             "conhost.exe powershell.exe -NoLogo -NoProfile -NoExit -Command \
-             $Host.UI.RawUI.WindowTitle='{title}'"
+             {prelude}$Host.UI.RawUI.WindowTitle='{title}'"
         )
         .encode_utf16()
         .chain(Some(0))
@@ -187,6 +225,7 @@ impl Console {
         Self {
             host: info.dwProcessId,
             window: RENAMED.with(Cell::get),
+            client_window: 0,
             _job: job,
         }
     }

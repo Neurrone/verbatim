@@ -329,7 +329,9 @@ outpost's worker and the focus listener's reading thread for an
 application each abandon a call that has taken half a second
 (`MOVED_ON_GRACE`) once the window in front belongs to the same
 application on another UI thread than the window being handled or read,
-until their own deadlines (10 seconds for the worker, `READ_DEADLINE`, 11
+the application being each window's provider process, so that a console
+window counts as its console host's rather than its client's, until
+their own deadlines (10 seconds for the worker, `READ_DEADLINE`, 11
 seconds, for a reading thread). The event being handled or read is
 dropped, and a new worker or reading thread takes the application's later
 events.
@@ -410,12 +412,15 @@ Other differences:
   keyboard focus to another thread with no foreground event, such as to
   a child window owned by another thread, is caught by NVDA and missed by
   Verbatim.
-- Both of Verbatim's rules compare threads and processes with
-  `GetWindowThreadProcessId`, which names a console window's client
-  rather than conhost, so a console client that also owns a GUI window on
-  another thread can have its console's read abandoned with a wrong
-  reason when the user moves to that window (`docs/roadmap.md`, M4.1's
-  focus-pipeline follow-ups).
+- NVDA compares only threads, by `GetWindowThreadProcessId`, which
+  names a console window's client and one of the client's threads
+  (`nvda/source/watchdog.py`, lines 230 to 232). Verbatim also requires
+  both windows to be served by one process, read with local calls
+  (`verbatim_uia::provider_process`), as its window filters do: a
+  console window is its console host's, so a move between a console
+  window and a window of its client's own on another thread is not a
+  move within one application, and no read of either is abandoned for
+  it; no thread of the console host's waits on the client's window.
 
 ### Recovery after an outpost is replaced
 

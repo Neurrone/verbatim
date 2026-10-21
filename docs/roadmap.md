@@ -182,7 +182,8 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
 - MSAA events lost while the listener resumes
   ([the phase 6 design](design/phase6-design.md), "MSAA events in each
   outpost's own hook"): an event raised between a ready outpost's end and
-  the listener resuming is lost; a recommendation is recorded there.
+  the listener resuming is lost. The gap is accepted (Dickson,
+  2026-10-21), as the design's recommendation there says.
 - An audit of every end-to-end scenario for timing races (2026-10-11),
   each race fixed by waiting for evidence, not a longer bound; and the
   agent's bring-forward, which always takes its slowest path (once 1.4
@@ -274,7 +275,8 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,
-    and `IAccessible/winConsole.py`); Verbatim says "pane".
+    and `IAccessible/winConsole.py`); Verbatim says "pane" (deferred,
+    Dickson, 2026-10-21).
   - On a fresh GitHub runner, the first Verbatim start can say "Start
     toggle button not pressed" instead of "Desktop list": shortly after
     Verbatim's subscriptions are installed, the taskbar rehosts the Start
@@ -283,7 +285,8 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     NVDA's checks would accept that focus too. Dickson chooses between a
     throwaway warm-up start before the suite and an experiment to find
     what triggers the rehosting. The local cause of the same utterance,
-    the agent's minimize activating the taskbar, is fixed (ace7858d).
+    the agent's minimize activating the taskbar, is fixed (ace7858d)
+    (deferred, Dickson, 2026-10-21).
   - Notepad's "app not responding" sound played once in `notepad_editing`
     on 2026-10-18, about 2 seconds after a right arrow, and the rerun
     passed; investigate if it recurs.
@@ -291,7 +294,7 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     milliseconds late. The listener logs how long its nearest-window
     lookup takes (f9fb32f7): locally most of the delay, about 230
     milliseconds, is the first lookup waiting on a busy File Explorer.
-    Confirm the same on GitHub's runner.
+    Confirm the same on GitHub's runner (deferred, Dickson, 2026-10-21).
   - Windows Terminal's terminal is sometimes said twice, or three times
     for a second window: in some launches Windows Terminal raises the
     terminal's focus under a second runtime id, the one starting 14,
@@ -308,20 +311,11 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     `target/e2e-evidence/full-suite-2026-10-17-spares-off/`.
   - One UIA focus event reached the listener 5 seconds late in a console
     host run on 2026-10-17; watch for it again.
-  - The moved-on rule, in an outpost's worker and in the listener's
-    reading threads alike, asks whether the window in front is another
-    thread of the application by `GetWindowThreadProcessId`, which names
-    a console window's client rather than conhost: a console client that
-    also owns a GUI window on another thread can have a read of its
-    console window abandoned as "moved on to another thread of its
-    application" when the user moves to that GUI window, though no
-    thread of conhost's waits on it. Compare by the window's provider
-    process (`verbatim_uia::provider_process`), as the window filters
-    do.
   - The trace tool's symbol lookup for ARM64X images, such as ntdll,
-    needs a follow-up, which can be tested only on the ARM64 runner.
+    needs a follow-up, which can be tested only on the ARM64 runner
+    (deferred, Dickson, 2026-10-21).
   - `line_key_flood` once read a half-written line on GitHub's runner;
-    repeat it there.
+    repeat it there (deferred, Dickson, 2026-10-21).
   - The suggestions-closed sound plays twice, 16 to 24 ms apart, after
     Enter on a suggestion in Settings' search box
     (`target/e2e-evidence/fixes-round-ten-2026-10-21/`, the
