@@ -1206,30 +1206,50 @@ The whole cost of a focus on a text field, its caret read while the
 outpost handles the focus and carried in the focus's one message
 (`FocusChanged`'s `text`), each the first focus in its window, pinned in
 `crates/mockapp/tests/call_counts.rs`
-(`text_field_focuses_cost_exactly`):
+(`text_field_focuses_cost_exactly`). The cost is paid for every text
+focus the outpost handles, whether or not a newer focus supersedes it
+before it is spoken, as NVDA reads an object's text for every focus it
+queues. The parts of a UIA focus's count are:
 
-- A UIA document (mockapp's `text.json`), read remotely: 9 UIA calls, 1
-  window message and 1 connection, the listener's read, the outpost's
-  search for its own element (the connection and one remote operation),
-  the focus's enrichment and the caret's read. Classically: 45 UIA calls,
-  1 window message and 1 connection.
-- A UIA terminal (`terminal_reading.json`), remotely: 9 UIA calls, 1
-  window message and 1 connection; classically 27 UIA calls, 1 window
-  message and 1 connection.
-- A classic edit control through MSAA: 39 MSAA calls and 6 window
-  messages.
+- the listener's read: 5 UIA calls and 1 window message;
+- the outpost's search for its own element: 2 UIA calls and 1
+  connection remotely, 4 calls and the connection classically;
+- the focus's enrichment: 1 UIA call;
+- the caret read: 1 UIA call remotely; classically 35 for mockapp's
+  document ("The caret report after a focus, UIA" above), 36 when
+  something is selected, and 17 for its terminal;
+- the selected text, read only when something is selected and the
+  field is not protected, since Core says none of a protected field's
+  text: 1 UIA call remotely and 4 classically.
 
-The calls are the ones the focus and its caret report made when the
-caret report was a message of its own after the focus: the edit
-control's 39 and 6 then too, and for UIA the focus and caret messages'
-7 remotely and 41 classically, 23 for a terminal classically, with the
-search for the outpost's own element made after the focus's message and
-before the caret's entry, counted in no message, 2 UIA calls and the
-connection remotely and 4 and the connection classically, which the one
-message now counts. The search and the caret's read now come before the
-focus is reported for a focus that may have text, so the first word
-waits for them; a focus without text is reported before its search, as
-it was.
+- Minimum: each part's own minimum: the listener's read, whose minimum
+  "A focus change, UIA, steady state" gives, here 5; the search's
+  `ElementFromHandle` and one remote operation; and one call each for
+  the enrichment, the caret and the selected text. That is 9 UIA calls, 1 window message and 1
+  connection remotely for a document with nothing selected, and 10 with
+  a selection. Classically, the walk's 4 calls replace the remote
+  operation's 2, and the caret read costs its classic minimum.
+- Today: a UIA document (mockapp's `text.json`) read remotely costs 9 UIA
+  calls, 1 window message and 1 connection; 10 with a selection; 9
+  protected with a selection. Classically it costs 45; 50 with a
+  selection; 46 protected with a selection. A UIA terminal
+  (`terminal_reading.json`) costs 9 remotely and 27 classically, each
+  with 1 window message and 1 connection. A classic edit control through
+  MSAA costs 39 MSAA calls and 6 window messages. With nothing
+  selected, these are the calls the focus and its caret report made when
+  the caret report was a message of its own after the focus. The search, then made after the
+  focus's message and counted in neither, now comes before the focus is
+  reported for a focus that may have text, so the one message counts
+  it, and the first word waits for the search and the caret read. A
+  focus without text is reported before its search, as it was.
+- Target: the minimum, which the remote counts meet; classically,
+  today's counts.
+
+`measure_focus_text_box` does not isolate the wait this adds before the
+first word: it times focuses on windows brought forward, whose text is
+not read with the focus. The full figures for that wait, in the form the
+measuring guide gives (`docs/tooling/measuring.md`), are to be recorded
+here from a run that focuses a text field and reads its caret.
 
 ### A caret key that selects, UIA
 

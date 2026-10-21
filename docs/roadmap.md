@@ -167,6 +167,14 @@ with the item.
   character from its keyboard hook, before the application handles the
   key, where NVDA echoes from the application's typed-character event; a
   letter typed within about 40 ms of Tab is not echoed.
+- The focus-now answer (`verbatim-app`'s `focus_inputs`), used at
+  startup, after a replaced outpost, and for the focus Verbatim reports
+  itself after a menu closes or Alt+Tab when no outpost is ready, carries
+  no text, so a text field focused then speaks no line where NVDA speaks
+  it, a gap a user hears.
+- The caret read made with a focus chooses remote or classic reading by
+  the previous focus's window, since the outpost's window tracking is
+  updated after the focus is published; only the read's cost differs.
 
 ### Follow-ups from M4.1
 

@@ -2387,6 +2387,70 @@ fn held_anchors_name_every_position_the_state_keeps() {
     assert_eq!(nodes, [(OUTPOST, vec![id(5)])]);
 }
 
+/// The caret read of a focus whose caret is at the start of a line minted
+/// at `anchor`, with nothing selected.
+fn caret_at_anchor(anchor: u64) -> FocusText {
+    FocusText::Caret {
+        caret: CaretReport {
+            line: line("gamma\n", anchor, 0),
+            selection: None,
+        },
+        selected_text: None,
+    }
+}
+
+/// The text anchors `state` holds, by outpost.
+fn anchors_held(state: &SrState) -> Vec<(OutpostId, Vec<TextAnchor>)> {
+    state
+        .held_anchors()
+        .into_iter()
+        .map(|(outpost, anchors)| (outpost, anchors.into_iter().collect()))
+        .collect()
+}
+
+#[test]
+fn a_duplicate_focus_takes_its_caret_without_speaking() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(100));
+    // The same node reported again is a duplicate: nothing is said, and
+    // its caret, read afresh, is Core's.
+    let announced = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(200));
+    assert_eq!(
+        (announced, anchors_held(&state)),
+        (Vec::new(), vec![(OUTPOST, vec![TextAnchor(200)])])
+    );
+}
+
+#[test]
+fn a_replacement_outposts_silent_re_read_takes_its_caret_without_speaking() {
+    let mut state = SrState::new();
+    let _ = focus_with_value(&mut state, StateSet::new(), "gamma\n", caret_at_anchor(100));
+    let _ = reduce(&mut state, &Input::OutpostEnded { outpost: OUTPOST });
+    // The replacement numbers its nodes and anchors afresh and reports the
+    // focus the user already heard: nothing is said, and its caret is
+    // Core's.
+    let replacement = OutpostId(2);
+    let effects = reduce(
+        &mut state,
+        &event(NormalizedEvent::FocusChanged {
+            node: NodeSnapshot {
+                id: NodeId::in_outpost(replacement, 2),
+                value: Some("gamma\n".to_owned()),
+                ..node(5, Role::Document, StateSet::new())
+            },
+            foreground: false,
+            ancestors: Vec::new(),
+            ancestors_unknown: false,
+            selected_child: None,
+            text: Some(Box::new(caret_at_anchor(200))),
+        }),
+    );
+    assert_eq!(
+        (effects, anchors_held(&state)),
+        (Vec::new(), vec![(replacement, vec![TextAnchor(200)])])
+    );
+}
+
 /// Focuses a document holding `value`, with what the outpost's caret read
 /// found, `text`, returning the segments of each utterance the focus
 /// announcement spoke, in order.

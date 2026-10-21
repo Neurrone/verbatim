@@ -512,8 +512,8 @@ The outpost needs an element of its own for the focus-following property and tex
 
 - For a focus without text, the outpost reports the focus to Core from the listener's result at once, with node ids it assigns, and searches for its own element after the report, so the focus is spoken without waiting for it.
 - For a focus whose role may have text (edit field, document, terminal), it searches before the report, since the focus's caret is read with its own element and its line comes in the focus's message (Dickson, 2026-10-21; `docs/nvda/speech.md`, "What an object with text says").
-- It finds its own element by the path the listener sent: from the nearest ancestor with a native window handle (`ElementFromHandle`, one call), a remote operation walks down the chain's runtime ids one level at a time, comparing each child's runtime id. One connection call and one transaction, bounded by the timeout; its cost, the depth below that window times the children compared, is to be measured. It replaces today's `GetFocusedElementBuildCache` with a read that stays inside the application.
-- Until the element is found, the property and text subscriptions follow the focus's top-level window (dd9114f's `follow_focus_window`, which stays), so a change on the focus in the gap is still heard.
+- It finds its own element by the path the listener sent: from the nearest ancestor with a native window handle (`ElementFromHandle`, one call), a remote operation walks down the chain's runtime ids one level at a time, comparing each child's runtime id. One connection call and one transaction, bounded by the timeout; its cost, the depth below that window times the children compared, is to be measured. The outpost makes no `GetFocusedElementBuildCache` call, so the read stays inside the application.
+- Until the element is found, the focus-following subscription follows nothing (`follow_focus` in `crates/verbatim-outpost/src/outpost/worker.rs` retargets it to no element), so a change on the focus in the gap is not heard, as NVDA hears nothing local before its group is added to a focus (section 17); once found, the subscription moves to the element.
 - An element that cannot be reached from its window, such as Windows Terminal's tab focus elements, which are not in the tree (`docs/design/phase6-design.md` 2835), has no outpost element. Its snapshot and ancestors are still right, because the listener read them from the sender, and the focus moves to the terminal a few milliseconds later. Review and navigation from such a focus start from its nearest ancestor that was found.
 - Elements for the ancestors are found the same way, only when navigation or review needs them.
 
@@ -530,7 +530,7 @@ With a spare, the first focus is spoken after about the remote operation's time;
 - One cache fill for the listener's registration, with the smaller cache request: NVDA's thirteen properties and the Text pattern since 2026-10-12, where it was the base cache request's 34.
 - In the listener: one remote operation, plus one live `HasKeyboardFocus` read on the previous element for a repeated runtime id.
 - In the outpost: one `ElementFromHandle` and one remote operation to find its own element, after reporting, or, for a focus that may have text, before it, with the caret's read.
-- Today the outpost makes `GetFocusedElementBuildCache` (which reads whichever application has the focus; 574 ms median on a first File Explorer focus in release) and one remote operation, plus up to two subtree searches when the focus has moved on. Option (b) makes about the same number of calls, all inside the application, and none of the outpost's is on the way to speech.
+- The outpost reads no system focus (`GetFocusedElementBuildCache`) and makes no subtree search: its calls are the two above, all inside the application. For a focus without text none of them is on the way to speech; for a focus that may have text, the search and the caret's read come before the report, and the first word waits for them (`docs/performance.md`, "A focus on a text field").
 - No other process handles the event: the outposts and the spares register no focus handler.
 
 ### 12.8 What becomes removable under (b)
@@ -538,7 +538,7 @@ With a spare, the first focus is spoken after about the remote operation's time;
 - As section 9 for the outpost's focus judgement: `live_focus_element`, `own_element_focused`, the moved-on rules (2818fd4, 5076b5a, 8be2223), `reissue_unless_focused`, `FocusQuery::require_focus` in the outpost (it moves to the listener), `FOCUS_READ_WAIT`, `Uia::within`, `GetFocusedElement` on the focus path, the console rules and console `report_foreign_window` (with section 5.4), `overtaken` and the take-back, whole-batch MSAA collapsing, UIA's counting in MSAA's limits, `msaa_focus_waiting`.
 - `element_of_moved_focus` and `Uia::element_by_name_and_position`: replaced by the path walk over runtime ids from the sender's own chain.
 - "Tab control" before "list" in Windows Terminal: gone, since the ancestors are the sender's.
-- What stays that section 9 removed under (c): `follow_focus_window` and `adopt_focus_element` (dd9114f), for the gap until the outpost has its element; the listener's UIA focus registration.
+- What stays that section 9 removed under (c): the listener's UIA focus registration.
 
 ### 12.9 Migration in small steps
 

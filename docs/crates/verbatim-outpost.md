@@ -2056,7 +2056,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   source comes between them, as NVDA's object announcement reads an
   object's text within it (`docs/nvda/speech.md`, "What an object with text
   says"). When something is selected the selected text is read too, which
-  Core speaks in place of the line. A focus with no text to read (an MSAA
+  Core speaks in place of the line, except in a protected (password)
+  field, whose text Core never says, so its focus carries the caret with
+  no selected text. A focus with no text to read (an MSAA
   object that is not an edit control, a UIA element with no text pattern)
   carries `FocusText::NoText`, and Core speaks its value in place of its
   line, as NVDA speaks the value of an object without navigable text. One

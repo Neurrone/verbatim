@@ -127,11 +127,22 @@ Matched:
   text interface. The focus's line comes in the focus's own message, read
   by the outpost while it handled the focus, so nothing is spoken between
   the focus and its line, as NVDA says the line with the focus. On
-  Shift+Tab into Settings' search box holding "sound", both say "Search
-  box, Find a setting edit" and "sound", cut off by the suggestion "Sound
-  settings 1 of 22" (`rapid-tab-nvda-1.txt` in
+  Shift+Tab into Settings' search box holding "sound", NVDA says one
+  utterance, "Search box, Find a setting edit sound", and Verbatim two,
+  the box and then "sound", which compare mode judges the same on their
+  joined text; both are cut off by the suggestion "Sound settings 1 of
+  22" (`rapid-tab-nvda-1.txt` in
   `target/e2e-evidence/fixes-round-six-2026-10-21`; the scenario
-  `settings_search_suggestions_reentered`).
+  `settings_search_suggestions_reentered`). When the outpost cannot read
+  the caret (`NotRead`), Verbatim speaks neither the line nor the value,
+  where NVDA, whose read of the selection fails, reads the line at the
+  text's first position instead (`nvda/source/speech/speech.py`, lines
+  905 to 923; "What an object with text says" in
+  [Speech](../nvda/speech.md)). Windows Terminal's second focus
+  identity, whose text NVDA cannot read either, says "terminal" alone
+  in both (`part2c-*` in
+  `target/e2e-evidence/m42-desktop-2-2026-10-22`); for any other text
+  whose caret cannot be read, NVDA's first line is a difference.
 - Multi-column list view items: NVDA names an item of a report view
   (such as msinfo32's right pane) from its column texts, "content;
   Header: content", with no value or description. Verbatim names an item

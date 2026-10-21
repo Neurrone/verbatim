@@ -544,10 +544,11 @@ mod props {
         UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
         UIA_IsContentElementPropertyId, UIA_IsEnabledPropertyId,
         UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
-        UIA_IsOffscreenPropertyId, UIA_IsSelectionItemPatternAvailablePropertyId,
-        UIA_IsTogglePatternAvailablePropertyId, UIA_LevelPropertyId, UIA_NamePropertyId,
-        UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID, UIA_PositionInSetPropertyId,
-        UIA_ProcessIdPropertyId, UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
+        UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
+        UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTogglePatternAvailablePropertyId,
+        UIA_LevelPropertyId, UIA_NamePropertyId, UIA_NativeWindowHandlePropertyId, UIA_PROPERTY_ID,
+        UIA_PositionInSetPropertyId, UIA_ProcessIdPropertyId,
+        UIA_SelectionItemIsSelectedPropertyId, UIA_SizeOfSetPropertyId,
         UIA_ToggleToggleStatePropertyId, UIA_ValueValuePropertyId, UiaAppendRuntimeId,
         UiaHostProviderFromHwnd,
     };
@@ -810,6 +811,8 @@ mod props {
             bool_variant(node.states.contains(State::Focusable))
         } else if id == UIA_IsOffscreenPropertyId.0 {
             bool_variant(node.states.contains(State::Offscreen))
+        } else if id == UIA_IsPasswordPropertyId.0 {
+            bool_variant(node.states.contains(State::Protected))
         } else if id == UIA_IsTogglePatternAvailablePropertyId.0 {
             bool_variant(toggle_available(node.role))
         } else if id == UIA_ToggleToggleStatePropertyId.0 {

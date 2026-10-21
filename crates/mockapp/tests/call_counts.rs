@@ -4277,8 +4277,9 @@ fn uia_combo_box_costs_exactly() {
 /// the field `id` of `fixture`, the first focus in its window. Its caret
 /// is read with it, so the one focus message carries every call the focus
 /// costs: the listener's read, the outpost's own element found by the
-/// listener's path, the focus's enrichment, and the caret's read.
-fn uia_text_focus(fixture: &str, id: &str, remote: bool) -> Reported {
+/// listener's path, the focus's enrichment, and the caret's read. Each of
+/// `setup`'s mockapp commands is sent before the focus.
+fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Reported {
     let title = common::unique_title("mockapp-counts-text-focus");
     let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
@@ -4288,6 +4289,9 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool) -> Reported {
             remote_operations: remote,
         },
     );
+    for command in setup {
+        app.send(command);
+    }
     app.send(&format!("set-focus {id}"));
     let uia = Uia::new().expect("a UIA client");
     let reported = outpost.uia_focus(&common::listener_focus(&uia, hwnd.0 as isize));
@@ -4298,10 +4302,16 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool) -> Reported {
 
 /// The calls a focus on a text field costs, its caret read with it and
 /// counted in the focus's one message (`docs/performance.md`, "A focus on
-/// a text field"): a UIA document and a terminal, remotely and
-/// classically, and a classic edit control through MSAA. Each is the first
+/// a text field"): a UIA document with nothing selected, with a selection,
+/// whose text is read with the caret, and protected with a selection,
+/// whose text is not, and a terminal, each remotely and classically, and
+/// a classic edit control through MSAA. Each is the first
 /// focus in its window, so a UIA focus makes the one connection that
 /// finds the outpost's own element.
+#[expect(
+    clippy::too_many_lines,
+    reason = "every text field focus and its pinned counts, listed in full"
+)]
 fn text_field_focuses_cost_exactly() {
     common::init_com();
     let mut ratchet = Ratchet::default();
@@ -4309,12 +4319,16 @@ fn text_field_focuses_cost_exactly() {
         connections: 1,
         ..calls(uia, 0, 1)
     };
-    for (operation, fixture, id, remote, expected) in [
+    let selected: &[&str] = &["caret doc 0 5"];
+    let protected_selected: &[&str] = &["set-states doc focusable protected", "caret doc 0 5"];
+    for (operation, fixture, id, remote, setup, selected_text, expected) in [
         (
             "UIA text field focus with its caret, remotely",
             "text.json",
             "doc",
             true,
+            &[][..],
+            None,
             with_connection(9),
         ),
         (
@@ -4322,13 +4336,57 @@ fn text_field_focuses_cost_exactly() {
             "text.json",
             "doc",
             false,
+            &[][..],
+            None,
             with_connection(45),
+        ),
+        (
+            "UIA text field focus with a selection, remotely",
+            "text.json",
+            "doc",
+            true,
+            selected,
+            Some("alpha"),
+            with_connection(10),
+        ),
+        (
+            "UIA text field focus with a selection, classically",
+            "text.json",
+            "doc",
+            false,
+            selected,
+            Some("alpha"),
+            with_connection(50),
+        ),
+        // A protected field's selected text is not read, since Core says
+        // none of its text: its focus costs what one with nothing
+        // selected does, but for the classic caret read's one call more
+        // for a selection, which the unprotected field's 50 includes too.
+        (
+            "UIA protected text field focus with a selection, remotely",
+            "text.json",
+            "doc",
+            true,
+            protected_selected,
+            None,
+            with_connection(9),
+        ),
+        (
+            "UIA protected text field focus with a selection, classically",
+            "text.json",
+            "doc",
+            false,
+            protected_selected,
+            None,
+            with_connection(46),
         ),
         (
             "UIA terminal focus with its caret, remotely",
             "terminal_reading.json",
             "term",
             true,
+            &[][..],
+            None,
             with_connection(9),
         ),
         (
@@ -4336,14 +4394,26 @@ fn text_field_focuses_cost_exactly() {
             "terminal_reading.json",
             "term",
             false,
+            &[][..],
+            None,
             with_connection(27),
         ),
     ] {
-        let reported = uia_text_focus(fixture, id, remote);
-        assert!(
-            matches!(reported.text, Some(FocusText::Caret { .. })),
-            "{operation}: the focus came without its caret: {:?}",
-            reported.text
+        let reported = uia_text_focus(fixture, id, remote, setup);
+        let Some(FocusText::Caret {
+            selected_text: read,
+            ..
+        }) = &reported.text
+        else {
+            panic!(
+                "{operation}: the focus came without its caret: {:?}",
+                reported.text
+            );
+        };
+        assert_eq!(
+            read.as_deref(),
+            selected_text,
+            "{operation}: the selected text"
         );
         ratchet.check_calls(operation, reported.calls, expected);
     }

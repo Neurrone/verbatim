@@ -2272,9 +2272,55 @@ fn an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off
     app.quit();
 }
 
+/// A protected (password) field focused with something selected comes
+/// with its caret and no selected text: Core says none of a protected
+/// field's text, so the outpost does not read it
+/// (`docs/parity/focus-announcement.md`, "Text on focus").
+fn a_protected_fields_focus_comes_with_its_caret_and_no_selected_text() {
+    let title = common::unique_title("mockapp-protected-focus");
+    let mut app = common::spawn("text.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-states doc focusable protected");
+    app.send("caret doc 0 5");
+    app.send("set-focus doc");
+    let reported = outpost.uia_focus(&client.focused());
+    let Some(FocusText::Caret {
+        caret,
+        selected_text,
+    }) = &reported.text
+    else {
+        panic!("the focus came without its caret: {:?}", reported.text);
+    };
+    assert_eq!(
+        (
+            reported.node.states.contains(State::Protected),
+            caret.line.text.as_str(),
+            caret.selection.is_some(),
+            selected_text.as_deref(),
+        ),
+        (
+            true,
+            "alpha beta
+",
+            true,
+            None
+        )
+    );
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_protected_fields_focus_comes_with_its_caret_and_no_selected_text",
+            a_protected_fields_focus_comes_with_its_caret_and_no_selected_text,
+        ),
         (
             "a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed",
             a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed,
