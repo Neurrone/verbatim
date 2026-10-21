@@ -4902,6 +4902,47 @@ fn flat_review_copies_back_from_the_marker_through_the_marker_s_character() {
     assert_eq!(effects, vec![Effect::CopyToClipboard("bc".to_owned())]);
 }
 
+/// Flat text's first press is NVDA's attempt to select, so a further first
+/// press asks for the second, which copies and clears the start marker
+/// (`docs/parity/review.md`, "Select then copy from the review cursor").
+#[test]
+fn flat_review_asks_for_the_second_press_after_a_first() {
+    use verbatim_model::Message;
+    let state = reviewing("abcd");
+    let (state, _) = review(&state, ReviewCommand::SetStartMarker, 0);
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    let (state, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(segments, vec![message(Message::CannotSelect)]);
+    let (state, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(segments, vec![message(Message::PressTwiceToCopy)]);
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+    );
+    assert_eq!(effects, vec![Effect::CopyToClipboard("ab".to_owned())]);
+    let (_, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(segments, vec![message(Message::NoStartMarker)]);
+}
+
+/// A copy of empty flat text copies nothing, says nothing, and still
+/// clears the start marker.
+#[test]
+fn flat_review_copy_of_nothing_clears_the_start_marker() {
+    use verbatim_model::Message;
+    let state = focused(
+        Pid(1),
+        node(140, Role::StaticText, None, None, StateSet::new()),
+    );
+    let (state, _) = review(&state, ReviewCommand::SetStartMarker, 0);
+    let (state, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+    );
+    assert_eq!(effects, Vec::new());
+    let (_, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(segments, vec![message(Message::NoStartMarker)]);
+}
+
 /// An emoji with a skin tone is one character in flat review, so the next
 /// character after it is the space.
 #[test]

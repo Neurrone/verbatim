@@ -1489,6 +1489,123 @@ fn select_then_copy_selects_from_the_start_marker_says_so_copies_and_clears_the_
     assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
 }
 
+/// Whether `effects` ask the outpost for anything.
+fn requests_text(effects: &[Effect]) -> bool {
+    effects
+        .iter()
+        .any(|effect| matches!(effect, Effect::Text(_)))
+}
+
+/// A start marker on "h" of "hello world", the review cursor moved to
+/// "w", and select then copy's first press made, its selection of "hello
+/// w" answered; returns the range it selected.
+fn selected_from_the_marker(state: &mut SrState) -> TextOp {
+    let _ = reduce(state, &command(ReviewCommand::SetStartMarker, 0));
+    let _ = reduce(state, &command(ReviewCommand::ReviewNextWord, 0));
+    let effects = reduce(state, &command(ReviewCommand::SelectThenCopy, 0));
+    let select = request(&effects);
+    let _ = reduce(
+        state,
+        &completed(
+            select.query_id,
+            TextReply::Selected(vec![SelectionChange {
+                selected: true,
+                text: "hello w".to_owned(),
+                characters: 7,
+            }]),
+        ),
+    );
+    select.op
+}
+
+#[test]
+fn a_first_press_after_a_selection_not_yet_copied_asks_for_the_second() {
+    // NVDA keeps the range a first press selected: a further first press
+    // says so and selects nothing, and the second press copies that range
+    // (`docs/parity/review.md`, "Select then copy from the review cursor").
+    let mut state = reviewing("hello world\n", 0);
+    let TextOp::Select {
+        start,
+        end,
+        through,
+    } = selected_from_the_marker(&mut state)
+    else {
+        panic!("the first press selects");
+    };
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    assert!(!requests_text(&effects));
+    assert_eq!(spoken(&effects), vec![message(Message::PressTwiceToCopy)]);
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::ReadRange {
+            start,
+            end,
+            through
+        }
+    );
+}
+
+#[test]
+fn a_copy_of_nothing_clears_the_start_marker_and_says_nothing() {
+    let mut state = reviewing("hello world\n", 0);
+    let _ = selected_from_the_marker(&mut state);
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request(&effects).query_id,
+            TextReply::Range {
+                text: String::new(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(effects, Vec::new());
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
+}
+
+#[test]
+fn a_copy_the_text_cannot_answer_clears_the_start_marker() {
+    let mut state = reviewing("hello world\n", 0);
+    let _ = selected_from_the_marker(&mut state);
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 1));
+    let effects = reduce(
+        &mut state,
+        &completed(request(&effects).query_id, TextReply::NoText),
+    );
+    assert_eq!(spoken(&effects), vec![message(Message::NotSupported)]);
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
+}
+
+#[test]
+fn the_start_marker_in_another_object_is_no_start_marker_and_is_kept() {
+    // NVDA says "No start marker set" with the navigator elsewhere, and
+    // the marker is there again when it returns.
+    let mut state = reviewing("hello world\n", 0);
+    let _ = reduce(&mut state, &command(ReviewCommand::SetStartMarker, 0));
+    focus(&mut state, node(6, Role::Button, StateSet::new()));
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    assert!(!requests_text(&effects));
+    assert_eq!(spoken(&effects), vec![message(Message::NoStartMarker)]);
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let effects = reduce(&mut state, &command(ReviewCommand::SelectThenCopy, 0));
+    let effects = read_at_caret(&mut state, &effects, line("hello world\n", 100, 0));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::Select {
+            start: at(0),
+            end: at(0),
+            through: Some(TextThrough {
+                start: at(1),
+                end: at(1),
+            }),
+        }
+    );
+}
+
 /// The point `offset` bytes into the line [`reviewing`] reads, anchor 100.
 fn at(offset: u32) -> TextPoint {
     TextPoint::At(TextPosition {

@@ -454,6 +454,13 @@ fn execute(
                     }),
                 )
             };
+            if repeat == 0 && selected_to.is_some() {
+                // The range a first press selected is kept until a second
+                // press copies it or the marker is set again; a further
+                // first press only says so (`docs/parity/review.md`,
+                // "Select then copy from the review cursor").
+                return vec![speak(trace_id, message(Message::PressTwiceToCopy))];
+            }
             if repeat == 0 {
                 // The second press copies the range this one selects, as
                 // NVDA's does, wherever the review cursor has gone since:
@@ -498,12 +505,14 @@ fn execute(
     request(state, node, op, then)
 }
 
-/// The start marker, when it is in `node`'s text; otherwise what to say.
+/// The start marker, when it is in `node`'s text; otherwise what to say:
+/// "No start marker set" whether there is none or it is in another object,
+/// which keeps it for when the navigator returns (`docs/parity/review.md`,
+/// "Select then copy from the review cursor").
 fn marker_in(state: &SrState, node: NodeId) -> Result<StartMarker, Vec<UtteranceSegment>> {
     match state.start_marker {
-        None => Err(message(Message::NoStartMarker)),
-        Some(marker) if marker.node() != node => Err(message(Message::StartMarkerElsewhere)),
-        Some(marker) => Ok(marker),
+        Some(marker) if marker.node() == node => Ok(marker),
+        _ => Err(message(Message::NoStartMarker)),
     }
 }
 
@@ -625,12 +634,21 @@ pub(crate) fn reply(
                 Phrase::Positioned { x, y },
             ))],
         )],
-        // A copy clears the start marker, so a further press has none
-        // (`docs/parity/review.md`, "Select then copy from the review
-        // cursor").
-        (TextFollowUp::Copy, TextReply::Range { text, .. }) if !text.is_empty() => {
+        // A copy clears the start marker whatever it found, so a further
+        // press has none; a range with nothing in it copies nothing and
+        // says nothing (`docs/parity/review.md`, "Select then copy from
+        // the review cursor").
+        (TextFollowUp::Copy, reply) => {
             state.start_marker = None;
-            vec![Effect::CopyToClipboard(text)]
+            match reply {
+                TextReply::Range { text, .. } if !text.is_empty() => {
+                    vec![Effect::CopyToClipboard(text)]
+                }
+                TextReply::Unsupported | TextReply::UnsupportedUnit(_) | TextReply::NoText => {
+                    vec![speak(trace_id, message(Message::NotSupported))]
+                }
+                _ => Vec::new(),
+            }
         }
         // The selection the command made is spoken as a caret key's is,
         // "selected" and "unselected" from the same comparison
@@ -649,7 +667,7 @@ pub(crate) fn reply(
             vec![speak(trace_id, message(Message::CannotSelect))]
         }
         (_, TextReply::Unsupported | TextReply::UnsupportedUnit(_))
-        | (TextFollowUp::Location | TextFollowUp::Copy, TextReply::NoText) => {
+        | (TextFollowUp::Location, TextReply::NoText) => {
             vec![speak(trace_id, message(Message::NotSupported))]
         }
         (_, _) if !on_navigator => Vec::new(),
@@ -793,7 +811,11 @@ pub(crate) fn flat_extra(
             vec![speak(trace_id, text::text_segments(rest, None))]
         }
         ReviewCommand::SetStartMarker => {
-            state.start_marker = Some(StartMarker::Flat { node, offset });
+            state.start_marker = Some(StartMarker::Flat {
+                node,
+                offset,
+                selected: false,
+            });
             vec![speak(trace_id, message(Message::StartMarked))]
         }
         ReviewCommand::MoveToStartMarker => match marker_in(state, node) {
@@ -808,10 +830,21 @@ pub(crate) fn flat_extra(
             Err(segments) => vec![speak(trace_id, segments)],
         },
         ReviewCommand::SelectThenCopy => match marker_in(state, node) {
-            Ok(StartMarker::Flat { offset: start, .. }) => {
-                if repeat == 0 {
+            Ok(StartMarker::Flat {
+                offset: start,
+                selected,
+                ..
+            }) => {
+                if repeat == 0 && selected {
+                    vec![speak(trace_id, message(Message::PressTwiceToCopy))]
+                } else if repeat == 0 {
                     // Flat text cannot be selected; pressed again, it is
                     // copied.
+                    state.start_marker = Some(StartMarker::Flat {
+                        node,
+                        offset: start,
+                        selected: true,
+                    });
                     vec![speak(trace_id, message(Message::CannotSelect))]
                 } else {
                     // From the earlier of the marker and the review cursor
@@ -825,9 +858,10 @@ pub(crate) fn flat_extra(
                     } else {
                         (start, after(offset))
                     };
+                    // The copy clears the marker whatever it found.
+                    state.start_marker = None;
                     match flat.get(from..to) {
                         Some(copied) if !copied.is_empty() => {
-                            state.start_marker = None;
                             vec![Effect::CopyToClipboard(copied.to_owned())]
                         }
                         _ => Vec::new(),

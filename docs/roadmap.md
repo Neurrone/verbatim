@@ -357,11 +357,6 @@ full suite ten times clean.
 Small differences from NVDA found during M4, each closed against a live
 NVDA capture.
 
-- NVDA's "Press twice to copy or reset the start marker", for a first
-  press of Verbatim+F10 after a selection not yet copied, and the start
-  marker cleared when a copy fails, where Verbatim keeps it (Dickson,
-  2026-10-15; [review parity](parity/review.md), "Select then copy from
-  the review cursor").
 - The M4.2 compare runs capture NVDA's review bottom (Shift+Numpad 9) in
   the Windows Forms text box, to confirm or correct the source reading in
   [text parity](parity/text.md), "The review cursor's bottom in a

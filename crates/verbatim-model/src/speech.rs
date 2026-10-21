@@ -281,11 +281,13 @@ pub enum Message {
     Space,
     /// The select-then-copy start marker was set — NVDA's "Start marked".
     StartMarked,
-    /// Select then copy with no start marker — NVDA's "No start marker set".
+    /// Select then copy with no start marker, or with the start marker in
+    /// another object — NVDA's "No start marker set".
     NoStartMarker,
-    /// Select then copy with the start marker in another object — NVDA's
-    /// "The start marker must reside within the same object".
-    StartMarkerElsewhere,
+    /// Select then copy pressed once again after a first press whose range
+    /// is not yet copied — NVDA's "Press twice to copy or reset the start
+    /// marker".
+    PressTwiceToCopy,
     /// The review cursor now follows the caret — NVDA's "caret moves review
     /// cursor".
     CaretMovesReview,

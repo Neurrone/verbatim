@@ -4,8 +4,12 @@
 //! the current line, word, and character without moving the caret, moving
 //! by line, word, and character, the line's ends (the end being its line
 //! break, named as NVDA names it) and the text's top and
-//! bottom, and Verbatim+F9 and F10 copying a range, checked by pasting it,
-//! after which a further press of F10 finds the start marker cleared.
+//! bottom, and Verbatim+F9 and F10 copying a range, checked by pasting it:
+//! a first press of F10 again before the copy asks for the second press,
+//! and after the copy a further press finds the start marker cleared.
+//! Last, a start marker set and the navigator moved to the parent object,
+//! where F10 finds no start marker, and back at the focus, where F10
+//! selects from the kept marker.
 //!
 //! The document is a small text table whose second column starts at column
 //! 8 on every row long enough to have one. Moving down the table keeps the
@@ -34,6 +38,10 @@ const NAME: &str = "review";
 /// The document: a table whose quantity column starts at column 8.
 const DOCUMENT: &str = "Name    Qty\r\nApple   3\r\nFig\r\nBanana  12\r\n";
 
+/// What Verbatim+F10 says pressed once after a first press whose range is
+/// not yet copied.
+const PRESS_TWICE: &str = "Press twice to copy or reset the start marker";
+
 /// The scenario's document, which Notepad opens before Verbatim starts.
 pub(crate) fn document() -> Document {
     Document {
@@ -55,6 +63,16 @@ fn review(scenario: &mut Scenario, gesture: &str, heard: &str) {
 fn review_kept_column(scenario: &mut Scenario, gesture: &str, heard: &str) {
     scenario.send_gesture(gesture).expect("sends the gesture");
     scenario.deviates_from_nvda("docs/parity/review.md", "Review cursor columns");
+    scenario.speech().expect(&[heard]);
+}
+
+/// [`review`] for a step that moves the navigator to an object NVDA's
+/// default simple review skips: Verbatim's object navigation walks the
+/// full tree, as NVDA's does with simple review off
+/// (`docs/parity/review.md`, "Navigation tree shape").
+fn review_full_tree(scenario: &mut Scenario, gesture: &str, heard: &str) {
+    scenario.send_gesture(gesture).expect("sends the gesture");
+    scenario.deviates_from_nvda("docs/parity/review.md", "Navigation tree shape");
     scenario.speech().expect(&[heard]);
 }
 
@@ -128,16 +146,21 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     review(scenario, "kb:numpad3", "m");
     review(scenario, "kb:numpad3", "e");
     // The first press of Verbatim+F10 selects the range and announces the
-    // selection as a selecting key's is. The second, pressed while that
-    // plays, so within the multi-press timeout, cuts it off and copies.
+    // selection as a selecting key's is. A first press again, with that
+    // range not yet copied, only asks for the second press.
+    review(scenario, "kb:verbatim+f10", "Name selected");
+    review(scenario, "kb:verbatim+f10", PRESS_TWICE);
+    // Pressed twice, the first press asks again, and the second, pressed
+    // while that plays, so within the multi-press timeout, cuts it off and
+    // copies the range the first selection made.
     scenario
         .send_keys(&["insert+f10"])
         .expect("sends Verbatim+F10");
-    let selected = scenario.speech().expect_started("Name selected");
+    let asked = scenario.speech().expect_started(PRESS_TWICE);
     scenario
         .send_keys(&["insert+f10"])
         .expect("sends Verbatim+F10 again");
-    scenario.speech().expect_ended(&selected, Ending::Cancelled);
+    scenario.speech().expect_ended(&asked, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
     // The copy cleared the start marker, so Verbatim+F10 pressed again,
     // once the copy's confirmation is heard in full, finds none.
@@ -157,6 +180,23 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     scenario.send_keys(&["home"]).expect("sends home");
     scenario.speech().expect(&["N"]);
     review(scenario, "kb:numpad8", "Name");
+
+    // A start marked there, and the navigator moved to the text box's
+    // parent: Verbatim+F10 there finds no start marker, which is kept for
+    // the text box, and back at the focus selects from it through the
+    // review cursor, both on the line's first character.
+    review(scenario, "kb:verbatim+f9", "Start marked");
+    // The parent is the text box's own window, which NVDA's simple review
+    // skips for the form's window.
+    review_full_tree(scenario, "kb:verbatim+numpad8", "Text window");
+    review(scenario, "kb:verbatim+f10", "No start marker set");
+    scenario
+        .send_gesture("kb:verbatim+numpadminus")
+        .expect("sends the gesture");
+    scenario
+        .speech()
+        .expect(&["Move to focus Text edit multi line", "Name"]);
+    review(scenario, "kb:verbatim+f10", "N selected");
 }
 
 /// The scenario in Windows 11 Notepad.
@@ -210,16 +250,21 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     review(scenario, "kb:numpad3", "m");
     review(scenario, "kb:numpad3", "e");
     // The first press of Verbatim+F10 selects the range and announces the
-    // selection as a selecting key's is. The second, pressed while that
-    // plays, so within the multi-press timeout, cuts it off and copies.
+    // selection as a selecting key's is. A first press again, with that
+    // range not yet copied, only asks for the second press.
+    review(scenario, "kb:verbatim+f10", "Name selected");
+    review(scenario, "kb:verbatim+f10", PRESS_TWICE);
+    // Pressed twice, the first press asks again, and the second, pressed
+    // while that plays, so within the multi-press timeout, cuts it off and
+    // copies the range the first selection made.
     scenario
         .send_keys(&["insert+f10"])
         .expect("sends Verbatim+F10");
-    let selected = scenario.speech().expect_started("Name selected");
+    let asked = scenario.speech().expect_started(PRESS_TWICE);
     scenario
         .send_keys(&["insert+f10"])
         .expect("sends Verbatim+F10 again");
-    scenario.speech().expect_ended(&selected, Ending::Cancelled);
+    scenario.speech().expect_ended(&asked, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
     // The copy cleared the start marker, so Verbatim+F10 pressed again,
     // once the copy's confirmation is heard in full, finds none.
@@ -239,6 +284,23 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     scenario.send_keys(&["home"]).expect("sends home");
     scenario.speech().expect(&["N"]);
     review(scenario, "kb:numpad8", "Name");
+
+    // A start marked there, and the navigator moved to the text area's
+    // parent: Verbatim+F10 there finds no start marker, which is kept for
+    // the text area, and back at the focus selects from it through the
+    // review cursor, both on the line's first character.
+    review(scenario, "kb:verbatim+f9", "Start marked");
+    // The parent is a pane, which NVDA's simple review skips for
+    // Notepad's window.
+    review_full_tree(scenario, "kb:verbatim+numpad8", "pane");
+    review(scenario, "kb:verbatim+f10", "No start marker set");
+    scenario
+        .send_gesture("kb:verbatim+numpadminus")
+        .expect("sends the gesture");
+    scenario
+        .speech()
+        .expect(&["Move to focus Text editor document", "Name"]);
+    review(scenario, "kb:verbatim+f10", "N selected");
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");

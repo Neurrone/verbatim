@@ -692,9 +692,7 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::Space => i18n_embed_fl::fl!(loader, "message-space"),
         Message::StartMarked => i18n_embed_fl::fl!(loader, "message-start-marked"),
         Message::NoStartMarker => i18n_embed_fl::fl!(loader, "message-no-start-marker"),
-        Message::StartMarkerElsewhere => {
-            i18n_embed_fl::fl!(loader, "message-start-marker-elsewhere")
-        }
+        Message::PressTwiceToCopy => i18n_embed_fl::fl!(loader, "message-press-twice-to-copy"),
         Message::CaretMovesReview => i18n_embed_fl::fl!(loader, "message-caret-moves-review"),
         Message::CaretDoesNotMoveReview => {
             i18n_embed_fl::fl!(loader, "message-caret-does-not-move-review")
@@ -1848,6 +1846,10 @@ mod tests {
         assert_eq!(
             message_text(verbatim_model::Message::CannotSelect),
             "Can't select text, press twice to copy"
+        );
+        assert_eq!(
+            message_text(verbatim_model::Message::PressTwiceToCopy),
+            "Press twice to copy or reset the start marker"
         );
         assert_eq!(role_name(verbatim_model::Role::Terminal), "terminal");
         assert_eq!(role_name(verbatim_model::Role::IpAddress), "IP address");

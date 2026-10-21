@@ -221,35 +221,50 @@ descriptions on repeated presses, top and bottom, and the edge messages) read th
 
 Select then copy from the review cursor (Verbatim+F9, Verbatim+Shift+F9,
 Verbatim+F10 once to select and twice to copy). NVDA: the same keys and
-messages ("Start marked", "No start marker set", "The start marker must
-reside within the same object", "Can't select text, press twice to
-copy"). The first press selects the range in the control, from the
-earlier of the start marker and the review cursor through the character
-at the later, whichever of the two that is, so the characters at both
-ends are included whichever way the review cursor moved, and announces
-the selection's change as a selecting key's is announced ("Name
-selected"); where the text cannot be selected it says "Can't select text,
-press twice to copy". The second, within the multi-press timeout, copies
-the range the first selected ("Copied to clipboard: Name") and clears the
-start marker, so a further press says "No start marker set".
+messages ("Start marked", "No start marker set", "Can't select text,
+press twice to copy", "Press twice to copy or reset the start marker").
+The first press selects the range in the control, from the earlier of
+the start marker and the review cursor through the character at the
+later, whichever of the two that is, so the characters at both ends are
+included whichever way the review cursor moved, and announces the
+selection's change as a selecting key's is announced ("Name selected");
+where the text cannot be selected it says "Can't select text, press
+twice to copy". The first press keeps the range it built until it is
+copied or the start marker is set again, so a further first press says
+"Press twice to copy or reset the start marker" and selects nothing,
+flat text included, where the first press only tried to select. The
+second, within the multi-press timeout, copies that range ("Copied to
+clipboard: Name") and clears the start marker whether or not anything
+was copied, so a further press says "No start marker set"; a range with
+no text copies nothing and says nothing. With the navigator in another
+object than the marker, Verbatim+F10 says "No start marker set" and
+keeps the marker, so back in the marker's object it selects from it.
+NVDA has no message of its own for that case. The captures
+`target/e2e-evidence/m42-captures-2026-10-21/1a-review-copy-messages.txt`,
+`1b-start-marker-other-object-parent.txt`, and
+`1b-start-marker-other-object-and-back.txt` show both.
 Verbatim: **matched (verified)** by `text_box_review_cursor` and
 `notepad_review_cursor`, implemented in Core: the first press's
 announcement comes from the same comparison of the selection before and
 after, and the same wording, as a selecting key's, and the first press
 says "Can't select text, press twice to copy" when the text cannot be
-selected, flat text included. The range with the review cursor moved
-back before the marker is covered by
+selected, flat text included. The marker in another object saying "No
+start marker set" is Fable's decision of 2026-10-21, pending Dickson's
+acceptance. The range with the review cursor moved back before the
+marker is covered by
 `select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker`
 (`crates/verbatim-core/tests/text.rs`), with flat text by
 `flat_review_copies_back_from_the_marker_through_the_marker_s_character`
 (`crates/verbatim-core/tests/reduce.rs`), and the outpost's range by
 `a_range_through_its_ends_holds_both_ends_characters_whichever_comes_first`.
-NVDA's "Press twice to copy or reset the start marker", for a first press
-after a selection not yet copied, is not yet built (M4.2): such a
-press selects again (Dickson, 2026-10-15). NVDA's second press clears
-the start marker even when the copy fails, while Verbatim keeps it when
-there was nothing to copy; clearing it then is not yet built (M4.2)
-(Dickson, 2026-10-15).
+A copy the text cannot answer says "Not supported in this document" and
+clears the marker too. NVDA's "No text to copy", for a first press whose
+range holds nothing, which it says and then clears the marker, is not
+built: the range holds nothing only where the marker and the review
+cursor are at the same place with no character there, such as the end of
+the text, and Core cannot tell that two positions from different reads
+are the same place, so such a press asks the control to select nothing,
+and its second press copies nothing.
 
 ### Document review and screen review modes
 
