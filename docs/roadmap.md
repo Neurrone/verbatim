@@ -12,8 +12,8 @@ VM), and M3 (desktop usability core) are complete. Their full scope
 and exit-criteria evidence are archived in
 [Completed milestones](roadmap-done.md). M4 is in progress; the
 parts of it that have landed are listed there too, under "M4, completed
-so far". M4.1 (stability) is complete and archived there, with its
-follow-ups.
+so far". M4.1 (stability) is complete and archived there; its open
+follow-ups are under M4, "Follow-ups from M4.1".
 
 ## M4 — Text, editing, and terminals
 
@@ -41,8 +41,8 @@ Deferred list closes the section with items that are not M4's.
 What has landed is in [Completed milestones](roadmap-done.md), "M4,
 completed so far". The open work was planned as three groups, each one
 session (Dickson, 2026-10-15). The first, the focus pipeline with its
-File Explorer evidence pass, landed on 2026-10-17, and its follow-ups are
-in M4.1, archived there. Two groups remain: the terminal redesign with the key-holding
+File Explorer evidence pass, landed on 2026-10-17, and its open
+follow-ups are under "Follow-ups from M4.1" below. Two groups remain: the terminal redesign with the key-holding
 question, and the audio step; within a group, the items are in the order they are done
 (Dickson, 2026-10-10 and 2026-10-13). Each item is one change,
 checked with `cargo xtask ci` and its related scenarios ten times, with the
@@ -167,6 +167,113 @@ with the item.
   character from its keyboard hook, before the application handles the
   key, where NVDA echoes from the application's typed-character event; a
   letter typed within about 40 ms of Tab is not echoed.
+
+### Follow-ups from M4.1
+
+M4.1 (stability) is complete and archived in [Completed
+milestones](roadmap-done.md); these are its follow-ups still open or
+deferred.
+
+- The outpost crash inside UI Automation's saved-event delivery
+  ([the phase 6 design](design/phase6-design.md), "Console windows as one
+  application"): section 17 of the focus-pipeline design is built
+  (152f09a), but `conhost_leave_flood`'s console host outpost failed
+  fast again on 2026-10-12; its full dump, kept outside the repository,
+  is to be read and section 17's fifty-run check made.
+- Verbatim's own outpost once left a fact in its intake for 6.37 seconds
+  (2026-10-11); it is to be reproduced with the intake and menu logs of
+  f9d067d.
+- An audit of every end-to-end scenario for timing races (2026-10-11),
+  each race fixed by waiting for evidence, not a longer bound; and the
+  agent's bring-forward, which always takes its slowest path (once 1.4
+  seconds), its cause open. A known weakness of `measure_focus_explorer`'s
+  key waits: each ends on its key's item, and "alpha 2 of 4" ends both
+  Down 1 and Up 1, as "Inner 1 of 4" ends both Up 2 and Backspace, so a
+  late repeat of one step's item arriving after the next key would end
+  that key's wait; renaming cannot remove it, since the targets are
+  `explorer_folder_window`'s.
+- The staging windows' focus, which Verbatim drops, so speech is not cut
+  at the staging window where NVDA cuts it, is deferred until a capture
+  shows speech that should have been cut, since the spoken words already
+  match (the audits' item 11, Dickson, 2026-10-20;
+  `docs/parity/windows-and-processes.md`, "The shell's staging windows").
+- The classic .NET Framework Windows Forms combo box rule,
+  element-selected events from the `ComboLBox` window reported as the
+  combo box's value change (`NVDAObjects/UIA/__init__.py`, lines 2734 to
+  2744 and 2779 to 2790), is deferred until Verbatim reads such a combo
+  box in an application, since no .NET Framework application is in the
+  suite (the audits' item 11, Dickson, 2026-10-20).
+- The rule for a `Windows.UI.Core` combo box that has the `Value` pattern
+  (lines 2795 to 2798) is not built, since every Settings combo box
+  checked on 2026-10-20 lacks the pattern and takes the rule without it
+  (`docs/parity/changes-and-selection.md`, "A combo box's value from its
+  selected item").
+- The events NVDA registers desktop-wide that Verbatim lacks (the audits'
+  item 10) are deferred until each event is supported (Dickson,
+  2026-10-20); `docs/parity/backends.md`, "UIA event registration",
+  records the gap, and a foreground UIA progress bar that is not the
+  focus is in M4.2, background progress bars in M4.3.
+- What Verbatim does for a user whose first OneCore activation after
+  logon takes longer than the synthesizer host's ten-second hang bound is
+  open (Dickson, 2026-10-21).
+- GitHub's CI on main failed on the two pushes before 2026-10-15 (runs
+  38271366442 and 38544999189) in the ARM64 job's unit test
+  `the_codeview_record_read_is_the_one_dbghelp_reports` in
+  `verbatim-trace-waits` and in the hosted end-to-end job's
+  `windows_terminal_two_windows` and `windows_terminal_leave_flood`;
+  each is to be root-caused from the run logs
+  (`gh run view <id> --log-failed`), since neither reproduces here.
+- UIA's late or missing delivery of a new process's focus events, and the
+  burst of gone senders (risks 2 and 13 of
+  [the listener design](design/listener-without-connections.md)), are
+  recovered by decision 11's step; the first `settings_system_page` or
+  File Explorer run that meets the fault is to be read for the outpost's
+  "the focus is read and reported" line and the speech after it.
+- File Explorer can give the focus to its "Working on it..." placeholder
+  and raise no later focus, UIA or `WinEvent`, so
+  `measure_focus_explorer`'s step times out
+  (`target/e2e-evidence/fixes-round-fifteen-2026-10-21/mfe-1-fail/`);
+  decision 11's wait cannot recover it, and what File Explorer raises
+  then, beyond a name change and three state changes on the items view,
+  is to be found.
+- The outpost's remote focus program still reports as a complete walk
+  one that ends at a missing parent above an element with its own window
+  handle when no top-level window was reached; only a fragment element
+  reporting a handle it does not host reaches this.
+- Why the `delta` item inside Inner in run 39558690998 still carried the
+  parent folder's window title, File Explorer's title lagging or a stale
+  ancestor name, is to be checked.
+- A console window read through MSAA is "pane" where NVDA gives its
+  client object the legacy console overlay with the terminal role
+  (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,
+  and `IAccessible/winConsole.py`; deferred, Dickson, 2026-10-21).
+- On a fresh GitHub runner the first Verbatim start can say "Start toggle
+  button not pressed" instead of "Desktop list", because the taskbar
+  rehosts the Start button in a new PopupHost window and raises a UIA
+  focus NVDA's checks would accept too (runs 39040893786 and
+  38980790680); the choice between a throwaway warm-up start before the
+  suite and an experiment to find what triggers the rehosting is
+  deferred (Dickson, 2026-10-21).
+- Notepad's "app not responding" sound played once in `notepad_editing`
+  on 2026-10-18, about 2 seconds after a right arrow, and the rerun
+  passed; it is investigated if it recurs.
+- In File Explorer scenarios the listener's read once came 285
+  milliseconds late, locally mostly the first nearest-window lookup
+  waiting on a busy File Explorer (logged since f9fb32f7); the same is to
+  be confirmed on GitHub's runner (deferred, Dickson, 2026-10-21).
+- Windows Terminal sometimes raises its terminal's focus under a second
+  runtime id, the one starting 14, so the terminal is said twice, or
+  three times for a second window, which the tests accept as an optional
+  utterance; the rule that recognizes it is deferred to Windows
+  Terminal's app module in M5 (`target/e2e-evidence/full-suite-2026-10-17/`
+  and `target/e2e-evidence/full-suite-2026-10-17-spares-off/`).
+- One UIA focus event reached the listener 5 seconds late in a console
+  host run on 2026-10-17; it is watched for again.
+- The trace tool's symbol lookup for ARM64X images, such as ntdll, needs
+  a follow-up that can be tested only on the ARM64 runner (deferred,
+  Dickson, 2026-10-21).
+- `line_key_flood` once read a half-written line on GitHub's runner; it
+  is to be repeated there (deferred, Dickson, 2026-10-21).
 
 ## M4.2 — Parity small items
 

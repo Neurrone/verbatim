@@ -124,5 +124,5 @@ window (`ForegroundStaging`, `LauncherTipWnd`,
 `ApplicationManager_DesktopShellWindow`), so nothing is said for it.
 **matched (verified)** for what is said (the two-window scenarios).
 Different: since the focus is dropped, speech is not cut at the staging
-window, only at the window switched to (the audits' items in M4.1's
-follow-ups, in [Completed milestones](../roadmap-done.md)).
+window, only at the window switched to ([the roadmap](../roadmap.md),
+M4, "Follow-ups from M4.1").

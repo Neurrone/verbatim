@@ -275,7 +275,7 @@ set: File Explorer sometimes gives the focus to the placeholder and raises
 no later focus, so the wait for the item times out with no fault of
 Verbatim's (2 of 3 runs on 2026-10-21,
 `target/e2e-evidence/fixes-round-fifteen-2026-10-21/mfe-1-fail` and
-`mfe-2-fail`; M4.1's follow-ups in `docs/roadmap-done.md` record it), and the run is
+`mfe-2-fail`; `docs/roadmap.md`, M4, "Follow-ups from M4.1", records it), and the run is
 recorded and repeated.
 
 **A window's title-bar information takes seconds during a parallel
