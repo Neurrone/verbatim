@@ -110,6 +110,10 @@ nothing. `crates/mockapp/src/stdin.rs` documents each command in full.
 - `answer-property <property id> <fail|empty|usual>` (UIA only) makes
   every provider's `GetPropertyValue` for that numeric property id fail,
   answer `VT_EMPTY`, or answer as usual again; one property at a time.
+- `answer-parent <id> <fail|none|usual> [<after>]` (UIA only) makes that
+  node's provider answer `Navigate(Parent)` failing with `E_FAIL`, with no
+  parent, or as usual again, after first answering `after` such calls as
+  usual; UIA hands a client no parent either way.
 - `take-runtime-id <id> <from>` (UIA only) removes node `from` from the
   tree, every call on its elements failing with
   `UIA_E_ELEMENTNOTAVAILABLE`, and gives node `id` its runtime id, as File

@@ -570,7 +570,7 @@ pub(super) fn uia_remote_enrichment(
         .selected_child
         .as_ref()
         .map(|child| child.snapshot(registry));
-    let ancestors = if ancestry.out_of_time {
+    let ancestors = if ancestry.ancestors_unknown() {
         None
     } else {
         let desktop = desktop_window();

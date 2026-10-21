@@ -62,6 +62,9 @@ pub(crate) struct NodeData {
     /// has left the tree, and every call on its elements fails as on an
     /// element that is gone.
     pub(crate) dead: bool,
+    /// How the node's UIA provider answers `Navigate(Parent)`, once it has
+    /// answered as many calls as usual as the count says (`answer-parent`).
+    pub(crate) parent_answer: (crate::stdin::ParentAnswer, u32),
     /// Whether UIA counts the node as content (`IsContentElement`).
     pub(crate) content: bool,
 }
@@ -274,6 +277,7 @@ fn insert(
         children: Vec::new(),
         runtime_id: index,
         dead: false,
+        parent_answer: (crate::stdin::ParentAnswer::Usual, 0),
         content: node.content,
     });
     by_fixture_id.insert(node.id, index);

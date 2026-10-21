@@ -799,6 +799,75 @@ fn a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown() {
     }
 }
 
+/// A focus whose walk's step to a parent fails, or finds no parent, below
+/// the desktop root is reported with its containers unknown, never as
+/// having none: only the root ends a known walk, as NVDA reads the window
+/// hierarchy when its parent read fails (`NVDAObjects/UIA/__init__.py`
+/// 2142 to 2145), whether remote operations are on or off. The listener's
+/// classic read steps from the focus to its parent after its nearest
+/// window has been found, as File Explorer's "Working on it..."
+/// placeholder answers its properties after it has left the tree. UIA
+/// hands the client no parent both when the provider's `Navigate` fails
+/// and when it answers none (verified), so a step that fails with a code
+/// is covered by the walk's own unit test.
+fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
+    for (answer, remote) in [
+        ("fail", true),
+        ("fail", false),
+        ("none", true),
+        ("none", false),
+    ] {
+        let path = if remote { "remote" } else { "classic" };
+        let case = format!("{answer} {path}");
+        let mut fixture = Fixture::start(&format!("mockapp-rops-parent-{answer}-{path}"));
+        let outpost = OutpostUnderTest::with_options(
+            &fixture.app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        );
+        // A focus before, in the same window, whose containers are known.
+        let check = fixture.focus_delivered("check", "Remember");
+        outpost.deliver(outpost.listener_fact(&check));
+        assert!(
+            matches!(
+                outpost.next(),
+                OutpostToSupervisor::Event {
+                    event: NormalizedEvent::FocusChanged { .. },
+                    ..
+                }
+            ),
+            "{case}: the focus before is reported"
+        );
+        outpost.settled();
+        let deep = fixture.focus_delivered("deep", "Deep button");
+        // The listener's walk to the nearest window steps to the focus's
+        // parent once first; the step after it is the classic read's.
+        fixture.app.send(&format!("answer-parent deep {answer} 1"));
+        outpost.deliver(outpost.listener_fact(&deep));
+        match outpost.next() {
+            OutpostToSupervisor::Event {
+                event:
+                    NormalizedEvent::FocusChanged {
+                        node,
+                        ancestors,
+                        ancestors_unknown,
+                        ..
+                    },
+                ..
+            } => {
+                assert_eq!(node.name.as_deref(), Some("Deep button"), "{case}");
+                assert!(ancestors_unknown, "{case}: the containers are unknown");
+                assert_eq!(ancestors, [], "{case}");
+            }
+            other => panic!("{case}: the outpost said {other:?}, not the focus"),
+        }
+        outpost.settled();
+        drop(outpost);
+        fixture.app.quit();
+    }
+}
+
 /// A focus whose read fails is reported from its event, its containers
 /// unknown, as the focus, its only state focused, whatever the event's
 /// cache says of its keyboard focus: NVDA's
@@ -1243,6 +1312,10 @@ fn main() {
         (
             "a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown",
             a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown,
+        ),
+        (
+            "a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown",
+            a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown,
         ),
         (
             "a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus",

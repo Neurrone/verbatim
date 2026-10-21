@@ -271,18 +271,22 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     and the scenario has no handling for it; what File Explorer raises
     then, beyond a name change and three state changes on the items view
     whose states the hook's debug line does not show, is to be found.
-  - `explorer_folder_window` failed in run 39573264801 after Enter with
-    `["Working on it...", "Inner - File Explorer"]` where "Items View
-    list" was expected. The likely cause is the item's focus arriving
-    after File Explorer retitled the window, so the renamed window counted
-    as a new ancestor: Verbatim compares MSAA ancestors by role and name,
-    and NVDA's IAccessible equality compares names too
-    (`nvda/source/NVDAObjects/IAccessible/__init__.py` lines 957 to 958),
-    but no capture shows what NVDA says. To settle it, read that run's
-    flight recorder for the window ancestor's names, and capture NVDA on
-    a slow folder load. In the same pass, check why the `delta` item
-    inside Inner in run 39558690998 still carried the parent folder's
-    window title: File Explorer's title lagging, or a stale ancestor name.
+  - `explorer_folder_window` failed in runs 39573264801 and 39613639083
+    after Enter with `["Working on it...", "Inner - File Explorer"]` where
+    "Items View list" was expected. The cause: the focus listener's
+    classic ancestor walk took the placeholder's failed step to its
+    parent for the desktop root, so the placeholder was stored with no
+    containers, and the item's focus after it counted every container,
+    the window included, as entered. The walk now reports a step from
+    below the root that fails or finds no parent as ancestors unknown, so
+    Core keeps the previous chain and the item enters only the list
+    (`docs/parity/focus-events.md`, "A focus whose element is gone before
+    its read", and its `mockapp` test). The scenario accepts the
+    placeholder at either place, so its next runner pass is what confirms
+    the fix.
+  - Check why the `delta` item inside Inner in run 39558690998 still
+    carried the parent folder's window title: File Explorer's title
+    lagging, or a stale ancestor name.
   - No outpost connects to a new window after its probe, so the worker is
     held only by the probe while File Explorer builds the window: a new folder window's
     first item was queued 62 to 323 ms after its event in 50 windows on

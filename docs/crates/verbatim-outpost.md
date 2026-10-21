@@ -1623,8 +1623,15 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   that fails, the remote program by UIA's transaction timeout or the
   classic walk by a hop that timed out, also reports them unknown, never
   as an empty chain (`crates/mockapp/tests/remote_ops.rs`,
-  `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`).
-  Object navigation's ancestor query reads the whole chain.
+  `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`),
+  and so does a classic focus walk (`focus_ancestry_classic`, the focus
+  listener's read and the program's fallback) whose step from an element
+  below the desktop root fails or finds no parent
+  (`Ancestry::ancestors_unknown`;
+  `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`).
+  `read::uia_enrichment`'s walk (`Uia::ancestors`) still ends at such a
+  step as the root. Object navigation's ancestor query reads the whole
+  chain.
 - A dialog's own text (`read::describe_dialogs`). Before a focus is
   published, every dialog among its ancestors, and the focus itself, that
   is not in the previous focus's chain and has no description of its own
@@ -1652,7 +1659,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   client-side proxy, marked in the context for the window's lifetime and
   forgotten when it is destroyed), the per-hop walk (`read::uia_enrichment`)
   is used. A program that fails otherwise is answered by the classic walk
-  for that call and logged with the failing instruction's source line. A
+  for that call and logged with the failing instruction's source line.
+  The program's walk ends at a null parent, as it reaches the top of a
+  program's tree, so it reports a step below a top-level window that
+  finds no parent as a complete walk, where the classic walk reports the
+  ancestors unknown. A
   UIA focus event without text costs the outpost no UIA call before it is
   reported: the listener's read is its classic walk
   (`focus_ancestry_classic`), and the outpost's walk to its own copy of the

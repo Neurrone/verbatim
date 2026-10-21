@@ -284,6 +284,13 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .replace_items(&id)?,
+        Command::AnswerParent(id, answer, after) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            guard.nodes[index].parent_answer = (answer, after);
+        }
         // Handled by the window thread before dispatch.
         Command::Stall(..)
         | Command::OnActivate(_)
@@ -910,11 +917,24 @@ mod props {
         direction: NavigateDirection,
     ) -> WinResult<IRawElementProviderFragment> {
         let target = {
-            let guard = tree
+            let mut guard = tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if direction == NavigateDirection_Parent {
-                guard.nodes[index].parent
+                let (answer, usual_first) = &mut guard.nodes[index].parent_answer;
+                let answer = if *usual_first > 0 {
+                    *usual_first -= 1;
+                    crate::stdin::ParentAnswer::Usual
+                } else {
+                    *answer
+                };
+                match answer {
+                    crate::stdin::ParentAnswer::Fail => {
+                        return Err(windows::Win32::Foundation::E_FAIL.into());
+                    }
+                    crate::stdin::ParentAnswer::Missing => None,
+                    crate::stdin::ParentAnswer::Usual => guard.nodes[index].parent,
+                }
             } else if direction == NavigateDirection_FirstChild {
                 guard.nodes[index].children.first().copied()
             } else if direction == NavigateDirection_LastChild {

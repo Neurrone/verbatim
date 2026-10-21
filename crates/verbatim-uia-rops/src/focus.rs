@@ -113,6 +113,18 @@ pub struct Ancestry {
     /// Whether the classic walk stopped when the query's time was up, with
     /// ancestors left. Never set by the remote program.
     pub out_of_time: bool,
+    /// How the classic walk's step to a parent failed from an element
+    /// below the desktop root, which ends the walk with the ancestors
+    /// unknown, as an out-of-time walk does ([`Self::ancestors_unknown`]);
+    /// `None` when no step failed. Only reaching the root ends a walk as
+    /// known: in the classic view a top-level window's parent is the root
+    /// element, so a missing parent below it is abnormal, and NVDA reads
+    /// the window hierarchy instead when its parent read fails
+    /// (`NVDAObjects/UIA/__init__.py` 2142 to 2145). Never set by the
+    /// remote program, whose walk ends at a null parent, as it reaches the
+    /// top of a program's tree, so it reports a missing parent below a
+    /// top-level window as a complete walk.
+    pub failed_hop: Option<FailedHop>,
     /// For a list or tab control, the first selected child, filled by the
     /// query's fill: what `verbatim_uia::Uia::selected_node` reports; for a
     /// combo box without the `Value` pattern, its first selected item, its
@@ -140,6 +152,41 @@ pub struct Ancestry {
     /// classic walk, which leaves the read to its caller, one live call
     /// made only when the caller needs it.
     pub legacy_state: Option<Option<i32>>,
+}
+
+impl Ancestry {
+    /// Whether the walk did not finish, so the ancestors past those read
+    /// are unknown: it ran out of time ([`Self::out_of_time`]) or a step
+    /// to a parent failed ([`Self::failed_hop`]).
+    #[must_use]
+    pub fn ancestors_unknown(&self) -> bool {
+        self.out_of_time || self.failed_hop.is_some()
+    }
+}
+
+/// How a classic walk's step to a parent failed ([`Ancestry::failed_hop`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FailedHop {
+    /// The step failed with this code, other than UIA's transaction
+    /// timeout, which fails the whole walk.
+    Error(windows::core::HRESULT),
+    /// The step answered no parent: the error carrying no failure code
+    /// that `windows` reports for a null element.
+    NoParent,
+}
+
+impl FailedHop {
+    /// How a step that answered `error` failed: no parent for the error
+    /// carrying no failure code, else the code. (A provider whose own
+    /// `Navigate` fails with `E_FAIL` reaches the client as no parent,
+    /// verified against mockapp's `answer-parent`.)
+    fn of(error: &windows::core::Error) -> Self {
+        if error.code().is_ok() {
+            Self::NoParent
+        } else {
+            Self::Error(error.code())
+        }
+    }
 }
 
 /// The signature both implementations share, so a caller can hold either.
@@ -598,6 +645,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         met_known: usize::try_from(outcome.get(met_known)?).ok(),
         depth_limited: outcome.get(depth_limited)?,
         out_of_time: false,
+        failed_hop: None,
         selected_child: claimed(outcome.get(selected)?, outcome.get(selected_absent)?),
         window: (window != 0).then_some(window as isize),
         previous_focused: match query.previous {
@@ -757,7 +805,8 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// the provider did not answer within UIA's transaction timeout, or when
 /// the selected child's read does or finds an element gone
 /// ([`Uia::selected`]); a hop that finds no parent, or fails
-/// otherwise, ends the walk.
+/// otherwise, ends the walk with the ancestors unknown
+/// ([`Ancestry::failed_hop`]).
 #[expect(
     clippy::too_many_lines,
     reason = "one walk, read top to bottom as it runs, as the program is"
@@ -816,6 +865,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         met_known: None,
         depth_limited: false,
         out_of_time: false,
+        failed_hop: None,
         selected_child,
         window: own_window(input.hwnd).or(query.nearest_window),
         previous_focused,
@@ -852,9 +902,11 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             // no parent: the walk failed, and what it read is not the
             // ancestry.
             Err(error) if timed_out(&error) => return Err(Error::Uia(error)),
-            // Any other failed hop is the root.
-            Err(_) => {
-                complete = true;
+            // Any other failed step, or one that finds no parent, from an
+            // element below the root leaves the ancestors unknown: only the
+            // root ends a known walk.
+            Err(error) => {
+                ancestry.failed_hop = Some(FailedHop::of(&error));
                 break;
             }
         };
@@ -887,9 +939,30 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
             break;
         }
     }
-    if ancestry.window.is_none() && !complete && !ancestry.out_of_time && !out_of_time() {
+    if ancestry.window.is_none() && !complete && !ancestry.ancestors_unknown() && !out_of_time() {
         before_call("the nearest window");
         ancestry.window = verbatim_uia::nearest_window_handle(live.element());
     }
     Ok(FocusAncestry::Focused(ancestry))
+}
+
+#[cfg(test)]
+mod tests {
+    use windows::Win32::Foundation::E_FAIL;
+
+    use super::FailedHop;
+
+    /// A step that failed with a code keeps it, and one that answered a
+    /// null element, the error carrying no failure code, found no parent.
+    #[test]
+    fn a_failed_step_is_told_by_its_code() {
+        assert_eq!(
+            FailedHop::of(&windows::core::Error::from(E_FAIL)),
+            FailedHop::Error(E_FAIL)
+        );
+        assert_eq!(
+            FailedHop::of(&windows::core::Error::empty()),
+            FailedHop::NoParent
+        );
+    }
 }

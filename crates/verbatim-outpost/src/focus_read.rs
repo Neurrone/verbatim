@@ -1040,7 +1040,11 @@ impl FocusReader {
                 .flatten();
             add_legacy_checked_state(&mut snapshot.states, legacy);
         }
-        let ancestors = (!ancestry.out_of_time).then(|| {
+        // A walk out of time, or one whose step to a parent failed or found
+        // none below the root, leaves the ancestors unknown, as NVDA's
+        // failed parent read falls back to the window hierarchy rather
+        // than ending the chain.
+        let ancestors = (!ancestry.ancestors_unknown()).then(|| {
             let tail = match (ancestry.met_known, &self.last) {
                 (Some(met), Some(last)) => reused_ancestors(&last.ancestors, met),
                 _ => Vec::new(),
@@ -1058,6 +1062,7 @@ impl FocusReader {
             met_known = ?ancestry.met_known,
             depth_limited = ancestry.depth_limited,
             out_of_time = ancestry.out_of_time,
+            failed_hop = ?ancestry.failed_hop,
             window = ?ancestry.window,
             "UIA focus ancestors read"
         );

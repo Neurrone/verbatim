@@ -214,6 +214,17 @@ element it compares equal to still has the focus. The `Ancestry`:
   ancestors left.
 - `out_of_time`: whether the classic walk stopped when the query's time
   was up, with ancestors left; never set by the program.
+- `failed_hop`: how the classic walk's step to a parent failed from an
+  element below the desktop root, a `FailedHop`: `Error` with the failing
+  code, or `NoParent` for a step that answered none; `None` when no step
+  failed, and never set by the program. Only reaching the root ends a
+  classic walk as known, since in the classic view a top-level window's
+  parent is the root element. A provider whose `Navigate` fails reaches
+  the client as no parent (verified against mockapp's `answer-parent`).
+  `Ancestry::ancestors_unknown` is true for a walk out of time or with a
+  failed step, and callers report such a focus with its ancestors
+  unknown, as NVDA falls back to the window hierarchy when its parent
+  read fails.
 - `selected_child`: for a list or tab control (by the element's cached
   control type), the first selected child, a `Cached<Ancestor>` too,
   which the outpost reports as its node; and for a combo box without the
@@ -320,10 +331,15 @@ walk's own failures. The classic walk fails when its read of `previous`
 or a hop times out, or its read of the selected child times out or finds
 an element gone, rather than taking a hop that did not answer as the
 root or a selection that did not answer as nothing selected, so a walk that hit the timeout is never reported as a short but
-complete ancestry; any other failed hop still ends the walk as the root,
-as NVDA's parent read answers no parent. Pinned against mockapp with
-`slow` and `stall` (`crates/mockapp/tests/remote_ops.rs`,
-`a_focus_walk_that_times_out_fails`).
+complete ancestry; any other failed hop, or one that finds no parent,
+below the root ends the walk with `failed_hop` set, its ancestors
+unknown. Pinned against mockapp with `slow` and `stall`
+(`crates/mockapp/tests/remote_ops.rs`, `a_focus_walk_that_times_out_fails`)
+and with `answer-parent`
+(`a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`).
+The program's walk ends at a null parent, which is how it reaches the top
+of a program's tree, so a step that finds no parent below a top-level
+window is reported by it as a complete walk.
 
 NVDA makes each call site choose instead: code that can use remote
 operations asks `remote.isSupported()` before building a program and

@@ -11,6 +11,7 @@
 //! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
 //! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
 //! `answer-property <property id> <fail|empty|usual>`,
+//! `answer-parent <id> <fail|none|usual> [<after>]`,
 //! `take-runtime-id <id> <from>`, `replace-items <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `hold`, `release`, and `quit`.
@@ -35,6 +36,18 @@ pub(crate) enum PropertyAnswer {
     /// The call answers `VT_EMPTY`.
     Empty,
     /// The call answers as usual.
+    Usual,
+}
+
+/// How a node's UIA provider answers `Navigate(Parent)`, as
+/// `answer-parent` sets it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParentAnswer {
+    /// The call fails with `E_FAIL`.
+    Fail,
+    /// The call answers no parent, a null element.
+    Missing,
+    /// The call answers the node's parent.
     Usual,
 }
 
@@ -167,6 +180,15 @@ pub(crate) enum Command {
     /// answers as usual again; one property at a time, the last named.
     /// UIA-only.
     AnswerProperty(i32, PropertyAnswer),
+    /// `answer-parent <id> fail`, `... none` or `... usual`, optionally
+    /// followed by a count, `after`: node `id`'s provider answers its next
+    /// `after` `Navigate(Parent)` calls as usual, and every one after them
+    /// failing (`E_FAIL`), with no parent (a null element), or as usual,
+    /// while every other call on it answers as usual, as an element File
+    /// Explorer has taken out of its tree can. The count lets a client's
+    /// walk to the nearest window, which steps to the node's parent once,
+    /// pass before the answer takes effect. UIA-only.
+    AnswerParent(String, ParentAnswer, u32),
     /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
     /// (its parent no longer lists it, and every call on its elements fails
     /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
@@ -268,6 +290,27 @@ fn answer_property(rest: &str) -> Option<Command> {
     Some(Command::AnswerProperty(property.parse().ok()?, answer))
 }
 
+/// `answer-parent`'s arguments, a node's id, how its parent is answered,
+/// and after how many calls answered as usual.
+fn answer_parent(rest: &str) -> Option<Command> {
+    let mut parts = rest.split_whitespace();
+    let id = parts.next()?;
+    let answer = match parts.next()? {
+        "fail" => ParentAnswer::Fail,
+        "none" => ParentAnswer::Missing,
+        "usual" => ParentAnswer::Usual,
+        _ => return None,
+    };
+    let after = match parts.next() {
+        Some(after) => after.parse().ok()?,
+        None => 0,
+    };
+    parts
+        .next()
+        .is_none()
+        .then(|| Command::AnswerParent(id.to_owned(), answer, after))
+}
+
 /// `write-on-read`'s arguments, a node's id and the text to write.
 fn write_on_read(rest: &str) -> Option<Command> {
     let (id, text) = rest.split_once(' ')?;
@@ -311,6 +354,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
             _ => None,
         },
         "answer-property" => answer_property(rest),
+        "answer-parent" => answer_parent(rest),
         "take-runtime-id" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;

@@ -206,7 +206,15 @@ acknowledged `applied`), `answer-property <property id> fail`,
 `E_FAIL`, answers `VT_EMPTY`, or answers as usual again; one property at a
 time; UIA-only; acknowledged `applied`; UIA fills an event's cache after
 the event's command is acknowledged, so a test keeps an answer set until
-the event has arrived), `hold` (the next
+the event has arrived), `answer-parent <id> fail`, `... none` and
+`... usual`, optionally followed by a count (node `id`'s provider answers
+its next count of `Navigate(Parent)` calls as usual, and every one after
+them failing with `E_FAIL`, with no parent, or as usual, while every other
+call on it answers as usual, as an element File Explorer has taken out of
+its tree can; the count lets a client's walk to the nearest window, which
+steps to the node's parent once, pass first; UIA hands the client no
+parent for the failure as for none; UIA-only, rejected on the MSAA
+backend; acknowledged `applied`), `hold` (the next
 provider call, whichever client makes it, prints `held <method>` on
 stdout as it begins and waits until `release`, so a test knows a client's
 call is in progress and decides when it ends; acknowledged `applied`),

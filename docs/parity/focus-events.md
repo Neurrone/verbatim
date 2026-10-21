@@ -538,7 +538,7 @@ UIA ancestors, with or without its name, by its source; not captured.
 Verbatim: **matched (unverified)**. The focus listener's own read decides
 both cases (`crates/verbatim-outpost/src/focus_read.rs`). NVDA's first case
 is the listener's nearest-window walk finding no window, which drops the
-event as `NO_WINDOW` (line 1361). There Verbatim differs, by decision 11 of
+event as `NO_WINDOW` (line 1366). There Verbatim differs, by decision 11 of
 `docs/design/listener-without-connections.md` (Dickson, 2026-10-21): the outpost reads the
 focus at once and speaks where it now is, where NVDA drops the event and
 says nothing ("A focus UIA does not deliver", above). NVDA's second case
@@ -546,7 +546,20 @@ is the element going after that walk found its window: the listener's
 classic read of the sender then fails, and the listener reports the focus
 as the event's cache gives it, its ancestors unknown (lines 894 to 925);
 its read running out of its time budget leaves the ancestors unknown in
-the same way (the module doc's time limits, lines 57 to 60). The outpost
+the same way (the module doc's time limits, lines 57 to 60), and so does
+a classic read whose step from an element below the desktop root to its
+parent fails or finds no parent, as NVDA's failed parent read falls back
+to the window hierarchy rather than ending the chain: only reaching the
+root ends the walk as known (`focus_ancestry_classic` and
+`Ancestry::failed_hop` in `crates/verbatim-uia-rops/src/focus.rs`; the
+listener at line 1047). The listener's log line "UIA focus ancestors
+read" names the failed step as `failed_hop`, `NoParent` or the failing
+code, and as `None` for a walk that reached the root. The placeholder's
+element can answer its properties after it has left the tree, so its
+read succeeds and only that step fails, which run 39613639083 shows with
+`read=0` and the ancestors reported as known; reported as known and
+empty, the next focus in the window counted every container as entered
+and spoke the window's title. The outpost
 reports the focus with the ancestors the listener gave, so with
 `ancestors_unknown`, and it is spoken without its list, and always with
 its name, which NVDA loses when a main-loop pass came between. The time
@@ -559,12 +572,16 @@ before "Items View list" rather than between it and the item; the
 outpost's later search for its own copy of the element, which logs "the
 focus's own element looked for by its path" with found=false beside it,
 runs after the focus has been reported and decides only what is followed.
-The observation is run 39558690998's log; `explorer_folder_window` accepts
-the placeholder at either place, so it passes with or without this
-behaviour and does not pin it. Tests of Verbatim's side: `remote_ops.rs` in
-`mockapp`, `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`
-and `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`,
-for the listener's report, and `focus_reports.rs`, whose
+The observations are the logs of runs 39558690998 and 39613639083;
+`explorer_folder_window` accepts the placeholder at either place, so a
+local pass of it, with or without this behaviour, does not prove it.
+Tests of Verbatim's side: `remote_ops.rs` in `mockapp`,
+`a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`,
+`a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`,
+and `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`,
+which pins the failed step and the missing parent, for the listener's
+report, the unit test `a_failed_step_is_told_by_its_code` in
+`verbatim-uia-rops` for a step that fails with a code, and `focus_reports.rs`, whose
 `focus_without_a_path` and its caller
 `a_focus_without_a_path_is_followed_from_its_next_focus_event` assert that
 such a read is reported with its ancestors unknown. No capture of NVDA
