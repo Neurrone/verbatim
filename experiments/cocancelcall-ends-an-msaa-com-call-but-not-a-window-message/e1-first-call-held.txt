@@ -1,0 +1,16 @@
+
+running 1 test
+RESULT e1f trial=1 acquire=acquired held=AccParent held_after_ms=0.3 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2007.7 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=2 acquire=acquired held=AccParent held_after_ms=0.2 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2009.7 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=3 acquire=acquired held=AccParent held_after_ms=0.2 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2006.4 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=4 acquire=acquired held=AccParent held_after_ms=0.6 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2003.6 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=5 acquire=acquired held=AccParent held_after_ms=0.3 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2008.4 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=6 acquire=acquired held=AccParent held_after_ms=0.3 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2010.2 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=7 acquire=acquired held=AccParent held_after_ms=0.3 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2009.7 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=8 acquire=acquired held=AccParent held_after_ms=0.3 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2007.4 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=9 acquire=acquired held=AccParent held_after_ms=0.3 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2008.7 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+RESULT e1f trial=10 acquire=acquired held=AccParent held_after_ms=0.3 cancel_answer=S_OK second_cancel_answer=S_OK returned_before_release=true after_release_ms=0.0 call_ms=2008.6 result=failed 0x80010002 hits=[("accParent", 1), ("get_accName", 1)] second=ok Mockapp Events Fixture
+test e1_first_call_held ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 20.16s
+

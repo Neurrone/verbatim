@@ -1,0 +1,29 @@
+
+running 1 test
+RESULT e2h control trial=1 held=AccChild call_ms=310.1 result=ok object=true child=VT_I4 0 returned_ms=310.1 old_release_ms=0.0 its_name=ok Original Name
+RESULT e2h control trial=2 held=AccChild call_ms=300.9 result=ok object=true child=VT_I4 0 returned_ms=300.9 old_release_ms=0.0 its_name=ok Original Name
+RESULT e2h control trial=3 held=AccChild call_ms=301.2 result=ok object=true child=VT_I4 0 returned_ms=301.2 old_release_ms=0.0 its_name=ok Original Name
+RESULT e2h trial=1 returned_before_release=false after_release_ms=0.3
+RESULT e2h cancel trial=1 held=AccChild cancel_answer=S_OK call_ms=15006.5 after_cancel_ms=15006.0 result=ok object=true child=VT_I4 1 returned_ms=0.6 old_release_ms=15005.9 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.4 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=2 returned_before_release=false after_release_ms=0.2
+RESULT e2h cancel trial=2 held=AccChild cancel_answer=S_OK call_ms=15015.7 after_cancel_ms=15015.5 result=ok object=true child=VT_I4 1 returned_ms=0.3 old_release_ms=15015.5 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.5 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=3 returned_before_release=false after_release_ms=0.2
+RESULT e2h cancel trial=3 held=AccChild cancel_answer=S_OK call_ms=15005.1 after_cancel_ms=15004.8 result=ok object=true child=VT_I4 1 returned_ms=0.3 old_release_ms=15004.8 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.5 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=4 returned_before_release=false after_release_ms=0.3
+RESULT e2h cancel trial=4 held=AccChild cancel_answer=S_OK call_ms=15008.8 after_cancel_ms=15008.5 result=ok object=true child=VT_I4 1 returned_ms=0.4 old_release_ms=15008.4 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.6 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=5 returned_before_release=false after_release_ms=0.3
+RESULT e2h cancel trial=5 held=AccChild cancel_answer=S_OK call_ms=15008.2 after_cancel_ms=15007.9 result=ok object=true child=VT_I4 1 returned_ms=0.3 old_release_ms=15007.9 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.6 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=6 returned_before_release=false after_release_ms=0.3
+RESULT e2h cancel trial=6 held=AccChild cancel_answer=S_OK call_ms=15008.1 after_cancel_ms=15007.8 result=ok object=true child=VT_I4 1 returned_ms=0.4 old_release_ms=15007.7 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.6 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=7 returned_before_release=false after_release_ms=0.3
+RESULT e2h cancel trial=7 held=AccChild cancel_answer=S_OK call_ms=15011.0 after_cancel_ms=15010.7 result=ok object=true child=VT_I4 1 returned_ms=0.4 old_release_ms=15010.6 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.8 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=8 returned_before_release=false after_release_ms=0.2
+RESULT e2h cancel trial=8 held=AccChild cancel_answer=S_OK call_ms=15015.9 after_cancel_ms=15015.6 result=ok object=true child=VT_I4 1 returned_ms=0.4 old_release_ms=15015.5 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.5 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=9 returned_before_release=false after_release_ms=0.2
+RESULT e2h cancel trial=9 held=AccChild cancel_answer=S_OK call_ms=15002.9 after_cancel_ms=15002.6 result=ok object=true child=VT_I4 1 returned_ms=0.3 old_release_ms=15002.6 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.5 old_release_ms=0.1 again_name=ok Original Name
+RESULT e2h trial=10 returned_before_release=false after_release_ms=0.3
+RESULT e2h cancel trial=10 held=AccChild cancel_answer=S_OK call_ms=15014.4 after_cancel_ms=15014.1 result=ok object=true child=VT_I4 1 returned_ms=0.3 old_release_ms=15014.1 its_name=ok Mockapp Events Fixture hits=[("WM_GETOBJECT", 1), ("accParent", 1), ("get_accChild", 1), ("get_accName", 1)] again=ok object=true child=VT_I4 0 returned_ms=0.7 old_release_ms=0.1 again_name=ok Original Name
+test e2_from_event_child_held ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 151.08s
+

@@ -1,0 +1,26 @@
+
+running 1 test
+RESULT e1r child_object cancel=true trial=1 got=ok object=true child=VT_I4 0 returned_ms=29.9 old_release_ms=0.0 name=ok Original Name release_ms=300.5 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r child_object cancel=true trial=2 got=ok object=true child=VT_I4 0 returned_ms=0.8 old_release_ms=0.0 name=ok Original Name release_ms=300.5 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r child_object cancel=true trial=3 got=ok object=true child=VT_I4 0 returned_ms=1.0 old_release_ms=0.0 name=ok Original Name release_ms=300.5 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r child_object cancel=true trial=4 got=ok object=true child=VT_I4 0 returned_ms=0.9 old_release_ms=0.0 name=ok Original Name release_ms=300.7 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r child_object cancel=true trial=5 got=ok object=true child=VT_I4 0 returned_ms=0.9 old_release_ms=0.0 name=ok Original Name release_ms=300.4 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r child_object cancel=false trial=1 got=ok object=true child=VT_I4 0 returned_ms=0.9 old_release_ms=0.0 name=ok Original Name release_ms=4000.7 cancels=0 answers={} result=dropped had=true
+RESULT e1r child_object cancel=false trial=2 got=ok object=true child=VT_I4 0 returned_ms=0.8 old_release_ms=0.0 name=ok Original Name release_ms=4000.7 cancels=0 answers={} result=dropped had=true
+RESULT e1r child_object cancel=false trial=3 got=ok object=true child=VT_I4 0 returned_ms=0.9 old_release_ms=0.0 name=ok Original Name release_ms=4000.3 cancels=0 answers={} result=dropped had=true
+RESULT e1r child_object cancel=false trial=4 got=ok object=true child=VT_I4 0 returned_ms=0.8 old_release_ms=0.0 name=ok Original Name release_ms=4000.5 cancels=0 answers={} result=dropped had=true
+RESULT e1r child_object cancel=false trial=5 got=ok object=true child=VT_I4 0 returned_ms=0.9 old_release_ms=0.0 name=ok Original Name release_ms=4000.5 cancels=0 answers={} result=dropped had=true
+RESULT e1r window_object cancel=true trial=1 got=acquired returned_ms=0.4 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=300.1 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r window_object cancel=true trial=2 got=acquired returned_ms=0.5 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=300.3 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r window_object cancel=true trial=3 got=acquired returned_ms=0.4 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=300.4 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r window_object cancel=true trial=4 got=acquired returned_ms=0.6 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=300.5 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r window_object cancel=true trial=5 got=acquired returned_ms=0.5 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=300.3 cancels=1 answers={"S_OK"} result=dropped had=true
+RESULT e1r window_object cancel=false trial=1 got=acquired returned_ms=0.4 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=4000.6 cancels=0 answers={} result=dropped had=true
+RESULT e1r window_object cancel=false trial=2 got=acquired returned_ms=0.4 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=4000.3 cancels=0 answers={} result=dropped had=true
+RESULT e1r window_object cancel=false trial=3 got=acquired returned_ms=0.5 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=4000.2 cancels=0 answers={} result=dropped had=true
+RESULT e1r window_object cancel=false trial=4 got=acquired returned_ms=0.5 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=4000.3 cancels=0 answers={} result=dropped had=true
+RESULT e1r window_object cancel=false trial=5 got=acquired returned_ms=0.4 old_release_ms=0.0 name=ok Mockapp Events Fixture release_ms=4000.7 cancels=0 answers={} result=dropped had=true
+test e1_release_in_a_stall ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 80.12s
+

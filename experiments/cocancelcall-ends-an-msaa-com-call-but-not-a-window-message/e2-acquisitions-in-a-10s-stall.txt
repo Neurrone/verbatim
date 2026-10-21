@@ -1,0 +1,24 @@
+
+running 1 test
+RESULT e2 from_event_self cancel=true trial=1 cancel_answer=0x8001011e call_ms=10006.2 after_cancel_ms=9706.0 stall_seen_end_ms=10006.2 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_self cancel=true trial=2 cancel_answer=0x8001011e call_ms=10000.3 after_cancel_ms=9699.8 stall_seen_end_ms=10000.3 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_self cancel=true trial=3 cancel_answer=0x8001011e call_ms=10005.5 after_cancel_ms=9704.8 stall_seen_end_ms=10005.5 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_self cancel=false trial=1 cancel_answer=none call_ms=10000.9 after_cancel_ms=- stall_seen_end_ms=10000.9 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_self cancel=false trial=2 cancel_answer=none call_ms=10000.7 after_cancel_ms=- stall_seen_end_ms=10000.7 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_self cancel=false trial=3 cancel_answer=none call_ms=10001.0 after_cancel_ms=- stall_seen_end_ms=10001.0 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_child1 cancel=true trial=1 cancel_answer=0x8001011e call_ms=10001.3 after_cancel_ms=9701.2 stall_seen_end_ms=10001.3 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_child1 cancel=true trial=2 cancel_answer=0x8001011e call_ms=10001.1 after_cancel_ms=9701.0 stall_seen_end_ms=10001.1 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_child1 cancel=true trial=3 cancel_answer=0x8001011e call_ms=10000.9 after_cancel_ms=9700.8 stall_seen_end_ms=10000.9 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_child1 cancel=false trial=1 cancel_answer=none call_ms=10001.5 after_cancel_ms=- stall_seen_end_ms=10001.5 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_child1 cancel=false trial=2 cancel_answer=none call_ms=10001.3 after_cancel_ms=- stall_seen_end_ms=10001.4 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_event_child1 cancel=false trial=3 cancel_answer=none call_ms=10001.3 after_cancel_ms=- stall_seen_end_ms=10001.3 hung_at_return=false result=ok object=true child=VT_I4 0
+RESULT e2 from_window cancel=true trial=1 cancel_answer=0x8001011e call_ms=10001.0 after_cancel_ms=9700.9 stall_seen_end_ms=10001.0 hung_at_return=false result=ok
+RESULT e2 from_window cancel=true trial=2 cancel_answer=0x8001011e call_ms=10001.0 after_cancel_ms=9700.9 stall_seen_end_ms=10001.1 hung_at_return=false result=ok
+RESULT e2 from_window cancel=true trial=3 cancel_answer=0x8001011e call_ms=10000.7 after_cancel_ms=9700.5 stall_seen_end_ms=10000.7 hung_at_return=false result=ok
+RESULT e2 from_window cancel=false trial=1 cancel_answer=none call_ms=10001.0 after_cancel_ms=- stall_seen_end_ms=10001.1 hung_at_return=false result=ok
+RESULT e2 from_window cancel=false trial=2 cancel_answer=none call_ms=10000.9 after_cancel_ms=- stall_seen_end_ms=10001.0 hung_at_return=false result=ok
+RESULT e2 from_window cancel=false trial=3 cancel_answer=none call_ms=10000.9 after_cancel_ms=- stall_seen_end_ms=10000.9 hung_at_return=false result=ok
+test e2_acquisitions_in_a_stall ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 180.06s
+

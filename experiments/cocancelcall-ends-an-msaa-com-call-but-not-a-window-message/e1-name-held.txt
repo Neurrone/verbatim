@@ -1,0 +1,40 @@
+
+running 1 test
+RESULT e1h acquire acquired
+RESULT e1h hits after acquire [("WM_GETOBJECT", 1)]
+RESULT e1h first ok Mockapp Events Fixture
+RESULT e1h hits after first call [("accParent", 1), ("get_accName", 1)]
+RESULT e1h trial=1 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=1 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=1 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.2 after_cancel_ms=0.1 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=2 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=2 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=2 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=3 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=3 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=3 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=4 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=4 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=4 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=5 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=5 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=5 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.2 after_cancel_ms=0.1 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=6 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=6 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=6 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=7 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=7 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=7 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=8 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=8 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=8 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=9 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=9 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=9 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+RESULT e1h trial=10 held=AccName cancel_answer=S_OK cancel_took_ms=0.0
+RESULT e1h trial=10 returned_before_release=true after_release_ms=0.0
+RESULT e1h trial=10 held=AccName held_after_ms=0.1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=0.1 after_cancel_ms=0.0 result=failed 0x80010002 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits=[("get_accName", 2)]
+test e1_name_held ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.09s
+

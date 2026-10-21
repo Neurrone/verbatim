@@ -1,0 +1,24 @@
+
+running 1 test
+RESULT e2 from_event_self cancel=true trial=1 cancel_answer=0x8001011e call_ms=15000.6 after_cancel_ms=14700.3 stall_seen_end_ms=15000.7 hung_at_return=false result=ok object=true child=VT_I4 0 returned_ms=15000.5 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_self cancel=true trial=2 cancel_answer=0x8001011e call_ms=15000.5 after_cancel_ms=14700.3 stall_seen_end_ms=15000.5 hung_at_return=false result=ok object=true child=VT_I4 0 returned_ms=15000.5 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_self cancel=true trial=3 cancel_answer=0x8001011e call_ms=10015.4 after_cancel_ms=9715.0 stall_seen_end_ms=15000.2 hung_at_return=true result=ok object=true child=VT_I4 0 returned_ms=10015.4 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_self cancel=false trial=1 cancel_answer=none call_ms=10004.1 after_cancel_ms=- stall_seen_end_ms=15000.2 hung_at_return=true result=ok object=true child=VT_I4 0 returned_ms=10004.1 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_self cancel=false trial=2 cancel_answer=none call_ms=10001.3 after_cancel_ms=- stall_seen_end_ms=15000.4 hung_at_return=true result=ok object=true child=VT_I4 0 returned_ms=10001.3 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_self cancel=false trial=3 cancel_answer=none call_ms=10013.3 after_cancel_ms=- stall_seen_end_ms=15000.2 hung_at_return=true result=ok object=true child=VT_I4 0 returned_ms=10013.3 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_child1 cancel=true trial=1 cancel_answer=0x8001011e call_ms=10004.4 after_cancel_ms=9704.2 stall_seen_end_ms=15000.6 hung_at_return=true result=ok object=true child=VT_I4 1 returned_ms=10004.4 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_child1 cancel=true trial=2 cancel_answer=0x8001011e call_ms=10005.3 after_cancel_ms=9704.8 stall_seen_end_ms=15000.3 hung_at_return=true result=ok object=true child=VT_I4 1 returned_ms=10005.3 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_child1 cancel=true trial=3 cancel_answer=0x8001011e call_ms=10008.9 after_cancel_ms=9708.3 stall_seen_end_ms=15000.1 hung_at_return=true result=ok object=true child=VT_I4 1 returned_ms=10008.8 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_child1 cancel=false trial=1 cancel_answer=none call_ms=10013.1 after_cancel_ms=- stall_seen_end_ms=15000.6 hung_at_return=true result=ok object=true child=VT_I4 1 returned_ms=10013.1 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_child1 cancel=false trial=2 cancel_answer=none call_ms=10003.7 after_cancel_ms=- stall_seen_end_ms=15000.4 hung_at_return=true result=ok object=true child=VT_I4 1 returned_ms=10003.6 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_event_child1 cancel=false trial=3 cancel_answer=none call_ms=10010.1 after_cancel_ms=- stall_seen_end_ms=15000.6 hung_at_return=true result=ok object=true child=VT_I4 1 returned_ms=10010.1 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_window cancel=true trial=1 cancel_answer=0x8001011e call_ms=10008.7 after_cancel_ms=9708.6 stall_seen_end_ms=15000.2 hung_at_return=true result=ok returned_ms=10008.7 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_window cancel=true trial=2 cancel_answer=0x8001011e call_ms=10010.9 after_cancel_ms=9710.6 stall_seen_end_ms=15000.3 hung_at_return=true result=ok returned_ms=10010.9 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_window cancel=true trial=3 cancel_answer=0x8001011e call_ms=10006.5 after_cancel_ms=9706.4 stall_seen_end_ms=15000.2 hung_at_return=true result=ok returned_ms=10006.5 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_window cancel=false trial=1 cancel_answer=none call_ms=10003.7 after_cancel_ms=- stall_seen_end_ms=15000.4 hung_at_return=true result=ok returned_ms=10003.7 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_window cancel=false trial=2 cancel_answer=none call_ms=10006.4 after_cancel_ms=- stall_seen_end_ms=15000.2 hung_at_return=true result=ok returned_ms=10006.4 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+RESULT e2 from_window cancel=false trial=3 cancel_answer=none call_ms=10011.7 after_cancel_ms=- stall_seen_end_ms=15000.4 hung_at_return=true result=ok returned_ms=10011.7 old_release_ms=0.0 its_name=ok cancel-acquire-stall-8232-1
+test e2_acquisitions_in_a_stall ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 270.06s
+

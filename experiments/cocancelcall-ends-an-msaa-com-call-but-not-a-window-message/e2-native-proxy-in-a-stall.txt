@@ -1,0 +1,14 @@
+
+running 1 test
+RESULT e2n acquire acquired returned_ms=0.4 old_release_ms=0.0
+RESULT e2n first ok Apply
+RESULT e2n cancel=true trial=1 cancel_answer=0x8001011e call_ms=10000.2 after_cancel_ms=9700.1 stall_seen_end_ms=10000.3 hung_at_return=false result=ok Apply
+RESULT e2n cancel=true trial=2 cancel_answer=0x8001011e call_ms=10000.6 after_cancel_ms=9699.3 stall_seen_end_ms=10000.6 hung_at_return=false result=ok Apply
+RESULT e2n cancel=true trial=3 cancel_answer=0x8001011e call_ms=10000.6 after_cancel_ms=9700.3 stall_seen_end_ms=10000.7 hung_at_return=false result=ok Apply
+RESULT e2n cancel=false trial=1 cancel_answer=none call_ms=10000.4 after_cancel_ms=- stall_seen_end_ms=10000.4 hung_at_return=false result=ok Apply
+RESULT e2n cancel=false trial=2 cancel_answer=none call_ms=10000.2 after_cancel_ms=- stall_seen_end_ms=10000.3 hung_at_return=false result=ok Apply
+RESULT e2n cancel=false trial=3 cancel_answer=none call_ms=10000.6 after_cancel_ms=- stall_seen_end_ms=10000.6 hung_at_return=false result=ok Apply
+test e2_native_proxy_in_a_stall ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 60.05s
+

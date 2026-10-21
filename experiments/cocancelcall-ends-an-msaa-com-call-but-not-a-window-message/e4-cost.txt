@@ -1,0 +1,13 @@
+
+running 1 test
+RESULT e4 acquire acquired returned_ms=9.9 old_release_ms=0.0
+RESULT e4 round=1 disabled_ms=51.1 disabled_result=failed 0 enable=S_OK enable_us=11.4 enabled_ms=64.4 enabled_result=failed 0 disable=S_OK
+RESULT e4 round=2 disabled_ms=49.5 disabled_result=failed 0 enable=S_OK enable_us=2.3 enabled_ms=60.6 enabled_result=failed 0 disable=S_OK
+RESULT e4 round=3 disabled_ms=46.2 disabled_result=failed 0 enable=S_OK enable_us=8.4 enabled_ms=53.9 enabled_result=failed 0 disable=S_OK
+RESULT e4 round=4 disabled_ms=47.1 disabled_result=failed 0 enable=S_OK enable_us=2.0 enabled_ms=55.7 enabled_result=failed 0 disable=S_OK
+RESULT e4 round=5 disabled_ms=43.5 disabled_result=failed 0 enable=S_OK enable_us=5.5 enabled_ms=58.8 enabled_result=failed 0 disable=S_OK
+RESULT e4 round=6 disabled_ms=48.4 disabled_result=failed 0 enable=S_OK enable_us=7.6 enabled_ms=68.6 enabled_result=failed 0 disable=S_OK
+test e4_cost ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.70s
+

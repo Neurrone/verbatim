@@ -1,0 +1,52 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index baf9c6a0..03fc14ba 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -927,6 +927,7 @@ dependencies = [
+  "clap",
+  "serde",
+  "serde_json",
++ "tracing-subscriber",
+  "verbatim-core",
+  "verbatim-ia2",
+  "verbatim-model",
+diff --git a/crates/mockapp/Cargo.toml b/crates/mockapp/Cargo.toml
+index 591613a1..b5048bcb 100644
+--- a/crates/mockapp/Cargo.toml
++++ b/crates/mockapp/Cargo.toml
+@@ -22,6 +22,7 @@ verbatim-outpost.workspace = true
+ verbatim-process.workspace = true
+ verbatim-uia.workspace = true
+ verbatim-uia-rops.workspace = true
++tracing-subscriber.workspace = true
+ 
+ # The test binaries that use UIA as a client run through their own runner,
+ # which ends the process without running DLL detach code; the reason is in
+@@ -103,6 +104,10 @@ harness = false
+ name = "text"
+ harness = false
+ 
++[[test]]
++name = "cocancelcall"
++harness = false
++
+ [[test]]
+ name = "time_limits"
+ harness = false
+diff --git a/crates/mockapp/src/hits.rs b/crates/mockapp/src/hits.rs
+index aa879bdd..440e4def 100644
+--- a/crates/mockapp/src/hits.rs
++++ b/crates/mockapp/src/hits.rs
+@@ -525,7 +525,11 @@ static PATTERN_DELAY_MS: AtomicU64 = AtomicU64::new(0);
+ /// client's call is in progress and decides when it ends.
+ pub(crate) fn hit(method: Method) {
+     HITS[method.index()].fetch_add(1, Ordering::Relaxed);
+-    if HOLD.swap(false, Ordering::Relaxed) {
++    // Scratch (experiment): with MOCKAPP_HOLD_PAST_GETOBJECT set, the hold
++    // passes over WM_GETOBJECT and takes the next provider method.
++    let past_get_object = matches!(method, Method::GetObject)
++        && std::env::var_os("MOCKAPP_HOLD_PAST_GETOBJECT").is_some();
++    if !past_get_object && HOLD.swap(false, Ordering::Relaxed) {
+         // Printed as the window thread's acknowledgements are, where
+         // `ready` went.
+         let mut stdout = std::io::stdout().lock();

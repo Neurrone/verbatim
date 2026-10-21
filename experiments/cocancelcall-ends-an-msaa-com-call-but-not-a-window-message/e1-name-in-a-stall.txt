@@ -1,0 +1,43 @@
+
+running 1 test
+RESULT e1 acquire acquired
+RESULT e1 first ok Mockapp Events Fixture
+RESULT e1 stall timeout=0s trial=1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=300.5 after_cancel_ms=0.3 result=failed 0x80010002 stall_seen_end_ms=4000.6 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=2 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=300.2 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.5 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=3 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=300.7 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.5 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=4 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=300.7 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.4 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=5 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=300.4 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.2 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=6 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=300.5 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=7 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=300.5 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.6 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=8 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=300.5 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.4 second=ok Mockapp Events Fixture second_ms=1.4 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=9 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=300.6 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=0s trial=10 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=300.2 after_cancel_ms=0.1 result=failed 0x80010002 stall_seen_end_ms=4000.5 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=1 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1305.6 after_cancel_ms=1005.0 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=2 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1311.4 after_cancel_ms=1011.0 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=3 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=1301.6 after_cancel_ms=1001.3 result=failed 0x80010002 stall_seen_end_ms=4000.4 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=4 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1303.0 after_cancel_ms=1002.5 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=5 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1309.9 after_cancel_ms=1009.6 result=failed 0x80010002 stall_seen_end_ms=4000.4 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=6 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1306.8 after_cancel_ms=1006.4 result=failed 0x80010002 stall_seen_end_ms=4000.5 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=7 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1306.2 after_cancel_ms=1005.8 result=failed 0x80010002 stall_seen_end_ms=4004.9 second=ok Mockapp Events Fixture second_ms=0.7 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=8 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1304.8 after_cancel_ms=1004.4 result=failed 0x80010002 stall_seen_end_ms=4000.5 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=9 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=1309.7 after_cancel_ms=1009.4 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=1s trial=10 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=1312.4 after_cancel_ms=1012.2 result=failed 0x80010002 stall_seen_end_ms=4000.5 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=1 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=2311.7 after_cancel_ms=2011.1 result=failed 0x80010002 stall_seen_end_ms=4000.6 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=2 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2300.5 after_cancel_ms=2000.3 result=failed 0x80010002 stall_seen_end_ms=4000.6 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=3 cancel_answer=S_OK cancel_took_ms=0.1 call_ms=2302.7 after_cancel_ms=2002.1 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=4 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2303.7 after_cancel_ms=2003.2 result=failed 0x80010002 stall_seen_end_ms=4000.2 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=5 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2307.5 after_cancel_ms=2007.1 result=failed 0x80010002 stall_seen_end_ms=4000.2 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=6 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2311.8 after_cancel_ms=2011.3 result=failed 0x80010002 stall_seen_end_ms=4000.2 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=7 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2302.9 after_cancel_ms=2002.6 result=failed 0x80010002 stall_seen_end_ms=4000.6 second=ok Mockapp Events Fixture second_ms=0.1 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=8 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2307.8 after_cancel_ms=2007.4 result=failed 0x80010002 stall_seen_end_ms=4000.3 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=9 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2312.2 after_cancel_ms=2012.0 result=failed 0x80010002 stall_seen_end_ms=4000.2 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 stall timeout=2s trial=10 cancel_answer=S_OK cancel_took_ms=0.0 call_ms=2316.2 after_cancel_ms=2015.9 result=failed 0x80010002 stall_seen_end_ms=4000.5 second=ok Mockapp Events Fixture second_ms=0.2 accname_hits_after_second=2
+RESULT e1 control acquire acquired
+RESULT e1 control trial=1 cancel_answer=0x80010140 call_ms=2000.9 after_cancel_ms=1700.5 result=ok Mockapp Events Fixture
+RESULT e1 control trial=2 cancel_answer=0x80010140 call_ms=2000.3 after_cancel_ms=1699.6 result=ok Mockapp Events Fixture
+RESULT e1 control trial=3 cancel_answer=0x80010140 call_ms=2000.4 after_cancel_ms=1700.1 result=ok Mockapp Events Fixture
+RESULT e1 idle cancel_answer=0x8001011e
+test e1_name_in_a_stall ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 126.11s
+

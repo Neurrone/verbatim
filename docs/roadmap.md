@@ -194,7 +194,9 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   that key's wait; renaming cannot remove it, since the targets are
   `explorer_folder_window`'s.
 - `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
-  "Time limits that hold".
+  "Time limits that hold"; the experiment's record,
+  `experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/readme.md`,
+  finds COM calls cancellable and window messages not.
 - What remains of the audits' items 10 and 11 (Dickson, 2026-10-20;
   items 8 and 9 are done, `docs/roadmap-done.md`):
   - Item 11, its three changes done (`docs/roadmap-done.md`); left from
