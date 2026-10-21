@@ -258,7 +258,8 @@ marker is covered by
 (`crates/verbatim-core/tests/reduce.rs`), and the outpost's range by
 `a_range_through_its_ends_holds_both_ends_characters_whichever_comes_first`.
 A copy the text cannot answer says "Not supported in this document" and
-clears the marker too. NVDA's "No text to copy", for a first press whose
+clears the marker too, a recorded difference: NVDA keeps the marker and
+says nothing, since the read's failure escapes its script. NVDA's "No text to copy", for a first press whose
 range holds nothing, which it says and then clears the marker, is not
 built: the range holds nothing only where the marker and the review
 cursor are at the same place with no character there, such as the end of

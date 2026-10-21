@@ -814,7 +814,7 @@ pub(crate) fn flat_extra(
             state.start_marker = Some(StartMarker::Flat {
                 node,
                 offset,
-                selected: false,
+                selected_to: None,
             });
             vec![speak(trace_id, message(Message::StartMarked))]
         }
@@ -832,31 +832,34 @@ pub(crate) fn flat_extra(
         ReviewCommand::SelectThenCopy => match marker_in(state, node) {
             Ok(StartMarker::Flat {
                 offset: start,
-                selected,
+                selected_to,
                 ..
             }) => {
-                if repeat == 0 && selected {
+                if repeat == 0 && selected_to.is_some() {
                     vec![speak(trace_id, message(Message::PressTwiceToCopy))]
                 } else if repeat == 0 {
-                    // Flat text cannot be selected; pressed again, it is
-                    // copied.
+                    // Flat text cannot be selected, but the range is built
+                    // now, and the second press copies it wherever the
+                    // review cursor has gone since.
                     state.start_marker = Some(StartMarker::Flat {
                         node,
                         offset: start,
-                        selected: true,
+                        selected_to: Some(offset),
                     });
                     vec![speak(trace_id, message(Message::CannotSelect))]
                 } else {
                     // From the earlier of the marker and the review cursor
                     // through the character at the later
                     // (`docs/parity/review.md`, "Select then copy from the
-                    // review cursor").
+                    // review cursor"), the review cursor taken where a first
+                    // press found it.
+                    let end = selected_to.unwrap_or(offset);
                     let after =
                         |at: usize| text::grapheme_at(&flat, at).map_or(at, |range| range.end);
-                    let (from, to) = if offset < start {
-                        (offset, after(start))
+                    let (from, to) = if end < start {
+                        (end, after(start))
                     } else {
-                        (start, after(offset))
+                        (start, after(end))
                     };
                     // The copy clears the marker whatever it found.
                     state.start_marker = None;

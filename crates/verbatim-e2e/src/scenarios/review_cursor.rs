@@ -149,7 +149,14 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // selection as a selecting key's is. A first press again, with that
     // range not yet copied, only asks for the second press.
     review(scenario, "kb:verbatim+f10", "Name selected");
+    // A different gesture resets the repeat count, so the lone press below
+    // is a first press whatever the length of "Name selected"; reading the
+    // current line leaves the review cursor on the range's last character.
+    review(scenario, "kb:numpad8", "Name    Qty");
     review(scenario, "kb:verbatim+f10", PRESS_TWICE);
+    // A different gesture resets the repeat count, so the press below is a
+    // first press whatever the length of the speech before it.
+    review(scenario, "kb:numpad8", "Name    Qty");
     // Pressed twice, the first press asks again, and the second, pressed
     // while that plays, so within the multi-press timeout, cuts it off and
     // copies the range the first selection made.
@@ -162,8 +169,11 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         .expect("sends Verbatim+F10 again");
     scenario.speech().expect_ended(&asked, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
-    // The copy cleared the start marker, so Verbatim+F10 pressed again,
-    // once the copy's confirmation is heard in full, finds none.
+    // The copy cleared the start marker, so Verbatim+F10 pressed again
+    // finds none.
+    // A different gesture resets the repeat count, so the press below is a
+    // first press whatever the length of the speech before it.
+    review(scenario, "kb:numpad8", "Name    Qty");
     review(scenario, "kb:verbatim+f10", "No start marker set");
 
     // The range Verbatim+F10 selected in the text box is still selected;
@@ -253,7 +263,14 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // selection as a selecting key's is. A first press again, with that
     // range not yet copied, only asks for the second press.
     review(scenario, "kb:verbatim+f10", "Name selected");
+    // A different gesture resets the repeat count, so the lone press below
+    // is a first press whatever the length of "Name selected"; reading the
+    // current line leaves the review cursor on the range's last character.
+    review(scenario, "kb:numpad8", "Name    Qty");
     review(scenario, "kb:verbatim+f10", PRESS_TWICE);
+    // A different gesture resets the repeat count, so the press below is a
+    // first press whatever the length of the speech before it.
+    review(scenario, "kb:numpad8", "Name    Qty");
     // Pressed twice, the first press asks again, and the second, pressed
     // while that plays, so within the multi-press timeout, cuts it off and
     // copies the range the first selection made.
@@ -266,8 +283,11 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         .expect("sends Verbatim+F10 again");
     scenario.speech().expect_ended(&asked, Ending::Cancelled);
     scenario.speech().expect(&["Copied to clipboard: Name"]);
-    // The copy cleared the start marker, so Verbatim+F10 pressed again,
-    // once the copy's confirmation is heard in full, finds none.
+    // The copy cleared the start marker, so Verbatim+F10 pressed again
+    // finds none.
+    // A different gesture resets the repeat count, so the press below is a
+    // first press whatever the length of the speech before it.
+    review(scenario, "kb:numpad8", "Name    Qty");
     review(scenario, "kb:verbatim+f10", "No start marker set");
 
     // The range Verbatim+F10 selected in Notepad is still selected; moving

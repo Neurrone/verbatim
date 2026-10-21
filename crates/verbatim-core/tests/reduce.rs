@@ -4935,6 +4935,28 @@ fn flat_review_asks_for_the_second_press_after_a_first() {
     assert_eq!(segments, vec![message(Message::NoStartMarker)]);
 }
 
+/// The second press copies the range the first press built, not the one
+/// the review cursor has moved to since (`docs/parity/review.md`, "Select
+/// then copy from the review cursor").
+#[test]
+fn flat_review_copies_the_range_the_first_press_built() {
+    use verbatim_model::Message;
+    let state = reviewing("abcd");
+    let (state, _) = review(&state, ReviewCommand::SetStartMarker, 0);
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    let (state, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(segments, vec![message(Message::CannotSelect)]);
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    let (state, _) = review(&state, ReviewCommand::ReviewNextCharacter, 0);
+    let (state, segments) = review(&state, ReviewCommand::SelectThenCopy, 0);
+    assert_eq!(segments, vec![message(Message::PressTwiceToCopy)]);
+    let (_, effects) = reduce(
+        &state,
+        &command(TraceId::mint(), ReviewCommand::SelectThenCopy, 1),
+    );
+    assert_eq!(effects, vec![Effect::CopyToClipboard("ab".to_owned())]);
+}
+
 /// A copy of empty flat text copies nothing, says nothing, and still
 /// clears the start marker.
 #[test]

@@ -318,13 +318,13 @@ pub(crate) enum StartMarker {
         after: TextPosition,
         selected_to: Option<(TextPosition, TextPosition)>,
     },
-    /// A byte offset into a node's flat text, and whether a select then
-    /// copy's first press has tried to select from it, which flat text
-    /// cannot do, so a further first press asks for the second.
+    /// A byte offset into a node's flat text, and the review cursor's
+    /// offset when a select then copy's first press built its range, which
+    /// flat text cannot select but its second press copies.
     Flat {
         node: NodeId,
         offset: usize,
-        selected: bool,
+        selected_to: Option<usize>,
     },
 }
 
