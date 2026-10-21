@@ -228,11 +228,15 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     `docs/parity/backends.md`, "UIA event registration", records the gap,
     and its pieces have homes: a foreground UIA progress bar that is not
     the focus in M4.2, background progress bars in M4.3.
-- The OneCore synthesizer host once failed to become ready within 10
-  seconds on GitHub's runner, where it is otherwise ready in about a
-  second. Its start is logged step by step (3baec60): if it recurs,
-  investigate from that log, which shows the step where it stopped;
-  otherwise drop this item when M4.1 closes.
+- The OneCore synthesizer host fails now and then to become ready within
+  10 seconds on GitHub's runner, where it is otherwise ready in about a
+  second (runs before 2026-10-15, and 39603654902, where four hosting
+  tests' hosts all stalled in the same ten seconds while one started
+  just after was ready). Its start is logged step by step (3baec60) to
+  `target/debug/logs/<test pid>/synth-onecore.log`, which the job log
+  never shows, so the unit-test jobs upload that directory as an
+  artifact when they fail: investigate the next recurrence from it,
+  which shows the step where the host stopped.
 
 - GitHub's CI on main had failed on the two pushes before 2026-10-15
   (runs 38271366442 and 38544999189), in two places that this machine

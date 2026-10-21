@@ -59,6 +59,18 @@ jobs:
           tool: cargo-hakari
       - name: Run CI checks
         run: cargo xtask ci
+      # The unit tests launch the synthesizer host as Verbatim does, and
+      # its step-by-step start log goes to target/debug/logs/<pid>/
+      # (crates/verbatim-process/src/lib.rs, launch_log_dir), never to the
+      # job log; a failed job keeps those logs so a host that did not
+      # become ready shows the step where it stopped (docs/roadmap.md).
+      - name: Upload the child-process logs of the unit tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verbatim-ci-logs-${{ runner.arch }}
+          path: target/debug/logs/
+          if-no-files-found: ignore
 
   # The same checks on an ARM64 runner: nothing names a target, so this
   # job builds and tests ARM64, as `ci` does x64.
@@ -94,6 +106,18 @@ jobs:
           tool: cargo-hakari
       - name: Run CI checks
         run: cargo xtask ci
+      # The unit tests launch the synthesizer host as Verbatim does, and
+      # its step-by-step start log goes to target/debug/logs/<pid>/
+      # (crates/verbatim-process/src/lib.rs, launch_log_dir), never to the
+      # job log; a failed job keeps those logs so a host that did not
+      # become ready shows the step where it stopped (docs/roadmap.md).
+      - name: Upload the child-process logs of the unit tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verbatim-ci-logs-${{ runner.arch }}
+          path: target/debug/logs/
+          if-no-files-found: ignore
 
   # Milestone M2's runner-direct E2E suite (docs/roadmap.md): builds the
   # debug binaries the suite drives, starts verbatim-agent.exe bound to
