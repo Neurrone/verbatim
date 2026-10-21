@@ -24,30 +24,28 @@
 //! runners in 8 of 18 recorded runs after Enter, and after Backspace in
 //! runs 39558690998 and 39583748471; in none of 5 local runs of this
 //! scenario, though `measure_focus_explorer` has met it on a development
-//! machine. Whether it comes depends
-//! on how quickly the machine loads the folder, so it is an optional
-//! utterance (`docs/testing.md`, "Optional utterances", approved by
-//! Dickson for Enter on 2026-10-17 and for Backspace on 2026-10-21) rather
-//! than an expectation that depends on the machine: heard in full, cut off
-//! by the item's focus, or not said at all, always immediately before the
-//! item's focus speech. Where it lands relative to "Items View list"
-//! depends on whether the outpost's read of the placeholder's focus finds
-//! its element still there. When File Explorer has already removed it
-//! (the outpost logs "the focus's own element looked for by its path"
-//! with found=false, and the focus is reported with `ancestors_unknown`),
-//! the placeholder is spoken with no ancestors, so it comes before
-//! "Items View list", which comes with the item's focus. When the read
-//! finds it, its ancestry ends in the new list, so "Items View list" is
-//! spoken first and the placeholder between it and the item. Which
-//! happens depends on whether Verbatim's read beats File Explorer's
-//! removal of the placeholder, not on the key. Each step's allowance
-//! matches the order seen in run 39558690998: the Enter step accepts the
-//! placeholder first, the Backspace step between the list and the item.
-//! Either step can meet the other order, and fails when it does (run
-//! 39583748471 also had the placeholder after Backspace); the expectation
-//! for that is an open question (`docs/roadmap.md`, M4.1). The item is still required: a run
-//! where the placeholder keeps the focus fails. No run has had it on the
-//! window's opening, so it is not declared there.
+//! machine. Whether it comes depends on how quickly the machine loads the
+//! folder, so it is an optional utterance (`docs/testing.md`, "Optional
+//! utterances", approved by Dickson for Enter on 2026-10-17 and for
+//! Backspace on 2026-10-21) rather than an expectation that depends on the
+//! machine: heard in full, cut off by the item's focus, or not said at
+//! all. Where it lands depends on whether the outpost's read of the
+//! placeholder's focus still finds its element. When File Explorer has
+//! already removed it (the outpost logs "the focus's own element looked
+//! for by its path" with found=false, and the focus is reported with
+//! `ancestors_unknown`), the placeholder is spoken with no ancestors,
+//! before "Items View list", which comes with the item's focus; when the
+//! read finds it, its ancestry ends in the new list, so "Items View list"
+//! is spoken first and the placeholder between it and the item. NVDA's
+//! own handling depends on the same timing and speaks a placeholder whose
+//! element is gone by its main thread's read without its list
+//! (`docs/parity/focus-events.md`, "A focus whose element is gone before
+//! its read"), so each step accepts the placeholder at either position,
+//! an explicit exception to the one-outcome rule (Dickson, 2026-10-21).
+//! The two optional places would also accept the placeholder said at
+//! both, so each step asserts that it was said at most once. The item is
+//! still required: a run where the placeholder keeps the focus fails. No
+//! run has had it on the window's opening, so it is not declared there.
 
 use std::io;
 
@@ -81,15 +79,30 @@ pub(crate) fn body(scenario: &mut Scenario, state: &mut ScenarioState) {
         scenario.speech().expect(said);
     }
     scenario.send_keys(&["enter"]).expect("sends the key");
-    scenario.speech().expect_sequence(&[
-        optional("Working on it..."),
-        heard("Items View list"),
-        heard("delta not selected 1 of 1"),
-    ]);
+    expect_after_load(scenario, "delta not selected 1 of 1");
     scenario.send_keys(&["backspace"]).expect("sends the key");
-    scenario.speech().expect_sequence(&[
+    expect_after_load(scenario, "Inner 1 of 4");
+}
+
+/// The speech of a folder load: "Items View list" and `item`, with File
+/// Explorer's placeholder optional before the list or between it and the
+/// item, and said at most once in all.
+fn expect_after_load(scenario: &mut Scenario, item: &str) {
+    let placeholder = "Working on it...";
+    let before = scenario.speech().optional_outcomes().len();
+    let expected = [
+        optional(placeholder),
         heard("Items View list"),
-        optional("Working on it..."),
-        heard("Inner 1 of 4"),
-    ]);
+        optional(placeholder),
+        heard(item),
+    ];
+    scenario.speech().expect_sequence(&expected);
+    let said: usize = scenario.speech().optional_outcomes()[before..]
+        .iter()
+        .map(|outcome| outcome.endings.len())
+        .sum();
+    assert!(
+        said <= 1,
+        "{placeholder:?} was said {said} times in one step, where at most once is accepted"
+    );
 }

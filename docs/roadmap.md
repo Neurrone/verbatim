@@ -264,22 +264,6 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     and the scenario has no handling for it; what File Explorer raises
     then, beyond a name change and three state changes on the items view
     whose states the hook's debug line does not show, is to be found.
-  - Where the placeholder is spoken in `explorer_folder_window` depends on
-    Verbatim's read timing against File Explorer's removal of it. In run
-    39558690998, after Enter the outpost read the placeholder's focus 255
-    ms after the event and found its element gone ("the focus's own
-    element looked for by its path" found=false, reported with
-    `ancestors_unknown`), so it was spoken with no ancestors, before
-    "Items View list"; after Backspace the read, 230 ms after the event,
-    found it, its ancestry ended in the new list, and "Items View list"
-    was spoken first. The scenario's allowance covers one order per step,
-    so the runner can still fail on the other. The choice is open between
-    making the outcome deterministic in Verbatim, by dropping a focus
-    whose element is gone before the read, as NVDA drops a UIA focus
-    whose element no longer has the keyboard focus
-    (`shouldAllowUIAFocusEvent`, `nvda/source/NVDAObjects/UIA/__init__.py`
-    line 1632), and an explicit exception accepting the placeholder at
-    either position.
   - `explorer_folder_window` failed in run 39573264801 after Enter with
     `["Working on it...", "Inner - File Explorer"]` where "Items View
     list" was expected. The likely cause is the item's focus arriving

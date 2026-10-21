@@ -505,6 +505,45 @@ speaks the focus where NVDA, by its source, is silent. A late UIA focus
 for the element already read is Core's duplicate and says nothing. Tests:
 `focus_reports.rs` in `mockapp`, its `a_winevent_focus_` tests.
 
+### A focus whose element is gone before its read
+
+NVDA, by its source at the pin (732d1ce2), handles a UIA focus whose
+element is gone in one of two ways, by when it went. Gone before its UIA
+callback runs: `isNativeUIAElement` (`source/UIAHandler/__init__.py`,
+lines 1516 to 1575) asks `getNearestWindowHandle` (lines 1383 to 1460),
+whose live `NormalizeElementBuildCache` walk (line 1438) fails and answers
+none (lines 1439 to 1444), so the element is not native (lines 1573 to
+1575) and the callback drops the event (lines 887 to 899); nothing is
+spoken. Gone after the callback but before the main thread handles the
+event: the callback found the window and made the object (lines 924 to
+958), `shouldAllowUIAFocusEvent` (`source/NVDAObjects/UIA/__init__.py`,
+lines 1632 to 1637) allows it on the COMError of its live read, and the
+event is queued (line 958) and handled (`source/eventHandler.py`,
+`executeEvent` at lines 312 to 359, `doPreGainFocus` at lines 378 to 429);
+`api.setFocusObject` (`source/api.py`, lines 80 to 194) walks `container`
+(line 145), and the UIA object's parent (`source/NVDAObjects/UIA/__init__.py`,
+lines 2136 to 2154) catches the failed live parent read (lines 2142 to
+2143) and falls back to the window hierarchy
+(`source/NVDAObjects/window/__init__.py`, lines 287 to 293), so the UIA
+ancestors such as a list are left out. The role comes from the event's
+cache (`source/NVDAObjects/UIA/__init__.py`, lines 1898 to 1902); the name
+from the cache only while no main-loop pass has cleared the per-cycle
+cache (lines 1148 to 1153 and 1172 to 1184; `source/core.py`, line 1035),
+otherwise from a live read that fails and leaves it empty; the states
+through the variant that handles COMErrors (lines 1155 to 1170). The
+focus is spoken without its UIA ancestors, with or without its name.
+
+Verbatim: **matched for the second case**, by `explorer_folder_window`;
+the first case is "A focus UIA does not deliver", above. The focus listener's read at event time stands for
+NVDA's callback, and the outpost's later read of the focus for NVDA's
+main thread: a focus the listener read but whose element the outpost no
+longer finds is reported with its ancestors unknown and spoken as the
+listener read it, without its list, and always with its name, which NVDA
+loses when a main-loop pass came between. File Explorer's
+"Working on it..." placeholder takes this path when it is removed between
+the two reads, and is then spoken before "Items View list" rather than
+between it and the item.
+
 ### Held objects
 
 NVDA: an object lives as long as something refers to it, and an MSAA
