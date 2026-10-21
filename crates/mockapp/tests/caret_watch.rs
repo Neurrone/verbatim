@@ -797,7 +797,12 @@ fn an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms
     app.send("caret doc 1");
     app.send("caret-event doc");
     app.send("text-changed doc");
+    // The control raises a value change of its own for the new text,
+    // before the caret event. Only once the later value change is heard
+    // has it replaced that one at the back of the intake, so both are
+    // waited for before the worker goes on.
     outpost.heard(&[
+        Heard::Msaa(WinEventKind::ValueChange),
         Heard::Msaa(WinEventKind::TextSelectionChange),
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
@@ -893,7 +898,10 @@ fn an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general
     app.send("caret doc 0");
     app.send("caret-event doc");
     app.send("text-changed doc");
+    // The control's own value change for the new text is waited for too,
+    // as in `an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms`.
     outpost.heard(&[
+        Heard::Msaa(WinEventKind::ValueChange),
         Heard::Msaa(WinEventKind::TextSelectionChange),
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
