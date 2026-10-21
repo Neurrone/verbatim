@@ -641,6 +641,103 @@ fn a_delete_that_changes_the_text_at_the_caret_is_evidence() {
     assert_eq!(reply.unit.expect("the character").text, "c");
 }
 
+/// A caret event's report compared with the last after the text changed:
+/// the change in general terms, with no text, and the note cleared, so
+/// the next report compares as always.
+#[test]
+fn a_comparison_after_the_text_changed_is_in_general_terms_once() {
+    let mut source = Fake::new("hello world", 0);
+    source.selection = Some((0, 5));
+    let mut anchors = store();
+    report(&mut source, &mut anchors);
+    anchors.note_content_changed(1);
+    source.selection = None;
+    source.caret = 1;
+    let compare = |source: &mut Fake, anchors: &mut Anchors<usize>| {
+        let read = caret_report_since(
+            source,
+            &mut anchors.node(1),
+            &mut || REPORTED_AT,
+            (false, None, LastSelection::Compare),
+        )
+        .expect("the fake answers");
+        (
+            read.selection_changes,
+            read.content_changed,
+            read.new_selection,
+        )
+    };
+    assert_eq!(
+        compare(&mut source, &mut anchors),
+        (
+            vec![SelectionChange {
+                selected: false,
+                text: String::new(),
+                characters: 0,
+            }],
+            true,
+            None
+        )
+    );
+    source.selection = Some((1, 3));
+    assert_eq!(
+        compare(&mut source, &mut anchors),
+        (
+            vec![SelectionChange {
+                selected: true,
+                text: "el".to_owned(),
+                characters: 2,
+            }],
+            false,
+            None
+        )
+    );
+}
+
+/// A selecting key's answer after the text changed: the change in general
+/// terms, with the whole new selection's text.
+#[test]
+fn a_selecting_keys_answer_after_the_text_changed_is_in_general_terms() {
+    let mut source = Fake::new("hello world", 0);
+    source.selection = Some((0, 2));
+    let mut anchors = store();
+    let before = report(&mut source, &mut anchors);
+    let selection = before.selection.expect("a selection");
+    anchors.note_content_changed(1);
+    source.selection = Some((0, 5));
+    let mut watch = watch(None, TextUnit::Character);
+    watch.previous_selection = Some(PreviousSelection {
+        start: selection.start,
+        end: selection.end,
+    });
+    let reply = answered(check(
+        &mut source,
+        &mut anchors,
+        &watch,
+        &mut FakeSignal::new(),
+    ));
+    assert_eq!(
+        (
+            reply.selection_changes,
+            reply.content_changed,
+            reply.new_selection
+        ),
+        (
+            vec![SelectionChange {
+                selected: true,
+                text: String::new(),
+                characters: 0,
+            }],
+            true,
+            Some(SelectionChange {
+                selected: true,
+                text: "hello".to_owned(),
+                characters: 5,
+            })
+        )
+    );
+}
+
 /// A selecting key's reply, from a selection of `old` (equal ends for none,
 /// with the caret there) to `new`.
 fn selection_after(old: (usize, usize), new: Option<(usize, usize)>) -> Vec<(bool, String, u32)> {

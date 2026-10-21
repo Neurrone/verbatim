@@ -512,6 +512,10 @@ pub struct NodeAnchors<P> {
     /// the next report's selection changes are worked out from
     /// ([`caret_report_since`]); `None` when there is none to compare with.
     selection: Option<KeptSelection<P>>,
+    /// The node's text changed since the next comparison's selection was
+    /// reported ([`Anchors::note_content_changed`]), so that comparison is
+    /// made in general terms.
+    content_changed: bool,
 }
 
 /// The selection of a caret report, as the next report compares with it.
@@ -530,6 +534,7 @@ impl<P> Default for NodeAnchors<P> {
             reported: HashMap::new(),
             carets: VecDeque::new(),
             selection: None,
+            content_changed: false,
         }
     }
 }
@@ -587,6 +592,17 @@ impl<P: Clone> Anchors<P> {
         }
     }
 
+    /// Notes that node `node`'s text changed, so the next caret report that
+    /// compares selections makes its comparison in general terms and clears
+    /// the note, as NVDA's `hasContentChangedSinceLastSelection` is set by a
+    /// classic edit control's value change and read and cleared by
+    /// `detectPossibleSelectionChange` (`nvda/source/editableText.py` 429
+    /// to 451; `nvda/source/NVDAObjects/IAccessible/__init__.py` 2019 to
+    /// 2023).
+    pub fn note_content_changed(&mut self, node: u64) {
+        self.nodes.entry(node).or_default().content_changed = true;
+    }
+
     /// The anchors of node `node`, with what minting needs.
     pub fn node(&mut self, node: u64) -> NodeText<'_, P> {
         NodeText {
@@ -641,12 +657,18 @@ impl<P: Clone> NodeText<'_, P> {
 
     /// Forgets the selection the next caret report would be compared with,
     /// so that report carries no selection changes and is compared with
-    /// from then on: at a new focus, whose first report sets it; once the
-    /// node's text changed, when the selection's old ends may no longer
-    /// hold the text that was selected; and once the outpost selected or
-    /// moved the caret for Core, which speaks that itself.
+    /// from then on: at a new focus, whose first report sets it, and once
+    /// the outpost selected or moved the caret for Core, which speaks that
+    /// itself.
     pub fn forget_selection(&mut self) {
         self.anchors.selection = None;
+    }
+
+    /// Whether the node's text changed since the selection kept was
+    /// reported ([`Anchors::note_content_changed`]), clearing the note: a
+    /// report that compares with the kept selection consumes it.
+    fn take_content_changed(&mut self) -> bool {
+        std::mem::take(&mut self.anchors.content_changed)
     }
 
     /// The text of the chunk `anchor` started, when the anchor is kept.
@@ -1031,8 +1053,8 @@ pub enum LastSelection {
     /// selection no later report compares with.
     Ignore,
     /// Forgotten, and replaced by the report's, which carries no change:
-    /// the report after a focus, and the first after the node's text
-    /// changed.
+    /// the report after a focus, which also clears the note that the text
+    /// changed ([`Anchors::note_content_changed`]).
     Restart,
     /// Compared with, for how the selection changed, and replaced by the
     /// report's: a caret event's report.
@@ -1049,6 +1071,13 @@ pub struct ReportedCaret<P> {
     pub moved: bool,
     /// How the selection changed from the one last reported, when asked.
     pub selection_changes: Vec<SelectionChange>,
+    /// The node's text changed since the selection compared with was
+    /// reported, so `selection_changes` carry no text
+    /// ([`CaretReply::content_changed`]).
+    pub content_changed: bool,
+    /// With `content_changed`, the whole new selection's text
+    /// ([`CaretReply::new_selection`]).
+    pub new_selection: Option<SelectionChange>,
 }
 
 /// [`caret_report`], and, given `since`, whether the caret is no longer
@@ -1060,8 +1089,11 @@ pub struct ReportedCaret<P> {
 /// last report to compare with ([`NodeText::forget_selection`]), and, read
 /// call by call, no comparison when neither selection holds anything, which
 /// has no change to speak (NVDA's `speakSelectionChange`,
-/// `nvda/source/speech/speech.py` 1358 to 1359). The report's selection is
-/// kept for the next report to compare with unless `last` is
+/// `nvda/source/speech/speech.py` 1358 to 1359). A comparison made when
+/// the node's text changed since the last report
+/// ([`Anchors::note_content_changed`]) clears that note and is made in
+/// general terms ([`general_changes`]). The report's selection is kept for
+/// the next report to compare with unless `last` is
 /// [`LastSelection::Ignore`].
 ///
 /// # Errors
@@ -1075,6 +1107,7 @@ pub fn caret_report_since<S: TextSource>(
 ) -> TextResult<ReportedCaret<S::Pos>> {
     if last == LastSelection::Restart {
         anchors.forget_selection();
+        anchors.take_content_changed();
     }
     let keep = last != LastSelection::Ignore;
     let last = if last == LastSelection::Compare {
@@ -1082,9 +1115,17 @@ pub fn caret_report_since<S: TextSource>(
     } else {
         None
     };
+    // NVDA reads and clears the note at every comparison, and keeps it
+    // while there is no selection to compare with
+    // (`detectPossibleSelectionChange`, `nvda/source/editableText.py` 437
+    // to 451).
+    let content_changed = last.is_some() && anchors.take_content_changed();
     let request = CaretRequest {
         since,
-        previous: last.as_ref().map(|last| &last.ends),
+        previous: last
+            .as_ref()
+            .filter(|_| !content_changed)
+            .map(|last| &last.ends),
         previous_collapsed: last.as_ref().is_some_and(|last| last.collapsed),
         unit: None,
         formats: formats.then_some(FormatSpan::Line),
@@ -1103,15 +1144,20 @@ pub fn caret_report_since<S: TextSource>(
             };
             (state, moved, read_at_ms, None, None)
         };
-    let selection_changes = match (&last, read_changes) {
-        (Some(_), Some(read)) => read
-            .into_iter()
-            .filter_map(|(selected, text)| change_of(selected, &text))
-            .collect(),
-        (Some(last), None) if !(last.collapsed && state.selection.is_none()) => {
-            selection_changes(source, &last.ends, &state)?
+    let (selection_changes, new_selection) = match (&last, read_changes) {
+        (Some(last), _) if content_changed => {
+            general_changes(source, (&last.ends, last.collapsed), &state)?
         }
-        _ => Vec::new(),
+        (Some(_), Some(read)) => (
+            read.into_iter()
+                .filter_map(|(selected, text)| change_of(selected, &text))
+                .collect(),
+            None,
+        ),
+        (Some(last), None) if !(last.collapsed && state.selection.is_none()) => {
+            (selection_changes(source, &last.ends, &state)?, None)
+        }
+        _ => (Vec::new(), None),
     };
     let report = report_for(source, anchors, (&state, read_at_ms), line, keep)?;
     Ok(ReportedCaret {
@@ -1119,6 +1165,8 @@ pub fn caret_report_since<S: TextSource>(
         state,
         moved,
         selection_changes,
+        content_changed,
+        new_selection,
     })
 }
 
@@ -1608,6 +1656,13 @@ fn answer_caret<S: TextSource>(
         (Vec::new(), formats)
     };
     let line = line.map(|(unit, offset)| (unit, offset, line_formats));
+    // The answer replaces the selection kept, as the key's caret event does
+    // in NVDA, which reads and clears the note that the text changed
+    // whenever it has a selection to compare with
+    // (`detectPossibleSelectionChange`, `nvda/source/editableText.py` 437
+    // to 451); a comparison the key asked for is then made in general
+    // terms.
+    let content_changed = anchors.anchors.selection.is_some() && anchors.take_content_changed();
     // A key's answer is the last report the next caret event's compares
     // with.
     let caret = report_for(source, anchors, (&state, read_at_ms), line, true)?;
@@ -1618,13 +1673,21 @@ fn answer_caret<S: TextSource>(
         unit,
         (read_unit, unit_formats),
     )?;
-    let selection_changes = match (previous, changes) {
-        (Some(_), Some(changes)) => changes
-            .into_iter()
-            .filter_map(|(selected, text)| change_of(selected, &text))
-            .collect(),
-        (Some(previous), None) => selection_changes(source, previous, &state)?,
-        (None, _) => Vec::new(),
+    let content_changed = content_changed && previous.is_some();
+    let (selection_changes, new_selection) = match (previous, changes) {
+        (Some(previous), _) if content_changed => {
+            let collapsed = source.compare(&previous.0, &previous.1)? == Ordering::Equal;
+            general_changes(source, (previous, collapsed), &state)?
+        }
+        (Some(_), Some(changes)) => (
+            changes
+                .into_iter()
+                .filter_map(|(selected, text)| change_of(selected, &text))
+                .collect(),
+            None,
+        ),
+        (Some(previous), None) => (selection_changes(source, previous, &state)?, None),
+        (None, _) => (Vec::new(), None),
     };
     Ok(TextReply::Caret(Box::new(CaretReply {
         moved,
@@ -1632,6 +1695,8 @@ fn answer_caret<S: TextSource>(
         read_at_ms,
         unit,
         selection_changes,
+        content_changed,
+        new_selection,
         same_line,
         removed: None,
     })))
@@ -1768,6 +1833,63 @@ fn selection_changes<S: TextSource>(
         Ordering::Equal => {}
     }
     Ok(changes)
+}
+
+/// How the selection changed from `previous` (its ends, and whether it was
+/// collapsed) to what `state` holds, in general terms, the text having
+/// changed since `previous` was reported: whether something was selected
+/// and whether something was unselected, each a change with no text, by
+/// NVDA's comparison of the two selections' ends (`speakSelectionChange`,
+/// `nvda/source/speech/speech.py` 1355 to 1391, which with `generalize`
+/// speaks only whether each list has an entry), with the whole new
+/// selection's text when something was selected or unselected and the new
+/// selection holds something. Nothing when neither selection holds
+/// anything. The ends are compared with no read; the new selection's text
+/// is the one read.
+fn general_changes<S: TextSource>(
+    source: &mut S,
+    (previous, old_collapsed): (&(S::Pos, S::Pos), bool),
+    state: &CaretState<S::Pos>,
+) -> TextResult<(Vec<SelectionChange>, Option<SelectionChange>)> {
+    let Some((new_start, new_end)) = state.selection.as_ref() else {
+        return Ok(if old_collapsed {
+            (Vec::new(), None)
+        } else {
+            (vec![empty_change(false)], None)
+        });
+    };
+    let mut changes = Vec::new();
+    if old_collapsed {
+        changes.push(empty_change(true));
+    } else {
+        let (old_start, old_end) = previous;
+        let apart = source.compare(new_start, old_end)? == Ordering::Greater
+            || source.compare(new_end, old_start)? == Ordering::Less;
+        let starts = source.compare(new_start, old_start)?;
+        let ends = source.compare(new_end, old_end)?;
+        if apart || starts == Ordering::Less || ends == Ordering::Greater {
+            changes.push(empty_change(true));
+        }
+        if apart || starts == Ordering::Greater || ends == Ordering::Less {
+            changes.push(empty_change(false));
+        }
+    }
+    let new_selection = if changes.is_empty() {
+        None
+    } else {
+        change(source, true, new_start, new_end)?
+    };
+    Ok((changes, new_selection))
+}
+
+/// A change that says only whether something was selected or unselected,
+/// with no text ([`general_changes`]).
+fn empty_change(selected: bool) -> SelectionChange {
+    SelectionChange {
+        selected,
+        text: String::new(),
+        characters: 0,
+    }
 }
 
 /// Reads one unit: moves first when asked, then reads the unit at the point

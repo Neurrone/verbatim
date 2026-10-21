@@ -229,6 +229,8 @@ fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
                 selection: None,
             },
             selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
         },
     }
 }
@@ -270,6 +272,8 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
             },
             unit: None,
             selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
         })),
     });
     let _ = same(&Input::Command {

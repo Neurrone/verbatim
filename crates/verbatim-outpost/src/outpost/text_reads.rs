@@ -442,6 +442,20 @@ pub(super) enum NoCaret {
     NotRead,
 }
 
+/// How the selection changed with a caret event's report ([`report_caret`]),
+/// as [`NormalizedEvent::CaretMoved`](verbatim_model::NormalizedEvent::CaretMoved)
+/// carries it.
+#[derive(Default)]
+pub(super) struct SelectionReport {
+    /// The changes from the selection last reported.
+    pub(super) changes: Vec<SelectionChange>,
+    /// The node's text changed since that selection was reported, so the
+    /// changes carry no text.
+    pub(super) content_changed: bool,
+    /// With `content_changed`, the whole new selection's text.
+    pub(super) new_selection: Option<SelectionChange>,
+}
+
 /// What a caret report is for ([`report_caret`]).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum CaretFor {
@@ -471,7 +485,7 @@ pub(super) fn report_caret(
     context: &Context,
     node_id: NodeId,
     purpose: CaretFor,
-) -> Result<(CaretReport, bool, Vec<SelectionChange>), NoCaret> {
+) -> Result<(CaretReport, bool, SelectionReport), NoCaret> {
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(reply) => {
@@ -496,18 +510,24 @@ pub(super) fn report_caret(
     let last = match purpose {
         CaretFor::Focus => LastSelection::Restart,
         CaretFor::Terminal => LastSelection::Ignore,
-        // The text changed since the selection was last reported, its
-        // change waiting behind this caret event: compared with the old
-        // selection's ends, the new text would be spoken as the selection
-        // that changed. NVDA's edit control notes the content changed when
-        // a value change for it is pending at its caret event
-        // (`Edit.event_caret`, `nvda/source/NVDAObjects/window/edit.py`
-        // 1068 to 1082), and so speaks the change in general terms, as
-        // after a text change handled first; Verbatim says nothing for it
-        // in either order ([`forget_selection`]).
-        CaretFor::Event if text_change_waiting(context, node_id) => LastSelection::Restart,
         CaretFor::Event => LastSelection::Compare,
     };
+    // An edit control's value change waiting behind this caret event: the
+    // text changed since the selection was last reported, so the change is
+    // spoken in general terms, as after a value change handled first. NVDA's
+    // edit control notes the content changed when a value change for it is
+    // pending at its caret event (`Edit.event_caret`,
+    // `nvda/source/NVDAObjects/window/edit.py` 1068 to 1084). A UIA text
+    // change is never noted: NVDA handles UIA's text changed event as a
+    // text change only for Word and the two terminals
+    // (`nvda/source/UIAHandler/__init__.py` 145 to 151 and 778 to 799), so
+    // a UIA text's comparison always reads the old selection's range as it
+    // now is.
+    if purpose == CaretFor::Event && value_change_waiting(context, node_id) {
+        context
+            .edit_anchors()
+            .note_content_changed(node_id.number());
+    }
     let formats = purpose == CaretFor::Focus;
     context.caret_read(node_id);
     let report = match source {
@@ -524,7 +544,8 @@ pub(super) fn report_caret(
                     && sent
                         .as_ref()
                         .is_some_and(|(sent, _)| text::same_caret(sent, &read.report));
-                (read.report, unchanged, read.selection_changes)
+                let (report, selection) = selection_report(read);
+                (report, unchanged, selection)
             });
             drop(anchors);
             note_fallback(context, &mut source);
@@ -539,7 +560,10 @@ pub(super) fn report_caret(
                 &mut super::now_ms,
                 (formats, None, last),
             )
-            .map(|read| (read.report, false, read.selection_changes))
+            .map(|read| {
+                let (report, selection) = selection_report(read);
+                (report, false, selection)
+            })
         }
     };
     match report {
@@ -552,16 +576,23 @@ pub(super) fn report_caret(
     }
 }
 
+/// A caret read's report, and its selection changes as a caret event's
+/// report carries them.
+fn selection_report<P>(read: text::ReportedCaret<P>) -> (CaretReport, SelectionReport) {
+    (
+        read.report,
+        SelectionReport {
+            changes: read.selection_changes,
+            content_changed: read.content_changed,
+            new_selection: read.new_selection,
+        },
+    )
+}
+
 /// Forgets the selection `node_id`, read through `backend`, would have its
-/// next caret report compared with ([`text::NodeText::forget_selection`]):
-/// at a new focus, and when its text changed, after which NVDA speaks a
-/// selection change in general terms ("selected instead", "selection
-/// removed": `hasContentChangedSinceLastSelection`,
-/// `nvda/source/NVDAObjects/behaviors.py` 351 to 358, and
-/// `speech.speakSelectionChange`'s `generalize`,
-/// `nvda/source/speech/speech.py` 1340 to 1416), which Verbatim does not
-/// yet say: the next report carries no change. Only that backend's anchors
-/// are locked.
+/// next caret report compared with ([`text::NodeText::forget_selection`]),
+/// at a new focus: the report carries no change. Only that backend's
+/// anchors are locked.
 pub(super) fn forget_selection(context: &Context, node_id: NodeId, backend: Backend) {
     match backend {
         Backend::Uia => context.uia_anchors().forget_selection(node_id.number()),
@@ -569,33 +600,42 @@ pub(super) fn forget_selection(context: &Context, node_id: NodeId, backend: Back
     }
 }
 
-/// Whether a change of `node_id`'s text waits in the intake: UIA's text
-/// changed event from the node's element, or, for an edit control's client
-/// area, its value change.
-fn text_change_waiting(context: &Context, node_id: NodeId) -> bool {
-    use super::intake::{Item, UiaKind};
+/// Notes that the text of edit control `node_id` changed, its value change
+/// handled, so its next caret report's selection comparison is made in
+/// general terms ([`text::Anchors::note_content_changed`]): NVDA's
+/// `IAccessible.event_valueChange` for an object that detects its own
+/// selection changes (`nvda/source/NVDAObjects/IAccessible/__init__.py`
+/// 2019 to 2023).
+pub(super) fn note_value_change(context: &Context, node_id: NodeId) {
+    context
+        .edit_anchors()
+        .note_content_changed(node_id.number());
+}
+
+/// Whether a value change of `node_id`, an edit control's client area,
+/// waits in the intake.
+fn value_change_waiting(context: &Context, node_id: NodeId) -> bool {
+    use super::intake::Item;
     use verbatim_ia2::WinEventKind;
-    let runtime_id = context.uia_registry.runtime_id_of(node_id);
-    let edit = match runtime_id {
-        Some(_) => None,
-        None => context
-            .msaa_registry
-            .key_of(node_id)
-            .filter(|&(_, object, child)| object == OBJID_CLIENT.0 && child == CHILDID_SELF)
-            .map(|(hwnd, ..)| hwnd),
+    if context.uia_registry.runtime_id_of(node_id).is_some() {
+        return false;
+    }
+    let Some(edit) = context
+        .msaa_registry
+        .key_of(node_id)
+        .filter(|&(_, object, child)| object == OBJID_CLIENT.0 && child == CHILDID_SELF)
+        .map(|(hwnd, ..)| hwnd)
+    else {
+        return false;
     };
     context.intake.any_waiting(|entry| match &entry.item {
-        Item::Uia(event) => {
-            matches!(event.kind, UiaKind::TextChanged)
-                && runtime_id.as_ref() == Some(&event.parts.runtime_id)
-        }
         Item::Msaa {
             kind: WinEventKind::ValueChange,
             hwnd,
             id_object,
             id_child,
             ..
-        } => edit == Some(*hwnd) && *id_object == OBJID_CLIENT.0 && *id_child == CHILDID_SELF,
+        } => edit == *hwnd && *id_object == OBJID_CLIENT.0 && *id_child == CHILDID_SELF,
         _ => false,
     })
 }

@@ -454,6 +454,8 @@ fn reduce_caret_moved(
         node_id: node,
         caret,
         selection_changes,
+        content_changed,
+        new_selection,
     } = moved
     else {
         return Vec::new();
@@ -461,11 +463,15 @@ fn reduce_caret_moved(
     let node = *node;
     let mut effects = terminal::caret_shows_typing(state, trace_id, node, caret);
     editing::update_caret(state, node, caret.clone(), observed_at_ms);
+    let general = content_changed.then_some(editing::General {
+        selection: new_selection.as_ref(),
+        collapsed: caret.selection.is_none(),
+    });
     effects.extend(editing::selection_changed(
         state,
         trace_id,
         (node, observed_at_ms),
-        selection_changes,
+        (selection_changes, general),
     ));
     effects
 }

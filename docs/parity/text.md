@@ -230,27 +230,42 @@ Differences:
   for the same node, the merged report carries both reports' changes, so
   every intermediate change is spoken, where NVDA, whose event limiter
   keeps one caret event per object (`IAccessibleHandler/orderedWinEventLimiter.py`),
-  compares only the last selection with the one it last saw. Not yet built:
-  - After the focus's text changed, NVDA speaks the next selection change
-    in general terms, the whole new selection followed by "selected",
-    "<text> selected instead" when one replaced another, or "selection
-    removed" (`speech.speakSelectionChange`'s `generalize`); Verbatim says
-    nothing for that change and compares with the selection after it. A
-    caret event whose text change still waits behind it counts as after
-    the change (mockapp's
-    `an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change`
-    and `a_caret_event_before_its_text_change_carries_no_selection_change`).
+  compares only the last selection with the one it last saw.
+- A selection change that follows a change of the focus's text:
+  **matched** in both backends, against the captures in
+  `target/e2e-evidence/m42-desktop-2-2026-10-22/` (`part3b-textbox-*.txt`
+  and `part3b-notepad-*.txt`). The selection compared with is never
+  forgotten when the text changes. In a classic edit control, the text
+  having changed since the selection compared with was reported, the
+  change is said in general terms: the whole new selection followed by
+  "selected" when anything was selected, then, when anything was
+  unselected, the whole new selection followed by "selected instead", or
+  "selection removed" when nothing is selected now, both for a disjoint
+  replacement ("Selection changes" in
+  [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
+  The control's text counts as changed once its value change is handled,
+  and at a caret event while its value change still waits, so both orders
+  of the two events give the general words, as NVDA's do (`x` typed over
+  the selected "hello ": "x" then "selection removed"; Control+X on a
+  selected line: "selection removed"; mockapp's
+  `an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms`
+  and
+  `an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms`).
+  A selecting key's answer is said the same way when the text changed
+  before it. The outpost carries the general terms to Core as
+  `content_changed` with the whole new selection's text, read in the same
+  caret read in place of the changed pieces' text. A UIA text's change
+  never counts, as in NVDA, which handles UIA's text change as one only for
+  Word and the two terminals: the selections are compared as always, the
+  old selection's range read as it now is, so "x" typed over the selected
+  "hello " in Windows 11 Notepad says "x" then "x unselected", the old
+  range now holding the typed character, and Control+X on a selected line
+  says nothing, the old range now empty (mockapp's
+  `a_caret_event_before_its_text_change_compares_the_old_ranges_text`).
+  Not yet built:
   - NVDA's classic edit control drops a caret event whose selection
-    offsets equal the last one's, and takes its content as changed when a
-    value change for it is pending at the caret event
-    (`NVDAObjects/window/edit.py` 1068 to 1082), as when the Windows Forms
-    text box raises its caret's move before its value change for a key
-    that types over a selection; Verbatim reads each caret event, and
-    compares nothing when the control's value change waits behind it.
-    NVDA's UIA objects take the content as changed only as the text change
-    is handled (`NVDAObjects/behaviors.py` 351 to 352), so for a caret
-    event raised before its text change NVDA compares the selections;
-    Verbatim applies the edit control's rule there too and says nothing.
+    offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to
+    1075); Verbatim reads each caret event.
   - NVDA speaks the whole new selection when the old one held nothing,
     and the whole old one when the new one holds nothing; Verbatim splits
     either at the caret by the rule a selecting key's answer follows,

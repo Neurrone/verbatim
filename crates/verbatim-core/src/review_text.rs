@@ -661,7 +661,7 @@ pub(crate) fn reply(
         // (`docs/parity/review.md`, "Select then copy from the review
         // cursor").
         (TextFollowUp::Selected, TextReply::Selected(changes)) => {
-            let segments = selection_segments(&changes);
+            let segments = selection_segments(&changes, None);
             if segments.is_empty() {
                 Vec::new()
             } else {

@@ -806,6 +806,8 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
                     node_id: terminal_node(),
                     caret,
                     selection_changes: Vec::new(),
+                    content_changed: false,
+                    new_selection: None,
                 },
             ),
         );

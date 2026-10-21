@@ -7,9 +7,11 @@
 //! Backspace naming the line break they meet, as NVDA does
 //! (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
 //! character"): Windows 11 Notepad breaks lines with a carriage return, an
-//! edit control with a carriage return and a line feed. The Notepad
-//! scenario is local-only: GitHub's Windows Server runner has classic
-//! Notepad.
+//! edit control with a carriage return and a line feed; and a selection
+//! changed by typing over it or cutting it, said in general terms in the
+//! text box and compared as always in Notepad, as NVDA says each. The
+//! Notepad scenario is local-only: GitHub's Windows Server runner has
+//! classic Notepad.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! editor, which moves its caret; Verbatim waits for evidence that it did
@@ -113,6 +115,21 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
     // Backspace at the line's start deletes the line break before it.
     press(scenario, "backspace", &["line feed"]);
+
+    // A selection changed by a change of the text is said in general
+    // terms, as NVDA's edit control says it
+    // (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-textbox-1-type-over.txt`
+    // and `part3b-textbox-2-cut.txt`): "x" typed over the selected word is
+    // echoed, then the selection is removed; so is the line cut with
+    // Control+X. The "x" typed after it changes no selection, so the cut's
+    // words are the only ones before it.
+    press(scenario, "control+home", &["alpha beta gammaelta epsilon"]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press(scenario, "x", &["x", "selection removed"]);
+    press(scenario, "control+home", &["xbeta gammaelta epsilon"]);
+    press(scenario, "shift+end", &["xbeta gammaelta epsilon selected"]);
+    press(scenario, "control+x", &["selection removed"]);
+    press(scenario, "x", &["x"]);
 }
 
 /// The scenario in Windows 11 Notepad.
@@ -160,6 +177,26 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
 
     // Backspace at the line's start deletes the line break before it.
     press(scenario, "backspace", &["carriage return"]);
+
+    // A selection changed by a change of the text is compared as any other,
+    // the old selection's range read as it now is, as NVDA does in Windows
+    // 11 Notepad
+    // (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`
+    // and `part3b-notepad-2.txt`): "x" typed over the selected word is
+    // echoed, then unselected, the old range holding it now; the line cut
+    // with Control+X says nothing, its old range now empty, so the echo of
+    // the "x" typed next is the next thing heard.
+    press(scenario, "control+home", &["alpha beta gammaelta epsilon"]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press(scenario, "x", &["x", "x unselected"]);
+    press(scenario, "control+home", &["xbeta gammaelta epsilon"]);
+    press(
+        scenario,
+        "shift+end",
+        &["xbeta gammaelta epsilon  selected"],
+    );
+    scenario.send_keys(&["control+x"]).expect("sends control+x");
+    press(scenario, "x", &["x"]);
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");

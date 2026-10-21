@@ -239,11 +239,19 @@ pub enum NormalizedEvent {
         caret: CaretReport,
         /// How the selection changed from the one the outpost last reported
         /// for the node, by the rule of [`CaretReply`](crate::CaretReply)'s
-        /// `selection_changes`. Always empty for a terminal, and for the first report after the node's text changed
-        /// (or with its change waiting behind the caret event) or Verbatim
-        /// itself selected or moved the caret.
+        /// `selection_changes`. Always empty for a terminal, and for the
+        /// first report after Verbatim itself selected or moved the caret.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         selection_changes: Vec<SelectionChange>,
+        /// The node's text changed since the selection compared with was
+        /// reported, so the change is spoken in general terms, as
+        /// [`CaretReply`](crate::CaretReply)'s `content_changed` says.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        content_changed: bool,
+        /// With `content_changed`, the whole new selection's text, as
+        /// [`CaretReply`](crate::CaretReply)'s `new_selection` says.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new_selection: Option<SelectionChange>,
     },
     /// The text of a node changed (UIA's text changed event, an edit
     /// control's change notification). Characters typed into a terminal

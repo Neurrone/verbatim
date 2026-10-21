@@ -502,7 +502,13 @@ then speaks, queued:
   unselected, NVDA's "hello selected" and "hello unselected", a single
   character by its name, 512 characters or more as their number. A
   movement without Shift that leaves a selection speaks its unit, then
-  the text it unselected; a deletion does not. Text an object already has
+  the text it unselected; a deletion does not. A change with no text says
+  nothing. A change in general terms, the text having changed since the
+  selection compared with was reported (`content_changed`), speaks the
+  whole new selection: "hello selected" when something was selected, then,
+  when something was unselected, "hello selected instead", or "selection
+  removed" when nothing is selected now (`editing::selection_segments`).
+  Text an object already has
   selected when it is announced puts the word first, "selected hello".
 - A selection no key made, the mouse's or the application's, arrives as
   the selection changes of a `CaretMoved` once the focus's announcement is

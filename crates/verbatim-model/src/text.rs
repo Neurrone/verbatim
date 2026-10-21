@@ -485,6 +485,19 @@ pub struct CaretReply {
     /// How the selection changed, when the watch asked.
     #[serde(default)]
     pub selection_changes: Vec<SelectionChange>,
+    /// The node's text changed since the selection compared with was
+    /// reported, so the change is spoken in general terms
+    /// (`docs/parity/text.md`, "TextInfo-equivalent layer"): each of
+    /// `selection_changes` then says only whether something was selected or
+    /// unselected, with no text, and [`new_selection`](Self::new_selection)
+    /// is the whole new selection.
+    #[serde(default)]
+    pub content_changed: bool,
+    /// With `content_changed`, the whole new selection's text, read in the
+    /// same caret read, its `selected` true; `None` when nothing is
+    /// selected, and always without `content_changed`.
+    #[serde(default)]
+    pub new_selection: Option<SelectionChange>,
     /// For a watch judged by where the caret landed
     /// ([`CaretWatch::landing`]), whether the caret is on the line where
     /// it was before the key; `None` when not asked or not known.

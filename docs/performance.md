@@ -1112,9 +1112,8 @@ from the caret.
 - Target: 1.
 
 Local work beside the calls, which by "What counts as a call" counts as
-none: each report looks the node up in the registry and scans the
-outpost's intake once under its lock for a text change of the node
-waiting behind the caret event, after which the report compares nothing;
+none: each report looks the node up in the registry, and, a UIA text
+change being no reason to change the comparison, scans no intake for one;
 and each report, a caret key's answer included, keeps its selection's
 ends for the next report to compare with, a copy of two text positions,
 which for UIA adds two references to ranges the outpost already holds
@@ -1489,14 +1488,18 @@ The same caret key in a standard edit control, read through its messages.
 - Today: 5 with nothing selected before or after; 7 for a selection no
   key made (mockapp's "al" from the caret), the change's text read with
   `WM_GETTEXTLENGTH` and `WM_GETTEXT`, its comparisons of offsets making
-  no call.
+  no call. A comparison in general terms, after the control's text
+  changed, reads no change's text, only the whole new selection's when
+  something is selected, with the same two messages a change's text
+  takes, so it adds no message to the comparison it replaces.
 - Target: the minimum.
 
-The same local work as through UIA: the intake scanned once for the
-control's value change waiting, and the selection's two offsets kept.
-Each value change of the focused control locks the edit controls' anchors
-once to forget the selection kept, and nothing else; a UIA text change of
-a focus that is not a terminal likewise locks the UIA anchors once.
+The local work beside the calls: the registry looked up and the intake
+scanned once under its lock for the control's value change waiting, and
+the selection's two offsets kept. Each value change of the focused
+control locks the edit controls' anchors once to note that its text
+changed, and nothing else; a UIA text change takes no lock on the
+anchors.
 
 ### Typed-character echo
 

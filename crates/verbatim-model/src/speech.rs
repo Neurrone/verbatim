@@ -209,6 +209,9 @@ pub enum Phrase {
     Selected(SelectionText),
     /// Text stopped being selected: NVDA's "hello unselected".
     Unselected(SelectionText),
+    /// The selection that replaced one the text changed under: NVDA's
+    /// "hello selected instead".
+    SelectedInstead(SelectionText),
     /// Text an object already had selected when it was announced: NVDA's
     /// "selected hello", the word first as a warning that typing would
     /// replace it.
@@ -313,6 +316,9 @@ pub enum Message {
     /// A terminal line longer than all the output Core keeps waiting was
     /// cut, and the rest of it is not spoken — "line cut".
     TerminalLineCut,
+    /// The selection went when the text changed under it — NVDA's
+    /// "selection removed".
+    SelectionRemoved,
 }
 
 /// One segment of an utterance, with an optional language override.

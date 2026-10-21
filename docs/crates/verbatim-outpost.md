@@ -958,7 +958,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   its read finished; `caret_report_since` also says whether the caret left
   a given position and, as its `LastSelection` asks, how the selection
   changed from the node's last report (`ReportedCaret`), with whether the
-  report's selection is kept for the next to compare with, and
+  report's selection is kept for the next to compare with, and with the
+  change in general terms when the node's text changed since
+  (`ReportedCaret::content_changed` and `new_selection`);
+  `Anchors::note_content_changed` notes such a change, and
   `NodeText::forget_selection`
   and `Anchors::forget_selection` make the next report carry no change. `Anchors` keeps one backend's anchors, by node, numbered
   from a counter both of an outpost's backends share, and never forgets
@@ -1948,22 +1951,35 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     change's text with the window's text. The selection compared with is
     forgotten, so the next report carries no change and sets it anew, at a
     new focus (the report after it, whose selection Core already speaks
-    as the focus's), when the node's text changes (UIA's text changed, an
-    edit control's value change: NVDA then speaks the change in general
-    terms, "selected instead" or "selection removed", which Verbatim does
-    not yet say), also when that change still waits in the intake behind
-    the caret event (`text_reads::text_change_waiting`, as NVDA's edit
-    control checks for a pending value change: the Windows Forms text box
-    raises its caret's move before its value change), and when the outpost selects or moves the caret for Core
+    as the focus's), and when the outpost selects or moves the caret for Core
     (`Select`, `MoveCaret`), whose own reply speaks what it did. A key's
     selection reaches Core only in the key's answer, since the watch takes
     the key's caret event. A terminal's reports carry no changes: NVDA's
     console class replaces the detection, which is not yet traced, so a
-    terminal's text change forgets nothing. Two caret reports merged while
-    they wait to be written (`outbound::merged`) carry both reports'
-    changes in order, and a waiting report that carries changes is never
-    merged across a reply (`Pending::waiting_with`), which would have it
-    reach Core after the reply to a key pressed before Core saw it.
+    terminal's reports keep no selection. A text change never forgets the
+    selection. In a classic edit control, the text having changed since
+    the selection compared with was reported, the next comparison is made
+    in general terms, as NVDA's `hasContentChangedSinceLastSelection`
+    makes it (`docs/parity/text.md`, "TextInfo-equivalent layer"): the
+    node's note is set when the control's value change is handled
+    (`text_reads::note_value_change`) and at a caret event while that
+    value change still waits in the intake
+    (`text_reads::value_change_waiting`: the Windows Forms text box raises
+    its caret's move before its value change), and is cleared by the next
+    report, a caret key's answer included, that has a selection to compare
+    with, and by a focus. Such a comparison (`text::general_changes`)
+    compares the ends only, and sends each change with no text, whether
+    something was selected or unselected, with `content_changed` and the
+    whole new selection's text in `new_selection`, the one text it reads,
+    when anything changed and something is selected. A UIA text change is
+    never noted, as NVDA notes one only for Word and the terminals: the
+    comparison reads the old selection's range as it now is, after it
+    followed the edit. Two caret reports merged while they wait to be
+    written (`outbound::merged`) carry both reports' changes in order, a
+    waiting report that carries changes is never merged across a reply
+    (`Pending::waiting_with`), which would have it reach Core after the
+    reply to a key pressed before Core saw it, nor with a report in
+    general terms, or into one, whose words come from its own selection.
   - Which applications raise the evidence, as checked live on
     2026-10-08 (`docs/design/phase6-design.md`, "Live caret event
     checks"): the focused Windows Forms text box raises, for every caret

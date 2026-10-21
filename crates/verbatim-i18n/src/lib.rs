@@ -705,6 +705,7 @@ pub fn message_text(message: verbatim_model::Message) -> String {
             i18n_embed_fl::fl!(loader, "message-report-new-output-off")
         }
         Message::TerminalLineCut => i18n_embed_fl::fl!(loader, "message-terminal-line-cut"),
+        Message::SelectionRemoved => i18n_embed_fl::fl!(loader, "message-selection-removed"),
         // `Message` is non_exhaustive; an unmapped future message speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -725,6 +726,11 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         Phrase::Unselected(text) => {
             i18n_embed_fl::fl!(loader, "phrase-unselected", text = selection_text(text))
         }
+        Phrase::SelectedInstead(text) => i18n_embed_fl::fl!(
+            loader,
+            "phrase-selected-instead",
+            text = selection_text(text)
+        ),
         Phrase::Preselected(text) => {
             i18n_embed_fl::fl!(loader, "phrase-preselected", text = selection_text(text))
         }
@@ -1828,6 +1834,12 @@ mod tests {
             "600 characters selected"
         );
         assert_eq!(
+            phrase_text(&Phrase::SelectedInstead(SelectionText::Text(
+                "hello".into()
+            ))),
+            "hello selected instead"
+        );
+        assert_eq!(
             phrase_text(&Phrase::Preselected(SelectionText::Text("hello".into()))),
             "selected hello"
         );
@@ -1846,6 +1858,10 @@ mod tests {
         assert_eq!(
             message_text(verbatim_model::Message::CannotSelect),
             "Can't select text, press twice to copy"
+        );
+        assert_eq!(
+            message_text(verbatim_model::Message::SelectionRemoved),
+            "selection removed"
         );
         assert_eq!(
             message_text(verbatim_model::Message::PressTwiceToCopy),

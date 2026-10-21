@@ -1465,14 +1465,16 @@ impl Worker<'_> {
                 tracing::debug!("the terminal's caret is the one last sent; it is not sent again");
                 return;
             }
-            Ok((caret, false, selection_changes)) => {
+            Ok((caret, false, selection)) => {
                 if terminal {
                     self.sent_caret(node_id, &caret);
                 }
                 NormalizedEvent::CaretMoved {
                     node_id,
                     caret,
-                    selection_changes,
+                    selection_changes: selection.changes,
+                    content_changed: selection.content_changed,
+                    new_selection: selection.new_selection,
                 }
             }
             Err(_) => return,
@@ -1748,6 +1750,8 @@ impl Worker<'_> {
                     node_id,
                     caret: caret.report,
                     selection_changes: Vec::new(),
+                    content_changed: false,
+                    new_selection: None,
                 });
             }
         }
@@ -2555,7 +2559,7 @@ impl Worker<'_> {
                     self.context
                         .msaa_registry
                         .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
-                text_reads::forget_selection(self.context, node_id, Backend::Msaa);
+                text_reads::note_value_change(self.context, node_id);
                 self.check_open_watch(node_id, false);
                 self.emit(
                     trace,
@@ -2871,10 +2875,6 @@ impl Worker<'_> {
         };
         text_reads::text_event_from(self.context, node_id, element);
         let terminal = self.focused_terminal(node_id);
-        // A terminal's caret reports compare no selection.
-        if !terminal {
-            text_reads::forget_selection(self.context, node_id, Backend::Uia);
-        }
         self.check_open_watch(node_id, false);
         if terminal {
             self.terminal_output(node_id, trace, observed_at_ms);

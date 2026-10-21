@@ -9,7 +9,9 @@
 //! watch's end at its bound reads no focus for the wait for a UIA focus
 //! after a `WinEvent` focus while a UIA focus's marker waits for its read;
 //! and a selection no key made is reported with its change, one a key or
-//! Verbatim made is not.
+//! Verbatim made is not; and a selection change after a text change is
+//! compared through UIA as always, and said in general terms in a classic
+//! edit control in either order of its caret event and value change.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -611,15 +613,31 @@ fn a_selection_verbatim_made_is_not_reported_again() {
     app.quit();
 }
 
-/// The caret's report and the text change of `node` that the outpost said
-/// next: a caret event raised before its text's change, both waiting when
-/// the outpost took the caret event, as a key typed over a selection
-/// raises them. The text changed since the selection was last reported, so
-/// the report carries no change, as it carries none when the text change
-/// comes first (NVDA's `hasContentChangedSinceLastSelection`, set when a
-/// value change waits at the caret event, words Verbatim does not yet say).
-fn typed_over_the_selection(outpost: &OutpostUnderTest, node: NodeId) {
-    assert_eq!(reported_changes(outpost, node), []);
+/// The caret report of `node` that the outpost said next: its selection
+/// changes, whether they are said in general terms, and the new selection's
+/// text that comes with them.
+fn reported_selection(
+    outpost: &OutpostUnderTest,
+    node: NodeId,
+) -> (Vec<SelectionChange>, bool, Option<SelectionChange>) {
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::CaretMoved {
+                    node_id,
+                    selection_changes,
+                    content_changed,
+                    new_selection,
+                    ..
+                },
+            ..
+        } if node_id == node => (selection_changes, content_changed, new_selection),
+        other => panic!("the outpost said {other:?}, not the caret of {node:?}"),
+    }
+}
+
+/// The text change of `node`, which must be the outpost's next message.
+fn text_changed(outpost: &OutpostUnderTest, node: NodeId) {
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::TextChanged { node_id },
@@ -627,21 +645,46 @@ fn typed_over_the_selection(outpost: &OutpostUnderTest, node: NodeId) {
         } if node_id == node => {}
         other => panic!("the outpost said {other:?}, not the text's change"),
     }
-    outpost.settled();
 }
 
-/// "x" typed over the selected "alpha" in a document read through UIA, its
-/// caret event raised before its text change.
-fn a_caret_event_before_its_text_change_carries_no_selection_change() {
+/// An unselection said in general terms, which carries no text.
+fn unselected_in_general() -> SelectionChange {
+    SelectionChange {
+        selected: false,
+        text: String::new(),
+        characters: 0,
+    }
+}
+
+/// "x" typed over the selected "a" in a document read through UIA, its
+/// caret event raised before its text change: the report compares the
+/// selections as always, reading the old selection's range as it now is,
+/// so the typed "x" it now holds is unselected, as NVDA, which handles no
+/// text change for such a document, says in Windows 11 Notepad
+/// (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`).
+/// mockapp's ranges are offsets into the text as it now is, so the old
+/// range holds what a range that follows the edit would: one character.
+fn a_caret_event_before_its_text_change_compares_the_old_ranges_text() {
     let (mut app, hwnd, outpost) = start("mockapp-caret-watch-typed-over");
     let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
-    app.send("caret doc 0 5");
+    app.send("caret doc 0 1");
     app.send("caret-event doc");
-    assert_eq!(reported_changes(&outpost, notes), [change(true, "alpha")]);
+    assert_eq!(
+        reported_selection(&outpost, notes),
+        (
+            vec![SelectionChange {
+                selected: true,
+                text: "a".to_owned(),
+                characters: 1,
+            }],
+            false,
+            None
+        )
+    );
     heard_caret_event(&outpost);
     outpost.settled();
     outpost.hold_worker();
-    app.send(r"set-text doc x beta\ngamma\n");
+    app.send(r"set-text doc xlpha beta\ngamma\n");
     app.send("caret doc 1");
     app.send("caret-event doc");
     app.send("text-changed doc");
@@ -653,18 +696,29 @@ fn a_caret_event_before_its_text_change_carries_no_selection_change() {
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
     outpost.release_worker();
-    typed_over_the_selection(&outpost, notes);
+    assert_eq!(
+        reported_selection(&outpost, notes),
+        (
+            vec![SelectionChange {
+                selected: false,
+                text: "x".to_owned(),
+                characters: 1,
+            }],
+            false,
+            None
+        )
+    );
+    text_changed(&outpost, notes);
+    outpost.settled();
     drop(outpost);
     app.quit();
 }
 
-/// "x" typed over the selected "alpha" in a classic edit control, its
-/// caret event raised before its value change, as the Windows Forms text
-/// box raises the caret's location change before the client's value
-/// change (`docs/design/phase6-design.md`, "Live caret event checks").
-fn an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change() {
+/// mockapp's classic edit control focused, with an outpost watching it:
+/// the app, the outpost, and the edit control's node.
+fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     common::init_com();
-    let title = common::unique_title("mockapp-caret-watch-edit-typed-over");
+    let title = common::unique_title(name);
     let mut app = common::spawn("text.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     // The host has the focused state, as in
@@ -701,9 +755,24 @@ fn an_edit_controls_caret_event_before_its_value_change_carries_no_selection_cha
     outpost.settled();
     app.send("caret doc 0 5");
     app.send("caret-event doc");
-    assert_eq!(reported_changes(&outpost, node), [change(true, "alpha")]);
+    assert_eq!(
+        reported_selection(&outpost, node),
+        (vec![change(true, "alpha")], false, None)
+    );
     outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
     outpost.settled();
+    (app, outpost, node)
+}
+
+/// "x" typed over the selected "alpha" in a classic edit control, its
+/// caret event raised before its value change, as the Windows Forms text
+/// box raises the caret's location change before the client's value
+/// change (`docs/design/phase6-design.md`, "Live caret event checks"): the
+/// value change waiting at the caret event, the report says its change in
+/// general terms, the selection removed, as NVDA's edit control does
+/// (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-textbox-1-type-over.txt`).
+fn an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms() {
+    let (mut app, outpost, node) = focus_edit("mockapp-caret-watch-edit-typed-over");
     outpost.hold_worker_on(common::another_applications_window().0 as isize);
     app.send(r"set-text doc x beta\ngamma\n");
     app.send("caret doc 1");
@@ -714,7 +783,33 @@ fn an_edit_controls_caret_event_before_its_value_change_carries_no_selection_cha
         Heard::Msaa(WinEventKind::ValueChange),
     ]);
     outpost.release_worker();
-    typed_over_the_selection(&outpost, node);
+    assert_eq!(
+        reported_selection(&outpost, node),
+        (vec![unselected_in_general()], true, None)
+    );
+    text_changed(&outpost, node);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// "x" typed over the selected "alpha" in a classic edit control, its value
+/// change handled before its caret event: the caret event's report says
+/// its change in general terms, as when the value change waits behind it.
+fn an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms() {
+    let (mut app, outpost, node) = focus_edit("mockapp-caret-watch-edit-changed-first");
+    app.send(r"set-text doc x beta\ngamma\n");
+    outpost.heard(&[Heard::Msaa(WinEventKind::ValueChange)]);
+    text_changed(&outpost, node);
+    outpost.settled();
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
+    assert_eq!(
+        reported_selection(&outpost, node),
+        (vec![unselected_in_general()], true, None)
+    );
+    outpost.settled();
     drop(outpost);
     app.quit();
 }
@@ -771,12 +866,16 @@ fn main() {
             a_selection_verbatim_made_is_not_reported_again,
         ),
         (
-            "a_caret_event_before_its_text_change_carries_no_selection_change",
-            a_caret_event_before_its_text_change_carries_no_selection_change,
+            "a_caret_event_before_its_text_change_compares_the_old_ranges_text",
+            a_caret_event_before_its_text_change_compares_the_old_ranges_text,
         ),
         (
-            "an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change",
-            an_edit_controls_caret_event_before_its_value_change_carries_no_selection_change,
+            "an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms",
+            an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms,
+        ),
+        (
+            "an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms",
+            an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms,
         ),
     ]);
 }

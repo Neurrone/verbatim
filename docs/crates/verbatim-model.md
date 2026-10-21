@@ -132,7 +132,8 @@ Public API:
   `Mark` (a `SpeechMark`, an index mark reported back when playback
   reaches it), and `Phrase` (a reader message with values in it: `Selected`
   and `Unselected` with a `SelectionText` that is text, one character, or a
-  count of characters; `Positioned` with screen coordinates; and the new
+  count of characters, and `SelectedInstead`, "hello selected instead",
+  for a selection that replaced another after the text changed; `Positioned` with screen coordinates; and the new
   values of the typing echo toggles, and `SkippedLines` with a count, for
   terminal output too much to read, or `SkippedUncountedLines`, "skipped
   lines", when the count is not known, or `SkippedMoreThanLines` with a
@@ -284,7 +285,7 @@ the contract the Windows side implements.
   neither. The caret, when read, becomes Core's, and is the one the
   focus's later `CaretMoved` reports are compared with.
 - `NormalizedEvent::CaretMoved { node_id, caret: CaretReport,
-  selection_changes }`: the caret or selection moved in a node with text.
+  selection_changes, content_changed, new_selection }`: the caret or selection moved in a node with text.
   A `CaretReport` is the line at the caret, with its `offset` at the caret,
   and the `Selection` (a start and an end `TextPosition`), `None` when
   nothing is selected. Send one on every caret or selection change in
@@ -294,10 +295,11 @@ the contract the Windows side implements.
   it deleted, the review cursor follows the caret). `selection_changes`
   (`serde(default)`, left out when empty) is how the selection changed
   from the one in the outpost's last report for the node, by the rule of
-  `CaretReply`'s: empty for a terminal, and
-  for the first report after the node's text changed (or with its change
-  waiting behind the caret event) or Verbatim selected or moved the caret
-  itself. A report speaks only these changes, as
+  `CaretReply`'s: empty for a terminal, and for the first report after
+  Verbatim selected or moved the caret itself. `content_changed` and
+  `new_selection` (both `serde(default)`, left out when false or `None`)
+  say the changes in general terms, as a `CaretReply`'s do. A report
+  speaks only these changes, as
   "selected" and "unselected" with the words a selecting key's reply uses,
   unless a caret key's answer is awaited for the node, which speaks them;
   a key's own caret event is taken by its watch, and reaches Core as a
@@ -387,7 +389,17 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   side (text between the new and the old start is selected when the start
   moved back, unselected when it moved forward), then the end side (text
   between the old and the new end is selected when the end moved forward,
-  unselected when it moved back). Leave out empty changes.
+  unselected when it moved back). Leave out empty changes. When the
+  node's text changed since the selection compared with was reported, so
+  that its ends may no longer hold the text that was selected, set
+  `content_changed` (`serde(default)`): each change then carries no text
+  and says only whether something was selected or unselected, by the same
+  comparison of ends, and `new_selection` carries the whole new
+  selection's text (`None` when nothing is selected). Core then speaks
+  "<new> selected" when something was selected, then, when something was
+  unselected, "<new> selected instead", or "selection removed" when
+  nothing is selected now (`docs/parity/text.md`, "TextInfo-equivalent
+  layer").
 - `Read(TextRead { at, movement, unit })`: start at `at`, move by
   `movement` (a `TextMovement`: a unit and a signed count) when there is
   one, landing on that unit's start, then read the `unit` containing the

@@ -83,6 +83,8 @@ fn caret_event(state: &mut SrState, number: u64, line: TextChunk) {
                 selection: None,
             },
             selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
         }),
     );
 }
@@ -206,6 +208,8 @@ fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> TextRep
         },
         unit,
         selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
     }))
 }
 
@@ -515,6 +519,8 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
                 characters: 600,
             },
         ],
+        content_changed: false,
+        new_selection: None,
     }));
     let effects = reduce(&mut state, &completed(request.query_id, reply));
     assert_eq!(
@@ -567,6 +573,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
         },
         unit: None,
         selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
     }));
     let _ = reduce(&mut state, &completed(request_of(&effects), reply));
 
@@ -604,6 +612,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
             text: "hello".to_owned(),
             characters: 5,
         }],
+        content_changed: false,
+        new_selection: None,
     }));
     let effects = reduce(&mut state, &completed(asked.query_id, reply));
     assert_eq!(
@@ -639,6 +649,8 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
         },
         unit: None,
         selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
     }));
     let _ = reduce(&mut state, &completed(request_of(&effects), reply));
     let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
@@ -665,6 +677,8 @@ fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> 
                     selection: None,
                 },
                 selection_changes: Vec::new(),
+                content_changed: false,
+                new_selection: None,
             },
         },
     )
@@ -695,6 +709,8 @@ fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> TextReply {
         read_at_ms,
         unit: None,
         selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
     }))
 }
 
@@ -2408,6 +2424,8 @@ fn caret_moved(selection: Option<Selection>, text: &str) -> Input {
             selection,
         },
         selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
     })
 }
 
@@ -2513,6 +2531,8 @@ fn selection_report(
                     characters: u32::try_from(text.len()).expect("a short text"),
                 })
                 .collect(),
+            content_changed: false,
+            new_selection: None,
         },
     }
 }
@@ -2564,6 +2584,164 @@ fn a_caret_report_with_no_selection_change_says_nothing() {
     let mut state = announced_field();
     let effects = reduce(&mut state, &selection_report(0, None, &[]));
     assert_eq!(effects, []);
+}
+
+/// A change with no text: "x" typed over a selection, its old range in a
+/// UIA text holding nothing once the text it held was cut.
+#[test]
+fn a_selection_change_with_no_text_says_nothing() {
+    let mut state = announced_field();
+    let effects = reduce(&mut state, &selection_report(0, None, &[(false, "")]));
+    assert_eq!(effects, []);
+}
+
+/// A caret report of the focused field whose selection changes are said in
+/// general terms, the text having changed since the selection compared
+/// with was reported: with `selection`, the changes `changes` (each
+/// selected or not, with no text), and the new selection's text `new`.
+fn general_report(selection: Option<Selection>, changes: &[bool], new: Option<&str>) -> Input {
+    let Input::Event {
+        event: NormalizedEvent::CaretMoved { node_id, caret, .. },
+        ..
+    } = selection_report(0, selection, &[])
+    else {
+        unreachable!("selection_report makes a caret report");
+    };
+    Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms: 0,
+        source: Pid(1),
+        backend: Backend::Msaa,
+        window: None,
+        event: NormalizedEvent::CaretMoved {
+            node_id,
+            caret,
+            selection_changes: changes
+                .iter()
+                .map(|&selected| SelectionChange {
+                    selected,
+                    text: String::new(),
+                    characters: 0,
+                })
+                .collect(),
+            content_changed: true,
+            new_selection: new.map(|text| SelectionChange {
+                selected: true,
+                text: text.to_owned(),
+                characters: u32::try_from(text.len()).expect("a short text"),
+            }),
+        },
+    }
+}
+
+#[test]
+fn a_selection_unselected_after_a_text_change_with_nothing_selected_says_selection_removed() {
+    let mut state = announced_field();
+    let effects = reduce(&mut state, &general_report(None, &[false], None));
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
+}
+
+#[test]
+fn a_selection_unselected_after_a_text_change_with_another_selected_says_selected_instead() {
+    let mut state = announced_field();
+    let effects = reduce(
+        &mut state,
+        &general_report(Some(alpha_selected()), &[false], Some("alpha")),
+    );
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::SelectedInstead(SelectionText::Text("alpha".to_owned()))
+        ))]
+    );
+}
+
+#[test]
+fn a_selection_extended_after_a_text_change_says_the_whole_new_selection_selected() {
+    let mut state = announced_field();
+    let effects = reduce(
+        &mut state,
+        &general_report(Some(alpha_selected()), &[true], Some("alpha")),
+    );
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
+        ))]
+    );
+}
+
+/// A selection replaced by one apart from it after a text change: both
+/// general words, each with the whole new selection.
+#[test]
+fn a_selection_replaced_after_a_text_change_says_selected_then_selected_instead() {
+    let mut state = announced_field();
+    let effects = reduce(
+        &mut state,
+        &general_report(Some(alpha_selected()), &[false, true], Some("alpha")),
+    );
+    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(
+        spoken(&effects),
+        vec![
+            UtteranceSegment::new(SegmentContent::Phrase(Phrase::Selected(
+                SelectionText::Text("alpha".to_owned())
+            ))),
+            UtteranceSegment::new(SegmentContent::Phrase(Phrase::SelectedInstead(
+                SelectionText::Text("alpha".to_owned())
+            ))),
+        ]
+    );
+}
+
+/// A selecting key's answer after a text change: the whole new selection,
+/// one character by its name.
+#[test]
+fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
+    let mut state = editing("hello, world\n", 5);
+    let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));
+    let request = request(&effects);
+    let reply = TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
+        removed: None,
+        moved: true,
+        read_at_ms: 0,
+        caret: CaretReport {
+            line: line("hello, world\n", 100, 6),
+            selection: Some(Selection {
+                start: TextPosition {
+                    anchor: TextAnchor(100),
+                    offset: 5,
+                },
+                end: TextPosition {
+                    anchor: TextAnchor(100),
+                    offset: 6,
+                },
+            }),
+        },
+        unit: None,
+        selection_changes: vec![SelectionChange {
+            selected: true,
+            text: String::new(),
+            characters: 0,
+        }],
+        content_changed: true,
+        new_selection: Some(SelectionChange {
+            selected: true,
+            text: ",".to_owned(),
+            characters: 1,
+        }),
+    }));
+    let effects = reduce(&mut state, &completed(request.query_id, reply));
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(SelectionText::Character(",".to_owned()))
+        ))]
+    );
 }
 
 #[test]

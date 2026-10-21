@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, FocusText, FocusValidity,
-    NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection,
+    Message, NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection,
     SelectionChange, SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp,
     TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
     Utterance, UtteranceSegment,
@@ -410,11 +410,17 @@ pub(crate) fn caret_reply(
         read_at_ms,
         unit,
         selection_changes,
+        content_changed,
+        new_selection,
         same_line,
         removed,
     } = *reply;
+    let general = content_changed.then_some(General {
+        selection: new_selection.as_ref(),
+        collapsed: caret.selection.is_none(),
+    });
     let segments = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
-        selection_segments(&selection_changes)
+        selection_segments(&selection_changes, general)
     } else {
         match pending.key.motion {
             CaretMotion::Backspace | CaretMotion::BackspaceWord => {
@@ -477,7 +483,7 @@ pub(crate) fn caret_reply(
     let unselected = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
         Vec::new()
     } else {
-        selection_segments(&selection_changes)
+        selection_segments(&selection_changes, general)
     };
     if !unselected.is_empty() {
         effects.push(speak(trace_id, unselected));
@@ -665,29 +671,82 @@ fn unit_segments(
     }
 }
 
+/// The new selection of a report whose selection changes are said in
+/// general terms, the text having changed since the selection compared
+/// with was reported ([`selection_segments`]).
+#[derive(Clone, Copy)]
+pub(crate) struct General<'a> {
+    /// The whole new selection's text, when it holds something.
+    pub(crate) selection: Option<&'a SelectionChange>,
+    /// Nothing is selected now.
+    pub(crate) collapsed: bool,
+}
+
 /// The speech for a selection change: each change as NVDA's "selected" or
 /// "unselected", a single character by its name, 512 characters or more as
-/// a count.
-pub(crate) fn selection_segments(changes: &[SelectionChange]) -> Vec<UtteranceSegment> {
-    changes
-        .iter()
-        .filter(|change| change.characters > 0)
-        .map(|change| {
-            let text = if change.characters >= SELECTION_SPOKEN_AS_COUNT {
-                SelectionText::Characters(change.characters)
-            } else if change.characters == 1 {
-                SelectionText::Character(change.text.clone())
-            } else {
-                SelectionText::Text(change.text.clone())
-            };
-            let phrase = if change.selected {
-                Phrase::Selected(text)
-            } else {
-                Phrase::Unselected(text)
-            };
-            UtteranceSegment::new(SegmentContent::Phrase(phrase))
-        })
-        .collect()
+/// a count, and a change with no text as nothing. With `general`, the text
+/// having changed since the selection compared with was reported, the
+/// changes say only what happened and the words come from the new
+/// selection (`docs/parity/text.md`, "TextInfo-equivalent layer";
+/// `docs/nvda/editable-text-and-terminals.md`, "Selection changes"): the
+/// new selection's text as "selected" when something was selected, then,
+/// when something was unselected, the new selection's text as "selected
+/// instead", or "selection removed" when nothing is selected now.
+pub(crate) fn selection_segments(
+    changes: &[SelectionChange],
+    general: Option<General<'_>>,
+) -> Vec<UtteranceSegment> {
+    let Some(general) = general else {
+        return changes
+            .iter()
+            .filter(|change| change.characters > 0)
+            .map(|change| {
+                let text = selection_text(change);
+                let phrase = if change.selected {
+                    Phrase::Selected(text)
+                } else {
+                    Phrase::Unselected(text)
+                };
+                UtteranceSegment::new(SegmentContent::Phrase(phrase))
+            })
+            .collect();
+    };
+    let new_text = general
+        .selection
+        .filter(|selection| selection.characters > 0)
+        .map(selection_text);
+    let mut segments = Vec::new();
+    if changes.iter().any(|change| change.selected)
+        && let Some(text) = new_text.clone()
+    {
+        segments.push(UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Selected(text),
+        )));
+    }
+    if changes.iter().any(|change| !change.selected) {
+        if general.collapsed {
+            segments.push(UtteranceSegment::new(SegmentContent::Message(
+                Message::SelectionRemoved,
+            )));
+        } else if let Some(text) = new_text {
+            segments.push(UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::SelectedInstead(text),
+            )));
+        }
+    }
+    segments
+}
+
+/// A selection change's text as it is spoken: a single character by its
+/// name, 512 characters or more as a count.
+fn selection_text(change: &SelectionChange) -> SelectionText {
+    if change.characters >= SELECTION_SPOKEN_AS_COUNT {
+        SelectionText::Characters(change.characters)
+    } else if change.characters == 1 {
+        SelectionText::Character(change.text.clone())
+    } else {
+        SelectionText::Text(change.text.clone())
+    }
 }
 
 /// Speaks how the selection of the focus `node` changed with a caret
@@ -704,7 +763,7 @@ pub(crate) fn selection_changed(
     state: &mut SrState,
     trace_id: TraceId,
     (node, observed_at_ms): (NodeId, u64),
-    changes: &[SelectionChange],
+    (changes, general): (&[SelectionChange], Option<General<'_>>),
 ) -> Vec<Effect> {
     if changes.is_empty()
         || !state.focus_matches(node)
@@ -715,7 +774,7 @@ pub(crate) fn selection_changed(
     {
         return Vec::new();
     }
-    let segments = selection_segments(changes);
+    let segments = selection_segments(changes, general);
     if segments.is_empty() {
         return Vec::new();
     }

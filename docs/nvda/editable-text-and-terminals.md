@@ -56,8 +56,35 @@ does not move any cursor itself.
   reported this way after the caret event, whatever caused it, so a plain
   arrow key that collapses a selection is spoken as its unit, then the
   text it unselected: Right Arrow after Control+A in Notepad says
-  "blank", then "alpha beta gamma delta epsilon unselected". Typed text
-  echo is
+  "blank", then "alpha beta gamma delta epsilon unselected". When the
+  object's content changed since the selection it compares with was
+  taken, the change is spoken in general terms, since the old selection's
+  bounds may no longer hold the text that was selected
+  (`speakSelectionChange`'s `generalize`, `speech/speech.py` 1340 to
+  1417): if anything was selected, the whole new selection followed by
+  "selected"; if anything was unselected, the whole new selection followed
+  by "selected instead", or "selection removed" when nothing is selected
+  now; a selection replaced by one apart from it gets both. The flag,
+  `hasContentChangedSinceLastSelection`, is read and cleared by every
+  comparison (`detectPossibleSelectionChange`, `editableText.py` 429 to
+  451), which always takes the new selection as the one to compare with
+  next and never forgets it on a text change. Who sets it differs by
+  backend. A classic edit control sets it when its value change is
+  handled (`NVDAObjects/IAccessible/__init__.py` 2019 to 2023) and at its
+  caret event when a value change for it is still pending
+  (`NVDAObjects/window/edit.py` 1068 to 1084), so either order of the two
+  events gives the general words: in the Windows Forms text box, "x"
+  typed over the selected "hello " says "x" then "selection removed", and
+  Control+X on a selected line "selection removed". A UIA text object
+  sets it only as a text change is handled, and NVDA handles UIA's text
+  changed event as one only for Word, the console host and Windows
+  Terminal (`UIAHandler/__init__.py` 145 to 151 and 778 to 799), so in
+  Windows 11 Notepad the specific text is always compared, the old
+  selection's range read at comparison time after it followed the edit:
+  "x" typed over the selected "hello " says "x" then "x unselected", and
+  Control+X on a selected line says nothing, the old range being empty
+  (captures in `target/e2e-evidence/m42-desktop-2-2026-10-22/`,
+  `part3b-*.txt`). Typed text echo is
   separate ([Keyboard input](input.md) — typed characters arrive via the injected
   reports or UIA textEdit events, filtered against the actual
   control's text where possible to suppress phantom echo from

@@ -231,11 +231,13 @@ message-no-caret = No caret
 message-report-new-output-on = report new output on
 message-report-new-output-off = report new output off
 message-terminal-line-cut = line cut
+message-selection-removed = selection removed
 
 ## Reader messages with values in them. Wording matches NVDA's.
 
 phrase-selected = { $text } selected
 phrase-unselected = { $text } unselected
+phrase-selected-instead = { $text } selected instead
 phrase-preselected = selected { $text }
 # Used only for 512 characters or more, so always plural.
 phrase-characters = { $count } characters

@@ -935,6 +935,8 @@ fn moved_onto(line: &str) -> TextReply {
         selection_changes: Vec::new(),
         same_line: None,
         removed: None,
+        content_changed: false,
+        new_selection: None,
     }))
 }
 
@@ -1064,6 +1066,8 @@ fn caret_at(text: &str, offset: u32) -> Input {
         node_id: id(TERMINAL),
         caret: caret_on(text, offset),
         selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
     })
 }
 

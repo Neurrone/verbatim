@@ -160,7 +160,7 @@ impl Pending {
         let key = key(&message);
         let mut message = message;
         if let Some(key) = &key
-            && let Some(index) = self.waiting_with(key)
+            && let Some(index) = self.waiting_with(key, &message)
             && let Some(Waiting::Message(_, older, older_touched)) = self.ordinary.remove(index)
         {
             let lines = usize::from(self.terminal_lines.load(Ordering::Relaxed));
@@ -178,12 +178,18 @@ impl Pending {
     /// it, and a change moved behind a reply would reach Core after the
     /// reply to a key pressed before Core saw it, whose own selection
     /// changes, compared with the selection Core knew, already include it.
-    fn waiting_with(&self, key: &Key) -> Option<usize> {
+    /// Nor is a caret report that carries selection changes merged with
+    /// `newer` when either says its changes in general terms
+    /// ([`verbatim_model::CaretReply::content_changed`]): each such report's
+    /// words are worked out from its own selection.
+    fn waiting_with(&self, key: &Key, newer: &OutpostToSupervisor) -> Option<usize> {
         let mut past_reply = false;
         for (index, waiting) in self.ordinary.iter().enumerate().rev() {
             match waiting {
                 Waiting::Message(Some(other), message, _) if other == key => {
-                    return (!past_reply || !carries_selection_changes(message)).then_some(index);
+                    let kept = carries_selection_changes(message)
+                        && (past_reply || content_changed(message) || content_changed(newer));
+                    return (!kept).then_some(index);
                 }
                 Waiting::Message(_, message, _) if message.is_idle_answer() => return None,
                 Waiting::Message(_, message, _) => {
@@ -425,10 +431,28 @@ fn carries_selection_changes(message: &OutpostToSupervisor) -> bool {
     )
 }
 
+/// Whether `message` is a caret report whose selection changes are said in
+/// general terms.
+fn content_changed(message: &OutpostToSupervisor) -> bool {
+    matches!(
+        message,
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved {
+                content_changed: true,
+                ..
+            },
+            ..
+        }
+    )
+}
+
 /// `newer` in place of `older`, the waiting message with the same key: a
 /// terminal's output combined with what was waiting, a caret report
 /// carrying the waiting one's selection changes before its own, each
 /// change being from the report before, and anything else replacing it.
+/// Two caret reports merged are never both in general terms, nor is the
+/// waiting one when it carries changes ([`Pending::waiting_with`]), so the
+/// newer's general terms are kept.
 fn merged(
     older: OutpostToSupervisor,
     newer: OutpostToSupervisor,
@@ -485,6 +509,8 @@ fn merged(
                         node_id,
                         caret,
                         selection_changes,
+                        content_changed,
+                        new_selection,
                     },
             },
         ) => {
@@ -500,6 +526,8 @@ fn merged(
                     node_id,
                     caret,
                     selection_changes: waiting,
+                    content_changed,
+                    new_selection,
                 },
             }
         }
@@ -739,6 +767,8 @@ mod tests {
                     characters: 5,
                 })
                 .collect(),
+            content_changed: false,
+            new_selection: None,
         })
     }
 
