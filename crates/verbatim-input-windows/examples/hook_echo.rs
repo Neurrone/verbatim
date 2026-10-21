@@ -24,7 +24,7 @@ fn main() {
         .map(|id| GestureId::parse(id).expect("valid gesture identifier"));
     let map = GestureMap::new(bindings).into_shared();
 
-    let (tx, rx) = crossbeam_channel::bounded(64);
+    let (tx, rx) = crossbeam_channel::unbounded();
     let _hook = InputHook::start(
         DecisionConfig::default(),
         map,

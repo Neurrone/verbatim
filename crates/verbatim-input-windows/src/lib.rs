@@ -15,11 +15,16 @@
 //!
 //! - It runs the pure decision machine, which does no I/O and takes
 //!   microseconds against a lock-free snapshot of the gesture map.
-//! - It forwards emitted gestures with a non-blocking
-//!   [`try_send`](crossbeam_channel::Sender::try_send) and drops the gesture if
-//!   the channel is full, rather than waiting for a slow consumer. A full
-//!   channel means the reducer is already backed up; dropping one synthetic
-//!   input event is far better than losing the whole keyboard.
+//! - It forwards emitted gestures down an unbounded channel, whose send
+//!   never waits, and [`InputHook::start`] refuses a bounded one. Waiting for
+//!   a slow consumer would risk the whole keyboard, and dropping a gesture
+//!   when the consumer is backed up would lose a key the user pressed;
+//!   neither is acceptable, so a backlog waits in memory in front of the
+//!   router instead, as the communication design keeps every backlog in
+//!   front of the reducer (`docs/design/communication.md`, section 4.8). A
+//!   queued gesture costs about 70 bytes (its 48-byte slot and its
+//!   gesture name), and a held key repeats about 30 times a second, so even
+//!   a router stalled for a minute holds about 140 kilobytes.
 //! - It touches no lock that any other thread can hold across a blocking call.
 //!
 //! Nothing that can wait belongs in the hook procedure. Gesture semantics run
@@ -216,9 +221,10 @@ impl InputHook {
     ///
     /// `config` chooses the Verbatim modifier keys and the double-tap timeout,
     /// `map` is the lock-free bound-gesture snapshot the hook consults, and
-    /// `events` receives gestures as they fire. The send is non-blocking and
-    /// drops on a full channel (see the module's never-block constraint), so a
-    /// bounded channel is a fine choice. `speech` carries out each key
+    /// `events` receives gestures as they fire. It must be an unbounded
+    /// channel, whose send neither waits nor fails while the router runs, so
+    /// no key is ever lost (see the module's never-block constraint).
+    /// `speech` carries out each key
     /// press's effect on speech (cancel, or pause and resume), before the
     /// press's gesture is sent, so speech the gesture causes is never the
     /// speech it cancels. `reports` receives, after the speech effect, what
@@ -226,8 +232,8 @@ impl InputHook {
     ///
     /// # Errors
     ///
-    /// Returns an error if the hook thread cannot be spawned or
-    /// `SetWindowsHookExW` fails.
+    /// Returns an error if `events` is bounded, the hook thread cannot be
+    /// spawned, or `SetWindowsHookExW` fails.
     pub fn start(
         config: DecisionConfig,
         map: SharedGestureMap,
@@ -235,6 +241,12 @@ impl InputHook {
         speech: SpeechEffectFn,
         reports: KeyReportFn,
     ) -> io::Result<Self> {
+        if events.capacity().is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the keyboard hook's channel must be unbounded, so that no key is lost",
+            ));
+        }
         // The thread reports back either its id (hook installed) or the error
         // that stopped it, so `start` can surface installation failure.
         let (ready_tx, ready_rx) = mpsc::channel::<io::Result<u32>>();
@@ -468,92 +480,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
             let Some(state) = state.as_mut() else {
                 return KeyDecision::Pass;
             };
-            // Num Lock decides what the numpad's operator keys are: the
-            // keyboard's own state, read locally before each key.
-            // SAFETY: GetKeyState takes any virtual-key code.
-            let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
-            state.machine.set_num_lock(num_lock);
-            let decision = state.machine.on_key(event, Instant::now());
-            let own = kbd.dwExtraInfo == OWN_INPUT_TAG;
-            let key_number = if event.pressed {
-                next_key()
-            } else {
-                KEY_SEQUENCE.load(Ordering::Relaxed)
-            };
-            if let Some(effect) = decision.speech
-                && !own
-            {
-                (state.speech)(effect, key_number);
-            }
-            if let Some(emitted) = decision.emitted {
-                record_key_origin(emitted.trace_id, key_number);
-                // Never block: drop the gesture if the consumer is backed up.
-                let _ = state.events.try_send(Routed::Gesture(emitted));
-            }
-            let was_observed = decision.observed.is_some();
-            if let Some(observed) = decision.observed
-                && !own
-            {
-                record_key_origin(observed.trace_id, key_number);
-                (state.reports)(KeyReport::Observed {
-                    gesture: observed,
-                    pressed_at_us: unix_us(),
-                });
-            }
-            let passed = event.pressed
-                && decision.decision == KeyDecision::Pass
-                && !decision.shared_modifier
-                && !own;
-            if passed {
-                let pressed_at_us = unix_us();
-                let trace_id = TraceId::mint();
-                match state.typing.translate(event.vk, kbd.scanCode) {
-                    Some(text) => {
-                        record_key_origin(trace_id, key_number);
-                        (state.reports)(KeyReport::Typed { trace_id, text });
-                    }
-                    None if !was_observed && may_edit(event.vk) => {
-                        record_key_origin(trace_id, key_number);
-                        (state.reports)(KeyReport::Passed {
-                            trace_id,
-                            pressed_at_us,
-                        });
-                    }
-                    None => {}
-                }
-            }
-            // A lock key reaching the operating system is reported, for its
-            // new state to be announced, as NVDA announces it. The Verbatim
-            // modifier passed in share mode is not: the screen reader behind
-            // Verbatim decides whether it reaches the operating system, and
-            // announces the state itself if it lets it through.
-            if event.pressed
-                && decision.decision == KeyDecision::Pass
-                && !decision.shared_modifier
-                && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
-            {
-                let trace_id = TraceId::mint();
-                record_key_origin(trace_id, key_number);
-                let _ = state
-                    .events
-                    .try_send(Routed::Gesture(verbatim_input::EmittedGesture {
-                        trace_id,
-                        gesture: key.gesture(),
-                        repeat: 0,
-                    }));
-            }
-            // A harness's stroke is complete with its last key event: say
-            // so behind everything the stroke caused. Never blocking, as
-            // for a gesture; a dropped mark leaves the harness's barrier
-            // waiting, which fails its test with a named timeout.
-            if let Some(numbered) = u64::try_from(kbd.dwExtraInfo)
-                .ok()
-                .and_then(verbatim_input::harness::decode)
-                && numbered.last
-            {
-                let _ = state.events.try_send(Routed::Handled(numbered.number));
-            }
-            decision.decision
+            decide(state, event, kbd.scanCode, kbd.dwExtraInfo)
         });
 
         if decision == KeyDecision::Swallow {
@@ -564,6 +491,102 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     // SAFETY: passing the transition to the next hook in the chain with the
     // parameters we received is always sound; a null handle is accepted.
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Decides one key transition with the hook thread's state, carries out its
+/// effect on speech, and sends and reports what it caused; `scan_code` and
+/// `extra_info` are the key event's own. Every send is on the router's
+/// unbounded channel, so it neither waits nor drops; it fails only once the
+/// router has exited, at shutdown, when nothing is left to act on a key.
+fn decide(
+    state: &mut HookState,
+    event: KeyEvent,
+    scan_code: u32,
+    extra_info: usize,
+) -> KeyDecision {
+    // Num Lock decides what the numpad's operator keys are: the
+    // keyboard's own state, read locally before each key.
+    // SAFETY: GetKeyState takes any virtual-key code.
+    let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
+    state.machine.set_num_lock(num_lock);
+    let decision = state.machine.on_key(event, Instant::now());
+    let own = extra_info == OWN_INPUT_TAG;
+    let key_number = if event.pressed {
+        next_key()
+    } else {
+        KEY_SEQUENCE.load(Ordering::Relaxed)
+    };
+    if let Some(effect) = decision.speech
+        && !own
+    {
+        (state.speech)(effect, key_number);
+    }
+    if let Some(emitted) = decision.emitted {
+        record_key_origin(emitted.trace_id, key_number);
+        let _ = state.events.send(Routed::Gesture(emitted));
+    }
+    let was_observed = decision.observed.is_some();
+    if let Some(observed) = decision.observed
+        && !own
+    {
+        record_key_origin(observed.trace_id, key_number);
+        (state.reports)(KeyReport::Observed {
+            gesture: observed,
+            pressed_at_us: unix_us(),
+        });
+    }
+    let passed = event.pressed
+        && decision.decision == KeyDecision::Pass
+        && !decision.shared_modifier
+        && !own;
+    if passed {
+        let pressed_at_us = unix_us();
+        let trace_id = TraceId::mint();
+        match state.typing.translate(event.vk, scan_code) {
+            Some(text) => {
+                record_key_origin(trace_id, key_number);
+                (state.reports)(KeyReport::Typed { trace_id, text });
+            }
+            None if !was_observed && may_edit(event.vk) => {
+                record_key_origin(trace_id, key_number);
+                (state.reports)(KeyReport::Passed {
+                    trace_id,
+                    pressed_at_us,
+                });
+            }
+            None => {}
+        }
+    }
+    // A lock key reaching the operating system is reported, for its
+    // new state to be announced, as NVDA announces it. The Verbatim
+    // modifier passed in share mode is not: the screen reader behind
+    // Verbatim decides whether it reaches the operating system, and
+    // announces the state itself if it lets it through.
+    if event.pressed
+        && decision.decision == KeyDecision::Pass
+        && !decision.shared_modifier
+        && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
+    {
+        let trace_id = TraceId::mint();
+        record_key_origin(trace_id, key_number);
+        let _ = state
+            .events
+            .send(Routed::Gesture(verbatim_input::EmittedGesture {
+                trace_id,
+                gesture: key.gesture(),
+                repeat: 0,
+            }));
+    }
+    // A harness's stroke is complete with its last key event: say
+    // so behind everything the stroke caused.
+    if let Some(numbered) = u64::try_from(extra_info)
+        .ok()
+        .and_then(verbatim_input::harness::decode)
+        && numbered.last
+    {
+        let _ = state.events.send(Routed::Handled(numbered.number));
+    }
+    decision.decision
 }
 
 #[cfg(test)]
@@ -581,6 +604,76 @@ mod tests {
             record_key_origin(TraceId::mint(), next_key());
         }
         assert_eq!(key_of(first), None);
+    }
+
+    /// A burst of strokes, each Verbatim+V with a harness number, larger
+    /// than the 64 gestures the router's channel once held, decided while
+    /// nothing reads the channel.
+    #[test]
+    fn a_burst_larger_than_the_old_bound_is_delivered_in_order_with_none_lost() {
+        use verbatim_input::GestureMap;
+        use verbatim_input::state::DecisionConfig;
+        use verbatim_model::GestureId;
+
+        const CAPS: u16 = 0x14;
+        const V: u16 = 0x56;
+        const STROKES: u64 = 1_000;
+        let key = |vk, pressed| KeyEvent {
+            vk,
+            scan_code: 0,
+            extended: false,
+            injected: true,
+            pressed,
+        };
+        let map = GestureMap::new([GestureId::parse("kb:v+verbatim").expect("valid id")]);
+        let (events, routed) = crossbeam_channel::unbounded();
+        let mut state = HookState {
+            machine: DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
+            events,
+            speech: Box::new(|_, _| {}),
+            reports: Box::new(|_| {}),
+            typing: typed::Typing::default(),
+        };
+        assert_eq!(
+            decide(&mut state, key(CAPS, true), 0, 0),
+            KeyDecision::Swallow
+        );
+        for number in 1..=STROKES {
+            let last = usize::try_from(verbatim_input::harness::encode(number, true)).unwrap();
+            assert_eq!(decide(&mut state, key(V, true), 0, 0), KeyDecision::Swallow);
+            assert_eq!(
+                decide(&mut state, key(V, false), 0, last),
+                KeyDecision::Swallow
+            );
+        }
+        drop(state);
+
+        let mut received = Vec::new();
+        for routed in routed {
+            received.push(match routed {
+                Routed::Gesture(emitted) => format!("{}", emitted.gesture),
+                Routed::Handled(number) => format!("handled {number}"),
+                Routed::Barrier(token) => format!("barrier {token}"),
+            });
+        }
+        let expected: Vec<String> = (1..=STROKES)
+            .flat_map(|number| ["kb:v+verbatim".to_owned(), format!("handled {number}")])
+            .collect();
+        assert_eq!(received, expected);
+    }
+
+    #[test]
+    fn a_bounded_channel_is_refused() {
+        let (events, _routed) = crossbeam_channel::bounded(64);
+        let error = InputHook::start(
+            verbatim_input::state::DecisionConfig::default(),
+            verbatim_input::GestureMap::new([]).into_shared(),
+            events,
+            Box::new(|_, _| {}),
+            Box::new(|_| {}),
+        )
+        .expect_err("a bounded channel could drop a key");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]

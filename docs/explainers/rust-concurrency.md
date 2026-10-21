@@ -47,14 +47,13 @@ Vocabulary that matters when reading call sites:
   (a full channel blocks senders — or fails `try_send`); unbounded
   never block senders but can grow without limit.
 - `send` blocks (bounded, full); `try_send` never blocks and returns
-  an error when full or disconnected. The input hook uses `try_send`
-  and *drops the gesture on a full channel*
-  (`crates/verbatim-input-windows/src/lib.rs`) — dropping is the correct
-  behavior there because the hook thread must never block
+  an error when full or disconnected. The input hook must never block
   ([Windows and messages](windows-and-messages.md) explains the OS
-  timeout). When you see `let _ = tx.try_send(...)`, the dropped-work
-  case is a design decision worth interrogating — the review packet's
-  "silent failure" theme.
+  timeout) and must never lose a key, so it sends on an unbounded
+  channel, whose `send` never waits, and refuses a bounded one
+  (`crates/verbatim-input-windows/src/lib.rs`). When you see
+  `let _ = tx.try_send(...)`, the dropped-work case is a design decision
+  worth interrogating — the review packet's "silent failure" theme.
 - `recv_timeout(d)` is the blocking-with-deadline receive; a
   disconnected channel (all senders dropped) ends `recv` loops — the
   usual clean-shutdown signal, no explicit stop flag needed.
@@ -143,7 +142,7 @@ modules:
 ## Reading order into the code
 
 Good first files, in order of increasing intricacy:
-`crates/verbatim-input-windows/src/lib.rs` (thread + try_send + arc-swap),
+`crates/verbatim-input-windows/src/lib.rs` (thread + unbounded send + arc-swap),
 `crates/verbatim-speech` (two named threads, command channels, a
 cancellation flag), `crates/verbatim-outpost/src/query_pool.rs`
 (bounded deadlines, worker abandonment, watchdog thread),

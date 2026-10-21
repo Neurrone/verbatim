@@ -311,8 +311,10 @@ fn run(
 
     // The gesture router: bound gestures become GUI commands, direct speech,
     // or — for review and object navigation — reducer commands sent over
-    // `command_tx`. The GUI handle arrives once the GUI thread is up.
-    let (gesture_tx, gesture_rx) = bounded::<Routed>(64);
+    // `command_tx`. The GUI handle arrives once the GUI thread is up. The
+    // channel is unbounded, as the keyboard hook requires, so the hook
+    // never waits and never drops a key.
+    let (gesture_tx, gesture_rx) = unbounded::<Routed>();
     {
         let gui_handle = Arc::clone(&gui_handle);
         let manager = Arc::clone(&manager);

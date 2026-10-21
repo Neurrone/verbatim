@@ -193,10 +193,6 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   late repeat of one step's item arriving after the next key would end
   that key's wait; renaming cannot remove it, since the targets are
   `explorer_folder_window`'s.
-- Scheduled for later (Dickson, 2026-10-11, from the communication
-  design): the keyboard hook drops a gesture when the router's
-  channel is full (`try_send` in `crates/verbatim-input-windows/src/lib.rs`),
-  which must never lose a key.
 - `CoCancelCall` for MSAA calls, a recommendation in the phase 6 design's
   "Time limits that hold".
 - What remains of the audits' items 10 and 11 (Dickson, 2026-10-20;

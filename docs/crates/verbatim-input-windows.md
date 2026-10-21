@@ -8,7 +8,8 @@ names, and the gesture tables carry no Windows dependency.
 Public API: `InputHook::start(config, map, events, speech, reports)`,
 which installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls.
 `events` is the gesture router's channel of `Routed` values, in the order
-the keys came: `Gesture`, a gesture that fired; `Handled(n)`, sent when
+the keys came; it must be unbounded, and `start` refuses a bounded one
+with `InvalidInput`, so that no key is ever lost: `Gesture`, a gesture that fired; `Handled(n)`, sent when
 the last key event of an end-to-end harness's numbered key stroke
 (`verbatim_input::harness`, read from `dwExtraInfo`) has been decided, so
 everything the stroke caused was sent before it; and `Barrier(token)`,
@@ -56,7 +57,8 @@ Num Lock is on (`DecisionMachine::set_num_lock`, from the keyboard's own
 toggle state, a local read), calls `speech` with the decision's
 speech effect before sending the gesture, so speech the gesture causes is
 never the speech the key press cancels, forwards emitted gestures with a
-non-blocking `try_send` that drops on a full channel, also sends the
+`send` on the unbounded channel, which never waits and never drops (it
+fails only once the router has exited, at shutdown), also sends the
 lock-key gesture (`ToggleKey::gesture`, with a repeat of 0) when a Caps
 Lock, Num Lock, or Scroll Lock press passes to the operating system, so
 its new state can be announced (not for the Verbatim key passed in share
@@ -65,7 +67,19 @@ Verbatim decides), and returns 1 to
 swallow or calls `CallNextHookEx` to pass. The never-block constraint is
 load-bearing: Windows silently removes low-level hooks whose procedure
 exceeds the system timeout, and the reader would go deaf to the keyboard
-with no error. The `hook_echo` example installs the real hook with two
+with no error. So is the never-drop rule: a key pressed while Verbatim is
+backed up must still act once the router reaches it. Both hold because
+the backlog waits in memory in front of the router, as every backlog in
+`docs/design/communication.md` waits in front of the reducer (section
+4.8): a queued gesture costs its channel slot, 48 bytes, and its gesture
+name's string, and the channel allocates a block of 31 slots as it
+grows, which in steady state is one allocation per 31 keys. A held key
+repeats about 30 times a second, so even a router stalled for a minute
+holds under 2,000 gestures, about 140 kilobytes. The decision for each key is `decide`, which the
+hook procedure calls with the thread's state; a unit test drives it
+directly with a burst of a thousand Verbatim+V strokes, more than the 64
+the channel once held, unread until the end, and checks that every
+gesture and every stroke's handled mark arrives, in order. The `hook_echo` example installs the real hook with two
 bound gestures and prints what fires and what each key reports; it needs
 an interactive desktop and is never run in CI.
 

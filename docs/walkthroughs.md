@@ -320,9 +320,9 @@ while focus is in Notepad's text area.
    key-down completes the bound chord `kb:verbatim+numpad6`, so it is
    swallowed too (its key-up will be as well), its `Cancel` speech effect
    is carried out first, and an `EmittedGesture` with a fresh trace id
-   and a repeat count (0 for a first press) is sent with `try_send` on a
-   bounded channel. The hook never blocks: Windows silently removes a
-   low-level hook that is too slow.
+   and a repeat count (0 for a first press) is sent on the router's
+   unbounded channel. The hook never blocks, since Windows silently
+   removes a low-level hook that is too slow, and never drops a key.
 2. **The router turns it into a reducer command.** The router thread
    (`router_loop` in `crates/verbatim-app/src/main.rs`) looks the gesture
    up in the layout's table (`verbatim_input::bindings_for`), finds
