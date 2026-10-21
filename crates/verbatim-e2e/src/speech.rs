@@ -695,50 +695,6 @@ impl SpeechCollector {
         self.expect_sequence_within(&expected, timeout);
     }
 
-    /// [`expect_sequence`](Self::expect_sequence) for a step whose speech
-    /// may end with optional utterances ([`optional`]), which no utterance
-    /// always said follows: once the rest is matched and has ended, each
-    /// trailing optional utterance is matched, in order, against the
-    /// utterances that have reached the harness by then, without waiting
-    /// for more. One that arrives later is unmatched, and fails the next
-    /// input's check as any speech no assertion matched does
-    /// ([`require_all_asserted`](Self::require_all_asserted)).
-    ///
-    /// # Panics
-    ///
-    /// As [`expect`](Self::expect).
-    pub fn expect_sequence_with_trailing_optional(&mut self, expected: &[Expected]) {
-        let split = expected
-            .iter()
-            .rposition(|want| want.said == Said::Once)
-            .map_or(0, |last| last + 1);
-        let (head, trailing) = expected.split_at(split);
-        self.expect_sequence_within(head, self.step_timeout);
-        if self.compare.is_some() {
-            return;
-        }
-        self.read_arrived();
-        let mut runs = Vec::new();
-        for want in trailing {
-            let Said::UpTo(times) = want.said else {
-                unreachable!("every utterance after the last one always said is optional");
-            };
-            let mut run = Vec::new();
-            while run.len() < times
-                && self
-                    .pending
-                    .front()
-                    .is_some_and(|next| next.text == want.text)
-            {
-                run.extend(self.pending.pop_front());
-            }
-            runs.push((want.text.as_str(), run));
-        }
-        for (text, run) in runs {
-            self.record_optional(text, &run, self.step_timeout);
-        }
-    }
-
     fn expect_sequence_within(&mut self, expected: &[Expected], timeout: Duration) {
         // In compare mode an optional utterance is left out: NVDA's speech
         // is compared with what is always expected.
@@ -1490,6 +1446,21 @@ impl SpeechCollector {
     ///
     /// Panics, naming the unmatched utterances, if there are any.
     pub fn require_all_asserted(&mut self, when: &str) {
+        self.require_asserted_before(when, &[]);
+    }
+
+    /// [`require_all_asserted`](Self::require_all_asserted) before the input
+    /// of a step whose speech is `expected`, whose leading optional
+    /// utterances ([`optional`]) may have arrived before the input: the
+    /// unmatched utterances may be exactly those, in order, each up to the
+    /// times it declares, and are then left for the step's assertion of
+    /// `expected` to match (`docs/testing.md`, "Optional utterances").
+    /// Any other unmatched utterance fails as it does there.
+    ///
+    /// # Panics
+    ///
+    /// As [`require_all_asserted`](Self::require_all_asserted).
+    pub fn require_asserted_before(&mut self, when: &str, expected: &[Expected]) {
         if self.compare.is_some() {
             self.close_step();
             return;
@@ -1509,7 +1480,22 @@ impl SpeechCollector {
             self.collected.extend(pending);
             return;
         }
-        if let Some(first) = self.pending.front() {
+        let mut admitted = 0;
+        for want in expected {
+            let Said::UpTo(times) = want.said else {
+                break;
+            };
+            admitted += self
+                .pending
+                .iter()
+                .skip(admitted)
+                .take(times)
+                .take_while(|got| got.text == want.text)
+                .count();
+        }
+        if admitted < self.pending.len()
+            && let Some(first) = self.pending.front()
+        {
             let unmatched: Vec<&str> = self.pending.iter().map(|u| u.text.as_str()).collect();
             self.fail_at(
                 &format!(
@@ -2029,22 +2015,81 @@ mod tests {
         );
     }
 
+    /// A step whose speech may begin with a second suggestions-closed
+    /// sound, which may arrive before its keys are sent.
+    fn tab_after_escape() -> [Expected; 2] {
+        [
+            optional("sound: suggestions-closed"),
+            heard("account button"),
+        ]
+    }
+
     #[test]
-    fn a_trailing_optional_utterance_arrived_by_the_steps_end_passes_and_is_reported_in_full() {
-        let mut speech = collector(vec![
+    fn a_leading_optional_utterance_arrived_before_the_keys_is_matched_by_the_step() {
+        let (mut speech, mut script) = scripted(Timeline::new());
+        script.feed(vec![
             queued(1, "sound: suggestions-closed"),
-            queued(2, "sound: suggestions-closed"),
             ended(1, UtteranceEnding::Completed),
+        ]);
+        speech.require_asserted_before("before the keys [\"tab\"]", &tab_after_escape());
+        script.feed(vec![
+            queued(2, "account button"),
             ended(2, UtteranceEnding::Completed),
         ]);
-        speech.expect_sequence_with_trailing_optional(&[
-            heard("sound: suggestions-closed"),
-            optional("sound: suggestions-closed"),
-        ]);
-        speech.require_all_asserted("before the next key");
+        speech.expect_sequence(&tab_after_escape());
+        speech.expect_nothing_more(None);
         assert_eq!(
             speech.optional_outcomes()[0].to_string(),
             "\"sound: suggestions-closed\": in full"
+        );
+    }
+
+    #[test]
+    fn other_speech_arrived_before_the_keys_fails_the_check_despite_a_leading_optional() {
+        let mut speech = collector(vec![
+            queued(1, "sound: suggestions-closed"),
+            queued(2, "Search box"),
+        ]);
+        let message = fails(move || {
+            speech.require_asserted_before("before the keys [\"tab\"]", &tab_after_escape());
+        });
+        assert_eq!(
+            message,
+            "harness error: utterances no assertion matched were waiting before the keys [\"tab\"]: [\"sound: suggestions-closed\", \"Search box\"]"
+        );
+    }
+
+    #[test]
+    fn a_leading_optional_utterance_arrived_after_the_keys_is_matched_in_sequence() {
+        let (mut speech, mut script) = scripted(Timeline::new());
+        speech.require_asserted_before("before the keys [\"tab\"]", &tab_after_escape());
+        script.feed(vec![
+            queued(1, "sound: suggestions-closed"),
+            queued(2, "account button"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence(&tab_after_escape());
+        speech.expect_nothing_more(None);
+        assert_eq!(
+            speech.optional_outcomes()[0].to_string(),
+            "\"sound: suggestions-closed\": in full"
+        );
+    }
+
+    #[test]
+    fn a_leading_optional_utterance_never_said_passes_the_check_and_the_step() {
+        let (mut speech, mut script) = scripted(Timeline::new());
+        speech.require_asserted_before("before the keys [\"tab\"]", &tab_after_escape());
+        script.feed(vec![
+            queued(1, "account button"),
+            ended(1, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence(&tab_after_escape());
+        speech.expect_nothing_more(None);
+        assert_eq!(
+            speech.optional_outcomes()[0].to_string(),
+            "\"sound: suggestions-closed\": absent"
         );
     }
 

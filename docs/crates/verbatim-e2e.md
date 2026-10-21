@@ -156,12 +156,6 @@ an utterance is named in its text.
   optional utterance, an `OptionalOutcome` (its text, the input its step
   answers, and each time's ending, none when absent), is noted on the
   timeline and kept in `optional_outcomes()`, which the registry reports.
-- `expect_sequence_with_trailing_optional(expected)`: `expect_sequence`
-  for a step whose speech may end with optional utterances that nothing
-  always said follows. Once the rest is matched and has ended, each
-  trailing optional utterance is matched, in order, against what has
-  reached the harness by then, without waiting for more; one arriving
-  later is unmatched and fails the next input's check.
 - `expect_within(texts, timeout)`: `expect` with a longer bound, for a
   terminal flood.
 - `expect_started(text)`: the next utterance is exactly `text` and its
@@ -185,7 +179,14 @@ an utterance is named in its text.
   reads the frames already on their way, without waiting for anything to
   happen, and fails, as a harness error, if any utterance is waiting that
   no assertion matched. A scenario never moves past speech it has not
-  asserted.
+  asserted. `require_asserted_before(when, expected)` is the same check
+  before the input of a step whose speech is `expected`: the waiting
+  utterances may be exactly that step's leading optional utterances, in
+  order and each up to its declared times, which are then left for the
+  step's assertion to match; anything else fails as before.
+  `Scenario::send_keys_expecting(keys, expected)` makes that check, sends
+  the keys, and asserts `expected` with `expect_sequence`, for a step whose
+  leading optional utterance may arrive before or after its keys.
 - `collect_only()` and `take_all_queued(after_input)`, for the measure set
   only, which asserts no speech: the registry sets collect-only mode for a
   Measure scenario once the startup speech and the desktop's announcement

@@ -71,24 +71,30 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .expect_sequence(&[heard(&suggestion), heard("sound: suggestions-opened")]);
 
     scenario.send_keys(&["escape"]).expect("sends Escape");
+    scenario
+        .speech()
+        .expect_sequence(&[heard("sound: suggestions-closed")]);
+
+    let account = scenario
+        .name_by_automation_id(ACCOUNT_BUTTON)
+        .expect("the agent reads the account button's name");
     // Settings sometimes raises the box's ControllerFor change twice, a
     // few milliseconds apart, as the suggestions close, and the sound is
     // played for each, as NVDA plays it for each it receives (NVDA's UIA
     // log received the second in one Escape of three,
     // `target/e2e-evidence/m42-desktop-2-2026-10-22/part3a-nvda-2.log`):
-    // an optional utterance at the end of the step (`docs/testing.md`,
-    // "Optional utterances"), matched against what has arrived once the
-    // first has been heard in full.
-    scenario.speech().expect_sequence_with_trailing_optional(&[
-        heard("sound: suggestions-closed"),
-        optional("sound: suggestions-closed"),
-    ]);
-
-    let account = scenario
-        .name_by_automation_id(ACCOUNT_BUTTON)
-        .expect("the agent reads the account button's name");
-    scenario.send_keys(&["tab"]).expect("sends Tab");
-    scenario.speech().expect(&[&format!("{account} button")]);
+    // an optional utterance at the start of the Tab's step
+    // (`docs/testing.md`, "Optional utterances"), which may arrive before
+    // or after the Tab is sent.
+    scenario
+        .send_keys_expecting(
+            &["tab"],
+            &[
+                optional("sound: suggestions-closed"),
+                heard(&format!("{account} button")),
+            ],
+        )
+        .expect("sends Tab");
 
     // The box and its line, cut off by the suggestion Settings selects as
     // the focus returns.

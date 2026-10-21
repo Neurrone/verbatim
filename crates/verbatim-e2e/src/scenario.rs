@@ -54,7 +54,7 @@ use verbatim_control::protocol::{Frame, ReplyPayload, Request, StatusInfo};
 use crate::agent_client::{AgentClient, Launched as AgentLaunch};
 use crate::artifacts::OutpostCrash;
 use crate::recording::Recording;
-use crate::speech::SpeechCollector;
+use crate::speech::{Expected, SpeechCollector};
 use crate::timeline::Timeline;
 use crate::{ENDPOINT_ENV, endpoint};
 
@@ -738,6 +738,32 @@ impl Scenario {
         self.timeline.push_keys(keys);
         let keys: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
         self.last_input = Some(self.agent.send_keys(&keys)?);
+        Ok(())
+    }
+
+    /// [`Scenario::send_keys`] for a step whose speech is `expected`,
+    /// which it then asserts ([`SpeechCollector::expect_sequence`]): the
+    /// step's leading optional utterances ([`crate::speech::optional`]) may
+    /// match speech that arrived before the keys were sent, which the check
+    /// before them leaves for the step
+    /// ([`SpeechCollector::require_asserted_before`]), and match in
+    /// sequence when it arrives after them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion or leading optional utterance
+    /// matched is waiting, or as [`SpeechCollector::expect_sequence`] does.
+    pub fn send_keys_expecting(&mut self, keys: &[&str], expected: &[Expected]) -> io::Result<()> {
+        self.speech
+            .require_asserted_before(&format!("before the keys {keys:?}"), expected);
+        self.timeline.push_keys(keys);
+        let owned: Vec<String> = keys.iter().map(|key| (*key).to_owned()).collect();
+        self.last_input = Some(self.agent.send_keys(&owned)?);
+        self.speech.expect_sequence(expected);
         Ok(())
     }
 
