@@ -72,6 +72,8 @@
 //!   ([`explorer_folder_window`](crate::scenarios::explorer_folder_window)),
 //!   the Settings app's System page
 //!   ([`settings_system_page`](crate::scenarios::settings_system_page)),
+//!   a combo box on its Date and time page opened and closed
+//!   ([`settings_combo_box_expanded`](crate::scenarios::settings_combo_box_expanded)),
 //!   and its search suggestions
 //!   ([`settings_search_suggestions`](crate::scenarios::settings_search_suggestions),
 //!   and [`settings_search_suggestions_reentered`](crate::scenarios::settings_search_suggestions_reentered)
@@ -155,13 +157,14 @@ use crate::scenarios::{
     menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery,
     rapid_tabbing_in_settings, return_after_retirement, review_cursor, review_words,
-    second_application_and_verbatim_menu, settings_dialog_keys, settings_search_suggestions,
-    settings_search_suggestions_reentered, settings_system_page, spelling_errors,
-    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
-    terminal_editing, terminal_flood, terminal_flood_kinds, terminal_footer, terminal_key_timing,
-    terminal_lists, terminal_overflow, terminal_pager, terminal_progress, terminal_review_grid,
-    terminal_review_output, terminal_screens, terminal_settings_page, terminal_short_output,
-    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
+    second_application_and_verbatim_menu, settings_combo_box_expanded, settings_dialog_keys,
+    settings_search_suggestions, settings_search_suggestions_reentered, settings_system_page,
+    spelling_errors, switch_to_onecore, synth_host_crash_recovery, system_information_tree,
+    terminal_commands, terminal_editing, terminal_flood, terminal_flood_kinds, terminal_footer,
+    terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
+    terminal_review_grid, terminal_review_output, terminal_screens, terminal_settings_page,
+    terminal_short_output, terminal_typing, terminal_windows, text_box_say_all, theme_panel,
+    typed_words, word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -518,6 +521,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: settings_system_page::setup,
         body: settings_system_page::body,
         teardown: settings_system_page::teardown,
+    },
+    ScenarioDef {
+        name: "settings_combo_box_expanded",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: settings_combo_box_expanded::setup,
+        body: settings_combo_box_expanded::body,
+        teardown: settings_combo_box_expanded::teardown,
     },
     ScenarioDef {
         name: "settings_search_suggestions",

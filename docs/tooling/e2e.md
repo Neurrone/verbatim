@@ -263,6 +263,8 @@ optional utterance on the window's opening and after Enter and after
 Backspace, before the speech its item's focus brings or between that
 speech and the item),
 `settings_system_page` (the Settings app's System page),
+`settings_combo_box_expanded` (a combo box on its Date and time page,
+"expanded" spoken before its first item as Alt+Down Arrow opens it),
 `settings_search_suggestions` (the Settings app's search suggestions,
 read as the selection moves through them while the focus stays in the
 search box, their number and names read by the agent before they are

@@ -20,16 +20,17 @@ use windows::Win32::UI::Accessibility::{
     IRawElementProviderFragment, IRawElementProviderSimple, NotificationKind_Other,
     NotificationProcessing_All, UIA_AutomationFocusChangedEventId, UIA_ButtonControlTypeId,
     UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId, UIA_ControllerForPropertyId,
-    UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HelpTextPropertyId,
-    UIA_HyperlinkControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
-    UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_NamePropertyId,
-    UIA_PROPERTY_ID, UIA_PaneControlTypeId, UIA_RadioButtonControlTypeId,
-    UIA_SelectionItem_ElementSelectedEventId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
-    UIA_StatusBarControlTypeId, UIA_TabControlTypeId, UIA_TabItemControlTypeId,
-    UIA_Text_TextChangedEventId, UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId,
-    UIA_ToolBarControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-    UIA_ValueValuePropertyId, UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent,
-    UiaRaiseAutomationEvent, UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
+    UIA_EditControlTypeId, UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_GroupControlTypeId,
+    UIA_HelpTextPropertyId, UIA_HyperlinkControlTypeId, UIA_ListControlTypeId,
+    UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId, UIA_MenuControlTypeId,
+    UIA_MenuItemControlTypeId, UIA_NamePropertyId, UIA_PROPERTY_ID, UIA_PaneControlTypeId,
+    UIA_RadioButtonControlTypeId, UIA_SelectionItem_ElementSelectedEventId,
+    UIA_SliderControlTypeId, UIA_SpinnerControlTypeId, UIA_StatusBarControlTypeId,
+    UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_Text_TextChangedEventId,
+    UIA_Text_TextSelectionChangedEventId, UIA_TextControlTypeId, UIA_ToolBarControlTypeId,
+    UIA_TreeControlTypeId, UIA_TreeItemControlTypeId, UIA_ValueValuePropertyId,
+    UIA_WindowControlTypeId, UiaRaiseActiveTextPositionChangedEvent, UiaRaiseAutomationEvent,
+    UiaRaiseAutomationPropertyChangedEvent, UiaRaiseNotificationEvent,
 };
 use windows_core::Interface;
 
@@ -183,8 +184,15 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
                 .ok_or_else(|| unknown(&id))?;
             raise_property_changed(tree, hwnd, index, UIA_ControllerForPropertyId)?;
         }
-        Command::SetStates(..) => {
-            return Err("this command is supported on the msaa backend only".into());
+        Command::SetStates(id, states) => {
+            let index =
+                with_node(tree, &id, |node| node.states = states).ok_or_else(|| unknown(&id))?;
+            raise_property_changed(
+                tree,
+                hwnd,
+                index,
+                UIA_ExpandCollapseExpandCollapseStatePropertyId,
+            )?;
         }
         Command::ActiveTextPosition(id, start, end) => {
             let index = tree

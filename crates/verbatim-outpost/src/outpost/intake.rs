@@ -20,10 +20,12 @@
 //!   per element and kind and counts nothing.
 //! - A batch is everything that accumulated while the worker handled the
 //!   previous batch, planned in the order it arrived: nothing moves ahead
-//!   of what came before it. The one exception is the focused terminal's
-//!   caret event, planned after a text change of the terminal that waits
-//!   behind it with only events between, since the change's read reads the
-//!   caret too (`caret_after_update`).
+//!   of what came before it. There are two exceptions: the focused
+//!   terminal's caret event, planned after a text change of the terminal
+//!   that waits behind it with only events between, since the change's
+//!   read reads the caret too (`caret_after_update`); and the old focus's
+//!   own UIA events behind a UIA focus marker whose read is a focus inside
+//!   the old focus, described below.
 //! - One entry may be kept apart, handed out only when nothing else is
 //!   ready: a held terminal's noted caret ([`Item::NotedCaret`]).
 //! - The console updates of one window may be absorbed: dropped as they are
@@ -106,6 +108,25 @@
 //!   that judges them, so an event raised after a focus is never handled
 //!   before it. A read whose marker the intake never saw, as when the
 //!   outpost started after it, is taken in where it arrives.
+//! - When a UIA focus's read takes its marker's place and the focus last
+//!   reported ([`Intake::set_focused`]) is among the read's ancestors, the
+//!   old focus's own UIA events that the outpost's subscriptions queued
+//!   after the marker, up to the next marker or idle query, are planned
+//!   ahead of the read, in their order (`old_focus_events_first`). The
+//!   listener sends the marker the moment the focus event arrives, while
+//!   the outpost's own subscriptions receive the old focus's events on a
+//!   route of their own, so a state change the provider raised before
+//!   moving the focus into a child, as a combo box opening into its list
+//!   raises its expand state's change before its item's focus, can be
+//!   queued a few milliseconds behind the marker; handled after the
+//!   focus, it would be a change of an ancestor the focus report already
+//!   read, and go unsaid. This restores the provider's order, which
+//!   NVDA's one UIA client and one event queue always see
+//!   (`docs/design/focus-pipeline.md`, section 12.4). Events of other elements, the listener's facts (already in the
+//!   listener's order), and every event when the new focus is not inside
+//!   the old keep their places, so a change raised as an element loses the
+//!   focus is still handled after the new focus. The check compares
+//!   runtime ids already in hand and makes no call.
 //! - A batch that holds a foreground change is handed out at once, never
 //!   held for its window to become the foreground window: Windows raises
 //!   the foreground event once the change is made, so a foreground event
@@ -699,6 +720,20 @@ impl Intake {
                 remove_client_focus(&mut state.waiting, *window, *thread, (*stamp, arrival));
             }
         }
+        // A focus moving into a child of the old focus: the old focus's own
+        // UIA events queued behind the marker are planned ahead of the read.
+        if let (Some(at), Item::Fact(DeliveredFact::UiaFocusRead { read, .. }, _)) =
+            (place.as_mut(), &entry.item)
+            && let Some(Object::Uia(old)) = &state.focused
+            && read.ancestors.as_ref().is_some_and(|ancestors| {
+                ancestors
+                    .iter()
+                    .any(|ancestor| ancestor.snapshot.runtime_id == *old)
+            })
+        {
+            let old = old.clone();
+            *at = old_focus_events_first(&mut state.waiting, *at, &old);
+        }
         // Logged, with what is queued around it, so an entry that waits
         // long in the intake can be told from one that arrived late; once
         // the lock is released, so the worker never waits on the log.
@@ -1048,6 +1083,40 @@ impl Intake {
 /// key, so the first found is the only one.
 fn remove_keyed(waiting: &mut VecDeque<Waiting>, key: &Key, at: usize) -> Option<usize> {
     remove_waiting(waiting, at, |waiting| waiting.key.as_ref() == Some(key))
+}
+
+/// Moves each of the old focus `old`'s own UIA events that waits behind the
+/// focus marker at `place`, before the next marker or idle query, to just
+/// before that marker, in their order; the marker's new place. Called when
+/// the marker's read is a focus inside `old`, so a state change the
+/// provider raised before moving the focus into the old focus's child, but
+/// which the outpost's own subscription queued after the listener's marker,
+/// is handled before the focus, in the provider's order. Events of other
+/// elements and the listener's facts keep their places.
+fn old_focus_events_first(waiting: &mut VecDeque<Waiting>, place: usize, old: &[i32]) -> usize {
+    let end = waiting
+        .iter()
+        .skip(place + 1)
+        .position(|waiting| {
+            waiting.marker.is_some() || matches!(waiting.entry.item, Item::IdleQuery { .. })
+        })
+        .map_or(waiting.len(), |at| place + 1 + at);
+    let mut place = place;
+    for at in place + 1..end {
+        let of_old = matches!(waiting[at].entry.item, Item::Uia(_))
+            && matches!(
+                &waiting[at].key,
+                Some(Key::Uia(_, _, runtime_id) | Key::UiaNotification(runtime_id, ..))
+                    if runtime_id.as_slice() == old
+            );
+        if of_old && let Some(moved) = waiting.remove(at) {
+            // Removing it and inserting it ahead leaves every later index
+            // where it was.
+            waiting.insert(place, moved);
+            place += 1;
+        }
+    }
+    place
 }
 
 /// Removes the focus event waiting on window `window`'s client object
@@ -3118,6 +3187,62 @@ mod tests {
             4,
         );
         assert_eq!(handed_out(&intake), [2, 0, 3, 4]);
+    }
+
+    /// A UIA property change `property` on element `runtime_id`.
+    fn property_change(property: i32, runtime_id: &[i32]) -> Item {
+        text_event(UiaKind::Property(property), runtime_id)
+    }
+
+    /// [`uia_focus`] on `runtime_id`, read with `ancestors` as its
+    /// ancestors, nearest first.
+    fn uia_focus_inside(marker: u64, runtime_id: Vec<i32>, ancestors: &[&[i32]]) -> Item {
+        let mut fact = uia_focus(marker, 3, runtime_id);
+        if let DeliveredFact::UiaFocusRead { read, .. } = &mut fact {
+            read.ancestors = Some(
+                ancestors
+                    .iter()
+                    .map(|runtime_id| crate::protocol::UiaAncestorFact {
+                        snapshot: snapshot(runtime_id.to_vec()),
+                        hwnd: 0,
+                        content: true,
+                    })
+                    .collect(),
+            );
+        }
+        Item::Fact(fact, None)
+    }
+
+    /// A combo box `[42, 1]` focused opens into its item `[42, 2]`: the
+    /// combo box's state change, queued after the item's marker, is planned
+    /// ahead of the item's read, and another element's change keeps its
+    /// place behind it.
+    #[test]
+    fn the_old_focus_uia_events_behind_a_focus_inside_it_are_planned_first() {
+        let intake = Intake::default();
+        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        push_item(&intake, marker(7), 1);
+        push_item(&intake, property_change(30070, &[42, 1]), 2);
+        push_item(&intake, property_change(30005, &[42, 5]), 3);
+        push_item(&intake, property_change(30005, &[42, 1]), 4);
+        push_item(
+            &intake,
+            uia_focus_inside(7, vec![42, 2], &[&[42, 3], &[42, 1]]),
+            5,
+        );
+        assert_eq!(handed_out(&intake), [2, 4, 5, 3]);
+    }
+
+    /// A focus that is not inside the old focus keeps its place ahead of
+    /// the old focus's later events.
+    #[test]
+    fn a_focus_outside_the_old_focus_keeps_its_place_before_its_events() {
+        let intake = Intake::default();
+        intake.set_focused(Some(Object::Uia(vec![42, 1])));
+        push_item(&intake, marker(7), 1);
+        push_item(&intake, property_change(30070, &[42, 1]), 2);
+        push_item(&intake, uia_focus_inside(7, vec![42, 2], &[&[42, 3]]), 3);
+        assert_eq!(handed_out(&intake), [3, 2]);
     }
 
     #[test]

@@ -373,12 +373,6 @@ NVDA capture.
   `ToastView`, from a desktop-wide window-opened subscription in the
   listener), then adopt NVDA's rule dropping MSAA alert and show events
   from native UIA windows.
-- NVDA says "expanded" when Alt+Down Arrow expands a Settings combo box,
-  before its first item, and Verbatim does not; both say the items alike,
-  "not selected" included ([changes and
-  selection](parity/changes-and-selection.md), the combo box entry;
-  `nvda-expanded-combo-box-capture.txt` in
-  `target/e2e-evidence/fixes-round-eight-2026-10-21`).
 - Selection inside a list the focus controls: the
   `settings_search_suggestions` scenario covers it, compared with NVDA
   on 2026-10-20. Left to check against a live NVDA capture are the

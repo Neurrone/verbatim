@@ -49,6 +49,7 @@ scenario_tests! {
     settings_search_suggestions
     settings_search_suggestions_reentered
     settings_system_page
+    settings_combo_box_expanded
     notepad_editing
     text_box_editing
     notepad_review_cursor

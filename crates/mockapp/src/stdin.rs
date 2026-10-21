@@ -63,7 +63,9 @@ pub(crate) enum Command {
     SetControllerFor(String, Option<String>),
     /// `set-states <id> <state>...`: replaces the node's states with those
     /// named, in the fixture's snake case, and raises
-    /// `EVENT_OBJECT_STATECHANGE`. MSAA-only.
+    /// `EVENT_OBJECT_STATECHANGE`, or in the UIA backend the change of the
+    /// `ExpandCollapseState` property, the one state-bearing property
+    /// change it raises.
     SetStates(String, verbatim_model::StateSet),
     /// `select <id>`: marks the node selected (moving the state off any
     /// previously selected node) and raises the backend-appropriate

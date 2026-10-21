@@ -8,7 +8,9 @@
 //! window is in front, as NVDA's acceptance test has it; how the outpost
 //! finds its own copy of the element by its path and follows it, and
 //! follows nothing when it has no path, until a later focus brings one;
-//! how a change raised after a focus event waits for the focus's read;
+//! how a change raised after a focus event waits for the focus's read,
+//! and how the old focus's change queued behind a focus inside it is
+//! handled before that focus;
 //! that a text change raised after the focus leaves a document and returns
 //! to it is heard; that a foreground event for a window read through
 //! UIA is dropped, the window met only among the focus's ancestors; and
@@ -41,7 +43,8 @@ use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{
-    IUIAutomation2, UIA_ControllerForPropertyId, UIA_HelpTextPropertyId, UIA_NamePropertyId,
+    IUIAutomation2, UIA_ControllerForPropertyId, UIA_ExpandCollapseExpandCollapseStatePropertyId,
+    UIA_HelpTextPropertyId, UIA_NamePropertyId,
 };
 use windows::core::Interface;
 
@@ -755,6 +758,101 @@ fn a_change_raised_after_a_focus_event_waits_for_the_focus_read() {
         other => panic!("the outpost said {other:?}, not the button's new name"),
     }
     outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A combo box opening into its list raises its expand state's change
+/// before its item's focus, but the change reaches the outpost through its
+/// own subscription to the combo box, and the focus through the listener,
+/// whose marker the outpost can take in first. The item is inside the
+/// combo box, the focus before, so the combo box's change queued behind
+/// the item's marker is planned ahead of the item's read, in the
+/// provider's order, as NVDA's one event queue sees it
+/// (`docs/design/focus-pipeline.md`, section 12.4): the outpost reports the
+/// combo box's states, then the item, and Core says "expanded", then the
+/// item, as NVDA does in Windows Settings. As the provider does, mockapp
+/// raises the change while the combo box has the keyboard focus and then
+/// moves the focus to the item; the test delivers the item's marker before
+/// the change is raised and its read after the change is heard, so the
+/// order the outpost takes them in is fixed.
+fn a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first() {
+    let title = common::unique_title("mockapp-expand-order");
+    let mut app = common::spawn("combo_box.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+    let mut state = SrState::new();
+
+    app.send("set-focus hour");
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let combo_box = focus_changed(outpost.next());
+    outpost.settled();
+    let NormalizedEvent::FocusChanged { node, .. } = &combo_box else {
+        unreachable!("a focus change");
+    };
+    let combo_box_id = node.id;
+    assert_eq!(
+        reduced(&mut state, combo_box).1,
+        [
+            vec![
+                SegmentContent::Label("Mockapp Combo Box Fixture".to_owned()),
+                SegmentContent::Role(Role::Window),
+            ],
+            vec![
+                SegmentContent::Label("Hour".to_owned()),
+                SegmentContent::Role(Role::ComboBox),
+                SegmentContent::Value("Nine".to_owned()),
+                SegmentContent::State(State::Collapsed),
+            ],
+        ]
+    );
+
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 3 });
+    // The whole state set, the keyboard focus still the combo box's.
+    app.send("set-states hour focused focusable expanded");
+    // UIA raises a state change `WinEvent` alongside the property change.
+    outpost.heard(&[
+        Heard::UiaProperty(UIA_ExpandCollapseExpandCollapseStatePropertyId.0),
+        Heard::Msaa(WinEventKind::StateChange),
+    ]);
+    app.send("set-focus nine");
+    let (read, _) = outpost.listener_read(&client.focused());
+    outpost.deliver(read.into_fact(3, FocusEvent::Focus));
+    let change = match outpost.next() {
+        OutpostToSupervisor::Event { event, .. } => event,
+        other => panic!("the outpost said {other:?}, not the combo box's change"),
+    };
+    let NormalizedEvent::PropertyChanged {
+        node_id,
+        change: PropertyChange::States(states),
+        child_count: None,
+    } = &change
+    else {
+        panic!("the outpost said {change:?}, not the combo box's states first");
+    };
+    assert_eq!(
+        (*node_id, *states),
+        (
+            combo_box_id,
+            StateSet::from_iter([State::Focused, State::Focusable, State::Expanded])
+        )
+    );
+    let item = focus_changed(outpost.next());
+    outpost.settled();
+    let NormalizedEvent::FocusChanged { node, .. } = &item else {
+        unreachable!("a focus change");
+    };
+    assert_eq!(node.name.as_deref(), Some("Nine"));
+
+    assert_eq!(
+        reduced(&mut state, change).1,
+        [vec![SegmentContent::State(State::Expanded)]]
+    );
+    assert_eq!(
+        reduced(&mut state, item).1,
+        [vec![SegmentContent::Label("Nine".to_owned())]]
+    );
 
     drop(outpost);
     app.quit();
@@ -2260,6 +2358,10 @@ fn main() {
         (
             "a_change_raised_after_a_focus_event_waits_for_the_focus_read",
             a_change_raised_after_a_focus_event_waits_for_the_focus_read,
+        ),
+        (
+            "a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first",
+            a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first,
         ),
         (
             "a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is",

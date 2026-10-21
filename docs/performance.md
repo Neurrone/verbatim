@@ -423,6 +423,16 @@ verdict for the focus's window rather than asking the window again.
   is made only for a focus or a menu opening whose sender is windowless,
   never for a selection or a notification, whose reads are not judged. No call
   into the application, and no wake-up beyond the start's.
+- In the outpost's intake, as the read takes its marker's place, one
+  comparison of the focus before's runtime id with the runtime ids of
+  the read's ancestors, which the read already carries, under the lock
+  the push takes anyway; only when the new focus is inside the old does
+  the intake scan the entries behind the marker and move the old focus's
+  own UIA events ahead of the read (`docs/design/focus-pipeline.md`,
+  section 12.4). No call and no wake-up. The focus report is delayed only
+  when events are moved, by their handling time, 0.2 to 1.8 ms for each
+  property change in Settings' Date and time page traces of 2026-10-21;
+  the call counts above are unchanged.
 - Target: the minimum, which the listener meets.
 
 ### A WinEvent focus in a UIA window, and the read when no UIA focus follows

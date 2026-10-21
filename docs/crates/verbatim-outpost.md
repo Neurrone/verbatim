@@ -791,7 +791,18 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     focus is never handled before it, as NVDA's UIA events pass in order
     through its one flusher thread; a read whose marker the outpost never
     held, as when the outpost started after it, is taken where it
-    arrives.
+    arrives. When the read takes its marker's place and the focus last
+    reported is among the read's ancestors, the old focus's own UIA
+    events that the outpost's subscriptions queued after the marker, up to
+    the next marker or idle query, are planned ahead of the read, in their
+    order (`old_focus_events_first`): a provider moving the focus into a
+    child of the old focus, as a combo box opening into its list, raises
+    the old focus's state change first, but the change comes by the
+    outpost's own route and the focus by the listener's, so the change can
+    be queued behind the marker. Events of other elements, the listener's
+    facts, and every event when the new focus is not inside the old keep
+    their places (`docs/design/focus-pipeline.md`, section 12.4). The
+    check compares runtime ids the read carries and makes no call.
   - The worker (`outpost::worker`): one thread takes entries in order and
     finishes each before the next. Before any call into the application
     for an entry, it tests the event by NVDA's acceptance test against the

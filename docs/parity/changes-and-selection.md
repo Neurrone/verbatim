@@ -285,10 +285,17 @@ Chinese (Lunar) not selected 2 of 3"), with no value change
 (`target/e2e-evidence/fixes-round-six-2026-10-21/settings-combo-box-live-check.txt`).
 NVDA, captured with the same keys on 2026-10-21 (NVDA alpha-58022, the
 pin), says each item in the same words, "not selected" included, and
-says "expanded" at Alt+Down Arrow before the first item, which Verbatim
-does not say, a difference on the roadmap (M4.2)
-(`target/e2e-evidence/fixes-round-eight-2026-10-21/nvda-expanded-combo-box-capture.txt`,
-beside Verbatim's `target/e2e-evidence/fixes-round-six-2026-10-21/expanded-combo-box-capture.txt`).
+says "expanded" at Alt+Down Arrow before the first item
+(`target/e2e-evidence/fixes-round-eight-2026-10-21/nvda-expanded-combo-box-capture.txt`).
+Verbatim says "expanded" there too: Settings raises the combo box's
+expand state change before the item's focus, and when the change
+reaches the outpost behind the item's focus marker, the outpost plans
+it ahead of the item's focus, since the item is inside the combo box
+that was the focus (`docs/design/focus-pipeline.md`, section 12.4;
+mockapp's
+`a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first`
+test, and the `settings_combo_box_expanded` scenario). The expansion is
+**matched**, from that capture.
 So NVDA's second rule, the same value change for a `Windows.UI.Core`
 combo box that has the `Value` pattern (lines 2795 to 2798, NVDA issue
 6337), is not needed for Settings and is not built: no such combo box

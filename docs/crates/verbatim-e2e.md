@@ -672,7 +672,9 @@ The groups:
   two minutes without attention, announced as before through a new
   outpost), `explorer_folder_window`, and
   `settings_system_page` (the list focused by its UI Automation
-  identifier through the agent).
+  identifier through the agent), and `settings_combo_box_expanded` (a
+  Date and time combo box focused the same way, opened with Alt+Down
+  Arrow, "expanded" before its first item, and closed with Escape).
 - Navigation: `object_navigation_in_settings` (over MSAA, in Verbatim's
   own dialog), `object_navigation_over_uia` (over UIA, in `mockapp`'s
   provider), and `system_information_tree`.

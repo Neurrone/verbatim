@@ -110,9 +110,11 @@ property-change or name/value-change notification), `set-description <id>
 <text>` (replaces the description and raises
 `EVENT_OBJECT_DESCRIPTIONCHANGE`, or in the UIA backend a help text
 change, the description being served as both the full description and
-the help text), `set-states <id> <state>...` (MSAA only: replaces the
-whole state set, named as in fixtures, and raises
-`EVENT_OBJECT_STATECHANGE`), `set-controller-for <id> [<controlled>]`
+the help text), `set-states <id> <state>...` (replaces the whole state
+set, named as in fixtures, and raises `EVENT_OBJECT_STATECHANGE`, or in
+the UIA backend the change of the `ExpandCollapseState` property, the one
+state-bearing property change it raises, as a combo box opening or
+closing raises), `set-controller-for <id> [<controlled>]`
 (UIA only: the node's `ControllerFor` relation names node `controlled`,
 or nothing, and its property change is raised), `focus-child
 <container> <child>` (addresses the container's children as numbered
