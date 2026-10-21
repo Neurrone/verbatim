@@ -24,7 +24,7 @@ use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
-use crate::speech::{cut_off, heard};
+use crate::speech::{cut_off, heard, optional};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -77,7 +77,18 @@ pub(crate) fn body(scenario: &mut Scenario, _state: &mut ScenarioState) {
         .name_by_automation_id(ACCOUNT_BUTTON)
         .expect("the agent reads the account button's name");
     scenario.send_keys(&["tab"]).expect("sends Tab");
-    scenario.speech().expect(&[&format!("{account} button")]);
+    // Settings sometimes raises the box's ControllerFor change twice, a
+    // few milliseconds apart, as the suggestions close, and the sound is
+    // played for each, as NVDA plays it for each it receives (NVDA's UIA
+    // log received the second in one Escape of three,
+    // `target/e2e-evidence/m42-desktop-2-2026-10-22/part3a-nvda-2.log`):
+    // an optional utterance (`docs/testing.md`, "Optional utterances"),
+    // matched here ahead of the Tab's speech, the first utterance always
+    // said after it.
+    scenario.speech().expect_sequence(&[
+        optional("sound: suggestions-closed"),
+        heard(&format!("{account} button")),
+    ]);
 
     // The box and its line, cut off by the suggestion Settings selects as
     // the focus returns.

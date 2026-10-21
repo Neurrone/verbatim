@@ -217,8 +217,17 @@ suggestions-closed indication. NVDA's editable-text condition also asks
 for navigable text or a text selection; Verbatim takes the text pattern
 alone. Help text changes on the focus are followed too, and spoken as
 NVDA speaks a description change. The item status is not followed:
-NVDA's own handling of it is in app modules only.
-**matched (unverified)**.
+NVDA's own handling of it is in app modules only. Settings' search box
+sometimes raises its ControllerFor change twice, about 5 ms apart, as
+its suggestions close, and both readers play the suggestions-closed
+sound for each change they receive: NVDA plays it whenever the field is
+not the focus or names no elements, and its UIA debug log received the
+duplicate after one Escape of three
+(`target/e2e-evidence/m42-desktop-2-2026-10-22/part3a-nvda-1.log` to
+`-3.log`, read from the line each `.startline` file gives); both enable
+UIA's event coalescing, so only how often Settings' duplicate arrives
+differs. `settings_search_suggestions_reentered` accepts the second
+sound as an optional utterance. **matched (unverified)**.
 
 ### Value change on focused node speaks bare value
 

@@ -343,22 +343,11 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     (deferred, Dickson, 2026-10-21).
   - `line_key_flood` once read a half-written line on GitHub's runner;
     repeat it there (deferred, Dickson, 2026-10-21).
-  - The suggestions-closed sound plays twice, 16 to 24 ms apart, after
-    Enter on a suggestion in Settings' search box
-    (`target/e2e-evidence/fixes-round-ten-2026-10-21/`, the
-    `verbatim-enter-capture-*.txt` files and the outpost logs beside
-    them). Settings raises two ControllerFor changes on the search box;
-    the second reaches the outpost after the combo box's focus marker,
-    waits behind it as the intake's rule has it, and is handled after the
-    combo box was reported as the focus. NVDA's source at the pin plays
-    the sound for both if its UIA handler receives the second: the search
-    box's `event_controllerForChange` (`NVDAObjects/behaviors.py` 231 to
-    236) plays it whenever the object is not the focus, and whether the
-    second change arrives before NVDA removes the box's local
-    registration at its loss of focus (`NVDAObjects/UIA/__init__.py`
-    1627 to 1630, `UIAHandler/__init__.py` 743 to 756) is a race the
-    source does not settle. An NVDA debug log with UIA event logging on
-    would settle it.
+  - The suggestions-closed sound played twice in Settings' search box is
+    matched: NVDA's UIA debug logs show it receives Settings' duplicate
+    ControllerFor change in some presses and plays the sound for each
+    (`docs/parity/changes-and-selection.md`, "Suggestions appearing and
+    going away").
 
 Exit: a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean.
