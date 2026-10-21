@@ -457,12 +457,30 @@ these focuses; that is not captured.
 Verbatim: **different**, as a consequence of that design's decision 11
 (Fable, 2026-10-21, pending Dickson's acceptance). When no UIA focus
 follows a `WinEvent` focus in a UIA window within a second of the
-`WinEvent`, or the UIA focus comes stale, its sender having no window
-above it or its element no longer having the keyboard focus, the
-application's outpost reads its focus itself, as the focus-now query
-does, and reports it, once. Where NVDA drops a stale focus event and
-speaks nothing until the next one comes, Verbatim speaks where the focus
-now is. So where UIA delivers late, Verbatim speaks
+`WinEvent`, the application's outpost reads its focus itself, as the
+focus-now query does, and reports it, once. The listener's drops of the
+UIA focus it waits for fall into three classes:
+
+- A verdict of NVDA's checks on the event: its window hung, not related
+  to the foreground window, the console window's own, a shell window that
+  only stages a switch, or not a UIA window, or a repeat of the focus
+  that still has the keyboard focus. NVDA drops the event for the same
+  reason and nothing more is lost, so the wait ends.
+- A drop that could not establish the focus: its element no longer has
+  the keyboard focus (NVDA's drop at lines 1632 to 1637), its event said
+  it lacked it when the read's time was up, the read ran out of time, was
+  abandoned or never started, or a newer event of its element replaced
+  it. The wait goes on to its second, with nothing read at once: these
+  drops come in ordinary fast navigation, where the next key's focus
+  event follows, so a read at once would cost a read per key, and could
+  speak a focus out of order beside the next key's.
+- A sender with no window above it, as in a new window's first burst of
+  focus events after their senders are gone: the event came and cannot
+  be read, and the event for where the focus went may never come, so the
+  outpost reads its focus at once.
+
+Where NVDA drops a gone sender's focus event and speaks nothing until the
+next one comes, Verbatim speaks where the focus now is. So where UIA delivers late, Verbatim speaks
 the same words a second after the `WinEvent`, earlier than NVDA would;
 where it never delivers, and for a burst of gone elements, Verbatim
 speaks the focus where NVDA, by its source, is silent. A late UIA focus

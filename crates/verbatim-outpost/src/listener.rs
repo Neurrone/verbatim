@@ -1634,7 +1634,7 @@ mod tests {
                 DeliveredFact::UiaFocusMarker { marker: 2 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
-                    evidence: DropEvidence::Focus,
+                    evidence: DropEvidence::Inconclusive,
                 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 2,

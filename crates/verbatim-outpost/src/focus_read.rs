@@ -414,6 +414,41 @@ const NOTIFICATION_NO_WINDOW: &str = "its sender has no window above it";
 /// focus when it is read, as NVDA drops it.
 const NOT_FOCUSED: &str = "its element no longer has the keyboard focus";
 
+/// The reason a focus is dropped whose own window the system reports hung.
+const HUNG: &str = "its window is hung";
+
+/// The reason a menu opening is dropped whose comparison with the current
+/// focus failed.
+const COMPARISON_FAILED: &str = "its comparison with the current focus failed";
+
+/// The reason a focus is dropped that repeats the last focus accepted.
+const REPEAT: &str = "a repeat of the last focus, which still has the keyboard focus";
+
+/// The reason a focus is dropped that fails NVDA's acceptance test.
+const NOT_RELATED: &str = "its window is not related to the foreground window";
+
+/// The reason the console window's own element's focus is dropped.
+const CONSOLE_OWN: &str = "the console window's own focus";
+
+/// The reason a focus in a shell window that only stages a switch is
+/// dropped.
+const SHELL_STAGING: &str = "a shell window that only stages a switch";
+
+/// The reason a focus is dropped whose window does not use UIA.
+const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
+
+/// The drops of a focus that are NVDA's checks' verdict on its event, as
+/// its read would have been ([`DropEvidence::Focus`]).
+const VERDICTS: [&str; 7] = [
+    HUNG,
+    COMPARISON_FAILED,
+    REPEAT,
+    NOT_RELATED,
+    CONSOLE_OWN,
+    SHELL_STAGING,
+    NOT_UIA,
+];
+
 /// What became of one focus event.
 #[derive(Debug)]
 pub enum Judged {
@@ -448,13 +483,17 @@ impl Judged {
 
 /// What the drop of an event of kind `kind` for `reason` says to an
 /// outpost waiting for a UIA focus after a `WinEvent` focus
-/// ([`DropEvidence`]): a focus whose sender has no window above it or no
-/// longer has the keyboard focus came too late to speak the focus.
+/// ([`DropEvidence`]): a focus whose sender has no window above it came
+/// too late to be read; a verdict of NVDA's checks ([`VERDICTS`]) answers
+/// the wait; any other drop of a focus, such as one no longer focused or
+/// out of time, could not establish the focus and leaves the wait to its
+/// bound.
 #[must_use]
 pub fn drop_evidence(kind: FocusEvent, reason: &str) -> DropEvidence {
     match kind {
-        FocusEvent::Focus if reason == NO_WINDOW || reason == NOT_FOCUSED => DropEvidence::Stale,
-        FocusEvent::Focus => DropEvidence::Focus,
+        FocusEvent::Focus if reason == NO_WINDOW => DropEvidence::NoWindow,
+        FocusEvent::Focus if VERDICTS.contains(&reason) => DropEvidence::Focus,
+        FocusEvent::Focus => DropEvidence::Inconclusive,
         FocusEvent::MenuOpened | FocusEvent::Selection | FocusEvent::Notification => {
             DropEvidence::NotFocus
         }
@@ -1076,7 +1115,7 @@ impl FocusReader {
         // its cached handle only, so a windowless sender is not tested
         // here, and nothing is read live from a hung application.
         if hwnd != 0 && window_is_hung(hwnd) {
-            return Err("its window is hung");
+            return Err(HUNG);
         }
         // The current focus, as far as the listener holds it: the last
         // focus accepted, while no newer focus has been queued (section
@@ -1114,7 +1153,7 @@ impl FocusReader {
                 let same = compare();
                 match (&same, current.as_ref()) {
                     (Some(Err(_)), _) => {
-                        return Err("its comparison with the current focus failed");
+                        return Err(COMPARISON_FAILED);
                     }
                     (Some(Ok(true)), Some((focus, window))) => (*window, focus),
                     _ => (
@@ -1144,7 +1183,7 @@ impl FocusReader {
                         last.has_keyboard_focus().unwrap_or(false)
                     }
                 {
-                    return Err("a repeat of the last focus, which still has the keyboard focus");
+                    return Err(REPEAT);
                 }
                 (nearest, element)
             }
@@ -1166,7 +1205,7 @@ impl FocusReader {
             &windows,
             &RequestedEvents::default(),
         ) {
-            return Err("its window is not related to the foreground window");
+            return Err(NOT_RELATED);
         }
         // 5. The refusals of NVDA's object for the sender, before its
         // keyboard focus is read (`shouldAllowUIAFocusEvent` overridden):
@@ -1177,7 +1216,7 @@ impl FocusReader {
         // is the one element whose own window is the console window; the
         // text area has none.
         if hwnd != 0 && window_class_name(hwnd) == CONSOLE_WINDOW_CLASS {
-            return Err("the console window's own focus");
+            return Err(CONSOLE_OWN);
         }
         // The shell's windows that take the focus only while a switch is
         // staged, which NVDA's File Explorer app module ignores when it
@@ -1185,7 +1224,7 @@ impl FocusReader {
         // makes such a window its focus object before the app module
         // ignores it; that is not ported here.
         if is_shell_transition_window(window) {
-            return Err("a shell window that only stages a switch");
+            return Err(SHELL_STAGING);
         }
         // 6. NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
@@ -1269,7 +1308,6 @@ impl FocusReader {
         budget: &Budget,
         mut called: bool,
     ) -> Result<isize, &'static str> {
-        const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
         let out_of_time = || budget.out_of_time();
         let element = held.live().element();
         let hwnd = sender.role.hwnd;
@@ -2441,23 +2479,41 @@ mod tests {
     const WAIT: Duration = Duration::from_secs(10);
 
     /// Only a focus event's drop answers an outpost's wait for a UIA focus
-    /// after a `WinEvent` focus, and a focus whose sender has no window or
-    /// no longer has the keyboard focus is stale; a selection's, a
-    /// notification's, or a menu opening's drop says nothing of the focus.
+    /// after a `WinEvent` focus: a verdict of NVDA's checks answers it, a
+    /// focus whose sender has no window is told apart, and every other drop
+    /// of a focus is inconclusive; a selection's, a notification's, or a
+    /// menu opening's drop says nothing of the focus.
     #[test]
-    fn only_a_focus_events_drop_answers_and_a_stale_one_is_told_apart() {
-        let replaced = "a newer focus event of its element replaced it";
-        assert_eq!(
-            drop_evidence(FocusEvent::Focus, replaced),
-            DropEvidence::Focus
-        );
-        assert_eq!(
-            drop_evidence(FocusEvent::Focus, NOT_FOCUSED),
-            DropEvidence::Stale
-        );
+    fn a_focus_events_drop_is_a_verdict_inconclusive_or_without_a_window() {
+        for verdict in VERDICTS {
+            assert_eq!(
+                drop_evidence(FocusEvent::Focus, verdict),
+                DropEvidence::Focus,
+                "{verdict}"
+            );
+        }
+        for inconclusive in [
+            NOT_FOCUSED,
+            "its event says it did not have the keyboard focus, and its read's time was up",
+            "its read ran out of time before its window was looked up",
+            "its read ran out of time before its window was judged",
+            NOT_IN_TIME,
+            MOVED_ON,
+            WAITED_TOO_LONG,
+            "a newer focus event of its element replaced it",
+            "no thread to read it",
+            "the listener is shutting down",
+            "its element could not be kept for its read",
+        ] {
+            assert_eq!(
+                drop_evidence(FocusEvent::Focus, inconclusive),
+                DropEvidence::Inconclusive,
+                "{inconclusive}"
+            );
+        }
         assert_eq!(
             drop_evidence(FocusEvent::Focus, NO_WINDOW),
-            DropEvidence::Stale
+            DropEvidence::NoWindow
         );
         assert_eq!(
             drop_evidence(FocusEvent::Selection, NO_WINDOW),

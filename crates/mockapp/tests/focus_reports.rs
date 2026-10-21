@@ -969,7 +969,7 @@ fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
     outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 4 });
     outpost.deliver(DeliveredFact::UiaFocusDropped {
         marker: 4,
-        evidence: DropEvidence::Stale,
+        evidence: DropEvidence::NoWindow,
     });
     let reported = outpost.reported_focus();
     assert_eq!(
@@ -983,12 +983,114 @@ fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
     app.quit();
 }
 
+/// A `WinEvent` focus in a UIA window whose UIA focus event came but was
+/// dropped because its element no longer had the keyboard focus, as in
+/// ordinary fast navigation: the drop neither answers the wait nor reads at
+/// once (Fable, 2026-10-21, pending Dickson's acceptance), and the focus is
+/// read at the bound.
+fn a_winevent_focus_whose_uia_focus_is_no_longer_focused_is_read_at_its_bound() {
+    let title = common::unique_title("mockapp-unfocused-drop");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 7 });
+    outpost.deliver(DeliveredFact::UiaFocusDropped {
+        marker: 7,
+        evidence: DropEvidence::Inconclusive,
+    });
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settle();
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A `WinEvent` focus in a UIA window whose copy was observed two seconds
+/// before the outpost takes it up: the bound counts from the observation,
+/// so the gap is due at once and the focus is read by the settle request,
+/// with the outpost's clock unmoved.
+fn a_winevent_focus_observed_past_its_bound_is_read_at_once() {
+    let title = common::unique_title("mockapp-old-copy");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus_observed(&outpost, hwnd, common::outpost::now_ms() - 2_000);
+    outpost.settle();
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The focus markers the intake resolved without a read come to the worker
+/// with the next entry, and are taken in before it: a drop that closes an
+/// open gap, handed over with a later copy that it does not answer, leaves
+/// that copy to open a gap of its own, which is read at its bound.
+fn a_drop_handed_over_with_a_copy_is_taken_in_before_the_copy() {
+    let title = common::unique_title("mockapp-news-first");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    // The first copy's gap, which the drop answers.
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    // The drop and a copy observed 200 ms after it, which the drop does
+    // not answer, both handed to the worker as it goes on.
+    outpost.hold_worker();
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 6 });
+    outpost.deliver(DeliveredFact::UiaFocusDropped {
+        marker: 6,
+        evidence: DropEvidence::Focus,
+    });
+    winevent_focus_observed(&outpost, hwnd, common::outpost::now_ms() + 200);
+    outpost.release_worker();
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settle();
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A `WinEvent` focus in a UIA window that no UIA focus follows, with the
 /// outpost's clock the system's and no settle request: the worker's own
 /// wait for its next entry ends at the bound, a second after the copy, and
-/// the focus is read, as in the product. The UIA focus that then comes
-/// late is reported under the read's node, which Core's duplicate rule
-/// takes silently, so the element is heard once in all.
+/// the focus is read, as in the product, not before the bound: the read's
+/// report is observed a second or more after the copy. The UIA focus that
+/// then comes late is reported under the read's node, which Core's
+/// duplicate rule takes silently, so the element is heard once in all.
 fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late()
  {
     let title = common::unique_title("mockapp-late-uia-focus");
@@ -1000,9 +1102,23 @@ fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_whe
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
-    winevent_focus(&outpost, hwnd);
+    let copy_observed_at_ms = common::outpost::now_ms();
+    winevent_focus_observed(&outpost, hwnd, copy_observed_at_ms);
     // The report is the evidence that the wait ended.
-    let read = focus_changed(outpost.next());
+    let message = outpost.next();
+    let OutpostToSupervisor::Event {
+        observed_at_ms: read_observed_at_ms,
+        ..
+    } = &message
+    else {
+        panic!("the outpost said {message:?}, not a focus change");
+    };
+    assert!(
+        *read_observed_at_ms >= copy_observed_at_ms + 1_000,
+        "read {} ms after the copy, before the bound",
+        read_observed_at_ms.saturating_sub(copy_observed_at_ms)
+    );
+    let read = focus_changed(message);
     outpost.settled();
     outpost.deliver(outpost.listener_fact(&client.focused()));
     let late = focus_changed(outpost.next());
@@ -1050,12 +1166,13 @@ fn a_winevent_focus_whose_uia_focus_waits_for_its_read_at_the_bound_is_reported_
     outpost.read_focus_as(client.focused().live().element());
     winevent_focus(&outpost, hwnd);
     outpost.settled();
-    outpost.pass_time(Duration::from_secs(1));
-    // An entry the worker handles after the bound has passed, a
-    // foreground change of mockapp's window, which says nothing; the
-    // marker of the UIA focus arrives while it is handled, before its
-    // read.
+    // An entry the worker handles as the bound passes, a foreground change
+    // of mockapp's window, which says nothing; the marker of the UIA focus
+    // arrives while it is handled, before its read. The worker is held
+    // before the clock moves, so no wake of its own finds the gap due
+    // before the marker is in.
     outpost.hold_worker();
+    outpost.pass_time(Duration::from_secs(1));
     outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 5 });
     outpost.release_worker();
     let (judged, _) = outpost.listener_read(&client.focused());
@@ -1930,6 +2047,18 @@ fn main() {
         (
             "a_focus_queued_from_another_application_after_the_copy_answers_the_wait",
             a_focus_queued_from_another_application_after_the_copy_answers_the_wait,
+        ),
+        (
+            "a_winevent_focus_whose_uia_focus_is_no_longer_focused_is_read_at_its_bound",
+            a_winevent_focus_whose_uia_focus_is_no_longer_focused_is_read_at_its_bound,
+        ),
+        (
+            "a_winevent_focus_observed_past_its_bound_is_read_at_once",
+            a_winevent_focus_observed_past_its_bound_is_read_at_once,
+        ),
+        (
+            "a_drop_handed_over_with_a_copy_is_taken_in_before_the_copy",
+            a_drop_handed_over_with_a_copy_is_taken_in_before_the_copy,
         ),
         (
             "the_idle_answer_waits_for_the_wait_for_a_uia_focus",

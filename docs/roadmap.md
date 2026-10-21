@@ -251,12 +251,33 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     the burst of gone senders (risks 2 and 13 of
     [the listener design](design/listener-without-connections.md)), are
     recovered by decision 11's step, built on 2026-10-21 (section 10,
-    step 12). What remains: one `measure_focus_explorer` run has met late
-    delivery live since, and was heard once; no run has met missing
-    delivery or the burst, so that recovery's speech rests on its mockapp
-    tests; the first `settings_system_page` or File Explorer run that
-    meets it is to be read for the outpost's "the focus is read and
-    reported" line and the speech after it.
+    step 12). What remains: no run has met UIA's late or missing delivery
+    or the burst, so that recovery's speech rests on its mockapp tests;
+    the one read so far that came before its UIA focus, in a
+    `measure_focus_explorer` run, was made late because the outpost's
+    worker was held by its own early connections, whose hold also
+    explains the UIA focus's lateness (risk 11, below). The first
+    `settings_system_page` or File Explorer run that meets the fault is to
+    be read for the outpost's "the focus is read and reported" line and
+    the speech after it.
+  - A placeholder that keeps the focus: `measure_focus_explorer` failed 2
+    of 3 runs on 2026-10-21 because File Explorer gave the focus to its
+    "Working on it..." placeholder, a static text, and raised no later
+    focus, UIA or `WinEvent`, within the step's 15-second timeout: once at
+    the sixth new window's first item, once in the setup's folder window
+    (`target/e2e-evidence/fixes-round-fifteen-2026-10-21/mfe-1-fail/` and
+    `mfe-2-fail/`). Decision 11's wait cannot recover it, since no
+    `WinEvent` focus came. After the placeholder's UIA focus, the
+    outpost's hook took only window destructions (`EVENT_OBJECT_DESTROY`
+    on window objects, 11 in each run) and the listener received
+    nothing; in the first run two UIA element-selected events of the new
+    list's items came within 4 ms of the placeholder's focus event,
+    before its read was reported, and none after. So nothing raised after
+    the placeholder could serve as evidence that the focus moved.
+    `explorer_folder_window` allows the placeholder as an optional
+    utterance, but there the item's focus follows it. The scenario has no
+    handling for a placeholder that keeps the focus; nothing is built for
+    it.
   - The early connection an outpost makes to a new window after its probe
     finds a provider (variant d of
     [the listener design](design/listener-without-connections.md),
@@ -266,8 +287,12 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     `measure_focus_explorer` runs on 2026-10-21, against the 250 to 454 ms
     risk 11 recorded, and delayed those windows' first focus by 1.1 to
     3.5 seconds (`target/e2e-evidence/explorer-flakes-2026-10-21/partA/`).
-    A question for Dickson: whether the connection moves off the worker
-    or is made later; nothing is changed for it.
+    A copy the worker takes up after such a hold is read at once, and
+    that read races the UIA focus the same hold delayed; met once on
+    2026-10-21, the read reported 11 ms ahead of the UIA focus, heard
+    once (risk 11). A question for Dickson: whether the connection moves
+    off the worker or is made later, which decides these reads too;
+    nothing is changed for it.
   - When a console window is read through MSAA, NVDA gives its client
     object the legacy console overlay with the terminal role
     (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,

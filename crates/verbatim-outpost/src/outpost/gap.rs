@@ -9,11 +9,14 @@
 //! focus has answered, a gap, and says when the worker is to read its
 //! application's focus itself instead: once the worker's bound has passed,
 //! counted from the copy's observation, with no marker waiting, or at once
-//! when a focus marker is dropped as stale, its sender having no window
-//! above it or no longer having the keyboard focus. Only a focus marker's
-//! resolution answers a gap; a selection's, a notification's, or a menu
-//! opening's neither closes it nor reads it (Fable, 2026-10-21, pending
-//! Dickson's acceptance). At most one read is made for a gap.
+//! when a focus marker is dropped because its sender has no window above
+//! it. Only a focus marker's resolution answers a gap, and its drop in one
+//! of three ways ([`DropEvidence`](crate::protocol::DropEvidence)): a
+//! verdict of NVDA's checks closes it, a drop that could not establish the
+//! focus, such as one no longer focused, leaves it to its bound, and a drop
+//! for no window reads it at once; a selection's, a notification's, or a
+//! menu opening's neither closes it nor reads it (Fable, 2026-10-21,
+//! pending Dickson's acceptance). At most one read is made for a gap.
 //!
 //! It is the worker's alone, kept on its thread with no lock, and costs a
 //! few comparisons per focus. Its times are of two kinds: observation
@@ -49,15 +52,15 @@ pub(super) struct Open {
 #[derive(Debug, Default)]
 pub(super) struct FocusGap {
     open: Option<Open>,
-    /// Whether a focus marker that answers the gap was dropped as stale:
-    /// the gap is read at once.
+    /// Whether a focus marker that answers the gap was dropped because its
+    /// sender had no window above it: the gap is read at once.
     unreadable: bool,
     /// The newest observation of a UIA focus the worker has seen answered:
-    /// a read, or a drop for a reason that is not staleness.
+    /// a read, or a drop that is a verdict of NVDA's checks.
     last_answered_ms: Option<u64>,
-    /// The newest observation of a UIA focus the worker has seen dropped as
-    /// stale.
-    last_stale_ms: Option<u64>,
+    /// The newest observation of a UIA focus the worker has seen dropped
+    /// because its sender had no window above it.
+    last_no_window_ms: Option<u64>,
     /// The outpost's clock as the worker last read it.
     clock_now: Option<Instant>,
 }
@@ -72,7 +75,7 @@ impl FocusGap {
     /// the worker dropped for its UIA focus to report at `now` by the
     /// outpost's clock, `now_ms` by the system's: opens a gap, unless one is
     /// open or a UIA focus answered it already, to be read at once when a
-    /// stale drop answers it. Returns whether it opened one.
+    /// drop for no window answers it. Returns whether it opened one.
     pub(super) fn dropped_for_uia(
         &mut self,
         hwnd: isize,
@@ -95,7 +98,7 @@ impl FocusGap {
             observed_at_ms,
             opened: now.checked_sub(age).unwrap_or(now),
         });
-        self.unreadable = Self::answers(self.last_stale_ms, observed_at_ms);
+        self.unreadable = Self::answers(self.last_no_window_ms, observed_at_ms);
         true
     }
 
@@ -105,14 +108,14 @@ impl FocusGap {
         if let Some(at) = news.answered_at_ms {
             self.uia_answered(at);
         }
-        if let Some(at) = news.stale_at_ms {
-            self.focus_stale(at);
+        if let Some(at) = news.no_window_at_ms {
+            self.focus_without_window(at);
         }
     }
 
     /// A UIA focus marker observed at `observed_at_ms` was answered: read,
-    /// or dropped for a reason that is not staleness. Closes the gap it
-    /// answers, returning it.
+    /// or dropped by a verdict of NVDA's checks. Closes the gap it answers,
+    /// returning it.
     pub(super) fn uia_answered(&mut self, observed_at_ms: u64) -> Option<Open> {
         self.last_answered_ms = Some(
             self.last_answered_ms
@@ -125,11 +128,12 @@ impl FocusGap {
         self.close()
     }
 
-    /// A UIA focus marker observed at `observed_at_ms` was dropped as
-    /// stale: the gap it answers is read at once.
-    fn focus_stale(&mut self, observed_at_ms: u64) {
-        self.last_stale_ms = Some(
-            self.last_stale_ms
+    /// A UIA focus marker observed at `observed_at_ms` was dropped because
+    /// its sender had no window above it: the gap it answers is read at
+    /// once.
+    fn focus_without_window(&mut self, observed_at_ms: u64) {
+        self.last_no_window_ms = Some(
+            self.last_no_window_ms
                 .map_or(observed_at_ms, |at| at.max(observed_at_ms)),
         );
         if let Some(open) = self.open
@@ -152,7 +156,7 @@ impl FocusGap {
     }
 
     /// Whether the gap is to be read at `now` by the outpost's clock: its
-    /// bound has passed, or a focus marker of it was dropped as stale.
+    /// bound has passed, or a focus marker of it was dropped for no window.
     pub(super) fn is_due(&self, now: Instant, bound: Duration) -> bool {
         self.open
             .is_some_and(|open| self.unreadable || now >= open.opened + bound)
@@ -166,7 +170,7 @@ impl FocusGap {
         self.close()
     }
 
-    /// Whether a focus marker of the gap was dropped as stale.
+    /// Whether a focus marker of the gap was dropped for no window.
     pub(super) fn unreadable(&self) -> bool {
         self.unreadable
     }
@@ -211,10 +215,10 @@ mod tests {
         assert!(gap.dropped_for_uia(7, 5_000, (start, 5_000)));
     }
 
-    fn stale_at(at: u64) -> MarkerNews {
+    fn no_window_at(at: u64) -> MarkerNews {
         MarkerNews {
             answered_at_ms: None,
-            stale_at_ms: Some(at),
+            no_window_at_ms: Some(at),
         }
     }
 
@@ -251,11 +255,11 @@ mod tests {
     }
 
     #[test]
-    fn a_focus_marker_dropped_as_stale_reads_the_gap_at_once() {
+    fn a_focus_marker_dropped_for_no_window_reads_the_gap_at_once() {
         let start = Instant::now();
         let mut gap = FocusGap::default();
         opened(&mut gap, start);
-        gap.marker_news(stale_at(5_200));
+        gap.marker_news(no_window_at(5_200));
         assert_eq!(gap.wake_at(start, BOUND), Some(start));
         assert_eq!(gap.take_due(start, BOUND).map(|open| open.hwnd), Some(7));
     }

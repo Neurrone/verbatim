@@ -491,17 +491,19 @@ struct State {
 /// The focus markers the intake resolved without a read, which never reach
 /// the worker, for the worker's wait for a UIA focus after a `WinEvent`
 /// focus in a UIA window (`super::gap`): when the newest focus marker was
-/// dropped for a reason that is not staleness or the listener's reads
-/// ended, and when the newest was dropped as stale
+/// dropped by a verdict of NVDA's checks or the listener's reads ended, and
+/// when the newest was dropped because its sender had no window above it
 /// ([`DropEvidence`](crate::protocol::DropEvidence)), each by the time the
-/// drop was observed. A drop of any other event's marker is no news.
+/// drop was observed. A focus marker's drop that could not establish the
+/// focus, and a drop of any other event's marker, are no news: the gap
+/// waits for its bound.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct MarkerNews {
-    /// The newest focus drop that is not stale, or the end of the
-    /// listener's reads, by when it was observed.
+    /// The newest focus drop by a verdict of NVDA's checks, or the end of
+    /// the listener's reads, by when it was observed.
     pub(super) answered_at_ms: Option<u64>,
-    /// The newest focus drop as stale.
-    pub(super) stale_at_ms: Option<u64>,
+    /// The newest focus drop because its sender had no window above it.
+    pub(super) no_window_at_ms: Option<u64>,
 }
 
 /// When [`Intake::next_with_gap`] wakes its worker for the gap.
@@ -521,8 +523,8 @@ impl MarkerNews {
     fn record(&mut self, evidence: DropEvidence, observed_at_ms: u64) {
         let slot = match evidence {
             DropEvidence::Focus => &mut self.answered_at_ms,
-            DropEvidence::Stale => &mut self.stale_at_ms,
-            DropEvidence::NotFocus => return,
+            DropEvidence::NoWindow => &mut self.no_window_at_ms,
+            DropEvidence::Inconclusive | DropEvidence::NotFocus => return,
         };
         *slot = Some(slot.map_or(observed_at_ms, |at| at.max(observed_at_ms)));
     }
@@ -3271,9 +3273,9 @@ mod tests {
     }
 
     #[test]
-    fn a_focus_marker_dropped_as_stale_wakes_the_gap_at_once_with_its_news() {
+    fn a_focus_marker_dropped_for_no_window_wakes_the_gap_at_once_with_its_news() {
         let intake = Intake::default();
-        marker_dropped(&intake, DropEvidence::Stale);
+        marker_dropped(&intake, DropEvidence::NoWindow);
         let later = Instant::now() + std::time::Duration::from_secs(1);
         let (planned, _, news) = intake.next_with_gap(Some(later)).expect("an entry");
         assert!(matches!(&planned.entries()[0].item, Item::Wake));
@@ -3281,7 +3283,7 @@ mod tests {
             news,
             MarkerNews {
                 answered_at_ms: None,
-                stale_at_ms: Some(40),
+                no_window_at_ms: Some(40),
             }
         );
         assert_eq!(
@@ -3298,7 +3300,7 @@ mod tests {
             focus.lock().marker_news,
             MarkerNews {
                 answered_at_ms: Some(40),
-                stale_at_ms: None,
+                no_window_at_ms: None,
             }
         );
         let selection = Intake::default();
@@ -3311,9 +3313,27 @@ mod tests {
         );
     }
 
+    /// A focus marker's drop that could not establish the focus, such as
+    /// one no longer focused, is no news: the gap waits for its bound, and
+    /// is neither closed nor read at once.
     #[test]
-    fn the_end_of_the_listeners_reads_is_news_that_answers_a_gap() {
+    fn an_inconclusive_focus_drop_leaves_the_gap_to_its_bound() {
         let intake = Intake::default();
+        marker_dropped(&intake, DropEvidence::Inconclusive);
+        assert_eq!(intake.lock().marker_news, MarkerNews::default());
+        let later = Instant::now() + std::time::Duration::from_secs(1);
+        assert_eq!(
+            intake.lock().gap_wake(Some(later), Instant::now()),
+            GapWake::At(later)
+        );
+    }
+
+    #[test]
+    fn the_end_of_the_listeners_reads_is_news_that_closes_a_gap() {
+        let intake = Intake::default();
+        let start = Instant::now();
+        let mut gap = super::super::gap::FocusGap::default();
+        assert!(gap.dropped_for_uia(7, 30, (start, 30)));
         push_item(
             &intake,
             Item::Fact(DeliveredFact::UiaFocusMarker { marker: 3 }, None),
@@ -3324,13 +3344,18 @@ mod tests {
             Item::Fact(DeliveredFact::UiaFocusReadsEnded, None),
             40,
         );
+        let later = start + std::time::Duration::from_secs(1);
+        let (planned, _, news) = intake.next_with_gap(Some(later)).expect("an entry");
+        assert!(matches!(&planned.entries()[0].item, Item::Wake));
         assert_eq!(
-            intake.lock().marker_news,
+            news,
             MarkerNews {
                 answered_at_ms: Some(40),
-                stale_at_ms: None,
+                no_window_at_ms: None,
             }
         );
+        gap.marker_news(news);
+        assert!(!gap.is_open());
     }
 
     #[test]
@@ -3356,7 +3381,7 @@ mod tests {
             news,
             MarkerNews {
                 answered_at_ms: Some(40),
-                stale_at_ms: None,
+                no_window_at_ms: None,
             }
         );
         assert_eq!(intake.lock().marker_news, MarkerNews::default());

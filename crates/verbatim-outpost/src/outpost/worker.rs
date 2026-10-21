@@ -714,9 +714,14 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
 /// Answers the idle barrier's query the worker has reached
 /// ([`Item::IdleQuery`]) once no deferred work is pending: no caret key's
 /// watch is open, no terminal owes Core a read, and the worker waits for
-/// no UIA focus after a `WinEvent` focus (`gap_open`), a wait that ends
-/// within its bound, [`UIA_FOCUS_BOUND`], at most, on its UIA focus or with
-/// the read that replaces it. Called by the worker in charge after each
+/// no UIA focus after a `WinEvent` focus (`gap_open`), a wait that ends on
+/// its UIA focus or with the read that replaces it: at its bound,
+/// [`UIA_FOCUS_BOUND`] after the copy's observation, or, when a marker
+/// waits for its read then, once that marker is resolved, which can take
+/// as long as the listener's read of it, up to its deadline
+/// (`focus_read::READ_DEADLINE`, 11 seconds), and as long again for each
+/// marker that follows while the gap is open, plus whatever entry the
+/// worker is handling. Called by the worker in charge after each
 /// entry, so the answer goes as soon as the entry that ends the watch,
 /// pays the read, or closes the gap is handled, behind what that entry
 /// published.

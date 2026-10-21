@@ -271,20 +271,33 @@ impl ListenerFact {
 /// for a UIA focus after a `WinEvent` focus in one of its UIA windows
 /// (`docs/design/listener-without-connections.md`, decision 11; Fable,
 /// 2026-10-21, pending Dickson's acceptance): only a focus event's
-/// resolution answers that wait.
+/// resolution answers that wait, in one of three ways. It goes on the pipe
+/// as JSON, by its variant's name; the listener, the supervisor and the
+/// outposts are one build of this definition, so it needs no version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DropEvidence {
-    /// A focus event dropped for a reason that leaves it the answer, as its
-    /// read would have been: it waited too long, a newer event of its
-    /// element replaced it, or its window was not related to the
-    /// foreground window, among others.
+    /// A focus event NVDA's checks give a verdict on, as its read would
+    /// have: its window was hung, not related to the foreground window,
+    /// the console window's own, a shell window that only stages a switch,
+    /// or a window that does not use UIA, or the event repeats the focus,
+    /// which still has the keyboard focus. The event was handled, so the
+    /// wait ends.
     Focus,
-    /// A focus event that came but cannot speak the focus: its sender has
-    /// no window above it, which a sender gone before its read has, or its
-    /// element no longer had the keyboard focus when it was read. The
-    /// focus has moved on, and the event for where it went may never come,
-    /// so the outpost reads its focus at once.
-    Stale,
+    /// A focus event whose read could not establish where the focus is:
+    /// its element no longer had the keyboard focus, or its event said it
+    /// did not have it when the read's time was up, or the read ran out of
+    /// time, was abandoned, waited too long or never started, or its
+    /// element could not be kept for the read, or a newer event of the
+    /// same element replaced it. The wait goes on to its bound, and nothing
+    /// is read at once: such drops come in ordinary fast navigation, where
+    /// the next key's focus event follows.
+    Inconclusive,
+    /// A focus event whose sender has no window above it, which a sender
+    /// gone before its read has, as in a new window's first burst of focus
+    /// events: the event came and cannot be read, and the event for where
+    /// the focus went may never come, so the outpost reads its focus at
+    /// once.
+    NoWindow,
     /// Not a focus event: a selection, a notification, or a menu opening,
     /// which says nothing of the focus.
     NotFocus,
@@ -1629,7 +1642,7 @@ mod tests {
             DeliveredFact::UiaFocusMarker { marker: 9 },
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
-                evidence: DropEvidence::Stale,
+                evidence: DropEvidence::NoWindow,
             },
             DeliveredFact::UiaFocusReadsEnded,
         ] {
