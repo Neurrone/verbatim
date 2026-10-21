@@ -189,6 +189,10 @@ an utterance is named in its text.
   everything collected or unmatched once Verbatim is idle after the given
   input, together with every frame that has reached the harness since,
   each counted as matched without its content being asserted.
+  `take_collected()` returns only what collect-only mode has already
+  collected, waiting for nothing, so a measure scenario that waits with
+  `take_until` after a key can keep the speech that came before the key
+  first, in arrival order.
 
 A failed assertion unwinds with a `SpeechFailure`, without the panic
 hook, and the run reports it once the logs are collected
@@ -666,7 +670,11 @@ The groups:
   `measure_speech_real`, the last only in an audible run: workloads
   for Verbatim's latency ledger, which assert no speech after the
   desktop's and write each step's ground truth to `measure-truth.jsonl`
-  in their artifacts. `docs/tooling/e2e.md`, "The measure set", describes
+  in their artifacts. `measure_focus_explorer` also waits for exact
+  announcements (each new window's first item, the folder window's item
+  after each close, and each key's item), and fails with a named timeout
+  when one is not queued; it writes its samples by kind to
+  `measure-summary.txt`. `docs/tooling/e2e.md`, "The measure set", describes
   each and how to run them in debug and release.
 
 ### Shared setups

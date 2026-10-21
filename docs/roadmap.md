@@ -253,8 +253,9 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
   - The early connection an outpost makes to a new window after its probe
     finds a provider (variant d of
     [the listener design](design/listener-without-connections.md),
-    risk 11) held the worker 2,004 to 4,230 ms, the connection timeout or
-    more, in about half the new File Explorer windows of five
+    risk 11) held the worker 2,004 to 4,230 ms, about the 2-second
+    connection timeout's length or more and each connecting, in about
+    half the new File Explorer windows of five
     `measure_focus_explorer` runs on 2026-10-21, against the 250 to 454 ms
     risk 11 recorded, and delayed those windows' first focus by 1.1 to
     3.5 seconds (`target/e2e-evidence/explorer-flakes-2026-10-21/partA/`).

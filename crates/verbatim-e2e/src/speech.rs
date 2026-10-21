@@ -1212,6 +1212,16 @@ impl SpeechCollector {
         taken
     }
 
+    /// For the measurement workloads: the utterances collect-only mode has
+    /// already collected (moved aside by [`Self::require_all_asserted`]
+    /// before an input), in order, without reading or waiting for anything,
+    /// each counted as matched. Everything they hold arrived before
+    /// anything still pending, so taking them before [`Self::take_until`]
+    /// keeps a step's speech in arrival order.
+    pub fn take_collected(&mut self) -> Vec<Heard> {
+        std::mem::take(&mut self.collected)
+    }
+
     /// From now on this scenario asserts no speech, as the measurement
     /// workloads do. Every utterance is still read, timed and kept on the
     /// timeline, and unmatched ones are collected for

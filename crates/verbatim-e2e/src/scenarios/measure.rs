@@ -12,7 +12,8 @@
 //! minimized desktop and asserts Verbatim's startup speech; the window a
 //! key goes to is confirmed in front before every key; every wait is for
 //! evidence (Verbatim idle after the last input, a window in front, a file
-//! a script writes). Windows are switched as a taskbar button does, never
+//! a script writes, and in `measure_focus_explorer` an exact announcement,
+//! [`Truth::drain_until`]). Windows are switched as a taskbar button does, never
 //! with Alt+Tab. They assert nothing beyond completing: the registry runs
 //! the `measure` group with the speech collector in collect-only mode,
 //! which never fails on unasserted speech. Just before every input,
@@ -26,6 +27,7 @@
 //! auto-repeat's rate, not a wait. The ticker script prints a line every
 //! 50 ms for the same reason.
 
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 
@@ -34,7 +36,7 @@ use super::text_box::{self, BOX_NAME};
 use crate::artifacts;
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
-use crate::speech::STEP_TIMEOUT;
+use crate::speech::{LatencyRow, STEP_TIMEOUT};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -77,6 +79,14 @@ struct Truth {
 }
 
 impl Truth {
+    /// Writes `text` as the file `name` in the scenario's artifacts
+    /// directory, replacing it.
+    fn write_file(&self, name: &str, text: &str) {
+        let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), self.name);
+        fs::create_dir_all(&dir).expect("creates the artifacts directory");
+        fs::write(dir.join(name), text).unwrap_or_else(|error| panic!("writes {name}: {error}"));
+    }
+
     /// Appends one step's ground truth.
     fn write(&self, step: &serde_json::Value) {
         let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), self.name);
@@ -106,7 +116,9 @@ impl Truth {
     /// Waits for the utterance `until`, the announcement a step's input or
     /// window causes, then takes it, everything queued before it, and
     /// everything else queued once Verbatim is idle after the last input
-    /// ([`Truth::drain`]), and writes them with `step`, unasserted. For a
+    /// ([`Truth::drain`]), and writes them with `step`, unasserted, in the
+    /// order they arrived: what collect-only mode moved aside before the
+    /// step's input comes first. For a
     /// step whose announcement comes from an application event that
     /// Verbatim cannot count as part of an input, such as a new window's
     /// first focus or the focus a key moves in File Explorer, which can
@@ -119,10 +131,17 @@ impl Truth {
     fn drain_until(&self, scenario: &mut Scenario, step: &str, until: &str) {
         let mut heard: Vec<String> = scenario
             .speech()
-            .take_until(until, STEP_TIMEOUT)
+            .take_collected()
             .into_iter()
             .map(|heard| heard.text)
             .collect();
+        heard.extend(
+            scenario
+                .speech()
+                .take_until(until, STEP_TIMEOUT)
+                .into_iter()
+                .map(|heard| heard.text),
+        );
         heard.extend(
             scenario
                 .take_all_queued()
@@ -303,13 +322,27 @@ pub(crate) fn setup_focus_explorer(scenario: &mut Scenario) -> io::Result<Scenar
     Ok(ScenarioState::Title(title))
 }
 
-/// `measure_focus_explorer`: moving in a File Explorer folder window, and
-/// into its subfolder and back. Each new window is closed only once its
-/// first item has been announced, and each key is followed by a wait for
-/// the item it moves to, as `explorer_folder_window` asserts them, so
-/// every sample carries its announcement: neither a new window's first
-/// focus nor the focus a key moves is part of an input Verbatim can report
-/// handled, and both can come after Verbatim is idle.
+/// `measure_focus_explorer`: new File Explorer windows' first focus, then
+/// moving in a folder window, and into its subfolder and back. Every step
+/// waits for an exact announcement, because neither a new window's first
+/// focus, nor the folder window's return to the front, nor the focus a key
+/// moves is part of an input Verbatim can report handled, and each can
+/// come after Verbatim is idle:
+///
+/// - Setup's folder window, its item ([`FOLDER_ITEM`]), so the first new
+///   window opens on a desktop that has finished announcing it.
+/// - Each new window, its own first item ("one 3 not selected 1 of 2" for
+///   the fourth), named for that window so that a late repeat of one
+///   window's announcement cannot end the next window's wait.
+/// - After each new window closes, the folder window's item again, which
+///   its title and list precede on every return, so that every new window
+///   opens on the same desktop. Waiting for the title alone left the item
+///   arriving in the next window's step on 3 to 4 of the 10 returns of
+///   each run (2026-10-21).
+/// - Each key, the item `explorer_folder_window` asserts for it.
+///
+/// It writes its samples by kind to `measure-summary.txt`
+/// ([`write_explorer_summary`]).
 pub(crate) fn body_focus_explorer(scenario: &mut Scenario, state: &mut ScenarioState) {
     let truth = Truth {
         name: "measure_focus_explorer",
@@ -318,34 +351,129 @@ pub(crate) fn body_focus_explorer(scenario: &mut Scenario, state: &mut ScenarioS
         panic!("setup opens the folder");
     };
     let title = title.clone();
-    truth.drain_until(scenario, "opened", "Inner not selected 1 of 4");
+    let folder_window = format!("{title} - File Explorer");
+    truth.drain_until(scenario, "opened", FOLDER_ITEM);
     // The first focus in a new File Explorer window, each closed again.
+    let mut new_windows = Vec::new();
     for index in 0..NEW_EXPLORER_WINDOWS {
+        let first = format!("one {index}");
+        let second = format!("two {index}");
         let opened = scenario
-            .open_folder(&format!("m-new-folder-{index}"), &["one", "two"])
+            .open_folder(&format!("m-new-folder-{index}"), &[&first, &second])
             .expect("opens another folder window");
         truth.write(&serde_json::json!({ "step": "explorer_window", "title": opened }));
-        truth.drain_until(scenario, "after opening", "one not selected 1 of 2");
+        truth.drain_until(
+            scenario,
+            "after opening",
+            &format!("{first} not selected 1 of 2"),
+        );
         scenario
             .close_windows_titled(&opened)
             .expect("closes the folder window");
-        truth.drain(scenario, "after closing");
+        new_windows.push(format!("{opened} - File Explorer"));
+        truth.drain_until(scenario, "after closing", FOLDER_ITEM);
     }
     for _ in 0..REPEATS {
-        for (key, front, said) in [
-            ("downarrow", title.as_str(), "alpha 2 of 4"),
-            ("downarrow", title.as_str(), "beta 3 of 4"),
-            ("uparrow", title.as_str(), "alpha 2 of 4"),
-            ("uparrow", title.as_str(), "Inner 1 of 4"),
-            ("enter", title.as_str(), "delta not selected 1 of 1"),
-            ("backspace", "Inner - File Explorer", "Inner 1 of 4"),
-        ] {
+        for (key, front, said) in EXPLORER_KEYS {
+            let front = front.unwrap_or(title.as_str());
             ready(scenario, &truth, front);
             scenario.send_keys(&[key]).expect("sends the key");
             truth.write(&serde_json::json!({ "step": "explorer", "key": key }));
             truth.drain_until(scenario, "after key", said);
         }
     }
+    write_explorer_summary(scenario, &truth, &folder_window, &new_windows);
+}
+
+/// The item focused in `measure_focus_explorer`'s folder window whenever it
+/// comes to the front.
+const FOLDER_ITEM: &str = "Inner not selected 1 of 4";
+
+/// `measure_focus_explorer`'s keys: each key, the window it goes to (the
+/// folder window when `None`), and the item it moves to, as
+/// `explorer_folder_window` asserts them.
+const EXPLORER_KEYS: [(&str, Option<&str>, &str); 6] = [
+    ("downarrow", None, "alpha 2 of 4"),
+    ("downarrow", None, "beta 3 of 4"),
+    ("uparrow", None, "alpha 2 of 4"),
+    ("uparrow", None, "Inner 1 of 4"),
+    ("enter", None, "delta not selected 1 of 1"),
+    ("backspace", Some("Inner - File Explorer"), "Inner 1 of 4"),
+];
+
+/// Writes `measure_focus_explorer`'s samples to `measure-summary.txt`, one
+/// line per kind, each with its own count and its event-to-queue and
+/// event-to-audio minimum, P50, P95, P99 and maximum
+/// (`docs/tooling/measuring.md`), and no figure over all of them, since
+/// they measure different things:
+///
+/// - keys: each key's item (the utterances in [`EXPLORER_KEYS`]).
+/// - new windows: each new window's title (`new_windows`), once per
+///   window. Its list and its first item are announced from the same
+///   event, with the same latency, so counting them too would weigh each
+///   window three times; the title is the one of the three that starts to
+///   play, since the window is closed once its item is queued.
+/// - returns: the folder window's title after each new window closes,
+///   once per return, for the same reason; the title announced when setup
+///   opened it is not one.
+fn write_explorer_summary(
+    scenario: &mut Scenario,
+    truth: &Truth,
+    folder_window: &str,
+    new_windows: &[String],
+) {
+    let rows = scenario.speech().latency_rows();
+    let keys: Vec<&LatencyRow> = rows
+        .iter()
+        .filter(|row| EXPLORER_KEYS.iter().any(|(_, _, said)| row.text == *said))
+        .collect();
+    let windows: Vec<&LatencyRow> = rows
+        .iter()
+        .filter(|row| new_windows.contains(&row.text))
+        .collect();
+    let returns: Vec<&LatencyRow> = rows
+        .iter()
+        .filter(|row| row.text == folder_window)
+        .skip(1)
+        .collect();
+    let mut text = String::new();
+    for (kind, samples) in [
+        ("keys", keys),
+        ("new windows", windows),
+        ("returns", returns),
+    ] {
+        let queue: Vec<u64> = samples.iter().map(|row| row.event_to_queue_ms).collect();
+        let audio: Vec<u64> = samples
+            .iter()
+            .filter_map(|row| row.event_to_audio_ms)
+            .collect();
+        let _ = writeln!(
+            text,
+            "{kind}: n={}; event to queue {}; event to audio n={} {}",
+            samples.len(),
+            figures(queue),
+            audio.len(),
+            figures(audio),
+        );
+    }
+    truth.write_file("measure-summary.txt", &text);
+}
+
+/// `samples`' minimum, P50, P95, P99 and maximum in milliseconds, each
+/// percentile the sample at the nearest rank; `none` when there are none.
+fn figures(mut samples: Vec<u64>) -> String {
+    samples.sort_unstable();
+    let Some(&max) = samples.last() else {
+        return "none".to_owned();
+    };
+    let at = |percent: usize| samples[(percent * (samples.len() - 1) + 50) / 100];
+    format!(
+        "min={} p50={} p95={} p99={} max={max}",
+        samples[0],
+        at(50),
+        at(95),
+        at(99)
+    )
 }
 
 pub(crate) fn setup_focus_text_box(scenario: &mut Scenario) -> io::Result<ScenarioState> {

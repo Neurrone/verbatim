@@ -271,14 +271,17 @@ while another process has an event handler") reaches it. After a "yes",
 an outpost connects to its own application's window once, logged at
 debug as `arbitration connected to the window after its probe` with its
 own `elapsed_ms`; on a new File Explorer folder window that connection
-took about 200 to 450 ms where the probe took 33 to 45 ms, so a slow first look
+took about 200 to 450 ms where the probe took 33 to 45 ms in the runs
+of 2026-10-20, and 2,004 to 4,230 ms, each connecting, in about half the
+new windows of five `measure_focus_explorer` runs on 2026-10-21, so a slow first look
 at a window is the connection when that line's time is the long one.
 
 **A window's title-bar information takes seconds during a parallel
 mockapp run.** On the development VM the Desktop Window Manager does
 about 30 ms of work for every hidden top-level window, about 200 ms for
-every visible one, and about 110 to 120 ms for every desktop, made or
-destroyed anywhere in the session, and does it in turn, so anything that
+every visible one, each made or destroyed anywhere in the session, and
+about 110 to 120 ms for every desktop made (destroying one was not
+measured), and does it in turn, so anything that
 waits on it, such as `WM_GETTITLEBARINFOEX`, which the MSAA proxy sends,
 can wait seconds while `cargo test -p mockapp` runs its tests in
 parallel: up to 13 s measured on 2026-10-19, and on 2026-10-21 a
@@ -286,8 +289,15 @@ longest wait of 0.5 to 1.4 s in each of nine full runs, against 35 ms on
 an idle machine, from a probe sending the message to a window of its own
 every 100 ms. The mockapp runner makes one desktop per worker thread, not
 one per test (169 desktops with 12 worker threads in a full run, not
-219), and the longest wait did not change with it, which suggests that
-most of the work is the tests' own windows (not measured apart). It matters because a test that
+219), and the longest wait did not change with it, so reusing desktops
+does not measurably shorten the waits. That most of the work is the
+tests' own windows is not measured apart: the probe's window was on the
+interactive desktop, not a runner desktop; its wait includes the time
+for the window's own thread to be scheduled and answer, and no control
+message that does not go through the Desktop Window Manager was sent
+beside it to tell that from processor contention; and the runs of each
+arm were not alternated, the first of each block, started after a gap,
+having the shortest longest wait. It matters because a test that
 times or tightly bounds such a read fails from load elsewhere in the
 session, not from its own code, so no test does (`docs/testing.md`,
 "Waits are for evidence").

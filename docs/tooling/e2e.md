@@ -553,14 +553,25 @@ The eight scenarios, all named `measure_`:
   forward 20 times by turns as a taskbar button does.
 - `measure_focus_windows_terminal_tabs`: two tabs of one Windows Terminal
   window, 20 switches with Control+Tab and Control+Shift+Tab.
-- `measure_focus_explorer`: 10 new File Explorer windows, each opened and
-  closed once its first item is announced (the first focus in a new
-  window), then 20 rounds of arrows, Enter into a subfolder and Backspace
-  back, each key followed by a wait for the item it moves to. Neither a
-  new window's first focus nor the focus a key moves is part of an input
-  Verbatim reports handled, and either can come after Verbatim is idle,
-  so the scenario waits for the announcement itself, as
-  `explorer_folder_window` does.
+- `measure_focus_explorer`: 10 new File Explorer windows, each holding
+  two files named for it, each opened and closed once its first item is
+  announced (the first focus in a new window), with a wait after each
+  close for the folder window's item as it comes back to the front, so
+  every new window opens on the same desktop;
+  then 20 rounds of arrows, Enter into a subfolder and Backspace back,
+  each key followed by a wait for the item it moves to. None of these
+  announcements is part of an input Verbatim reports handled, and each
+  can come after Verbatim is idle, so the scenario waits for the
+  announcement itself, as `explorer_folder_window` does. It writes
+  `measure-summary.txt` to its artifacts: its samples by kind, keys, new
+  windows (each window's title, once per window, though its list and
+  item share its latency) and returns (the folder window's title after
+  each close, likewise), each with its count and
+  figures, and no figure over all of them, since the new windows' first
+  focus, which includes a new outpost's start, sets any overall
+  percentile alone. Runs before 3de02d37 (2026-10-21) closed each new
+  window before it was announced, so they carried no new-window samples,
+  and their figures compare with the keys' figures only.
 - `measure_focus_text_box`: two Windows Forms text boxes, brought forward
   20 times by turns.
 - `measure_focus_new_application`: 12 newly started applications, each
