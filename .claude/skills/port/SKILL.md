@@ -120,7 +120,7 @@ For a substantial change or a new feature on the event or speech path, measure b
 
 Have a review subagent review the result as if it is subtly wrong despite passing its tests. It runs in a separate context from the implementer, because the writer of code wants it accepted. Give it `references/review.md`. Every suspected defect needs a concrete counterexample, a violated invariant, or a missing piece of evidence.
 
-Fix verified defects and re-run the relevant judge. When the review finds a bug, sweep the whole change for the same class before closing. If the same class recurs across steps or sessions, stop treating each instance as independent: determine whether the design, parity description, test strategy, or this skill lacks a rule, and fix that before continuing.
+Review the scope once its implementation is complete and its judge passes, as one diff against the commit it started from, not slice by slice. Reproduce each Important finding before building on it, fix the verified ones in one commit, and re-run the relevant judge. Re-review that commit on its diff only, against the first review's counterexamples, and stop there; nits and pre-existing items go to the step's documents commit or the roadmap, as `REVIEW.md` says. When the review finds a bug, sweep the whole change for the same class before closing. If the same class recurs across steps or sessions, stop treating each instance as independent: determine whether the design, parity description, test strategy, or this skill lacks a rule, and fix that before continuing.
 
 ## Phase 10: Close the scope
 

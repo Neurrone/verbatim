@@ -1,6 +1,8 @@
 # Semantic-review targets
 
-Give this list to the review subagent in phase 9. Review the change as if it
+The protocol that governs the review, its severity tags and when the loop
+stops is `REVIEW.md` at the repository root; this file lists only what to
+look for. Give this list to the review subagent in phase 9. Review the change as if it
 is subtly wrong despite passing its tests. Look especially for:
 
 - an omitted stage in the NVDA causal path;
