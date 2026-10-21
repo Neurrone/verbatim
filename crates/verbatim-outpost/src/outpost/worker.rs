@@ -680,8 +680,15 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
         .next_with_gap(gap.wake_at(Instant::now(), UIA_FOCUS_BOUND))
     {
         // The focus markers the intake resolved without a read before
-        // these entries: a copy they answer opens no gap.
-        gap.marker_news(news);
+        // these entries: a copy they answer opens no gap. A gap one closes
+        // is logged, once per close, and a close is at most once per gap.
+        if let Some(closed) = gap.marker_news(news) {
+            tracing::debug!(
+                hwnd = closed.hwnd,
+                observed_at_ms = closed.observed_at_ms,
+                "the wait for a UIA focus is closed by the listener's news: a drop that ends it, or the end of its reads"
+            );
+        }
         let mut run = |entry: Entry, menu: bool| {
             run_entry(
                 context,
@@ -716,12 +723,18 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
 /// watch is open, no terminal owes Core a read, and the worker waits for
 /// no UIA focus after a `WinEvent` focus (`gap_open`), a wait that ends on
 /// its UIA focus or with the read that replaces it: at its bound,
-/// [`UIA_FOCUS_BOUND`] after the copy's observation, or, when a marker
-/// waits for its read then, once that marker is resolved, which can take
-/// as long as the listener's read of it, up to its deadline
-/// (`focus_read::READ_DEADLINE`, 11 seconds), and as long again for each
-/// marker that follows while the gap is open, plus whatever entry the
-/// worker is handling. Called by the worker in charge after each
+/// [`UIA_FOCUS_BOUND`] after the copy's observation, or, when any marker
+/// waits for its resolution then, a focus's, a selection's, a
+/// notification's or a menu opening's alike, once that marker is
+/// resolved, which can take as long as the listener's read of it, up to
+/// its deadline (`focus_read::READ_DEADLINE`, 11 seconds), a marker queued
+/// behind its application's abandoned reads up to that deadline again, and
+/// as long again for each marker that follows while the gap is open, plus
+/// whatever entry the worker is handling and the read, if the gap comes to
+/// one. For one focus marker on an application that answers that is about
+/// 12.2 seconds, within the harness's 15-second idle timeout; a slower
+/// application can exceed it, and the harness then fails the step. Called
+/// by the worker in charge after each
 /// entry, so the answer goes as soon as the entry that ends the watch,
 /// pays the read, or closes the gap is handled, behind what that entry
 /// published.
@@ -3403,7 +3416,7 @@ impl Worker<'_> {
             // observation: the entry's start by the system's clock and by
             // the outpost's place it on the latter.
             let opened_gap = self.gap.dropped_for_uia(
-                hwnd,
+                (hwnd, top_level_of(hwnd)),
                 observed_at_ms,
                 (self.clock_now, self.timing.dequeued_at_us / 1_000),
             );
@@ -3529,10 +3542,15 @@ impl Worker<'_> {
     /// ([`find_focus_element`](Self::find_focus_element)).
     fn uia_focus(&mut self, read: &UiaFocusRead, focus: bool, trace: TraceId, observed_at_ms: u64) {
         let context = self.context;
-        // The UIA focus a `WinEvent` focus in a UIA window was waiting for;
-        // a menu opening's read is not one.
+        // The UIA focus a `WinEvent` focus in a UIA window was waiting for,
+        // in the copy's top-level window; a menu opening's read is not one.
+        let read_top_level = Some(read.hwnd)
+            .filter(|&hwnd| hwnd != 0)
+            .or(read.window)
+            .map(top_level_of)
+            .filter(|&top| top != 0);
         let answered_gap_ms = focus
-            .then(|| self.gap.uia_answered(observed_at_ms))
+            .then(|| self.gap.uia_answered(observed_at_ms, read_top_level))
             .flatten()
             .map(|open| {
                 self.clock_now

@@ -184,18 +184,28 @@ event's own element:
   through a full queue in order. A drop says, in `evidence`
   (`DropEvidence`, set by `focus_read::drop_evidence` from the drop's
   reason and the event's kind), what it tells an outpost waiting for a
-  UIA focus: `Focus`, a verdict of NVDA's checks on the event
-  (`focus_read::VERDICTS`: its window hung, not related to the foreground
-  window, the console window's own, a shell window that only stages a
-  switch, or not UIA, or a repeat of the focus that still has the
-  keyboard focus); `Inconclusive`, any other drop of a focus, which could
-  not establish where the focus is (its element no longer with the
-  keyboard focus, its event saying it lacked it when the read's time was
-  up, the read out of time, abandoned, waiting too long or never started,
-  its element not kept for the read, or a newer event of its element
-  replacing it); `NoWindow`, its sender with no window above it
+  UIA focus: `Focus`, a drop that ends the wait, either a verdict of
+  NVDA's checks on the event (`focus_read::VERDICTS`: its window hung, not
+  related to the foreground window, the console window's own, or a shell
+  window that only stages a switch, or a repeat of the focus that still
+  has the keyboard focus, or the comparison of a menu opening with the
+  focus failed) or the listener giving up on the application
+  (`focus_read::GAVE_UP`: the read did not return in time, waited too
+  long behind its application's abandoned reads, ran out of time before
+  its window was looked up or judged, or its event said it lacked the
+  keyboard focus when the read's time was up); `Inconclusive`, any other
+  drop of a focus, which could not establish where the focus is (its
+  element no longer with the keyboard focus, its window not using UIA,
+  which is another window than the copy's, the read abandoned when the
+  user moved on, no thread to read it, the listener shutting down, its
+  element not kept for the read or not resolved, its reading thread
+  without a UIA client, or a newer event of its element replacing it);
+  `NoWindow`, its sender with no window above it
   (`focus_read::NO_WINDOW`), as a sender gone before its read has; or
-  `NotFocus`, not a focus at all. A read says, in `focus`, whether it was
+  `NotFocus`, not a focus at all. Two of these are judgement calls of
+  their own (Fable, 2026-10-21, pending Dickson's acceptance): the drop
+  whose event said it lacked the keyboard focus when the read's time was
+  up ends the wait, and the one a newer event replaced is inconclusive. A read says, in `focus`, whether it was
   a focus's rather than a menu opening's. Both go on the pipe as JSON,
   the field `"evidence"` on each drop and `"focus"` on each read; the
   listener, the supervisor and the outposts build from one `protocol.rs`,
@@ -205,8 +215,8 @@ event's own element:
   (`outpost/gap.rs`, `docs/design/listener-without-connections.md`,
   decision 11): it opens a gap, unless a UIA focus was observed no earlier
   than 100 ms before the copy, which a focus's UIA read from the listener
-  closes, as do a focus marker's drop by a verdict (`Focus`), the end of
-  the listener's reads, a focus (not a foreground change) the
+  closes, as do a focus marker's drop that ends the wait (`Focus`), the
+  end of the listener's reads, a focus (not a foreground change) the
   outpost reports observed after the copy, and another application's
   focus Core queued after it. That last one reaches an outpost only when
   it reported the focus Core had queued just before: `FocusQueued` goes
@@ -214,7 +224,16 @@ event's own element:
   when it wakes for the gap, so it saves a read, never a wake-up. A
   selection's, a notification's, or a menu opening's marker neither
   closes a gap nor reads it, and nor does an `Inconclusive` drop, which
-  leaves the gap to its bound. The gap is the worker's alone, without a
+  leaves the gap to its bound; one that is resolved after the bound has
+  passed lets the gap be read then, as any marker's resolution does, the
+  gap then being due. A read answers a copy only in the copy's top-level
+  window (`window::top_level_of`, a local call made for each copy and each
+  read), so a UIA focus in another window of the application, such as the
+  folder window a new File Explorer window was opened from, answers
+  nothing of it; a drop carries no window and is matched by its
+  observation alone, a limit (Fable, 2026-10-21, pending Dickson's
+  acceptance). A gap a drop or the end of the reads closes is logged at
+  debug, one line per close. The gap is the worker's alone, without a
   lock, and a replacement worker starts with none. While a marker waits,
   the gap is not judged, whatever the worker wakes for. The intake hands
   the worker, with each entry, the news of the focus markers it resolved
@@ -226,12 +245,30 @@ event's own element:
   once when a focus marker of it is dropped for `NoWindow`, the worker reads
   the focus with the focus-now query's read (`read::focused_control_in`)
   and reports it as a UIA focus, once per gap, logging it at info ("no
-  UIA focus followed a WinEvent focus in a UIA window"). The idle
-  barrier's answer waits while a gap is open, as it waits for a caret
-  key's watch: until the bound, or, when a marker waits for its read then,
-  until that marker is resolved, which can take as long as the
-  listener's read, up to `focus_read::READ_DEADLINE` (11 seconds). A settle request (`Outpost::settle`) reads a gap that is
-  due before it is answered.
+  UIA focus followed a WinEvent focus in a UIA window"). That read makes
+  no call into the application when the focus window is no longer a
+  window, has a ghost window standing in for it, or is hung
+  (`window::event_window_unreadable`, local calls); and it reads again,
+  through the window's proxy, an ancestor that is a window's own element
+  read inside the provider without its handle, as the console host's
+  window is (`docs/uia-bugs.md`, "Inside a remote operation, conhost's
+  window has no handle or title"), one call, so the read reports the
+  window the listener's read would. The idle barrier's answer waits while
+  a gap is open, as it waits for a caret key's watch: until the bound, a
+  second after the copy's observation; while any marker waits for its
+  resolution then, a focus's, a selection's, a notification's or a menu
+  opening's alike, until it is resolved, which can take as long as the
+  listener's read, up to `focus_read::READ_DEADLINE` (11 seconds), a
+  marker queued behind its application's abandoned reads waiting up to
+  that deadline again, and each marker that follows while the gap is open
+  adding its own time; then the read, if the gap comes to one. For one
+  focus marker on an application that answers, that is about 12.2
+  seconds at most (the bound, the deadline, the relay's 146 ms at most
+  measured, and the read's milliseconds), within the harness's 15-second
+  idle timeout; a slower application can exceed it, and the harness's
+  idle timeout then fails the step, which is the right outcome. A settle
+  request (`Outpost::settle`) reads a gap that is due before it is
+  answered.
 - A read, its checks included, has one time budget, `READ_BUDGET`, 2
   seconds, asked before each of its calls after the first, so at most the
   call under way runs past it. The raw probe's wait, up to 3 seconds, is

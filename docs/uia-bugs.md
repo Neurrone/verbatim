@@ -264,7 +264,7 @@ Not established. In steady state a UIA focus follows its `WinEvent` in the same 
 
 #### Workarounds that worked
 
-Not a workaround of the fault but a recovery from it (Fable, 2026-10-21, pending Dickson's acceptance): the application's outpost, which sees the `WinEvent` focus copy, waits a second from the copy's observation for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came after its sender was gone, with no window above it (decision 11 of the same design). No run has yet met UIA's late or missing delivery or the burst, whose recovery is tested in mockapp. The one read so far that came before its UIA focus does not show UIA's lateness: a new window's first item in a `measure_focus_explorer` run was read 1,175 ms after its copy because the outpost's worker was held by its own early connections into that window, and the item's UIA focus came 9 ms after the last of them ended, 11 ms after the read was reported (`target/e2e-evidence/explorer-c-fixes-2026-10-21/measure_focus_explorer/2026-10-21T00-47-59.958Z-pass/`, the listener design's risk 11).
+Not a workaround of the fault but a recovery from it (Fable, 2026-10-21, pending Dickson's acceptance): the application's outpost, which sees the `WinEvent` focus copy, waits a second from the copy's observation for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came after its sender was gone, with no window above it (decision 11 of the same design). One run has met the late delivery, the full suite's `conhost_two_windows` on 2026-10-21, whose second console window's UIA focus came 2.15 seconds after its `WinEvent` focus: the outpost read the focus at the bound and reported it, but without the console window, which its read inside the console host's provider lacked (the entry "Inside a remote operation, conhost's window has no handle or title"), so the window went unannounced; that is fixed. No run has met the burst, whose recovery is tested in mockapp. The one read so far that came before its UIA focus does not show UIA's lateness: a new window's first item in a `measure_focus_explorer` run was read 1,175 ms after its copy because the outpost's worker was held by its own early connections into that window; the listener received the item's UIA focus at 00:47:29.826, 9 ms after the last of them ended, the read was reported at 29.873, and the listener's read of that focus 11 ms after the read (`target/e2e-evidence/explorer-c-fixes-2026-10-21/measure_focus_explorer/2026-10-21T00-47-59.958Z-pass/`, the listener design's risk 11). The UIA focus's lateness coincided with the hold; the hold is not shown to explain it.
 
 #### Workarounds that didn't work
 
@@ -377,7 +377,7 @@ Read inside the operation, the window element has no native window handle and no
 
 #### Workarounds that worked
 
-- Verbatim's choice: when the remote read finds no window, the classic walk to the nearest window finds it (3f4dbb44); and the listener takes a window ancestor's properties from the client side's read of the window, which it already made, so no call is added (1b2e5420).
+- Verbatim's choice: the listener reads every focus by the classic walk, through the client side, so its ancestors come through the window proxy. An outpost's read of its application's focus, the focus-now query's and the read after a `WinEvent` focus no UIA focus followed, reads by the remote operation, and reads again through the window's proxy any ancestor that is a window's own element (runtime id `[42, handle]`) read without its handle, one `ElementFromHandleBuildCache`. Without it, such a read in `conhost_two_windows`'s second window reported the terminal with no ancestors, so the window went unannounced (`target/e2e-evidence/full-suite-2026-10-21/conhost_two_windows-suite-fail/`); a probe against a real console host showed the operation's window element nameless, with handle 0 and the disabled state, and the proxy's read of it named, with its handle, as the classic walk reads it (`target/e2e-evidence/explorer-c3-fixes-2026-10-21/console-window-remote-vs-proxy.txt`).
 
 #### Workarounds that didn't work
 
@@ -389,7 +389,7 @@ NVDA reads the raw-view parent through the proxy (`nvda/source/NVDAObjects/UIA/_
 
 #### Reproduction test
 
-No test reproduces it yet: mockapp's provider cannot produce an in-provider window element without its host's properties, and a root with no host provider fails UIA's own search of the window (1b2e5420).
+No test reproduces it yet: mockapp's provider cannot produce an in-provider window element without its host's properties, and a root with no host provider fails UIA's own search of the window (1b2e5420). The outpost's read again is tested by its choice of ancestor (`read.rs`, `a_window_element_read_without_its_handle_is_named_by_its_runtime_id`), and the console window reported with a read after a `WinEvent` focus by `focus_reports.rs`'s `a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_window`, which passes without the read again, since mockapp's window element has its title in the provider.
 
 #### Evidence
 

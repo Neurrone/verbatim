@@ -292,6 +292,19 @@ const MOVED_ON: &str = "the user moved on from a slow window";
 /// [`READ_DEADLINE`] states, or arrived after that bound.
 const WAITED_TOO_LONG: &str = "it waited too long behind its application's abandoned reads";
 
+/// Why a focus is dropped whose event said it lacked the keyboard focus
+/// when its read's time was up, before the live read of its focus.
+const UNFOCUSED_OUT_OF_TIME: &str =
+    "its event says it did not have the keyboard focus, and its read's time was up";
+
+/// Why a focus is dropped whose read's time was up before its sender's
+/// nearest window was looked up.
+const OUT_OF_TIME_BEFORE_LOOKUP: &str = "its read ran out of time before its window was looked up";
+
+/// Why a focus is dropped whose read's time was up before its window's
+/// verdict was known.
+const OUT_OF_TIME_BEFORE_JUDGEMENT: &str = "its read ran out of time before its window was judged";
+
 /// What a read does once its window becomes known
 /// ([`WatchedRead::learn`]): judges, as the watchdog would, whether the
 /// window in front is already another thread's, and wakes the watchdog if
@@ -438,15 +451,36 @@ const SHELL_STAGING: &str = "a shell window that only stages a switch";
 const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
 
 /// The drops of a focus that are NVDA's checks' verdict on its event, as
-/// its read would have been ([`DropEvidence::Focus`]).
-const VERDICTS: [&str; 7] = [
+/// its read would have been ([`DropEvidence::Focus`]). A window that does
+/// not use UIA ([`NOT_UIA`]) is not among them: the copy an outpost waits
+/// on is in a window it judged UIA, so such a drop is of another window of
+/// the application, such as a new File Explorer window's frame beside its
+/// items view, or a disagreement of the listener's and the outpost's
+/// verdicts, and establishes nothing of the copy's focus (Fable,
+/// 2026-10-21, pending Dickson's acceptance).
+const VERDICTS: [&str; 6] = [
     HUNG,
     COMPARISON_FAILED,
     REPEAT,
     NOT_RELATED,
     CONSOLE_OWN,
     SHELL_STAGING,
-    NOT_UIA,
+];
+
+/// The drops of a focus because the listener gave up on its read, the
+/// application not answering in time ([`DropEvidence::Focus`]): a read
+/// into that application by the outpost would call into one that has just
+/// failed to answer, so the wait ends without one (Fable, 2026-10-21,
+/// pending Dickson's acceptance). The drop whose event said it lacked the
+/// keyboard focus when the read's time was up is among them, a judgement
+/// call of its own (Fable, 2026-10-21, pending Dickson's acceptance): its
+/// time ran out as the others' did.
+const GAVE_UP: [&str; 5] = [
+    NOT_IN_TIME,
+    WAITED_TOO_LONG,
+    OUT_OF_TIME_BEFORE_LOOKUP,
+    OUT_OF_TIME_BEFORE_JUDGEMENT,
+    UNFOCUSED_OUT_OF_TIME,
 ];
 
 /// What became of one focus event.
@@ -484,15 +518,18 @@ impl Judged {
 /// What the drop of an event of kind `kind` for `reason` says to an
 /// outpost waiting for a UIA focus after a `WinEvent` focus
 /// ([`DropEvidence`]): a focus whose sender has no window above it came
-/// too late to be read; a verdict of NVDA's checks ([`VERDICTS`]) answers
-/// the wait; any other drop of a focus, such as one no longer focused or
-/// out of time, could not establish the focus and leaves the wait to its
-/// bound.
+/// too late to be read; a verdict of NVDA's checks ([`VERDICTS`]), or the
+/// listener giving up on the application ([`GAVE_UP`]), ends the wait; any
+/// other drop of a focus, such as one no longer focused, one in a window
+/// that does not use UIA, or one a newer event of its element replaced,
+/// could not establish the focus and leaves the wait to its bound.
 #[must_use]
 pub fn drop_evidence(kind: FocusEvent, reason: &str) -> DropEvidence {
     match kind {
         FocusEvent::Focus if reason == NO_WINDOW => DropEvidence::NoWindow,
-        FocusEvent::Focus if VERDICTS.contains(&reason) => DropEvidence::Focus,
+        FocusEvent::Focus if VERDICTS.contains(&reason) || GAVE_UP.contains(&reason) => {
+            DropEvidence::Focus
+        }
         FocusEvent::Focus => DropEvidence::Inconclusive,
         FocusEvent::MenuOpened | FocusEvent::Selection | FocusEvent::Notification => {
             DropEvidence::NotFocus
@@ -1254,9 +1291,7 @@ impl FocusReader {
             || std::ptr::eq(subject, element) && sender.lacked_keyboard_focus();
         if out_of_time() {
             if lacked_by_its_event() {
-                return Err(
-                    "its event says it did not have the keyboard focus, and its read's time was up",
-                );
+                return Err(UNFOCUSED_OUT_OF_TIME);
             }
         } else {
             budget.call("the keyboard focus");
@@ -1313,7 +1348,7 @@ impl FocusReader {
         let hwnd = sender.role.hwnd;
         let nearest = if hwnd == 0 {
             if called && out_of_time() {
-                return Err("its read ran out of time before its window was looked up");
+                return Err(OUT_OF_TIME_BEFORE_LOOKUP);
             }
             called = true;
             budget.call("the nearest window");
@@ -1337,7 +1372,7 @@ impl FocusReader {
             return match known_verdict(&self.arbitrator, nearest) {
                 Some(true) => Ok(nearest),
                 Some(false) => Err(NOT_UIA),
-                None => Err("its read ran out of time before its window was judged"),
+                None => Err(OUT_OF_TIME_BEFORE_JUDGEMENT),
             };
         }
         // The raw probe, not a connection: the listener connects to no
@@ -2479,31 +2514,43 @@ mod tests {
     const WAIT: Duration = Duration::from_secs(10);
 
     /// Only a focus event's drop answers an outpost's wait for a UIA focus
-    /// after a `WinEvent` focus: a verdict of NVDA's checks answers it, a
-    /// focus whose sender has no window is told apart, and every other drop
-    /// of a focus is inconclusive; a selection's, a notification's, or a
-    /// menu opening's drop says nothing of the focus.
+    /// after a `WinEvent` focus: a verdict of NVDA's checks, or the listener
+    /// giving up on the application, ends it, a focus whose sender has no
+    /// window is told apart, and every other drop of a focus is
+    /// inconclusive, one in a window that does not use UIA among them; a
+    /// selection's, a notification's, or a menu opening's drop says nothing
+    /// of the focus. Every reason the listener drops a focus for is listed.
     #[test]
-    fn a_focus_events_drop_is_a_verdict_inconclusive_or_without_a_window() {
-        for verdict in VERDICTS {
+    fn a_focus_events_drop_ends_the_wait_is_inconclusive_or_is_without_a_window() {
+        for ends in [
+            "its window is hung",
+            "its comparison with the current focus failed",
+            "a repeat of the last focus, which still has the keyboard focus",
+            "its window is not related to the foreground window",
+            "the console window's own focus",
+            "a shell window that only stages a switch",
+            "its read did not return in time",
+            "it waited too long behind its application's abandoned reads",
+            "its read ran out of time before its window was looked up",
+            "its read ran out of time before its window was judged",
+            "its event says it did not have the keyboard focus, and its read's time was up",
+        ] {
             assert_eq!(
-                drop_evidence(FocusEvent::Focus, verdict),
+                drop_evidence(FocusEvent::Focus, ends),
                 DropEvidence::Focus,
-                "{verdict}"
+                "{ends}"
             );
         }
         for inconclusive in [
-            NOT_FOCUSED,
-            "its event says it did not have the keyboard focus, and its read's time was up",
-            "its read ran out of time before its window was looked up",
-            "its read ran out of time before its window was judged",
-            NOT_IN_TIME,
-            MOVED_ON,
-            WAITED_TOO_LONG,
+            "its element no longer has the keyboard focus",
+            "its window does not use UIA, so its MSAA events speak for it",
+            "the user moved on from a slow window",
             "a newer focus event of its element replaced it",
             "no thread to read it",
             "the listener is shutting down",
             "its element could not be kept for its read",
+            "its reading thread has no UIA client",
+            "its element could not be resolved",
         ] {
             assert_eq!(
                 drop_evidence(FocusEvent::Focus, inconclusive),

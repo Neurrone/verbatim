@@ -491,7 +491,8 @@ struct State {
 /// The focus markers the intake resolved without a read, which never reach
 /// the worker, for the worker's wait for a UIA focus after a `WinEvent`
 /// focus in a UIA window (`super::gap`): when the newest focus marker was
-/// dropped by a verdict of NVDA's checks or the listener's reads ended, and
+/// dropped in a way that ends the wait, a verdict of NVDA's checks or the
+/// listener giving up on the application, or the listener's reads ended, and
 /// when the newest was dropped because its sender had no window above it
 /// ([`DropEvidence`](crate::protocol::DropEvidence)), each by the time the
 /// drop was observed. A focus marker's drop that could not establish the
@@ -499,8 +500,8 @@ struct State {
 /// waits for its bound.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct MarkerNews {
-    /// The newest focus drop by a verdict of NVDA's checks, or the end of
-    /// the listener's reads, by when it was observed.
+    /// The newest focus drop that ends the wait, or the end of the
+    /// listener's reads, by when it was observed.
     pub(super) answered_at_ms: Option<u64>,
     /// The newest focus drop because its sender had no window above it.
     pub(super) no_window_at_ms: Option<u64>,
@@ -3328,12 +3329,63 @@ mod tests {
         );
     }
 
+    /// A focus the listener dropped because its window does not use UIA,
+    /// such as a new File Explorer window's frame beside the items view
+    /// whose copy opened the gap, is no news: it neither closes the gap
+    /// open before it nor answers a copy that comes after it.
+    #[test]
+    fn a_drop_of_a_window_that_does_not_use_uia_neither_closes_nor_prevents_a_gap() {
+        let evidence = crate::focus_read::drop_evidence(
+            crate::focus_read::FocusEvent::Focus,
+            "its window does not use UIA, so its MSAA events speak for it",
+        );
+        let start = Instant::now();
+        let mut open = super::super::gap::FocusGap::default();
+        assert!(open.dropped_for_uia((7, 70), 30, (start, 30)));
+        let intake = Intake::default();
+        marker_dropped(&intake, evidence);
+        let news = intake.lock().marker_news;
+        assert_eq!(news, MarkerNews::default());
+        assert_eq!(open.marker_news(news), None);
+        assert!(open.is_open());
+        let mut after = super::super::gap::FocusGap::default();
+        assert_eq!(after.marker_news(news), None);
+        assert!(after.dropped_for_uia((7, 70), 50, (start, 50)));
+    }
+
+    /// A focus the listener dropped because its read did not return in
+    /// time is news that closes the gap: the application did not answer
+    /// the listener, so the outpost reads nothing of it at the bound.
+    #[test]
+    fn a_drop_for_a_read_that_did_not_return_in_time_closes_the_gap_and_nothing_is_read() {
+        let evidence = crate::focus_read::drop_evidence(
+            crate::focus_read::FocusEvent::Focus,
+            "its read did not return in time",
+        );
+        let start = Instant::now();
+        let mut gap = super::super::gap::FocusGap::default();
+        assert!(gap.dropped_for_uia((7, 70), 30, (start, 30)));
+        let intake = Intake::default();
+        marker_dropped(&intake, evidence);
+        let news = intake.lock().marker_news;
+        assert_eq!(
+            news,
+            MarkerNews {
+                answered_at_ms: Some(40),
+                no_window_at_ms: None,
+            }
+        );
+        assert_eq!(gap.marker_news(news).map(|open| open.hwnd), Some(7));
+        let bound = std::time::Duration::from_secs(1);
+        assert_eq!(gap.take_due(start + bound, bound), None);
+    }
+
     #[test]
     fn the_end_of_the_listeners_reads_is_news_that_closes_a_gap() {
         let intake = Intake::default();
         let start = Instant::now();
         let mut gap = super::super::gap::FocusGap::default();
-        assert!(gap.dropped_for_uia(7, 30, (start, 30)));
+        assert!(gap.dropped_for_uia((7, 70), 30, (start, 30)));
         push_item(
             &intake,
             Item::Fact(DeliveredFact::UiaFocusMarker { marker: 3 }, None),

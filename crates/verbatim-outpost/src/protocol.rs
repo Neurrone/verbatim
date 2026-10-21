@@ -276,21 +276,29 @@ impl ListenerFact {
 /// outposts are one build of this definition, so it needs no version.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DropEvidence {
-    /// A focus event NVDA's checks give a verdict on, as its read would
-    /// have: its window was hung, not related to the foreground window,
-    /// the console window's own, a shell window that only stages a switch,
-    /// or a window that does not use UIA, or the event repeats the focus,
-    /// which still has the keyboard focus. The event was handled, so the
-    /// wait ends.
+    /// A focus event whose drop ends the wait: a verdict of NVDA's checks
+    /// on it, as its read would have been (its window was hung, not
+    /// related to the foreground window, the console window's own, or a
+    /// shell window that only stages a switch, or the event repeats the
+    /// focus, which still has the keyboard focus), or the listener giving
+    /// up on its application, which did not answer in time (the read did
+    /// not return in time, waited too long behind abandoned reads, ran out
+    /// of time before its window was looked up or judged, or its event
+    /// said it lacked the keyboard focus when the read's time was up), so
+    /// that the outpost does not read an application that has just failed
+    /// to answer.
     Focus,
-    /// A focus event whose read could not establish where the focus is:
-    /// its element no longer had the keyboard focus, or its event said it
-    /// did not have it when the read's time was up, or the read ran out of
-    /// time, was abandoned, waited too long or never started, or its
-    /// element could not be kept for the read, or a newer event of the
-    /// same element replaced it. The wait goes on to its bound, and nothing
-    /// is read at once: such drops come in ordinary fast navigation, where
-    /// the next key's focus event follows.
+    /// A focus event whose drop could not establish where the focus is:
+    /// its element no longer had the keyboard focus, its window does not
+    /// use UIA, so it is another window than the one the outpost waits on,
+    /// its read was abandoned when the user moved on or never started, the
+    /// listener was shutting down, its element could not be kept or
+    /// resolved for the read, its reading thread had no UIA client, or a
+    /// newer event of the same element replaced it. The wait goes on to
+    /// its bound, and nothing is read at once: such drops come in ordinary
+    /// fast navigation, where the next key's focus event follows, and in a
+    /// new File Explorer window, whose frame's focus is dropped beside its
+    /// items view's.
     Inconclusive,
     /// A focus event whose sender has no window above it, which a sender
     /// gone before its read has, as in a new window's first burst of focus
@@ -329,9 +337,10 @@ pub enum DeliveredFact {
         /// The focus as read.
         read: Box<UiaFocusRead>,
         /// Whether the event read was a focus rather than a menu opening:
-        /// only a focus's read answers an outpost's wait for a UIA focus
-        /// after a `WinEvent` focus in a UIA window
-        /// (`docs/design/listener-without-connections.md`, decision 11).
+        /// only a focus's read, in the copy's top-level window, answers an
+        /// outpost's wait for a UIA focus after a `WinEvent` focus in a UIA
+        /// window (`docs/design/listener-without-connections.md`, decision
+        /// 11).
         focus: bool,
     },
     /// The UIA focus event `marker` names is not reported: its element had

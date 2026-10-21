@@ -1151,6 +1151,80 @@ fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_whe
     app.quit();
 }
 
+/// A `WinEvent` focus in a console window that no UIA focus follows, as in
+/// `conhost_two_windows`'s second window: the read at the bound reports the
+/// terminal with the console window, which Core has not been told of, as
+/// its one ancestor, as the listener's read of the same focus reports it,
+/// so Core announces the window before the terminal. In the console host
+/// itself the window's element read inside its provider has no handle or
+/// title, and the outpost reads it again through the window's proxy;
+/// mockapp's root provider names its host, so its window element has both
+/// there too, and that fault is not reproduced here (`docs/uia-bugs.md`,
+/// "Inside a remote operation, conhost's window has no handle or title").
+fn a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_window() {
+    let title = common::unique_title("mockapp-unanswered-console");
+    let mut app = common::spawn("console_window.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus text");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settle();
+    let read = focus_changed(outpost.next());
+    let NormalizedEvent::FocusChanged {
+        node,
+        ancestors,
+        ancestors_unknown,
+        ..
+    } = &read
+    else {
+        unreachable!("a focus change");
+    };
+    assert_eq!((node.role, node.name.as_deref()), (Role::Terminal, None));
+    assert_eq!(
+        (
+            ancestors
+                .iter()
+                .map(|ancestor| (ancestor.role, ancestor.name.as_deref()))
+                .collect::<Vec<_>>(),
+            *ancestors_unknown
+        ),
+        (
+            vec![(Role::Window, Some("Mockapp Console Window Fixture"))],
+            false
+        )
+    );
+    let node_id = node.id;
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id: caret, .. },
+            ..
+        } if caret == node_id => {}
+        other => panic!("the outpost said {other:?}, not the terminal's caret"),
+    }
+    outpost.settled();
+
+    let mut state = SrState::new();
+    let (_, spoken) = reduced(&mut state, read);
+    assert_eq!(
+        spoken,
+        [
+            vec![
+                SegmentContent::Label("Mockapp Console Window Fixture".to_owned()),
+                SegmentContent::Role(Role::Window),
+            ],
+            vec![SegmentContent::Role(Role::Terminal)],
+        ]
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A `WinEvent` focus in a UIA window whose UIA focus's marker is still
 /// waiting for its read when the bound passes: the outpost reads nothing
 /// while it waits, the entry it handles after the bound included, and the
@@ -2039,6 +2113,10 @@ fn main() {
         (
             "a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late",
             a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late,
+        ),
+        (
+            "a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_window",
+            a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_window,
         ),
         (
             "a_winevent_focus_whose_uia_focus_waits_for_its_read_at_the_bound_is_reported_from_that_read",

@@ -26,9 +26,9 @@ use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
-    desktop_window, foreground_window_of, main_window_of, now_ms, served_by, top_level_of,
-    top_level_windows, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
-    window_text,
+    desktop_window, event_window_unreadable, foreground_window_of, main_window_of, now_ms,
+    served_by, top_level_of, top_level_windows, window_belongs_to_hidden_frame, window_facts,
+    window_is_hidden_frame, window_text,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -544,7 +544,7 @@ pub(super) fn uia_remote_enrichment(
     // One remote operation, one transaction, which UIA's transaction
     // timeout bounds; the classic walk it falls back to checks the
     // budget between its calls.
-    let (ancestry, path) = match focus_ancestry(uia, &query, true) {
+    let (mut ancestry, path) = match focus_ancestry(uia, &query, true) {
         Ok((FocusAncestry::Focused(ancestry), path)) => (ancestry, path),
         Ok((FocusAncestry::NotFocused, _)) => return Some(Err(NotFocused)),
         Err(error) => {
@@ -559,6 +559,26 @@ pub(super) fn uia_remote_enrichment(
         tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
         if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
             context.read_classically(window);
+        }
+    }
+    // A window's own element read inside the provider can lack what the
+    // client side's window proxy gives it, its handle and title among them
+    // (`docs/uia-bugs.md`, "Inside a remote operation, conhost's window has
+    // no handle or title"): such an ancestor of this application's is read
+    // again through the proxy, one call, as the listener's classic walk
+    // reads every ancestor.
+    for ancestor in &mut ancestry.ancestors {
+        let Some(hwnd) =
+            window_read_without_its_handle(ancestor.read().node.role.hwnd, &ancestor.runtime_id())
+                .filter(|&hwnd| serves(context, hwnd))
+        else {
+            continue;
+        };
+        match uia.window_element(hwnd, request) {
+            Ok(read) => *ancestor = read,
+            Err(error) => {
+                tracing::debug!(hwnd, %error, "a window ancestor could not be read again through its proxy");
+            }
         }
     }
     let registry = &context.uia_registry;
@@ -613,6 +633,18 @@ pub(super) fn uia_remote_enrichment(
         "UIA focus ancestry read"
     );
     Some(Ok((ancestors, selected)))
+}
+
+/// The window whose own element an ancestor is, by its runtime id, `[42,
+/// handle]` as UI Automation gives a window's element, when the ancestor
+/// was read without that handle (`hwnd`, 0): a read inside the provider
+/// that lacked the client side's window proxy. `None` for any other
+/// element, and for a window element read with its handle.
+fn window_read_without_its_handle(hwnd: isize, runtime_id: &[i32]) -> Option<isize> {
+    match runtime_id {
+        &[42, handle] if hwnd == 0 && handle != 0 => isize::try_from(handle).ok(),
+        _ => None,
+    }
 }
 
 /// An MSAA node's ancestors, outermost first, without the window objects
@@ -844,7 +876,10 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// a console window is its console host's), or is on Core's hidden frame,
 /// so the focused element is never read in another application, whose
 /// window this outpost would connect to
-/// (`docs/design/listener-without-connections.md`, section 4.3).
+/// (`docs/design/listener-without-connections.md`, section 4.3); and when
+/// the focus window cannot be read, no longer a window, stood in for by a
+/// ghost window, or hung ([`event_window_unreadable`], local calls), so
+/// nothing is asked of an application that does not answer.
 pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<FocusedControl> {
     focused_control_in(context, client).map(|(_, control)| control)
 }
@@ -856,6 +891,14 @@ pub(super) fn focused_control_in(
 ) -> Option<(isize, FocusedControl)> {
     let hwnd = control_window(context.target_pid(), || context.focus_window())?;
     if window_belongs_to_hidden_frame(hwnd) {
+        return None;
+    }
+    if let Some(reason) = event_window_unreadable(hwnd) {
+        tracing::debug!(
+            hwnd,
+            reason,
+            "the focus window cannot be read; its focus is not read"
+        );
         return None;
     }
     // The focused element is read from the window's provider at once.
@@ -1358,7 +1401,10 @@ mod tests {
     use verbatim_model::{Backend, NodeDetails, NodeId, NodeSnapshot, Role, StateSet};
 
     use super::super::window::window_owner;
-    use super::{CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, splice};
+    use super::{
+        CONSOLE_WINDOW_CLASS, console_text_area_in, control_window, splice,
+        window_read_without_its_handle,
+    };
 
     fn node(id: u64) -> NodeSnapshot {
         NodeSnapshot {
@@ -1426,5 +1472,25 @@ mod tests {
         let mut window = text_area(Role::Window);
         console_text_area_in(&mut window, || panic!("a window's class is not read"));
         assert_eq!(window, text_area(Role::Window));
+    }
+
+    /// Only a window's own element read without its handle, as the console
+    /// host's window is read inside its provider, is read again through
+    /// its proxy: its handle comes from its runtime id.
+    #[test]
+    fn a_window_element_read_without_its_handle_is_named_by_its_runtime_id() {
+        assert_eq!(
+            window_read_without_its_handle(0, &[42, 76_482_230]),
+            Some(76_482_230)
+        );
+        assert_eq!(
+            window_read_without_its_handle(76_482_230, &[42, 76_482_230]),
+            None
+        );
+        assert_eq!(
+            window_read_without_its_handle(0, &[42, 76_482_230, 4, -1]),
+            None
+        );
+        assert_eq!(window_read_without_its_handle(0, &[7, 76_482_230]), None);
     }
 }

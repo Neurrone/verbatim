@@ -456,33 +456,53 @@ verdict for the focus's window rather than asking the window again.
   13 bytes more on every listener focus message; the listener, the
   supervisor and the outposts build from one `protocol.rs`, so neither
   field needs a version. Nothing is read in steady state on any drop: a
-  drop by a verdict of NVDA's checks closes the gap, and a drop that could
-  not establish the focus, such as one no longer focused, which ordinary
-  fast navigation makes (80 a `measure_focus_explorer` run on
-  2026-10-21), leaves the gap to its bound with no read and no wake-up,
-  the next key's UIA focus closing it; only a drop for a sender with no
-  window above it, which comes in a new window's first burst, reads at
-  once. No log line is added on this path: the existing debug lines gain
-  fields (`opened_gap`, `answered_gap_ms`). The idle barrier's answer
-  waits while a gap is open, a cost to the harness alone: until the
-  bound, a second after the copy's observation, or, when a marker waits
-  for its read then, until that marker is resolved, up to the listener's
-  read deadline of 11 seconds (`READ_DEADLINE`), within the harness's
-  15-second idle timeout; gaps were open 1,071 to 3,105 ms at the longest
-  in the runs of 2026-10-21, and up to 3,528 ms in
-  `measure_focus_explorer` after holds of the worker by its early
-  connections. Not traced; by construction.
+  drop that ends the wait, a verdict of NVDA's checks or the listener
+  giving up on the application, closes the gap, and a drop that could not
+  establish the focus, such as one no longer focused, which ordinary fast
+  navigation makes (80 a `measure_focus_explorer` run on 2026-10-21), or
+  a new File Explorer window's frame's, in a window that does not use
+  UIA, leaves the gap to its bound with no read and no wake-up, the next
+  UIA focus closing it; only a drop for a sender with no window above it,
+  which comes in a new window's first burst, reads at once. A read
+  answers a copy only in the copy's top-level window: one local
+  `GetAncestor` for each copy in a UIA window and one for each focus
+  read from the listener, no call into any application and no wake-up.
+  The existing debug lines gain fields (`opened_gap`, `answered_gap_ms`),
+  and one debug line is added when a drop or the end of the listener's
+  reads closes a gap, at most once a gap, written only with debug
+  logging on. The idle barrier's answer waits while a gap is open, a cost
+  to the harness alone: until the bound, a second after the copy's
+  observation; while any marker waits for its resolution then, a
+  focus's, a selection's, a notification's or a menu opening's alike,
+  until it is resolved, up to the listener's read deadline of 11 seconds
+  (`READ_DEADLINE`), a marker queued behind its application's abandoned
+  reads up to that deadline again, and each marker that follows while
+  the gap is open adding its own; then the read, if the gap comes to
+  one. For one focus marker on an application that answers that is about
+  12.2 seconds at most (the bound, the deadline, the relay's 146 ms at
+  most measured, and the read's milliseconds), within the harness's
+  15-second idle timeout; a slower application can exceed it, and the
+  harness's idle timeout then fails the step, which is the right
+  outcome. Gaps were open 1,071 to 3,105 ms at the longest in the runs
+  of 2026-10-21, and up to 3,528 ms in `measure_focus_explorer` after
+  holds of the worker by its early connections. Not traced; by
+  construction.
 - Per gap that comes to a read, once a second has passed with no UIA
   focus, or at once when the UIA focus was dropped because its sender had
   no window above it (`docs/design/listener-without-connections.md`,
   decision 11): one wake-up of the worker at the bound, unless another
   entry wakes it first, and the focus-now query's read
-  (`read::focused_control_in`): its local check of the focus window,
-  then, when the window is the application's and uses UIA, one
+  (`read::focused_control_in`): its local checks of the focus window,
+  that the application serves it and that it is a window, has no ghost
+  window standing in for it and is not hung, so a hung application is
+  not called; then, when the window uses UIA, one
   `GetFocusedElementBuildCache`, the enrichment by one remote operation
   or the classic walk, and the MSAA continuation above the process
-  boundary, as a focus-now query costs (`call_counts.rs`); and one report
-  to Core. At most one read a gap. When the late UIA focus of the element
+  boundary, as a focus-now query costs (`call_counts.rs`), and one
+  `ElementFromHandleBuildCache` more for an ancestor that is a window's
+  own element read inside the provider without its handle, which the
+  console host's window is (`docs/uia-bugs.md`), read again through the
+  window's proxy; and one report to Core. At most one read a gap. When the late UIA focus of the element
   read then comes, the outpost finds its own copy of the element by the
   path again (`find_focus_element`), since the listener holds no element
   for the read: one connection more per recovered focus. A gap whose copy
@@ -502,10 +522,16 @@ verdict for the focus's window rather than asking the window again.
   coming, and only a later call could tell; none is made. In three later
   runs (2026-10-21) 0, 1 and 0 reads; the one, a new window's first
   item, came 1,175 ms after its copy because the worker was held by its
-  own early connections into that window, and was reported 11 ms ahead
-  of the item's UIA focus, which the same hold explains (the listener
-  design's risk 11). In three runs with the drop classes (2026-10-21,
-  `target/e2e-evidence/explorer-c2-fixes-2026-10-21/`), no read.
+  own early connections into that window; the listener received the
+  item's UIA focus at 00:47:29.826, 9 ms after the hold ended, the read
+  was reported at 29.873, and the listener's read of that focus 11 ms
+  after the read. The UIA focus's lateness coincided with the hold; the
+  hold is not shown to explain it (the listener design's risk 11). In
+  three runs with the drop classes as they now are and reads matched by
+  top-level window (2026-10-21,
+  `target/e2e-evidence/explorer-c3-fixes-2026-10-21/`), 0, 0 and 1
+  reads, the one a new window's first item behind the worker's early
+  connections, heard once.
 - Target: no cost per focus; one read per gap.
 
 ### A focus behind other objects' events
