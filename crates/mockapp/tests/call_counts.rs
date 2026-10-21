@@ -67,6 +67,7 @@ use verbatim_model::{
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::arbitration::NEGATIVE_VERDICT_LIFETIME;
 use verbatim_outpost::dialog_text::{UiaDialog, dialog_text};
+use verbatim_outpost::focus_read::FocusEvent;
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, SupervisorToOutpost};
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::{UiaPos, UiaText};
@@ -1413,7 +1414,9 @@ fn uia_repeated_focus_costs_exactly() {
         reason,
         "a repeat of the last focus, which still has the keyboard focus"
     );
-    outpost.deliver(verbatim_outpost::focus_read::Judged::Dropped(reason).into_fact(0));
+    outpost.deliver(
+        verbatim_outpost::focus_read::Judged::Dropped(reason).into_fact(0, FocusEvent::Focus),
+    );
     outpost.settled();
     let cost = Cost {
         calls: listener_calls,
@@ -1476,7 +1479,7 @@ fn the_listener_makes_no_connection() {
             listener_calls.connections, 0,
             "the listener's connections reading the focus on {name}"
         );
-        let _ = outpost.focus(judged.into_fact(0));
+        let _ = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
     }
     drop(outpost);
     app.quit();
@@ -1587,7 +1590,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
 
         common::reset_hits(parent);
-        let reported = outpost.focus(judged.into_fact(0));
+        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
         // The parent's client area and the chain above it through MSAA,
         // with no probe of the other process's window. UIA's client side
         // still sends a parent its connection message as the outpost's
@@ -1806,7 +1809,7 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
         let focused = under_test.focused(hwnd);
         let (judged, _) = outpost.listener_read(&focused);
         common::reset_hits(parent);
-        let reported = outpost.focus(judged.into_fact(0));
+        let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus));
         // The parent's client area through MSAA's standard proxy, named by
         // its title, and the chain above it, all MSAA calls.
         let expected_chain = [

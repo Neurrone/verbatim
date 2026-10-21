@@ -260,11 +260,11 @@ The listener's `WinEvent` hook sees the focus move, and UI Automation delivers t
 
 #### Not affected
 
-Applications already running: a UIA focus follows its `WinEvent` in the same millisecond at the median in File Explorer.
+Not established. In steady state a UIA focus follows its `WinEvent` in the same millisecond at the median in File Explorer, but an application already running was affected too: the first folder window of `measure_focus_explorer`, a running process, had its UIA focus about a second after its `WinEvent` focus each time it took the focus back after a new window closed (`target/e2e-evidence/explorer-flakes-2026-10-21/partA/`, the listener design's section 10, step 12).
 
 #### Workarounds that worked
 
-Not a workaround of the fault but a recovery from it (2026-10-21; Fable, pending Dickson's acceptance): the application's outpost, which sees the `WinEvent` focus copy, waits a second for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came with a gone element (decision 11 of the same design). No run since has met the fault live; the recovery is tested in mockapp.
+Not a workaround of the fault but a recovery from it (Fable, 2026-10-21, pending Dickson's acceptance): the application's outpost, which sees the `WinEvent` focus copy, waits a second from the copy's observation for its UIA focus and otherwise reads the application's focus itself, at once when the UIA focus came stale, its element gone or no longer focused (decision 11 of the same design). One run since has met late delivery live, a new window's first item whose UIA focus came 1,183 ms after its `WinEvent`, spoken from the read and heard once (`target/e2e-evidence/explorer-c-fixes-2026-10-21/measure_focus_explorer/`); no run has met missing delivery or the burst, whose recovery is tested in mockapp.
 
 #### Workarounds that didn't work
 
@@ -276,7 +276,7 @@ By its source, NVDA loses these focuses: it drops a `WinEvent` focus in a native
 
 #### Reproduction test
 
-None: the fault does not reproduce reliably, and no mockapp simulation is built for such a fault (Dickson, 2026-10-19). The recovery's tests are `focus_reports.rs`'s three `a_winevent_focus_` tests.
+None: the fault does not reproduce reliably, and no mockapp simulation is built for such a fault (Dickson, 2026-10-19). The recovery's tests are `focus_reports.rs`'s `a_winevent_focus_` tests.
 
 #### Evidence
 

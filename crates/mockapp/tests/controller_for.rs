@@ -38,7 +38,7 @@ use std::sync::mpsc;
 use verbatim_model::{
     CallCounts, NodeId, NodeSnapshot, NormalizedEvent, PropertyChange, Role, StateSet,
 };
-use verbatim_outpost::focus_read::Judged;
+use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor, UiaSnapshotFact};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{
@@ -236,7 +236,7 @@ fn report_focus(
         .expect("the search")
         .unwrap_or_else(|| panic!("no element named {name:?}"));
     let (judged, _) = outpost.listener_read(&focused);
-    outpost.deliver(judged.into_fact(0));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::FocusChanged {

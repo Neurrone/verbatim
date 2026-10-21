@@ -445,10 +445,15 @@ verdict for the focus's window rather than asking the window again.
   worker already makes for its next entry (`Intake::next_with_gap`),
   which takes the intake's lock anyway; the UIA focus's marker wakes the
   worker as it always did, so a gap answered within the bound sets no
-  timer of its own and costs no wake-up. The listener's drop message
-  carries one more `bool` (`no_window`). No log line is added on this
-  path: the existing debug lines gain fields (`opened_gap`,
-  `answered_gap_ms`). Not traced; by construction.
+  timer of its own and costs no wake-up. The news of the focus markers
+  the intake resolved without a read comes with each entry the worker
+  takes, two optional times copied under the lock `next_with_gap` takes
+  anyway.
+  The listener's drop message carries one byte (`evidence`) and its read
+  one (`focus`). No log line is added on this path: the existing debug
+  lines gain fields (`opened_gap`, `answered_gap_ms`). The idle barrier's
+  answer waits while a gap is open, a cost to the harness alone, at most
+  a second a gap. Not traced; by construction.
 - Per gap that comes to a read, once a second has passed with no UIA
   focus, or at once when the UIA focus was dropped because its sender had
   no window above it (`docs/design/listener-without-connections.md`,
@@ -459,9 +464,26 @@ verdict for the focus's window rather than asking the window again.
   `GetFocusedElementBuildCache`, the enrichment by one remote operation
   or the classic walk, and the MSAA continuation above the process
   boundary, as a focus-now query costs (`call_counts.rs`); and one report
-  to Core. At most one read a gap. In five `measure_focus_explorer` runs
-  (2026-10-21) 1 to 6 gaps a run came to a read, every one ending at the
-  local check, since the focus had moved to another application's window.
+  to Core. At most one read a gap. When the late UIA focus of the element
+  read then comes, the outpost finds its own copy of the element by the
+  path again (`find_focus_element`), since the listener holds no element
+  for the read: one connection more per recovered focus. A gap whose copy
+  the worker took up after a hold, such as the early connection after a
+  probe, can be due at once, since the bound counts from the copy's
+  observation.
+- Reads made in vain, accepted as the design's cost: in five
+  `measure_focus_explorer` runs (2026-10-21) 1 to 6 gaps a run came to a
+  read, every one in the first folder window as it took the focus back,
+  ending at the read's local check, since the focus had moved to another
+  application's window: each Wake entry took 104 to 120 µs, with no call
+  into the application. The copies passed the acceptance test because
+  that window was still the system's foreground window when each was
+  handled; the new window's foreground `WinEvent` had come about 200 ms
+  before it took the foreground. The outpost's own hook sees only its
+  application's events, so nothing it has says the other window is
+  coming, and only a later call could tell; none is made. In three runs
+  after the review's fixes (2026-10-21), 0, 1 and 0 reads, the one a
+  focus UIA delivered 1,183 ms late, spoken from the read.
 - Target: no cost per focus; one read per gap.
 
 ### A focus behind other objects' events

@@ -836,7 +836,7 @@ impl Reading for UiaFocusReading {
             tracing::debug!(%pid, marker = meta.marker, reason, "UIA focus dropped");
         }
         self.outgoing
-            .focus_read(pid, judged.into_fact(meta.marker), meta);
+            .focus_read(pid, judged.into_fact(meta.marker, meta.kind), meta);
     }
 }
 
@@ -1134,6 +1134,7 @@ fn queue_for_reading(
     };
     let meta = Meta {
         marker: outgoing.next_marker(),
+        kind,
         trace: TraceId::mint(),
         observed_at_ms: now_ms(),
         timing: EventTiming {
@@ -1161,7 +1162,10 @@ fn queue_for_reading(
                 pid,
                 DeliveredFact::UiaFocusDropped {
                     marker: meta.marker,
-                    no_window: false,
+                    evidence: crate::focus_read::drop_evidence(
+                        kind,
+                        "its element could not be kept for its read",
+                    ),
                 },
                 meta,
             );
@@ -1499,7 +1503,7 @@ mod tests {
     use verbatim_process::transport::EVENT_PIPE_BUFFER;
 
     use super::*;
-    use crate::protocol::read_message;
+    use crate::protocol::{DropEvidence, read_message};
 
     /// An `Outgoing` writing to a pipe with a buffer of `buffer` bytes, its
     /// writes that pend finished by a thread of the sender's own, as the
@@ -1593,6 +1597,7 @@ mod tests {
         let (outgoing, mut reader) = outgoing();
         let meta = |marker| Meta {
             marker,
+            kind: FocusEvent::Focus,
             trace: TraceId::mint(),
             observed_at_ms: 0,
             timing: EventTiming::default(),
@@ -1602,12 +1607,16 @@ mod tests {
         // in order.
         outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 1 }, meta(1));
         outgoing.focus_read(Pid(5), DeliveredFact::UiaFocusMarker { marker: 2 }, meta(2));
-        outgoing.focus_read(Pid(5), Judged::Dropped("read").into_fact(1), meta(1));
+        outgoing.focus_read(
+            Pid(5),
+            Judged::Dropped("read").into_fact(1, FocusEvent::Focus),
+            meta(1),
+        );
         outgoing.focus_read(
             Pid(5),
             DeliveredFact::UiaFocusDropped {
                 marker: 2,
-                no_window: false,
+                evidence: DropEvidence::Focus,
             },
             meta(2),
         );
@@ -1625,11 +1634,11 @@ mod tests {
                 DeliveredFact::UiaFocusMarker { marker: 2 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 1,
-                    no_window: false,
+                    evidence: DropEvidence::Focus,
                 },
                 DeliveredFact::UiaFocusDropped {
                     marker: 2,
-                    no_window: false,
+                    evidence: DropEvidence::Focus,
                 },
             ]
         );
@@ -1978,6 +1987,7 @@ mod tests {
         let (outgoing, mut reader) = at_seven_thousand();
         let meta = Meta {
             marker: 1,
+            kind: FocusEvent::Focus,
             trace: TraceId::mint(),
             observed_at_ms: 0,
             timing: EventTiming {
@@ -1997,6 +2007,7 @@ mod tests {
         let (outgoing, mut reader) = at_seven_thousand();
         let meta = Meta {
             marker: 1,
+            kind: FocusEvent::Focus,
             trace: TraceId::mint(),
             observed_at_ms: 0,
             timing: EventTiming {
@@ -2009,7 +2020,7 @@ mod tests {
             Pid(5),
             DeliveredFact::UiaFocusDropped {
                 marker: 1,
-                no_window: false,
+                evidence: DropEvidence::Focus,
             },
             meta,
         );

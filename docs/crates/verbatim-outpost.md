@@ -181,26 +181,41 @@ event's own element:
   (`DeliveredFact::UiaFocusDropped`) follows the marker through
   verbatim.exe, never coalesced and never dropped on the way: the
   listener queues them unkeyed, and the supervisor's writer lets them
-  through a full queue in order. A drop says, in `no_window`, whether its
-  sender had no window above it (`focus_read::NO_WINDOW`), as a sender
-  gone before its read has.
+  through a full queue in order. A drop says, in `evidence`
+  (`DropEvidence`), what it tells an outpost waiting for a UIA focus: a
+  focus dropped as stale, its sender with no window above it
+  (`focus_read::NO_WINDOW`), as a sender gone before its read has, or its
+  element no longer with the keyboard focus; a focus dropped for any other
+  reason; or not a focus at all. A read says, in `focus`, whether it was a
+  focus's rather than a menu opening's.
 - A `WinEvent` focus copy whose window uses UIA is dropped by the worker
   for its UIA focus to report, and the worker waits for that UIA focus
   (`outpost/gap.rs`, `docs/design/listener-without-connections.md`,
   decision 11): it opens a gap, unless a UIA focus was observed no earlier
-  than 100 ms before the copy, which the listener's UIA focus read closes,
-  as do a marker dropped for another reason, the end of the listener's
-  reads, a focus the outpost reports observed after the copy, and another
-  application's focus Core queued after it. The gap is the worker's alone,
-  without a lock, and a replacement worker starts with none. While a
-  marker waits, it is not judged; the intake keeps the markers it resolves
-  without a read as news for the worker (`Intake::take_marker_news`), and
-  `Intake::next_with_gap` gives the worker `Item::Wake` at the gap's bound,
-  `UIA_FOCUS_BOUND`, a second by the outpost's clock, or at once for such
-  news. Due, the worker reads the focus with the focus-now query's read
-  (`read::focused_control_in`) and reports it as a UIA focus, once per
-  gap, logging it at info ("no UIA focus followed a WinEvent focus in a
-  UIA window"). A settle request (`Outpost::settle`) reads a gap that is
+  than 100 ms before the copy, which a focus's UIA read from the listener
+  closes, as do a focus marker dropped for a reason other than staleness,
+  the end of the listener's reads, a focus (not a foreground change) the
+  outpost reports observed after the copy, and another application's
+  focus Core queued after it. That last one reaches an outpost only when
+  it reported the focus Core had queued just before: `FocusQueued` goes
+  to the listener and to that outpost alone, and the worker reads it only
+  when it wakes for the gap, so it saves a read, never a wake-up. A
+  selection's, a notification's, or a menu opening's marker neither
+  closes a gap nor reads it. The gap is the worker's alone, without a
+  lock, and a replacement worker starts with none. While a marker waits,
+  the gap is not judged, whatever the worker wakes for. The intake hands
+  the worker, with each entry, the news of the focus markers it resolved
+  without a read (`MarkerNews`), under the lock `Intake::next_with_gap`
+  takes anyway, so a copy such a drop already answers opens no gap; and
+  `next_with_gap` gives the worker `Item::Wake` at the gap's bound,
+  `UIA_FOCUS_BOUND`, a second from the copy's observation by the
+  outpost's clock, or at once for news while a gap is open. Due, or at
+  once when a focus marker of it is dropped as stale, the worker reads
+  the focus with the focus-now query's read (`read::focused_control_in`)
+  and reports it as a UIA focus, once per gap, logging it at info ("no
+  UIA focus followed a WinEvent focus in a UIA window"). The idle
+  barrier's answer waits while a gap is open, as it waits for a caret
+  key's watch. A settle request (`Outpost::settle`) reads a gap that is
   due before it is answered.
 - A read, its checks included, has one time budget, `READ_BUDGET`, 2
   seconds, asked before each of its calls after the first, so at most the

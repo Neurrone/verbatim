@@ -13,7 +13,8 @@
 //! to it is heard; that a foreground event for a window read through
 //! UIA is dropped, the window met only among the focus's ancestors; and
 //! how the outpost reads its focus itself after a `WinEvent` focus in a
-//! UIA window that no UIA focus follows.
+//! UIA window that no UIA focus follows, what answers that wait, and that
+//! the idle barrier's answer waits for it.
 //!
 //! The test stands in for the listener (`common::outpost`), reading each
 //! focus with the listener's own reader on this thread; mockapp's focus
@@ -25,14 +26,16 @@ mod harness;
 
 use std::time::Duration;
 
+use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    Fetches, NodeDetails, NodeSnapshot, NormalizedEvent, PropertyChange, Role, State, StateSet,
+    Backend, Effect, Fetches, Input, NodeDetails, NodeSnapshot, NormalizedEvent, OutpostId, Pid,
+    PropertyChange, Role, SegmentContent, State, StateSet, TraceId,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged};
 use verbatim_outpost::protocol::{
-    DeliveredFact, OutpostToSupervisor, SupervisorToOutpost, UiaFocusRead, UiaSnapshotFact,
-    WinEventStamp,
+    DeliveredFact, DropEvidence, OutpostToSupervisor, SupervisorToOutpost, UiaFocusRead,
+    UiaSnapshotFact, WinEventStamp,
 };
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, RAW_PROBE_TIMEOUT_MS, Uia};
@@ -157,7 +160,7 @@ fn reused_runtime_id(remote: bool) {
         "{path}: the repeated focus is dropped, not {judged:?}"
     );
     assert_eq!(calls.uia, 3, "{path}: the calls the repeated focus made");
-    outpost.deliver(judged.into_fact(0));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     outpost.settled();
 
     drop(outpost);
@@ -327,7 +330,7 @@ fn a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped()
         panic!("the listener read a focus that had moved on: {judged:?}");
     };
     assert_eq!(reason, "its element no longer has the keyboard focus");
-    outpost.deliver(judged.into_fact(7));
+    outpost.deliver(judged.into_fact(7, FocusEvent::Focus));
     outpost.settled();
 
     let slider = client.focused();
@@ -405,7 +408,11 @@ fn focus_without_a_path(
     };
     read.ancestors = None;
     read.window = None;
-    outpost.deliver(DeliveredFact::UiaFocusRead { marker: 0, read });
+    outpost.deliver(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
             event:
@@ -726,7 +733,7 @@ fn a_change_raised_after_a_focus_event_waits_for_the_focus_read() {
         Heard::UiaProperty(UIA_NamePropertyId.0),
         Heard::Msaa(WinEventKind::NameChange),
     ]);
-    outpost.deliver(read.into_fact(3));
+    outpost.deliver(read.into_fact(3, FocusEvent::Focus));
     match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::FocusChanged { node, .. },
@@ -777,7 +784,7 @@ fn a_focus_dropped_before_its_window_is_in_front_is_reported_once_it_is() {
     };
     assert_eq!(reason, "its window is not related to the foreground window");
     assert_eq!(calls.uia, 1, "the nearest window, and nothing else");
-    outpost.deliver(Judged::Dropped(reason).into_fact(0));
+    outpost.deliver(Judged::Dropped(reason).into_fact(0, FocusEvent::Focus));
     outpost.settled();
 
     outpost.set_foreground(hwnd);
@@ -823,14 +830,64 @@ fn a_foreground_event_for_a_window_read_through_uia_is_dropped() {
 /// The listener's copy of a `WinEvent` focus on the client object of
 /// mockapp's window, a UIA window, with no UIA focus event of its own.
 fn winevent_focus(outpost: &OutpostUnderTest, hwnd: HWND) {
-    outpost.deliver_win_event(
+    winevent_focus_observed(outpost, hwnd, 0);
+}
+
+/// [`winevent_focus`], observed at `observed_at_ms` (0 for none).
+fn winevent_focus_observed(outpost: &OutpostUnderTest, hwnd: HWND, observed_at_ms: u64) {
+    outpost.deliver_win_event_observed(
         DeliveredFact::MsaaFocus {
             hwnd: hwnd.0 as isize,
             id_object: -4,
             id_child: 0,
         },
         WinEventStamp { thread: 1, time: 1 },
+        observed_at_ms,
     );
+}
+
+/// The focus change the outpost said, which must be one.
+fn focus_changed(message: OutpostToSupervisor) -> NormalizedEvent {
+    match message {
+        OutpostToSupervisor::Event {
+            event: event @ NormalizedEvent::FocusChanged { .. },
+            ..
+        } => event,
+        other => panic!("the outpost said {other:?}, not a focus change"),
+    }
+}
+
+/// What Core does with `event` from the outpost, and what it says.
+fn reduced(
+    state: &mut SrState,
+    mut event: NormalizedEvent,
+) -> (Vec<Effect>, Vec<Vec<SegmentContent>>) {
+    event.assign_outpost(OutpostId(1));
+    let effects = verbatim_core::reduce(
+        state,
+        &Input::Event {
+            trace_id: TraceId::mint(),
+            observed_at_ms: 0,
+            source: Pid(1),
+            backend: Backend::Uia,
+            window: None,
+            event,
+        },
+    );
+    let spoken = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance) => Some(
+                utterance
+                    .segments
+                    .iter()
+                    .map(|segment| segment.content.clone())
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .collect();
+    (effects, spoken)
 }
 
 /// A `WinEvent` focus in a UIA window that no UIA focus follows, as UI
@@ -912,7 +969,7 @@ fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
     outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 4 });
     outpost.deliver(DeliveredFact::UiaFocusDropped {
         marker: 4,
-        no_window: true,
+        evidence: DropEvidence::Stale,
     });
     let reported = outpost.reported_focus();
     assert_eq!(
@@ -920,6 +977,150 @@ fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
         [Some("Mockapp Events Fixture"), Some("Original Name")]
     );
     outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A `WinEvent` focus in a UIA window that no UIA focus follows, with the
+/// outpost's clock the system's and no settle request: the worker's own
+/// wait for its next entry ends at the bound, a second after the copy, and
+/// the focus is read, as in the product. The UIA focus that then comes
+/// late is reported under the read's node, which Core's duplicate rule
+/// takes silently, so the element is heard once in all.
+fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late()
+ {
+    let title = common::unique_title("mockapp-late-uia-focus");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.follow_the_system_clock();
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    // The report is the evidence that the wait ended.
+    let read = focus_changed(outpost.next());
+    outpost.settled();
+    outpost.deliver(outpost.listener_fact(&client.focused()));
+    let late = focus_changed(outpost.next());
+    outpost.settled();
+
+    let node_of = |event: &NormalizedEvent| match event {
+        NormalizedEvent::FocusChanged { node, .. } => node.id,
+        _ => unreachable!("a focus change"),
+    };
+    assert_eq!(node_of(&late), node_of(&read));
+    let mut state = SrState::new();
+    let (_, spoken) = reduced(&mut state, read);
+    assert_eq!(
+        spoken,
+        [
+            vec![
+                SegmentContent::Label("Mockapp Events Fixture".to_owned()),
+                SegmentContent::Role(Role::Window),
+            ],
+            vec![
+                SegmentContent::Label("Original Name".to_owned()),
+                SegmentContent::Role(Role::Button),
+            ],
+        ]
+    );
+    // Core's duplicate rule: nothing at all.
+    assert_eq!(reduced(&mut state, late).0, []);
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A `WinEvent` focus in a UIA window whose UIA focus's marker is still
+/// waiting for its read when the bound passes: the outpost reads nothing
+/// while it waits, the entry it handles after the bound included, and the
+/// marker's read then answers the wait and is reported once.
+fn a_winevent_focus_whose_uia_focus_waits_for_its_read_at_the_bound_is_reported_from_that_read() {
+    let title = common::unique_title("mockapp-marker-at-bound");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    // An entry the worker handles after the bound has passed, a
+    // foreground change of mockapp's window, which says nothing; the
+    // marker of the UIA focus arrives while it is handled, before its
+    // read.
+    outpost.hold_worker();
+    outpost.deliver(DeliveredFact::UiaFocusMarker { marker: 5 });
+    outpost.release_worker();
+    let (judged, _) = outpost.listener_read(&client.focused());
+    let reported = outpost.focus(judged.into_fact(5, FocusEvent::Focus));
+    assert_eq!(
+        reported.chain(),
+        [Some("Mockapp Events Fixture"), Some("Original Name")]
+    );
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A `WinEvent` focus in a UIA window after which Core queues another
+/// application's focus: that focus answers the wait, and nothing is read
+/// once the bound has passed.
+fn a_focus_queued_from_another_application_after_the_copy_answers_the_wait() {
+    let title = common::unique_title("mockapp-focus-elsewhere");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    let observed_at_ms = common::outpost::now_ms();
+    winevent_focus_observed(&outpost, hwnd, observed_at_ms);
+    outpost.settled();
+    outpost.focus_queued_elsewhere(observed_at_ms + 1);
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// The idle barrier's answer waits while the outpost waits for a UIA focus
+/// after a `WinEvent` focus in a UIA window, as it waits for a caret key's
+/// watch (`docs/design/communication.md`, section 6.7), and goes behind
+/// the read that ends the wait.
+fn the_idle_answer_waits_for_the_wait_for_a_uia_focus() {
+    let title = common::unique_title("mockapp-idle-gap");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::IdleQuery { round: 4 });
+    // The worker has reached the query, and nothing is said.
+    outpost.settled();
+    outpost.pass_time(Duration::from_secs(1));
+    outpost.settle();
+    let NormalizedEvent::FocusChanged { node, .. } = focus_changed(outpost.next()) else {
+        unreachable!("a focus change");
+    };
+    assert_eq!(node.name.as_deref(), Some("Original Name"));
+    assert_eq!(outpost.next(), OutpostToSupervisor::IdleAnswer { round: 4 });
     outpost.settled();
 
     drop(outpost);
@@ -955,7 +1156,7 @@ fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
         (3, 0, 0),
         "the nearest window, the comparison, and the keyboard focus read, and nothing else"
     );
-    outpost.deliver(Judged::Dropped(reason).into_fact(0));
+    outpost.deliver(Judged::Dropped(reason).into_fact(0, FocusEvent::Focus));
     outpost.settled();
 
     app.send("set-focus slider1");
@@ -1422,7 +1623,7 @@ fn a_console_windows_own_focus_is_never_reported() {
         calls.uia, 4,
         "the console check, and no read of the element"
     );
-    outpost.deliver(judged.into_fact(0));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     outpost.settled();
 
     drop(outpost);
@@ -1457,7 +1658,7 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
         (7, 0, 1),
         "the probe, the console check from the text area, and the read"
     );
-    outpost.deliver(judged.into_fact(0));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     let (node, ancestors) = match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::FocusChanged {
@@ -1522,7 +1723,7 @@ fn a_focus_whose_window_has_no_uia_provider_is_dropped() {
         (0, 0, 1),
         "the window's provider asked for, and nothing read"
     );
-    outpost.deliver(judged.into_fact(0));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     outpost.settled();
 
     drop(outpost);
@@ -1544,7 +1745,7 @@ fn a_focus_s_help_text_and_suggestions_are_followed() {
     app.send("set-focus search");
     let (judged, _) = outpost.listener_read(&client.focused());
     assert!(matches!(judged, Judged::Read(_)), "dropped: {judged:?}");
-    outpost.deliver(judged.into_fact(0));
+    outpost.deliver(judged.into_fact(0, FocusEvent::Focus));
     let node = match outpost.next() {
         OutpostToSupervisor::Event {
             event: NormalizedEvent::FocusChanged { node, .. },
@@ -1717,6 +1918,22 @@ fn main() {
         (
             "a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once",
             a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once,
+        ),
+        (
+            "a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late",
+            a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late,
+        ),
+        (
+            "a_winevent_focus_whose_uia_focus_waits_for_its_read_at_the_bound_is_reported_from_that_read",
+            a_winevent_focus_whose_uia_focus_waits_for_its_read_at_the_bound_is_reported_from_that_read,
+        ),
+        (
+            "a_focus_queued_from_another_application_after_the_copy_answers_the_wait",
+            a_focus_queued_from_another_application_after_the_copy_answers_the_wait,
+        ),
+        (
+            "the_idle_answer_waits_for_the_wait_for_a_uia_focus",
+            the_idle_answer_waits_for_the_wait_for_a_uia_focus,
         ),
         (
             "an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off",

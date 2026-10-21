@@ -599,10 +599,21 @@ impl OutpostUnderTest {
     /// `WinEvent`, with the thread that raised the event and when, which
     /// the outpost matches with its own hook's copy, and returns at once.
     pub fn deliver_win_event(&self, fact: DeliveredFact, stamp: WinEventStamp) {
+        self.deliver_win_event_observed(fact, stamp, 0);
+    }
+
+    /// [`deliver_win_event`](Self::deliver_win_event), the event observed
+    /// at `observed_at_ms`.
+    pub fn deliver_win_event_observed(
+        &self,
+        fact: DeliveredFact,
+        stamp: WinEventStamp,
+        observed_at_ms: u64,
+    ) {
         self.outpost
             .handle_command(&SupervisorToOutpost::DeliverFact {
                 trace_id: TraceId::mint(),
-                observed_at_ms: 0,
+                observed_at_ms,
                 timing: EventTiming::default(),
                 fact,
                 win_event: Some(stamp),
@@ -701,7 +712,7 @@ impl OutpostUnderTest {
     /// once it has read it, which must not be dropped.
     pub fn listener_fact(&self, element: &Cached<ListenerEvent>) -> DeliveredFact {
         match self.listener_read(element).0 {
-            read @ Judged::Read(_) => read.into_fact(0),
+            read @ Judged::Read(_) => read.into_fact(0, FocusEvent::Focus),
             Judged::Dropped(reason) => panic!("the listener dropped the focus: {reason}"),
             Judged::Passed(fact) => panic!("a focus read passed a fact on: {fact:?}"),
         }
@@ -822,7 +833,7 @@ impl OutpostUnderTest {
             panic!("the listener dropped the focus: {judged:?}");
         };
         let listener_failed_reads = verbatim_uia::calls::take_failed_reads();
-        let mut reported = self.focus(judged.into_fact(0));
+        let mut reported = self.focus(judged.into_fact(0, FocusEvent::Focus));
         reported.calls += calls;
         reported.failed_reads += listener_failed_reads;
         reported

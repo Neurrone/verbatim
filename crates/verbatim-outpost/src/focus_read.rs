@@ -124,7 +124,8 @@ use crate::outpost::window::{
     front_is_another_thread_of_its_application, is_shell_transition_window, window_is_hung,
 };
 use crate::protocol::{
-    DeliveredFact, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact, now_us,
+    DeliveredFact, DropEvidence, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
+    now_us,
 };
 
 /// The most ancestors read for a focus, as many as the outpost walks.
@@ -409,6 +410,10 @@ pub const NO_WINDOW: &str = "it has no window above it, so NVDA makes no object 
 /// above it.
 const NOTIFICATION_NO_WINDOW: &str = "its sender has no window above it";
 
+/// The reason a focus is dropped whose element no longer has the keyboard
+/// focus when it is read, as NVDA drops it.
+const NOT_FOCUSED: &str = "its element no longer has the keyboard focus";
+
 /// What became of one focus event.
 #[derive(Debug)]
 pub enum Judged {
@@ -422,16 +427,36 @@ pub enum Judged {
 }
 
 impl Judged {
-    /// The fact that resolves marker `marker` with this outcome.
+    /// The fact that resolves marker `marker`, sent for an event of kind
+    /// `kind`, with this outcome.
     #[must_use]
-    pub fn into_fact(self, marker: u64) -> DeliveredFact {
+    pub fn into_fact(self, marker: u64, kind: FocusEvent) -> DeliveredFact {
         match self {
-            Judged::Read(read) => DeliveredFact::UiaFocusRead { marker, read },
+            Judged::Read(read) => DeliveredFact::UiaFocusRead {
+                marker,
+                read,
+                focus: kind == FocusEvent::Focus,
+            },
             Judged::Dropped(reason) => DeliveredFact::UiaFocusDropped {
                 marker,
-                no_window: reason == NO_WINDOW || reason == NOTIFICATION_NO_WINDOW,
+                evidence: drop_evidence(kind, reason),
             },
             Judged::Passed(fact) => DeliveredFact::UiaMarked { marker, fact },
+        }
+    }
+}
+
+/// What the drop of an event of kind `kind` for `reason` says to an
+/// outpost waiting for a UIA focus after a `WinEvent` focus
+/// ([`DropEvidence`]): a focus whose sender has no window above it or no
+/// longer has the keyboard focus came too late to speak the focus.
+#[must_use]
+pub fn drop_evidence(kind: FocusEvent, reason: &str) -> DropEvidence {
+    match kind {
+        FocusEvent::Focus if reason == NO_WINDOW || reason == NOT_FOCUSED => DropEvidence::Stale,
+        FocusEvent::Focus => DropEvidence::Focus,
+        FocusEvent::MenuOpened | FocusEvent::Selection | FocusEvent::Notification => {
+            DropEvidence::NotFocus
         }
     }
 }
@@ -784,9 +809,7 @@ impl FocusReader {
                 focus_ancestry_classic(&self.uia, &query)
             });
         match read {
-            Ok(FocusAncestry::NotFocused) => {
-                Judged::Dropped("its element no longer has the keyboard focus")
-            }
+            Ok(FocusAncestry::NotFocused) => Judged::Dropped(NOT_FOCUSED),
             Ok(FocusAncestry::Focused(ancestry)) => self.focused(
                 element,
                 (hwnd, nearest),
@@ -1199,7 +1222,7 @@ impl FocusReader {
         } else {
             budget.call("the keyboard focus");
             if let Ok(false) = subject.has_keyboard_focus() {
-                return Err("its element no longer has the keyboard focus");
+                return Err(NOT_FOCUSED);
             }
         }
         Ok(window)
@@ -1396,6 +1419,8 @@ fn ancestor_fact(element: &Cached<Ancestor>) -> UiaAncestorFact {
 pub(crate) struct Meta {
     /// The marker sent for the event.
     pub(crate) marker: u64,
+    /// The event's kind, which its read or drop tells the outpost.
+    pub(crate) kind: FocusEvent,
     /// The trace minted when the event arrived.
     pub(crate) trace: TraceId,
     /// When the event arrived, in milliseconds since the Unix epoch.
@@ -2406,6 +2431,7 @@ mod tests {
     fn meta(marker: u64) -> Meta {
         Meta {
             marker,
+            kind: FocusEvent::Focus,
             trace: TraceId::mint(),
             observed_at_ms: 0,
             timing: EventTiming::default(),
@@ -2413,6 +2439,39 @@ mod tests {
     }
 
     const WAIT: Duration = Duration::from_secs(10);
+
+    /// Only a focus event's drop answers an outpost's wait for a UIA focus
+    /// after a `WinEvent` focus, and a focus whose sender has no window or
+    /// no longer has the keyboard focus is stale; a selection's, a
+    /// notification's, or a menu opening's drop says nothing of the focus.
+    #[test]
+    fn only_a_focus_events_drop_answers_and_a_stale_one_is_told_apart() {
+        let replaced = "a newer focus event of its element replaced it";
+        assert_eq!(
+            drop_evidence(FocusEvent::Focus, replaced),
+            DropEvidence::Focus
+        );
+        assert_eq!(
+            drop_evidence(FocusEvent::Focus, NOT_FOCUSED),
+            DropEvidence::Stale
+        );
+        assert_eq!(
+            drop_evidence(FocusEvent::Focus, NO_WINDOW),
+            DropEvidence::Stale
+        );
+        assert_eq!(
+            drop_evidence(FocusEvent::Selection, NO_WINDOW),
+            DropEvidence::NotFocus
+        );
+        assert_eq!(
+            drop_evidence(FocusEvent::Notification, NOTIFICATION_NO_WINDOW),
+            DropEvidence::NotFocus
+        );
+        assert_eq!(
+            drop_evidence(FocusEvent::MenuOpened, NOT_FOCUSED),
+            DropEvidence::NotFocus
+        );
+    }
 
     /// The time the window's verdict takes, the raw probe's wait, is not
     /// counted: a read whose probe waited 3 seconds still has its whole

@@ -87,8 +87,9 @@ const HANDLING_DEADLINE: Duration = Duration::from_secs(10);
 /// How long the worker waits for a UIA focus after a `WinEvent` focus in a
 /// UIA window before it reads its application's focus itself
 /// (`docs/design/listener-without-connections.md`, decision 11; Fable,
-/// 2026-10-21, pending Dickson's acceptance), counted from the first such
-/// focus no UIA focus has answered. A UIA focus follows its `WinEvent`
+/// 2026-10-21, pending Dickson's acceptance), counted from the observation
+/// of the first such focus no UIA focus has answered, not from when the
+/// worker took it up. A UIA focus follows its `WinEvent`
 /// within 1 to 35 ms in Settings, and in the same millisecond at the median
 /// in File Explorer; a newly started File Explorer process's first one came
 /// 222 to 514 ms after the first item's `WinEvent` in
@@ -674,10 +675,13 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
     // window, its own and without a lock; a replacement worker starts with
     // none.
     let mut gap = FocusGap::default();
-    while let Some((planned, batch)) = context
+    while let Some((planned, batch, news)) = context
         .intake
         .next_with_gap(gap.wake_at(Instant::now(), UIA_FOCUS_BOUND))
     {
+        // The focus markers the intake resolved without a read before
+        // these entries: a copy they answer opens no gap.
+        gap.marker_news(news);
         let mut run = |entry: Entry, menu: bool| {
             run_entry(
                 context,
@@ -703,18 +707,21 @@ fn run_loop(context: &Context, generation: u64, warm: bool) {
         if outcome.is_err() {
             return;
         }
-        answer_idle(context);
+        answer_idle(context, gap.is_open());
     }
 }
 
 /// Answers the idle barrier's query the worker has reached
 /// ([`Item::IdleQuery`]) once no deferred work is pending: no caret key's
-/// watch is open and no terminal owes Core a read. Called by the worker in
-/// charge after each entry, so the answer goes as soon as the entry that
-/// ends the watch or pays the read is handled, behind what that entry
+/// watch is open, no terminal owes Core a read, and the worker waits for
+/// no UIA focus after a `WinEvent` focus (`gap_open`), a wait that ends
+/// within its bound, [`UIA_FOCUS_BOUND`], at most, on its UIA focus or with
+/// the read that replaces it. Called by the worker in charge after each
+/// entry, so the answer goes as soon as the entry that ends the watch,
+/// pays the read, or closes the gap is handled, behind what that entry
 /// published.
-fn answer_idle(context: &Context) {
-    if context.idle_query().is_none() {
+fn answer_idle(context: &Context, gap_open: bool) {
+    if gap_open || context.idle_query().is_none() {
         return;
     }
     // Neither lock is held across a call into the application, so a worker
@@ -1264,26 +1271,26 @@ impl Worker<'_> {
     }
 
     /// [`Item::Wake`] for the wait for a UIA focus after a `WinEvent` focus
-    /// in a UIA window (`gap`): takes in the markers the intake resolved
-    /// without a read and another application's focus Core has queued, and
-    /// reads the application's focus once the gap is due.
+    /// in a UIA window (`gap`): takes in another application's focus Core
+    /// has queued, and reads the application's focus once the gap is due
+    /// and no marker waits for its read, whatever the wake was for, since
+    /// that marker's resolution decides first. The markers the intake
+    /// resolved without a read came with the entry ([`run_loop`]).
     fn gap_wake(&mut self) {
         if !self.gap.is_open() {
             return;
-        }
-        let news = self.context.intake.take_marker_news();
-        if let Some(at) = news.answered_at_ms {
-            self.gap.uia_answered(at);
-        }
-        if let Some(at) = news.no_window_at_ms {
-            self.gap.sender_unreadable(at);
         }
         let elsewhere = self.context.tracking().queued_elsewhere_at_ms;
         if elsewhere > 0 {
             self.gap.focus_after(elsewhere);
         }
+        if !self.gap.is_due(self.clock_now, UIA_FOCUS_BOUND) || self.context.intake.marker_waiting()
+        {
+            return;
+        }
+        let unreadable = self.gap.unreadable();
         if let Some(open) = self.gap.take_due(self.clock_now, UIA_FOCUS_BOUND) {
-            self.read_focus_after_gap(open, news.no_window_at_ms.is_some());
+            self.read_focus_after_gap(open, unreadable);
         }
     }
 
@@ -2110,8 +2117,11 @@ impl Worker<'_> {
         };
         if self.emit(trace, observed_at_ms, backend, window, event) {
             // A focus observed after a `WinEvent` focus no UIA focus has
-            // answered yet answers it.
-            self.gap.focus_after(observed_at_ms);
+            // answered yet answers it; a foreground change says nothing of
+            // the focus inside its window, and does not.
+            if !foreground {
+                self.gap.focus_after(observed_at_ms);
+            }
             // A caret key's watch on another node ends with the focus,
             // saying nothing, as NVDA's wait gives way to a focus change.
             if self
@@ -3123,8 +3133,8 @@ impl Worker<'_> {
                 id_object,
                 id_child,
             } => self.msaa_focus(hwnd, id_object, id_child, trace, observed_at_ms),
-            DeliveredFact::UiaFocusRead { read, .. } => {
-                self.uia_focus(&read, trace, observed_at_ms);
+            DeliveredFact::UiaFocusRead { read, focus, .. } => {
+                self.uia_focus(&read, focus, trace, observed_at_ms);
             }
             // The intake resolves these; none reaches the worker.
             DeliveredFact::UiaFocusMarker { .. }
@@ -3384,10 +3394,14 @@ impl Worker<'_> {
         }
         if read::window_uses_uia(self.context, hwnd) {
             // UIA owns this window; its UIA fact reports the focus, which
-            // the worker waits for (`gap`).
-            let opened_gap = self
-                .gap
-                .dropped_for_uia(hwnd, observed_at_ms, self.clock_now);
+            // the worker waits for (`gap`), counted from the copy's
+            // observation: the entry's start by the system's clock and by
+            // the outpost's place it on the latter.
+            let opened_gap = self.gap.dropped_for_uia(
+                hwnd,
+                observed_at_ms,
+                (self.clock_now, self.timing.dequeued_at_us / 1_000),
+            );
             tracing::debug!(hwnd, opened_gap, "MSAA focus dropped: UIA owns the window");
             return;
         }
@@ -3508,14 +3522,18 @@ impl Worker<'_> {
     /// does the outpost find its own copy of the element, which no process
     /// can hand it (experiment E-marshal), by the path the listener read
     /// ([`find_focus_element`](Self::find_focus_element)).
-    fn uia_focus(&mut self, read: &UiaFocusRead, trace: TraceId, observed_at_ms: u64) {
+    fn uia_focus(&mut self, read: &UiaFocusRead, focus: bool, trace: TraceId, observed_at_ms: u64) {
         let context = self.context;
-        // The UIA focus a `WinEvent` focus in a UIA window was waiting for.
-        let answered_gap_ms = self.gap.uia_answered(observed_at_ms).map(|open| {
-            self.clock_now
-                .saturating_duration_since(open.opened)
-                .as_millis()
-        });
+        // The UIA focus a `WinEvent` focus in a UIA window was waiting for;
+        // a menu opening's read is not one.
+        let answered_gap_ms = focus
+            .then(|| self.gap.uia_answered(observed_at_ms))
+            .flatten()
+            .map(|open| {
+                self.clock_now
+                    .saturating_duration_since(open.opened)
+                    .as_millis()
+            });
         // NVDA's acceptance test against the foreground window was made by
         // the listener, before it read the focus, as NVDA makes it before
         // it queues one (`docs/design/focus-pipeline.md`, section 16.2).

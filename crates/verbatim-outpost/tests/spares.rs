@@ -41,8 +41,8 @@ use crossbeam_channel::unbounded;
 use verbatim_model::{OutpostId, Pid, TraceId};
 use verbatim_outpost::OutpostOptions;
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, ListenerFact, OutpostToSupervisor, SupervisorToOutpost,
-    read_message, write_message,
+    DeliveredFact, DropEvidence, EventTiming, ListenerFact, OutpostToSupervisor,
+    SupervisorToOutpost, read_message, write_message,
 };
 use verbatim_outpost::supervisor::{
     EndReason, IgnoredProcesses, OutpostMessage, ShutdownSummary, Supervisor,
@@ -173,7 +173,7 @@ fn scripted_facts() -> Vec<OutpostToSupervisor> {
                 },
                 "drop" => DeliveredFact::UiaFocusDropped {
                     marker: 1,
-                    no_window: false,
+                    evidence: DropEvidence::Focus,
                 },
                 "foreground" => DeliveredFact::Foreground { hwnd: 1 },
                 other => panic!("no fact is called {other}"),

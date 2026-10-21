@@ -447,21 +447,27 @@ whose window is native UIA before making any object
 focus whose sender has no window above it, since `getNearestWindowHandle`
 answers none for a gone element (`source/UIAHandler/__init__.py`, lines
 1437 to 1444) and `isNativeUIAElement` then finds the element not native
-(lines 1516 to 1575, its drop at 887 to 899 of the focus handler). It has
-no other path that reads the focus after a `WinEvent`, so by its source
-it loses these focuses; that is not captured.
+(lines 1516 to 1575, its drop at 887 to 899 of the focus handler); and it
+drops a UIA focus whose element no longer has the keyboard focus
+(`shouldAllowUIAFocusEvent`, `source/NVDAObjects/UIA/__init__.py` lines
+1632 to 1637, tested at line 948 of the focus handler). It has no other
+path that reads the focus after a `WinEvent`, so by its source it loses
+these focuses; that is not captured.
 
 Verbatim: **different**, as a consequence of that design's decision 11
 (Fable, 2026-10-21, pending Dickson's acceptance). When no UIA focus
-follows a `WinEvent` focus in a UIA window within a second, or the UIA
-focus is dropped because its sender has no window above it, the
+follows a `WinEvent` focus in a UIA window within a second of the
+`WinEvent`, or the UIA focus comes stale, its sender having no window
+above it or its element no longer having the keyboard focus, the
 application's outpost reads its focus itself, as the focus-now query
-does, and reports it, once. So where UIA delivers late, Verbatim speaks
+does, and reports it, once. Where NVDA drops a stale focus event and
+speaks nothing until the next one comes, Verbatim speaks where the focus
+now is. So where UIA delivers late, Verbatim speaks
 the same words a second after the `WinEvent`, earlier than NVDA would;
 where it never delivers, and for a burst of gone elements, Verbatim
 speaks the focus where NVDA, by its source, is silent. A late UIA focus
 for the element already read is Core's duplicate and says nothing. Tests:
-`focus_reports.rs` in `mockapp`, its three `a_winevent_focus_` tests.
+`focus_reports.rs` in `mockapp`, its `a_winevent_focus_` tests.
 
 ### Held objects
 

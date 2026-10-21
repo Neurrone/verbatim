@@ -267,6 +267,29 @@ impl ListenerFact {
     }
 }
 
+/// What the drop of a UIA focus event's read says to an outpost waiting
+/// for a UIA focus after a `WinEvent` focus in one of its UIA windows
+/// (`docs/design/listener-without-connections.md`, decision 11; Fable,
+/// 2026-10-21, pending Dickson's acceptance): only a focus event's
+/// resolution answers that wait.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DropEvidence {
+    /// A focus event dropped for a reason that leaves it the answer, as its
+    /// read would have been: it waited too long, a newer event of its
+    /// element replaced it, or its window was not related to the
+    /// foreground window, among others.
+    Focus,
+    /// A focus event that came but cannot speak the focus: its sender has
+    /// no window above it, which a sender gone before its read has, or its
+    /// element no longer had the keyboard focus when it was read. The
+    /// focus has moved on, and the event for where it went may never come,
+    /// so the outpost reads its focus at once.
+    Stale,
+    /// Not a focus event: a selection, a notification, or a menu opening,
+    /// which says nothing of the focus.
+    NotFocus,
+}
+
 /// A fact the supervisor delivers to a target outpost (decision D13): what
 /// the listener captured, minus the pid, since routing is already done. The
 /// outpost's worker reads, arbitrates, and reports it exactly as it does the
@@ -292,6 +315,11 @@ pub enum DeliveredFact {
         marker: u64,
         /// The focus as read.
         read: Box<UiaFocusRead>,
+        /// Whether the event read was a focus rather than a menu opening:
+        /// only a focus's read answers an outpost's wait for a UIA focus
+        /// after a `WinEvent` focus in a UIA window
+        /// (`docs/design/listener-without-connections.md`, decision 11).
+        focus: bool,
     },
     /// The UIA focus event `marker` names is not reported: its element had
     /// lost the keyboard focus when it was read, as NVDA drops such an
@@ -301,12 +329,9 @@ pub enum DeliveredFact {
     UiaFocusDropped {
         /// The marker the drop resolves.
         marker: u64,
-        /// Whether it was dropped because its sender has no window above
-        /// it, which a sender gone before its read is: the event came but
-        /// cannot be read, so an outpost waiting for a UIA focus after a
-        /// `WinEvent` focus in a UIA window reads its focus at once
-        /// (`docs/design/listener-without-connections.md`, decision 11).
-        no_window: bool,
+        /// What the drop says to an outpost waiting for a UIA focus after a
+        /// `WinEvent` focus in a UIA window.
+        evidence: DropEvidence,
     },
     /// The focus listener that sent the markers still waiting has ended:
     /// none of them will be resolved, so none is waited for any more. Made
@@ -1569,6 +1594,7 @@ mod tests {
             fact: DeliveredFact::UiaFocusRead {
                 marker: 9,
                 read: Box::new(read.clone()),
+                focus: true,
             },
         };
         let focus_fact = OutpostToSupervisor::FocusFact {
@@ -1592,14 +1618,15 @@ mod tests {
             fact.into_delivered(),
             DeliveredFact::UiaFocusRead {
                 marker: 9,
-                read: Box::new(read)
+                read: Box::new(read),
+                focus: true,
             }
         );
         for fact in [
             DeliveredFact::UiaFocusMarker { marker: 9 },
             DeliveredFact::UiaFocusDropped {
                 marker: 9,
-                no_window: true,
+                evidence: DropEvidence::Stale,
             },
             DeliveredFact::UiaFocusReadsEnded,
         ] {
@@ -1756,7 +1783,7 @@ mod tests {
         assert!(
             !DeliveredFact::UiaFocusDropped {
                 marker: 1,
-                no_window: false
+                evidence: DropEvidence::Focus,
             }
             .may_start_outpost()
         );

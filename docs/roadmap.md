@@ -245,11 +245,12 @@ Verbatim stops crashing and stalling, and the suite stops failing by timing.
     the burst of gone senders (risks 2 and 13 of
     [the listener design](design/listener-without-connections.md)), are
     recovered by decision 11's step, built on 2026-10-21 (section 10,
-    step 12). What remains: no run has met either fault live since, so
-    the recovery's speech rests on its mockapp tests; the first
-    `settings_system_page` or File Explorer run that meets it is to be
-    read for the outpost's "the focus is read and reported" line and
-    the speech after it.
+    step 12). What remains: one `measure_focus_explorer` run has met late
+    delivery live since, and was heard once; no run has met missing
+    delivery or the burst, so that recovery's speech rests on its mockapp
+    tests; the first `settings_system_page` or File Explorer run that
+    meets it is to be read for the outpost's "the focus is read and
+    reported" line and the speech after it.
   - The early connection an outpost makes to a new window after its probe
     finds a provider (variant d of
     [the listener design](design/listener-without-connections.md),
