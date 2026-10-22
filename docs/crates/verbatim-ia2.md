@@ -73,13 +73,16 @@ Public API:
   `idChild`; the hook thread hands the ticket to `on_marker`, never to
   `callback`. A thread message posted to the hook thread can be handled
   before a `WinEvent` raised before the post has reached that thread, but
-  `WinEvent`s arrive in the order raised, so a marker's arrival shows
-  every event raised before it has arrived; the outpost's event thread
+  `WinEvent`s have been observed to arrive in the order raised (an
+  observation, not an order Microsoft documents), so a marker's arrival
+  is taken to show every event raised before it has arrived; the
+  outpost's event thread
   waits for one in `Nudger::sync`. A marker raised with no window is
   never delivered, which is why the set makes one. The marker hook is
   scoped to this process, so another process's event with that id is not
   a marker, though another process's global hook for the id sees the
-  markers. `suspend_kinds` leaves the marker hook alone, and dropping the
+  markers; and a set takes only the markers raised on its own window, so
+  another hook set's markers in the same process are never its own. `suspend_kinds` leaves the marker hook alone, and dropping the
   set removes it and destroys the window.
 - `suspend_kinds(suspended)` — narrows the calling thread's hook set while
   it runs: every raw event of the kinds it was installed for is hooked

@@ -1729,10 +1729,20 @@ one sync marker with `NotifyWinEvent`, a `WinEvent` of the outpost's own
 that the thread's hook set hears, since a posted message alone can be
 handled before an event raised before it has arrived; the thread wakes
 once or twice for the two, so the marker costs one `NotifyWinEvent` and
-up to one more wake per sync. A sync is
+up to one more wake per sync. Measured on the development machine (x64,
+release build, 20,000 syncs of an idle event thread), one sync's median
+went from about 15 microseconds with the message alone to about 25 to 36
+with the marker as well (mean about 16 to about 27 to 33). No hook seen
+here asks for a marker's object, so a marker costs the outpost no
+`WM_GETOBJECT`: 500 markers raised on a message-only window drew none
+with NVDA and Verbatim running, where a hook of the marker's id that asks
+for each event's object drew two each. A sync is
 made only here, in the caret report below, and in `Outpost::settle`,
 which tests call, never once per event. With nothing selected before or
-after, it checks nothing.
+after, it checks nothing. Every event thread's hook set, the focus
+listener's included, has the marker hook and its message-only window
+from when its hooks are in; the listener never syncs, so its marker
+hook stays idle and costs no wake.
 
 ### A caret report, Win32 edit control
 

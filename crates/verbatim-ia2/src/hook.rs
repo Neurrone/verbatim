@@ -254,13 +254,15 @@ pub type WinEventCallback = Box<dyn Fn(WinEvent)>;
 /// the range Windows sets aside for events defined outside it, by the
 /// Accessibility Interoperability Alliance (`EVENT_AIA_START` to
 /// `EVENT_AIA_END`). The marker hook is scoped to this process, so the same
-/// id raised by another process is never taken for a marker; another
+/// id raised by another process is never taken for a marker, and a hook
+/// set takes only the markers raised on its own window, so another hook
+/// set's markers in this process are never taken for its own; another
 /// process's global hook that asks for this id sees the markers, as it
 /// would any process's events in that range.
 const SYNC_MARKER_EVENT: u32 = EVENT_AIA_START + 0x05B1;
 
 /// Called on the installing thread with the ticket of each sync marker
-/// raised in this process ([`SyncMarker::raise`]), in the order the
+/// raised to its hook set ([`SyncMarker::raise`]), in the order the
 /// markers arrive.
 pub type SyncMarkerCallback = Box<dyn Fn(u64)>;
 
@@ -320,9 +322,10 @@ pub fn event_clock() -> u32 {
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
-    /// The callback this thread's sync markers are handed to, while its
-    /// hook set hears them.
-    static MARKER_CALLBACK: RefCell<Option<SyncMarkerCallback>> = const { RefCell::new(None) };
+    /// The window this thread's sync markers are raised on, and the
+    /// callback they are handed to, while its hook set hears them.
+    static MARKER_CALLBACK: RefCell<Option<(isize, SyncMarkerCallback)>> =
+        const { RefCell::new(None) };
     /// The kinds this thread's hooks were installed for.
     static KINDS: RefCell<Vec<WinEventKind>> = const { RefCell::new(Vec::new()) };
     /// The class of each window [`is_wanted`] has asked about, while this
@@ -572,7 +575,8 @@ impl WinEventHook {
         let marker = match on_marker {
             Some(on_marker) => match hook_sync_markers() {
                 Ok(marker) => {
-                    MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = Some(on_marker));
+                    let window = marker.1.0 as isize;
+                    MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = Some((window, on_marker)));
                     Some(marker)
                 }
                 Err(error) => {
@@ -796,8 +800,12 @@ unsafe extern "system" fn win_event_proc(
     if event == SYNC_MARKER_EVENT {
         let ticket =
             (u64::from(id_object.cast_unsigned()) << 32) | u64::from(id_child.cast_unsigned());
+        // The hook hears every marker of the process; only those raised on
+        // this set's own window are its own.
         MARKER_CALLBACK.with(|slot| {
-            if let Some(on_marker) = slot.borrow().as_ref() {
+            if let Some((window, on_marker)) = slot.borrow().as_ref()
+                && *window == hwnd.0 as isize
+            {
                 on_marker(ticket);
             }
         });

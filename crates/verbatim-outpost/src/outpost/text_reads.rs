@@ -112,8 +112,8 @@ impl CaretSignal for Signal<'_> {
     /// to 1082). The control raised it while it handled the key, before
     /// the read that found the key's evidence returned, but the `WinEvent`
     /// thread may not have queued it yet, so the check waits for that
-    /// thread to handle every event delivered to it first. A UIA text's
-    /// change is never noted.
+    /// thread to take every event raised before the check first. A UIA
+    /// text's change is never noted.
     fn text_change_waiting(&mut self) -> bool {
         value_change_raised(self.context, self.node_id)
     }
@@ -703,10 +703,10 @@ pub(super) fn note_value_change(context: &Context, node_id: NodeId) {
 
 /// Whether a value change of `node_id`, an edit control's client area,
 /// raised before now waits in the intake: the check waits for the
-/// `WinEvent` thread to handle every event delivered to it first, one wake
-/// of that thread and no call to the application, since the control may
-/// have raised it while it answered a read the caller just made. A UIA
-/// text's change is never checked for.
+/// `WinEvent` thread to take every event raised before it first
+/// (`Nudger::sync`), up to two wakes of that thread and no call to the
+/// application, since the control may have raised it while it answered a
+/// read the caller just made. A UIA text's change is never checked for.
 fn value_change_raised(context: &Context, node_id: NodeId) -> bool {
     if context.uia_registry.runtime_id_of(node_id).is_some() {
         return false;

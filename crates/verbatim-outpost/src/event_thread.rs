@@ -462,6 +462,56 @@ mod tests {
         unsafe { DestroyWindow(window) }.expect("the window destroyed");
     }
 
+    /// The last ticket whose marker has reached `thread`.
+    fn marked(thread: &EventThread) -> u64 {
+        thread
+            .nudger
+            .synced
+            .reached
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .marked
+    }
+
+    /// Once the hooks are in, a sync returns only when its own marker has
+    /// reached the thread: each sync leaves the thread's marked ticket at
+    /// its own.
+    #[test]
+    fn a_sync_returns_once_its_marker_has_reached_the_thread() {
+        let (events_tx, _events) = unbounded();
+        let (changes_tx, _changes) = unbounded();
+        let thread = event_thread(events_tx, changes_tx);
+        let nudger = thread.nudger();
+        nudger.sync();
+        assert_eq!(marked(&thread), 1);
+        nudger.sync();
+        assert_eq!(marked(&thread), 2);
+    }
+
+    /// A hook set takes only the markers raised on its own window, though
+    /// its marker hook hears the whole process: another event thread's
+    /// sync leaves this thread's marked ticket alone. The value change is
+    /// raised after the other thread's marker, so it arrives behind it.
+    #[test]
+    fn a_sync_of_another_event_thread_marks_nothing_here() {
+        let (events_tx, events) = unbounded();
+        let (changes_tx, _changes) = unbounded();
+        let watching = event_thread(events_tx, changes_tx);
+        let (other_events_tx, _other_events) = unbounded();
+        let (other_changes_tx, _other_changes) = unbounded();
+        let syncing = event_thread(other_events_tx, other_changes_tx);
+        let window = window();
+        syncing.nudger().sync();
+        // SAFETY: raising an event for a live window of this thread.
+        unsafe { NotifyWinEvent(EVENT_OBJECT_VALUECHANGE, window, OBJID_CLIENT.0, 0) };
+        assert_eq!(events.recv_timeout(WAIT), Ok(WinEventKind::ValueChange));
+        assert_eq!(marked(&watching), 0);
+        drop(syncing);
+        drop(watching);
+        // SAFETY: the window made above, on this thread.
+        unsafe { DestroyWindow(window) }.expect("the window destroyed");
+    }
+
     /// A sync that raised a marker may not return once its thread message
     /// is handled, until its marker has reached the thread too; one that
     /// raised none returns on its message.
