@@ -12,6 +12,7 @@ mod datetime;
 mod error_sound;
 mod flight_dump;
 mod harness;
+mod held_keys;
 mod idle;
 mod latency;
 mod live;
@@ -43,7 +44,7 @@ use verbatim_input::{
     DecisionConfig, EmittedGesture, GestureMap, KeySpeechEffect, KeyboardLayout, ScriptAction,
     SharedGestureMap,
 };
-use verbatim_input_windows::{InputHook, KeyReport, Routed};
+use verbatim_input_windows::{InputHook, KeyHolding, KeyReport, Routed};
 use verbatim_model::{
     CaretKey, Earcon, Effect, GestureId, Input, OutpostId, Pid, ReaderSettings, SpeechPriority,
     TextRequest, TraceId, Utterance, UtteranceSegment,
@@ -287,10 +288,20 @@ fn run(
 
     warm_own_outpost(&supervisor, &outposts, own_pid);
 
+    // Which caret keys the keyboard hook holds back while the focus is
+    // text, switched by the reducer thread from Core's focus
+    // (`docs/design/key-holding.md`).
+    let holding = Arc::new(KeyHolding::new(
+        verbatim_input::caret_bindings()
+            .into_iter()
+            .map(|(gesture, _)| gesture),
+    ));
+
     // The reducer thread: normalized events and review commands in, speech,
     // fetches, text requests, activations, and clipboard copies out.
     {
         let context = ReducerContext {
+            holding: Arc::clone(&holding),
             clipboard: clipboard::Clipboard::start(Arc::clone(&manager))?,
             manager: Arc::clone(&manager),
             supervisor: Arc::clone(&supervisor),
@@ -425,6 +436,23 @@ fn run(
                     }
                     None => return,
                 },
+                KeyReport::Held {
+                    gesture,
+                    pressed_at_us,
+                    stroke,
+                } => match caret_keys.get(&gesture.gesture) {
+                    Some(&key) => ShellCommand::HeldKey {
+                        input: Box::new(Input::HeldKey {
+                            trace_id: gesture.trace_id,
+                            key,
+                            pressed_at_ms: pressed_at_us / 1_000,
+                        }),
+                        gesture: gesture.gesture,
+                        pressed_at_us,
+                        stroke,
+                    },
+                    None => return,
+                },
                 KeyReport::Passed {
                     trace_id,
                     pressed_at_us,
@@ -445,6 +473,7 @@ fn run(
             };
             let _ = reports_tx.send(command);
         }),
+        holding,
     )?;
 
     // The start sound, and the initial outpost target (the focus listener
@@ -914,9 +943,18 @@ fn foreground_pid() -> Option<Pid> {
     (pid != 0).then_some(Pid(pid))
 }
 
+/// The longest a held caret key waits for the read of the caret before it
+/// (`TextOp::ReadCaret`): past it the read is ended as unanswered and the
+/// key is passed on as the hook would have passed it
+/// (`docs/design/key-holding.md`, "The bound").
+const HELD_KEY_BOUND: Duration = Duration::from_millis(150);
+
 /// The reducer thread's dependencies, bundled to keep [`reducer_loop`]'s
 /// signature from growing an argument for every subsystem it touches.
 struct ReducerContext {
+    /// Whether the keyboard hook holds caret keys back, set from Core's
+    /// focus after each input.
+    holding: Arc<KeyHolding>,
     manager: Arc<SpeechManager>,
     /// Where copies to the clipboard are made, off the reducer thread.
     clipboard: clipboard::Clipboard,
@@ -958,6 +996,15 @@ pub(crate) enum ShellCommand {
     CaretKey {
         input: Box<Input>,
         pressed_at_us: u64,
+    },
+    /// A caret key the hook held back, an `Input::HeldKey`, with its
+    /// gesture, when the hook saw it, and the stroke to send again once
+    /// Core passes it on.
+    HeldKey {
+        input: Box<Input>,
+        gesture: GestureId,
+        pressed_at_us: u64,
+        stroke: verbatim_input_windows::HeldStroke,
     },
     DumpTree(DumpTicket, Sender<DumpTreeResult>),
     /// The control-plane caller waiting for this tree dump stopped waiting:
@@ -1018,6 +1065,8 @@ struct ReducerThread<'a> {
     frames: Frames,
     /// Room for the messages [`Frames`] hands on for one input.
     decoded: Vec<OutpostMessage>,
+    /// The caret keys the hook held back, until Core passes them on.
+    held_keys: held_keys::HeldKeys,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
     /// (`docs/design/communication.md`, section 6.7).
@@ -1367,6 +1416,19 @@ impl ReducerThread<'_> {
                 }
                 self.apply(*input);
             }
+            ShellCommand::HeldKey {
+                input,
+                gesture,
+                pressed_at_us,
+                stroke,
+            } => {
+                if let Input::HeldKey { trace_id, .. } = &*input {
+                    self.context.ledger.key_pressed(*trace_id, pressed_at_us);
+                    self.held_keys
+                        .held(*trace_id, &gesture, stroke, pressed_at_us);
+                }
+                self.apply(*input);
+            }
             ShellCommand::DumpTree(ticket, reply) => self.dump_tree(ticket, reply),
             ShellCommand::ShellItems(kind, deliver) => self.shell_items(kind, deliver),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
@@ -1501,6 +1563,7 @@ impl ReducerThread<'_> {
             | Input::Command { trace_id, .. }
             | Input::TextCompleted { trace_id, .. }
             | Input::CaretKey { trace_id, .. }
+            | Input::HeldKey { trace_id, .. }
             | Input::CharacterTyped { trace_id, .. }
             | Input::ClearingKey { trace_id } => *trace_id,
             _ => TraceId::mint(),
@@ -1526,6 +1589,7 @@ impl ReducerThread<'_> {
             self.context.readiness.notify();
         }
         self.context.ledger.reduced(trace_id);
+        self.context.holding.set(self.state.holds_caret_keys());
         {
             let mut recorder = self
                 .context
@@ -1686,6 +1750,8 @@ impl ReducerThread<'_> {
                 save_reader_settings(&self.context.store, settings);
             }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
+            Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
+            Effect::TextForKey(key, request) => self.text_request(key, request),
             _ => {}
         }
     }
@@ -1705,6 +1771,11 @@ impl ReducerThread<'_> {
         // idle.
         let id = if matches!(op, verbatim_model::TextOp::AwaitCaret(_)) {
             self.requests.begin_passive(outpost, asker)
+        } else if op == verbatim_model::TextOp::ReadCaret {
+            // A held key waits for this read; past the bound it is passed
+            // on without it (`docs/design/key-holding.md`).
+            self.requests
+                .begin_until(outpost, asker, Instant::now() + HELD_KEY_BOUND)
         } else {
             self.requests.begin(outpost, asker)
         };
@@ -1944,6 +2015,7 @@ fn reducer_loop(
         decoded: Vec::new(),
         barrier: idle::IdleBarrier::default(),
         reincarnated: HashSet::new(),
+        held_keys: held_keys::HeldKeys::default(),
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));

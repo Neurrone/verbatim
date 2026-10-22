@@ -427,6 +427,20 @@ first review command reads the line at the caret, and a `NoText` answer
 makes the object flat text, reviewed by its value or name as in M3. Any
 other object is flat text without asking.
 
+Held caret keys (the key-holding prototype, `docs/design/key-holding.md`).
+An `Input::HeldKey`, a caret key the keyboard hook held back because
+`SrState::holds_caret_keys` was true, asks the focus's outpost to read
+the caret (`TextOp::ReadCaret`) and keeps the key (`HeldKeys`); a held
+key that comes while a read is in flight waits behind it. The read's
+answer becomes the focus's caret, as a report's does, and the key is
+passed on (`Effect::PassHeldKey`) and handled as an `Input::CaretKey`
+pressed one millisecond after the read ended, so the caret before the
+key, here and in the outpost, is the one the read found. Any other answer,
+a failure or the shell's bound passing, passes the key on with the hook's
+time. The next waiting key's read is asked for once the key before it was
+passed on; with no focus whose caret is read, a held key is passed on at
+once.
+
 Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
 `Input::CaretKey` on a focus with text asks its outpost to watch for
 evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when

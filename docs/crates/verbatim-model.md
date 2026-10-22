@@ -413,6 +413,16 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   unselected, "<new> selected instead", or "selection removed" when
   nothing is selected now (`docs/parity/text.md`, "TextInfo-equivalent
   layer").
+- `ReadCaret`: the caret before a caret key the keyboard hook held back
+  (the key-holding prototype, `docs/design/key-holding.md`). Answer
+  `TextReply::Caret` with `moved` false, the caret's line, selection and
+  `selection_line` as a caret event's report carries them, no unit and no
+  selection changes, and `read_at_ms`; keep the read among the node's
+  caret reports, so the key's watch takes it as the caret before the key,
+  and leave the selection kept for comparison as it was. Core passes the
+  held key on with `Effect::PassHeldKey(trace_id)` once this is answered,
+  whatever the answer, and the key reaches Core as `Input::HeldKey`, with
+  the same fields as `Input::CaretKey`.
 - `Read(TextRead { at, movement, unit })`: start at `at`, move by
   `movement` (a `TextMovement`: a unit and a signed count) when there is
   one, landing on that unit's start, then read the `unit` containing the

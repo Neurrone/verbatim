@@ -1974,6 +1974,16 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     out and reads their text in the same round trip when the selection
     moved (`CaretRead::changes`), and the edit controls work them out call
     by call.
+  - The caret before a held key (`TextOp::ReadCaret`, the key-holding
+    prototype, `docs/design/key-holding.md`) is read as a caret event's
+    report reads it, with no formatting and without comparing or
+    replacing the selection kept for the node (`LastSelection::Ignore`),
+    one round trip through UIA where the provider runs remote operations,
+    and is answered as a `CaretReply` with `moved` false and its read
+    time. It joins the node's remembered reports, so the held key's watch,
+    which Core sends with a press time just after the read, takes it as
+    its baseline. It is not noted as a read of the caret that covers a
+    caret event observed before it.
   - A selection no key made, such as the mouse's or the application's, is
     reported with the caret event that follows it, as NVDA's auto-select
     detection reports any selection change of a UIA or classic edit focus

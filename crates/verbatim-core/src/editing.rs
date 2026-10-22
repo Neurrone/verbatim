@@ -38,8 +38,8 @@ use verbatim_model::{
 };
 
 use crate::state::{
-    CARET_HISTORY, CaretContext, NavigatorRead, PendingCaret, PendingText, ReviewText, SrState,
-    TextFollowUp, TimedCaret,
+    CARET_HISTORY, CaretContext, HeldKey, HeldRead, NavigatorRead, PendingCaret, PendingText,
+    ReviewText, SrState, TextFollowUp, TimedCaret,
 };
 use crate::text;
 
@@ -184,6 +184,102 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         node_id: node,
         op: TextOp::AwaitCaret(watch),
     }));
+    effects
+}
+
+/// The focus whose caret keys are watched for evidence: alive, with a
+/// caret Core knows or a role that may have text ([`caret_key`]'s test).
+pub(crate) fn text_focus(state: &SrState) -> Option<NodeId> {
+    let focus = state.focus.as_ref().filter(|focus| focus.alive)?;
+    let node = focus.snapshot.id;
+    let known = state.caret.as_ref().is_some_and(|caret| caret.node == node);
+    (known || may_have_text(focus.snapshot.role)).then_some(node)
+}
+
+/// Handles a caret key the keyboard hook held back
+/// (`docs/design/key-holding.md`): the focus's outpost reads the caret
+/// before it, as NVDA's caret scripts read the caret before they send the
+/// key. A key pressed while another's caret is read waits behind it, and
+/// is passed on in order once the keys before it are.
+pub(crate) fn held_key(
+    state: &mut SrState,
+    trace_id: TraceId,
+    key: CaretKey,
+    pressed_at_ms: u64,
+) -> Vec<Effect> {
+    state.held_keys.waiting.push_back(HeldKey {
+        trace_id,
+        key,
+        pressed_at_ms,
+    });
+    next_held(state)
+}
+
+/// Starts the next waiting held key's read, passing on at once every key
+/// that has no caret to read, until a read is in flight or no key waits.
+fn next_held(state: &mut SrState) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    while state.held_keys.reading.is_none() {
+        let Some(held) = state.held_keys.waiting.pop_front() else {
+            break;
+        };
+        let Some(node) = text_focus(state) else {
+            effects.extend(pass_held(state, held, held.pressed_at_ms));
+            continue;
+        };
+        let query_id = state.allocate_query_id();
+        state.held_keys.reading = Some(HeldRead {
+            query_id,
+            node,
+            key: held,
+        });
+        effects.push(Effect::TextForKey(
+            held.trace_id,
+            TextRequest {
+                query_id,
+                node_id: node,
+                op: TextOp::ReadCaret,
+            },
+        ));
+    }
+    effects
+}
+
+/// Passes `held` on to the application and watches for its evidence as
+/// for a caret key the hook passed itself, the key taken as pressed at
+/// `at_ms`.
+fn pass_held(state: &mut SrState, held: HeldKey, at_ms: u64) -> Vec<Effect> {
+    let mut effects = vec![Effect::PassHeldKey(held.trace_id)];
+    crate::terminal::caret_key(state);
+    effects.extend(caret_key(state, held.key, at_ms));
+    effects
+}
+
+/// Handles the read of the caret before a held key: a caret read becomes
+/// the focus's caret, as a report does, and the key, passed on, is taken
+/// as pressed just after the read ended, so that its watch, here and in
+/// the outpost, takes the read as the caret before the key (the newest
+/// report from before the key). Any other answer, the read having failed
+/// or passed its bound in the shell, passes the key on with the hook's
+/// time, judged as a key the hook passed itself. The key waiting next has
+/// its caret read after this key was passed on, as NVDA's next caret
+/// script reads after the first's key was sent.
+pub(crate) fn held_read(state: &mut SrState, reading: HeldRead, reply: TextReply) -> Vec<Effect> {
+    let held = reading.key;
+    let at_ms = match reply {
+        TextReply::Caret(reply) => {
+            let at_ms = if reply.read_at_ms == 0 {
+                held.pressed_at_ms
+            } else {
+                reply.read_at_ms + 1
+            };
+            update_caret(state, reading.node, reply.caret, reply.read_at_ms);
+            at_ms
+        }
+        _ => held.pressed_at_ms,
+    };
+    let mut effects = pass_held(state, held, at_ms);
+    effects.extend(next_held(state));
     effects
 }
 

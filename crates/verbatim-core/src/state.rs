@@ -255,6 +255,33 @@ pub(crate) struct PendingCaret {
     pub(crate) heard: Vec<verbatim_model::UtteranceSegment>,
 }
 
+/// A caret key the keyboard hook held back from the application
+/// (`Input::HeldKey`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct HeldKey {
+    /// The key's trace, which also names it to the shell that passes it on.
+    pub(crate) trace_id: TraceId,
+    pub(crate) key: CaretKey,
+    /// When the hook saw it, on the outposts' clock; 0 when unknown.
+    pub(crate) pressed_at_ms: u64,
+}
+
+/// A held key whose caret is being read before it is passed on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct HeldRead {
+    pub(crate) query_id: QueryId,
+    pub(crate) node: NodeId,
+    pub(crate) key: HeldKey,
+}
+
+/// The caret keys the hook held back: the one whose caret is being read,
+/// and those pressed while it was, each passed on in the order pressed.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct HeldKeys {
+    pub(crate) reading: Option<HeldRead>,
+    pub(crate) waiting: std::collections::VecDeque<HeldKey>,
+}
+
 /// A text request a review or text command made, and what to do with its
 /// answer. A newer command's request supersedes it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -556,6 +583,10 @@ pub struct SrState {
     /// of the selection (`editing::superseded_reply`).
     #[serde(default)]
     pub(crate) superseded_caret: Option<(QueryId, NodeId)>,
+    /// The caret keys the keyboard hook held back
+    /// (`docs/design/key-holding.md`).
+    #[serde(default)]
+    pub(crate) held_keys: HeldKeys,
     /// The review or text command's request in flight.
     #[serde(default)]
     pub(crate) pending_text: Option<PendingText>,
@@ -624,6 +655,15 @@ impl SrState {
     #[must_use]
     pub fn focuses_queued(&self) -> u64 {
         self.focuses_queued
+    }
+
+    /// Whether a caret key pressed now is held back until the focus's
+    /// caret has been read (`docs/design/key-holding.md`): the focus has
+    /// text, or may have, as for the caret keys whose evidence is watched.
+    /// The keyboard hook holds caret keys only while this holds.
+    #[must_use]
+    pub fn holds_caret_keys(&self) -> bool {
+        crate::editing::text_focus(self).is_some()
     }
 
     /// Forgets the focus's caret and its timed reports.
@@ -749,6 +789,9 @@ impl SrState {
         }
         if let Some(pending) = &self.pending_text {
             insert(pending.node);
+        }
+        if let Some(reading) = &self.held_keys.reading {
+            insert(reading.node);
         }
         if let Some(marker) = self.start_marker {
             insert(marker.node());

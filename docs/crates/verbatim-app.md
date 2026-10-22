@@ -113,6 +113,19 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   settings from `keyboard.speech_interrupt_for_characters` and
   `keyboard.speech_interrupt_for_enter`. The router maps a script action
   to its reducer command with `ScriptAction::review_command`.
+- Held caret keys (the key-holding prototype,
+  `docs/design/key-holding.md`): the hook holds the caret table's keys
+  while a `KeyHolding` switch is on, which the reducer thread sets after
+  every input from `SrState::holds_caret_keys`. A held key's report
+  becomes `Input::HeldKey`, its stroke kept by its trace (`held_keys`)
+  until Core emits `Effect::PassHeldKey`, which sends it with `SendInput`
+  tagged `PASSED_ON_TAG`, the gesture's Shift, Control or Alt that are no
+  longer down pressed around it and the key released first if Windows
+  still has it down, as NVDA's gesture send does, and logs how long the
+  key was held (`verbatim::held_key`, `held_us`). The read of the caret
+  before the key (`TextOp::ReadCaret`) is a request with a deadline,
+  `HELD_KEY_BOUND`, 150 milliseconds: past it the request ends as
+  unanswered and Core passes the key on without it.
 - `Effect::Text` goes to the outpost of the node it names as
   `Query::Text`, recorded in the request table as `Asker::Text`; its one
   outcome comes back as `Input::TextCompleted` under the reducer's query

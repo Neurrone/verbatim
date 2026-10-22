@@ -19,7 +19,8 @@
 //! Shift key after a selection Verbatim made or a caret it moved compares
 //! with it; and a selection's start is reported in the line it starts in;
 //! and a text field a focus-now query answered with, and no focus event
-//! reported, has a caret event no key caused reported.
+//! reported, has a caret event no key caused reported; and a held key's
+//! watch is judged from the caret read before the key.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -197,6 +198,62 @@ fn a_caret_move_raised_later_answers_the_watch() {
     assert_eq!(reply.caret.line.offset, 1);
     assert_eq!(reply.unit.expect("the character").text, "l");
     assert_eq!(reply.selection_changes, []);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A held caret key's caret, read before the key is passed on
+/// (`TextOp::ReadCaret`, `docs/design/key-holding.md`), is its watch's
+/// baseline, though the application moved the caret there without
+/// reporting it: the watch stays open until the key's own move, and is
+/// answered with the caret where the key took it. Judged from the focus's
+/// report, the newest the outpost had made before the read, the
+/// unreported move would have answered the watch at once.
+fn a_held_keys_watch_is_judged_from_the_caret_read_before_it() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-held");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    // The application moves its caret and reports nothing.
+    app.send("caret doc 3");
+    let read = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::ReadCaret,
+    });
+    let before = caret_reply(answer_to(&outpost, read));
+    assert!(!before.moved);
+    assert_eq!(
+        (before.caret.line.text.as_str(), before.caret.line.offset),
+        (
+            "alpha beta
+",
+            3
+        )
+    );
+    outpost.settled();
+    // The key is passed on just after the read, as Core takes it.
+    let key = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(TextPosition {
+                anchor: before.caret.line.start,
+                offset: before.caret.line.offset,
+            }),
+            pressed_at_ms: before.read_at_ms + 1,
+            unit: TextUnit::Character,
+            compare: None,
+            deletes: false,
+        }),
+    });
+    // The watch is open: the caret is where the read found it.
+    outpost.settled();
+    app.send("caret doc 4");
+    app.send("caret-event doc");
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert!(reply.moved);
+    assert_eq!(reply.caret.line.offset, 4);
+    assert_eq!(reply.unit.expect("the character").text, "a");
     heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
@@ -1306,6 +1363,10 @@ fn main() {
         (
             "a_caret_move_raised_later_answers_the_watch",
             a_caret_move_raised_later_answers_the_watch,
+        ),
+        (
+            "a_held_keys_watch_is_judged_from_the_caret_read_before_it",
+            a_held_keys_watch_is_judged_from_the_caret_read_before_it,
         ),
         (
             "a_key_that_moves_nothing_is_answered_with_nothing",

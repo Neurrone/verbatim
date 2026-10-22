@@ -559,6 +559,23 @@ pub enum Input {
         #[serde(default)]
         pressed_at_ms: u64,
     },
+    /// A caret key the keyboard hook held back from the application, as
+    /// NVDA's caret scripts hold theirs (`docs/design/key-holding.md`): the
+    /// reducer has the focus's outpost read the caret before the key, then
+    /// passes the key on ([`Effect::PassHeldKey`]) and watches for its
+    /// evidence from that exact caret, as for [`Input::CaretKey`]. The key
+    /// is always passed on, whatever the read's outcome.
+    HeldKey {
+        /// Trace ID minted when the key was observed; it also names the
+        /// key to pass on.
+        trace_id: TraceId,
+        /// Which key.
+        key: CaretKey,
+        /// As [`Input::CaretKey`]'s: when the hook saw the key, on the
+        /// outposts' clock; 0 when unknown.
+        #[serde(default)]
+        pressed_at_ms: u64,
+    },
     /// Text was typed into the focused application: one character, or
     /// several at once when an input method commits a composition (one key
     /// press need not be one character). Sourced on the platform side,
@@ -775,4 +792,14 @@ pub enum Effect {
     /// The reducer changed a reader setting itself, by a toggle key; the
     /// shell saves the new settings.
     SettingsChanged(ReaderSettings),
+    /// Pass the caret key the hook held back as [`Input::HeldKey`] with
+    /// this trace ID on to the application, re-sent as the user pressed
+    /// it.
+    PassHeldKey(TraceId),
+    /// [`Effect::Text`] on behalf of the key with this trace ID, whatever
+    /// input asked for it: the read before a held key that waited behind
+    /// another is asked for while the reducer handles the other key's
+    /// answer, and its answer, and the speech after it, must carry its own
+    /// key's trace, so that its speech is that key's.
+    TextForKey(TraceId, TextRequest),
 }

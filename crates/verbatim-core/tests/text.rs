@@ -169,7 +169,7 @@ fn request(effects: &[Effect]) -> TextRequest {
     let requests: Vec<&TextRequest> = effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::Text(request) => Some(request),
+            Effect::Text(request) | Effect::TextForKey(_, request) => Some(request),
             _ => None,
         })
         .collect();
@@ -4282,4 +4282,124 @@ fn reporting_the_focus_with_none_says_no_focus() {
     let mut state = SrState::new();
     let effects = reduce(&mut state, &command(ReviewCommand::ReportFocus, 0));
     assert_eq!(spoken(&effects), vec![message(Message::NoFocus)]);
+}
+
+/// A caret key the keyboard hook held back, pressed at `pressed_at_ms`.
+fn held_at(trace_id: TraceId, motion: CaretMotion, pressed_at_ms: u64) -> Input {
+    Input::HeldKey {
+        trace_id,
+        key: CaretKey {
+            motion,
+            select: false,
+        },
+        pressed_at_ms,
+    }
+}
+
+/// The caret read before a held key, read at `read_at_ms`.
+fn read_before(line: TextChunk, read_at_ms: u64) -> TextReply {
+    TextReply::Caret(Box::new(CaretReply {
+        same_line: None,
+        removed: None,
+        moved: false,
+        caret: CaretReport {
+            line,
+            selection: None,
+            selection_line: None,
+        },
+        read_at_ms,
+        unit: None,
+        selection_changes: Vec::new(),
+        content_changed: false,
+        new_selection: None,
+    }))
+}
+
+#[test]
+fn a_held_key_is_passed_on_once_its_caret_is_read_and_judged_from_that_caret() {
+    // Core last heard of the caret at the line's start; the application
+    // has since moved it to "l" without reporting it.
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::EditableText, StateSet::new()));
+    let _ = caret_event_at(&mut state, line("Hello", 100, 0), 300);
+    let trace = TraceId::mint();
+    let effects = reduce(&mut state, &held_at(trace, CaretMotion::NextCharacter, 400));
+    // Nothing is passed on before the caret is read.
+    let asked = request(&effects);
+    assert_eq!(effects.len(), 1);
+    assert_eq!(asked.op, TextOp::ReadCaret);
+    let effects = reduce(
+        &mut state,
+        &completed(asked.query_id, read_before(line("Hello", 101, 3), 410)),
+    );
+    // The key is passed on first, then watched from the caret read, taken
+    // as pressed just after the read.
+    assert_eq!(effects[0], Effect::PassHeldKey(trace));
+    let TextOp::AwaitCaret(watch) = request(&effects).op else {
+        panic!("expected a caret wait, got {effects:?}");
+    };
+    assert_eq!(
+        watch.since,
+        Some(TextPosition {
+            anchor: TextAnchor(101),
+            offset: 3
+        })
+    );
+    assert_eq!(watch.pressed_at_ms, 411);
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply_at(line("Hello", 101, 4), 420),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("o")]);
+}
+
+#[test]
+fn held_keys_are_passed_on_in_order_whatever_their_reads_answer() {
+    let mut state = editing("Hello", 0);
+    let (first, second) = (TraceId::mint(), TraceId::mint());
+    let effects = reduce(&mut state, &held_at(first, CaretMotion::NextCharacter, 400));
+    let reading = request(&effects).query_id;
+    // A key pressed while the first one's caret is read waits behind it.
+    let effects = reduce(
+        &mut state,
+        &held_at(second, CaretMotion::NextCharacter, 405),
+    );
+    assert_eq!(effects, []);
+    // A read that failed, or passed its bound, still passes the key on,
+    // watched as a key the hook passed itself; the next key's caret is
+    // read once the first key was passed on.
+    let effects = reduce(&mut state, &completed(reading, TextReply::Unanswered));
+    assert_eq!(effects[0], Effect::PassHeldKey(first));
+    let ops: Vec<TextOp> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Text(request) | Effect::TextForKey(_, request) => Some(request.op.clone()),
+            _ => None,
+        })
+        .collect();
+    let [TextOp::AwaitCaret(watch), TextOp::ReadCaret] = ops.as_slice() else {
+        panic!("expected the first key's watch, then the second's read: {ops:?}");
+    };
+    assert_eq!(watch.pressed_at_ms, 400);
+    // The second key's read is made on its own key's behalf, though the
+    // first key's answer asked for it, so its answer and speech are its own.
+    let Some(Effect::TextForKey(key, read)) = effects.last() else {
+        panic!("expected the second key's read last: {effects:?}");
+    };
+    assert_eq!(*key, second);
+    let effects = reduce(
+        &mut state,
+        &completed(read.query_id, read_before(line("Hello", 101, 1), 430)),
+    );
+    assert_eq!(effects[0], Effect::PassHeldKey(second));
+
+    // With no focus whose caret is read, a held key is passed on at once.
+    let mut state = SrState::new();
+    focus(&mut state, node(6, Role::Button, StateSet::new()));
+    let third = TraceId::mint();
+    let effects = reduce(&mut state, &held_at(third, CaretMotion::NextCharacter, 500));
+    assert_eq!(effects, [Effect::PassHeldKey(third)]);
 }

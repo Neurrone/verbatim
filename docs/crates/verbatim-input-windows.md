@@ -5,8 +5,9 @@ never-blocking imperative shell around [verbatim-input](verbatim-input.md)'s
 pure `DecisionMachine`. It is a separate crate so that the machine, the key
 names, and the gesture tables carry no Windows dependency.
 
-Public API: `InputHook::start(config, map, events, speech, reports)`,
-which installs `WH_KEYBOARD_LL` on a dedicated thread; drop uninstalls.
+Public API: `InputHook::start(config, map, events, speech, reports,
+holding)`, which installs `WH_KEYBOARD_LL` on a dedicated thread; drop
+uninstalls.
 `events` is the gesture router's channel of `Routed` values, in the order
 the keys came. It must be unbounded, so that no key is ever lost, and
 `start` refuses a bounded one with `InvalidInput`. The values are
@@ -88,6 +89,27 @@ pass with `try_send` too, so the guarantee that no key is lost rests on
 refuses a bounded channel. The `hook_echo` example installs the
 real hook with two bound gestures and prints what fires and what each
 key reports; it needs an interactive desktop and is never run in CI.
+
+## Holding caret keys (the key-holding prototype)
+
+`holding` is a `KeyHolding`: the caret keys the hook holds back (the
+whole caret table, `verbatim_input::caret_bindings`) and an atomic
+switch the app sets after every input from Core's focus
+(`SrState::holds_caret_keys`, true while the focus has text or may have,
+as for the caret keys whose evidence is watched); the hook reads it with
+one relaxed load, so it never waits (`docs/design/key-holding.md`). While
+it is on, a key-down that completes one of those gestures is swallowed and
+reported as `KeyReport::Held`, with its press time and the stroke it came
+from (`HeldStroke`: virtual key, scan code, extended flag), after its
+effect on speech as before; the key's release is swallowed too, so the
+application never sees a release without its press. The clearing keys,
+typed characters, Enter and any other key pass as before. A key carrying
+`PASSED_ON_TAG` in `dwExtraInfo`, a held key the app sends again once
+Core has read the caret, passes straight through, decided by nothing,
+numbered by nothing and reported to nobody, as NVDA ignores the keys its
+scripts send; a key the end-to-end harness injects carries its stroke
+number instead and is held like a typed one. Two unit tests drive
+`decide` with the hold on and off, and with each tag.
 
 ## Typed text (the `typed` module)
 

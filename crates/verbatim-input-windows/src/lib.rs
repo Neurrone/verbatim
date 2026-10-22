@@ -52,10 +52,10 @@
 mod typed;
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, PoisonError, mpsc};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -72,7 +72,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use verbatim_input::map::SharedGestureMap;
-use verbatim_input::state::{DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect};
+use verbatim_input::state::{
+    Decision, DecisionConfig, DecisionMachine, EmittedGesture, KeySpeechEffect,
+};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 /// The `dwExtraInfo` Verbatim puts on keys it injects for its own purposes
@@ -81,6 +83,59 @@ use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 /// injected on a user's behalf, such as the end-to-end harness's, carry no
 /// tag and cancel speech like typed ones.
 pub const OWN_INPUT_TAG: usize = 0x5642_544D;
+
+/// The `dwExtraInfo` Verbatim puts on a caret key it held back and now
+/// passes on to the application (`docs/design/key-holding.md`): the hook
+/// passes it, and the modifiers sent with it, straight down the hook chain,
+/// deciding and reporting nothing, as NVDA ignores the keys its caret
+/// scripts send. Keys injected on a user's behalf, such as the end-to-end
+/// harness's, carry other values and are held like typed ones.
+pub const PASSED_ON_TAG: usize = 0x5642_4B50;
+
+/// Which caret keys the hook holds back, and whether it holds them now
+/// (`docs/design/key-holding.md`). The keys are fixed when the hook starts;
+/// the switch is set by the reducer's thread from the focus after each
+/// input ([`KeyHolding::set`]) and read by the hook procedure with one
+/// atomic load, so the hook never waits for it.
+#[derive(Debug)]
+pub struct KeyHolding {
+    on: AtomicBool,
+    keys: HashSet<GestureId>,
+}
+
+impl KeyHolding {
+    /// Holds `keys`, the caret keys, once switched on.
+    #[must_use]
+    pub fn new(keys: impl IntoIterator<Item = GestureId>) -> Self {
+        Self {
+            on: AtomicBool::new(false),
+            keys: keys.into_iter().collect(),
+        }
+    }
+
+    /// Switches holding on, while the focus is text whose caret Verbatim
+    /// reads, or off.
+    pub fn set(&self, on: bool) {
+        self.on.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether a key that completed `gesture` is held back now.
+    fn holds(&self, gesture: &GestureId) -> bool {
+        self.on.load(Ordering::Relaxed) && self.keys.contains(gesture)
+    }
+}
+
+/// The key a held caret key's press came from, for the application to be
+/// sent it again.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeldStroke {
+    /// The virtual-key code.
+    pub vk: u16,
+    /// The hardware scan code.
+    pub scan_code: u32,
+    /// Whether it is an extended key (the arrows and the navigation block).
+    pub extended: bool,
+}
 
 /// What the hook sends the gesture router, in the order the keys came.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -149,7 +204,7 @@ pub fn key_of(trace: TraceId) -> Option<u64> {
 /// [`SpeechEffectFn`] explains.
 pub type KeyReportFn = Box<dyn Fn(KeyReport) + Send>;
 use verbatim_input::{KeyDecision, KeyEvent};
-use verbatim_model::TraceId;
+use verbatim_model::{GestureId, TraceId};
 
 /// What a key the hook passed to the application did, reported after the
 /// key's effect on speech.
@@ -170,6 +225,18 @@ pub enum KeyReport {
         /// about 16 ms: converted to this clock it could fall after the
         /// application handled the key.
         pressed_at_us: u64,
+    },
+    /// A caret key the hook held back from the application, because
+    /// holding is on ([`KeyHolding`]): the reducer has the caret read, then
+    /// has the key sent again ([`HeldStroke`], tagged [`PASSED_ON_TAG`]).
+    /// Its release is held back too.
+    Held {
+        /// The gesture.
+        gesture: EmittedGesture,
+        /// As [`KeyReport::Observed`]'s.
+        pressed_at_us: u64,
+        /// The key to send again.
+        stroke: HeldStroke,
     },
     /// Any other key passed to the application, typing no text, that is not
     /// a modifier or a lock key: the source of a caret key judged by where
@@ -203,6 +270,10 @@ struct HookState {
     speech: SpeechEffectFn,
     reports: KeyReportFn,
     typing: typed::Typing,
+    holding: Arc<KeyHolding>,
+    /// The keys whose press was held back, whose release is held back too,
+    /// so the application never sees a release without its press.
+    held_downs: HashSet<(u16, bool)>,
 }
 
 thread_local! {
@@ -228,7 +299,8 @@ impl InputHook {
     /// press's effect on speech (cancel, or pause and resume), before the
     /// press's gesture is sent, so speech the gesture causes is never the
     /// speech it cancels. `reports` receives, after the speech effect, what
-    /// each passed key did ([`KeyReport`]).
+    /// each passed or held key did ([`KeyReport`]). `holding` says which
+    /// caret keys are held back, and when.
     ///
     /// # Errors
     ///
@@ -240,6 +312,7 @@ impl InputHook {
         events: Sender<Routed>,
         speech: SpeechEffectFn,
         reports: KeyReportFn,
+        holding: Arc<KeyHolding>,
     ) -> io::Result<Self> {
         if events.capacity().is_some() {
             return Err(io::Error::new(
@@ -253,7 +326,9 @@ impl InputHook {
 
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
-            .spawn(move || hook_thread(config, map, events, (speech, reports), &ready_tx))?;
+            .spawn(move || {
+                hook_thread(config, map, events, (speech, reports, holding), &ready_tx);
+            })?;
 
         match ready_rx.recv() {
             Ok(Ok(thread_id)) => Ok(Self {
@@ -299,7 +374,7 @@ fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
     events: Sender<Routed>,
-    (speech, reports): (SpeechEffectFn, KeyReportFn),
+    (speech, reports, holding): (SpeechEffectFn, KeyReportFn, Arc<KeyHolding>),
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
     prioritize_role("keyboard hook", HOOK_PRIORITY);
@@ -340,6 +415,8 @@ fn hook_thread(
             speech,
             reports,
             typing: typed::Typing::with_text_services(),
+            holding,
+            held_downs: HashSet::new(),
         });
     });
 
@@ -493,6 +570,26 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
+/// Holds a caret key back while holding is on, and its release with it,
+/// swallowing both in `decision`; the reducer has the key sent again once
+/// the caret has been read. Returns whether this key-down was held.
+fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decision) -> bool {
+    let stroke = (event.vk, event.extended);
+    let held = event.pressed
+        && !own
+        && decision
+            .observed
+            .as_ref()
+            .is_some_and(|observed| state.holding.holds(&observed.gesture));
+    if held {
+        state.held_downs.insert(stroke);
+        decision.decision = KeyDecision::Swallow;
+    } else if !event.pressed && state.held_downs.remove(&stroke) {
+        decision.decision = KeyDecision::Swallow;
+    }
+    held
+}
+
 /// Decides one key transition with the hook thread's state, carries out its
 /// effect on speech, and sends and reports what it caused; `scan_code` and
 /// `extra_info` are the key event's own. Every send is on the router's
@@ -504,13 +601,19 @@ fn decide(
     scan_code: u32,
     extra_info: usize,
 ) -> KeyDecision {
+    // A held key Verbatim passes on, with its modifiers, goes straight to
+    // the application: it was decided and reported when it was pressed.
+    if extra_info == PASSED_ON_TAG {
+        return KeyDecision::Pass;
+    }
     // Num Lock decides what the numpad's operator keys are: the
     // keyboard's own state, read locally before each key.
     // SAFETY: GetKeyState takes any virtual-key code.
     let num_lock = unsafe { GetKeyState(i32::from(VK_NUMLOCK.0)) } & 1 != 0;
     state.machine.set_num_lock(num_lock);
-    let decision = state.machine.on_key(event, Instant::now());
+    let mut decision = state.machine.on_key(event, Instant::now());
     let own = extra_info == OWN_INPUT_TAG;
+    let held = hold(state, event, own, &mut decision);
     let key_number = if event.pressed {
         next_key()
     } else {
@@ -530,9 +633,22 @@ fn decide(
         && !own
     {
         record_key_origin(observed.trace_id, key_number);
-        (state.reports)(KeyReport::Observed {
-            gesture: observed,
-            pressed_at_us: unix_us(),
+        let pressed_at_us = unix_us();
+        (state.reports)(if held {
+            KeyReport::Held {
+                gesture: observed,
+                pressed_at_us,
+                stroke: HeldStroke {
+                    vk: event.vk,
+                    scan_code,
+                    extended: event.extended,
+                },
+            }
+        } else {
+            KeyReport::Observed {
+                gesture: observed,
+                pressed_at_us,
+            }
         });
     }
     let passed = event.pressed
@@ -636,6 +752,8 @@ mod tests {
             speech: Box::new(|_, _| {}),
             reports: Box::new(|_| {}),
             typing: typed::Typing::default(),
+            holding: Arc::new(KeyHolding::new([])),
+            held_downs: HashSet::new(),
         };
         assert_eq!(
             decide(&mut state, key(CAPS, true), 0, 0),
@@ -676,9 +794,153 @@ mod tests {
             events,
             Box::new(|_, _| {}),
             Box::new(|_| {}),
+            Arc::new(KeyHolding::new([])),
         )
         .expect_err("a bounded channel could drop a key");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    /// A hook state observing Right Arrow and Escape, holding Right Arrow,
+    /// whose reports are collected in `reports`.
+    fn holding_state(
+        reports: &Arc<Mutex<Vec<KeyReport>>>,
+    ) -> (
+        HookState,
+        crossbeam_channel::Receiver<Routed>,
+        Arc<KeyHolding>,
+    ) {
+        use verbatim_input::GestureMap;
+        use verbatim_input::state::DecisionConfig;
+
+        let right = GestureId::parse("kb:rightarrow").expect("valid id");
+        let escape = GestureId::parse("kb:escape").expect("valid id");
+        let map = GestureMap::new([]).with_observed([right.clone(), escape]);
+        let holding = Arc::new(KeyHolding::new([right]));
+        let (events, routed) = crossbeam_channel::unbounded();
+        let sink = Arc::clone(reports);
+        let state = HookState {
+            machine: DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
+            events,
+            speech: Box::new(|_, _| {}),
+            reports: Box::new(move |report| sink.lock().unwrap().push(report)),
+            typing: typed::Typing::default(),
+            holding: Arc::clone(&holding),
+            held_downs: HashSet::new(),
+        };
+        (state, routed, holding)
+    }
+
+    /// Right Arrow, an extended key, pressed or released.
+    fn right_arrow(pressed: bool) -> KeyEvent {
+        KeyEvent {
+            vk: 0x27,
+            scan_code: 0x4D,
+            extended: true,
+            injected: false,
+            pressed,
+        }
+    }
+
+    /// While holding is on, a caret key in the holding set is held back,
+    /// press and release, and reported held with the stroke to send again;
+    /// a key observed but not held (Escape) still passes; with holding off
+    /// the caret key passes and is reported observed, as before.
+    #[test]
+    fn a_caret_key_is_held_while_holding_is_on() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let (mut state, _routed, holding) = holding_state(&reports);
+        holding.set(true);
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Swallow
+        );
+        assert_eq!(
+            decide(&mut state, right_arrow(false), 0x4D, 0),
+            KeyDecision::Swallow
+        );
+        let escape = |pressed| KeyEvent {
+            vk: 0x1B,
+            scan_code: 0x01,
+            extended: false,
+            injected: false,
+            pressed,
+        };
+        assert_eq!(decide(&mut state, escape(true), 0x01, 0), KeyDecision::Pass);
+        assert_eq!(
+            decide(&mut state, escape(false), 0x01, 0),
+            KeyDecision::Pass
+        );
+        holding.set(false);
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Pass
+        );
+        assert_eq!(
+            decide(&mut state, right_arrow(false), 0x4D, 0),
+            KeyDecision::Pass
+        );
+        let reports = reports.lock().unwrap();
+        let kinds: Vec<String> = reports
+            .iter()
+            .map(|report| match report {
+                KeyReport::Held {
+                    gesture, stroke, ..
+                } => format!(
+                    "held {} {:#04x} {:#04x} {}",
+                    gesture.gesture, stroke.vk, stroke.scan_code, stroke.extended
+                ),
+                KeyReport::Observed { gesture, .. } => format!("observed {}", gesture.gesture),
+                KeyReport::Passed { .. } => "passed".to_owned(),
+                KeyReport::Typed { text, .. } => format!("typed {text}"),
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "held kb:rightarrow 0x27 0x4d true",
+                "observed kb:escape",
+                "observed kb:rightarrow",
+            ]
+        );
+    }
+
+    /// A key carrying [`PASSED_ON_TAG`], a held key Verbatim passes on,
+    /// passes straight through, reported to nobody and sent on to no
+    /// router, though holding is on; a key the end-to-end harness injects,
+    /// with its stroke number, is the user's and is held.
+    #[test]
+    fn a_key_passed_on_passes_untouched_and_a_harness_key_is_held() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let (mut state, routed, holding) = holding_state(&reports);
+        holding.set(true);
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, PASSED_ON_TAG),
+            KeyDecision::Pass
+        );
+        assert_eq!(
+            decide(&mut state, right_arrow(false), 0x4D, PASSED_ON_TAG),
+            KeyDecision::Pass
+        );
+        assert!(reports.lock().unwrap().is_empty());
+        assert!(routed.try_recv().is_err());
+        let numbered = usize::try_from(verbatim_input::harness::encode(7, true)).unwrap();
+        let injected = |pressed| KeyEvent {
+            injected: true,
+            ..right_arrow(pressed)
+        };
+        assert_eq!(
+            decide(&mut state, injected(true), 0x4D, 0),
+            KeyDecision::Swallow
+        );
+        assert_eq!(
+            decide(&mut state, injected(false), 0x4D, numbered),
+            KeyDecision::Swallow
+        );
+        assert!(matches!(
+            reports.lock().unwrap().as_slice(),
+            [KeyReport::Held { .. }]
+        ));
+        assert_eq!(routed.try_recv(), Ok(Routed::Handled(7)));
     }
 
     #[test]

@@ -89,6 +89,11 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             terminal::caret_key(state);
             editing::caret_key(state, *key, *pressed_at_ms)
         }
+        Input::HeldKey {
+            trace_id,
+            key,
+            pressed_at_ms,
+        } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
         Input::CharacterTyped { trace_id, text } => {
             editing::character_typed(state, *trace_id, text)
         }
@@ -361,6 +366,13 @@ fn reduce_text_completed(
     query_id: QueryId,
     reply: verbatim_model::TextReply,
 ) -> Vec<Effect> {
+    if let Some(reading) = state
+        .held_keys
+        .reading
+        .take_if(|reading| reading.query_id == query_id)
+    {
+        return editing::held_read(state, reading, reply);
+    }
     if let Some(pending) = state
         .pending_caret
         .take_if(|pending| pending.query_id == query_id)

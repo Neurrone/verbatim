@@ -26,8 +26,8 @@ use windows::core::AgileReference;
 
 use verbatim_ia2::CHILDID_SELF;
 use verbatim_model::{
-    Backend, CallCounts, CaretReport, CaretWatch, NodeId, Role, SelectionChange, TextOp, TextReply,
-    TraceId,
+    Backend, CallCounts, CaretReply, CaretReport, CaretWatch, NodeId, Role, SelectionChange,
+    TextOp, TextReply, TraceId,
 };
 use verbatim_uia::map::is_terminal_class;
 use verbatim_uia::{Cached, Kept};
@@ -368,6 +368,9 @@ pub(super) fn may_have_text(context: &Context, node_id: NodeId, role: Role) -> b
 /// Answers one of Core's text requests other than a caret key's watch,
 /// which [`check_watch`] checks.
 pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextReply {
+    if *op == TextOp::ReadCaret {
+        return caret_before_key(context, node_id);
+    }
     let source = match source(context, node_id) {
         Ok(source) => source,
         Err(reply) => return reply,
@@ -384,6 +387,78 @@ pub(super) fn answer(context: &Context, node_id: NodeId, op: &TextOp) -> TextRep
         Source::Edit(mut source) => {
             let mut anchors = context.edit_anchors();
             text::perform(&mut source, &mut anchors.node(node_id.number()), op)
+        }
+    }
+}
+
+/// Reads `node_id`'s caret before a held caret key is passed on
+/// ([`TextOp::ReadCaret`], `docs/design/key-holding.md`): the read a caret
+/// event's report makes, one round trip through UIA where the window's
+/// provider runs remote operations (the caret read program), and the edit
+/// control's messages otherwise, with no formatting. It is kept among the
+/// node's caret reports, from which the key's watch takes the newest read
+/// before the key as its baseline, and leaves the selection kept for the
+/// next comparison alone, so the key's answer compares with the same
+/// selection it would have without the read. It is not noted as a read of
+/// the caret that answers a caret event observed before it: that event's
+/// report still compares the selection.
+fn caret_before_key(context: &Context, node_id: NodeId) -> TextReply {
+    let source = match source(context, node_id) {
+        Ok(source) => source,
+        Err(reply) => return reply,
+    };
+    let read_at_ms = std::cell::Cell::new(0);
+    let mut now = || {
+        let now = super::now_ms();
+        read_at_ms.set(now);
+        now
+    };
+    match source {
+        Source::Uia(mut source) => {
+            let mut anchors = context.uia_anchors();
+            let read = text::caret_report_since(
+                &mut source,
+                &mut anchors.node(node_id.number()),
+                &mut now,
+                (false, None, LastSelection::Ignore),
+            );
+            drop(anchors);
+            note_fallback(context, &mut source);
+            keep_support(context, node_id, &source);
+            before_reply(read, read_at_ms.get())
+        }
+        Source::Edit(mut source) => {
+            let mut anchors = context.edit_anchors();
+            let read = text::caret_report_since(
+                &mut source,
+                &mut anchors.node(node_id.number()),
+                &mut now,
+                (false, None, LastSelection::Ignore),
+            );
+            before_reply(read, read_at_ms.get())
+        }
+    }
+}
+
+/// The answer to [`TextOp::ReadCaret`] from its read, which ended at
+/// `read_at_ms`.
+fn before_reply<P>(read: Result<text::ReportedCaret<P>, TextError>, read_at_ms: u64) -> TextReply {
+    match read {
+        Ok(read) => TextReply::Caret(Box::new(CaretReply {
+            moved: false,
+            caret: read.report,
+            read_at_ms,
+            unit: None,
+            selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
+            same_line: None,
+            removed: None,
+        })),
+        Err(TextError::Gone) => TextReply::Gone,
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "the caret before a held key could not be read");
+            TextReply::Unanswered
         }
     }
 }

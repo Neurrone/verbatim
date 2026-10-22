@@ -581,6 +581,14 @@ pub enum TextOp {
     /// answered [`TextReply::Caret`] once evidence arrives, or
     /// [`TextReply::WatchEnded`] when the watch ends without it.
     AwaitCaret(CaretWatch),
+    /// Read the caret as it is now, before a held caret key is passed on
+    /// (`docs/design/key-holding.md`): answered [`TextReply::Caret`], with
+    /// `moved` false and the time of the read, the caret's line and the
+    /// selection, and the line the selection starts in when that is an
+    /// earlier one. The read is kept as the outpost's newest caret report
+    /// for the node, so the key's watch takes it as the caret before the
+    /// key; the selection the next report compares with is left as it was.
+    ReadCaret,
     /// Read one unit: answered [`TextReply::Read`].
     Read(TextRead),
     /// Read the text between two points, in document order whichever comes
