@@ -284,8 +284,11 @@ Differences:
     `an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms`,
     `an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms`,
     `an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms`,
-    `an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms`
-    and `a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change`).
+    `an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms`,
+    `a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change`
+    and, for a selection extended by Shift and a click after a key that
+    changed nothing, said at once as NVDA says it,
+    `a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends`).
     NVDA's Enter script reads the new line's text before the caret, which
     is empty in every case captured, so neither says anything for it;
     Verbatim has no such read, since Enter reaches it as typed text,
@@ -300,18 +303,30 @@ Differences:
     unselected"; Control+X and Control+V over a word, nothing, and
     Control+V over a line's rest, "kiwi unselected", the pasted word.
     Dickson judges these words wrong, since they name the new text as
-    though it had been selected; Verbatim keeps the selection's whole text
-    when it is reported and, when the old range no longer holds it, says
-    the change in general terms: "x" then "selection removed", and
-    "selection removed" after each of those keys' own words. NVDA's
-    behavior is not offered as a setting. The text is read in the caret
-    read's one round trip, in full, and compared length first. A range
-    that still holds its text is compared as NVDA compares it:
-    Control+Backspace over "beta ", which Notepad answers by deleting the word
-    before the selection, says "beta unselected" in both
+    though it had been selected; Verbatim keeps the selection's text when
+    it is reported and, when the old range no longer holds it, says the
+    change in general terms: "x" then "selection removed", and
+    "selection removed" after each of those keys' own words
     (`notepad_selection_keys` and `notepad_editing`; mockapp's
     `a_uia_selection_typed_over_is_said_in_general_terms` and
     `a_uia_deleting_key_over_a_selection_is_answered_in_general_terms`).
+    NVDA's behavior is not offered as a setting. Both texts are read in
+    the caret read's one round trip, each up to 513 UTF-16 code units, one
+    more than the 512 characters from which a selection is spoken as a
+    count (Fable, 2026-10-22, pending Dickson's acceptance), and compared
+    as read: typing over, cutting and pasting change the first characters
+    or the length, so a longer selection is compared by its first 513
+    units and by being longer, and only an edit that leaves both as they
+    were, such as one past its 513th unit, is compared as NVDA compares
+    it, in specific terms. The new selection's text is read only when its
+    ends moved; when they did not, what the old ends hold now is its text
+    and is kept (mockapp's `remote_and_classic_caret_reads_agree`). A
+    range that still holds its text is compared as NVDA compares it:
+    Control+Backspace over "beta ", which Notepad answers by deleting the
+    word before the selection, says "beta unselected" in both
+    (`notepad-second-word-control-backspace.txt`; no scenario asserts it
+    yet, since Verbatim's words before it differ, as the next item
+    records).
   - Different through UIA, recorded, not chosen: NVDA's caret over a
     selection is the selection's start in both backends, and Verbatim's
     through UIA is the selection's active end (`TextPattern2`'s caret),

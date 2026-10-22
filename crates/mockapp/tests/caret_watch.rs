@@ -14,7 +14,8 @@
 //! longer holds its text, and in a classic edit control in either order of
 //! its caret event and value change; and a deleting key's answer compares
 //! with the selection the outpost kept, in both backends, so a caret
-//! report that compared it first leaves the answer no change.
+//! report that compared it first leaves the answer no change, and a
+//! selection moved by a report read after the key is evidence of it.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -968,6 +969,70 @@ fn a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change() {
     app.quit();
 }
 
+/// A key that changes nothing over the selected "alpha" in a classic edit
+/// control, as Control+C copies it, its watch arriving only after the
+/// selection was extended to "alpha be", as Shift and a click extend it:
+/// that caret event's report says " be" selected and replaces the
+/// selection the outpost kept, and the caret, the selection's start, stays
+/// where it was. The selection in the report the watch takes its baseline
+/// from, before the key, has ends other than the selection's now, which is
+/// evidence: the key is answered at once, with no change left to say, so
+/// Core says the report's words then, as NVDA says them at once, and not
+/// when the watch reaches its bound.
+fn a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends() {
+    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-extended");
+    let pressed_at_ms = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after the epoch")
+            .as_millis(),
+    )
+    .expect("milliseconds that fit");
+    app.send("caret doc 0 8");
+    app.send("caret-event doc");
+    outpost.heard(&[Heard::Msaa(WinEventKind::TextSelectionChange)]);
+    assert_eq!(
+        reported_selection(&outpost, node),
+        (
+            vec![SelectionChange {
+                selected: true,
+                text: " be".to_owned(),
+                characters: 3,
+            }],
+            false,
+            None
+        )
+    );
+    outpost.settled();
+    let key = outpost.ask(Query::Text {
+        node_id: node,
+        op: TextOp::AwaitCaret(CaretWatch {
+            landing: true,
+            since: Some(TextPosition {
+                anchor: before.line.start,
+                offset: before.line.offset,
+            }),
+            pressed_at_ms,
+            unit: TextUnit::Word,
+            compare: None,
+            previous_selection: None,
+        }),
+    });
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        (
+            reply.moved,
+            reply.selection_changes,
+            reply.content_changed,
+            reply.new_selection
+        ),
+        (true, Vec::new(), false, None)
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// The selected "alpha" deleted from a document read through UIA with
 /// Delete: the answer compares with the selection the outpost kept, whose
 /// range no longer holds the "alpha" it held when it was reported, so the
@@ -1095,6 +1160,10 @@ fn main() {
         (
             "a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change",
             a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change,
+        ),
+        (
+            "a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends",
+            a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends,
         ),
         (
             "a_uia_deleting_key_over_a_selection_is_answered_in_general_terms",

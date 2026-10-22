@@ -1150,10 +1150,67 @@ fn a_caret_reports_selection_change_while_a_key_waits_is_said_after_the_keys_wor
     let _ = selection_event(
         &mut state,
         (line("alpha gamma\r\n", 100, 6), None),
-        (removed, true),
+        (removed.clone(), true),
     );
     let effects = reduce(&mut state, &completed(asked, TextReply::WatchEnded));
     assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
+}
+
+/// A caret report's selection change held while a key waited is said
+/// when the key's answer says the caret did not move, and when the answer
+/// was read once a later key was pressed, which is not this key's to
+/// speak.
+#[test]
+fn a_caret_reports_held_change_is_said_with_an_answer_not_spoken() {
+    let text = "alpha beta gamma\r\n";
+    let after = "alpha gamma\r\n";
+    let removed = vec![SelectionChange {
+        selected: false,
+        text: String::new(),
+        characters: 0,
+    }];
+    let selected = Some(Selection {
+        start: TextPosition {
+            anchor: TextAnchor(200),
+            offset: 0,
+        },
+        end: TextPosition {
+            anchor: TextAnchor(201),
+            offset: 0,
+        },
+    });
+    for later in [false, true] {
+        let mut state = editing(text, 0);
+        let _ = selection_event(
+            &mut state,
+            (line(text, 100, 6), selected),
+            (Vec::new(), false),
+        );
+        let effects = reduce(&mut state, &key(CaretMotion::Other, false));
+        let asked = request_of(&effects);
+        let _ = selection_event(
+            &mut state,
+            (line(after, 100, 6), None),
+            (removed.clone(), true),
+        );
+        if later {
+            let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
+        }
+        let effects = reduce(
+            &mut state,
+            &completed(asked, caret_reply(later, line(after, 100, 6), None)),
+        );
+        assert_eq!(
+            spoken(&effects),
+            vec![message(Message::SelectionRemoved)],
+            "{}",
+            if later {
+                "an answer read after a later key"
+            } else {
+                "an answer that did not move"
+            }
+        );
+    }
 }
 
 #[test]

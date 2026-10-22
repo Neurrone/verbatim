@@ -1919,12 +1919,19 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     nothing more to read. The evidence is the caret no longer where it was
     known to be, the characters either side of the caret changed from what
     was known, the text at the caret changed after a Delete, the
-    selection changed, or text was selected in the report the caret was
-    known from and is not now, or the reverse. The last counts because a
-    caret event's report can compare the selection before the watch
-    arrives, and a provider's positions follow edits, so a Backspace over
-    a selection in Windows 11 Notepad can leave the caret's neighbors as
-    they were. Where it was known to be is the newest caret this
+    selection changed, or the selection in the report the caret was known
+    from differs from the selection now: something selected in one and
+    not the other, or ends that are not the same positions. The last
+    counts because a caret event's report can compare the selection, and
+    replace the one kept, before the watch arrives: a provider's positions
+    follow edits, so a Backspace over a selection in Windows 11 Notepad
+    can leave the caret's neighbors as they were, and a selection
+    extended by Shift and a click after a key that changed nothing leaves
+    a classic edit control's caret, the selection's start, where it was.
+    The ends are compared only when that report's selection is not the
+    one the read compared with already (each report is numbered, and the
+    kept selection carries its report's number), so through UIA the
+    comparison's calls are made only after such a report. Where it was known to be is the newest caret this
     outpost reported for the node from a read that finished before the key
     was pressed (the watch's `pressed_at_ms`, stamped by the keyboard hook
     on the same Unix millisecond clock as `observed_at_ms`), which can be

@@ -39,12 +39,12 @@ const NAME: &str = "selection-keys";
 /// Each line of the document, one for each key.
 const LINE: &str = "alpha beta gamma";
 
-/// The scenario's document: seven copies of [`LINE`], which Notepad opens
+/// The scenario's document: eight copies of [`LINE`], which Notepad opens
 /// before Verbatim starts.
 pub(crate) fn document() -> Document {
     Document {
         name: NAME,
-        contents: format!("{LINE}\r\n").repeat(7),
+        contents: format!("{LINE}\r\n").repeat(8),
     }
 }
 
@@ -90,6 +90,16 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // the selection removed (`textbox-word-backspace.txt`).
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "backspace", &["blank", "selection removed"]);
+
+    // Control+Backspace over the first word: no word before the caret
+    // either (`textbox-word-control-backspace.txt`).
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press(
+        scenario,
+        "control+backspace",
+        &["blank", "selection removed"],
+    );
 
     // Backspace and Control+Backspace over the second word: the space and
     // the word before the caret (`textbox-second-word-backspace.txt`,

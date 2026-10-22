@@ -510,11 +510,13 @@ strikethrough styles, the foreground and background colors, the bullet
 style, and the link attribute), and which of them are being learned
 (`learning`: those whose support the caller does not know yet), and
 whether to read the caret again at the end (`recheck`, which a caret
-key's watch asks for), and whether to read, in full, the selection's text
+key's watch asks for), and whether to read the selection's text
 (`read_selection_text`) and the text between the old ends as they now
 are, when that selection held something (`read_previous_text`), which
 the outpost keeps and compares to decide whether the text changed under
-the selection. The `CaretAnswer`:
+the selection. Both are read up to `MAX_COMPARED_TEXT`, 513 UTF-16 code
+units, one more than the 512 characters from which a selection is
+spoken as a count, since they serve only that comparison. The `CaretAnswer`:
 
 - `caret`, a range whose start is the caret, and whether it is known to
   be collapsed; `selection`, the selected range when text is selected.
@@ -547,9 +549,11 @@ the selection. The `CaretAnswer`:
   between them, and the line then shows a character whose write moved the
   caret past where the caret was read (2026-10-14, `conhost_up_typing`).
   False without `recheck`.
-- `selection_text` and `previous_text`: the selection's whole text when
-  something is selected, and the old ends' text now, each only when
-  asked; read with no limit (`GetText` with -1).
+- `selection_text` and `previous_text`: the selection's text when
+  something is selected and its ends are not the old ones (or no old
+  ones were given), and the old ends' text now, each only when asked and
+  up to `MAX_COMPARED_TEXT`. With the ends unchanged the selection's text
+  is not read: the old ends' text is the same text.
 
 The program imports the element and gets its text pattern with the
 pattern getter instructions (Microsoft's `GetTextPattern`, whose opcode

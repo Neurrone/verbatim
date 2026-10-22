@@ -110,13 +110,16 @@ pub struct CaretRequest<'a, P> {
     /// Whether to read the caret again once everything else is read, to
     /// say whether it moved meanwhile ([`CaretRead::moved_while_read`]).
     pub recheck: bool,
-    /// Whether to read, in full, the selection's text when something is
-    /// selected, which is kept with the selection for the next comparison
+    /// Whether to read the selection's text, up to the source's cap for
+    /// compared text (513 UTF-16 code units through UIA,
+    /// `verbatim_uia_rops::MAX_COMPARED_TEXT`), when something is selected
+    /// and its ends are not `previous`'s, or there is no `previous`, which
+    /// is kept with the selection for the next comparison
     /// ([`CaretRead::selection_text`]).
     pub read_selection_text: bool,
-    /// Whether to read, in full, the text between `previous`'s ends as
-    /// they are now, when it held something, to compare with its text as
-    /// it was reported ([`CaretRead::previous_text`]).
+    /// Whether to read the text between `previous`'s ends as they are now,
+    /// up to the same cap, when it held something, to compare with its
+    /// text as it was reported ([`CaretRead::previous_text`]).
     pub read_previous_text: bool,
 }
 
@@ -143,15 +146,28 @@ pub struct CaretRead<P> {
     /// everything else had moved: the line may show what the application
     /// wrote after the caret was read. False without a recheck.
     pub moved_while_read: bool,
-    /// With [`CaretRequest::read_selection_text`], the selection's whole text when
-    /// something is selected; `None` otherwise, and from a source that
-    /// does not read it.
+    /// With [`CaretRequest::read_selection_text`], the selection's text up
+    /// to the source's cap when something is selected and its ends are not
+    /// `previous`'s, or there was no `previous`; `None` otherwise, and from
+    /// a source that does not read it.
     pub selection_text: Option<Vec<u16>>,
-    /// With [`CaretRequest::read_previous_text`] and a `previous` that held something,
-    /// the whole text between its ends as they are now, which a source
-    /// whose positions follow edits (UIA's ranges) moves as the text
-    /// changes; `None` otherwise, and from a source that does not read it.
+    /// With [`CaretRequest::read_previous_text`] and a `previous` that held
+    /// something, the text between its ends as they are now, up to the
+    /// source's cap, which a source whose positions follow edits (UIA's
+    /// ranges) moves as the text changes; `None` otherwise, and from a
+    /// source that does not read it.
     pub previous_text: Option<Vec<u16>>,
+}
+
+impl<P> CaretRead<P> {
+    /// The selection's text to keep with it ([`KeptSelection::text`]): the
+    /// text read of it, or, when its ends are `previous`'s, what those
+    /// ends hold now, which is its text; `None` when neither was read.
+    fn kept_text(&self) -> Option<Vec<u16>> {
+        self.selection_text
+            .clone()
+            .or_else(|| self.previous_text.clone().filter(|_| !self.selection_moved))
+    }
 }
 
 /// A point as a source is asked to find it: the protocol's [`TextPoint`],
@@ -534,10 +550,11 @@ struct Anchor<P> {
 pub struct NodeAnchors<P> {
     anchors: BTreeMap<u64, Anchor<P>>,
     reported: HashMap<(u64, u32), P>,
-    /// The carets the outpost last reported for the node, oldest first,
-    /// each with when it was read, in milliseconds since the Unix epoch,
-    /// and whether text was selected.
-    carets: VecDeque<(u64, TextPosition, bool)>,
+    /// The carets the outpost last reported for the node, oldest first.
+    carets: VecDeque<CaretSeen<P>>,
+    /// How many caret reports the outpost has made for the node, which
+    /// numbers each ([`CaretSeen::report`], [`KeptSelection::report`]).
+    reports: u64,
     /// The selection in the outpost's last caret report for the node, which
     /// the next report's selection changes are worked out from
     /// ([`caret_report_since`]); `None` when there is none to compare with.
@@ -548,6 +565,19 @@ pub struct NodeAnchors<P> {
     content_changed: bool,
 }
 
+/// A caret the outpost reported, as a caret key's watch takes its baseline
+/// from it ([`baseline`]).
+struct CaretSeen<P> {
+    /// When it was read, in milliseconds since the Unix epoch.
+    read_at_ms: u64,
+    /// The caret, as reported.
+    caret: TextPosition,
+    /// The selection's ends, when something was selected.
+    selection: Option<(P, P)>,
+    /// The report's number ([`NodeAnchors::reports`]).
+    report: u64,
+}
+
 /// The selection of a caret report, as the next report compares with it.
 #[derive(Clone)]
 struct KeptSelection<P> {
@@ -555,10 +585,14 @@ struct KeptSelection<P> {
     ends: (P, P),
     /// Nothing was selected.
     collapsed: bool,
-    /// Its whole text as it was reported, when something was selected and
-    /// the source read it ([`CaretRead::selection_text`]), for
-    /// [`content_changed`] to compare with what its ends hold now.
+    /// Its text as it was reported, up to the source's cap for compared
+    /// text, when something was selected and the source read it
+    /// ([`CaretRead::kept_text`]), for [`content_changed`] to compare with
+    /// what its ends hold now.
     text: Option<Arc<[u16]>>,
+    /// The number of the report it is from ([`NodeAnchors::reports`]); 0
+    /// for one Core sent.
+    report: u64,
 }
 
 impl<P> Default for NodeAnchors<P> {
@@ -567,6 +601,7 @@ impl<P> Default for NodeAnchors<P> {
             anchors: BTreeMap::new(),
             reported: HashMap::new(),
             carets: VecDeque::new(),
+            reports: 0,
             selection: None,
             content_changed: false,
         }
@@ -1189,8 +1224,8 @@ pub fn caret_report_checking<S: TextSource>(
     };
     let (state, moved, read_at_ms, line, read_changes, (selection_text, previous_text)) =
         if let Some(read) = source.caret_read(&request)? {
+            let texts = (read.kept_text(), read.previous_text.clone());
             let line = Some((read.line.0, read.line.1, read.formats));
-            let texts = (read.selection_text, read.previous_text);
             (read.state, read.moved, now_ms(), line, read.changes, texts)
         } else {
             let state = source.caret()?;
@@ -1251,8 +1286,9 @@ pub fn caret_report_checking<S: TextSource>(
 /// to tell. Otherwise it changed when `last`'s text as it was reported
 /// differs from what its ends hold now (`previous_text`, read in the same
 /// read; `None` from a source that does not read it, a classic edit
-/// control, whose offsets do not follow edits), compared length first as
-/// slices are; or when a change no report has noted waits to be handled
+/// control, whose offsets do not follow edits), each read up to the same
+/// cap, so a text longer than it is compared by its first units and by
+/// being longer; or when a change no report has noted waits to be handled
 /// (`text_change_waiting`, asked last, since it may wake another thread).
 /// The first of these is Verbatim's own, Dickson's decision of 2026-10-22
 /// (`docs/parity/text.md`, "TextInfo-equivalent layer"): NVDA compares a
@@ -1361,18 +1397,21 @@ fn report_for<S: TextSource>(
         (offset, state.caret.clone()),
         (Vec::new(), &formats),
     );
+    anchors.anchors.reports += 1;
+    let report = anchors.anchors.reports;
     let carets = &mut anchors.anchors.carets;
     if carets.len() == REMEMBERED_CARETS {
         carets.pop_front();
     }
-    carets.push_back((
+    carets.push_back(CaretSeen {
         read_at_ms,
-        TextPosition {
+        caret: TextPosition {
             anchor: line.start,
             offset: line.offset,
         },
-        state.selection.is_some(),
-    ));
+        selection: state.selection.clone(),
+        report,
+    });
     let selection = state.selection.as_ref().map(|(start, end)| Selection {
         start: anchors.position_of(start.clone()),
         end: anchors.position_of(end.clone()),
@@ -1387,6 +1426,7 @@ fn report_for<S: TextSource>(
             text: selection_text
                 .filter(|_| state.selection.is_some())
                 .map(Arc::from),
+            report,
         });
     }
     Ok(CaretReport { line, selection })
@@ -1489,8 +1529,8 @@ struct Polled<P> {
     /// Read in one go ([`TextSource::caret_read`]), whether the caret read
     /// again at its end had moved; `None` when read by parts.
     moved_while_read: Option<bool>,
-    /// The selection's whole text, when the read had it
-    /// ([`CaretRead::selection_text`]).
+    /// The selection's text to keep, when the read had it
+    /// ([`CaretRead::kept_text`]).
     selection_text: Option<Vec<u16>>,
     /// What the compared selection's ends hold now, when the read had it
     /// ([`CaretRead::previous_text`]).
@@ -1507,6 +1547,7 @@ fn read_watched<S: TextSource>(
 ) -> TextResult<Polled<S::Pos>> {
     signal.reading();
     if let Some(read) = source.caret_read(request)? {
+        let kept_text = read.kept_text();
         return Ok(Polled {
             state: read.state,
             read_at_ms: signal.now_ms(),
@@ -1517,7 +1558,7 @@ fn read_watched<S: TextSource>(
             formats: read.formats,
             changes: read.changes,
             moved_while_read: Some(read.moved_while_read),
-            selection_text: read.selection_text,
+            selection_text: kept_text,
             previous_text: read.previous_text,
         });
     }
@@ -1608,10 +1649,27 @@ fn evidence<S: TextSource>(
         read_previous_text: compared.as_ref().is_some_and(|last| last.text.is_some()),
     };
     let mut polled = read_watched(source, &request, signal)?;
-    let mut moved = (since.is_none() && signal.caret_event())
-        || polled.caret_moved
-        || polled.selection_moved
-        || selected.is_some_and(|selected| selected != polled.state.selection.is_some());
+    let mut moved =
+        (since.is_none() && signal.caret_event()) || polled.caret_moved || polled.selection_moved;
+    if !moved && let Some((before, report)) = &selected {
+        // The read compared the selection with the one kept, which a
+        // caret report read after the key may have replaced already; the
+        // selection in the baseline's report is compared too, unless it is
+        // the one the read compared with.
+        let compared_already = selecting
+            || compared
+                .as_ref()
+                .is_some_and(|compared| compared.report == *report);
+        moved = match (before, &polled.state.selection) {
+            (None, None) => false,
+            (Some(_), None) | (None, Some(_)) => true,
+            (Some(_), Some(_)) if compared_already => false,
+            (Some((start, end)), Some((now_start, now_end))) => {
+                source.compare(start, now_start)? != Ordering::Equal
+                    || source.compare(end, now_end)? != Ordering::Equal
+            }
+        };
+    }
     if !moved && (known.is_some() || watch.compare.is_some()) {
         let (unit, offset) = match polled.line.take() {
             Some(line) => line,
@@ -1745,9 +1803,9 @@ struct Baseline<P> {
     /// `compared` is a selecting key's, from Core.
     selecting: bool,
     known: Option<(String, String)>,
-    /// Whether text was selected in the caret report `since` came from;
-    /// `None` when it came from Core.
-    selected: Option<bool>,
+    /// The selection in the caret report `since` came from, and that
+    /// report's number; `None` when it came from Core.
+    selected: Option<(Option<(P, P)>, u64)>,
 }
 
 /// The baseline of a caret key's watch.
@@ -1771,14 +1829,17 @@ fn baseline<S: TextSource>(
         .carets
         .iter()
         .rev()
-        .find(|(read_at_ms, ..)| *read_at_ms < watch.pressed_at_ms)
-        .map(|&(_, position, selected)| (position, selected));
-    let baseline = reported.map(|(position, _)| position).or(watch.since);
-    // Whether text was selected then: a key that removed or made a
-    // selection did something, though the caret event's report that
-    // compared it came before the watch, and a provider's positions, which
-    // follow edits, show the caret where it was.
-    let selected = reported.map(|(_, selected)| selected);
+        .find(|seen| seen.read_at_ms < watch.pressed_at_ms)
+        .map(|seen| (seen.caret, seen.selection.clone(), seen.report));
+    let baseline = reported
+        .as_ref()
+        .map(|(position, ..)| *position)
+        .or(watch.since);
+    // The selection then: a key that changed the selection did something,
+    // though the caret event's report that compared it came before the
+    // watch, and a provider's positions, which follow edits, show the
+    // caret where it was.
+    let selected = reported.map(|(_, selection, report)| (selection, report));
     let since = match baseline {
         Some(position) => anchors.resolve(source, position)?,
         None => None,
@@ -1795,6 +1856,7 @@ fn baseline<S: TextSource>(
                     // selected.
                     collapsed: start == end,
                     text: None,
+                    report: 0,
                 }),
                 _ => None,
             },

@@ -568,6 +568,7 @@ fn remote_and_classic_caret_reads_agree() {
     };
     let extended = caret_both(&CaretQuery {
         previous_selection: Some((six, six)),
+        read_selection_text: true,
         ..query(None, None)
     });
     assert_eq!(
@@ -575,6 +576,8 @@ fn remote_and_classic_caret_reads_agree() {
         Some(vec![(true, "beta".to_owned())]),
         "the word selected"
     );
+    // Its ends moved, so its text is read to keep.
+    assert_eq!(extended.texts, (Some("beta".to_owned()), None));
     common::apply(&mut app, hwnd, "caret doc 6 10");
     let selected = caret_read_remote(&query(None, None)).expect("the caret");
     assert!(selected.selection.is_some());
@@ -596,8 +599,10 @@ fn remote_and_classic_caret_reads_agree() {
         ..query(None, None)
     });
     assert!(!again.moved && !again.selection_moved);
-    // With the texts asked for: the selection's whole text, and what the
-    // previous selection's ends hold now, here the same word.
+    // With the texts asked for: what the previous selection's ends hold
+    // now, and the selection's text only when its ends are not those, here
+    // not read, the ends being the same; with no previous selection, the
+    // selection's text.
     let texts = caret_both(&CaretQuery {
         previous_selection: Some((
             RangeEnd {
@@ -613,10 +618,42 @@ fn remote_and_classic_caret_reads_agree() {
         read_previous_text: true,
         ..query(None, None)
     });
-    assert_eq!(
-        texts.texts,
-        (Some("beta".to_owned()), Some("beta".to_owned()))
+    assert_eq!(texts.texts, (None, Some("beta".to_owned())));
+    let alone = caret_both(&CaretQuery {
+        read_selection_text: true,
+        ..query(None, None)
+    });
+    assert_eq!(alone.texts, (Some("beta".to_owned()), None));
+    // A selection longer than the cap for compared text: its first 513
+    // units are read, and so are those of what the old ends hold.
+    common::apply(
+        &mut app,
+        hwnd,
+        &format!(r"set-text doc {}\n", "a".repeat(600)),
     );
+    common::apply(&mut app, hwnd, "caret doc 0 600");
+    let long = caret_read_remote(&query(None, None)).expect("the caret");
+    let long_selection = long.selection.as_ref().expect("a selection");
+    let capped = caret_both(&CaretQuery {
+        previous_selection: Some((
+            RangeEnd {
+                range: long_selection,
+                endpoint: Endpoint::Start,
+            },
+            RangeEnd {
+                range: long_selection,
+                endpoint: Endpoint::End,
+            },
+        )),
+        read_previous_text: true,
+        ..query(None, None)
+    });
+    assert_eq!(capped.texts, (None, Some("a".repeat(513))));
+    let capped = caret_both(&CaretQuery {
+        read_selection_text: true,
+        ..query(None, None)
+    });
+    assert_eq!(capped.texts, (Some("a".repeat(513)), None));
     app.quit();
 }
 

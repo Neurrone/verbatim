@@ -1075,6 +1075,14 @@ and in its edit control.
   such key that read the line's formatting, 396 calls classically, before
   that comparison let it answer at once.
 - Target: one round trip for each check.
+- A watch whose read finds no evidence, with something selected in the
+  report its caret was known from and now, compares that report's
+  selection's ends with the selection now when a caret report read after
+  the key replaced the kept selection the read compared with: up to two
+  comparisons of positions, `CompareEndpoints` calls through UIA (one
+  round trip each) and none in an edit control, whose positions are
+  offsets (since 2026-10-22). Otherwise, the usual case, the read's own
+  comparison covers it and nothing more is made.
 - Over a selection, any key compares with the selection the outpost kept,
   in the same round trip, as a caret report does (below); a key that does
   not select sends no selection of its own since 2026-10-22, so Backspace,
@@ -1083,10 +1091,12 @@ and in its edit control.
   comparison and the texts read in the program, no round trip more; in an
   edit control, one wake of the `WinEvent` thread for the value change
   check ("A caret move, Win32 edit control"). Through UIA the program
-  also reads, with no limit, the old selection's text as its ends now
-  hold it, when that selection held something, to compare with its text
-  as it was reported: a `GetText` inside the provider, and one call
-  classically. A key that leaves no selection and found none pays
+  also reads the old selection's text as its ends now hold it, when that
+  selection held something, to compare with its text as it was reported:
+  a `GetText` inside the provider, and one call classically, each read
+  up to 513 UTF-16 code units (`verbatim_uia_rops::MAX_COMPARED_TEXT`,
+  one more than the 512 characters from which a selection is spoken as a
+  count). A key that leaves no selection and found none pays
   nothing more: the program's comparison is skipped when neither holds
   anything.
 - Wall clock: what matters is what waits behind the key. Before, every
@@ -1117,9 +1127,11 @@ from the caret.
   since NVDA's comparison has nothing to say then; with a selection, the
   comparison and the change's text.
 - Today: 1 remotely, in either case: the comparison with the last
-  selection, the change's text, and the new selection's whole text, which
-  is kept with it for the next comparison (a `GetText` inside the
-  provider, since 2026-10-22), are part of the caret read's program,
+  selection, the change's text, and the new selection's text up to 513
+  UTF-16 code units, which is kept with it for the next comparison (a
+  `GetText` inside the provider, since 2026-10-22, made only when the
+  selection's ends moved: when they did not, what the old ends hold now
+  is its text and is kept), are part of the caret read's program,
   which compares nothing when the last selection and the new one both hold
   nothing. Classically 8 with nothing selected (8 before remote
   operations), and 19 for the selection of "al" (18 before 2026-10-22):
@@ -1127,11 +1139,16 @@ from the caret.
   caret (`GetCaretRange`), six comparisons in all, among them the
   selection's ends with the old caret's and the comparisons that place
   the change, the change's text (a copy, its two ends moved, its text),
-  and the selection's whole text. When the last selection held
-  something, what its ends now hold is read too, in full, to compare with
-  its text as it was reported; through UIA a mismatch has the change said
-  in general terms (`docs/parity/text.md`, "TextInfo-equivalent layer"),
-  and costs one comparison of two strings, lengths first.
+  and the selection's text. When the last selection held something, what
+  its ends now hold is read too, up to the same 513 units, to compare
+  with its text as it was reported; through UIA a mismatch has the change
+  said in general terms (`docs/parity/text.md`, "TextInfo-equivalent
+  layer"), and costs one comparison of two strings of at most 513 units.
+  A longer text is compared by its first 513 units and by being longer,
+  so an edit that leaves both as they were is compared in specific terms,
+  as NVDA compares it. With unchanged ends nothing is read of the new
+  selection: a report whose ends equal the kept selection's and whose
+  old range still holds its text reads no selection text at all.
 - Target: 1.
 
 Local work beside the calls, which by "What counts as a call" counts as
@@ -1238,8 +1255,9 @@ queues. The parts of a UIA focus's count are:
 - the focus's enrichment: 1 UIA call;
 - the caret read: 1 UIA call remotely; classically 35 for mockapp's
   document ("The caret report after a focus, UIA" above), 37 when
-  something is selected (the selection's caret, and its whole text, kept
-  for the next comparison since 2026-10-22), and 17 for its terminal;
+  something is selected (the selection's caret, and its text up to 513
+  units, kept for the next comparison since 2026-10-22), and 17 for its
+  terminal;
 - the selected text, read only when something is selected and the
   field is not protected, since Core says none of a protected field's
   text: 1 UIA call remotely and 4 classically, the read of the range
@@ -1257,7 +1275,7 @@ queues. The parts of a UIA focus's count are:
   calls, 1 window message and 1 connection; 10 with a selection; 9
   protected with a selection. Classically it costs 45; 51 with a
   selection; 47 protected with a selection (50 and 46 before the
-  selection's whole text was read to keep, 2026-10-22). A UIA terminal
+  selection's text was read to keep, 2026-10-22). A UIA terminal
   (`terminal_reading.json`) costs 9 remotely and 27 classically, each
   with 1 window message and 1 connection. A classic edit control through
   MSAA costs 39 MSAA calls and 6 window messages. With nothing
@@ -2200,15 +2218,17 @@ share of the limit in brackets:
   The walk is bounded by the controlled list, not by the query, the one
   program whose worst case is the application's to set; the Settings
   app's search suggestions, checked live on 2026-10-03, were 25.
-- The caret read: 4,434 (44 percent) for a line of 64 stretches reached by
+- The caret read: 4,435 (44 percent) for a line of 64 stretches reached by
   walking one mixed format stretch by words and a mixed word by
   characters, every attribute read (eleven since 2026-10-07, ten of them
   being learned), with a word, the evidence, a selection's change, the
-  selection's whole text, and what the old selection's ends hold now;
+  selection's text, read when its ends moved, and what the old
+  selection's ends hold now, each up to 513 units;
   87 for the report after a focus on a line of plain text with the
   default theme's two attributes, the annotation types and the link,
   whose support is known, which asks for the selection's text. They were
-  4,425 and 84 before the selection's texts were read (2026-10-22). It was 4,884 and 85 with seven attributes and
+  4,425 and 84 before the selection's texts were read, and 4,434 before
+  the selection's text was read only when its ends moved (2026-10-22). It was 4,884 and 85 with seven attributes and
   one: the program now returns each value as the provider gave it, and
   the caller reads it by its type, where the program tested each value's
   type and the annotation types' array itself, which more than paid for

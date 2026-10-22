@@ -429,8 +429,8 @@ fn caret_query<'a>(
 /// The caret read: a line of 64 stretches, reached by walking one mixed
 /// stretch by words and a mixed word by characters (`italic.json`), every
 /// attribute read and learned, with a word, the evidence, a selection's
-/// change, the selection's whole text, and what the old selection's ends
-/// hold now; and, typically, the report after a focus on a line of plain text
+/// change, the selection's text, and what the old selection's ends hold
+/// now, each up to the cap for compared text; and, typically, the report after a focus on a line of plain text
 /// with the default theme's two attributes, the annotation types and the
 /// link, whose support is known.
 fn caret_reads_execute_exactly() {
@@ -465,9 +465,10 @@ fn caret_reads_execute_exactly() {
         assert_eq!(answer.runs.len(), 1);
     });
     fixture.app.quit();
-    // 4425 and 84 before the caret read began reading the selection's texts
+    // 4425 and 84 before the caret read began reading the selection's texts,
+    // and 4434 before it read the selection's text only when its ends moved
     // (2026-10-22).
-    assert_eq!([worst, typical], [4434, 87], "caret read worst and typical");
+    assert_eq!([worst, typical], [4435, 87], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one

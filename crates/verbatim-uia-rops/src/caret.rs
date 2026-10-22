@@ -48,6 +48,15 @@ pub const ANNOTATION_GRAMMAR_ERROR: i32 = 60002;
 /// of prose has, and a bound on the program's work for one that has more.
 pub const MAX_RUNS: u32 = 64;
 
+/// The most UTF-16 code units read of a selection's text kept to compare
+/// ([`CaretAnswer::selection_text`]) and of what an old selection's ends
+/// hold now ([`CaretAnswer::previous_text`]): one more than the 512
+/// characters from which a selection is spoken as a count. The two are
+/// compared only to tell whether the text changed, which typing over,
+/// cutting or pasting does in the first characters or the length, so a
+/// longer text is compared by its first 513 units and by being longer.
+pub const MAX_COMPARED_TEXT: i32 = 513;
+
 /// A position: one end of a text range.
 #[derive(Clone, Copy)]
 pub struct RangeEnd<'a> {
@@ -243,12 +252,15 @@ pub struct CaretQuery<'a> {
     /// Whether to read the caret again once everything else is read, to
     /// say whether it moved meanwhile ([`CaretAnswer::moved_while_read`]).
     pub recheck: bool,
-    /// Whether to read, in full, the selection's text when something is
-    /// selected ([`CaretAnswer::selection_text`]).
+    /// Whether to read the selection's text, up to [`MAX_COMPARED_TEXT`],
+    /// when something is selected and its ends are not those of the
+    /// [`previous_selection`](Self::previous_selection), or there is none
+    /// ([`CaretAnswer::selection_text`]).
     pub read_selection_text: bool,
-    /// Whether to read, in full, the text between the
+    /// Whether to read the text between the
     /// [`previous_selection`](Self::previous_selection)'s ends as they now
-    /// are, when it was not [`previous_collapsed`](Self::previous_collapsed)
+    /// are, up to [`MAX_COMPARED_TEXT`], when it was not
+    /// [`previous_collapsed`](Self::previous_collapsed)
     /// ([`CaretAnswer::previous_text`]).
     pub read_previous_text: bool,
 }
@@ -365,14 +377,25 @@ pub struct CaretAnswer {
     /// shows a character whose write moved the caret past where the caret
     /// was read. False without a recheck.
     pub moved_while_read: bool,
-    /// With [`CaretQuery::read_selection_text`], the selection's whole text
-    /// when something is selected; `None` otherwise.
+    /// With [`CaretQuery::read_selection_text`], the selection's text up to
+    /// [`MAX_COMPARED_TEXT`] when something is selected and its ends moved
+    /// from the previous selection's, or there was none; `None` otherwise.
     pub selection_text: Option<Vec<u16>>,
     /// With [`CaretQuery::read_previous_text`] and a previous selection not
-    /// collapsed, the whole text between the previous selection's ends as
-    /// they are now, which a provider moves as the text changes; `None`
-    /// otherwise.
+    /// collapsed, the text between the previous selection's ends as they
+    /// are now, up to [`MAX_COMPARED_TEXT`], which a provider moves as the
+    /// text changes; `None` otherwise.
     pub previous_text: Option<Vec<u16>>,
+}
+
+/// Whether a read with `query` reads the selection's text
+/// ([`CaretAnswer::selection_text`]): when asked, with something
+/// `selected`, and with no previous selection or one whose ends the
+/// selection's are not (`selection_moved`); the ends unchanged, the
+/// selection's text is what the previous selection's ends hold now
+/// ([`CaretAnswer::previous_text`]).
+fn selection_text_read(query: &CaretQuery<'_>, selected: bool, selection_moved: bool) -> bool {
+    query.read_selection_text && selected && (query.previous_selection.is_none() || selection_moved)
 }
 
 /// The signature both implementations share.
@@ -1028,20 +1051,29 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         ));
     }
 
-    // The selection's whole text, and what the previous selection's ends
-    // hold now, read in full.
-    let all = (query.read_selection_text || query.read_previous_text).then(|| b.int(-1));
-    let selection_text = all.filter(|_| query.read_selection_text).map(|all| {
-        let text = b.new_string("");
-        let text = b.add_to_results(text);
-        b.if_(has_selection, |b| {
-            let read = b.text_range_get_text(selection, all);
-            b.set(text, read);
+    // The selection's text, when its ends are not the previous
+    // selection's, and what the previous selection's ends hold now, each
+    // read up to `MAX_COMPARED_TEXT` ([`selection_text_read`]).
+    let compared =
+        (query.read_selection_text || query.read_previous_text).then(|| b.int(MAX_COMPARED_TEXT));
+    let selection_text = compared
+        .filter(|_| query.read_selection_text)
+        .map(|compared| {
+            let text = b.new_string("");
+            let text = b.add_to_results(text);
+            let read_it = if query.previous_selection.is_some() {
+                b.and(has_selection, selection_moved)
+            } else {
+                has_selection
+            };
+            b.if_(read_it, |b| {
+                let read = b.text_range_get_text(selection, compared);
+                b.set(text, read);
+            });
+            text
         });
-        text
-    });
-    let previous_text = match (query.previous_selection, previous, all) {
-        (Some((old_start, old_end)), Some((start_range, end_range)), Some(all))
+    let previous_text = match (query.previous_selection, previous, compared) {
+        (Some((old_start, old_end)), Some((start_range, end_range)), Some(compared))
             if query.read_previous_text && !query.previous_collapsed =>
         {
             let start_endpoint = b.int(endpoint_number(old_start.endpoint));
@@ -1049,7 +1081,7 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
             let between = b.text_range_clone(start_range);
             b.text_range_move_endpoint_by_range(between, c.start, start_range, start_endpoint);
             b.text_range_move_endpoint_by_range(between, c.end, end_range, end_endpoint);
-            let text = b.text_range_get_text(between, all);
+            let text = b.text_range_get_text(between, compared);
             Some(b.add_to_results(text))
         }
         _ => None,
@@ -1238,7 +1270,9 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         None
     };
     let selection_text = match selection_text {
-        Some(text) if selected => Some(string_of(&outcome, text)?.encode_utf16().collect()),
+        Some(text) if selection_text_read(query, selected, outcome.get(selection_moved)?) => {
+            Some(string_of(&outcome, text)?.encode_utf16().collect())
+        }
         _ => None,
     };
     let previous_text = previous_text
@@ -1740,7 +1774,9 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         None => None,
     };
     let selection_text = match &selection {
-        Some(selection) if query.read_selection_text => Some(selection.text(-1)?),
+        Some(selection) if selection_text_read(query, true, selection_moved) => {
+            Some(selection.text(MAX_COMPARED_TEXT)?)
+        }
         _ => None,
     };
     let previous_text = match query.previous_selection {
@@ -1748,7 +1784,7 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
             let between = old_start.range.clone_range()?;
             between.move_endpoint_to(Endpoint::Start, old_start.range, old_start.endpoint)?;
             between.move_endpoint_to(Endpoint::End, old_end.range, old_end.endpoint)?;
-            Some(between.text(-1)?)
+            Some(between.text(MAX_COMPARED_TEXT)?)
         }
         _ => None,
     };
