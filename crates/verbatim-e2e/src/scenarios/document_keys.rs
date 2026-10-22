@@ -337,8 +337,9 @@ pub(crate) fn notepad_pages_body(scenario: &mut Scenario, _state: &mut ScenarioS
 }
 
 /// The three paragraphs in the Windows Forms text box, whose Control with
-/// Down or Up Arrow does not move the caret: each says nothing, where NVDA
-/// reads the line at the caret, "First paragraph opens here.", every time
+/// Down or Up Arrow does not move the caret: each says nothing, each a
+/// declared difference from NVDA, which reads the line at the caret,
+/// "First paragraph opens here.", every time
 /// (`08-textbox-paragraphs-control-down-up.txt`). Down Arrow then reads the
 /// second line, which shows the caret never moved.
 pub(crate) fn text_box_paragraphs_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
@@ -357,8 +358,8 @@ pub(crate) fn text_box_paragraphs_body(scenario: &mut Scenario, _state: &mut Sce
         "control+uparrow",
     ] {
         press_silent(scenario, keys);
+        scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
     }
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
     press(scenario, "downarrow", &["It has a second line."]);
 }
 

@@ -181,12 +181,15 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
     // The line break selected and unselected at the line's end, which
     // NVDA says as "selected" and "unselected" with no text, the text being
-    // the break (`03a-textbox-docA-end-shift-right-shift-left-run1.txt`);
-    // then the words before the caret selected with Shift+Control+Left
-    // Arrow (`09a-textbox-docA-shift-control-left-run1.txt`).
+    // the break (`03a-textbox-docA-end-shift-right-shift-left-run1.txt`),
+    // and Verbatim says as white space, a carriage return and line feed
+    // being one grapheme cluster with no name of its own (Dickson,
+    // 2026-10-22); then the words before the caret selected with
+    // Shift+Control+Left Arrow
+    // (`09a-textbox-docA-shift-control-left-run1.txt`).
     press(scenario, "end", &["carriage return"]);
-    press(scenario, "shift+rightarrow", &["   selected"]);
-    press(scenario, "shift+leftarrow", &["   unselected"]);
+    press_deviating(scenario, "shift+rightarrow", &["   selected"]);
+    press_deviating(scenario, "shift+leftarrow", &["   unselected"]);
     press(scenario, "shift+control+leftarrow", &["gamma selected"]);
     press(scenario, "shift+control+leftarrow", &["beta  selected"]);
     press(

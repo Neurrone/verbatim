@@ -886,6 +886,32 @@ fn selecting_and_unselecting_report_what_changed_on_each_side() {
     );
 }
 
+/// A selection made around a collapsed caret, as a double-click inside a
+/// word makes it, is one change, the whole selection selected, and the
+/// caret left inside it again is one change, the whole selection
+/// unselected, on the generic path classic edit controls take.
+#[test]
+fn a_selection_around_the_caret_is_one_change_each_way() {
+    let mut source = Fake::new("hello world", 5);
+    let mut anchors = store();
+    let _ = report(&mut source, &mut anchors);
+    let mut answer = |source: &mut Fake| {
+        let watch = watch(None, TextUnit::Character);
+        let reply = answered(check(source, &mut anchors, &watch, &mut FakeSignal::new()));
+        reply
+            .selection_changes
+            .into_iter()
+            .map(|change| (change.selected, change.text, change.characters))
+            .collect::<Vec<_>>()
+    };
+    source.selection = Some((3, 8));
+    source.caret = 8;
+    assert_eq!(answer(&mut source), [(true, "lo wo".to_owned(), 5)]);
+    source.selection = None;
+    source.caret = 5;
+    assert_eq!(answer(&mut source), [(false, "lo wo".to_owned(), 5)]);
+}
+
 fn read(source: &mut Fake, anchors: &mut Anchors<usize>, read: TextRead) -> TextReply {
     perform(source, &mut anchors.node(1), &TextOp::Read(read))
 }

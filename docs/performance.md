@@ -1727,6 +1727,15 @@ The same caret key in a standard edit control, read through its messages.
 - Target: 5, with the caret and its line read in one message, which no
   edit control message offers.
 
+A word read in a rich edit control from version 2.0 finds the word with
+the control's own breaks: two `EM_FINDWORDBREAK` messages, or three when the
+first word found ends at or before the offset. Before them it reads the
+text's length (`EM_GETTEXTLENGTHEX`, whose structure is written into the
+application's memory with `VirtualAllocEx` and `WriteProcessMemory` and
+freed with `VirtualFreeEx`) to find no word at the end of the text, as
+NVDA does: one message more per word read when the length was not
+already read in that request, since the length is kept for the request.
+
 An answer that compares selections, a selecting key's or any key's made
 with something selected (Backspace and Delete over a selection included,
 since 2026-10-22), also waits once for the `WinEvent` thread to take
