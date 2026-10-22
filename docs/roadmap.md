@@ -120,8 +120,9 @@ its measurements, with the corrections of
   followed by Right, the stale-copy case below, measured beside plain
   arrow keys in Notepad and a classic edit control for the latency added
   per key, how often a key's effect is misjudged with and without
-  holding, and the cost of re-injection, including whether re-sent keys
-  reach elevated windows (uiAccess). The measurement decides whether
+  holding, and the cost of re-injection. Re-sent keys reaching elevated
+  windows is out of scope, since Verbatim runs without the uiAccess
+  privilege (Dickson, 2026-10-22). The measurement decides whether
   holding replaces the per-case fixes below or stays a terminal tool.
   `notepad_say_all` is not a case: its failure was not a key reaching
   the application before say-all's caret move.
