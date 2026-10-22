@@ -99,6 +99,9 @@ NVDA says, to decide what Verbatim should say.
     reading; adopted, not yet built.
   - [terminal-reading-review.md](design/terminal-reading-review.md) —
     the review of the terminal design; corrections pending its build.
+  - [key-holding.md](design/key-holding.md) — holding caret keys as
+    NVDA does; a prototype on the branch `key-holding`, measured, its
+    merge Dickson's decision.
   - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
     — the rule for Windows Terminal's second terminal identity; a design
     for M5, not built.

@@ -125,7 +125,10 @@ its measurements, with the corrections of
   privilege (Dickson, 2026-10-22). The measurement decides whether
   holding replaces the per-case fixes below or stays a terminal tool.
   `notepad_say_all` is not a case: its failure was not a key reaching
-  the application before say-all's caret move.
+  the application before say-all's caret move. Built and measured on
+  2026-10-22 on the unmerged branch `key-holding`; the design, figures
+  and recommendation are in [holding caret keys](design/key-holding.md),
+  and whether to merge is Dickson's decision.
 - The caret problems that share one cause, decided with the key-holding
   question rather than fixed one by one (Dickson, 2026-10-17). NVDA keeps
   no copy of the caret: its caret scripts read the caret from the
