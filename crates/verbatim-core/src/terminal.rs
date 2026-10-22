@@ -926,6 +926,7 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
     match effect {
         Effect::StopSpeech => true,
         Effect::Speak(utterance) => utterance.priority == SpeechPriority::Interrupt,
+        Effect::ForKey(_, effect) => cuts_speech(effect),
         _ => false,
     }
 }

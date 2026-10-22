@@ -161,6 +161,9 @@ scenario_tests! {
     measure_keys_notepad
     measure_keys_conhost
     measure_keys_windows_terminal
+    measure_stale_caret_text_box
+    measure_stale_caret_notepad
+    measure_stale_caret_conhost
     measure_speech_real
 }
 

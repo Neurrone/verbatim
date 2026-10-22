@@ -736,6 +736,160 @@ fn select_then_right(scenario: &mut Scenario, truth: &Truth, title: &str) {
         .expect("dumps the flight recorder after the selections");
 }
 
+/// How many times each of the stale caret cases runs in one run of its
+/// workload.
+const STALE_ROUNDS: usize = 10;
+
+/// The harness document `measure_stale_caret_notepad` opens in Notepad.
+const STALE_NOTEPAD_NAME: &str = "m-stale-notepad";
+
+/// Dumps the flight recorder into `<name>-<round>` in the artifacts.
+fn dump_recorder(scenario: &mut Scenario, truth: &Truth, name: &str, round: usize) {
+    let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), truth.name)
+        .join(format!("{name}-{round}"));
+    scenario
+        .collect_flight_recorder(&dir)
+        .expect("dumps the flight recorder");
+}
+
+/// A stale caret case of `docs/design/key-holding.md`: Shift+Right Arrow
+/// followed at once by Right Arrow, in one batch, from the top of
+/// [`arrow_text`], so that Right is pressed before the application can
+/// have reported the selection Shift+Right made, [`STALE_ROUNDS`] times.
+/// Right should leave the caret on "i" with nothing selected. The flight
+/// recorder, dumped after each round (`shift-right-then-right-<round>`),
+/// holds the keys' answers.
+fn shift_right_then_right(scenario: &mut Scenario, truth: &Truth, title: &str) {
+    for round in 0..STALE_ROUNDS {
+        top(scenario, truth, title);
+        ready(scenario, truth, title);
+        scenario
+            .send_keys(&["shift+rightarrow", "rightarrow"])
+            .expect("presses shift+rightarrow and rightarrow");
+        truth.write(&serde_json::json!({
+            "step": "shift_right_then_right", "round": round, "at": "i",
+        }));
+        truth.drain(scenario, "after shift+right then right");
+        // One more key, so that Right's answer, which can come after
+        // Verbatim is idle, is in the recorder before it is dumped.
+        top(scenario, truth, title);
+        dump_recorder(scenario, truth, "shift-right-then-right", round);
+    }
+}
+
+pub(crate) fn setup_stale_caret_text_box(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    text_box::open(scenario, "m-stale-box", BOX_NAME, &arrow_text())?;
+    Ok(ScenarioState::None)
+}
+
+/// `measure_stale_caret_text_box`: Shift+Right then Right at once
+/// ([`shift_right_then_right`]) in the Windows Forms text box.
+pub(crate) fn body_stale_caret_text_box(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_stale_caret_text_box",
+    };
+    let title = harness_marker("m-stale-box");
+    truth.drain(scenario, "opened");
+    shift_right_then_right(scenario, &truth, &title);
+}
+
+/// The document `measure_stale_caret_notepad` opens in Notepad before
+/// Verbatim starts: [`arrow_text`].
+pub(crate) fn stale_notepad_document() -> Document {
+    Document {
+        name: STALE_NOTEPAD_NAME,
+        contents: arrow_text(),
+    }
+}
+
+pub(crate) fn setup_stale_caret_notepad(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    scenario.bring_document_forward(STALE_NOTEPAD_NAME)?;
+    Ok(ScenarioState::None)
+}
+
+/// `measure_stale_caret_notepad`: Shift+Right then Right at once
+/// ([`shift_right_then_right`]) in Windows 11 Notepad.
+pub(crate) fn body_stale_caret_notepad(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_stale_caret_notepad",
+    };
+    let title = harness_marker(STALE_NOTEPAD_NAME);
+    truth.drain(scenario, "opened");
+    shift_right_then_right(scenario, &truth, &title);
+    ready(scenario, &truth, &title);
+    scenario
+        .save_document(STALE_NOTEPAD_NAME, WINDOW_TIMEOUT)
+        .expect("saves the document");
+    truth.drain(scenario, "saved");
+}
+
+pub(crate) fn setup_stale_caret_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_console_host(scenario, "m-stale", &[])
+}
+
+/// How long say-all's first utterance in the console host may take to be
+/// heard: the command's first row and the read-ahead's twenty rows after
+/// it, which repeat the second row (`docs/design/key-holding.md`, "How
+/// often a key's effect was misjudged").
+const SAY_ALL_FIRST_UTTERANCE: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// A command too long for the console host's 120 columns: after the
+/// prompt, `ready> `, its first 113 characters fill the first row, ending
+/// with a space, and the rest wraps onto the next.
+const LONG_COMMAND: &str = "echo alpha bravo charlie delta foxtrot golfer hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey";
+
+/// `measure_stale_caret_conhost`: the other stale caret case of
+/// `docs/design/key-holding.md`, a say-all caret move the application
+/// refuses. A command that wraps onto a second row is typed
+/// ([`LONG_COMMAND`]); then, [`STALE_ROUNDS`] times, Home
+/// puts the cursor at its start, say-all from the caret reads on from
+/// there, moving the caret to the second row as playback reaches it,
+/// which the console host refuses, and once say-all's first utterance
+/// has been heard in full, so every move it carries was made, Right
+/// Arrow is pressed, which should leave the cursor on the command's "c".
+/// The flight recorder is dumped after each round
+/// (`say-all-then-right-<round>`).
+pub(crate) fn body_stale_caret_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_stale_caret_conhost",
+    };
+    let title = terminal::title(state).to_owned();
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{title} window"), "terminal", "blank"],
+    );
+    ready(scenario, &truth, &title);
+    scenario.type_text(LONG_COMMAND).expect("types the command");
+    truth.drain(scenario, "after typing");
+    for round in 0..STALE_ROUNDS {
+        ready(scenario, &truth, &title);
+        scenario.send_keys(&["home"]).expect("presses home");
+        truth.drain(scenario, "after home");
+        ready(scenario, &truth, &title);
+        scenario
+            .send_gesture("kb:verbatim+downarrow")
+            .expect("sends say all");
+        let first = scenario.speech().take_next(STEP_TIMEOUT);
+        let ending = scenario.speech().ending_of(&first, SAY_ALL_FIRST_UTTERANCE);
+        truth.write(&serde_json::json!({
+            "step": "say all", "first": first.text, "ending": format!("{ending:?}"),
+        }));
+        in_front(scenario, &title);
+        scenario
+            .send_keys(&["rightarrow"])
+            .expect("presses right arrow");
+        truth.write(&serde_json::json!({
+            "step": "say_all_then_right", "round": round, "at": "c",
+        }));
+        truth.drain(scenario, "after right arrow");
+        ready(scenario, &truth, &title);
+        scenario.send_keys(&["home"]).expect("presses home");
+        truth.drain(scenario, "after home");
+        dump_recorder(scenario, &truth, "say-all-then-right", round);
+    }
+}
+
 /// Moves the caret to the top of the text with Control+Home.
 fn top(scenario: &mut Scenario, truth: &Truth, title: &str) {
     ready(scenario, truth, title);

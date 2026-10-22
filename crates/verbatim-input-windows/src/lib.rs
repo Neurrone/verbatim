@@ -49,6 +49,7 @@
 //! never speaks it (`docs/nvda/input.md`, "What a key press does to
 //! speech").
 
+mod integrity;
 mod typed;
 
 use std::cell::RefCell;
@@ -84,13 +85,31 @@ use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 /// tag and cancel speech like typed ones.
 pub const OWN_INPUT_TAG: usize = 0x5642_544D;
 
-/// The `dwExtraInfo` Verbatim puts on a caret key it held back and now
-/// passes on to the application (`docs/design/key-holding.md`): the hook
-/// passes it, and the modifiers sent with it, straight down the hook chain,
-/// deciding and reporting nothing, as NVDA ignores the keys its caret
-/// scripts send. Keys injected on a user's behalf, such as the end-to-end
-/// harness's, carry other values and are held like typed ones.
-pub const PASSED_ON_TAG: usize = 0x5642_4B50;
+/// The high half of the `dwExtraInfo` Verbatim puts on a key it held back
+/// and now passes on to the application (`docs/design/key-holding.md`);
+/// the low half is the key's place in line ([`HeldStroke::sequence`]), or
+/// 0 on the modifiers and releases sent around a held key. The hook passes
+/// these keys straight down the hook chain, deciding and reporting
+/// nothing, as NVDA ignores the keys its caret scripts send. Keys injected
+/// on a user's behalf, such as the end-to-end harness's, carry other
+/// values and are held like typed ones.
+pub const PASSED_ON_TAG: usize = 0x5642_4B50 << 32;
+
+/// The bits of `dwExtraInfo` that hold [`PASSED_ON_TAG`].
+const PASSED_ON_MASK: usize = 0xFFFF_FFFF << 32;
+
+/// The `dwExtraInfo` of a key passed on with place in line `sequence`.
+#[must_use]
+pub fn passed_on_info(sequence: u32) -> usize {
+    PASSED_ON_TAG | sequence as usize
+}
+
+/// The place in line a key passed on carries, when `extra_info` is
+/// [`passed_on_info`]'s.
+fn passed_on_sequence(extra_info: usize) -> Option<u32> {
+    (extra_info & PASSED_ON_MASK == PASSED_ON_TAG)
+        .then(|| u32::try_from(extra_info & !PASSED_ON_MASK).unwrap_or(0))
+}
 
 /// Which caret keys the hook holds back, and whether it holds them now
 /// (`docs/design/key-holding.md`). The keys are fixed when the hook starts;
@@ -125,16 +144,21 @@ impl KeyHolding {
     }
 }
 
-/// The key a held caret key's press came from, for the application to be
-/// sent it again.
+/// The key a held or deferred key transition came from, for the
+/// application to be sent it again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeldStroke {
-    /// The virtual-key code.
+    /// The virtual-key code; `VK_PACKET` for a character typed as Unicode,
+    /// whose UTF-16 unit is the scan code.
     pub vk: u16,
     /// The hardware scan code.
     pub scan_code: u32,
     /// Whether it is an extended key (the arrows and the navigation block).
     pub extended: bool,
+    /// Its place in the line of keys held back, counted from 1, which the
+    /// key carries when it is passed on ([`passed_on_info`]) so the hook
+    /// knows it has reached the application.
+    pub sequence: u32,
 }
 
 /// What the hook sends the gesture router, in the order the keys came.
@@ -238,6 +262,18 @@ pub enum KeyReport {
         /// The key to send again.
         stroke: HeldStroke,
     },
+    /// A key transition the hook would have passed to the application but
+    /// held back, because a held key ahead of it has not reached the
+    /// application yet: it is passed on after the keys ahead of it, in the
+    /// order pressed, never read (`docs/design/key-holding.md`, "Keys
+    /// behind a held key"). What the key did is reported as for a key
+    /// passed at once, by the other reports.
+    Deferred {
+        /// The transition to send again.
+        stroke: HeldStroke,
+        /// Whether it is a press; a release otherwise.
+        pressed: bool,
+    },
     /// Any other key passed to the application, typing no text, that is not
     /// a modifier or a lock key: the source of a caret key judged by where
     /// the caret landed (`CaretMotion::Other`).
@@ -274,6 +310,101 @@ struct HookState {
     /// The keys whose press was held back, whose release is held back too,
     /// so the application never sees a release without its press.
     held_downs: HashSet<(u16, bool)>,
+    /// The key transitions held back or deferred and not yet seen passed
+    /// on, in the order pressed; while any is, every later transition the
+    /// hook would pass is deferred behind them.
+    outstanding: VecDeque<Outstanding>,
+    /// The last place in line given out ([`HeldStroke::sequence`]).
+    sequence: u32,
+    /// Whether the foreground window belongs to a process of higher
+    /// integrity than Verbatim's, where no key is held or deferred
+    /// ([`integrity`]); set when the foreground changes.
+    foreground_above: bool,
+}
+
+/// A key transition held back or deferred, not yet seen passed on.
+#[derive(Clone, Copy, Debug)]
+struct Outstanding {
+    sequence: u32,
+    /// A deferred transition's key and whether it is a press, which the
+    /// translation of typed text takes as already made; `None` for a held
+    /// caret key, which is no modifier.
+    transition: Option<(u16, bool)>,
+}
+
+impl HookState {
+    /// A hook state with nothing held, deciding with `machine`.
+    fn new(
+        machine: DecisionMachine,
+        events: Sender<Routed>,
+        (speech, reports, holding): (SpeechEffectFn, KeyReportFn, Arc<KeyHolding>),
+        typing: typed::Typing,
+    ) -> Self {
+        Self {
+            machine,
+            events,
+            speech,
+            reports,
+            typing,
+            holding,
+            held_downs: HashSet::new(),
+            outstanding: VecDeque::new(),
+            sequence: 0,
+            foreground_above: false,
+        }
+    }
+
+    /// Notes a transition held back or deferred, giving it the next place
+    /// in line.
+    fn queue(&mut self, transition: Option<(u16, bool)>) -> u32 {
+        self.sequence = self.sequence.checked_add(1).unwrap_or(1);
+        self.outstanding.push_back(Outstanding {
+            sequence: self.sequence,
+            transition,
+        });
+        self.sequence
+    }
+
+    /// Notes that the key passed on with place `sequence` reached the hook
+    /// on its way to the application, and with it every key ahead of it,
+    /// since keys are passed on in order: one Windows dropped is not waited
+    /// for once a later one arrives.
+    fn passed_on(&mut self, sequence: u32) {
+        if !self
+            .outstanding
+            .iter()
+            .any(|outstanding| outstanding.sequence == sequence)
+        {
+            return;
+        }
+        while let Some(front) = self.outstanding.pop_front() {
+            if front.sequence == sequence {
+                break;
+            }
+        }
+    }
+
+    /// The deferred transitions not yet passed on, in order.
+    fn deferred_transitions(&self) -> Vec<(u16, bool)> {
+        self.outstanding
+            .iter()
+            .filter_map(|outstanding| outstanding.transition)
+            .collect()
+    }
+}
+
+/// Notes that `window` came to the front: whether its process has higher
+/// integrity than Verbatim's decides whether keys are held there. Called
+/// on the hook thread from its foreground event.
+pub(crate) fn foreground_changed(window: windows::Win32::Foundation::HWND) {
+    let above = integrity::foreground_above(&integrity::WindowIntegrity(window));
+    HOOK_STATE.with(|state| {
+        if let Ok(mut state) = state.try_borrow_mut()
+            && let Some(state) = state.as_mut()
+        {
+            state.foreground_above = above;
+        }
+    });
 }
 
 thread_local! {
@@ -409,15 +540,17 @@ fn hook_thread(
     // Install this thread's decision state before announcing readiness, so the
     // procedure never runs against an empty thread-local.
     HOOK_STATE.with(|state| {
-        *state.borrow_mut() = Some(HookState {
-            machine: DecisionMachine::new(config, map),
+        let mut hook_state = HookState::new(
+            DecisionMachine::new(config, map),
             events,
-            speech,
-            reports,
-            typing: typed::Typing::with_text_services(),
-            holding,
-            held_downs: HashSet::new(),
-        });
+            (speech, reports, holding),
+            typed::Typing::with_text_services(),
+        );
+        // SAFETY: a local read with no preconditions.
+        let window = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+        hook_state.foreground_above =
+            integrity::foreground_above(&integrity::WindowIntegrity(window));
+        *state.borrow_mut() = Some(hook_state);
     });
 
     // SAFETY: reads a thread-owned integer.
@@ -570,13 +703,39 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
 }
 
+/// What [`hold`] did with a key transition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Hold {
+    /// Left as decided.
+    No,
+    /// A caret key's press held back for its caret to be read, with its
+    /// place in line.
+    Held(u32),
+    /// A transition that would have passed, deferred behind a held key,
+    /// with its place in line.
+    Deferred(u32),
+}
+
 /// Holds a caret key back while holding is on, and its release with it,
 /// swallowing both in `decision`; the reducer has the key sent again once
-/// the caret has been read. Returns whether this key-down was held.
-fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decision) -> bool {
+/// the caret has been read. While any key held back has not yet reached
+/// the application, every later transition the hook would pass is
+/// deferred, swallowed and sent again behind it, so that no key overtakes
+/// a held one (`docs/design/key-holding.md`, "Keys behind a held key").
+/// Nothing is held or deferred while the foreground window's process has
+/// higher integrity than Verbatim's, which Windows would drop a key sent
+/// again to ([`integrity`]); Verbatim's own keys are never held.
+fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decision) -> Hold {
     let stroke = (event.vk, event.extended);
+    if !event.pressed && state.held_downs.remove(&stroke) {
+        // The held press is sent again with its release.
+        decision.decision = KeyDecision::Swallow;
+        return Hold::No;
+    }
+    if own || state.foreground_above {
+        return Hold::No;
+    }
     let held = event.pressed
-        && !own
         && decision
             .observed
             .as_ref()
@@ -584,10 +743,42 @@ fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decisi
     if held {
         state.held_downs.insert(stroke);
         decision.decision = KeyDecision::Swallow;
-    } else if !event.pressed && state.held_downs.remove(&stroke) {
-        decision.decision = KeyDecision::Swallow;
+        return Hold::Held(state.queue(None));
     }
-    held
+    if decision.decision == KeyDecision::Pass && !state.outstanding.is_empty() {
+        decision.decision = KeyDecision::Swallow;
+        return Hold::Deferred(state.queue(Some((event.vk, event.pressed))));
+    }
+    Hold::No
+}
+
+/// Reports what a key press that reaches the application, now or once
+/// deferred, did: the text it types, or, for a key that types nothing and
+/// completed no observed gesture, that it may have edited the text.
+fn report_passed(
+    state: &mut HookState,
+    event: KeyEvent,
+    scan_code: u32,
+    key_number: u64,
+    was_observed: bool,
+) {
+    let pressed_at_us = unix_us();
+    let trace_id = TraceId::mint();
+    let deferred = state.deferred_transitions();
+    match state.typing.translate(event.vk, scan_code, &deferred) {
+        Some(text) => {
+            record_key_origin(trace_id, key_number);
+            (state.reports)(KeyReport::Typed { trace_id, text });
+        }
+        None if !was_observed && may_edit(event.vk) => {
+            record_key_origin(trace_id, key_number);
+            (state.reports)(KeyReport::Passed {
+                trace_id,
+                pressed_at_us,
+            });
+        }
+        None => {}
+    }
 }
 
 /// Decides one key transition with the hook thread's state, carries out its
@@ -601,9 +792,13 @@ fn decide(
     scan_code: u32,
     extra_info: usize,
 ) -> KeyDecision {
-    // A held key Verbatim passes on, with its modifiers, goes straight to
-    // the application: it was decided and reported when it was pressed.
-    if extra_info == PASSED_ON_TAG {
+    // A key Verbatim passes on, with the modifiers sent around it, goes
+    // straight to the application: it was decided and reported when it
+    // was pressed.
+    if let Some(sequence) = passed_on_sequence(extra_info) {
+        if sequence != 0 {
+            state.passed_on(sequence);
+        }
         return KeyDecision::Pass;
     }
     // Num Lock decides what the numpad's operator keys are: the
@@ -613,7 +808,15 @@ fn decide(
     state.machine.set_num_lock(num_lock);
     let mut decision = state.machine.on_key(event, Instant::now());
     let own = extra_info == OWN_INPUT_TAG;
-    let held = hold(state, event, own, &mut decision);
+    // Whether the key reaches the application, now or once deferred.
+    let reaches_application = decision.decision == KeyDecision::Pass;
+    let hold = hold(state, event, own, &mut decision);
+    let stroke = |sequence| HeldStroke {
+        vk: event.vk,
+        scan_code,
+        extended: event.extended,
+        sequence,
+    };
     let key_number = if event.pressed {
         next_key()
     } else {
@@ -634,15 +837,11 @@ fn decide(
     {
         record_key_origin(observed.trace_id, key_number);
         let pressed_at_us = unix_us();
-        (state.reports)(if held {
+        (state.reports)(if let Hold::Held(sequence) = hold {
             KeyReport::Held {
                 gesture: observed,
                 pressed_at_us,
-                stroke: HeldStroke {
-                    vk: event.vk,
-                    scan_code,
-                    extended: event.extended,
-                },
+                stroke: stroke(sequence),
             }
         } else {
             KeyReport::Observed {
@@ -651,27 +850,19 @@ fn decide(
             }
         });
     }
-    let passed = event.pressed
-        && decision.decision == KeyDecision::Pass
+    if let Hold::Deferred(sequence) = hold {
+        (state.reports)(KeyReport::Deferred {
+            stroke: stroke(sequence),
+            pressed: event.pressed,
+        });
+    }
+    if event.pressed
+        && reaches_application
+        && !matches!(hold, Hold::Held(_))
         && !decision.shared_modifier
-        && !own;
-    if passed {
-        let pressed_at_us = unix_us();
-        let trace_id = TraceId::mint();
-        match state.typing.translate(event.vk, scan_code) {
-            Some(text) => {
-                record_key_origin(trace_id, key_number);
-                (state.reports)(KeyReport::Typed { trace_id, text });
-            }
-            None if !was_observed && may_edit(event.vk) => {
-                record_key_origin(trace_id, key_number);
-                (state.reports)(KeyReport::Passed {
-                    trace_id,
-                    pressed_at_us,
-                });
-            }
-            None => {}
-        }
+        && !own
+    {
+        report_passed(state, event, scan_code, key_number, was_observed);
     }
     // A lock key reaching the operating system is reported, for its
     // new state to be announced, as NVDA announces it. The Verbatim
@@ -679,7 +870,7 @@ fn decide(
     // Verbatim decides whether it reaches the operating system, and
     // announces the state itself if it lets it through.
     if event.pressed
-        && decision.decision == KeyDecision::Pass
+        && reaches_application
         && !decision.shared_modifier
         && let Some(key) = verbatim_input::ToggleKey::from_vk(event.vk)
     {
@@ -746,15 +937,16 @@ mod tests {
         };
         let map = GestureMap::new([GestureId::parse("kb:v+verbatim").expect("valid id")]);
         let (events, routed) = crossbeam_channel::unbounded();
-        let mut state = HookState {
-            machine: DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
+        let mut state = HookState::new(
+            DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
             events,
-            speech: Box::new(|_, _| {}),
-            reports: Box::new(|_| {}),
-            typing: typed::Typing::default(),
-            holding: Arc::new(KeyHolding::new([])),
-            held_downs: HashSet::new(),
-        };
+            (
+                Box::new(|_, _| {}),
+                Box::new(|_| {}),
+                Arc::new(KeyHolding::new([])),
+            ),
+            typed::Typing::default(),
+        );
         assert_eq!(
             decide(&mut state, key(CAPS, true), 0, 0),
             KeyDecision::Swallow
@@ -818,16 +1010,153 @@ mod tests {
         let holding = Arc::new(KeyHolding::new([right]));
         let (events, routed) = crossbeam_channel::unbounded();
         let sink = Arc::clone(reports);
-        let state = HookState {
-            machine: DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
+        let state = HookState::new(
+            DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
             events,
-            speech: Box::new(|_, _| {}),
-            reports: Box::new(move |report| sink.lock().unwrap().push(report)),
-            typing: typed::Typing::default(),
-            holding: Arc::clone(&holding),
-            held_downs: HashSet::new(),
-        };
+            (
+                Box::new(|_, _| {}),
+                Box::new(move |report| sink.lock().unwrap().push(report)),
+                Arc::clone(&holding),
+            ),
+            typed::Typing::default(),
+        );
         (state, routed, holding)
+    }
+
+    /// The letter X, a key neither held nor observed, pressed or released.
+    fn letter_x(pressed: bool) -> KeyEvent {
+        KeyEvent {
+            vk: 0x58,
+            scan_code: 0x2D,
+            extended: false,
+            injected: false,
+            pressed,
+        }
+    }
+
+    /// What each report says, for comparing a sequence of them.
+    fn described(reports: &[KeyReport]) -> Vec<String> {
+        reports
+            .iter()
+            .map(|report| match report {
+                KeyReport::Held {
+                    gesture, stroke, ..
+                } => format!("held {} #{}", gesture.gesture, stroke.sequence),
+                KeyReport::Deferred { stroke, pressed } => format!(
+                    "deferred {:#04x} {} #{}",
+                    stroke.vk,
+                    if *pressed { "down" } else { "up" },
+                    stroke.sequence
+                ),
+                KeyReport::Observed { gesture, .. } => format!("observed {}", gesture.gesture),
+                KeyReport::Passed { .. } => "passed".to_owned(),
+                KeyReport::Typed { text, .. } => format!("typed {text}"),
+            })
+            .collect()
+    }
+
+    /// While a held key has not reached the application, every later key
+    /// the hook would pass, a typed letter and its release included, is
+    /// deferred behind it in the order pressed, and the letter is still
+    /// reported typed; a later caret key is held in its own turn. Once the
+    /// keys passed on come back through the hook, up to the last one held
+    /// back, keys pass again; one passed on with a later place clears
+    /// those before it, which Windows may have dropped.
+    #[test]
+    fn keys_behind_a_held_key_are_deferred_in_order_until_it_is_passed_on() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let (mut state, _routed, holding) = holding_state(&reports);
+        holding.set(true);
+        let swallowed = KeyDecision::Swallow;
+        let pass = KeyDecision::Pass;
+        assert_eq!(decide(&mut state, right_arrow(true), 0x4D, 0), swallowed);
+        assert_eq!(decide(&mut state, right_arrow(false), 0x4D, 0), swallowed);
+        assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
+        assert_eq!(decide(&mut state, right_arrow(true), 0x4D, 0), swallowed);
+        assert_eq!(decide(&mut state, letter_x(false), 0x2D, 0), swallowed);
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            [
+                "held kb:rightarrow #1",
+                "deferred 0x58 down #2",
+                "typed x",
+                "held kb:rightarrow #3",
+                "deferred 0x58 up #4",
+            ]
+        );
+        // The first Right Arrow and the letter come back passed on: the
+        // keys behind them still wait.
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, passed_on_info(1)),
+            pass
+        );
+        assert_eq!(
+            decide(&mut state, letter_x(true), 0x2D, passed_on_info(2)),
+            pass
+        );
+        reports.lock().unwrap().clear();
+        assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            ["deferred 0x58 down #5", "typed x"]
+        );
+        // The last key held back comes back, clearing the second Right
+        // Arrow and the letter's release though they never came: a key
+        // pressed now passes.
+        assert_eq!(
+            decide(&mut state, letter_x(true), 0x2D, passed_on_info(5)),
+            pass
+        );
+        assert_eq!(decide(&mut state, letter_x(false), 0x2D, 0), pass);
+        // The modifiers and releases sent around a held key carry no
+        // place, and clear nothing.
+        assert_eq!(decide(&mut state, right_arrow(true), 0x4D, 0), swallowed);
+        assert_eq!(
+            decide(&mut state, right_arrow(false), 0x4D, passed_on_info(0)),
+            pass
+        );
+        assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
+    }
+
+    /// While the foreground window's process has higher integrity than
+    /// Verbatim's, as a fixed integrity source says, a caret key passes
+    /// unheld and is reported observed, and no key is deferred behind a
+    /// key held before the window came to the front, whose release is
+    /// still held back with it.
+    #[test]
+    fn no_key_is_held_for_a_window_of_higher_integrity() {
+        use integrity::tests::Fixed;
+
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let (mut state, _routed, holding) = holding_state(&reports);
+        holding.set(true);
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Swallow
+        );
+        state.foreground_above = integrity::foreground_above(&Fixed(Some(0x3000), Some(0x2000)));
+        assert_eq!(
+            decide(&mut state, right_arrow(false), 0x4D, 0),
+            KeyDecision::Swallow
+        );
+        assert_eq!(
+            decide(&mut state, letter_x(true), 0x2D, 0),
+            KeyDecision::Pass
+        );
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Pass
+        );
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            ["held kb:rightarrow #1", "typed x", "observed kb:rightarrow"]
+        );
+        // Back at a window of Verbatim's own integrity, keys are held again.
+        state.foreground_above = integrity::foreground_above(&Fixed(Some(0x2000), Some(0x2000)));
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Swallow
+        );
     }
 
     /// Right Arrow, an extended key, pressed or released.
@@ -858,6 +1187,11 @@ mod tests {
             decide(&mut state, right_arrow(false), 0x4D, 0),
             KeyDecision::Swallow
         );
+        // Passed on, it reaches the hook again and goes straight through.
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, passed_on_info(1)),
+            KeyDecision::Pass
+        );
         let escape = |pressed| KeyEvent {
             vk: 0x1B,
             scan_code: 0x01,
@@ -880,24 +1214,22 @@ mod tests {
             KeyDecision::Pass
         );
         let reports = reports.lock().unwrap();
-        let kinds: Vec<String> = reports
-            .iter()
-            .map(|report| match report {
-                KeyReport::Held {
-                    gesture, stroke, ..
-                } => format!(
-                    "held {} {:#04x} {:#04x} {}",
-                    gesture.gesture, stroke.vk, stroke.scan_code, stroke.extended
-                ),
-                KeyReport::Observed { gesture, .. } => format!("observed {}", gesture.gesture),
-                KeyReport::Passed { .. } => "passed".to_owned(),
-                KeyReport::Typed { text, .. } => format!("typed {text}"),
-            })
-            .collect();
+        let KeyReport::Held { stroke, .. } = reports[0] else {
+            panic!("expected Right Arrow held first: {reports:?}");
+        };
         assert_eq!(
-            kinds,
+            stroke,
+            HeldStroke {
+                vk: 0x27,
+                scan_code: 0x4D,
+                extended: true,
+                sequence: 1
+            }
+        );
+        assert_eq!(
+            described(&reports),
             [
-                "held kb:rightarrow 0x27 0x4d true",
+                "held kb:rightarrow #1",
                 "observed kb:escape",
                 "observed kb:rightarrow",
             ]

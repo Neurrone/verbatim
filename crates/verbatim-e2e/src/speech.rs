@@ -1114,6 +1114,25 @@ impl SpeechCollector {
         }
     }
 
+    /// The next utterance queued, whatever its text, waited for up to
+    /// `timeout`, for a measurement step whose speech cannot be known
+    /// before it runs. The caller asserts on it; it is matched otherwise
+    /// by nothing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if nothing is queued within `timeout`.
+    pub fn take_next(&mut self, timeout: Duration) -> Heard {
+        self.refuse_in_compare_mode("take_next");
+        let Some(got) = self.next_utterance(Instant::now() + timeout) else {
+            self.fail(&format!("nothing was queued for {timeout:?}"));
+        };
+        Heard {
+            text: got.text,
+            utterance: got.utterance,
+        }
+    }
+
     /// How `heard` ended, waiting up to `timeout` for it to end; `None`
     /// when it had not.
     pub fn ending_of(&mut self, heard: &Heard, timeout: Duration) -> Option<UtteranceEnding> {

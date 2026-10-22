@@ -124,12 +124,21 @@ impl Typing {
     }
 
     /// The text a key-down passed to the application types, or `None`.
-    pub(crate) fn translate(&mut self, vk: u16, scan_code: u32) -> Option<String> {
+    /// `deferred` are the key transitions held back behind a held key and
+    /// not yet passed on, in order, which the key follows: the modifiers
+    /// among them are taken as made, since the key reaches the application
+    /// after them.
+    pub(crate) fn translate(
+        &mut self,
+        vk: u16,
+        scan_code: u32,
+        deferred: &[(u16, bool)],
+    ) -> Option<String> {
         if vk == VK_PACKET.0 {
             return self.packet(u16::try_from(scan_code).ok()?);
         }
         self.high_surrogate = None;
-        let modifiers = Modifiers::now();
+        let modifiers = Modifiers::now().after(deferred);
         if !modifiers.allow_typing() {
             return None;
         }
@@ -219,6 +228,22 @@ impl Modifiers {
             // SAFETY: GetKeyState takes any virtual-key code.
             caps_lock: unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) } & 1 != 0,
         }
+    }
+
+    /// These modifiers once `transitions` are made, in order: a modifier's
+    /// press or release, and Caps Lock's press, which toggles it.
+    pub(crate) fn after(mut self, transitions: &[(u16, bool)]) -> Self {
+        for &(vk, pressed) in transitions {
+            match vk {
+                0x10 | 0xA0 | 0xA1 => self.shift = pressed,
+                0x11 | 0xA2 | 0xA3 => self.control = pressed,
+                0x12 | 0xA4 | 0xA5 => self.alt = pressed,
+                0x5B | 0x5C => self.windows = pressed,
+                0x14 if pressed => self.caps_lock = !self.caps_lock,
+                _ => {}
+            }
+        }
+        self
     }
 
     /// Whether a key pressed with these modifiers types: not with Control or
@@ -312,7 +337,10 @@ thread_local! {
 ///
 /// The foreground event is hooked for as long as this lives: a console
 /// window raises it, from the console host's own thread, when it comes to
-/// the front, and it is rare. Every console's events (its caret, its
+/// the front, and it is rare. The same event, from every process,
+/// Verbatim's own included, tells the hook whether the window in front
+/// belongs to a process of higher integrity ([`crate::foreground_changed`]).
+/// Every console's events (its caret, its
 /// output) are hooked only while the console window in front has not yet
 /// named its thread through one of them, when Verbatim starts with a
 /// console in front or a console comes to the front, and unhooked at the
@@ -332,6 +360,7 @@ impl ConsoleWatch {
             EVENT_SYSTEM_FOREGROUND,
             EVENT_SYSTEM_FOREGROUND,
             on_foreground_event,
+            WINEVENT_OUTOFCONTEXT,
         );
         // SAFETY: a local read with no preconditions.
         let window = unsafe { GetForegroundWindow() };
@@ -352,26 +381,17 @@ impl Drop for ConsoleWatch {
     }
 }
 
-/// Hooks events `first` to `last` from every other process, out of
-/// context, with `callback`; `None` if Windows refuses.
+/// Hooks events `first` to `last` with `callback` and `flags`; `None` if
+/// Windows refuses.
 fn hook(
     first: u32,
     last: u32,
     callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
+    flags: u32,
 ) -> Option<HWINEVENTHOOK> {
     // SAFETY: `callback` has the WINEVENTPROC signature and lives for the
     // process; the caller removes the hook.
-    let hook = unsafe {
-        SetWinEventHook(
-            first,
-            last,
-            None,
-            Some(callback),
-            0,
-            0,
-            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-        )
-    };
+    let hook = unsafe { SetWinEventHook(first, last, None, Some(callback), 0, 0, flags) };
     if hook.is_invalid() {
         tracing::warn!(first, last, "a console event hook could not be set");
         return None;
@@ -387,6 +407,7 @@ fn watch_console_events(on: bool) {
             EVENT_CONSOLE_CARET,
             EVENT_CONSOLE_END,
             on_console_event,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
         )),
         (false, Some(hook)) => {
             slot.set(None);
@@ -420,7 +441,8 @@ fn note_console_thread(window: HWND, thread: u32) -> bool {
 
 /// Notes the thread of a console window that came to the front, and hooks
 /// every console's events until one of its own confirms it; another
-/// window's coming to the front removes that hook.
+/// window's coming to the front removes that hook. Tells the hook which
+/// window is in front.
 unsafe extern "system" fn on_foreground_event(
     _hook: HWINEVENTHOOK,
     _event: u32,
@@ -430,6 +452,7 @@ unsafe extern "system" fn on_foreground_event(
     thread: u32,
     _time: u32,
 ) {
+    crate::foreground_changed(window);
     watch_console_events(note_console_thread(window, thread));
 }
 

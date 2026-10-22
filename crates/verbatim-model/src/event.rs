@@ -796,10 +796,10 @@ pub enum Effect {
     /// this trace ID on to the application, re-sent as the user pressed
     /// it.
     PassHeldKey(TraceId),
-    /// [`Effect::Text`] on behalf of the key with this trace ID, whatever
-    /// input asked for it: the read before a held key that waited behind
-    /// another is asked for while the reducer handles the other key's
-    /// answer, and its answer, and the speech after it, must carry its own
-    /// key's trace, so that its speech is that key's.
-    TextForKey(TraceId, TextRequest),
+    /// The effect on behalf of the key with this trace ID, whatever input
+    /// caused it: a key that waited behind a held key is handled while the
+    /// reducer handles the held key's read (the read before a held key, or
+    /// a later key's own effects), and its requests and speech must carry
+    /// its own key's trace, so that its answers and speech are that key's.
+    ForKey(TraceId, Box<Effect>),
 }

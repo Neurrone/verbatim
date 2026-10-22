@@ -274,12 +274,40 @@ pub(crate) struct HeldRead {
     pub(crate) key: HeldKey,
 }
 
+/// A key waiting behind a held key whose caret is being read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum WaitingKey {
+    /// A caret key held back too, whose caret is read in its turn.
+    Held(HeldKey),
+    /// A key the hook deferred behind the held key, which reaches the
+    /// application after it: a caret key judged by where the caret lands,
+    /// text typed, or a key that clears a terminal's line. Handled in its
+    /// turn, as the input it came as.
+    Later(Box<verbatim_model::Input>),
+}
+
 /// The caret keys the hook held back: the one whose caret is being read,
-/// and those pressed while it was, each passed on in the order pressed.
+/// and the keys pressed while it was, each handled in the order pressed
+/// (`docs/design/key-holding.md`, "Keys behind a held key").
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct HeldKeys {
     pub(crate) reading: Option<HeldRead>,
-    pub(crate) waiting: std::collections::VecDeque<HeldKey>,
+    pub(crate) waiting: std::collections::VecDeque<WaitingKey>,
+    /// When the last held key was passed on, on the outposts' clock: a key
+    /// behind it reaches the application no earlier.
+    #[serde(default)]
+    pub(crate) passed_at_ms: u64,
+    /// The watch of the held key last passed on, until it is answered: a
+    /// held key behind it has its caret read only then.
+    #[serde(default)]
+    pub(crate) awaiting_watch: Option<QueryId>,
+}
+
+impl HeldKeys {
+    /// Whether a key pressed now waits behind a held key.
+    pub(crate) fn busy(&self) -> bool {
+        self.reading.is_some() || !self.waiting.is_empty()
+    }
 }
 
 /// A text request a review or text command made, and what to do with its

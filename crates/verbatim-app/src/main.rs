@@ -436,23 +436,28 @@ fn run(
                     }
                     None => return,
                 },
+                // A held key always reaches the reducer thread, which sends
+                // it on; the hook holds only caret keys, so it is one.
                 KeyReport::Held {
                     gesture,
                     pressed_at_us,
                     stroke,
-                } => match caret_keys.get(&gesture.gesture) {
-                    Some(&key) => ShellCommand::HeldKey {
-                        input: Box::new(Input::HeldKey {
+                } => ShellCommand::HeldKey {
+                    input: caret_keys.get(&gesture.gesture).map(|&key| {
+                        Box::new(Input::HeldKey {
                             trace_id: gesture.trace_id,
                             key,
                             pressed_at_ms: pressed_at_us / 1_000,
-                        }),
-                        gesture: gesture.gesture,
-                        pressed_at_us,
-                        stroke,
-                    },
-                    None => return,
+                        })
+                    }),
+                    trace_id: gesture.trace_id,
+                    gesture: gesture.gesture,
+                    pressed_at_us,
+                    stroke,
                 },
+                KeyReport::Deferred { stroke, pressed } => {
+                    ShellCommand::DeferredKey { stroke, pressed }
+                }
                 KeyReport::Passed {
                     trace_id,
                     pressed_at_us,
@@ -997,14 +1002,22 @@ pub(crate) enum ShellCommand {
         input: Box<Input>,
         pressed_at_us: u64,
     },
-    /// A caret key the hook held back, an `Input::HeldKey`, with its
-    /// gesture, when the hook saw it, and the stroke to send again once
-    /// Core passes it on.
+    /// A caret key the hook held back, an `Input::HeldKey` (`None` for a
+    /// key that is no caret key, which is passed on at once), with its
+    /// trace, its gesture, when the hook saw it, and the stroke to send
+    /// again once Core passes it on.
     HeldKey {
-        input: Box<Input>,
+        input: Option<Box<Input>>,
+        trace_id: TraceId,
         gesture: GestureId,
         pressed_at_us: u64,
         stroke: verbatim_input_windows::HeldStroke,
+    },
+    /// A key transition the hook deferred behind a held key, sent on in
+    /// its turn.
+    DeferredKey {
+        stroke: verbatim_input_windows::HeldStroke,
+        pressed: bool,
     },
     DumpTree(DumpTicket, Sender<DumpTreeResult>),
     /// The control-plane caller waiting for this tree dump stopped waiting:
@@ -1418,16 +1431,23 @@ impl ReducerThread<'_> {
             }
             ShellCommand::HeldKey {
                 input,
+                trace_id,
                 gesture,
                 pressed_at_us,
                 stroke,
             } => {
-                if let Input::HeldKey { trace_id, .. } = &*input {
-                    self.context.ledger.key_pressed(*trace_id, pressed_at_us);
-                    self.held_keys
-                        .held(*trace_id, &gesture, stroke, pressed_at_us);
+                self.held_keys
+                    .held(trace_id, &gesture, stroke, pressed_at_us);
+                match input {
+                    Some(input) => {
+                        self.context.ledger.key_pressed(trace_id, pressed_at_us);
+                        self.apply(*input);
+                    }
+                    None => self.held_keys.pass_on(trace_id),
                 }
-                self.apply(*input);
+            }
+            ShellCommand::DeferredKey { stroke, pressed } => {
+                self.held_keys.deferred(stroke, pressed);
             }
             ShellCommand::DumpTree(ticket, reply) => self.dump_tree(ticket, reply),
             ShellCommand::ShellItems(kind, deliver) => self.shell_items(kind, deliver),
@@ -1516,9 +1536,12 @@ impl ReducerThread<'_> {
     /// The reducer's own conditions for the idle barrier: no request to an
     /// outpost is outstanding, no outpost is starting (one still starting
     /// has facts or a focus query waiting for it, as a replacement for a
-    /// crashed one does), and no application's focus is wanted.
+    /// crashed one does), no application's focus is wanted, and no key the
+    /// hook held back is still waiting to reach its application
+    /// (`docs/design/key-holding.md`).
     fn idle_conditions_clear(&self) -> bool {
         self.requests.outstanding() == 0
+            && self.held_keys.is_empty()
             && self.live.starting() == 0
             && self.focus_now_wanted.is_empty()
             && !self.frames.parsing()
@@ -1751,7 +1774,7 @@ impl ReducerThread<'_> {
             }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
             Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
-            Effect::TextForKey(key, request) => self.text_request(key, request),
+            Effect::ForKey(key, effect) => self.execute(key, *effect),
             _ => {}
         }
     }

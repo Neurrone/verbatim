@@ -37,6 +37,7 @@ use std::io;
 
 use crate::registry::ScenarioState;
 use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT};
+use crate::speech::{cut_off, heard};
 
 pub(crate) use super::no_teardown as teardown;
 
@@ -46,12 +47,12 @@ const NAME: &str = "selection-keys";
 /// Each line of the document, one for each key.
 const LINE: &str = "alpha beta gamma";
 
-/// The scenario's document: ten copies of [`LINE`], which Notepad opens
+/// The scenario's document: eleven copies of [`LINE`], which Notepad opens
 /// before Verbatim starts.
 pub(crate) fn document() -> Document {
     Document {
         name: NAME,
-        contents: format!("{LINE}\r\n").repeat(10),
+        contents: format!("{LINE}\r\n").repeat(11),
     }
 }
 
@@ -145,12 +146,36 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
     press(scenario, "control+v", &["selection removed"]);
 
+    shift_right_then_right(scenario);
+
     // Enter, typed, comes last, since the line break it types splits the
     // line (`textbox-word-enter.txt`).
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "enter", &["selection removed"]);
+}
+
+/// Shift+Right Arrow followed at once by Right Arrow, in one batch, so
+/// that Right is pressed before the application can have reported the
+/// selection Shift+Right made (`docs/design/key-holding.md`, "How often a
+/// key's effect was misjudged"): each key is judged from the caret it
+/// started from, so Shift+Right's selection is said, cut off by Right's
+/// character, "l", and then the selection Right cleared. NVDA says only "l"
+/// (`m42-key-holding-merge-2026-10-22/captures/`), its Shift+Right script
+/// saying nothing while Right's waits and Right comparing with the
+/// selection before Shift+Right: Verbatim says every intermediate
+/// selection change (`docs/parity/text.md`, "TextInfo-equivalent layer").
+fn shift_right_then_right(scenario: &mut Scenario) {
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "home", &["a"]);
+    scenario
+        .send_keys(&["shift+rightarrow", "rightarrow"])
+        .expect("sends shift+rightarrow and rightarrow");
+    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
+    scenario
+        .speech()
+        .expect_sequence(&[cut_off("a selected"), heard("l"), heard("a unselected")]);
 }
 
 /// The scenario in Windows 11 Notepad, read through UI Automation, whose
@@ -238,6 +263,8 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press_deviating(scenario, "control+x", &["selection removed"]);
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
     press_deviating(scenario, "control+v", &["selection removed"]);
+
+    shift_right_then_right(scenario);
 
     // Enter, typed: the selection removed, where NVDA names the line break
     // now in the old range, "carriage return unselected"

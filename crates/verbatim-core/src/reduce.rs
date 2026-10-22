@@ -83,24 +83,26 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             query_id,
             reply,
         } => reduce_text_completed(state, *trace_id, *query_id, reply.clone()),
-        Input::CaretKey {
-            key, pressed_at_ms, ..
-        } => {
-            terminal::caret_key(state);
-            editing::caret_key(state, *key, *pressed_at_ms)
+        // A key pressed while a held key waits reaches the application
+        // after it, so it is handled after it (`docs/design/key-holding.md`,
+        // "Keys behind a held key").
+        Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. }
+            if state.held_keys.busy() =>
+        {
+            state
+                .held_keys
+                .waiting
+                .push_back(crate::state::WaitingKey::Later(Box::new(input.clone())));
+            Vec::new()
+        }
+        Input::CaretKey { .. } | Input::CharacterTyped { .. } | Input::ClearingKey { .. } => {
+            key_input(state, input)
         }
         Input::HeldKey {
             trace_id,
             key,
             pressed_at_ms,
         } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
-        Input::CharacterTyped { trace_id, text } => {
-            editing::character_typed(state, *trace_id, text)
-        }
-        Input::ClearingKey { .. } => {
-            editing::clearing_key(state);
-            Vec::new()
-        }
         Input::MarkReached { mark } => {
             let mut effects = say_all::mark_reached(state, *mark);
             effects.extend(terminal::mark_reached(state, *mark));
@@ -132,6 +134,56 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         // variants added by later milestones, until each grows a real
         // policy.
         _ => Vec::new(),
+    }
+}
+
+/// Handles a key passed to the application that is not held: a caret key
+/// judged by where the caret lands, text typed, or a key that clears a
+/// terminal's line. Any other input does nothing here.
+pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    match input {
+        Input::CaretKey {
+            key, pressed_at_ms, ..
+        } => {
+            terminal::caret_key(state);
+            editing::caret_key(state, *key, *pressed_at_ms)
+        }
+        Input::CharacterTyped { trace_id, text } => {
+            editing::character_typed(state, *trace_id, text)
+        }
+        Input::ClearingKey { .. } => {
+            editing::clearing_key(state);
+            Vec::new()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// The trace of a key's input, minted when the hook saw the key.
+pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
+    match input {
+        Input::CaretKey { trace_id, .. }
+        | Input::CharacterTyped { trace_id, .. }
+        | Input::ClearingKey { trace_id }
+        | Input::HeldKey { trace_id, .. } => Some(*trace_id),
+        _ => None,
+    }
+}
+
+/// `input` with a caret key's press taken as no earlier than `at_ms`, when
+/// that is known.
+pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
+    match input {
+        Input::CaretKey {
+            trace_id,
+            key,
+            pressed_at_ms,
+        } if pressed_at_ms != 0 => Input::CaretKey {
+            trace_id,
+            key,
+            pressed_at_ms: pressed_at_ms.max(at_ms),
+        },
+        input => input,
     }
 }
 
@@ -361,6 +413,26 @@ fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowF
 /// nothing waits for any more (superseded by a newer request, or a
 /// say-all's caret movement) is dropped.
 fn reduce_text_completed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    query_id: QueryId,
+    reply: verbatim_model::TextReply,
+) -> Vec<Effect> {
+    // The watch of the held key last passed on has its answer, whatever it
+    // is: the held key waiting behind it may have its caret read now.
+    let resume = state.held_keys.awaiting_watch == Some(query_id);
+    if resume {
+        state.held_keys.awaiting_watch = None;
+    }
+    let mut effects = text_completed(state, trace_id, query_id, reply);
+    if resume {
+        effects.extend(editing::held_watch_answered(state));
+    }
+    effects
+}
+
+/// [`reduce_text_completed`]'s dispatch, by the request answered.
+fn text_completed(
     state: &mut SrState,
     trace_id: TraceId,
     query_id: QueryId,

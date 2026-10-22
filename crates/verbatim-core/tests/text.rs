@@ -164,12 +164,20 @@ fn completed(query_id: QueryId, reply: TextReply) -> Input {
     }
 }
 
+/// `effect`, or the effect it carries on a key's behalf.
+fn own(effect: &Effect) -> &Effect {
+    match effect {
+        Effect::ForKey(_, effect) => effect,
+        effect => effect,
+    }
+}
+
 /// The one text request among `effects`.
 fn request(effects: &[Effect]) -> TextRequest {
     let requests: Vec<&TextRequest> = effects
         .iter()
-        .filter_map(|effect| match effect {
-            Effect::Text(request) | Effect::TextForKey(_, request) => Some(request),
+        .filter_map(|effect| match own(effect) {
+            Effect::Text(request) => Some(request),
             _ => None,
         })
         .collect();
@@ -181,7 +189,7 @@ fn request(effects: &[Effect]) -> TextRequest {
 fn spoken(effects: &[Effect]) -> Vec<UtteranceSegment> {
     effects
         .iter()
-        .filter_map(|effect| match effect {
+        .filter_map(|effect| match own(effect) {
             Effect::Speak(utterance) => Some(utterance.segments.clone()),
             _ => None,
         })
@@ -4332,9 +4340,10 @@ fn a_held_key_is_passed_on_once_its_caret_is_read_and_judged_from_that_caret() {
         &mut state,
         &completed(asked.query_id, read_before(line("Hello", 101, 3), 410)),
     );
-    // The key is passed on first, then watched from the caret read, taken
-    // as pressed just after the read.
-    assert_eq!(effects[0], Effect::PassHeldKey(trace));
+    // The key is watched from the caret read, taken as pressed just after
+    // the read, and then passed on, so the watch reaches the outpost
+    // before the key reaches the application.
+    assert_eq!(effects.last(), Some(&Effect::PassHeldKey(trace)));
     let TextOp::AwaitCaret(watch) = request(&effects).op else {
         panic!("expected a caret wait, got {effects:?}");
     };
@@ -4369,37 +4378,107 @@ fn held_keys_are_passed_on_in_order_whatever_their_reads_answer() {
     );
     assert_eq!(effects, []);
     // A read that failed, or passed its bound, still passes the key on,
-    // watched as a key the hook passed itself; the next key's caret is
-    // read once the first key was passed on.
+    // watched as a key the hook passed itself, the watch asked for first.
     let effects = reduce(&mut state, &completed(reading, TextReply::Unanswered));
-    assert_eq!(effects[0], Effect::PassHeldKey(first));
-    let ops: Vec<TextOp> = effects
-        .iter()
-        .filter_map(|effect| match effect {
-            Effect::Text(request) | Effect::TextForKey(_, request) => Some(request.op.clone()),
-            _ => None,
-        })
-        .collect();
-    let [TextOp::AwaitCaret(watch), TextOp::ReadCaret] = ops.as_slice() else {
-        panic!("expected the first key's watch, then the second's read: {ops:?}");
+    let [Effect::Text(watched), Effect::PassHeldKey(passed)] = effects.as_slice() else {
+        panic!("expected the first key's watch, then the key passed on: {effects:?}");
+    };
+    assert_eq!(*passed, first);
+    let TextOp::AwaitCaret(watch) = &watched.op else {
+        panic!("expected the first key's watch: {watched:?}");
     };
     assert_eq!(watch.pressed_at_ms, 400);
+    // The next key's caret is read once the first key's watch is answered,
+    // here having ended without evidence.
+    let effects = reduce(
+        &mut state,
+        &completed(watched.query_id, TextReply::WatchEnded),
+    );
     // The second key's read is made on its own key's behalf, though the
     // first key's answer asked for it, so its answer and speech are its own.
-    let Some(Effect::TextForKey(key, read)) = effects.last() else {
-        panic!("expected the second key's read last: {effects:?}");
+    let [Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected the second key's read alone: {effects:?}");
     };
+    let Effect::Text(read) = &**read else {
+        panic!("expected the second key's read: {read:?}");
+    };
+    assert_eq!(read.op, TextOp::ReadCaret);
     assert_eq!(*key, second);
     let effects = reduce(
         &mut state,
         &completed(read.query_id, read_before(line("Hello", 101, 1), 430)),
     );
-    assert_eq!(effects[0], Effect::PassHeldKey(second));
+    assert_eq!(effects.last(), Some(&Effect::PassHeldKey(second)));
 
     // With no focus whose caret is read, a held key is passed on at once.
     let mut state = SrState::new();
     focus(&mut state, node(6, Role::Button, StateSet::new()));
     let third = TraceId::mint();
     let effects = reduce(&mut state, &held_at(third, CaretMotion::NextCharacter, 500));
-    assert_eq!(effects, [Effect::PassHeldKey(third)]);
+    assert_eq!(
+        effects,
+        [Effect::ForKey(third, Box::new(Effect::PassHeldKey(third)))]
+    );
+}
+
+#[test]
+fn keys_pressed_behind_a_held_key_are_handled_after_it_in_order() {
+    // A held Backspace, then, while its caret is read, a typed "c" and a
+    // held Right Arrow: the "c" is echoed only once Backspace was passed
+    // on, on its own trace, and Right Arrow's caret is read once
+    // Backspace's watch has been answered.
+    let mut state = editing("ab", 2);
+    let (backspace, letter, right) = (TraceId::mint(), TraceId::mint(), TraceId::mint());
+    let effects = reduce(&mut state, &held_at(backspace, CaretMotion::Backspace, 400));
+    let reading = request(&effects).query_id;
+    let typed_c = Input::CharacterTyped {
+        trace_id: letter,
+        text: "c".to_owned(),
+    };
+    assert_eq!(reduce(&mut state, &typed_c), []);
+    assert_eq!(
+        reduce(&mut state, &held_at(right, CaretMotion::NextCharacter, 403)),
+        []
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(reading, read_before(line("ab", 101, 2), 410)),
+    );
+    let order: Vec<String> = effects
+        .iter()
+        .map(|effect| match effect {
+            Effect::PassHeldKey(key) if *key == backspace => "pass Backspace".to_owned(),
+            Effect::Text(request) if matches!(request.op, TextOp::AwaitCaret(_)) => {
+                "watch Backspace".to_owned()
+            }
+            Effect::ForKey(key, effect) if *key == letter => match &**effect {
+                Effect::Speak(utterance) => format!("echo {:?}", utterance.segments),
+                other => format!("letter's {other:?}"),
+            },
+            Effect::ForKey(key, effect) if *key == right => match &**effect {
+                Effect::Text(request) if request.op == TextOp::ReadCaret => {
+                    "read before Right".to_owned()
+                }
+                other => format!("Right's {other:?}"),
+            },
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        order,
+        [
+            "watch Backspace".to_owned(),
+            "pass Backspace".to_owned(),
+            format!("echo {:?}", vec![character("c")]),
+        ]
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(request_of(&effects), TextReply::WatchEnded),
+    );
+    let [Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected Right Arrow's read alone: {effects:?}");
+    };
+    assert_eq!(*key, right);
+    assert!(matches!(&**read, Effect::Text(request) if request.op == TextOp::ReadCaret));
 }
