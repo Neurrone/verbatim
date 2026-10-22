@@ -37,7 +37,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch eSpeak NG's source
         run: git submodule update --init --depth 1 third_party/espeak-ng
       # rust-toolchain.toml pins the toolchain, installed on the first cargo
@@ -49,7 +49,7 @@ jobs:
       - name: Point the wxWidgets build at a cached directory
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
@@ -73,7 +73,7 @@ jobs:
       # become ready shows the step where it stopped (docs/roadmap.md).
       - name: Upload the child-process logs of the unit tests
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verbatim-ci-logs-${{ runner.arch }}
           path: target/debug/logs/
@@ -85,7 +85,7 @@ jobs:
     if: github.event_name != 'workflow_dispatch'
     runs-on: windows-11-arm
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch eSpeak NG's source
         run: git submodule update --init --depth 1 third_party/espeak-ng
       - name: Install rustup if the image lacks it
@@ -103,7 +103,7 @@ jobs:
       - name: Point the wxWidgets build at a cached directory
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
@@ -127,7 +127,7 @@ jobs:
       # become ready shows the step where it stopped (docs/roadmap.md).
       - name: Upload the child-process logs of the unit tests
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verbatim-ci-logs-${{ runner.arch }}
           path: target/debug/logs/
@@ -144,7 +144,7 @@ jobs:
   e2e:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Fetch eSpeak NG's source
         run: git submodule update --init --depth 1 third_party/espeak-ng
       - uses: Swatinem/rust-cache@v2
@@ -154,7 +154,7 @@ jobs:
       - name: Point the wxWidgets build at a cached directory
         shell: pwsh
         run: Add-Content -Path $env:GITHUB_ENV -Value "VERBATIM_WX_DIR=$env:USERPROFILE\verbatim-wx"
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: ~/verbatim-wx
           key: wxwidgets-3.3.3-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/verbatim-gui/build/wx.rs') }}
@@ -266,7 +266,7 @@ jobs:
       # directory holds its video, timeline, logs, and summary.
       - name: Upload E2E output and videos
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verbatim-e2e-output
           path: |
@@ -281,7 +281,7 @@ jobs:
       # history (which leaves out the video) is kept as well.
       - name: Upload every run's artifacts of a repeated scenario
         if: always() && github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: verbatim-e2e-history
           path: target/e2e-artifacts/history/
