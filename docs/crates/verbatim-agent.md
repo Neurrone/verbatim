@@ -124,13 +124,10 @@ Public API:
     names of the first children asked for, as a search box's suggestions),
     `NameByAutomationId` (the name of the foreground window's element with
     that identifier, read without focusing it, for a control whose name
-    differs between machines), `FocusedControl` (the focused element's
-    name and UI Automation control type, for a
-    control that differs between machines, whose role word a test derives
-    from the type), `MisspeltWords` (the
+    differs between machines), `MisspeltWords` (the
     words of the focused text marked with UI Automation's spelling-error
     annotation, read word by word), and `KeyToggled` (whether a lock key
-    is on). The five requests that keep UI Automation, which need facts only
+    is on). The four requests that keep UI Automation, which need facts only
     it has, log how long each took, at warn from two seconds, so their slow
     answers are counted apart from Verbatim's
     (`docs/design/listener-without-connections.md`, section 4.5).

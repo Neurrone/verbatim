@@ -265,12 +265,6 @@ pub enum Request {
         /// The element's UI Automation identifier.
         automation_id: String,
     },
-    /// Reports the focused element's name and UI Automation control type,
-    /// read through UI Automation independently of any screen reader, as
-    /// a control that differs between machines, such as the first one a
-    /// Settings page focuses, is named before a test fixes what it
-    /// expects. Answered by [`ReplyPayload::Control`].
-    FocusedControl,
     /// Reports whether the lock key `key` (a key name of the control
     /// plane's vocabulary, such as `scrolllock`) is on, read independently
     /// of any screen reader. Answered by [`ReplyPayload::KeyToggled`].
@@ -655,13 +649,6 @@ pub enum ReplyPayload {
     Name {
         /// The element's name.
         name: String,
-    },
-    /// Answer to [`Request::FocusedControl`].
-    Control {
-        /// The element's name.
-        name: String,
-        /// Its UI Automation control type, a `UIA_*ControlTypeId` value.
-        control_type: i32,
     },
     /// Answer to [`Request::MisspeltWords`].
     Words {

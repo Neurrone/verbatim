@@ -126,9 +126,10 @@
 //!   `docs/tooling/e2e.md` says how to run them.
 //!
 //! A scenario marked [`ScenarioDef::local_only`] needs what GitHub's
-//! Windows Server runner lacks: Windows 11 Notepad, or a Settings app
-//! that selects the first search suggestion as the suggestions list
-//! opens; its name starts with one of [`LOCAL_ONLY_FILTERS`]. Every local and VM run includes it;
+//! Windows Server runner lacks: Windows 11 Notepad, a Settings app that
+//! selects the first search suggestion as the suggestions list opens, or
+//! one whose Date and time page opens with its focus on the Region button; its
+//! name starts with one of [`LOCAL_ONLY_FILTERS`]. Every local and VM run includes it;
 //! GitHub's `e2e` job sets [`SKIP_LOCAL_ONLY_ENV`] and deselects it by
 //! name (one `--skip` per filter), and [`run_named`] fails a local-only scenario
 //! that runs anyway with the variable set, so a skip is never reported as
@@ -182,9 +183,15 @@ pub const SKIP_LOCAL_ONLY_ENV: &str = "VERBATIM_E2E_SKIP_LOCAL_ONLY";
 /// contain one, and is deselected with `--skip demo_`). `notepad_` begins
 /// every scenario that tests Windows 11 Notepad; `settings_search_suggestions`
 /// expects Settings to select the first suggestion as the list opens, which
-/// the runner's Settings does not. A unit test checks CI's `e2e` job's
+/// the runner's Settings does not; `settings_combo_box_expanded` expects
+/// the Date and time page to open with its focus on the Region button,
+/// where the runner's page focuses its location settings link. A unit test checks CI's `e2e` job's
 /// skips against this list.
-pub const LOCAL_ONLY_FILTERS: &[&str] = &["notepad_", "settings_search_suggestions"];
+pub const LOCAL_ONLY_FILTERS: &[&str] = &[
+    "notepad_",
+    "settings_search_suggestions",
+    "settings_combo_box_expanded",
+];
 
 /// Whether `name` starts with one of [`LOCAL_ONLY_FILTERS`], so libtest's
 /// `--skip`, which matches anywhere in a test's name, deselects it.
@@ -526,7 +533,9 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         name: "settings_combo_box_expanded",
         group: Group::Shell,
         settings: None,
-        local_only: false,
+        // The runner's Date and time page opens with its focus on its
+        // location settings link, not the Region button.
+        local_only: true,
         document: None,
         comparable: Comparable::Yes,
         setup: settings_combo_box_expanded::setup,

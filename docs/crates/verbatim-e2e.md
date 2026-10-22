@@ -22,7 +22,7 @@ and how to read a failure.
   `#[ignore]`d with the reason "live", so a workspace test run (and
   `cargo xtask ci`) lists them as ignored rather than reporting them as
   passed. The end-to-end job runs them with
-  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --test-threads=1`.
+  `cargo test -p verbatim-e2e -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded --test-threads=1`.
 - `endpoint()` reads `ENDPOINT_ENV` (`VERBATIM_E2E_ENDPOINT`). A live test
   run without it fails: a scenario that cannot reach an agent has not
   passed. `session_info`, the precondition check that the agent runs in an
@@ -31,9 +31,11 @@ and how to read a failure.
 - Local-only scenarios test Windows 11 Notepad, which GitHub's Windows
   Server runner lacks, or, for `settings_search_suggestions`, a Settings
   app that selects the first search suggestion as the list opens, which
-  the runner's Settings does not. Their names, and only
-  theirs, start with one of `LOCAL_ONLY_FILTERS` (`notepad_` and
-  `settings_search_suggestions`), so a run off a Windows 11 desktop
+  the runner's Settings does not, or, for `settings_combo_box_expanded`, a
+  Date and time page that opens with its focus on the Region button, where
+  the runner's opens on its location settings link. Their names, and only
+  theirs, start with one of `LOCAL_ONLY_FILTERS` (`notepad_`,
+  `settings_search_suggestions`, and `settings_combo_box_expanded`), so a run off a Windows 11 desktop
   deselects them with a `--skip` for each; a unit test checks that CI's
   `e2e` job skips exactly these, and that no other scenario's name
   contains one. A run with `SKIP_LOCAL_ONLY_ENV`
@@ -436,8 +438,7 @@ and the input methods above:
   (of the first element the focused element controls, the set size its
   first child reports and the names of the first children), `name_by_automation_id`
   (the name of the foreground window's element with that UI Automation
-  identifier, read without focusing it), `focused_control` (the focused
-  element's name and UI Automation control type), and `misspelt_words`
+  identifier, read without focusing it), and `misspelt_words`
   (the words of the focused text marked with UI Automation's
   spelling-error annotation).
 - `verbatim_children`, `end_verbatim_process(pid)` (ending one of
@@ -682,10 +683,7 @@ The groups:
   `settings_system_page` (the list focused by its UI Automation
   identifier through the agent), and `settings_combo_box_expanded` (a
   Date and time combo box focused the same way, opened with Alt+Down
-  Arrow, "expanded" before its first item, and closed with Escape; the
-  page's first focused control, which differs between machines, is
-  expected from its name and UI Automation control type as the agent
-  reads them).
+  Arrow, "expanded" before its first item, and closed with Escape).
 - Navigation: `object_navigation_in_settings` (over MSAA, in Verbatim's
   own dialog), `object_navigation_over_uia` (over UIA, in `mockapp`'s
   provider), and `system_information_tree`.

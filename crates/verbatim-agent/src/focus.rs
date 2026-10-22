@@ -2,10 +2,9 @@
 //! [`Request::FocusedElement`](crate::protocol::Request::FocusedElement):
 //! state a test reads independently of the screen reader under test, such
 //! as which item of the desktop has the focus, to fix what it expects the
-//! screen reader to say before it says it. Five requests need facts only
+//! screen reader to say before it says it. Four requests need facts only
 //! UI Automation has and keep it: [`focus_by_automation_id`],
-//! [`controlled_items`], [`name_by_automation_id`], [`focused_control`],
-//! and [`misspelt_words`]
+//! [`controlled_items`], [`name_by_automation_id`], and [`misspelt_words`]
 //! (`docs/design/listener-without-connections.md`, section 4.5).
 
 use std::io;
@@ -170,34 +169,6 @@ pub fn name_by_automation_id(automation_id: &str) -> io::Result<String> {
         // SAFETY: a plain COM call on a live interface.
         let name = unsafe { element.CurrentName() }.map_err(io::Error::other)?;
         Ok(name.to_string())
-    })
-}
-
-/// The focused element's name and UI Automation control type (a
-/// `UIA_*ControlTypeId` value), read as the other requests here read
-/// their properties, without a cache, which only the outposts' shapes read
-/// (`docs/design/uia-shapes.md`, section 3.5), for a control that differs between
-/// machines, whose spoken role a test derives from its type.
-///
-/// # Errors
-///
-/// Returns an error if UI Automation cannot be reached or nothing has the
-/// focus.
-pub fn focused_control() -> io::Result<(String, i32)> {
-    through_uia("FocusedControl", || {
-        // SAFETY: as in `focused_element`.
-        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
-        // SAFETY: as in `focused_element`.
-        let automation: IUIAutomation =
-            unsafe { CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER) }
-                .map_err(io::Error::other)?;
-        // SAFETY: plain COM calls on live interfaces.
-        let focus = unsafe { automation.GetFocusedElement() }.map_err(io::Error::other)?;
-        // SAFETY: as above.
-        let name = unsafe { focus.CurrentName() }.map_err(io::Error::other)?;
-        // SAFETY: as above.
-        let control_type = unsafe { focus.CurrentControlType() }.map_err(io::Error::other)?;
-        Ok((name.to_string(), control_type.0))
     })
 }
 

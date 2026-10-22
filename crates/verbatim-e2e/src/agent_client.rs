@@ -711,22 +711,6 @@ impl AgentClient {
         }
     }
 
-    /// The focused element's name and UI Automation control type, as the
-    /// agent reads them through UI Automation, independently of Verbatim.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the request fails.
-    pub fn focused_control(&mut self) -> io::Result<(String, i32)> {
-        match self.request(Request::FocusedControl)? {
-            Frame::Reply {
-                payload: ReplyPayload::Control { name, control_type },
-                ..
-            } => Ok((name, control_type)),
-            other => Err(unexpected("FocusedControl", &other)),
-        }
-    }
-
     /// Of the first element the focused element controls (its UI
     /// Automation `ControllerFor` relation), the set size its first child
     /// reports (`SizeOfSet`) and the names of its first `names` children, as the agent reads them through UI
