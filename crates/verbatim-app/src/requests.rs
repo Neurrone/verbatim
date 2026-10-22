@@ -795,9 +795,10 @@ mod tests {
     }
 
     /// A focus-now answer with a focused control is that control's focus
-    /// alone, with its ancestors and what its text read found: the foreground window is not spoken as a
-    /// focus of its own, as NVDA does not speak it when it starts, and is
-    /// announced only as an entered ancestor when it is presentable.
+    /// alone, with its ancestors and what its text read found: the
+    /// foreground window is not spoken as a focus of its own, as NVDA does
+    /// not speak it when it starts, and is announced only as an entered
+    /// ancestor when it is presentable.
     #[test]
     fn a_focus_now_answer_with_a_control_is_the_controls_focus_alone() {
         let mut table = RequestTable::default();

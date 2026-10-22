@@ -438,8 +438,10 @@ verdict for the focus's window rather than asking the window again.
 - In the outpost, after its remote focus program's walk ends at a null
   parent at a window's own element, one local `GetAncestor` to tell
   whether that window is top-level, and for one that is not, the process
-  boundary check's local calls (`parent_across_process_boundary`), so a
-  walk is complete only at the top (since 2026-10-22). No call into the
+  boundary check's local calls (`parent_across_process_boundary`), and,
+  when neither finds the top and the last element's cached window handle
+  is another, one `GetAncestor` more for that handle, so a walk is
+  complete only at the top (since 2026-10-22). No call into the
   application, no wake-up, and no instruction more in the program.
 - Target: the minimum, which the listener meets.
 
@@ -1225,7 +1227,10 @@ read, and carried in the answer (`FocusedControl::text`), so the field's
 line is spoken and Core has its caret. Pinned in
 `crates/mockapp/tests/call_counts.rs`
 (`text_field_focuses_cost_exactly`), mockapp's UIA document with
-nothing selected.
+nothing selected. The MSAA edit control's answer is not pinned: the
+MSAA focus-now read takes the system's keyboard focus
+(`verbatim_ia2::acquire::focused_snapshot`), which no test on a desktop
+of its own can give mockapp's edit control.
 
 - Minimum: the query's read, 2 UIA calls and 1 window message, and what
   the caret read adds to a reported text focus: the text pattern's fetch

@@ -3728,6 +3728,39 @@ fn a_replacement_outpost_reporting_the_same_focus_is_taken_silently() {
     );
 }
 
+/// A replacement outpost whose read of the same focus leaves its ancestors
+/// unknown, as a walk that cannot reach the top does, has it taken
+/// silently too: unknown ancestors are not a changed chain, and the focus
+/// keeps the chain the user heard.
+#[test]
+fn a_replacement_outpost_reporting_the_same_focus_with_its_ancestors_unknown_is_taken_silently() {
+    let source = Pid(1);
+    let dialog = node(4, Role::Dialog, Some("Save"), None, StateSet::new());
+    let button = node(5, Role::Button, Some("OK"), None, StateSet::new());
+    let report = focus_event_with_ancestors(TraceId::mint(), source, button, vec![dialog]);
+    let (state, _) = reduce_from(&SrState::new(), &report, OutpostId(1));
+    let (state, _) = reduce(&state, &ended(OutpostId(1)));
+
+    let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
+    let mut report = focus_event_with_ancestors(TraceId::mint(), source, button, Vec::new());
+    if let Input::Event {
+        event: NormalizedEvent::FocusChanged {
+            ancestors_unknown, ..
+        },
+        ..
+    } = &mut report
+    {
+        *ancestors_unknown = true;
+    }
+    let (state, effects) = reduce_from(&state, &report, OutpostId(2));
+
+    assert_eq!(effects, [] as [verbatim_model::Effect; 0]);
+    assert_eq!(
+        state.focused().map(|(_, node)| node.id),
+        Some(NodeId::in_outpost(OutpostId(2), 2))
+    );
+}
+
 #[test]
 fn a_replacement_outpost_reporting_a_different_focus_announces_it() {
     let source = Pid(1);

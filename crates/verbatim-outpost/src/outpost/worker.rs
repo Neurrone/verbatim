@@ -3848,6 +3848,9 @@ impl Worker<'_> {
         let context = self.context;
         let client = &mut *self.client;
         let started = std::time::Instant::now();
+        // The focus-now answer's control, its text, and when it was read,
+        // followed once the answer is sent.
+        let mut follow = None;
         let result = match query {
             Query::FocusNow => {
                 let mut answer = read::focus_now(context, client);
@@ -3863,16 +3866,13 @@ impl Worker<'_> {
                 // Core takes the answer's control as its focus: its text is
                 // read as a reported focus's is, so a text field's line is
                 // spoken and Core has its caret, and a caret key there is
-                // answered by the control's caret events, so they are
-                // followed as a reported focus's are.
+                // answered by the control's caret events, so the
+                // focus-following subscription moves to it, after the
+                // answer.
                 if let Some(control) = &mut answer.focus {
                     let node = &control.node;
                     let text = self.read_focus_text(node.id, node.role);
-                    self.follow_text(
-                        (node.id, node.role),
-                        text.as_ref(),
-                        (trace, answer.observed_at_ms),
-                    );
+                    follow = Some(((node.id, node.role), text.clone(), answer.observed_at_ms));
                     control.text = text.map(Box::new);
                 }
                 Ok(QueryResult::Focus(answer))
@@ -3906,6 +3906,13 @@ impl Worker<'_> {
             "query answered"
         );
         self.reply(request_id, trace, outcome);
+        // The answer's control is followed once the answer is sent, as a
+        // reported focus is once its event is (`emit_focus`), so what the
+        // follow-up sends, such as a terminal's empty answer to a read
+        // owed to Core, reaches Core after the focus it follows.
+        if let Some((node, text, observed_at_ms)) = follow {
+            self.follow_text(node, text.as_ref(), (trace, observed_at_ms));
+        }
     }
 
     /// Publishes the reply to the query in hand, ending its entry.

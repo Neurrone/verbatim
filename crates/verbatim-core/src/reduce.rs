@@ -747,7 +747,11 @@ fn reduce_focus_changed(
 
     if let Some(focus) = state.focus.as_ref()
         && !focus.alive
-        && reads_the_same(focus, report.node, report.ancestors)
+        && reads_the_same(
+            focus,
+            report.node,
+            (!report.ancestors_unknown).then_some(report.ancestors),
+        )
     {
         // The silent re-read: the replacement outpost reports the focus the
         // user already heard, so take its ids without speaking.
@@ -995,18 +999,28 @@ fn has_text(text: Option<&str>) -> bool {
 /// Whether a reported focus reads the same as the dead focus's kept copy:
 /// role, name, value, and states, and the ancestors' names and roles. Node
 /// ids are not compared, since a replacement outpost issues new ones.
-fn reads_the_same(focus: &FocusContext, node: &NodeSnapshot, ancestors: &[NodeSnapshot]) -> bool {
+/// Ancestors reported unknown (`None`) count as unchanged, as the focus
+/// keeps the previous chain when its ancestors are unknown
+/// (`docs/parity/focus-events.md`, "Recovery after an outpost is replaced"
+/// and "A focus whose element is gone before its read").
+fn reads_the_same(
+    focus: &FocusContext,
+    node: &NodeSnapshot,
+    ancestors: Option<&[NodeSnapshot]>,
+) -> bool {
     let kept = &focus.snapshot;
     kept.role == node.role
         && kept.name == node.name
         && kept.value == node.value
         && kept.states == node.states
-        && focus.ancestors.len() == ancestors.len()
-        && focus
-            .ancestors
-            .iter()
-            .zip(ancestors)
-            .all(|(old, new)| old.role == new.role && old.name == new.name)
+        && ancestors.is_none_or(|ancestors| {
+            focus.ancestors.len() == ancestors.len()
+                && focus
+                    .ancestors
+                    .iter()
+                    .zip(ancestors)
+                    .all(|(old, new)| old.role == new.role && old.name == new.name)
+        })
 }
 
 /// Handles the end of an outpost incarnation: the focus keeps its copied

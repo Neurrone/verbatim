@@ -388,8 +388,10 @@ Implementation notes, `reduce`:
   navigation, report object, activate, and to-focus then do nothing until
   focus is reported again. A focus reported while the focus is dead is
   compared with the kept copy (role, name, value, states, and the ancestors'
-  names and roles): when they match, its new ids are taken silently;
-  otherwise it is announced as usual.
+  names and roles, which a focus reported with its ancestors unknown
+  leaves unchanged, since the focus then keeps its previous chain): when
+  they match, its new ids are taken silently; otherwise it is announced
+  as usual.
 - Every `Speak` carries the triggering input's trace ID, which is what
   makes end-to-end latency timelines possible.
 

@@ -262,6 +262,19 @@ deferred.
   client object the legacy console overlay with the terminal role
   (`nvda/source/NVDAObjects/IAccessible/__init__.py`, lines 731 to 733,
   and `IAccessible/winConsole.py`; deferred, Dickson, 2026-10-21).
+- The outpost never makes a focus-now answer's control its own focus:
+  the query path calls neither `note_focused` nor the intake's
+  `set_focused` and sets no tracking focus, role, or window, where a
+  reported focus's `emit_focus` does
+  (`crates/verbatim-outpost/src/outpost/worker.rs`). For a terminal
+  focused at startup or after a replaced outpost its line is spoken, but
+  until a real focus event caret events no key caused are dropped
+  (`caret_of` reads only the outpost's focus), the terminal branch of
+  `follow_text` never runs, text changes reach Core as plain
+  `TextChanged`, and Core's on-demand terminal reads are answered empty,
+  so its output stays silent (found by the review of the focus-now
+  text-field change, 2026-10-22). Whether and how to adopt it is
+  Dickson's decision.
 - On a fresh GitHub runner the first Verbatim start can say "Start toggle
   button not pressed" instead of "Desktop list", because the taskbar
   rehosts the Start button in a new PopupHost window and raises a UIA

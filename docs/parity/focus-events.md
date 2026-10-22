@@ -437,14 +437,19 @@ NVDA has no equivalent: it is one process, and after an application
 crash it re-queries the real focus
 ([Focus and the navigator](../nvda/focus-and-navigator.md)).
 
-Verbatim: **different (D9, D13)**; no test pins it yet. When an outpost
+Verbatim: **different (D9, D13)**. When an outpost
 ends, the reducer keeps the focus's copied data but treats its node ids
 as dead, and clears the navigator if it belonged to that outpost. If
 the application holds attention, a replacement starts at once and is
 asked for its current focus; when the reply arrives, it is compared
 with the kept copy (role, name, value, states, and the ancestors' names
-and roles), and if all match, the new node ids are taken silently,
-otherwise the focus is announced as usual. The same question is asked
+and roles, which a reply with its ancestors unknown leaves unchanged, as
+the focus keeps its previous chain then), and if all match, the new
+node ids are taken silently, otherwise the focus is announced as usual.
+Tests: `crates/verbatim-core/tests/reduce.rs`,
+`a_replacement_outpost_reporting_the_same_focus_is_taken_silently`,
+`a_replacement_outpost_reporting_the_same_focus_with_its_ancestors_unknown_is_taken_silently`,
+and `a_replacement_outpost_reporting_a_different_focus_announces_it`. The same question is asked
 after the focus listener is replaced.
 
 ### A focus UIA does not deliver
@@ -557,7 +562,8 @@ read" names the failed step as `failed_hop`, `NoParent` or the failing
 code, and as `None` for a walk that reached the root. The outpost's own
 walks behave the same: its remote program's walk, which ends at a null
 parent inside the program, reports the ancestors unknown when it ended
-there anywhere but at a top-level window, and its per-hop walk (`Uia::ancestors` in
+there anywhere but at a top-level window or a window below the process
+boundary, and its per-hop walk (`Uia::ancestors` in
 `crates/verbatim-uia/src/client.rs`) ends at a failed or missing parent
 below the root as `AncestorWalk::Unknown`, so a focus-now answer or a
 focus the outpost reads itself carries no partial chain as if it were
@@ -597,10 +603,14 @@ and `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`,
 which pins the failed step and the missing parent, for the listener's
 report,
 `a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`,
+`a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown`,
 `a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`,
 and
 `a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown`
-for the outpost's own walks,
+for the outpost's own walks, `call_counts.rs`'s
+`uia_focus_chains_stop_below_the_process_boundary`, whose "child,
+remote" case is a remote walk complete at a window below the process
+boundary,
 `a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain`
 for the listener's next read, the unit test `a_failed_step_is_told_by_its_code` in
 `verbatim-uia-rops` for a step that fails with a code, and `focus_reports.rs`, whose

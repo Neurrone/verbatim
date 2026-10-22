@@ -4533,11 +4533,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         };
         assert_eq!(
             (caret.line.text.as_str(), caret.line.offset),
-            (
-                "alpha beta
-",
-                0
-            ),
+            ("alpha beta\n", 0),
             "{operation}: the caret's line"
         );
         ratchet.check_calls(operation, measured, expected);
