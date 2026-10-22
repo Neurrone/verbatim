@@ -607,7 +607,10 @@ watch opened answers it with the character there
 (`a_caret_move_raised_later_answers_the_watch`); and a key that moves
 nothing says nothing, a caret event that shows no change leaves its watch
 open, and the next key's watch ends it, answered `WatchEnded`
-(`a_key_that_moves_nothing_is_answered_with_nothing`). mockapp
+(`a_key_that_moves_nothing_is_answered_with_nothing`); and the document
+a focus-now query answered with, no focus event having reported it, is
+the outpost's focus, so a caret event no key caused is reported
+(`a_focus_now_text_fields_caret_event_is_reported`). mockapp
 acknowledges `caret-event` once the call that raised the event has
 returned, but the outpost's handlers receive it later, on UI Automation's
 threads, and once more as the `WinEvent` UIA raises alongside it for MSAA

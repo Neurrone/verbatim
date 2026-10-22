@@ -393,7 +393,7 @@ An outpost's window filters (`window::served_by`, which
 `top_level_windows` decide by) take a window as the application's when
 the application serves its UIA (`verbatim_uia::served_by`, local calls),
 so a console window is its console host's and never its client's, even
-when the host cannot be read from the client, and `read::focused_control`
+when the host cannot be read from the client, and `read::focused_control_in`
 reads no focused element in a window another process serves
 (`read::control_window`; `docs/design/listener-without-connections.md`,
 section 4.3). Where the supervisor starts an outpost for a process on
@@ -1450,7 +1450,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   from that crate's `com` module for exactly this check, so a child
   element's event on some unrelated window is never accidentally
   suppressed by hwnd coincidence), the UIA focus path, and the focus-now
-  query (`focused_control` treats the hidden frame as "nothing focused").
+  query (`focused_control_in` treats the hidden frame as "nothing focused").
   The foreground and focus-now window choices skip hidden-frame windows. The
   checks also walk to the window's top-level ancestor (`GetAncestor` `GA_ROOT`,
   another hang-safe local read): the marker property sits on the frame window
@@ -2187,19 +2187,21 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   that ends the hold covers every update absorbed. A caret event, a text
   change, and a text selection change of the node a caret key's watch is
   open on check the watch first. A focus-now answer's control has its
-  caret read with the answer, by the reported focus's own read, and,
-  once the answer is sent, the focus-following subscription moved to it
-  (`follow_text`), so its caret and text change events arrive and a caret
-  key's watch on it is answered by them, since Core takes it as its focus;
-  it gets no property subscription. It is not made the outpost's own
-  focus, though: the query sets no tracking focus, role, or window and
-  tells the intake nothing (`note_focused`), so unless it is already the
-  focus this outpost last reported, a caret event no key caused is
-  dropped (`caret_of` reads only the focus's), a terminal gets no
-  baseline read, its text changes reach Core as plain `TextChanged`
-  rather than terminal output, and Core's on-demand terminal reads are
-  answered empty, until a focus event reports it (`docs/roadmap.md`,
-  "Follow-ups from M4.1"). The watch is
+  caret read with the answer, by the reported focus's own read, since
+  Core takes it as its focus. Once the answer is sent it becomes the
+  outpost's focus as a reported focus does, by the same function
+  (`adopt_focus`, which `emit_focus` calls too): a caret key's watch on
+  another node ends, the intake is told (`note_focused`), and the
+  tracking takes its node, role, states, window and chain; a control that
+  is already the focus this outpost last reported is not adopted again.
+  It is then followed as a reported focus is (`follow_text`): the
+  focus-following subscription moves to it, so its caret events no key
+  caused are reported and a caret key's watch on it is answered by them,
+  and a terminal has its baseline read, so its text changes are reported
+  as terminal output and Core's on-demand reads of it are answered. It
+  gets no property subscription, does not replace the last focus the
+  foreground tests compare with (`Tracking::queued`), and is not counted
+  among the focuses reported (`Tracking::reported`). The watch is
   checked before a system caret event is taken as the caret event of a
   UIA focus this outpost last reported, at the cost of the watch's lock
   for each such event, and the registry's while a watch is open; while

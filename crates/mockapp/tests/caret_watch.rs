@@ -17,7 +17,9 @@
 //! report that compared it first leaves the answer no change, and a
 //! selection moved by a report read after the key is evidence of it; a
 //! Shift key after a selection Verbatim made or a caret it moved compares
-//! with it; and a selection's start is reported in the line it starts in.
+//! with it; and a selection's start is reported in the line it starts in;
+//! and a text field a focus-now query answered with, and no focus event
+//! reported, has a caret event no key caused reported.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -195,6 +197,36 @@ fn a_caret_move_raised_later_answers_the_watch() {
     assert_eq!(reply.caret.line.offset, 1);
     assert_eq!(reply.unit.expect("the character").text, "l");
     assert_eq!(reply.selection_changes, []);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A text field the outpost was asked for with a focus-now query, as Core
+/// asks at its start and after an outpost is replaced, with no focus event
+/// for it, becomes the outpost's focus as a reported focus does: a caret
+/// event no key caused is reported with the caret where it moved.
+fn a_focus_now_text_fields_caret_event_is_reported() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-focus-now");
+    app.send("set-focus doc");
+    outpost.read_focus_as(focused(hwnd).live().element());
+    let control = outpost
+        .focus_now()
+        .expect("the focus now has a focused control");
+    let notes = control.node.id;
+    app.send("caret doc 1");
+    app.send("caret-event doc");
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
+            ..
+        } if node_id == notes => assert_eq!(
+            (caret.line.text.as_str(), caret.line.offset),
+            ("alpha beta\n", 1)
+        ),
+        other => panic!("the outpost said {other:?}, not the document's caret"),
+    }
     heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
@@ -1263,6 +1295,10 @@ fn a_uia_deleting_key_over_a_selection_is_answered_in_general_terms() {
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_focus_now_text_fields_caret_event_is_reported",
+            a_focus_now_text_fields_caret_event_is_reported,
+        ),
         (
             "a_focus_change_during_a_caret_watch_is_handled_at_once",
             a_focus_change_during_a_caret_watch_is_handled_at_once,

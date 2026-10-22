@@ -51,7 +51,7 @@ use windows::Win32::UI::Accessibility::{
 use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
-    DeliveredFact, EventTiming, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
+    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
     QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
 };
 
@@ -333,6 +333,34 @@ pub(super) struct Tracking {
     /// selection of one of its items is a change of its value
     /// ([`Worker::selection_as_value`]).
     value_from_selection: Option<NodeId>,
+}
+
+/// A focus-now answer's control, which the outpost adopts as its focus and
+/// follows once the answer is sent ([`Worker::follow_answer`]).
+struct AnsweredFocus {
+    /// The control.
+    node: NodeSnapshot,
+    /// Its ancestors, outermost first, or `None` when unknown.
+    ancestors: Option<Vec<NodeSnapshot>>,
+    /// What its caret read found ([`Worker::read_focus_text`]).
+    text: Option<FocusText>,
+    /// When the answer began to be read, in milliseconds since the Unix
+    /// epoch.
+    observed_at_ms: u64,
+    /// The window whose focused element the answer read.
+    window: Option<isize>,
+}
+
+/// The object the focus `node` is, by its backend's registry: its runtime id
+/// or its MSAA event address, as the intake records the focus.
+fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
+    match node.backend {
+        Backend::Uia => context.uia_registry.runtime_id_of(node.id).map(Object::Uia),
+        Backend::Msaa => context
+            .msaa_registry
+            .key_of(node.id)
+            .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child)),
+    }
 }
 
 /// A focus or foreground change an outpost reported, as NVDA's
@@ -1357,13 +1385,7 @@ impl Worker<'_> {
             name = ?node.name,
             "no UIA focus followed a WinEvent focus in a UIA window; the focus is read and reported"
         );
-        let object = match node.backend {
-            Backend::Uia => context.uia_registry.runtime_id_of(node.id).map(Object::Uia),
-            Backend::Msaa => context
-                .msaa_registry
-                .key_of(node.id)
-                .map(|(hwnd, object, child)| Object::Msaa(hwnd, object, child)),
-        };
+        let object = object_of(context, &node);
         let (node_id, role, backend) = (node.id, node.role, node.backend);
         self.emit_focus(
             TraceId::mint(),
@@ -2178,27 +2200,23 @@ impl Worker<'_> {
             text: text.clone().map(Box::new),
         };
         if self.emit(trace, observed_at_ms, backend, window, event) {
-            // A focus observed after a `WinEvent` focus no UIA focus has
-            // answered yet answers it; a foreground change says nothing of
-            // the focus inside its window, and does not.
-            if !foreground {
+            if foreground {
+                self.end_watch_elsewhere(node_id);
+                self.context.tracking().role = Some(role);
+            } else {
+                // A focus observed after a `WinEvent` focus no UIA focus
+                // has answered yet answers it; a foreground change says
+                // nothing of the focus inside its window, and does not.
                 self.gap.focus_after(observed_at_ms);
-            }
-            // A caret key's watch on another node ends with the focus,
-            // saying nothing, as NVDA's wait gives way to a focus change.
-            if self
-                .context
-                .caret_watch()
-                .as_ref()
-                .is_some_and(|open| open.node_id != node_id)
-            {
-                self.end_watch("the focus moved");
-            }
-            if !foreground {
-                self.note_focused(object, role, window);
+                self.adopt_focus(
+                    (node_id, role, states),
+                    object,
+                    window,
+                    chain,
+                    observed_at_ms,
+                );
             }
             let mut tracking = self.context.tracking();
-            tracking.role = Some(role);
             tracking.batch = Some(self.batch);
             tracking.foreground_since_focus = foreground;
             tracking.reported += 1;
@@ -2214,30 +2232,6 @@ impl Worker<'_> {
                     observed_at_ms
                 },
             });
-            if !foreground {
-                tracking.focus_observed_at_ms = if observed_at_ms == 0 {
-                    now_ms()
-                } else {
-                    observed_at_ms
-                };
-                tracking.focus = Some(node_id);
-                tracking.focus_states = Some(states);
-                tracking.focus_role = Some(role);
-                // NVDA makes its foreground object when the focus enters a
-                // top-level window, so the window keeps the verdict it had
-                // then while the focus moves within it.
-                let top = window.map(top_level_of).filter(|&top| top != 0);
-                if top != tracking.window.map(top_level_of) {
-                    let foreground = self.context.foreground_window();
-                    tracking.foreground_window = top.filter(|&top| top == foreground);
-                }
-                tracking.window = window;
-                // Unknown ancestors leave the previous chain, as the reducer
-                // keeps it.
-                if let Some(chain) = chain {
-                    tracking.chain = chain;
-                }
-            }
             drop(tracking);
             // Move the focus-following subscription to the new focus,
             // without waiting. A foreground report is a window, not the
@@ -2245,6 +2239,64 @@ impl Worker<'_> {
             if let Some(node) = text_node {
                 self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_ms));
             }
+        }
+    }
+
+    /// Makes `node_id`, of `role` with `states`, the outpost's focus: the
+    /// object `object` in `window`, with `chain`, its ancestors and itself,
+    /// or `None` when its ancestors are unknown, observed at
+    /// `observed_at_ms` (0 for now). A caret key's watch on another node
+    /// ends, the intake is told ([`note_focused`](Self::note_focused)), and
+    /// the tracking takes it, so its caret events, a terminal's output and
+    /// the menu rules follow it. A reported focus becomes the focus this
+    /// way ([`emit_focus`](Self::emit_focus)), and so does a focus-now
+    /// answer's control, which Core takes as its focus.
+    fn adopt_focus(
+        &mut self,
+        (node_id, role, states): (NodeId, Role, StateSet),
+        object: Option<Object>,
+        window: Option<isize>,
+        chain: Option<Vec<NodeSnapshot>>,
+        observed_at_ms: u64,
+    ) {
+        self.end_watch_elsewhere(node_id);
+        self.note_focused(object, role, window);
+        let mut tracking = self.context.tracking();
+        tracking.role = Some(role);
+        tracking.focus_observed_at_ms = if observed_at_ms == 0 {
+            now_ms()
+        } else {
+            observed_at_ms
+        };
+        tracking.focus = Some(node_id);
+        tracking.focus_states = Some(states);
+        tracking.focus_role = Some(role);
+        // NVDA makes its foreground object when the focus enters a
+        // top-level window, so the window keeps the verdict it had then
+        // while the focus moves within it.
+        let top = window.map(top_level_of).filter(|&top| top != 0);
+        if top != tracking.window.map(top_level_of) {
+            let foreground = self.context.foreground_window();
+            tracking.foreground_window = top.filter(|&top| top == foreground);
+        }
+        tracking.window = window;
+        // Unknown ancestors leave the previous chain, as the reducer keeps
+        // it.
+        if let Some(chain) = chain {
+            tracking.chain = chain;
+        }
+    }
+
+    /// Ends a caret key's watch on a node other than `node_id`, the new
+    /// focus, saying nothing, as NVDA's wait gives way to a focus change.
+    fn end_watch_elsewhere(&mut self, node_id: NodeId) {
+        if self
+            .context
+            .caret_watch()
+            .as_ref()
+            .is_some_and(|open| open.node_id != node_id)
+        {
+            self.end_watch("the focus moved");
         }
     }
 
@@ -3848,33 +3900,13 @@ impl Worker<'_> {
         let context = self.context;
         let client = &mut *self.client;
         let started = std::time::Instant::now();
-        // The focus-now answer's control, its text, and when it was read,
-        // followed once the answer is sent.
+        // The focus-now answer's control, adopted and followed once the
+        // answer is sent.
         let mut follow = None;
         let result = match query {
             Query::FocusNow => {
-                let mut answer = read::focus_now(context, client);
-                let previous = context.tracking().chain.clone();
-                let window = answer.window.iter_mut().map(|(window, _)| window);
-                let focus = answer.focus.iter_mut().flat_map(|focus| {
-                    let FocusedControl {
-                        node, ancestors, ..
-                    } = focus;
-                    ancestors.iter_mut().flatten().chain(std::iter::once(node))
-                });
-                read::describe_dialogs(context, window.chain(focus), (&previous, &mut None, false));
-                // Core takes the answer's control as its focus: its text is
-                // read as a reported focus's is, so a text field's line is
-                // spoken and Core has its caret, and a caret key there is
-                // answered by the control's caret events, so the
-                // focus-following subscription moves to it, after the
-                // answer.
-                if let Some(control) = &mut answer.focus {
-                    let node = &control.node;
-                    let text = self.read_focus_text(node.id, node.role);
-                    follow = Some(((node.id, node.role), text.clone(), answer.observed_at_ms));
-                    control.text = text.map(Box::new);
-                }
+                let (answer, answered) = self.focus_now();
+                follow = answered;
                 Ok(QueryResult::Focus(answer))
             }
             Query::Navigate { node_id, kind } => {
@@ -3906,13 +3938,74 @@ impl Worker<'_> {
             "query answered"
         );
         self.reply(request_id, trace, outcome);
-        // The answer's control is followed once the answer is sent, as a
-        // reported focus is once its event is (`emit_focus`), so what the
-        // follow-up sends, such as a terminal's empty answer to a read
-        // owed to Core, reaches Core after the focus it follows.
-        if let Some((node, text, observed_at_ms)) = follow {
-            self.follow_text(node, text.as_ref(), (trace, observed_at_ms));
+        if let Some(answered) = follow {
+            self.follow_answer(answered, trace);
         }
+    }
+
+    /// The answer to a focus-now query, with its control, when it has one,
+    /// to adopt and follow once the answer is sent
+    /// ([`follow_answer`](Self::follow_answer)). Core takes the control as
+    /// its focus, so its text is read as a reported focus's is: a text
+    /// field's line is spoken and Core has its caret.
+    fn focus_now(&mut self) -> (FocusNow, Option<AnsweredFocus>) {
+        let context = self.context;
+        let (mut answer, window) = read::focus_now(context, self.client);
+        let previous = context.tracking().chain.clone();
+        let windows = answer.window.iter_mut().map(|(window, _)| window);
+        let focus = answer.focus.iter_mut().flat_map(|focus| {
+            let FocusedControl {
+                node, ancestors, ..
+            } = focus;
+            ancestors.iter_mut().flatten().chain(std::iter::once(node))
+        });
+        read::describe_dialogs(context, windows.chain(focus), (&previous, &mut None, false));
+        let answered = answer.focus.as_mut().map(|control| {
+            let node = &control.node;
+            let text = self.read_focus_text(node.id, node.role);
+            control.text = text.clone().map(Box::new);
+            AnsweredFocus {
+                node: node.clone(),
+                ancestors: control.ancestors.clone(),
+                text,
+                observed_at_ms: answer.observed_at_ms,
+                window,
+            }
+        });
+        (answer, answered)
+    }
+
+    /// Makes a focus-now answer's control the outpost's focus and follows
+    /// it, once the answer is sent, as a reported focus is once its event
+    /// is ([`emit_focus`](Self::emit_focus)), so what the follow-up sends,
+    /// such as a terminal's empty answer to a read owed to Core, reaches
+    /// Core after the focus it follows. A control this outpost already has
+    /// as its focus is not adopted again.
+    fn follow_answer(&mut self, answered: AnsweredFocus, trace: TraceId) {
+        let AnsweredFocus {
+            node,
+            ancestors,
+            text,
+            observed_at_ms,
+            window,
+        } = answered;
+        if !self.is_focus(node.id) {
+            let object = object_of(self.context, &node);
+            let chain = ancestors.map(|ancestors| {
+                ancestors
+                    .into_iter()
+                    .chain(std::iter::once(node.clone()))
+                    .collect()
+            });
+            self.adopt_focus(
+                (node.id, node.role, node.states),
+                object,
+                window,
+                chain,
+                observed_at_ms,
+            );
+        }
+        self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_ms));
     }
 
     /// Publishes the reply to the query in hand, ending its entry.

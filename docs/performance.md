@@ -1241,7 +1241,10 @@ of its own can give mockapp's edit control.
 - Today: 4 UIA calls and 1 window message remotely, 40 and 1
   classically (2 and 1 before 2026-10-22, when the answer carried no
   text). A selection adds what it adds to a reported focus ("A focus on
-  a text field" below).
+  a text field" below). Once the answer is sent the control becomes the
+  outpost's focus, which makes no call; a terminal's follow-up then
+  makes the baseline read of its text a reported terminal focus's
+  follow-up makes, outside the answer's count.
 - Target: the minimum, met.
 
 ### The caret report after a focus, UIA

@@ -870,12 +870,8 @@ fn dialog_text_of(context: &Context, node: &NodeSnapshot) -> Option<String> {
 /// (`docs/design/listener-without-connections.md`, section 4.3); and when
 /// the focus window cannot be read, no longer a window, stood in for by a
 /// ghost window, or hung ([`event_window_unreadable`], local calls), so
-/// nothing is asked of an application that does not answer.
-pub(super) fn focused_control(context: &Context, client: &mut Client) -> Option<FocusedControl> {
-    focused_control_in(context, client).map(|(_, control)| control)
-}
-
-/// [`focused_control`] with the window whose focused element it read.
+/// nothing is asked of an application that does not answer. Returned with
+/// the window whose focused element it read.
 pub(super) fn focused_control_in(
     context: &Context,
     client: &mut Client,
@@ -953,7 +949,7 @@ pub(super) fn focused_control_in(
     }
 }
 
-/// The window whose focused element [`focused_control`] reads for the
+/// The window whose focused element [`focused_control_in`] reads for the
 /// application `target_pid`: the focus window `focus` answers, only when
 /// that application serves it ([`served_by`]), so a console's client never
 /// reads its console window's focus, which its console host serves.
@@ -986,8 +982,9 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
 
 /// The answer to a focus-now query: the application's foreground window, if
 /// it holds the system foreground, and its focused control. A console host's
-/// is its console window ([`foreground_window_of`]).
-pub(super) fn focus_now(context: &Context, client: &mut Client) -> FocusNow {
+/// is its console window ([`foreground_window_of`]). Returned with the
+/// window whose focused element it read, the control's own window.
+pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Option<isize>) {
     let observed_at_ms = now_ms();
     let window = foreground_window_of(context.target_pid())
         .filter(|&hwnd| !window_is_hidden_frame(hwnd))
@@ -997,11 +994,15 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> FocusNow {
                 window_facts(hwnd),
             )
         });
-    FocusNow {
-        window,
-        focus: focused_control(context, client),
-        observed_at_ms,
-    }
+    let (control_window, focus) = focused_control_in(context, client).unzip();
+    (
+        FocusNow {
+            window,
+            focus,
+            observed_at_ms,
+        },
+        control_window,
+    )
 }
 
 /// Resolves a UIA node to a live element filled by `nodes`: the registry's

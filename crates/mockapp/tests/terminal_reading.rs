@@ -33,6 +33,9 @@
 //!   hook leaves out the change events of windows read through MSAA, UI
 //!   Automation's `WinEvent` copies of its events among them, and hooks
 //!   them again once the focus is in a Win32 button read through MSAA.
+//! - A terminal that a focus-now query answered with, and no focus event
+//!   reported, is the outpost's focus: its text change is reported as
+//!   terminal output.
 //!
 //! While the terminal is held, the evidence that the outpost has taken a
 //! text change is the report of a caret event raised after it: UI
@@ -216,6 +219,30 @@ fn hold(outpost: &mut OutpostUnderTest, node: NodeId) {
     let hold = ask(outpost, node, TextOp::TerminalHold);
     assert_eq!(answer_to(outpost, hold), TextReply::Done);
     outpost.settled();
+}
+
+/// A terminal the outpost was asked for with a focus-now query, as Core
+/// asks at its start and after an outpost is replaced, with no focus event
+/// for it, becomes the outpost's focus as a reported focus does: its new
+/// line is reported as terminal output.
+fn a_focus_now_terminal_reports_its_output() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-focus-now");
+    let mut app = common::spawn("terminal_reading.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let mut outpost = OutpostUnderTest::new(&app);
+    app.send("set-focus term");
+    outpost.read_focus_as(focused(hwnd).live().element());
+    let control = outpost
+        .focus_now()
+        .expect("the focus now has a focused control");
+    assert_eq!(control.node.role, Role::Terminal);
+    let term = control.node.id;
+    write(&mut app, &["three"]);
+    assert_eq!(reported(&outpost, term), lines(&["three"]));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
 }
 
 /// Live, then held, then read: a change while held says nothing, and the
@@ -636,6 +663,10 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_focus_now_terminal_reports_its_output",
+            a_focus_now_terminal_reports_its_output,
+        ),
         (
             "a_held_terminal_notes_changes_and_a_read_answers_them",
             a_held_terminal_notes_changes_and_a_read_answers_them,
