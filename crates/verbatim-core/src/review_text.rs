@@ -25,7 +25,7 @@ use verbatim_model::{
     UtteranceSegment,
 };
 
-use crate::editing::{is_grid, may_have_text, selection_segments, speak};
+use crate::editing::{is_grid, may_have_text, selection_segments, speak, speak_each};
 use crate::state::{
     Landing, LandingPlace, PendingText, ReviewPosition, ReviewText, SharedChunk, SrState,
     StartMarker, TextFollowUp,
@@ -661,12 +661,7 @@ pub(crate) fn reply(
         // (`docs/parity/review.md`, "Select then copy from the review
         // cursor").
         (TextFollowUp::Selected, TextReply::Selected(changes)) => {
-            let segments = selection_segments(&changes, None);
-            if segments.is_empty() {
-                Vec::new()
-            } else {
-                vec![speak(trace_id, segments)]
-            }
+            speak_each(trace_id, selection_segments(&changes, None))
         }
         // The text cannot be selected: the second press still copies it.
         (TextFollowUp::Selected, TextReply::Unsupported | TextReply::NoText) => {

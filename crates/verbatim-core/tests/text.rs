@@ -3243,7 +3243,8 @@ fn a_selection_extended_after_a_text_change_says_the_whole_new_selection_selecte
 }
 
 /// A selection replaced by one apart from it after a text change: both
-/// general words, each with the whole new selection.
+/// general words, each with the whole new selection, each its own
+/// utterance.
 #[test]
 fn a_selection_replaced_after_a_text_change_says_selected_then_selected_instead() {
     let mut state = announced_field();
@@ -3251,7 +3252,7 @@ fn a_selection_replaced_after_a_text_change_says_selected_then_selected_instead(
         &mut state,
         &general_report(Some(alpha_selected()), &[false, true], Some("alpha")),
     );
-    assert_eq!(effects.len(), 1, "one effect in {effects:?}");
+    assert_eq!(effects.len(), 2, "two utterances in {effects:?}");
     assert_eq!(
         spoken(&effects),
         vec![

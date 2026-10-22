@@ -88,6 +88,17 @@ fn is_editable(node: &NodeSnapshot) -> bool {
     }
 }
 
+/// Queued speech for how a selection changed, each phrase its own
+/// utterance, as NVDA speaks each text selected or unselected, and
+/// "selection removed", on its own (`docs/parity/text.md`,
+/// "TextInfo-equivalent layer").
+pub(crate) fn speak_each(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Vec<Effect> {
+    segments
+        .into_iter()
+        .map(|segment| speak(trace_id, vec![segment]))
+        .collect()
+}
+
 /// Queued speech with no source node.
 pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effect {
     Effect::Speak(Utterance {
@@ -627,11 +638,7 @@ pub(crate) fn caret_reply(
         update_caret(state, pending.node, reply.caret, reply.read_at_ms);
         let mut said = pending.heard.clone();
         said.extend(changed);
-        return if said.is_empty() {
-            Vec::new()
-        } else {
-            vec![speak(trace_id, said)]
-        };
+        return speak_each(trace_id, said);
     }
     if !reply.moved {
         return heard(state, trace_id, pending);
@@ -769,14 +776,8 @@ fn changed_after(
     changes: &[SelectionChange],
     general: Option<General<'_>>,
 ) -> Vec<Effect> {
-    let mut effects = Vec::new();
-    if !pending.heard.is_empty() {
-        effects.push(speak(trace_id, pending.heard.clone()));
-    }
-    let answered = selection_segments(changes, general);
-    if !answered.is_empty() {
-        effects.push(speak(trace_id, answered));
-    }
+    let mut effects = speak_each(trace_id, pending.heard.clone());
+    effects.extend(speak_each(trace_id, selection_segments(changes, general)));
     effects
 }
 
@@ -819,17 +820,17 @@ pub(crate) fn superseded_reply(
         pending.heard.extend(changed);
         return Vec::new();
     }
-    vec![speak(trace_id, changed)]
+    speak_each(trace_id, changed)
 }
 
 /// The selection changes caret reports carried while `pending`'s key
 /// waited ([`PendingCaret::heard`]), spoken when its answer says nothing
 /// of its own, while its node is still the focus.
 fn heard(state: &SrState, trace_id: TraceId, pending: &PendingCaret) -> Vec<Effect> {
-    if pending.heard.is_empty() || !state.focus_matches(pending.node) {
+    if !state.focus_matches(pending.node) {
         return Vec::new();
     }
-    vec![speak(trace_id, pending.heard.clone())]
+    speak_each(trace_id, pending.heard.clone())
 }
 
 /// Whether the answer to `pending`'s key shows the selection removed:
@@ -1127,11 +1128,7 @@ pub(crate) fn selection_changed(
         pending.heard.extend(selection_segments(changes, general));
         return Vec::new();
     }
-    let segments = selection_segments(changes, general);
-    if segments.is_empty() {
-        return Vec::new();
-    }
-    vec![speak(trace_id, segments)]
+    speak_each(trace_id, selection_segments(changes, general))
 }
 
 /// Takes a caret report for `node` as the focus's caret, and moves the
