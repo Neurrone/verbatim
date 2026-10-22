@@ -962,6 +962,18 @@ fn backspace_at_a_lines_start_names_the_line_break_it_deleted() {
     );
     assert_eq!(spoken(&effects), vec![character("\r")]);
 
+    // With Control too, as Notepad deletes the break before a line's start.
+    let mut state = editing("def\r", 0);
+    let effects = reduce(&mut state, &key(CaretMotion::BackspaceWord, false));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            caret_reply(true, line("abcdef\r", 99, 3), None),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![character("\r")]);
+
     // A standard edit control's carriage return and line feed are spoken
     // as the line feed. On the text's last line, which has no break, the
     // break is the one the text was last seen to use.

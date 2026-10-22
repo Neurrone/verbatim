@@ -467,8 +467,8 @@ fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<Car
 /// key, `offset` being the caret's byte offset in it, or a selection's
 /// start: the character before it, or for Control+Backspace the text from
 /// the start of the word before it up to it. At the
-/// start of a line other than a terminal's, a Backspace deletes the line
-/// break before it, the kind of break the text uses, `line_break`
+/// start of a line other than a terminal's, a Backspace, with or without
+/// Control, deletes the line break before it, the kind of break the text uses, `line_break`
 /// ([`CaretContext::line_break`]), which NVDA names
 /// (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
 /// character"). `None` when that is not known, and for other keys.
@@ -489,8 +489,11 @@ fn deleted_text(
         },
         CaretMotion::BackspaceWord => {
             let words = text::words(content, line.language_at(0));
-            let start = words.iter().rev().find(|range| range.start < offset)?.start;
-            Some(content[start..offset].to_owned())
+            match words.iter().rev().find(|range| range.start < offset) {
+                Some(word) => Some(content[word.start..offset].to_owned()),
+                None if offset == 0 && !grid && !line.first => line_break.map(str::to_owned),
+                None => None,
+            }
         }
         _ => None,
     }
@@ -904,10 +907,12 @@ fn landing_segments(from: usize, line: &TextChunk, grid: bool) -> Vec<UtteranceS
     character()
 }
 
-/// The speech for text a Backspace deleted. A carriage return and line feed
-/// deleted together are spoken as the line feed, as NVDA speaks them.
+/// The speech for text a Backspace deleted: a character, or a line break
+/// whichever key deleted it, by its name, and a word as text. A carriage
+/// return and line feed deleted together are spoken as the line feed, as
+/// NVDA speaks them (`docs/parity/text.md`, "TextInfo-equivalent layer").
 fn deleted_segments(deleted: &str, motion: CaretMotion) -> Vec<UtteranceSegment> {
-    if motion == CaretMotion::Backspace {
+    if motion == CaretMotion::Backspace || text::line_break(deleted) == Some(deleted) {
         let deleted = if deleted == "\r\n" { "\n" } else { deleted };
         text::character_segments(Some(deleted), None)
     } else {

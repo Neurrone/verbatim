@@ -15,9 +15,12 @@
 //! over the same selection in the same line, "alpha beta gamma", in
 //! `target/e2e-evidence/m42-selection-keys-2026-10-22/`, named by the
 //! control and the key (`textbox-word-backspace.txt`,
-//! `notepad-second-word-backspace.txt`, and so on), and for Backspace over
+//! `notepad-second-word-backspace.txt`, and so on), for Backspace over
 //! Notepad's first word in
-//! `target/e2e-evidence/m42-selection-fixes-2026-10-22/notepad-first-word-backspace.txt`;
+//! `target/e2e-evidence/m42-selection-fixes-2026-10-22/notepad-first-word-backspace.txt`,
+//! and for Backspace and Control+Backspace at a later line's start, which
+//! name the line break before it, in
+//! `target/e2e-evidence/m42-text-captures-2026-10-23/` (items 1 and 2);
 //! each key has a line of its own, so each starts from the text its capture
 //! started from. Two
 //! differences are deliberate and declared where they occur: Verbatim has
@@ -47,12 +50,12 @@ const NAME: &str = "selection-keys";
 /// Each line of the document, one for each key.
 const LINE: &str = "alpha beta gamma";
 
-/// The scenario's document: eleven copies of [`LINE`], which Notepad opens
-/// before Verbatim starts.
+/// The scenario's document: fourteen copies of [`LINE`], which Notepad
+/// opens before Verbatim starts.
 pub(crate) fn document() -> Document {
     Document {
         name: NAME,
-        contents: format!("{LINE}\r\n").repeat(11),
+        contents: format!("{LINE}\r\n").repeat(14),
     }
 }
 
@@ -99,14 +102,15 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "backspace", &["blank", "selection removed"]);
 
-    // Control+Backspace over the first word: no word before the caret
-    // either (`textbox-word-control-backspace.txt`).
+    // Control+Backspace over the first word of a later line: the line
+    // break before the selection's start
+    // (`m42-text-captures-2026-10-23/01a-textbox-docS-word-control-backspace-run1.txt`).
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(
         scenario,
         "control+backspace",
-        &["blank", "selection removed"],
+        &["line feed", "selection removed"],
     );
 
     // Backspace and Control+Backspace over the second word: the space and
@@ -148,10 +152,18 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 
     shift_right_then_right(scenario);
 
-    // Enter, typed, comes last, since the line break it types splits the
-    // line (`textbox-word-enter.txt`).
+    // Backspace over the first word of a later line: the line break before
+    // the selection's start
+    // (`m42-text-captures-2026-10-23/02a-textbox-docS-word-backspace-run1.txt`).
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "home", &["a"]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press(scenario, "backspace", &["line feed", "selection removed"]);
+
+    // Enter, typed, comes last, since the line break it types splits the
+    // line (`textbox-word-enter.txt`). The caret is at the line's start
+    // already.
+    press(scenario, "downarrow", &[LINE]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
     press(scenario, "enter", &["selection removed"]);
 }
@@ -265,6 +277,39 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     press_deviating(scenario, "control+v", &["selection removed"]);
 
     shift_right_then_right(scenario);
+
+    // Control+Backspace over the first word of a later line: Notepad
+    // deletes the line break before the selection, which is said, and the
+    // selection's range still holds its text, so its change is said as
+    // NVDA says it
+    // (`m42-text-captures-2026-10-23/01b-notepad-docS-word-control-backspace-run1.txt`).
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "home", &["a"]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press(
+        scenario,
+        "control+backspace",
+        &["carriage return", "alpha  unselected"],
+    );
+
+    // Backspace over the first word of a later line: the line break before
+    // the selection's start, then the selection removed, where NVDA says
+    // nothing more
+    // (`m42-text-captures-2026-10-23/02b-notepad-docS-word-backspace-run1.txt`).
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "home", &["a"]);
+    press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
+    press_deviating(
+        scenario,
+        "backspace",
+        &["carriage return", "selection removed"],
+    );
+
+    // Control+Backspace at a later line's start with nothing selected: the
+    // line break it deletes
+    // (`m42-text-captures-2026-10-23/01c-notepad-docA-line2-control-backspace-run1.txt`).
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "control+backspace", &["carriage return"]);
 
     // Enter, typed: the selection removed, where NVDA names the line break
     // now in the old range, "carriage return unselected"
