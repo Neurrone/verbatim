@@ -271,6 +271,22 @@ deferred.
   began at the line after the caret's, in Notepad and in the text box,
   and either this NVDA build starts there or the capture add-on misses
   the first chunk of speech.
+- Notepad's Find box differs from NVDA's capture of 2026-10-23 (item 21b
+  in `target/e2e-evidence/m42-text-captures-2026-10-23/`): Control+F says
+  Notepad's notification "Press F6 to go to new notification" first and
+  "Find edit" and "selected beta" as two utterances, where NVDA says
+  "Popup window", then "Find edit selected beta" as one, then the
+  notification; this is the focus announcement's order with a
+  notification, outside the caret keys, and is to be settled with a
+  capture that does not depend on the text Notepad remembers in the box.
+- When a selection is replaced by one apart from it, NVDA speaks the new
+  text selected before the old text unselected (`speakSelectionChange`
+  speaks every selected text, then every unselected one), where Verbatim
+  says the old unselected first; no capture has it yet.
+- A double-click is checked only by hand (`dblclick2.ps1` in
+  `target/e2e-evidence/m42-text-parity-2026-10-23/exploration/`): the
+  agent has no mouse request, so no scenario pins "beta selected" for a
+  double-click inside a word.
 
 ## M4.2 — Parity small items
 
