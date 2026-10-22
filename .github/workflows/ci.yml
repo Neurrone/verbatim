@@ -257,7 +257,7 @@ jobs:
               if ($LASTEXITCODE -ne 0) { $status = $LASTEXITCODE }
             }
           } else {
-            cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
+            cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --test-threads=1 2>&1 | Tee-Object -FilePath verbatim-e2e-test-output.log
             $status = $LASTEXITCODE
           }
           Stop-Process -Id $agent.Id -ErrorAction SilentlyContinue

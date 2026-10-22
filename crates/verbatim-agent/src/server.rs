@@ -344,6 +344,7 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         | Request::MisspeltWords
         | Request::ControlledItems { .. }
         | Request::NameByAutomationId { .. }
+        | Request::FocusedControl
         | Request::KeyToggled { .. }) => state_request(id, request),
         Request::ListFiles { path } => list_reply(id, files::list(&path)),
         Request::ListFolders { path } => list_reply(id, files::list_folders(&path)),
@@ -497,7 +498,8 @@ fn process_request(id: u64, request: Request) -> Frame {
 
 /// Answers the requests that read state a test fixes its expectations
 /// from, independently of the screen reader under test: the focused
-/// element, an element focused by its identifier, the focused text's
+/// element, its name and control type, an element focused by its
+/// identifier, the focused text's
 /// misspelt words, and a lock key's state.
 fn state_request(id: u64, request: Request) -> Frame {
     match request {
@@ -540,6 +542,13 @@ fn state_request(id: u64, request: Request) -> Frame {
                 Err(error) => error_frame(id, &error),
             }
         }
+        Request::FocusedControl => match focus::focused_control() {
+            Ok((name, control_type)) => Frame::Reply {
+                to: id,
+                payload: ReplyPayload::Control { name, control_type },
+            },
+            Err(error) => error_frame(id, &error),
+        },
         Request::KeyToggled { key } => match keys::toggled(&key) {
             Ok(on) => Frame::Reply {
                 to: id,

@@ -85,7 +85,7 @@ would each think they own an instance the other just replaced out from
 under it (`single_instance::acquire_replacing`'s own algorithm).
 `.github/workflows/ci.yml`'s `e2e` job runs, on a plain `windows-latest`
 runner with the same environment variable,
-`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded --test-threads=1`,
+`cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --test-threads=1`,
 with `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` as well (see the local-only scenarios
 below). Started by hand, as `gh workflow run ci.yml -f scenario=<name> -f
 repeat=<n>`, the workflow runs only its `e2e` job, which runs that one
@@ -220,7 +220,7 @@ More environment variables matter for less common cases:
   the artifacts.
 - `VERBATIM_E2E_SKIP_LOCAL_ONLY=1` says the run is not on a Windows 11
   desktop: a local-only scenario run with it set fails, since such a run
-  deselects them with `--skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded`; unset, empty, or `0` runs them,
+  deselects them with `--skip notepad_ --skip settings_search_suggestions`; unset, empty, or `0` runs them,
   and any other value fails each test saying so. CI's `e2e` job sets it; see the
   local-only scenarios below.
 
@@ -264,8 +264,11 @@ Backspace, before the speech its item's focus brings or between that
 speech and the item),
 `settings_system_page` (the Settings app's System page),
 `settings_combo_box_expanded` (a combo box on its Date and time page,
-"expanded" spoken before its first item as Alt+Down Arrow opens it;
-local-only),
+"expanded" spoken before its first item as Alt+Down Arrow opens it; the
+page opens with its focus on "Region button" on this machine and on
+"Location Settings link" on GitHub's runner, so the scenario expects the
+control the agent reads as focused, its name and the role word of its UI
+Automation control type),
 `settings_search_suggestions` (the Settings app's search suggestions,
 read as the selection moves through them while the focus stays in the
 search box, their number and names read by the agent before they are
@@ -405,20 +408,12 @@ local-only because the runner's Settings raises no selection event for a
 first suggestion as the suggestions list opens, so "Suggestions
 available" plays to completion there, while the scenario expects the
 first suggestion, which this machine's Settings selects as the list
-opens, to cut it off (Dickson, 2026-10-21). `settings_combo_box_expanded`
-is local-only because the runner's Settings opens its Date and time page
-with the focus on "Location Settings link", where this machine's opens
-it on "Region button", which the scenario's opening speech asserts: GitHub
-run 39686251059 heard "Settings", "Settings window", "Location Settings
-link", a difference in the runner's Settings rather than in Verbatim. The
-opening is not read from the agent, as the suggestions' names are,
-because the agent reads no role, and composing the spoken role word in
-the scenario would copy Verbatim's role vocabulary into it. The
+opens, to cut it off (Dickson, 2026-10-21). The
 registry's `LOCAL_ONLY_FILTERS` lists the filters, and only local-only
 scenarios' names start with them. A local-only
 scenario is part of the suite: every local run and every
 `cargo xtask vm test` run includes it. CI's `e2e` job deselects them with
-`--skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded` and sets
+`--skip notepad_ --skip settings_search_suggestions` and sets
 `VERBATIM_E2E_SKIP_LOCAL_ONLY=1`, so one that
 ran there anyway would fail rather than report a pass. The skip comes from
 that setting alone, never from detecting the machine, so a local run

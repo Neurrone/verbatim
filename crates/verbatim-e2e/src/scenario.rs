@@ -1658,6 +1658,16 @@ impl Scenario {
         self.agent.name_by_automation_id(automation_id)
     }
 
+    /// The focused element's name and UI Automation control type, read by
+    /// the agent through UI Automation independently of Verbatim.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    pub fn focused_control(&mut self) -> io::Result<(String, i32)> {
+        self.agent.focused_control()
+    }
+
     /// Of the first element the focused element controls (its UI
     /// Automation `ControllerFor` relation), the set size its first child
     /// reports (`SizeOfSet`) and the names of its first `names` children, read by the agent independently of
