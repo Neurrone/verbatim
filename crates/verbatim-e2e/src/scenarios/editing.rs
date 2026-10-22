@@ -7,7 +7,8 @@
 //! Backspace naming the line break they meet, as NVDA does
 //! (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
 //! character"): Windows 11 Notepad breaks lines with a carriage return, an
-//! edit control with a carriage return and a line feed; and a selection
+//! edit control with a carriage return and a line feed; in the text box,
+//! no word at the end of the text, "blank"; and a selection
 //! changed by typing over it or cutting it, said in general terms in both,
 //! as NVDA says it in the text box, and in Notepad by Dickson's deliberate
 //! difference from NVDA (`docs/parity/text.md`, "TextInfo-equivalent
@@ -133,6 +134,20 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     press(scenario, "control+x", &["selection removed"]);
     scenario.expect_nothing_more();
     press(scenario, "x", &["x"]);
+
+    // At the end of the text there is no word, as NVDA finds it
+    // (`target/e2e-evidence/m42-word-at-end-2026-10-22/text-box-editing-compare.txt`,
+    // steps 27 to 33): "y" typed after a space, then Delete removes the
+    // line break after it, leaving the caret at the end of "x y";
+    // Control+Right onto the end and Control+Delete of the last word each
+    // leave nothing at the caret, "blank".
+    press(scenario, "space", &["space"]);
+    press(scenario, "y", &["y"]);
+    press(scenario, "delete", &["blank"]);
+    press(scenario, "control+leftarrow", &["y"]);
+    press(scenario, "control+rightarrow", &["blank"]);
+    press(scenario, "control+leftarrow", &["y"]);
+    press(scenario, "control+delete", &["blank"]);
 }
 
 /// The scenario in Windows 11 Notepad.

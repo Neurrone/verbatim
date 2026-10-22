@@ -98,9 +98,16 @@ impl EditText {
         Ok(text)
     }
 
-    /// The span of the word containing `offset`.
+    /// The span of the word containing `offset`, empty at the end of the
+    /// text, where NVDA expands a collapsed position to no word
+    /// (`OffsetsTextInfo.expand` in `nvda/source/textInfos/offsets.py`).
+    /// A plain edit control's end is found from its last line's text, with
+    /// no read of the length.
     fn word(&mut self, offset: u32) -> TextResult<(u32, u32)> {
         if self.control.version() >= 2 {
+            if offset >= self.length()? {
+                return Ok((offset, offset));
+            }
             // As NVDA's `_getWordOffsets` asks a rich edit control.
             let mut start = self.control.find_word_break(false, offset)?;
             let mut end = self.control.find_word_break(true, start)?;
@@ -158,8 +165,9 @@ fn is_break(unit: u16) -> bool {
 /// without its break, a null character or no-break space read as a space,
 /// is segmented by `verbatim-text`'s word rules (with dictionaries for
 /// scripts written without spaces), and each word takes the white space
-/// after it. White space at the line's start is a word of its own. At or
-/// past the line's text, the word is its last.
+/// after it. White space at the line's start is a word of its own. Past
+/// the line's text, which is the end of the text, there is no word: the
+/// span is empty.
 fn plain_word(text: &[u16], at: usize) -> (usize, usize) {
     let at = at.min(text.len());
     if text.get(at).copied().is_some_and(is_break) {
@@ -195,7 +203,6 @@ fn plain_word(text: &[u16], at: usize) -> (usize, usize) {
         .iter()
         .copied()
         .find(|&(start, end)| start <= at && at < end)
-        .or_else(|| words.last().copied())
         .unwrap_or((at, at))
 }
 
@@ -372,7 +379,12 @@ mod tests {
         assert_eq!(plain_word(&line, 6), (6, 9), "the break is not the word's");
         assert_eq!(plain_word(&line, 9), (9, 10), "the carriage return");
         assert_eq!(plain_word(&line, 10), (10, 11), "the line feed");
-        assert_eq!(plain_word(&line, 11), (6, 9), "the end");
+        assert_eq!(plain_word(&line, 11), (11, 11), "the end");
+        assert_eq!(
+            plain_word(&units("one two"), 7),
+            (7, 7),
+            "the end after a word"
+        );
     }
 
     #[test]
