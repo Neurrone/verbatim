@@ -1762,6 +1762,7 @@ fn evidence<S: TextSource>(
         since,
         compared,
         known,
+        known_line,
         selected,
     } = baseline(source, anchors, watch)?;
     let request = CaretRequest {
@@ -1797,25 +1798,14 @@ fn evidence<S: TextSource>(
             }
         };
     }
-    if !moved && (known.is_some() || watch.compare.is_some()) {
-        let (unit, offset) = match polled.line.take() {
-            Some(line) => line,
-            None => caret_line(source, &polled.state)?,
-        };
-        let (text, mapped, _) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &[offset]);
-        if let Some(known) = &known {
-            moved = beside(&text, mapped[0]) != *known;
-        }
-        if !moved && let Some(compare) = &watch.compare {
-            let read = polled.unit.as_ref().map(|(unit, _)| unit);
-            moved = text_at_caret(
-                source,
-                &polled.state,
-                (watch.unit, read),
-                (&text, mapped[0]),
-            )? != *compare;
-        }
-        polled.line = Some((unit, offset));
+    let deleting_line = known_line.filter(|_| watch.deletes);
+    if !moved && (known.is_some() || watch.compare.is_some() || deleting_line.is_some()) {
+        moved = text_changed(
+            source,
+            &mut polled,
+            watch,
+            (known.as_ref(), deleting_line.as_deref()),
+        )?;
     }
     if !moved {
         return Ok(None);
@@ -1881,6 +1871,37 @@ fn evidence<S: TextSource>(
     .map(Some)
 }
 
+/// Whether the text about the caret `polled` found differs from what was
+/// known before the key: the characters either side of the caret,
+/// `known`; for a key that deletes, the caret's line, `deleting_line`; or
+/// the text of the watch's unit at the caret, its `compare`. The caret's
+/// line, read here when the poll did not read it, is kept in `polled`.
+fn text_changed<S: TextSource>(
+    source: &mut S,
+    polled: &mut Polled<S::Pos>,
+    watch: &CaretWatch,
+    (known, deleting_line): (Option<&(String, String)>, Option<&str>),
+) -> TextResult<bool> {
+    let (unit, offset) = match polled.line.take() {
+        Some(line) => line,
+        None => caret_line(source, &polled.state)?,
+    };
+    let (text, mapped, _) = to_utf8(&unit.text, MAX_CHUNK_BYTES, &[offset]);
+    let mut changed = known.is_some_and(|known| beside(&text, mapped[0]) != *known)
+        || deleting_line.is_some_and(|line| text != line);
+    if !changed && let Some(compare) = &watch.compare {
+        let read = polled.unit.as_ref().map(|(unit, _)| unit);
+        changed = text_at_caret(
+            source,
+            &polled.state,
+            (watch.unit, read),
+            (&text, mapped[0]),
+        )? != *compare;
+    }
+    polled.line = Some((unit, offset));
+    Ok(changed)
+}
+
 /// Whether caret states `a` and `b` have the same caret and selection.
 fn same_state<S: TextSource>(
     source: &mut S,
@@ -1926,6 +1947,9 @@ struct Baseline<P> {
     /// by whichever reads it first.
     compared: Option<KeptSelection<P>>,
     known: Option<(String, String)>,
+    /// The caret's line where Core last knew it, whose change is evidence
+    /// for a key that deletes ([`CaretWatch::deletes`]).
+    known_line: Option<Arc<str>>,
     /// The selection in the caret report `since` came from, and that
     /// report's number; `None` when it came from Core.
     selected: Option<(Option<(P, P)>, u64)>,
@@ -1972,17 +1996,18 @@ fn baseline<S: TextSource>(
     // provider's positions follow edits (a deleted character takes the
     // position Core knew with it), and the application may have handled the
     // key before this wait began, so those characters changing is evidence
-    // too. The rest of the line is not compared: a line that wraps anew
-    // changes with no key at all.
-    let known = baseline.and_then(|position| {
-        anchors
-            .anchor_text(position.anchor)
-            .map(|text| beside(&text, position.offset as usize))
-    });
+    // too. The rest of the line is compared only for a key that deletes,
+    // which changes it: a line that wraps anew changes with no key at all,
+    // and after any other key that change would be taken for the key's.
+    let known_line = baseline.and_then(|position| anchors.anchor_text(position.anchor));
+    let known = baseline
+        .zip(known_line.as_ref())
+        .map(|(position, text)| beside(text, position.offset as usize));
     Ok(Baseline {
         since,
         compared,
         known,
+        known_line,
         selected,
     })
 }

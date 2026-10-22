@@ -196,9 +196,11 @@ announcement. This applies to focus, to object navigation (which speaks
 with the focus reason), and to reporting the current object or the focus
 on request. It does not apply to a container entered as the focus moves
 into it, or to an object under the mouse, which speak neither value nor
-text. NVDA does no masking of its own here: a protected field's text is
-read through its text interface, which gives the masked characters the
-control shows. (`getObjectSpeech` and `_objectSpeech_calculateAllowedProps`
+text. The announcement does not test the protected state: a protected
+field's text is read through its text interface, which masks it, NVDA's
+own for a classic edit control and the provider for UIA ("Protected
+(password) fields" in [Editable text and terminals](editable-text-and-terminals.md)).
+(`getObjectSpeech` and `_objectSpeech_calculateAllowedProps`
 in `speech/speech.py`; `_hasNavigableText` on the base NVDA object.)
 
 The object does not need the focus. Object navigation and reporting the

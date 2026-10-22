@@ -145,8 +145,8 @@ Implementation notes, `reduce`:
   with the caret, or its count at 512 characters or more
   (`editing::focus_text`). `NoText` speaks the value; `NotRead` speaks
   neither. Nothing is left waiting, so nothing from any source can come
-  between the focus and its line, and a protected field's text and value
-  are never spoken. Object
+  between the focus and its line. A protected (password) field's text and
+  value are spoken as any field's, masked as the control gives them. Object
   navigation, to-focus, and the first press of report current object
   announce such an object the same way, with or without the focus
   (`announce_navigator` in `reduce.rs`, `navigator_text` in `editing.rs`):
@@ -428,8 +428,10 @@ other object is flat text without asking.
 Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
 `Input::CaretKey` on a focus with text asks its outpost to watch for
 evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when
-the key was pressed, the unit to report, and for Delete the character or
-word at the caret (whose change is evidence); every key's answer, a
+the key was pressed, the unit to report, for Delete the character or
+word at the caret (whose change is evidence), and whether the key
+deletes, for which a change of the caret's line is evidence too; every
+key's answer, a
 selecting key's too, compares with the selection the outpost kept for
 the node, as a caret event's report does
 (`docs/crates/verbatim-outpost.md`). Backspace and Control+Backspace over

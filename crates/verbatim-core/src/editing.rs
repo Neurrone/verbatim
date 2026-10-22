@@ -151,6 +151,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         unit,
         compare,
         landing: key.motion == CaretMotion::Other,
+        deletes: key.motion.deletes(),
     };
     // The key is moving the caret, which the review cursor follows: a
     // review command from now on reads where the caret is, not where Core
@@ -1010,9 +1011,10 @@ fn follow_caret(state: &mut SrState, node: NodeId) {
 /// selected text when text is selected, or, for an object with no text to
 /// read, its value, which the focus's announcement left out. Its name and
 /// role were not held back for it, and nothing comes between them, since
-/// both come from the one message. A protected field never has its text
-/// read, and one whose text could not be read speaks neither its line nor
-/// its value. The caret, when read, becomes Core's.
+/// both come from the one message. A protected field's text is read as any
+/// field's, masked as the control gives it (`docs/parity/focus-announcement.md`,
+/// "Text on focus"), and one whose text could not be read speaks neither
+/// its line nor its value. The caret, when read, becomes Core's.
 pub(crate) fn focus_text(
     state: &mut SrState,
     trace_id: TraceId,
@@ -1020,7 +1022,7 @@ pub(crate) fn focus_text(
     (text, observed_at_ms): (Option<&FocusText>, u64),
 ) -> Vec<Effect> {
     keep_focus_caret(state, node.id, text, observed_at_ms);
-    if !may_have_text(node.role) || node.states.contains(State::Protected) {
+    if !may_have_text(node.role) {
         return Vec::new();
     }
     match text {
@@ -1129,13 +1131,6 @@ fn line_segments(
     })
 }
 
-/// Whether the navigator object `node` reads its text in place of its value
-/// (`docs/nvda/speech.md`, "What an object with text says"): an object that
-/// may have text and is not a protected field, whose text is never read.
-pub(crate) fn reads_text(node: &NodeSnapshot) -> bool {
-    may_have_text(node.role) && !node.states.contains(State::Protected)
-}
-
 /// Reads the text of the navigator object `node` for `read`: for its
 /// announcement, made by object navigation or by reporting the current
 /// object, an object that may have text says its text in place of its
@@ -1147,14 +1142,14 @@ pub(crate) fn reads_text(node: &NodeSnapshot) -> bool {
 /// once Core knows it, is read without asking the outpost; otherwise the
 /// outpost is asked for the selected text, then, when nothing is selected,
 /// the caret's line ([`navigator_text_reply`]). A protected field's text is
-/// never read, as on focus.
+/// read as any field's, as on focus.
 pub(crate) fn navigator_text(
     state: &mut SrState,
     trace_id: TraceId,
     node: &NodeSnapshot,
     read: NavigatorRead,
 ) -> Vec<Effect> {
-    if !reads_text(node) {
+    if !may_have_text(node.role) {
         return Vec::new();
     }
     let (start, end) = match state.caret.as_ref().filter(|caret| caret.node == node.id) {

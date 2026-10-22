@@ -142,7 +142,25 @@ Matched:
   identity, whose text NVDA cannot read either, says "terminal" alone
   in both (`part2c-*` in
   `target/e2e-evidence/m42-desktop-2-2026-10-22`); for any other text
-  whose caret cannot be read, NVDA's first line is a difference.
+  whose caret cannot be read, NVDA's first line is a difference. A
+  protected (password) field's text is read as any field's, masked as
+  its text interface gives it, on focus, by caret movement, for
+  Backspace and Delete, and by the review cursor and object navigation,
+  as NVDA reads it ("Protected (password) fields" in
+  [Editable text and terminals](../nvda/editable-text-and-terminals.md)):
+  stars in a classic edit control, whose text Verbatim masks as NVDA's
+  edit control text does, and the provider's circles in a WPF
+  `PasswordBox`; a typed character is still echoed as "star"
+  ([input.md](input.md)). Without symbol processing (M8) the masked text
+  is spoken as its characters, where NVDA says a run of stars by its
+  count and drops a line of circles: Tab into a Windows Forms password
+  box holding six characters says "Password edit protected" and
+  "selected ******" where NVDA says "selected 6 star", and Tab into the
+  `PasswordBox` says the six circles where NVDA says no text
+  ("Symbol/punctuation processing" in [speech-audio.md](speech-audio.md);
+  `text_box_password` and `wpf_password`, from
+  `winforms-password-focus.txt` and `wpf-uia-password-focus.txt` in
+  `target/e2e-evidence/m42-selection-keys-2026-10-22/`).
 - Multi-column list view items: NVDA names an item of a report view
   (such as msinfo32's right pane) from its column texts, "content;
   Header: content", with no value or description. Verbatim names an item
@@ -199,9 +217,7 @@ Not yet:
   [backends.md](backends.md)), so a UIA ancestor's state change is not
   spoken.
 
-Different: a protected field's text is never read on focus, where NVDA
-reads whatever masked text the control gives; and an empty field has no
-placeholder to speak.
+Different: an empty field has no placeholder to speak.
 
 ### An ancestor's state change observed just before a focus change
 

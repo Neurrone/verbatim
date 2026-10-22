@@ -502,6 +502,7 @@ character-name-2190 = left arrow
 character-name-2191 = up arrow
 character-name-2192 = right arrow
 character-name-2193 = down arrow
+character-name-25cf = circle
 character-name-2713 = check
 character-name-2714 = check
 character-name-3000 = ideographic space

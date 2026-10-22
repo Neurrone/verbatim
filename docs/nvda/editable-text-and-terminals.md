@@ -132,6 +132,62 @@ on, and NVDA names it like any other character spoken on its own.
 NVDA transcripts on 2026-10-07 confirmed each of these in Windows 11
 Notepad and a standard edit control.
 
+### Protected (password) fields
+
+NVDA reads a protected field's text through the same object
+announcement, caret scripts and review commands as any field's; nothing
+in its speech code tests the protected state when it reads text
+(`getObjectSpeech`, `nvda/source/speech/speech.py` 865 to 923). What it
+reads is masked below that, by the text backend:
+
+- A classic edit or rich edit control with the protected state
+  (`STATE_SYSTEM_PROTECTED`, which an `ES_PASSWORD` edit control has)
+  has its text replaced by one "*" per character in NVDA's own
+  `EditTextInfo`: the whole text (`_getStoryText`,
+  `NVDAObjects/window/edit.py` 469 to 471), a rich edit's range, since
+  some rich edit controls do not hide their password characters (#4095,
+  579 to 582), and the Text Object Model's range (853 to 855).
+  MSHTML's text does the same (`NVDAObjects/IAccessible/MSHTML.py` 398
+  to 400).
+- A UIA element whose `IsPassword` is true has the protected state
+  (`NVDAObjects/UIA/__init__.py` 1997 to 1999), and its text pattern's
+  text is read as the provider gives it, with no masking of NVDA's own
+  (`UIATextInfo._get_text`, 1043 to 1044). A WPF `PasswordBox` gives one
+  black circle (U+25CF) per character through its text pattern, and an
+  empty value.
+
+The words then go through symbol processing like any text. In English
+"*" is "star" from the "some" level, NVDA's default, and a run of it is
+collapsed to its count ("6 star"); "●" is "circle" only from the "most"
+level, so a line of circles at the default level is dropped and says
+nothing, while one character spoken on its own, as a caret moving by
+character or a Backspace says it, uses the character level and says
+"circle" (`nvda/source/locale/en/symbols.dic` lines 63 and 113;
+[Symbols, dictionaries, and character processing](symbols-and-dictionaries.md)).
+That is why, captured at the pinned build
+(`target/e2e-evidence/m42-selection-keys-2026-10-22/`), Tab into a
+Windows Forms password box holding six characters says "Password edit
+protected selected 6 star", and Left Arrow and Backspace say "star",
+while Tab into a WPF `PasswordBox` says only "Password edit protected",
+and Left Arrow and Backspace say "circle".
+
+Typed characters are the one place NVDA tests the state itself: when
+the focus is protected (`isProtected`, the protected state or the
+password edit role, kept for the object's life once seen,
+`NVDAObjects/__init__.py` 1121 to 1136; `api.isTypingProtected`,
+`nvda/source/api.py` 357), each typed character is echoed as "*",
+`PROTECTED_CHAR`, and no typed word is spoken (`speakTypedCharacters`,
+`speech/speech.py` 1431 and 1449 to 1469).
+
+A caret script's wait for evidence takes a pending caret or text change
+event within 60 ms of the key as evidence for a control whose caret
+events it relies on, which is every control but a terminal, before it
+compares the caret's bookmark with the one from before the key
+(`_hasCaretMoved`, `nvda/source/editableText.py` 57, 100 to 138 and 194
+to 206). Which of these finds Backspace's effect in a `PasswordBox`,
+whose characters either side of the caret are the same circle before
+and after, was not traced; the capture shows that one does.
+
 ## The per-control text backend ladder
 
 "An edit control" is not one thing; NVDA maintains a ladder of text

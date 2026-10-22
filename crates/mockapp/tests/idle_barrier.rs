@@ -158,6 +158,7 @@ fn the_answer_waits_for_an_open_caret_watch() {
             pressed_at_ms: 0,
             unit: TextUnit::Character,
             compare: None,
+            deletes: false,
         }),
     });
     outpost.settled();

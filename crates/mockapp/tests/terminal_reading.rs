@@ -420,6 +420,7 @@ fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
             pressed_at_ms: 0,
             unit: TextUnit::Character,
             compare: None,
+            deletes: false,
         }),
     );
     // The watch is open: nothing is said.
@@ -599,6 +600,7 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
             pressed_at_ms: 0,
             unit: TextUnit::Line,
             compare: None,
+            deletes: false,
         }),
     );
     // The read saw the caret move while it read: nothing is said.

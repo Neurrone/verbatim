@@ -2637,6 +2637,7 @@ fn right_arrow(before: &verbatim_model::CaretReport) -> CaretWatch {
         }),
         unit: TextUnit::Character,
         compare: None,
+        deletes: false,
     }
 }
 
@@ -3474,6 +3475,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
             since: Some(at),
             unit: TextUnit::Character,
             compare: None,
+            deletes: false,
         },
         &mut Check::default(),
     ));
@@ -4322,7 +4324,7 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Repo
 /// counted in the focus's one message (`docs/performance.md`, "A focus on
 /// a text field"): a UIA document with nothing selected, with a selection,
 /// whose text is read with the caret, and protected with a selection,
-/// whose text is not, and a terminal, each remotely and classically, and
+/// whose text is read as any field's, and a terminal, each remotely and classically, and
 /// a classic edit control through MSAA, and the focus-now answer on the
 /// UIA document ([`text_field_focus_now_costs`]). Each is the first
 /// focus in its window, so a UIA focus makes the one connection that
@@ -4381,20 +4383,19 @@ fn text_field_focuses_cost_exactly() {
             Some("alpha"),
             with_connection(57),
         ),
-        // A protected field's selected text is not read for Core, which
-        // says none of its text: its focus costs what one with nothing
-        // selected does, but for the classic caret read's eight calls more
-        // for a selection, its caret, its text kept for the next
-        // comparison, and where it starts (six, at the text's start),
-        // which the unprotected field's 57 includes too.
+        // A protected field's selected text is read as any field's, which
+        // Core says masked as the control gives it, so its focus costs
+        // what an unprotected field's with a selection does: 9 remotely
+        // and 53 classically before 2026-10-22, when the outpost skipped
+        // that read.
         (
             "UIA protected text field focus with a selection, remotely",
             "text.json",
             "doc",
             true,
             protected_selected,
-            None,
-            with_connection(9),
+            Some("alpha"),
+            with_connection(10),
         ),
         (
             "UIA protected text field focus with a selection, classically",
@@ -4402,8 +4403,8 @@ fn text_field_focuses_cost_exactly() {
             "doc",
             false,
             protected_selected,
-            None,
-            with_connection(53),
+            Some("alpha"),
+            with_connection(57),
         ),
         (
             "UIA terminal focus with its caret, remotely",

@@ -183,7 +183,11 @@ Differences:
 - A caret event alone is not evidence when the caret's position is
   known, since an application's late caret event can belong to an
   earlier key; the position, the characters either side of the caret,
-  or the selection must change (the wait-for-evidence
+  or the selection must change, or, after Backspace or Delete, the
+  caret's line, since deleting one of a run of the same character, such
+  as a password field's mask, changes neither the caret's neighbors nor,
+  in a WPF `PasswordBox`, whose positions follow edits, where the caret
+  is (`wpf_password`) (the wait-for-evidence
   design, Dickson, 2026-10-08, `docs/design/phase6-design.md`, "What a
   key did to the text").
 - Verbatim never swallows and resends the key, so what Backspace deleted
@@ -350,7 +354,12 @@ Differences:
     capture had NVDA reading Notepad as a classic edit control, not
     through UIA.
   - Different: NVDA's delayed character description, "Bravo" after the
-    "b" Delete reaches, is a setting Verbatim does not have yet.
+    "b" Delete reaches, is a setting Verbatim does not have yet; for a
+    character with no description, such as the star or circle Left Arrow
+    reaches in a password field, it is an utterance with no words, a
+    pause before nothing (`getSingleCharDescription`,
+    `nvda/source/speech/speech.py` 558; `text_box_password`,
+    `wpf_password`).
   - A key outside the caret table that removes a selection (Control+X,
     Control+V), something selected before it and nothing after, says only
     the selection's change, never the text it removed, which was the

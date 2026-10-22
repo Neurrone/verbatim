@@ -438,6 +438,13 @@ pub struct CaretWatch {
     /// on the line it was on ([`CaretReply::same_line`]).
     #[serde(default)]
     pub landing: bool,
+    /// The key deletes text ([`CaretMotion::deletes`]): the caret's line
+    /// differing from the one known before the key is evidence too. In a
+    /// run of one character, such as a password field's mask, deleting
+    /// one changes neither the characters beside the caret nor, where the
+    /// provider's positions follow edits, where the caret is.
+    #[serde(default)]
+    pub deletes: bool,
 }
 
 /// The outpost's answer to a [`CaretWatch`].

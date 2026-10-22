@@ -318,6 +318,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
             since: Some(point_of(&before.line)),
             unit: TextUnit::Word,
             compare: None,
+            deletes: false,
         },
         &mut AlreadyMoved,
     ));
@@ -341,6 +342,7 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
             since: Some(at),
             unit: TextUnit::Character,
             compare: None,
+            deletes: false,
         },
         &mut AlreadyMoved,
     ));

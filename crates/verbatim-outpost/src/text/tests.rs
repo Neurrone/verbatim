@@ -255,6 +255,7 @@ fn watch(since: Option<TextPosition>, unit: TextUnit) -> CaretWatch {
         pressed_at_ms: PRESSED_AT,
         unit,
         compare: None,
+        deletes: false,
     }
 }
 
@@ -640,6 +641,43 @@ fn a_delete_that_changes_the_text_at_the_caret_is_evidence() {
     ));
     assert!(reply.moved, "the character at the caret changed");
     assert_eq!(reply.unit.expect("the character").text, "c");
+}
+
+#[test]
+fn a_deleting_key_in_a_run_of_one_character_is_evidence_by_its_line() {
+    // A password field's mask: deleting one star leaves the caret, the
+    // characters beside it, and the character at it as they were, and only
+    // the line, one star shorter, shows the key did something.
+    let mut source = Fake::new("******", 2);
+    let mut anchors = store();
+    let line = report(&mut source, &mut anchors).line;
+    let since = TextPosition {
+        anchor: line.start,
+        offset: line.offset,
+    };
+    source.text = "*****".encode_utf16().collect();
+    let mut watch = watch(Some(since), CaretMotion::Delete.unit());
+    watch.compare = Some("*".to_owned());
+    let watched = check(&mut source, &mut anchors, &watch, &mut FakeSignal::new());
+    assert!(
+        matches!(watched, Watched::Watching),
+        "no evidence without the key's deleting: {watched:?}"
+    );
+    watch.deletes = true;
+    let reply = answered(check(
+        &mut source,
+        &mut anchors,
+        &watch,
+        &mut FakeSignal::new(),
+    ));
+    assert_eq!(
+        (
+            reply.moved,
+            reply.caret.line.text.as_str(),
+            reply.caret.line.offset
+        ),
+        (true, "*****", 2)
+    );
 }
 
 /// A caret event's report compared with the last after the text changed:

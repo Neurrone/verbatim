@@ -102,6 +102,7 @@ fn right_arrow(before: &CaretReport) -> TextOp {
         pressed_at_ms: 0,
         unit: TextUnit::Character,
         compare: None,
+        deletes: false,
     })
 }
 
@@ -313,6 +314,7 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
             pressed_at_ms: 0,
             unit: TextUnit::Character,
             compare: None,
+            deletes: false,
         }),
     });
     // The watch is open: nothing is said, and the worker has finished.
@@ -652,6 +654,7 @@ fn a_selection_a_key_made_is_reported_to_the_key_alone() {
             pressed_at_ms: 0,
             unit: TextUnit::Character,
             compare: None,
+            deletes: false,
         }),
     });
     outpost.settled();
@@ -710,6 +713,7 @@ fn shift_key(caret: TextPosition) -> TextOp {
         pressed_at_ms: 0,
         unit: TextUnit::Character,
         compare: None,
+        deletes: false,
     })
 }
 
@@ -1045,6 +1049,7 @@ fn delete_over(before: &CaretReport, pressed_at_ms: u64) -> TextOp {
         pressed_at_ms,
         unit: TextUnit::Character,
         compare: Some(at.chars().next().map(String::from).unwrap_or_default()),
+        deletes: true,
     })
 }
 
@@ -1184,6 +1189,7 @@ fn a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends() {
             pressed_at_ms,
             unit: TextUnit::Word,
             compare: None,
+            deletes: false,
         }),
     });
     let reply = caret_reply(answer_to(&outpost, key));

@@ -268,6 +268,44 @@ fn an_arrow_key_watches_for_evidence_then_speaks_the_character_at_the_caret() {
 }
 
 #[test]
+fn a_backspace_in_a_run_of_one_character_watches_its_line() {
+    // Deleting one star of a password field's mask changes neither the
+    // characters beside the caret nor, where positions follow edits, the
+    // caret: the watch says the key deletes, so the outpost takes the line
+    // changing as evidence, and the star removed is spoken.
+    let mut state = editing("******", 5);
+    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
+    let request = request(&effects);
+    assert_eq!(
+        request.op,
+        TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(TextPosition {
+                anchor: TextAnchor(100),
+                offset: 5
+            }),
+            pressed_at_ms: KEY_PRESSED_AT,
+            unit: TextUnit::Character,
+            compare: None,
+            deletes: true,
+        })
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request.query_id,
+            caret_reply(true, line("*****", 100, 4), None),
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Character(
+            "*".to_owned()
+        ))]
+    );
+}
+
+#[test]
 fn a_caret_key_that_moves_nothing_is_silent() {
     // Control+Home at the start of the text: the application moves nothing
     // and raises nothing, so the outpost's watch ends without evidence,
@@ -288,6 +326,7 @@ fn a_caret_key_that_moves_nothing_is_silent() {
             pressed_at_ms: KEY_PRESSED_AT,
             unit: TextUnit::Line,
             compare: None,
+            deletes: false,
         })
     );
     let effects = reduce(
@@ -2483,6 +2522,7 @@ fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
             pressed_at_ms: KEY_PRESSED_AT,
             unit: TextUnit::Character,
             compare: None,
+            deletes: false,
         })
     );
 }
@@ -3372,27 +3412,39 @@ fn a_focus_whose_text_was_not_read_says_neither_its_line_nor_its_value() {
 }
 
 #[test]
-fn a_protected_field_never_says_its_text() {
-    let mut state = SrState::new();
+fn a_protected_field_says_its_masked_line_and_selection_as_any_field() {
+    // The masked text the control gives is read as any field's text
+    // (`docs/parity/focus-announcement.md`, "Text on focus").
     let protected = StateSet::new().with(State::Protected);
-    let announcement = vec![vec![
+    let announcement = vec![
         UtteranceSegment::label("Body"),
         UtteranceSegment::new(SegmentContent::Role(Role::Document)),
         UtteranceSegment::new(SegmentContent::State(State::Protected)),
-    ]];
+    ];
+    let mut state = SrState::new();
     assert_eq!(
         focus_with_value(
             &mut state,
             protected,
-            "secret",
-            caret_read(None, "secret", None)
+            "******",
+            caret_read(None, "******", None)
         ),
-        announcement
+        vec![announcement.clone(), vec![UtteranceSegment::text("******")]]
     );
     let mut state = SrState::new();
     assert_eq!(
-        focus_with_value(&mut state, protected, "secret", FocusText::NoText),
-        announcement
+        focus_with_value(
+            &mut state,
+            protected,
+            "******",
+            caret_read(Some(selection_from(0, true)), "******", Some("******"))
+        ),
+        vec![
+            announcement,
+            vec![UtteranceSegment::new(SegmentContent::Phrase(
+                Phrase::Preselected(SelectionText::Text("******".to_owned()))
+            ))]
+        ]
     );
 }
 
@@ -3965,6 +4017,43 @@ fn navigating_to_an_edit_field_with_a_selection_says_it_is_selected() {
         spoken(&effects),
         vec![UtteranceSegment::new(SegmentContent::Phrase(
             Phrase::Preselected(SelectionText::Text("second".to_owned()))
+        ))]
+    );
+}
+
+#[test]
+fn navigating_to_a_protected_edit_field_reads_its_masked_selection() {
+    let mut state = SrState::new();
+    focus(&mut state, node(5, Role::Button, StateSet::new()));
+    let mut edit = unfocused_edit();
+    edit.states = StateSet::new().with(State::Protected);
+    let effects = navigate_to(&mut state, edit);
+    let selection = request(&effects);
+    assert_eq!(
+        (selection.node_id, &selection.op),
+        (
+            id(30),
+            &TextOp::ReadRange {
+                start: TextPoint::SelectionStart,
+                end: TextPoint::SelectionEnd,
+                through: None,
+            }
+        )
+    );
+    let effects = reduce(
+        &mut state,
+        &completed(
+            selection.query_id,
+            TextReply::Range {
+                text: "******".to_owned(),
+                truncated: false,
+            },
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![UtteranceSegment::new(SegmentContent::Phrase(
+            Phrase::Preselected(SelectionText::Text("******".to_owned()))
         ))]
     );
 }

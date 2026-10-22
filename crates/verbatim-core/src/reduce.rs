@@ -1360,7 +1360,7 @@ fn report_object(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effe
         // An object with text spells or copies its name and the text it
         // would announce, the selection or the caret's line, as NVDA does
         // (`docs/nvda/speech.md`, "What an object with text says").
-        1 | 2 if editing::reads_text(&navigator.object) => {
+        1 | 2 if editing::may_have_text(navigator.object.role) => {
             let object = navigator.object.clone();
             let read = if repeat == 1 {
                 NavigatorRead::Spell

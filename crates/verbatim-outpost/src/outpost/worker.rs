@@ -1873,13 +1873,12 @@ impl Worker<'_> {
     /// object announcement reads an object's text within it
     /// (`docs/nvda/speech.md`, "What an object with text says"). When
     /// something is selected, the selected text is read too, which Core
-    /// speaks in place of the line, except in a protected (password)
-    /// field, whose text Core never says, so it is not read. A focus with
-    /// no text to read is [`FocusText::NoText`], and Core speaks its
-    /// value; one whose text
+    /// speaks in place of the line, a protected (password) field's too,
+    /// masked as the control gives it. A focus with no text to read is
+    /// [`FocusText::NoText`], and Core speaks its value; one whose text
     /// could not be read now is [`FocusText::NotRead`], and Core speaks
     /// neither, never the value, which for a document is all of its text.
-    fn read_focus_text(&self, node_id: NodeId, role: Role, states: StateSet) -> Option<FocusText> {
+    fn read_focus_text(&self, node_id: NodeId, role: Role) -> Option<FocusText> {
         let context = self.context;
         text_reads::forget_no_text(context, node_id);
         // A terminal gaining the focus has its caret reported afresh.
@@ -1894,21 +1893,17 @@ impl Worker<'_> {
         let read = text_reads::report_caret(context, node_id, text_reads::CaretFor::Focus);
         let text = match read {
             Ok((caret, _, _)) => {
-                let protected = states.contains(State::Protected);
-                let selected_text = caret
-                    .selection
-                    .filter(|_| !protected)
-                    .and_then(|selection| {
-                        let op = TextOp::ReadRange {
-                            start: TextPoint::At(selection.start),
-                            end: TextPoint::At(selection.end),
-                            through: None,
-                        };
-                        match text_reads::answer(context, node_id, &op) {
-                            TextReply::Range { text, .. } => Some(text),
-                            _ => None,
-                        }
-                    });
+                let selected_text = caret.selection.and_then(|selection| {
+                    let op = TextOp::ReadRange {
+                        start: TextPoint::At(selection.start),
+                        end: TextPoint::At(selection.end),
+                        through: None,
+                    };
+                    match text_reads::answer(context, node_id, &op) {
+                        TextReply::Range { text, .. } => Some(text),
+                        _ => None,
+                    }
+                });
                 FocusText::Caret {
                     caret,
                     selected_text,
@@ -2158,7 +2153,7 @@ impl Worker<'_> {
         let text_node = (!foreground).then(|| node.clone());
         let text = text_node
             .as_ref()
-            .and_then(|node| self.read_focus_text(node.id, node.role, node.states));
+            .and_then(|node| self.read_focus_text(node.id, node.role));
         tracing::debug!(
             ?role,
             name = ?node.name,
@@ -3872,7 +3867,7 @@ impl Worker<'_> {
                 // followed as a reported focus's are.
                 if let Some(control) = &mut answer.focus {
                     let node = &control.node;
-                    let text = self.read_focus_text(node.id, node.role, node.states);
+                    let text = self.read_focus_text(node.id, node.role);
                     self.follow_text(
                         (node.id, node.role),
                         text.as_ref(),

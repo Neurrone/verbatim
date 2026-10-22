@@ -364,7 +364,12 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   `pressed_at_ms`, the key's time on the clock of `observed_at_ms`, in
   which case its newest such report; a caret read at or after that time
   may already show the key's effect); the text of `unit` at the caret differing from `compare` (the
-  character or word at the caret before a Delete); the selection no longer
+  character or word at the caret before a Delete); for a watch marked
+  `deletes` (Backspace and Delete, alone or with Control), the caret's line
+  differing from the one known before the key, since deleting one of a run
+  of the same character, such as a password field's mask, leaves the
+  characters beside the caret, and a provider's positions that follow
+  edits, as they were; the selection no longer
   the selection the outpost kept for the node: its last caret report's or
   key answer's, or the selection Verbatim made or the caret it moved. A watch marked `landing` (a key judged by where the
   caret landed) is answered with `same_line`, whether the caret is still on

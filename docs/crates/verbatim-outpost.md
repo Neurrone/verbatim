@@ -1922,7 +1922,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     trip remotely, so the check that finds the evidence is the answer, with
     nothing more to read. The evidence is the caret no longer where it was
     known to be, the characters either side of the caret changed from what
-    was known, the text at the caret changed after a Delete, the
+    was known, the text at the caret changed after a Delete, the caret's
+    line changed from the one known after a key that deletes (the watch's
+    `deletes`: in a run of one character, such as a password field's
+    mask, deleting one leaves the caret's neighbors as they were, and a
+    provider's positions follow the edit), the
     selection changed, or the selection in the report the caret was known
     from differs from the selection now: something selected in one and
     not the other, or ends that are not the same positions. The last
@@ -1950,7 +1954,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     positions follow edits (a deleted character takes the known position
     with it) and the application may have handled the key before the
     request arrived; only the caret's neighbors count, since a line can
-    wrap anew with no key at all. A caret event alone is evidence only when
+    wrap anew with no key at all, except after a key that deletes, which
+    changes its line. A caret event alone is evidence only when
     nothing knew the caret: it can be the application's late report of
     something earlier. Before a check answers, the caret is read again
     (`CaretRequest::recheck`; at the end of the same program through UIA,
@@ -2115,9 +2120,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   source comes between them, as NVDA's object announcement reads an
   object's text within it (`docs/nvda/speech.md`, "What an object with text
   says"). When something is selected the selected text is read too, which
-  Core speaks in place of the line, except in a protected (password)
-  field, whose text Core never says, so its focus carries the caret with
-  no selected text. A focus with no text to read (an MSAA
+  Core speaks in place of the line, a protected (password) field's too,
+  whose text is read masked as the control gives it. A focus with no
+  text to read (an MSAA
   object that is not an edit control, a UIA element with no text pattern)
   carries `FocusText::NoText`, and Core speaks its value in place of its
   line, as NVDA speaks the value of an object without navigable text. One

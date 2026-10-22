@@ -278,7 +278,14 @@ character spoken on its own (caret and review movement, spelling, typing
 echo) and character descriptions are built in English only, keyed by
 locale in the Fluent files, with NVDA's English symbol names (its
 corrected ones included) for the common punctuation and symbols and the
-phonetic alphabet; there are no CLDR emoji names yet.
+phonetic alphabet; there are no CLDR emoji names yet. Until symbol
+processing is built, a protected field's masked text is spoken as its
+characters: six stars, where NVDA says "6 star", and a line of a WPF
+`PasswordBox`'s circles, which NVDA drops at its default level, "circle"
+being a "most" level symbol, though one circle on its own is "circle" in
+both (`text_box_password` and `wpf_password`;
+"Protected (password) fields" in
+[Editable text and terminals](../nvda/editable-text-and-terminals.md)).
 
 ### Letter-to-digit splitting
 
