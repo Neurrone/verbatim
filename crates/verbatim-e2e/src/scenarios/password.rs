@@ -224,12 +224,14 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // Control+Backspace: the edit control deletes nothing and inserts a
     // DEL character, masked as one more star, so Verbatim, which says the
     // text a key removed, says nothing, where NVDA says the word it
-    // expected to go, "4 star"; the next key's words, asserted exactly,
-    // show the silence.
+    // expected to go, "4 star". The key changes the line and moves the
+    // caret, evidence that Verbatim has answered it, so nothing more is
+    // expected once Verbatim reports it handled and itself idle.
     scenario
         .send_keys(&["control+backspace"])
         .expect("sends control+backspace");
     scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
+    scenario.expect_nothing_more();
     press_without_description(scenario, "home", &["star"]);
     // Control+Delete: the box deletes all of its text, leaving nothing at
     // the caret.
@@ -280,12 +282,7 @@ pub(crate) fn wpf_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Control+Backspace: the two circles before the caret, which NVDA's
     // symbol level drops, saying an utterance with no words.
     press_without_symbols(scenario, "control+backspace", &["\u{25cf}\u{25cf}"]);
-    // Home at the text's start moves nothing, so Verbatim says nothing,
-    // where NVDA, finding no evidence, says the character at the caret,
-    // "circle"; the next key's words, asserted exactly, show the silence.
-    scenario.send_keys(&["home"]).expect("sends home");
-    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
-    // Control+Delete: the two circles left go, leaving nothing at the
-    // caret.
+    // Control+Delete at the text's start: the two circles left go, leaving
+    // nothing at the caret (`wpf-password-deleting-keys-without-home.txt`).
     press(scenario, "control+delete", &["blank"]);
 }

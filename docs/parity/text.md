@@ -204,10 +204,10 @@ Differences:
   inserts a DEL character, where NVDA would speak the word it expected
   to go, "4 star" in a Windows Forms password box, `text_box_password`,
   from `winforms-password-deleting-keys.txt` in
-  `target/e2e-evidence/m42-protected-fixes-2026-10-22/`). A backspace over a line break names the kind of break the
-  text was last seen to use, which is what NVDA reads, since a text uses
-  one kind throughout, and says nothing when Core has seen no line break
-  in it yet. In a terminal, Backspace and Control+Backspace say what
+  `target/e2e-evidence/m42-protected-fixes-2026-10-22/`). A backspace
+  over a line break names the kind of break the text was last seen to
+  use, which is what NVDA reads, since a text uses one kind throughout,
+  and says nothing when Core has seen no line break in it yet. In a terminal, Backspace and Control+Backspace say what
   NVDA says ("o" and "tw" after `echo one two`, both terminals).
 - A key outside NVDA's caret keys that types no text (bash's Control+A,
   Control+E, Alt+B, Alt+F, Control+W, Control+K, and Escape clearing a

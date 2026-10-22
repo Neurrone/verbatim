@@ -165,8 +165,9 @@ Matched:
   `text_box_password` and `wpf_password`, from
   `winforms-password-focus.txt` and `wpf-uia-password-focus.txt` in
   `target/e2e-evidence/m42-selection-keys-2026-10-22/` and
-  `winforms-password-deleting-keys.txt` and
-  `wpf-password-deleting-keys.txt` in
+  `winforms-password-deleting-keys.txt`,
+  `wpf-password-deleting-keys.txt` and
+  `wpf-password-deleting-keys-without-home.txt` in
   `target/e2e-evidence/m42-protected-fixes-2026-10-22/`. Reading a
   masked field with the review cursor or object navigation is
   matched (unverified): it takes the same reads as any field's, and
