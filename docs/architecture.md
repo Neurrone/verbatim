@@ -79,15 +79,22 @@ screen reader in both rendered and source form.
   D17 the seam is the `AudioDevice` trait behind the mixer: the mixer
   writes to it, and WASAPI is its device implementation.
 - **D6 — Extensions are Wasm components.** The WIT-defined API is the durable
-  contract, capability-gated and deny-by-default. wasmtime is the default
-  runtime choice, kept behind the extension-host seam so it stays
-  replaceable; the final call is ratified by the M5 spike. Closed-source
-  synths get a separate sandboxed *native* host process. Rationale: replaces
-  NVDA's unbounded Python add-on surface. wasmtime specifically: reference
-  implementation of the component model, epoch preemption (a runaway
-  extension cannot hang Core), first-class Rust embedding, Bytecode Alliance
-  security pedigree. Wasmer, WAMR, and wasmi currently lag on component-model
-  support or embedding fit.
+  contract, deny-by-default: a module can call only the host functions its
+  component imports, and its capabilities are derived from those imports,
+  never declared. The runtime is wasmtime with the component model, the
+  only runtime that meets Windows x64 and ARM64, the component model,
+  interruption of running code and memory limits together; Cranelift
+  compiles on both architectures and the Pulley interpreter is switched on
+  for ARM64 only if the `ci-arm64` ratification or a Cranelift fault requires
+  it; `verbatim-ext` is the one crate that names the runtime. Modules run in
+  the outposts and in Core, never in the listener; most of what NVDA's app
+  modules do is written as rules the host applies as data, and hooks run on
+  the thread that holds the event under an epoch deadline. Closed-source
+  synthesizers run in a separate sandboxed native host process (D18).
+  Rationale: replaces NVDA's unbounded Python add-on surface with a surface
+  that is enumerable from the binary. The design is
+  [docs/design/extensions.md](design/extensions.md). Amended 2026-10-22
+  (Dickson: runtime decided, capabilities derived, rules before hooks).
 - **D7 — Braille is designed for but implemented last.** Traits and pipeline
   seams exist from the start. Rationale: no hardware available for
   development.
@@ -382,11 +389,18 @@ screen reader in both rendered and source form.
   ended when nothing does, sits in a kill-on-close job like the outposts,
   and is started again with its saved settings after a crash, the
   utterance in flight ending as failed. Pipes, not shared memory, until
-  the latency ledger shows the hop matters. The AppContainer sandbox and
-  the 32-bit host for Eloquence remain M6 work. Verbatim is licensed GPL
+  the latency ledger shows the hop matters. A native engine is loaded
+  through an adapter DLL implementing Verbatim's C ABI, the `SynthDriver`
+  trait as C exports, so the host has no engine-specific code; the host for
+  the adapter's architecture loads it, and the 32-bit x86 host is a reduced
+  build carrying only the adapter loader. The host runs in an AppContainer,
+  the less privileged form wherever the engine allows, with the level chosen
+  per engine. Both are M6 work
+  ([design](design/extensions.md), [plan](design/m6-native-synth-work.md)). Verbatim is licensed GPL
   version 3 or later from the same date, and eSpeak NG (GPL version 3 or
   later) is statically linked into the host, not into `verbatim.exe`.
-  Decided 2026-10-04.
+  Decided 2026-10-04. Amended 2026-10-22 (Dickson: adapters, the
+  reduced x86 host, the container level per engine).
 
 ## 1. Process and thread model
 

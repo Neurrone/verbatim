@@ -105,6 +105,13 @@ NVDA says, to decide what Verbatim should say.
   - [windows-terminal-twin-focus.md](design/windows-terminal-twin-focus.md)
     — the rule for Windows Terminal's second terminal identity; a design
     for M5, not built.
+  - [extensions.md](design/extensions.md) — the extension system: modules,
+    rules, hooks, capabilities derived from imports, the runtime, ordering,
+    budgets, native synthesizers and the porting order; settled 2026-10-22,
+    not built.
+  - [m5-extensions-work.md](design/m5-extensions-work.md) and
+    [m6-native-synth-work.md](design/m6-native-synth-work.md) — the order
+    of work and the tests for M5 and M6, which the roadmap entries point to.
   - [outpost-redesign.md](design/outpost-redesign.md) — the outposts,
     listener, and supervisor; adopted and built.
   - [phase6-design.md](design/phase6-design.md) — phase 6's decision

@@ -18,6 +18,14 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   application's COM call cannot be safely killed. If the call ever
   returns, the thread publishes nothing and exits. Recovery ladder rung
   2's bounded garbage. [verbatim-outpost](crates/verbatim-outpost.md).
+- **Adapter** — the engine-specific DLL a native synthesizer extension
+  ships, implementing Verbatim's C ABI (the `SynthDriver` trait as C
+  exports) and loading the engine; the synthesizer host loads only it.
+  [extensions](design/extensions.md).
+- **Application identity** — the name a module binds to an outpost by:
+  the executable name, replaced by the console client's for a console
+  window, the hosted application's for WWAHost, the parent's for
+  WebView2. [extensions](design/extensions.md).
 - **Arbitration** — the per-window choice of backend (UIA or
   MSAA/IA2), decided by class lists lifted from NVDA plus a live
   provider probe; the result is a **verdict**, kept for the window's
@@ -27,6 +35,14 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Backend** — one client stack over an accessibility API: UIA
   (`verbatim-uia`), MSAA/IA2 (`verbatim-ia2`), later JAB.
   [Architecture](architecture.md) section 4.
+- **Built-in** — a module folder shipped with Verbatim under
+  `extensions/builtin/`, loaded by the same host as an installed module
+  but never bundled, listed, installed or disabled.
+  [extensions](design/extensions.md).
+- **Capability** — a group of host functions a module imports, derived
+  from the component's imports and never declared; only the sentences
+  naming something of the user's are shown at install.
+  [extensions](design/extensions.md).
 - **Capture synth** — the test synthesizer that records the flattened
   speech it was asked to speak instead of producing audio; what speech
   pipeline unit tests assert on (E2E runs speak through eSpeak NG).
@@ -50,6 +66,9 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Effect** — a reducer output: an instruction (Speak, Fetch,
   Activate…) the shell executes; the reducer itself does no I/O.
   [verbatim-core](crates/verbatim-core.md).
+- **Extension** — the installable unit, a `.vext` zip holding an extension
+  manifest, locale files and one or more module folders; NVDA's add-on.
+  [extensions](design/extensions.md).
 - **Fact** (focus fact) — one focus-relevant observation captured by
   the focus listener from an OS event's own payload and routed to the
   target's outpost for announcement (D13); a `ListenerFact` becomes a
@@ -74,6 +93,9 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   navigation's start); Core sends each outpost its own, and the outpost
   keeps the live objects for exactly those and releases the rest.
   [verbatim-outpost](crates/verbatim-outpost.md).
+- **Hook** — a function a module exports and the host calls, on the
+  thread that holds the event, under an epoch deadline.
+  [extensions](design/extensions.md).
 - **Idle retirement** — ending an outpost whose application has not
   held attention for two minutes and in which Core holds no nodes
   (risk R2's memory mitigation).
@@ -87,6 +109,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   acknowledges a position when it reports its held nodes, so the
   outpost knows which reported nodes Core has seen.
   [verbatim-outpost](crates/verbatim-outpost.md).
+- **Module** — one contribution inside an extension: an app module bound
+  to applications by identity, or a synthesizer; a folder with
+  `module.toml` and a component, one instance per outpost.
+  [extensions](design/extensions.md).
 - **Normalized model** — `verbatim-model`'s API-agnostic vocabulary
   of nodes, roles, states, and events that both backends map into.
   [verbatim-model](crates/verbatim-model.md).
@@ -111,6 +137,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
 - **Reducer** — the pure functional core: `reduce(state, input)`
   returns the next state and effects, no I/O, no clocks (architecture
   section 2). [verbatim-core](crates/verbatim-core.md).
+- **Rule** — a module's declaration of the form "match this, do that",
+  with a subject (window, event or node), a required id and a backend,
+  applied by the host as data without calling the module.
+  [extensions](design/extensions.md).
 - **Scan mode** — Verbatim's planned document-reading mode family
   (the browse-mode analog), landing with M7.
   [Architecture](architecture.md) section 8.
