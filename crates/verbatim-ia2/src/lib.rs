@@ -54,7 +54,7 @@ mod window;
 
 pub use com::CHILDID_SELF;
 pub use hook::{
-    APP_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, WinEvent, WinEventCallback, WinEventHook,
-    WinEventKind, WindowCache, event_clock, suspend_kinds,
+    APP_SUBSCRIPTIONS, LISTENER_SUBSCRIPTIONS, SyncMarker, SyncMarkerCallback, WinEvent,
+    WinEventCallback, WinEventHook, WinEventKind, WindowCache, event_clock, suspend_kinds,
 };
 pub use registry::{MsaaKey, NodeIdRegistry, Released};

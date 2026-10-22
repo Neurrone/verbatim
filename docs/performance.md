@@ -1101,7 +1101,7 @@ and in its edit control.
   Control+Backspace, Delete and Control+Delete over a selection now pay
   what a movement leaving a selection paid already: through UIA, the
   comparison and the texts read in the program, no round trip more; in an
-  edit control, one wake of the `WinEvent` thread for the value change
+  edit control, one sync of the `WinEvent` thread for the value change
   check ("A caret move, Win32 edit control"). Through UIA the program
   also reads the old selection's text as its ends now hold it, when that
   selection held something, to compare with its text as it was reported:
@@ -1720,12 +1720,19 @@ The same caret key in a standard edit control, read through its messages.
 
 An answer that compares selections, a selecting key's or any key's made
 with something selected (Backspace and Delete over a selection included,
-since 2026-10-22), also waits once for the `WinEvent` thread to handle
-the events delivered to it, one wake of that thread, and then scans the
-intake once under its lock for the control's value change, as a caret
-report does, so the answer is said in general terms after an edit; it
-makes no call to the application. With nothing selected before or after,
-it checks nothing.
+since 2026-10-22), also waits once for the `WinEvent` thread to take
+every event raised before it (`Nudger::sync`), and then scans the intake
+once under its lock for the control's value change, as a caret report
+does, so the answer is said in general terms after an edit; it makes no
+call to the application. The sync posts one thread message and raises
+one sync marker with `NotifyWinEvent`, a `WinEvent` of the outpost's own
+that the thread's hook set hears, since a posted message alone can be
+handled before an event raised before it has arrived; the thread wakes
+once or twice for the two, so the marker costs one `NotifyWinEvent` and
+up to one more wake per sync. A sync is
+made only here, in the caret report below, and in `Outpost::settle`,
+which tests call, never once per event. With nothing selected before or
+after, it checks nothing.
 
 ### A caret report, Win32 edit control
 
@@ -1742,9 +1749,10 @@ it checks nothing.
 
 The local work beside the calls: the selection's two offsets kept, and,
 for a report that compares a selection, a kept one or a new one that
-holds text, the registry looked up, one wake of the `WinEvent` thread
-waited for so that it handles the events delivered to it first, and the
-intake scanned once under its lock for the control's value change, which
+holds text, the registry looked up, one sync of the `WinEvent` thread
+waited for (above) so that it takes the events raised before it first,
+and the intake scanned once under its lock for the control's value
+change, which
 the control may raise while it answers the read; this makes no call to
 the application. A report with nothing selected before or after checks
 nothing. Each value change of the focused

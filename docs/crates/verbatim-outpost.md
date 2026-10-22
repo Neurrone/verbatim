@@ -2052,8 +2052,14 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     `CaretSignal::text_change_waiting`) covers the Windows Forms text box,
     which raises its caret's move before its value change and may raise
     the value change while it answers the read, so the check first waits
-    for the `WinEvent` thread to handle every event delivered to it
-    (`Nudger::sync`); "x" typed over a selection, the text box's
+    for the `WinEvent` thread to have taken every event raised before it
+    (`Nudger::sync`): a thread message posted to that thread can be
+    handled before a `WinEvent` raised before the post has reached it, so
+    the sync, besides its thread message, raises a sync marker, a
+    `WinEvent` of the outpost's own process that the thread's one hook set
+    also hears (`verbatim_ia2::SyncMarker`), and returns once both have
+    arrived, the marker arriving behind every event raised before it; "x"
+    typed over a selection, the text box's
     Control+X, and Backspace or Delete over a selection are said so. The
     remembered text is Verbatim's own, Dickson's decision of 2026-10-22:
     through UIA the caret read reads the whole selection's text in the

@@ -64,6 +64,23 @@ Public API:
   data, such as a scroll's horizontal distance, which is at or below
   `OBJID_ALERT` for ten or more columns to the left; NVDA hooks them
   apart (`winConsoleHandler.py`), where its filters do not run.
+- `WinEventHook::install_with_sync_marker(target_pid, kinds, callback,
+  on_marker)` — installs the same hooks and, as one more hook of the same
+  set, a hook for this process's sync markers, and returns the set with a
+  `SyncMarker`. `SyncMarker::raise(ticket)`, from any thread of the
+  process, raises `EVENT_AIA_START + 0x5B1` on a message-only window the
+  set made on its thread, the 64-bit ticket split across `idObject` and
+  `idChild`; the hook thread hands the ticket to `on_marker`, never to
+  `callback`. A thread message posted to the hook thread can be handled
+  before a `WinEvent` raised before the post has reached that thread, but
+  `WinEvent`s arrive in the order raised, so a marker's arrival shows
+  every event raised before it has arrived; the outpost's event thread
+  waits for one in `Nudger::sync`. A marker raised with no window is
+  never delivered, which is why the set makes one. The marker hook is
+  scoped to this process, so another process's event with that id is not
+  a marker, though another process's global hook for the id sees the
+  markers. `suspend_kinds` leaves the marker hook alone, and dropping the
+  set removes it and destroys the window.
 - `suspend_kinds(suspended)` — narrows the calling thread's hook set while
   it runs: every raw event of the kinds it was installed for is hooked
   except one whose installed kinds are all in `suspended`, which is

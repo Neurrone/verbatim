@@ -22,6 +22,11 @@
 //! The Win32 `WINEVENTPROC` has no user-context argument, so the callback is
 //! held in a thread-local. Because one process hosts one hook set on one
 //! thread, a thread-local is exactly the right scope.
+//!
+//! A hook set may also hear its own process's sync markers
+//! ([`WinEventHook::install_with_sync_marker`]): `WinEvent`s that any
+//! thread of the process raises so that the hook thread knows, when one
+//! arrives, that every event raised before it has arrived too.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,18 +37,23 @@ use crate::com::CHILDID_SELF;
 
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::SystemInformation::GetTickCount;
-use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
-use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_CONSOLE_CARET, EVENT_CONSOLE_LAYOUT, EVENT_CONSOLE_UPDATE_REGION,
-    EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE, EVENT_OBJECT_DESCRIPTIONCHANGE,
-    EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS, EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE,
-    EVENT_OBJECT_SELECTION, EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE,
-    EVENT_OBJECT_SELECTIONWITHIN, EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE,
-    EVENT_OBJECT_TEXTSELECTIONCHANGED, EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT,
-    EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND, EVENT_SYSTEM_MENUPOPUPEND,
-    EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, OBJID_ALERT, OBJID_CARET, OBJID_CLIENT,
-    OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW, WINEVENT_OUTOFCONTEXT,
+use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::UI::Accessibility::{
+    HWINEVENTHOOK, NotifyWinEvent, SetWinEventHook, UnhookWinEvent,
 };
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DestroyWindow, EVENT_AIA_START, EVENT_CONSOLE_CARET, EVENT_CONSOLE_LAYOUT,
+    EVENT_CONSOLE_UPDATE_REGION, EVENT_CONSOLE_UPDATE_SCROLL, EVENT_CONSOLE_UPDATE_SIMPLE,
+    EVENT_OBJECT_DESCRIPTIONCHANGE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_FOCUS,
+    EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_SELECTION,
+    EVENT_OBJECT_SELECTIONADD, EVENT_OBJECT_SELECTIONREMOVE, EVENT_OBJECT_SELECTIONWITHIN,
+    EVENT_OBJECT_SHOW, EVENT_OBJECT_STATECHANGE, EVENT_OBJECT_TEXTSELECTIONCHANGED,
+    EVENT_OBJECT_VALUECHANGE, EVENT_SYSTEM_ALERT, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MENUEND,
+    EVENT_SYSTEM_MENUPOPUPEND, EVENT_SYSTEM_MENUPOPUPSTART, EVENT_SYSTEM_SWITCHEND, HWND_MESSAGE,
+    OBJID_ALERT, OBJID_CARET, OBJID_CLIENT, OBJID_MENU, OBJID_SYSMENU, OBJID_WINDOW,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WINEVENT_OUTOFCONTEXT,
+};
+use windows::core::w;
 
 /// Which MSAA change a `WinEvent` reports. Events outside this set are dropped
 /// at the hook boundary.
@@ -240,6 +250,65 @@ pub struct WinEvent {
 /// block: its job is to enqueue the event for handling elsewhere.
 pub type WinEventCallback = Box<dyn Fn(WinEvent)>;
 
+/// The `WinEvent` id of a sync marker ([`SyncMarker`]): an arbitrary id in
+/// the range Windows sets aside for events defined outside it, by the
+/// Accessibility Interoperability Alliance (`EVENT_AIA_START` to
+/// `EVENT_AIA_END`). The marker hook is scoped to this process, so the same
+/// id raised by another process is never taken for a marker; another
+/// process's global hook that asks for this id sees the markers, as it
+/// would any process's events in that range.
+const SYNC_MARKER_EVENT: u32 = EVENT_AIA_START + 0x05B1;
+
+/// Called on the installing thread with the ticket of each sync marker
+/// raised in this process ([`SyncMarker::raise`]), in the order the
+/// markers arrive.
+pub type SyncMarkerCallback = Box<dyn Fn(u64)>;
+
+/// Raises sync markers, from any thread of the process, to the hook set
+/// that made it ([`WinEventHook::install_with_sync_marker`]). A marker
+/// is a `WinEvent` raised on a message-only window of the hook thread,
+/// its ticket's high half in `idObject` and its low half in `idChild`.
+///
+/// It exists because a thread message posted to the hook thread may be
+/// handled before a `WinEvent` raised before the post has been delivered
+/// to that thread: `NotifyWinEvent` can return before an out-of-context
+/// event reaches the hook thread. `WinEvent`s raised one after another,
+/// by different threads and processes, have been seen to arrive in the
+/// order raised (none of 1,100 standalone trials out of order, where a
+/// posted message overtook the event in up to half), so a marker's
+/// arrival is the evidence that every event raised before it has been
+/// delivered.
+#[derive(Clone, Copy, Debug)]
+pub struct SyncMarker {
+    /// The message-only window the markers are raised on, which the hook
+    /// set destroys when it is dropped.
+    hwnd: isize,
+}
+
+impl SyncMarker {
+    /// Raises a marker carrying `ticket`. It returns at once; the hook
+    /// set's thread hands the ticket to its marker callback once every
+    /// event raised before this call has been delivered to it. A marker
+    /// raised after the set was dropped never arrives.
+    pub fn raise(self, ticket: u64) {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the ticket's two halves, put together again as it arrives"
+        )]
+        let (high, low) = ((ticket >> 32) as u32, ticket as u32);
+        // SAFETY: raising an event only names the window; Windows checks
+        // the handle, and drops an event on one that has been destroyed.
+        unsafe {
+            NotifyWinEvent(
+                SYNC_MARKER_EVENT,
+                HWND(self.hwnd as _),
+                high.cast_signed(),
+                low.cast_signed(),
+            );
+        }
+    }
+}
+
 /// The clock `WinEvent`s are stamped with ([`WinEvent::time`]): milliseconds
 /// since the system started, `GetTickCount`, which advances in ticks of
 /// about 15.6 milliseconds and wraps after 49.7 days.
@@ -251,6 +320,9 @@ pub fn event_clock() -> u32 {
 
 thread_local! {
     static CALLBACK: RefCell<Option<WinEventCallback>> = const { RefCell::new(None) };
+    /// The callback this thread's sync markers are handed to, while its
+    /// hook set hears them.
+    static MARKER_CALLBACK: RefCell<Option<SyncMarkerCallback>> = const { RefCell::new(None) };
     /// The kinds this thread's hooks were installed for.
     static KINDS: RefCell<Vec<WinEventKind>> = const { RefCell::new(Vec::new()) };
     /// The class of each window [`is_wanted`] has asked about, while this
@@ -268,6 +340,53 @@ thread_local! {
 struct HookSet {
     target_pid: u32,
     hooked: Vec<(u32, HWINEVENTHOOK)>,
+    /// The hook for this process's sync markers and the window they are
+    /// raised on, when the set hears them; never narrowed by
+    /// [`suspend_kinds`].
+    marker: Option<(HWINEVENTHOOK, HWND)>,
+}
+
+/// Hooks this process's sync markers on the calling thread, and makes the
+/// message-only window they are raised on: a marker raised with no window
+/// is never delivered.
+fn hook_sync_markers() -> Result<(HWINEVENTHOOK, HWND), String> {
+    // SAFETY: a message-only window of a system class, with no parameter
+    // that points anywhere; it belongs to the calling thread.
+    let window = unsafe {
+        CreateWindowExW(
+            WINDOW_EX_STYLE::default(),
+            w!("STATIC"),
+            w!(""),
+            WINDOW_STYLE::default(),
+            0,
+            0,
+            0,
+            0,
+            Some(HWND_MESSAGE),
+            None,
+            None,
+            None,
+        )
+    }
+    .map_err(|error| format!("the sync marker window could not be made: {error}"))?;
+    // SAFETY: GetCurrentProcessId is always sound.
+    let pid = unsafe { GetCurrentProcessId() };
+    match hook_event(SYNC_MARKER_EVENT, pid) {
+        Ok(hook) => Ok((hook, window)),
+        Err(error) => {
+            destroy_marker_window(window);
+            Err(error)
+        }
+    }
+}
+
+/// Destroys the sync markers' window, which [`hook_sync_markers`] made on
+/// the calling thread.
+fn destroy_marker_window(window: HWND) {
+    // SAFETY: the window was made on this thread and is destroyed once.
+    unsafe {
+        let _ = DestroyWindow(window);
+    }
 }
 
 /// Hooks raw event `event` out of context, scoped to `target_pid`, on the
@@ -379,6 +498,39 @@ impl WinEventHook {
         kinds: &[WinEventKind],
         callback: WinEventCallback,
     ) -> Result<Self, String> {
+        Self::install_set(target_pid, kinds, callback, None).map(|(set, _)| set)
+    }
+
+    /// Installs the hooks as [`WinEventHook::install`] does, and with them
+    /// a hook for this process's sync markers, which hands each marker's
+    /// ticket to `on_marker` on this thread rather than to `callback`.
+    /// Returns the set and what raises its markers. The marker hook is part
+    /// of the one set: [`suspend_kinds`] leaves it alone, and dropping the
+    /// set removes it.
+    ///
+    /// # Errors
+    ///
+    /// As [`WinEventHook::install`], and if the marker hook or the window
+    /// the markers are raised on cannot be made.
+    pub fn install_with_sync_marker(
+        target_pid: u32,
+        kinds: &[WinEventKind],
+        callback: WinEventCallback,
+        on_marker: SyncMarkerCallback,
+    ) -> Result<(Self, SyncMarker), String> {
+        let (set, marker) = Self::install_set(target_pid, kinds, callback, Some(on_marker))?;
+        let marker = marker.ok_or("the sync marker hook was not installed")?;
+        Ok((set, marker))
+    }
+
+    /// Installs the set, with the sync marker hook when `on_marker` is
+    /// given.
+    fn install_set(
+        target_pid: u32,
+        kinds: &[WinEventKind],
+        callback: WinEventCallback,
+        on_marker: Option<SyncMarkerCallback>,
+    ) -> Result<(Self, Option<SyncMarker>), String> {
         let installed = CALLBACK.with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.is_some() {
@@ -396,6 +548,14 @@ impl WinEventHook {
                 .contains(&WinEventKind::Destroy)
                 .then(WindowCache::default);
         });
+        let undo = |hooked: Vec<(u32, HWINEVENTHOOK)>| {
+            for (_, hook) in hooked {
+                unhook_event(hook);
+            }
+            CALLBACK.with(|slot| *slot.borrow_mut() = None);
+            KINDS.with(|slot| slot.borrow_mut().clear());
+            CLASSES.with(|slot| *slot.borrow_mut() = None);
+        };
         let mut hooked: Vec<(u32, HWINEVENTHOOK)> = Vec::with_capacity(SUBSCRIPTIONS.len());
         for (event, kind) in SUBSCRIPTIONS {
             if !kinds.contains(&kind) {
@@ -404,20 +564,40 @@ impl WinEventHook {
             match hook_event(event, target_pid) {
                 Ok(hook) => hooked.push((event, hook)),
                 Err(error) => {
-                    for (_, hook) in hooked {
-                        unhook_event(hook);
-                    }
-                    CALLBACK.with(|slot| *slot.borrow_mut() = None);
-                    KINDS.with(|slot| slot.borrow_mut().clear());
-                    CLASSES.with(|slot| *slot.borrow_mut() = None);
+                    undo(hooked);
                     return Err(error);
                 }
             }
         }
-        HOOKS.with(|slot| *slot.borrow_mut() = Some(HookSet { target_pid, hooked }));
-        Ok(Self {
-            _thread_bound: std::marker::PhantomData,
-        })
+        let marker = match on_marker {
+            Some(on_marker) => match hook_sync_markers() {
+                Ok(marker) => {
+                    MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = Some(on_marker));
+                    Some(marker)
+                }
+                Err(error) => {
+                    undo(hooked);
+                    return Err(error);
+                }
+            },
+            None => None,
+        };
+        let raiser = marker.map(|(_, window)| SyncMarker {
+            hwnd: window.0 as isize,
+        });
+        HOOKS.with(|slot| {
+            *slot.borrow_mut() = Some(HookSet {
+                target_pid,
+                hooked,
+                marker,
+            });
+        });
+        Ok((
+            Self {
+                _thread_bound: std::marker::PhantomData,
+            },
+            raiser,
+        ))
     }
 }
 
@@ -427,8 +607,13 @@ impl Drop for WinEventHook {
             for (_, hook) in set.hooked {
                 unhook_event(hook);
             }
+            if let Some((hook, window)) = set.marker {
+                unhook_event(hook);
+                destroy_marker_window(window);
+            }
         }
         CALLBACK.with(|slot| *slot.borrow_mut() = None);
+        MARKER_CALLBACK.with(|slot| *slot.borrow_mut() = None);
         KINDS.with(|slot| slot.borrow_mut().clear());
         CLASSES.with(|slot| *slot.borrow_mut() = None);
     }
@@ -608,6 +793,16 @@ unsafe extern "system" fn win_event_proc(
     thread: u32,
     time: u32,
 ) {
+    if event == SYNC_MARKER_EVENT {
+        let ticket =
+            (u64::from(id_object.cast_unsigned()) << 32) | u64::from(id_child.cast_unsigned());
+        MARKER_CALLBACK.with(|slot| {
+            if let Some(on_marker) = slot.borrow().as_ref() {
+                on_marker(ticket);
+            }
+        });
+        return;
+    }
     // `time` is on the event clock.
     let raised_ms_ago = event_clock().wrapping_sub(time);
     let wanted = KINDS.with(|kinds| {

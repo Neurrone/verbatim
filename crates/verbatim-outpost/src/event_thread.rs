@@ -7,7 +7,9 @@
 //! section 19). Its owner can also nudge it ([`Nudger`]): a message the
 //! thread hands to the owner's nudge handler between events, on the thread
 //! that owns the hooks, which is how an outpost unhooks some of its kinds
-//! and hooks them again while it runs.
+//! and hooks them again while it runs. And it can wait for the thread to
+//! catch up ([`Nudger::sync`]): for every nudge sent and, once the hooks
+//! are in, every `WinEvent` raised before it.
 
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::{self, JoinHandle};
@@ -20,14 +22,15 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TranslateMessage, WM_APP, WM_QUIT,
 };
 
-use verbatim_ia2::{WinEventCallback, WinEventHook, WinEventKind};
+use verbatim_ia2::{SyncMarker, WinEventCallback, WinEventHook, WinEventKind};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 
 /// The thread message that carries a nudge's two words to the nudge
 /// handler.
 const WM_NUDGE: u32 = WM_APP;
 /// The thread message that marks every message posted before it handled
-/// ([`Nudger::sync`]), its ticket in its first word.
+/// ([`Nudger::sync`]), its ticket in its first word. It shows nothing
+/// about `WinEvent`s, which a posted message can overtake.
 const WM_SYNC: u32 = WM_APP + 1;
 /// The thread message that installs the hooks ([`EventThread::hook`]), the
 /// process id they are scoped to in its first word.
@@ -67,11 +70,12 @@ impl EventThread {
         let (id_tx, id_rx) = unbounded::<u32>();
         let (hooked_tx, hooked) = unbounded();
         let synced = Arc::new(Synced::default());
-        let thread_synced = Arc::clone(&synced);
+        let tickets = Arc::new(Mutex::new(Tickets::default()));
+        let thread_syncs = (Arc::clone(&synced), Arc::clone(&tickets));
         let join = thread::Builder::new()
             .name("verbatim-event".to_owned())
             .spawn(move || {
-                event_thread_main(kinds, (&id_tx, &hooked_tx), &make_handlers, &thread_synced);
+                event_thread_main(kinds, (&id_tx, &hooked_tx), &make_handlers, &thread_syncs);
             })
             .expect("spawn event thread");
         let thread_id = id_rx.recv().unwrap_or(0);
@@ -79,7 +83,7 @@ impl EventThread {
             nudger: Nudger {
                 thread_id,
                 synced,
-                tickets: Arc::default(),
+                tickets,
             },
             hooked,
             join: Some(join),
@@ -90,7 +94,8 @@ impl EventThread {
     /// for zero), on the thread, behind every nudge sent before, and
     /// returns once they are in, so a caller that reports itself ready
     /// after it really sees the events from then on. A thread has one set
-    /// of hooks for its whole life (decision D9).
+    /// of hooks for its whole life (decision D9), which includes the hook
+    /// for this process's sync markers ([`Nudger::sync`]).
     ///
     /// # Errors
     ///
@@ -119,23 +124,82 @@ impl EventThread {
 pub(crate) struct Nudger {
     thread_id: u32,
     synced: Arc<Synced>,
-    /// The last sync ticket handed out.
-    tickets: Arc<Mutex<u64>>,
+    tickets: Arc<Mutex<Tickets>>,
 }
 
-/// The last sync ticket the event thread has reached, `u64::MAX` once it
-/// has ended.
+/// The syncs handed out ([`Nudger::sync`]).
+#[derive(Default)]
+struct Tickets {
+    /// The last ticket handed out.
+    last: u64,
+    /// What raises the thread's sync markers, from when its hooks are in
+    /// until it ends. Read under the same lock as the ticket is taken, so
+    /// a sync racing the hooks' install either raises a marker the hook
+    /// will deliver, or raises none and waits for none.
+    marker: Option<SyncMarker>,
+}
+
+/// How far the event thread has come through the syncs: the last ticket
+/// whose message it has handled, and the last whose marker has reached
+/// it, both `u64::MAX` once it has ended.
 #[derive(Default)]
 struct Synced {
-    reached: Mutex<u64>,
+    reached: Mutex<Reached>,
     changed: Condvar,
 }
 
+/// The tickets [`Synced`] keeps.
+#[derive(Default)]
+struct Reached {
+    posted: u64,
+    marked: u64,
+}
+
+impl Reached {
+    /// Whether the sync with `ticket` may return: the thread has handled
+    /// its message and, when the sync raised a marker (`marked`), the
+    /// marker has reached the thread. A later ticket stands for an earlier
+    /// one, since a later sync took its ticket after the earlier one's
+    /// call began.
+    fn passed(&self, ticket: u64, marked: bool) -> bool {
+        self.posted >= ticket && (!marked || self.marked >= ticket)
+    }
+}
+
 impl Synced {
+    /// The thread has handled the message of the sync with `ticket`.
     fn reach(&self, ticket: u64) {
+        self.update(|reached| reached.posted = reached.posted.max(ticket));
+    }
+
+    /// The marker of the sync with `ticket` has reached the thread.
+    fn mark(&self, ticket: u64) {
+        self.update(|reached| reached.marked = reached.marked.max(ticket));
+    }
+
+    /// The thread has ended: no sync waits on it.
+    fn end(&self) {
+        self.update(|reached| {
+            reached.posted = u64::MAX;
+            reached.marked = u64::MAX;
+        });
+    }
+
+    fn update(&self, change: impl FnOnce(&mut Reached)) {
         let mut reached = self.reached.lock().unwrap_or_else(PoisonError::into_inner);
-        *reached = (*reached).max(ticket);
+        change(&mut reached);
         self.changed.notify_all();
+    }
+
+    /// Waits until the sync with `ticket` may return.
+    fn wait(&self, ticket: u64, marked: bool) {
+        let mut reached = self.reached.lock().unwrap_or_else(PoisonError::into_inner);
+        while !reached.passed(ticket, marked) {
+            reached = self
+                .changed
+                .wait(reached)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
     }
 }
 
@@ -150,12 +214,23 @@ impl Nudger {
     }
 
     /// Returns once the event thread has handled every nudge sent before
-    /// this call, or has ended.
+    /// this call and, once its hooks are in, every `WinEvent` its hooks
+    /// take that was raised before this call, or has ended.
+    ///
+    /// Nudges are thread messages, so a thread message posted behind them
+    /// (`WM_SYNC`) shows they are handled. It shows nothing about
+    /// `WinEvent`s: `NotifyWinEvent` can return before an out-of-context
+    /// event reaches the hook thread, and a message posted after it has
+    /// been handled first. So once the hooks are in, the sync also raises a
+    /// sync marker, a `WinEvent` of this process's that the thread's own
+    /// hook set hears (`verbatim_ia2::SyncMarker`), and waits for it too:
+    /// a `WinEvent` arrives behind every one raised before it. This costs
+    /// one `NotifyWinEvent` and up to one more wake of the thread.
     pub(crate) fn sync(&self) {
-        let ticket = {
+        let (ticket, marker) = {
             let mut tickets = self.tickets.lock().unwrap_or_else(PoisonError::into_inner);
-            *tickets += 1;
-            *tickets
+            tickets.last += 1;
+            (tickets.last, tickets.marker)
         };
         let Ok(word) = usize::try_from(ticket) else {
             return;
@@ -165,18 +240,10 @@ impl Nudger {
         {
             return;
         }
-        let mut reached = self
-            .synced
-            .reached
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        while *reached < ticket {
-            reached = self
-                .synced
-                .changed
-                .wait(reached)
-                .unwrap_or_else(PoisonError::into_inner);
+        if let Some(marker) = marker {
+            marker.raise(ticket);
         }
+        self.synced.wait(ticket, marker.is_some());
     }
 }
 
@@ -205,7 +272,7 @@ fn event_thread_main(
     kinds: &'static [WinEventKind],
     (id_tx, hooked_tx): (&Sender<u32>, &Sender<Result<(), String>>),
     make_handlers: &MakeHandlers,
-    synced: &Synced,
+    (synced, tickets): &(Arc<Synced>, Arc<Mutex<Tickets>>),
 ) {
     prioritize_role("WinEvent", EVENT_THREAD_PRIORITY);
     // SAFETY: GetCurrentThreadId is always sound.
@@ -254,9 +321,24 @@ fn event_thread_main(
                     // keyboard hook thread hooks and unhooks the console's
                     // events.
                     let target_pid = u32::try_from(message.wParam.0).unwrap_or(0);
+                    // The sync markers' hook is one more hook of the set.
                     let outcome = match win_event.take() {
-                        Some(callback) => WinEventHook::install(target_pid, kinds, callback)
-                            .map(|installed| hook = Some(installed)),
+                        Some(callback) => {
+                            let marked = Arc::clone(synced);
+                            WinEventHook::install_with_sync_marker(
+                                target_pid,
+                                kinds,
+                                callback,
+                                Box::new(move |ticket| marked.mark(ticket)),
+                            )
+                            .map(|(installed, marker)| {
+                                hook = Some(installed);
+                                tickets
+                                    .lock()
+                                    .unwrap_or_else(PoisonError::into_inner)
+                                    .marker = Some(marker);
+                            })
+                        }
                         None => Err("this thread already has its WinEvent hooks".to_owned()),
                     };
                     let _ = hooked_tx.send(outcome);
@@ -270,9 +352,14 @@ fn event_thread_main(
         // SAFETY: dispatching a fully owned message.
         unsafe { DispatchMessageW(&raw const message) };
     }
+    // No sync raises a marker once the hooks are going.
+    tickets
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .marker = None;
     drop(hook);
     // No sync waits on a thread that has ended.
-    synced.reach(u64::MAX);
+    synced.end();
 }
 
 #[cfg(test)]
@@ -356,9 +443,10 @@ mod tests {
     }
 
     /// A `WinEvent` raised before a sync is delivered before the sync
-    /// returns: the event is queued to the thread as it is raised, ahead of
-    /// the sync's message, which is what a check behind a sync relies on
-    /// to see every event the application raised before it.
+    /// returns, though the sync's thread message may be handled before the
+    /// event reaches the thread: the sync waits for its marker too, which
+    /// arrives behind the event. A check behind a sync relies on this to
+    /// see every event the application raised before it.
     #[test]
     fn an_event_raised_before_a_sync_is_delivered_before_it_returns() {
         let (events_tx, events) = unbounded();
@@ -372,6 +460,20 @@ mod tests {
         drop(thread);
         // SAFETY: the window made above, on this thread.
         unsafe { DestroyWindow(window) }.expect("the window destroyed");
+    }
+
+    /// A sync that raised a marker may not return once its thread message
+    /// is handled, until its marker has reached the thread too; one that
+    /// raised none returns on its message.
+    #[test]
+    fn a_sync_that_raised_a_marker_waits_for_the_marker_as_well() {
+        let synced = Synced::default();
+        let passed = |marked| synced.reached.lock().unwrap().passed(1, marked);
+        synced.reach(1);
+        assert!(!passed(true));
+        assert!(passed(false));
+        synced.mark(1);
+        assert!(passed(true));
     }
 
     #[test]
