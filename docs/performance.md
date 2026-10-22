@@ -1304,10 +1304,11 @@ queues. The parts of a UIA focus's count are:
   something is selected (the selection's caret, its text up to 513
   units, kept for the next comparison since 2026-10-22, and where it
   starts, here at the text's start, 6), and 17 for its terminal;
-- the selected text, read only when something is selected, a protected
-  field's too, whose masked text Core says as any field's: 1 UIA call remotely and 4 classically, the read of the range
-  alone, since the caret read has already fetched the selection ("The
-  selected text, UIA" below counts 7 for a read that fetches it too).
+- the selected text, read only when something is selected, a
+  protected field's too, whose masked text Core says as any field's: 1
+  UIA call remotely and 4 classically, the read of the range alone,
+  since the caret read has already fetched the selection ("The selected
+  text, UIA" below counts 7 for a read that fetches it too).
 
 - Minimum: each part's own minimum: the listener's read, whose minimum
   "A focus change, UIA, steady state" gives, here 5; the search's
@@ -1320,9 +1321,7 @@ queues. The parts of a UIA focus's count are:
   calls, 1 window message and 1 connection; 10 with a selection,
   protected or not. Classically it costs 45; 57 with a selection,
   protected or not (50 before the selection's text was read to keep,
-  and 51 before where it starts was read, 2026-10-22; a protected
-  field's focus cost 9 and 53 until its selected text was read too, the
-  same day). A UIA terminal
+  and 51 before where it starts was read, 2026-10-22). A UIA terminal
   (`terminal_reading.json`) costs 9 remotely and 27 classically, each
   with 1 window message and 1 connection. A classic edit control through
   MSAA costs 39 MSAA calls and 6 window messages. With nothing

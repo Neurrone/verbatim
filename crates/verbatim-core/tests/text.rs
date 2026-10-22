@@ -3412,7 +3412,7 @@ fn a_focus_whose_text_was_not_read_says_neither_its_line_nor_its_value() {
 }
 
 #[test]
-fn a_protected_field_says_its_masked_line_and_selection_as_any_field() {
+fn a_protected_field_says_its_masked_line_selection_or_value_as_any_field() {
     // The masked text the control gives is read as any field's text
     // (`docs/parity/focus-announcement.md`, "Text on focus").
     let protected = StateSet::new().with(State::Protected);
@@ -3440,11 +3440,17 @@ fn a_protected_field_says_its_masked_line_and_selection_as_any_field() {
             caret_read(Some(selection_from(0, true)), "******", Some("******"))
         ),
         vec![
-            announcement,
+            announcement.clone(),
             vec![UtteranceSegment::new(SegmentContent::Phrase(
                 Phrase::Preselected(SelectionText::Text("******".to_owned()))
             ))]
         ]
+    );
+    // With no text to read, its value is spoken as any field's.
+    let mut state = SrState::new();
+    assert_eq!(
+        focus_with_value(&mut state, protected, "******", FocusText::NoText),
+        vec![announcement, vec![UtteranceSegment::value("******")]]
     );
 }
 

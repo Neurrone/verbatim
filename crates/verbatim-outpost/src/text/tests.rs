@@ -8,12 +8,15 @@ use verbatim_model::CaretMotion;
 
 use super::*;
 
-/// An in-memory text whose positions are UTF-16 offsets. Lines end after
-/// each line feed; a word is a run of letters and digits with the spaces
-/// after it, or one other character; a paragraph is a line.
+/// An in-memory text whose positions are UTF-16 offsets. Paragraphs end
+/// after each line feed, and a line is a paragraph, or, with `wrap`, each
+/// run of that many units of one; a word is a run of letters and digits
+/// with the spaces after it, or one other character.
 struct Fake {
     text: Vec<u16>,
     caret: usize,
+    /// The width at which lines wrap, if any.
+    wrap: Option<usize>,
     selection: Option<(usize, usize)>,
     sentences: Sentences,
     /// How many times the caret was read.
@@ -29,6 +32,7 @@ impl Fake {
         Self {
             text: text.encode_utf16().collect(),
             caret,
+            wrap: None,
             selection: None,
             sentences: Sentences::ByParagraph,
             caret_reads: 0,
@@ -37,6 +41,20 @@ impl Fake {
     }
 
     fn lines(&self) -> Vec<(usize, usize)> {
+        let Some(width) = self.wrap else {
+            return self.paragraphs();
+        };
+        self.paragraphs()
+            .into_iter()
+            .flat_map(|(start, end)| {
+                (start..end.max(start + 1))
+                    .step_by(width)
+                    .map(move |from| (from, end.min(from + width)))
+            })
+            .collect()
+    }
+
+    fn paragraphs(&self) -> Vec<(usize, usize)> {
         let mut lines = Vec::new();
         let mut start = 0;
         for (index, &unit) in self.text.iter().enumerate() {
@@ -72,7 +90,8 @@ impl Fake {
 
     fn units(&self, unit: TextUnit) -> Option<Vec<(usize, usize)>> {
         match unit {
-            TextUnit::Line | TextUnit::Paragraph => Some(self.lines()),
+            TextUnit::Line => Some(self.lines()),
+            TextUnit::Paragraph => Some(self.paragraphs()),
             TextUnit::Word => Some(self.words()),
             TextUnit::Character => Some((0..self.text.len()).map(|i| (i, i + 1)).collect()),
             _ => None,
@@ -677,6 +696,42 @@ fn a_deleting_key_in_a_run_of_one_character_is_evidence_by_its_line() {
             reply.caret.line.offset
         ),
         (true, "*****", 2)
+    );
+}
+
+#[test]
+fn a_deleting_keys_line_is_not_compared_with_a_paragraph_core_knew() {
+    // After say-all, Core knows the caret in the paragraph it last read,
+    // which wraps onto two lines, and no caret has been reported since.
+    // Backspace has done nothing yet: the paragraph is not the caret's
+    // line, so their differing is not the key's evidence.
+    let mut source = Fake::new("abcdef ghijkl", 9);
+    source.wrap = Some(7);
+    let mut anchors = store();
+    let TextReply::Read { chunk, .. } = read(
+        &mut source,
+        &mut anchors,
+        TextRead {
+            at: TextPoint::Caret,
+            movement: None,
+            unit: TextUnit::Sentence,
+        },
+    ) else {
+        panic!("the paragraph is read");
+    };
+    assert_eq!((chunk.text.as_str(), chunk.offset), ("abcdef ghijkl", 9));
+    let mut watch = watch(
+        Some(TextPosition {
+            anchor: chunk.start,
+            offset: chunk.offset,
+        }),
+        CaretMotion::Backspace.unit(),
+    );
+    watch.deletes = true;
+    let watched = check(&mut source, &mut anchors, &watch, &mut FakeSignal::new());
+    assert!(
+        matches!(watched, Watched::Watching),
+        "nothing changed: {watched:?}"
     );
 }
 

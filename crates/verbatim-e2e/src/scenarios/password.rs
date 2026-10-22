@@ -4,20 +4,26 @@
 //! `wpf_password` in a WPF `PasswordBox`, read through UI Automation (each
 //! its own code, as `docs/testing.md` requires): a protected field's text
 //! is read as any field's, masked as the control gives it, on focus, by
-//! character and for Backspace, while its typed characters stay echoed as
+//! character, and for Backspace, Delete, Control+Backspace and
+//! Control+Delete, while its typed characters stay echoed as
 //! the protected character (`docs/parity/focus-announcement.md`, "Focus
 //! announcement content and property order", the text on focus).
 //!
 //! Every expectation comes from a capture of NVDA pressing the same keys
 //! in the same form: `winforms-password-focus.txt` and
 //! `wpf-uia-password-focus.txt` in
-//! `target/e2e-evidence/m42-selection-keys-2026-10-22/`. The differences
+//! `target/e2e-evidence/m42-selection-keys-2026-10-22/`, and, from the
+//! second Tab on, `winforms-password-deleting-keys.txt` and
+//! `wpf-password-deleting-keys.txt` in
+//! `target/e2e-evidence/m42-protected-fixes-2026-10-22/`. The differences
 //! are declared where they occur: Verbatim has no symbol processing yet
 //! (M8), so it says a run of masked characters as the characters
 //! themselves, where NVDA collapses six stars to "6 star" and drops a run
 //! of circles, whose symbol level is above its default; and it has no
 //! delayed character description, the empty utterance NVDA says after a
-//! character it moves to.
+//! character it moves to; and it says the text a key removed, so the
+//! Windows Forms box's Control+Backspace, which removes nothing, is
+//! silent where NVDA says the word it expected to go.
 //!
 //! Every key is a real key press the keyboard hook sees and passes to the
 //! form; each step waits for its speech to be heard in full before the
@@ -208,6 +214,26 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // since the box selects all of its text only when Tab first reaches
     // it; NVDA says "5 star".
     press_without_symbols(scenario, "tab", &["Password edit protected", "*****"]);
+    // Home, then Delete: the star now at the caret, each with no delayed
+    // description after it (`winforms-password-deleting-keys.txt`).
+    press_without_description(scenario, "home", &["star"]);
+    press_without_description(scenario, "delete", &["star"]);
+    press(scenario, "end", &["blank"]);
+    press_without_description(scenario, "leftarrow", &["star"]);
+    press_without_description(scenario, "leftarrow", &["star"]);
+    // Control+Backspace: the edit control deletes nothing and inserts a
+    // DEL character, masked as one more star, so Verbatim, which says the
+    // text a key removed, says nothing, where NVDA says the word it
+    // expected to go, "4 star"; the next key's words, asserted exactly,
+    // show the silence.
+    scenario
+        .send_keys(&["control+backspace"])
+        .expect("sends control+backspace");
+    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
+    press_without_description(scenario, "home", &["star"]);
+    // Control+Delete: the box deletes all of its text, leaving nothing at
+    // the caret.
+    press(scenario, "control+delete", &["blank"]);
 }
 
 /// The scenario in the WPF `PasswordBox`, whose text pattern gives its
@@ -244,4 +270,22 @@ pub(crate) fn wpf_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
             "\u{25cf}\u{25cf}\u{25cf}\u{25cf}\u{25cf}",
         ],
     );
+    // Home, then Delete: the circle now at the caret, each with no delayed
+    // description after it (`wpf-password-deleting-keys.txt`).
+    press_without_description(scenario, "home", &["circle"]);
+    press_without_description(scenario, "delete", &["circle"]);
+    press(scenario, "end", &["blank"]);
+    press_without_description(scenario, "leftarrow", &["circle"]);
+    press_without_description(scenario, "leftarrow", &["circle"]);
+    // Control+Backspace: the two circles before the caret, which NVDA's
+    // symbol level drops, saying an utterance with no words.
+    press_without_symbols(scenario, "control+backspace", &["\u{25cf}\u{25cf}"]);
+    // Home at the text's start moves nothing, so Verbatim says nothing,
+    // where NVDA, finding no evidence, says the character at the caret,
+    // "circle"; the next key's words, asserted exactly, show the silence.
+    scenario.send_keys(&["home"]).expect("sends home");
+    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
+    // Control+Delete: the two circles left go, leaving nothing at the
+    // caret.
+    press(scenario, "control+delete", &["blank"]);
 }

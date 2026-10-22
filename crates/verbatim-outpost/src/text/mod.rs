@@ -1947,8 +1947,9 @@ struct Baseline<P> {
     /// by whichever reads it first.
     compared: Option<KeptSelection<P>>,
     known: Option<(String, String)>,
-    /// The caret's line where Core last knew it, whose change is evidence
-    /// for a key that deletes ([`CaretWatch::deletes`]).
+    /// The caret's line before the key, from the caret report the
+    /// baseline came from, whose change is evidence for a key that deletes
+    /// ([`CaretWatch::deletes`]); `None` when the baseline came from Core.
     known_line: Option<Arc<str>>,
     /// The selection in the caret report `since` came from, and that
     /// report's number; `None` when it came from Core.
@@ -1986,6 +1987,7 @@ fn baseline<S: TextSource>(
     // though the caret event's report that compared it came before the
     // watch, and a provider's positions, which follow edits, show the
     // caret where it was.
+    let from_report = reported.is_some();
     let selected = reported.map(|(_, selection, report)| (selection, report));
     let since = match baseline {
         Some(position) => anchors.resolve(source, position)?,
@@ -1999,10 +2001,16 @@ fn baseline<S: TextSource>(
     // too. The rest of the line is compared only for a key that deletes,
     // which changes it: a line that wraps anew changes with no key at all,
     // and after any other key that change would be taken for the key's.
-    let known_line = baseline.and_then(|position| anchors.anchor_text(position.anchor));
+    // It is compared only when the baseline is a caret this outpost
+    // reported, whose anchor's text is the caret's line cut as
+    // [`text_changed`] cuts it; Core's position may be in any chunk, such
+    // as the paragraph say-all last read, which differs from the caret's
+    // line before the key is handled.
+    let anchor_text = baseline.and_then(|position| anchors.anchor_text(position.anchor));
     let known = baseline
-        .zip(known_line.as_ref())
+        .zip(anchor_text.as_ref())
         .map(|(position, text)| beside(text, position.offset as usize));
+    let known_line = anchor_text.filter(|_| from_report);
     Ok(Baseline {
         since,
         compared,

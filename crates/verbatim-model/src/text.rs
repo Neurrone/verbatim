@@ -439,7 +439,8 @@ pub struct CaretWatch {
     #[serde(default)]
     pub landing: bool,
     /// The key deletes text ([`CaretMotion::deletes`]): the caret's line
-    /// differing from the one known before the key is evidence too. In a
+    /// differing from the line of the caret the outpost last reported
+    /// before the key, when it reported one, is evidence too. In a
     /// run of one character, such as a password field's mask, deleting
     /// one changes neither the characters beside the caret nor, where the
     /// provider's positions follow edits, where the caret is.

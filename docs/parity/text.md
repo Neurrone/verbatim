@@ -183,13 +183,18 @@ Differences:
 - A caret event alone is not evidence when the caret's position is
   known, since an application's late caret event can belong to an
   earlier key; the position, the characters either side of the caret,
-  or the selection must change, or, after Backspace or Delete, the
-  caret's line, since deleting one of a run of the same character, such
-  as a password field's mask, changes neither the caret's neighbors nor,
-  in a WPF `PasswordBox`, whose positions follow edits, where the caret
-  is (`wpf_password`) (the wait-for-evidence
-  design, Dickson, 2026-10-08, `docs/design/phase6-design.md`, "What a
-  key did to the text").
+  or the selection must change (the wait-for-evidence design, Dickson,
+  2026-10-08, `docs/design/phase6-design.md`, "What a key did to the
+  text"). For Backspace and Delete, alone or with Control, the caret's
+  line differing from the line of the last caret reported before the
+  key is evidence too (Fable, 2026-10-22, pending Dickson's
+  acceptance), since deleting one of a run of the same character, such
+  as a password field's mask, changes neither the caret's neighbors
+  nor, in a WPF `PasswordBox`, whose positions follow edits, where the
+  caret is (`wpf_password`). NVDA finds that key's effect by the caret
+  event the control raises within 60 ms of the key, which it takes as
+  evidence ("Protected (password) fields" in
+  [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
 - Verbatim never swallows and resends the key, so what Backspace deleted
   is worked out by comparing Core's copy of the caret's line before the
   key with the line after it (Dickson, 2026-10-08,
@@ -197,7 +202,9 @@ Differences:
   text removed at the caret is spoken, in any language, and nothing when
   nothing was removed (the classic edit control's Control+Backspace
   inserts a DEL character, where NVDA would speak the word it expected
-  to go). A backspace over a line break names the kind of break the
+  to go, "4 star" in a Windows Forms password box, `text_box_password`,
+  from `winforms-password-deleting-keys.txt` in
+  `target/e2e-evidence/m42-protected-fixes-2026-10-22/`). A backspace over a line break names the kind of break the
   text was last seen to use, which is what NVDA reads, since a text uses
   one kind throughout, and says nothing when Core has seen no line break
   in it yet. In a terminal, Backspace and Control+Backspace say what

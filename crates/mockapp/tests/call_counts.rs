@@ -4324,11 +4324,11 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Repo
 /// counted in the focus's one message (`docs/performance.md`, "A focus on
 /// a text field"): a UIA document with nothing selected, with a selection,
 /// whose text is read with the caret, and protected with a selection,
-/// whose text is read as any field's, and a terminal, each remotely and classically, and
-/// a classic edit control through MSAA, and the focus-now answer on the
-/// UIA document ([`text_field_focus_now_costs`]). Each is the first
-/// focus in its window, so a UIA focus makes the one connection that
-/// finds the outpost's own element.
+/// whose text is read as any field's, and a terminal, each remotely and
+/// classically, and a classic edit control through MSAA, and the
+/// focus-now answer on the UIA document ([`text_field_focus_now_costs`]).
+/// Each is the first focus in its window, so a UIA focus makes the one
+/// connection that finds the outpost's own element.
 #[expect(
     clippy::too_many_lines,
     reason = "every text field focus and its pinned counts, listed in full"
@@ -4385,9 +4385,7 @@ fn text_field_focuses_cost_exactly() {
         ),
         // A protected field's selected text is read as any field's, which
         // Core says masked as the control gives it, so its focus costs
-        // what an unprotected field's with a selection does: 9 remotely
-        // and 53 classically before 2026-10-22, when the outpost skipped
-        // that read.
+        // what an unprotected field's with a selection does.
         (
             "UIA protected text field focus with a selection, remotely",
             "text.json",

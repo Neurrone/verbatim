@@ -144,9 +144,9 @@ Matched:
   `target/e2e-evidence/m42-desktop-2-2026-10-22`); for any other text
   whose caret cannot be read, NVDA's first line is a difference. A
   protected (password) field's text is read as any field's, masked as
-  its text interface gives it, on focus, by caret movement, for
-  Backspace and Delete, and by the review cursor and object navigation,
-  as NVDA reads it ("Protected (password) fields" in
+  its text interface gives it, on focus, by caret movement, and for
+  Backspace, Delete, Control+Backspace and Control+Delete, as NVDA
+  reads it ("Protected (password) fields" in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)):
   stars in a classic edit control, whose text Verbatim masks as NVDA's
   edit control text does, and the provider's circles in a WPF
@@ -157,10 +157,22 @@ Matched:
   box holding six characters says "Password edit protected" and
   "selected ******" where NVDA says "selected 6 star", and Tab into the
   `PasswordBox` says the six circles where NVDA says no text
-  ("Symbol/punctuation processing" in [speech-audio.md](speech-audio.md);
+  ("Symbol/punctuation processing" in [speech-audio.md](speech-audio.md)).
+  The Windows Forms box's Control+Backspace deletes nothing and inserts
+  a DEL character, masked as a star, and is silent, where NVDA says the
+  word it expected to go, as in any classic edit control
+  ([text.md](text.md), "TextInfo-equivalent layer"). These are pinned by
   `text_box_password` and `wpf_password`, from
   `winforms-password-focus.txt` and `wpf-uia-password-focus.txt` in
-  `target/e2e-evidence/m42-selection-keys-2026-10-22/`).
+  `target/e2e-evidence/m42-selection-keys-2026-10-22/` and
+  `winforms-password-deleting-keys.txt` and
+  `wpf-password-deleting-keys.txt` in
+  `target/e2e-evidence/m42-protected-fixes-2026-10-22/`. Reading a
+  masked field with the review cursor or object navigation is
+  matched (unverified): it takes the same reads as any field's, and
+  Core's unit test `navigating_to_a_protected_edit_field_reads_its_masked_selection`
+  covers object navigation's request, but no capture or scenario has
+  either in a password field yet.
 - Multi-column list view items: NVDA names an item of a report view
   (such as msinfo32's right pane) from its column texts, "content;
   Header: content", with no value or description. Verbatim names an item

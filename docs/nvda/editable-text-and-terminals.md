@@ -184,9 +184,17 @@ event within 60 ms of the key as evidence for a control whose caret
 events it relies on, which is every control but a terminal, before it
 compares the caret's bookmark with the one from before the key
 (`_hasCaretMoved`, `nvda/source/editableText.py` 57, 100 to 138 and 194
-to 206). Which of these finds Backspace's effect in a `PasswordBox`,
-whose characters either side of the caret are the same circle before
-and after, was not traced; the capture shows that one does.
+to 206). In a `PasswordBox`, whose characters either side of the caret
+are the same circle before and after Backspace, the event is what
+finds the key's effect. The box raises UIA's text selection changed
+event within 2 ms of Backspace, beside its text changed event and a
+system caret event (Verbatim's outpost log of `wpf_password`,
+`target/e2e-evidence/m42-protected-fixes-2026-10-22/wpf_password-outpost.log`).
+NVDA names the text selection changed event a caret event
+(`nvda/source/UIAHandler/__init__.py` 278 to 282) and so takes it as
+evidence. It drops the text changed event, since it keeps UIA text
+change events only for Word and the terminals (145 to 157 and 778 to
+798).
 
 ## The per-control text backend ladder
 

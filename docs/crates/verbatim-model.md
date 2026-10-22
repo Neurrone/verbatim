@@ -366,7 +366,8 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   may already show the key's effect); the text of `unit` at the caret differing from `compare` (the
   character or word at the caret before a Delete); for a watch marked
   `deletes` (Backspace and Delete, alone or with Control), the caret's line
-  differing from the one known before the key, since deleting one of a run
+  differing from the line of the caret the outpost last reported before
+  the key, when it reported one, since deleting one of a run
   of the same character, such as a password field's mask, leaves the
   characters beside the caret, and a provider's positions that follow
   edits, as they were; the selection no longer

@@ -1924,10 +1924,12 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     nothing more to read. The evidence is the caret no longer where it was
     known to be, the characters either side of the caret changed from what
     was known, the text at the caret changed after a Delete, the caret's
-    line changed from the one known after a key that deletes (the watch's
-    `deletes`: in a run of one character, such as a password field's
-    mask, deleting one leaves the caret's neighbors as they were, and a
-    provider's positions follow the edit), the
+    line changed, after a key that deletes, from the line of the caret
+    this outpost last reported before the key (the watch's `deletes`: in
+    a run of one character, such as a password field's mask, deleting one
+    leaves the caret's neighbors as they were, and a provider's positions
+    follow the edit; a position Core gives is not compared so, since it
+    may be in any chunk, such as the paragraph say-all last read), the
     selection changed, or the selection in the report the caret was known
     from differs from the selection now: something selected in one and
     not the other, or ends that are not the same positions. The last
