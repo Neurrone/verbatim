@@ -158,6 +158,7 @@ scenario_tests! {
     measure_focus_text_box
     measure_focus_new_application
     measure_keys_text_box
+    measure_keys_notepad
     measure_keys_conhost
     measure_keys_windows_terminal
     measure_speech_real

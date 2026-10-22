@@ -586,7 +586,7 @@ writes `measure-truth.jsonl` to its artifacts directory: one JSON line per
 step, with what was typed or what each key removed, the harness numbers of
 its keys, and the speech collected around it.
 
-The eight scenarios, all named `measure_`:
+The scenarios, all named `measure_`:
 
 - `measure_focus_windows_terminal`: two Windows Terminal windows, brought
   forward 20 times by turns as a taskbar button does.
@@ -636,12 +636,23 @@ The eight scenarios, all named `measure_`:
   through its control plane's `SendKeys` (the held-key re-injection
   workload; Pause is not announced, so the ledger logs no line for them),
   then three rounds of typing at 150 ms and 60 ms a character and
-  Backspace at 33 ms, in the Windows Forms text box.
+  Backspace at 33 ms, in the Windows Forms text box, over 30 numbered
+  lines; then three rounds of the caret keys from the top (Right, Left,
+  Down and Up Arrow, ten each at 150 ms, then ten Down Arrows 30 ms
+  apart, the flight recorder dumped after each burst to `burst-<round>`),
+  and ten rounds of select then copy's first press over the top line's
+  first word followed at once by Right Arrow (the recorder dumped after
+  them to `select-then-right`).
+- `measure_keys_notepad`: the same typing, caret keys and select then
+  Right in Windows 11 Notepad, over the same lines. It needs Windows 11
+  Notepad, so it is not in the set `cargo xtask measure` runs by default
+  and is named with `--scenario`; it is not marked local-only, since a
+  local-only scenario's name must start with one of the skip filters.
 - `measure_keys_conhost` and `measure_keys_windows_terminal`: in each
-  terminal, three rounds of typing at 150 ms then Escape, and typing at
-  60 ms then Backspace at 33 ms; typing while a script prints a line
-  every 50 ms; and five rounds of typing a line that wraps onto a second
-  row, then Escape.
+  terminal, three rounds of typing at 150 ms, ten Left and ten Right
+  Arrows at 150 ms, then Escape, and typing at 60 ms then Backspace at
+  33 ms; typing while a script prints a line every 50 ms; and five rounds
+  of typing a line that wraps onto a second row, then Escape.
 - `measure_speech_real` (`docs/design/communication.md`, section 10.3):
   the speech path through the real synthesizer host and audio device, so
   the ledger's host and device clock stages have figures: two Windows

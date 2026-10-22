@@ -9,7 +9,8 @@
 //! and after the copy a further press finds the start marker cleared.
 //! Last, a start marker set and the navigator moved to the parent object,
 //! where F10 finds no start marker, and back at the focus, where F10
-//! selects from the kept marker.
+//! selects from the kept marker, and Right Arrow then moves past the
+//! selection.
 //!
 //! The document is a small text table whose second column starts at column
 //! 8 on every row long enough to have one. Moving down the table keeps the
@@ -207,6 +208,15 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
         .speech()
         .expect(&["Move to focus Text edit multi line", "Name"]);
     review(scenario, "kb:verbatim+f10", "N selected");
+    // Right Arrow just after the selection the copy's first press made is
+    // judged from where the selection left the caret, read before the key
+    // is passed on (`docs/design/key-holding.md`): the character after
+    // the selection, then the selection removed, as NVDA says them
+    // (captured 2026-10-22, NVDA alpha-58022,732d1ce2).
+    scenario
+        .send_keys(&["rightarrow"])
+        .expect("sends right arrow");
+    scenario.speech().expect(&["a", "N unselected"]);
 }
 
 /// The scenario in Windows 11 Notepad.
@@ -321,6 +331,15 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         .speech()
         .expect(&["Move to focus Text editor document", "Name"]);
     review(scenario, "kb:verbatim+f10", "N selected");
+    // Right Arrow just after the selection the copy's first press made is
+    // judged from where the selection left the caret, read before the key
+    // is passed on (`docs/design/key-holding.md`): the character after
+    // the selection, then the selection removed, as NVDA says them
+    // (captured 2026-10-22, NVDA alpha-58022,732d1ce2).
+    scenario
+        .send_keys(&["rightarrow"])
+        .expect("sends right arrow");
+    scenario.speech().expect(&["a", "N unselected"]);
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)
         .expect("saves the document");

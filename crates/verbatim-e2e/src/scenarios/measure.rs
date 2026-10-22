@@ -35,7 +35,7 @@ use super::terminal::{self, PROMPT};
 use super::text_box::{self, BOX_NAME};
 use crate::artifacts;
 use crate::registry::ScenarioState;
-use crate::scenario::{Scenario, WINDOW_TIMEOUT, harness_marker};
+use crate::scenario::{Document, Scenario, WINDOW_TIMEOUT, harness_marker};
 use crate::speech::{LatencyRow, STEP_TIMEOUT};
 
 pub(crate) use super::no_teardown as teardown;
@@ -63,6 +63,27 @@ const ROUNDS: usize = 3;
 
 /// How many times a wrapped line is typed and cleared with Escape.
 const WRAPPED_ROUNDS: usize = 5;
+
+/// The lines the caret keys move over in the text box and Notepad, one
+/// more than the burst and each round of line keys can reach.
+const ARROW_LINES: usize = 30;
+
+/// How many Down Arrows a burst presses, and how far apart: faster than
+/// the reads each key's answer waits for, so keys come before the answers
+/// to the keys before them.
+const BURST_KEYS: usize = 10;
+const BURST_INTERVAL_MS: u32 = 30;
+
+/// The harness document `measure_keys_notepad` opens in Notepad.
+const NOTEPAD_NAME: &str = "m-keys-notepad";
+
+/// The text the caret keys move over: [`ARROW_LINES`] numbered lines.
+fn arrow_text() -> String {
+    (1..=ARROW_LINES).fold(String::new(), |mut text, line| {
+        let _ = write!(text, "line {line:02}\r\n");
+        text
+    })
+}
 
 /// Starts `ticker-run.ps1` sharing the terminal's console, so the shell
 /// returns to its prompt and reads typing while the ticker prints.
@@ -639,17 +660,105 @@ fn caret_keys(scenario: &mut Scenario, truth: &Truth, title: &str, key: &str, co
     truth.drain(scenario, "after caret keys");
 }
 
+/// The caret key workload in the window titled `title`, `target` naming
+/// it, over [`arrow_text`] with the caret at its top: Right and Left
+/// Arrow, then Down and Up Arrow, ten each at 150 ms, then a burst of
+/// [`BURST_KEYS`] Down Arrows [`BURST_INTERVAL_MS`] apart from the top,
+/// whose answers are kept in the flight recorder dumped after it
+/// (`burst-<round>` in the artifacts), each burst's truth naming the line
+/// each key leaves the caret on, [`ROUNDS`] times.
+fn arrow_keys(scenario: &mut Scenario, truth: &Truth, (title, target): (&str, &str)) {
+    for round in 0..ROUNDS {
+        top(scenario, truth, title);
+        caret_keys(scenario, truth, title, "rightarrow", 10);
+        caret_keys(scenario, truth, title, "leftarrow", 10);
+        caret_keys(scenario, truth, title, "downarrow", 10);
+        caret_keys(scenario, truth, title, "uparrow", 10);
+        top(scenario, truth, title);
+        ready(scenario, truth, title);
+        let keys = vec!["downarrow"; BURST_KEYS];
+        let (first, last) = scenario
+            .send_keys_paced(&keys, BURST_INTERVAL_MS)
+            .expect("presses the burst of down arrows");
+        let lines: Vec<String> = (2..=BURST_KEYS + 1)
+            .map(|line| format!("line {line:02}"))
+            .collect();
+        truth.write(&serde_json::json!({
+            "step": "burst", "target": target, "round": round, "key": "downarrow",
+            "first": first, "last": last, "interval_ms": BURST_INTERVAL_MS, "lines": lines,
+        }));
+        truth.drain(scenario, "after the burst");
+        let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), truth.name)
+            .join(format!("burst-{round}"));
+        scenario
+            .collect_flight_recorder(&dir)
+            .expect("dumps the flight recorder after the burst");
+    }
+}
+
+/// How many times [`select_then_right`] selects and presses Right.
+const SELECT_THEN_RIGHT: usize = 10;
+
+/// The first case of holding keys (`docs/roadmap.md`, the key-holding
+/// prototype): select then copy's first press selects the first word of
+/// the top line, from a start marker at the line's start through the
+/// review cursor on the word's last character, and Right Arrow follows at
+/// once, before the application can have reported the selection's caret,
+/// [`SELECT_THEN_RIGHT`] times. The flight recorder, dumped after
+/// (`select-then-right` in the artifacts), holds each key's answer.
+fn select_then_right(scenario: &mut Scenario, truth: &Truth, title: &str) {
+    for _ in 0..SELECT_THEN_RIGHT {
+        top(scenario, truth, title);
+        for gesture in ["kb:verbatim+f9", "kb:numpad3", "kb:numpad3", "kb:numpad3"] {
+            ready(scenario, truth, title);
+            scenario.send_gesture(gesture).expect("sends the gesture");
+            truth.drain(scenario, "after the review gesture");
+        }
+        ready(scenario, truth, title);
+        scenario
+            .send_gesture("kb:verbatim+f10")
+            .expect("sends the copy's first press");
+        scenario
+            .send_keys(&["rightarrow"])
+            .expect("presses right arrow");
+        truth.write(&serde_json::json!({
+            "step": "select_then_right", "selected": "line", "at": " ",
+        }));
+        truth.drain(scenario, "after select then right");
+    }
+    // One more key after the last Right, so that Right's answer, which can
+    // come after Verbatim is idle, is in the recorder before it is dumped.
+    top(scenario, truth, title);
+    let dir =
+        artifacts::scenario_dir(&artifacts::artifacts_root(), truth.name).join("select-then-right");
+    scenario
+        .collect_flight_recorder(&dir)
+        .expect("dumps the flight recorder after the selections");
+}
+
+/// Moves the caret to the top of the text with Control+Home.
+fn top(scenario: &mut Scenario, truth: &Truth, title: &str) {
+    ready(scenario, truth, title);
+    scenario
+        .send_keys(&["control+home"])
+        .expect("presses control+home");
+    truth.write(&serde_json::json!({ "step": "top" }));
+    truth.drain(scenario, "after control+home");
+}
+
 pub(crate) fn setup_keys_text_box(scenario: &mut Scenario) -> io::Result<ScenarioState> {
-    text_box::open(scenario, "m-keys-box", BOX_NAME, "")?;
+    text_box::open(scenario, "m-keys-box", BOX_NAME, &arrow_text())?;
     Ok(ScenarioState::None)
 }
 
 /// `measure_keys_text_box`: typing at 150 ms and 60 ms a character and
-/// Backspace at 33 ms in the Windows Forms text box, after 20 Pause keys
-/// injected by Verbatim itself through its control plane, the workload for
-/// what re-injecting a held key costs: the time from its `SendInput` to its
-/// own hook. Pause is not announced, so the latency ledger logs no line for
-/// those keys.
+/// Backspace at 33 ms in the Windows Forms text box, a classic edit
+/// control, after 20 Pause keys injected by Verbatim itself through its
+/// control plane, the workload for what re-injecting a held key costs: the
+/// time from its `SendInput` to its own hook. Pause is not announced, so
+/// the latency ledger logs no line for those keys. Then the caret key
+/// workload ([`arrow_keys`]) over the box's numbered lines, and select
+/// then Right ([`select_then_right`]).
 pub(crate) fn body_keys_text_box(scenario: &mut Scenario, _state: &mut ScenarioState) {
     let truth = Truth {
         name: "measure_keys_text_box",
@@ -673,6 +782,49 @@ pub(crate) fn body_keys_text_box(scenario: &mut Scenario, _state: &mut ScenarioS
         type_paced(scenario, &truth, target, TYPED, 60);
         backspace_paced(scenario, &truth, target, TYPED);
     }
+    arrow_keys(scenario, &truth, target);
+    select_then_right(scenario, &truth, &title);
+}
+
+/// The document `measure_keys_notepad` opens in Notepad before Verbatim
+/// starts: [`arrow_text`].
+pub(crate) fn notepad_document() -> Document {
+    Document {
+        name: NOTEPAD_NAME,
+        contents: arrow_text(),
+    }
+}
+
+pub(crate) fn setup_keys_notepad(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    scenario.bring_document_forward(NOTEPAD_NAME)?;
+    Ok(ScenarioState::None)
+}
+
+/// `measure_keys_notepad`: the text box's key workload in Windows 11
+/// Notepad, whose text Verbatim reads through UIA: typing at 150 ms and
+/// 60 ms a character and Backspace at 33 ms, then the caret key workload
+/// ([`arrow_keys`]) and select then Right ([`select_then_right`]). The document is saved at the end, as typed and
+/// removed, so Notepad closes without asking.
+pub(crate) fn body_keys_notepad(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_keys_notepad",
+    };
+    let title = harness_marker(NOTEPAD_NAME);
+    let target = (title.as_str(), "notepad");
+    truth.drain(scenario, "opened");
+    for _ in 0..ROUNDS {
+        type_paced(scenario, &truth, target, TYPED, 150);
+        backspace_paced(scenario, &truth, target, TYPED);
+        type_paced(scenario, &truth, target, TYPED, 60);
+        backspace_paced(scenario, &truth, target, TYPED);
+    }
+    arrow_keys(scenario, &truth, target);
+    select_then_right(scenario, &truth, &title);
+    ready(scenario, &truth, &title);
+    scenario
+        .save_document(NOTEPAD_NAME, WINDOW_TIMEOUT)
+        .expect("saves the document");
+    truth.drain(scenario, "saved");
 }
 
 /// The key workload of a terminal titled `title`, `target` naming it, the
@@ -686,6 +838,10 @@ fn terminal_keys(
     let window = (title, target);
     for _ in 0..ROUNDS {
         type_paced(scenario, truth, window, TYPED_COMMAND, 150);
+        // Caret keys on the typed line, back over its last ten characters
+        // and forward again.
+        caret_keys(scenario, truth, title, "leftarrow", 10);
+        caret_keys(scenario, truth, title, "rightarrow", 10);
         escape(scenario, truth, window, TYPED_COMMAND);
         type_paced(scenario, truth, window, TYPED_COMMAND, 60);
         backspace_paced(scenario, truth, window, TYPED_COMMAND);

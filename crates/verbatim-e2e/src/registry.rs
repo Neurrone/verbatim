@@ -1612,6 +1612,20 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: measure::teardown,
     },
     ScenarioDef {
+        name: "measure_keys_notepad",
+        group: Group::Measure,
+        settings: None,
+        // It needs Windows 11 Notepad as the `notepad_` scenarios do, but
+        // a measurement is never part of a suite run, CI's included, and
+        // its name cannot start with a local-only filter.
+        local_only: false,
+        document: Some(measure::notepad_document),
+        comparable: Comparable::No("it is a measurement workload of Verbatim's latency"),
+        setup: measure::setup_keys_notepad,
+        body: measure::body_keys_notepad,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
         name: "measure_keys_conhost",
         group: Group::Measure,
         settings: None,
