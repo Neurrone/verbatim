@@ -3865,11 +3865,20 @@ impl Worker<'_> {
                     ancestors.iter_mut().flatten().chain(std::iter::once(node))
                 });
                 read::describe_dialogs(context, window.chain(focus), (&previous, &mut None, false));
-                // Core takes the answer's control as its focus, and a caret
-                // key there is answered by the control's caret events, so
-                // they are followed as a reported focus's are.
-                if let Some(control) = &answer.focus {
-                    self.follow_focus((control.node.id, control.node.role));
+                // Core takes the answer's control as its focus: its text is
+                // read as a reported focus's is, so a text field's line is
+                // spoken and Core has its caret, and a caret key there is
+                // answered by the control's caret events, so they are
+                // followed as a reported focus's are.
+                if let Some(control) = &mut answer.focus {
+                    let node = &control.node;
+                    let text = self.read_focus_text(node.id, node.role, node.states);
+                    self.follow_text(
+                        (node.id, node.role),
+                        text.as_ref(),
+                        (trace, answer.observed_at_ms),
+                    );
+                    control.text = text.map(Box::new);
                 }
                 Ok(QueryResult::Focus(answer))
             }

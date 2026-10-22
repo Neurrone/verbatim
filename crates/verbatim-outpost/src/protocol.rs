@@ -992,6 +992,12 @@ pub struct FocusedControl {
     pub selected_child: Option<NodeSnapshot>,
     /// Its window's facts.
     pub window: Option<WindowFacts>,
+    /// What the outpost's caret read found, for a control that may have
+    /// text, read as a reported focus's is (`FocusChanged`'s `text`), so a
+    /// text field's line is spoken and Core has its caret; `None` for any
+    /// other control. The outpost's read leaves it `None` and the worker
+    /// fills it.
+    pub text: Option<Box<verbatim_model::FocusText>>,
 }
 
 /// Messages from an outpost to the Core-side supervisor.
@@ -1879,6 +1885,7 @@ mod tests {
                     ancestors: None,
                     selected_child: None,
                     window: None,
+                    text: None,
                 }),
                 observed_at_ms: 42,
             })),

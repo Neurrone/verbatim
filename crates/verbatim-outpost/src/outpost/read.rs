@@ -933,6 +933,7 @@ pub(super) fn focused_control_in(
                 ancestors,
                 selected_child,
                 window: Some(window_facts(hwnd)),
+                text: None,
             },
         ))
     } else {
@@ -946,6 +947,7 @@ pub(super) fn focused_control_in(
                 ancestors,
                 selected_child,
                 window: Some(window_facts(hwnd)),
+                text: None,
             },
         ))
     }

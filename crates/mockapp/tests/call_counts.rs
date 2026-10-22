@@ -4323,7 +4323,8 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Repo
 /// a text field"): a UIA document with nothing selected, with a selection,
 /// whose text is read with the caret, and protected with a selection,
 /// whose text is not, and a terminal, each remotely and classically, and
-/// a classic edit control through MSAA. Each is the first
+/// a classic edit control through MSAA, and the focus-now answer on the
+/// UIA document ([`text_field_focus_now_costs`]). Each is the first
 /// focus in its window, so a UIA focus makes the one connection that
 /// finds the outpost's own element.
 #[expect(
@@ -4477,7 +4478,71 @@ fn text_field_focuses_cost_exactly() {
     );
     drop(outpost);
     app.quit();
+    text_field_focus_now_costs(&mut ratchet);
     ratchet.finish();
+}
+
+/// The calls a focus-now query on a text field costs, the answer Core
+/// asks for at its start, after a replaced outpost, and after a menu
+/// closes or Alt+Tab (`docs/performance.md`, "The focus-now answer on a
+/// text field"): mockapp's UIA document with nothing selected, remotely
+/// and classically, its caret read with the focus by the reported
+/// focus's reading code and carried in the answer, its line "alpha
+/// beta". The caret read adds what it adds to a reported focus's
+/// read, measured in both: the text pattern's fetch and one program
+/// remotely, 2, and the fetch and 35 calls classically, 36, to the
+/// query's 2 UIA calls and 1 window message without it.
+fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
+    for (operation, remote, expected) in [
+        (
+            "UIA text field focus-now answer with its caret, remotely",
+            true,
+            calls(4, 0, 1),
+        ),
+        (
+            "UIA text field focus-now answer with its caret, classically",
+            false,
+            calls(40, 0, 1),
+        ),
+    ] {
+        let title = common::unique_title("mockapp-counts-text-focus-now");
+        let mut app = common::spawn("text.json", "uia", &title);
+        let hwnd = common::find_window(&title);
+        let mut outpost = OutpostUnderTest::with_options(
+            &app,
+            OutpostOptions {
+                remote_operations: remote,
+            },
+        );
+        app.send("set-focus doc");
+        let uia = Uia::new().expect("a UIA client");
+        let focused = common::listener_focus(&uia, hwnd.0 as isize);
+        outpost.read_focus_as(focused.live().element());
+        let (now, measured) = outpost.focus_now_with_calls();
+        let now = now.unwrap_or_else(|| panic!("{operation}: the focus now has a focused control"));
+        let Some(FocusText::Caret {
+            caret,
+            selected_text: None,
+        }) = now.text.as_deref()
+        else {
+            panic!(
+                "{operation}: the answer came without its caret: {:?}",
+                now.text
+            );
+        };
+        assert_eq!(
+            (caret.line.text.as_str(), caret.line.offset),
+            (
+                "alpha beta
+",
+                0
+            ),
+            "{operation}: the caret's line"
+        );
+        ratchet.check_calls(operation, measured, expected);
+        drop(outpost);
+        app.quit();
+    }
 }
 
 /// Runs this file's tests through the UIA test runner, which explains why

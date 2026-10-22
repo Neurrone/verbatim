@@ -1210,6 +1210,28 @@ from the outposts' logs on 2026-10-20 over three runs each of
   in an application that raises both, whose system caret's event comes
   first, before anything tells that the focus reports its own moves.
 
+### The focus-now answer on a text field
+
+The focus-now query's answer for a text field, which Core asks for at
+its start, after a replaced outpost, and after a menu closes or Alt+Tab:
+the focused control's caret read with it, by the reported focus's own
+read, and carried in the answer (`FocusedControl::text`), so the field's
+line is spoken and Core has its caret. Pinned in
+`crates/mockapp/tests/call_counts.rs`
+(`text_field_focuses_cost_exactly`), mockapp's UIA document with
+nothing selected.
+
+- Minimum: the query's read, 2 UIA calls and 1 window message, and what
+  the caret read adds to a reported text focus: the text pattern's fetch
+  and one program remotely, 2, and the fetch and 35 calls classically
+  ("The caret report after a focus, UIA" below), 36. No round trip is
+  added beyond what a reported text focus pays for its text.
+- Today: 4 UIA calls and 1 window message remotely, 40 and 1
+  classically (2 and 1 before 2026-10-22, when the answer carried no
+  text). A selection adds what it adds to a reported focus ("A focus on
+  a text field" below).
+- Target: the minimum, met.
+
 ### The caret report after a focus, UIA
 
 The caret read of a text focus, whose line Core speaks, with the line's

@@ -434,7 +434,8 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
                  window: Option<WindowFacts>,
                  foreground,
                  ancestors: Option<Vec<NodeSnapshot>>,
-                 selected_child| {
+                 selected_child,
+                 text| {
         Input::Event {
             trace_id,
             observed_at_ms: focus.observed_at_ms,
@@ -447,7 +448,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
                 ancestors_unknown: ancestors.is_none(),
                 ancestors: ancestors.unwrap_or_default(),
                 selected_child,
-                text: None,
+                text,
             },
         }
     };
@@ -458,9 +459,17 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
             false,
             control.ancestors,
             control.selected_child,
+            control.text,
         )],
         (None, Some((window, facts))) => {
-            vec![event(window, Some(facts), true, Some(Vec::new()), None)]
+            vec![event(
+                window,
+                Some(facts),
+                true,
+                Some(Vec::new()),
+                None,
+                None,
+            )]
         }
         (None, None) => Vec::new(),
     }
@@ -469,7 +478,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
 #[cfg(test)]
 mod tests {
     use crossbeam_channel::bounded;
-    use verbatim_model::{Backend, NodeDetails, NodeId, Role, StateSet, WindowHandle};
+    use verbatim_model::{Backend, FocusText, NodeDetails, NodeId, Role, StateSet, WindowHandle};
     use verbatim_outpost::protocol::{DumpedTree, FocusedControl};
 
     use super::*;
@@ -786,7 +795,7 @@ mod tests {
     }
 
     /// A focus-now answer with a focused control is that control's focus
-    /// alone, with its ancestors: the foreground window is not spoken as a
+    /// alone, with its ancestors and what its text read found: the foreground window is not spoken as a
     /// focus of its own, as NVDA does not speak it when it starts, and is
     /// announced only as an entered ancestor when it is presentable.
     #[test]
@@ -813,6 +822,7 @@ mod tests {
                 ancestors: Some(ancestors.clone()),
                 selected_child: selected_child.clone(),
                 window: Some(control_facts),
+                text: Some(Box::new(FocusText::NoText)),
             }),
             observed_at_ms: 1234,
         };
@@ -835,7 +845,7 @@ mod tests {
                     ancestors,
                     ancestors_unknown: false,
                     selected_child,
-                    text: None,
+                    text: Some(Box::new(FocusText::NoText)),
                 },
             }]
         );
@@ -900,6 +910,7 @@ mod tests {
                     ancestors: Some(Vec::new()),
                     selected_child: None,
                     window: None,
+                    text: None,
                 }),
                 observed_at_ms: 1234,
             })),
@@ -943,6 +954,7 @@ mod tests {
                 ancestors: Some(Vec::new()),
                 selected_child: None,
                 window: None,
+                text: None,
             }),
             observed_at_ms: 1234,
         };
@@ -993,6 +1005,7 @@ mod tests {
                 ancestors: None,
                 selected_child: None,
                 window: None,
+                text: None,
             }),
             observed_at_ms: 1234,
         };

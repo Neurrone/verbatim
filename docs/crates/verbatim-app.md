@@ -281,7 +281,7 @@ knowing for review:
   deadline, so it may or may not have happened) is only logged and says
   nothing; a tree dump's is sent on its reply channel; and a
   focus-now query's becomes reducer input: a focus on the focused control,
-  with its ancestors, its window announced only as an entered ancestor
+  with its ancestors and the text its outpost read with it, its window announced only as an entered ancestor
   when it is presentable, as NVDA announces the focus it starts with (since
   2026-10-11; the desktop's Program Manager had been spoken), or, with no
   focused control, a foreground change to the window. The reducer thread sends a focus-now query at startup (for the

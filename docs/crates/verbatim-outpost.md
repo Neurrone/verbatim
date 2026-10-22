@@ -608,7 +608,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   every message sent before it; `is_idle_answer` names it, since nothing
   is merged across it). A `FocusNow` answer carries the application's foreground
   window and its facts, when it holds the system foreground, and its focused
-  control with ancestors, selected child, and window facts, and the time
+  control with ancestors, selected child, window facts, and what its text
+  read found (`FocusedControl::text`, as `FocusChanged`'s `text`), and the time
   the outpost began reading it, which orders it among the focus events. A
   `ListenerFact` strips to a pid-less `DeliveredFact` once the supervisor
   has routed it. Node ids arrive from Core stamped with this outpost's id;
@@ -1427,8 +1428,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   name a child window such as Windows 11 Notepad's text area), and its
   focused control (`hwndFocus`, through that window's backend) with its
   ancestors, or with them unknown (`FocusedControl::ancestors` is then
-  `None`, and Core receives the focus with `ancestors_unknown`), and
-  selected child; a console's text area reads as a nameless
+  `None`, and Core receives the focus with `ancestors_unknown`),
+  selected child, and, for a control that may have text, its caret read
+  by the reported focus's own read (`read_focus_text`), so a text field
+  focused at startup or after a menu closes or Alt+Tab speaks its line
+  and Core has its caret; a console's text area reads as a nameless
   terminal there too, as on the event path (`read::console_text_area`).
   There are no retries: a nameless window is
   not announced later, a control that takes focus later raises its own focus
@@ -2178,7 +2182,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   and text changes followed too (the subscription moved to it, and an
   edit control's caret events checked against a watch on it), since Core
   takes it as its focus and its caret keys are answered by those events;
-  it gets no caret report and no property subscription. The watch is
+  its caret comes with the answer, read as a reported focus's is, and it
+  gets no property subscription. The watch is
   checked before a system caret event is taken as the caret event of a
   UIA focus this outpost last reported, at the cost of the watch's lock
   for each such event, and the registry's while a watch is open; while
