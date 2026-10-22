@@ -1082,7 +1082,9 @@ and in its edit control.
   comparisons of positions, `CompareEndpoints` calls through UIA (one
   round trip each) and none in an edit control, whose positions are
   offsets (since 2026-10-22). Otherwise, the usual case, the read's own
-  comparison covers it and nothing more is made.
+  comparison covers it and nothing more is made. A possible reduction:
+  the caret history could record whether a report changed the selection,
+  so the watch's two `CompareEndpoints` round trips go away.
 - Over a selection, any key compares with the selection the outpost kept,
   in the same round trip, as a caret report does (below); no key sends a
   selection of its own since 2026-10-22 (a selecting key's comparison
@@ -1157,6 +1159,9 @@ from the caret.
   as NVDA compares it. With unchanged ends nothing is read of the new
   selection: a report whose ends equal the kept selection's and whose
   old range still holds its text reads no selection text at all.
+  A possible reduction classically: when the selection and the caret are
+  on the same line, the selection's start is the caret's offset minus the
+  selection's length, two calls fewer.
 - Target: 1.
 
 Local work beside the calls, which by "What counts as a call" counts as

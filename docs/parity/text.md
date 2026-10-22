@@ -343,11 +343,12 @@ Differences:
     and both say nothing (`notepad_selection_keys`;
     `notepad-second-word-control-backspace.txt`,
     `notepad-third-word-to-end-control-backspace.txt`,
-    `notepad-word-control-backspace.txt`). An earlier capture of Backspace
-    over "alpha " in which NVDA said "space" had NVDA reading the
-    document as an "edit multi line" object, not as Notepad's UIA
-    document; the capture taken again with the document read through UIA
-    says "blank".
+    `notepad-word-control-backspace.txt`). Control+Backspace over a
+    selection starting at the beginning of a line that is not the first
+    is unverified: no capture has it, and the prediction is the line
+    break. Backspace over "alpha " was captured again because the first
+    capture had NVDA reading Notepad as a classic edit control, not
+    through UIA.
   - Different: NVDA's delayed character description, "Bravo" after the
     "b" Delete reaches, is a setting Verbatim does not have yet.
   - A key outside the caret table that removes a selection (Control+X,
@@ -355,6 +356,9 @@ Differences:
     the selection's change, never the text it removed, which was the
     selection's: NVDA has no script for these keys.
   Not yet built:
+  - A kept selection with no text, as the by-parts select path keeps it,
+    is not checked for its range no longer holding its text until its
+    ends move.
   - NVDA's classic edit control drops a caret event whose selection
     offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to
     1075); Verbatim reads each caret event.

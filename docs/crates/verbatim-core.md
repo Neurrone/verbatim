@@ -547,7 +547,11 @@ then speaks, queued:
   (`SrState::superseded_caret`, `editing::superseded_reply`); an answer
   read once a later key that is not a caret key was pressed says its
   selection change too. Each change is compared once, by whichever read
-  comes first, so none is said twice and none is lost.
+  comes first, so none is said twice and none is lost. The known limit:
+  the superseded slot holds one key, so in a burst of three keys where the
+  first key's answer arrives after the third press, the first answer's
+  selection change is not said; speech is cut at each press, so the user
+  hears the last caret event's change, as with NVDA.
 
 Formatting (milestone M4 item 7, `docs/nvda/document-formatting.md`).
 A caret key's character, word, or line, and a new focus's first line,

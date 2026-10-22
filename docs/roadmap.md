@@ -141,7 +141,10 @@ its measurements, with the corrections of
   after the next key (Shift+Right followed at once by Right) leaves Core's
   previous selection stale. The fix proposed for the first, deferred: the
   outpost's reply to a select carries the caret it read after selecting,
-  and Core takes it as its caret.
+  and Core takes it as its caret. The outpost's caret history is not
+  cleared after its own select as it is after a caret move, so a key
+  pressed before the application's caret event for the select is judged
+  from the report before it, now for the kept selection too.
 
 ### The audio step
 
