@@ -1539,6 +1539,47 @@ fn word_echo_keeps_combining_marks_and_joiners_in_the_word() {
     }
 }
 
+/// The word being typed goes on past a key that selects and a key outside
+/// the caret table, and starts again after a caret movement without Shift
+/// (`docs/parity/input.md`, "Typed-character echo").
+#[test]
+fn word_echo_forgets_the_word_only_when_the_caret_moves_without_shift() {
+    let mut state = editing("", 0);
+    let _ = reduce(
+        &mut state,
+        &Input::Settings(ReaderSettings {
+            speak_typed_characters: TypingEcho::Off,
+            speak_typed_words: TypingEcho::Always,
+            ..ReaderSettings::default()
+        }),
+    );
+    let type_word = |state: &mut SrState, between: Input| {
+        for letter in ["h", "e", "l"] {
+            let _ = reduce(state, &typed(letter));
+        }
+        let _ = reduce(state, &between);
+        for letter in ["l", "o"] {
+            let _ = reduce(state, &typed(letter));
+        }
+        spoken(&reduce(state, &typed(" ")))
+    };
+    let other = key(CaretMotion::Other, false);
+    assert_eq!(
+        type_word(&mut state, other),
+        vec![UtteranceSegment::text("hello")]
+    );
+    let selecting = key(CaretMotion::PreviousCharacter, true);
+    assert_eq!(
+        type_word(&mut state, selecting),
+        vec![UtteranceSegment::text("hello")]
+    );
+    let moving = key(CaretMotion::PreviousCharacter, false);
+    assert_eq!(
+        type_word(&mut state, moving),
+        vec![UtteranceSegment::text("lo")]
+    );
+}
+
 #[test]
 fn control_characters_end_a_word_but_are_never_spelled() {
     let mut state = editing("", 0);

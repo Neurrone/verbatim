@@ -629,7 +629,8 @@ field echoes only the protected character, spoken "star", and no words.
 In a terminal, unless the user asked for terminal passwords to be spoken,
 typing is held until `NormalizedEvent::TextChanged` for it arrives, so a
 password prompt that shows nothing speaks nothing; Enter drops what was
-held. A caret key or a focus change ends the word being typed.
+held. A caret key without Shift, or a focus change, ends the word being
+typed; a key that selects, or a key outside the caret table, does not.
 Interruption of speech by typing and Enter is the keyboard hook's
 (`verbatim-input`'s `interrupt_for_characters` and `interrupt_for_enter`).
 

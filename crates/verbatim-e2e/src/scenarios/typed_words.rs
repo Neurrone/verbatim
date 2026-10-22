@@ -7,7 +7,9 @@
 //! is spoken after its last character's echo and before the echo of the
 //! space or full stop that ends it. It holds for Windows 11 Notepad (UIA)
 //! and an edit control alike, since the echo comes from the keyboard hook's
-//! own translation of each key.
+//! own translation of each key. In Notepad, where NVDA was captured doing
+//! it, the word typed goes on past Control+C and past a selection made with
+//! Shift and typed over, and starts again after Left Arrow.
 //!
 //! Text is typed through the agent's `TypeText` a character at a time, as
 //! a listening user types, and what each character says is heard in full
@@ -139,6 +141,58 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         .speech()
         .expect(&["speak typed words only in edit controls"]);
     type_each(scenario, &WORDS);
+
+    // The word being typed goes on past Control+C and past a selection
+    // made with Shift and typed over, and starts again after a caret
+    // movement without Shift, as NVDA's captures show
+    // (`target/e2e-evidence/m42-text-captures-2026-10-23/`,
+    // `05a-notepad-typed-words-control-c-run1.txt`, `05b-*` and `05c-*`).
+    // Control+C, with nothing selected, says nothing: the "l" typed next
+    // is the next thing said.
+    type_each(
+        scenario,
+        &[
+            (' ', &["space"]),
+            ('h', &["h"]),
+            ('e', &["e"]),
+            ('l', &["l"]),
+        ],
+    );
+    scenario.send_keys(&["control+c"]).expect("sends control+c");
+    type_each(
+        scenario,
+        &[('l', &["l"]), ('o', &["o"]), (' ', &["hello", "space"])],
+    );
+
+    type_each(scenario, &[('h', &["h"]), ('e', &["e"]), ('l', &["l"])]);
+    scenario
+        .send_keys(&["shift+leftarrow"])
+        .expect("sends shift+leftarrow");
+    scenario.speech().expect(&["l selected"]);
+    type_each(
+        scenario,
+        &[
+            ('l', &["l", "l unselected"]),
+            ('o', &["o"]),
+            (' ', &["hello", "space"]),
+        ],
+    );
+
+    type_each(scenario, &[('h', &["h"]), ('e', &["e"]), ('l', &["l"])]);
+    scenario.send_keys(&["leftarrow"]).expect("sends leftarrow");
+    scenario.speech().expect(&["l"]);
+    scenario
+        .send_keys(&["shift+rightarrow"])
+        .expect("sends shift+rightarrow");
+    scenario.speech().expect(&["l selected"]);
+    type_each(
+        scenario,
+        &[
+            ('l', &["l", "l unselected"]),
+            ('o', &["o"]),
+            (' ', &["lo", "space"]),
+        ],
+    );
 
     scenario
         .save_document(NAME, WINDOW_TIMEOUT)

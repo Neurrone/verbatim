@@ -105,7 +105,14 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
 /// `pressed_at_ms` is when the hook saw the key, on the outposts' clock.
 pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
-    state.typed_word.clear();
+    // The word being typed is forgotten when a caret key without Shift
+    // moves the caret elsewhere or deletes; a key that selects, or one
+    // outside the caret table such as Control+C, leaves it, so typing over
+    // a selection goes on with the word (`docs/parity/input.md`,
+    // "Typed-character echo").
+    if !selects(key) && key.motion != CaretMotion::Other {
+        state.typed_word.clear();
+    }
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return effects;
     };

@@ -42,7 +42,15 @@ and "Speak typed words" (off), each off, only in edit controls, or
 always, toggled by Verbatim+2 and Verbatim+3; a word is spoken when a
 character that is not a letter, mark, or number by its general category
 ends it, before that character, so a virama or
-a Thai tone mark continues the word, as in NVDA. Different,
+a Thai tone mark continues the word, as in NVDA. The word typed so far
+is forgotten when a caret key without Shift moves the caret or deletes,
+and when the focus moves, but not after a key that selects or a key
+outside the caret table: "hel", Control+C, "lo" and a space says
+"hello"; so does "hel", Shift+Left Arrow, "lo" typed over the "l"
+selected, and a space; "hel", Left Arrow, Shift+Right Arrow, "lo" and a
+space says "lo" (`notepad_typed_words`, from NVDA's captures
+`05a-*` to `05c-*` in
+`target/e2e-evidence/m42-text-captures-2026-10-23/`). Different,
 deliberately: the zero-width non-joiner and joiner also continue a word,
 which NVDA's rule does not, since Persian and Indic words are typed
 with them. A protected field echoes only the protected character
