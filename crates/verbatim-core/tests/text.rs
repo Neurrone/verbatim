@@ -1027,6 +1027,15 @@ fn delete_compares_the_character_and_speaks_the_new_one() {
         ),
     );
     assert_eq!(spoken(&effects), vec![character("c")]);
+
+    // At the line's end the character compared is the line break, as the
+    // outpost reads the character at the caret.
+    let mut state = editing("abc\r", 3);
+    let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
+    let TextOp::AwaitCaret(watch) = request(&effects).op else {
+        panic!("expected a caret wait");
+    };
+    assert_eq!(watch.compare.as_deref(), Some("\r"));
 }
 
 /// A caret report of node 5 with `line` and `selection`, carrying

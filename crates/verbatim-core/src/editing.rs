@@ -573,10 +573,17 @@ fn compared_text(line: &TextChunk, motion: CaretMotion, grid: bool) -> Option<St
     let content = text::line_content(&line.text, grid);
     let offset = line.offset as usize;
     match motion {
-        CaretMotion::Delete => Some(
-            text::grapheme_at(content, offset)
-                .map_or(String::new(), |range| content[range].to_owned()),
-        ),
+        // The character as the outpost cuts it from the caret's line, a
+        // line break at the line's end included: compared with the line's
+        // content alone, a caret before the break would find a change
+        // before the application had handled the key.
+        CaretMotion::Delete => {
+            let text = if grid { content } else { line.text.as_str() };
+            Some(
+                text::grapheme_at(text, offset)
+                    .map_or(String::new(), |range| text[range].to_owned()),
+            )
+        }
         CaretMotion::DeleteWord => {
             let words = text::words(content, line.language_at(0));
             Some(
