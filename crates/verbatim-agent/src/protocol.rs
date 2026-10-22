@@ -58,11 +58,12 @@ use serde::{Deserialize, Serialize};
 /// File Explorer folder window shares one process and class, so a reused
 /// handle could otherwise close the owner's own folder window; version 22
 /// removed `WindowCondition::NotForeground` and `Request::ProcessStatus`,
-/// which no client sent. A test
+/// which no client sent; version 23 added [`Request::RepeatKey`], for the
+/// measurement of a caret key held with auto-repeat. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 22;
+pub const AGENT_PROTOCOL_VERSION: u32 = 23;
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in
@@ -521,6 +522,25 @@ pub enum Request {
         keys: Vec<String>,
         /// Milliseconds from one stroke to the next.
         interval_ms: u32,
+    },
+    /// Holds one key down as a keyboard's auto-repeat does: its press, then
+    /// `repeats` more presses with no release between them, the first
+    /// `delay_ms` after the press and each later one `interval_ms` after the
+    /// one before, then its release `interval_ms` after the last, each
+    /// numbered for the harness like a key stroke and paced as
+    /// [`Request::SendKeysPaced`] paces its strokes. Answered by
+    /// [`ReplyPayload::KeysSent`], with the release's number, once the
+    /// release is sent.
+    RepeatKey {
+        /// The key's name, one key, in the `SendKeys` vocabulary.
+        key: String,
+        /// Milliseconds from the press to the first repeat.
+        delay_ms: u32,
+        /// Milliseconds from one repeat to the next, and from the last to
+        /// the release.
+        interval_ms: u32,
+        /// How many presses follow the first before the release.
+        repeats: u32,
     },
     /// As [`Request::TypeText`], each character typed `interval_ms` after
     /// the one before it, as [`Request::SendKeysPaced`] paces its strokes.

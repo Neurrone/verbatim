@@ -1080,6 +1080,10 @@ struct ReducerThread<'a> {
     decoded: Vec<OutpostMessage>,
     /// The caret keys the hook held back, until Core passes them on.
     held_keys: held_keys::HeldKeys,
+    /// The held key waiting for the watch of the key ahead of it, and when
+    /// its wait ends if no answer has come ([`Effect::BoundHeldKeyWait`]):
+    /// one of the reducer thread's deadlines, so it adds no wake-up source.
+    held_wait: Option<(TraceId, Instant)>,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
     /// (`docs/design/communication.md`, section 6.7).
@@ -1774,6 +1778,9 @@ impl ReducerThread<'_> {
             }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
             Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
+            Effect::BoundHeldKeyWait { key, within_ms } => {
+                self.held_wait = Some((key, Instant::now() + Duration::from_millis(within_ms)));
+            }
             Effect::ForKey(key, effect) => self.execute(key, *effect),
             _ => {}
         }
@@ -1951,22 +1958,28 @@ impl ReducerThread<'_> {
     }
 
     /// The earliest time a shell items request is answered with nothing
-    /// if it has had no outcome by then.
+    /// if it has had no outcome by then, a request with a deadline is
+    /// ended, or a held key's wait for the key ahead of it ends.
     fn next_deadline(&self) -> Option<Instant> {
         self.shell_items_wanted
             .next_deadline()
             .into_iter()
             .chain(self.requests.next_deadline())
+            .chain(self.held_wait.map(|(_, due)| due))
             .min()
     }
 
     /// Answers every shell items request whose deadline is `now` or
     /// earlier, still waiting for its outpost or for the outpost's answer,
-    /// with nothing.
+    /// with nothing, ends every request whose deadline is past, and ends a
+    /// held key's wait for the key ahead of it once its bound is past.
     fn expire(&mut self, now: Instant) {
         self.shell_items_wanted.expire(now);
         for input in self.requests.expire(now) {
             self.apply(input);
+        }
+        if let Some((trace_id, _)) = self.held_wait.take_if(|(_, due)| *due <= now) {
+            self.apply(Input::HeldKeyWaitEnded { trace_id });
         }
     }
 
@@ -2039,6 +2052,7 @@ fn reducer_loop(
         barrier: idle::IdleBarrier::default(),
         reincarnated: HashSet::new(),
         held_keys: held_keys::HeldKeys::default(),
+        held_wait: None,
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));

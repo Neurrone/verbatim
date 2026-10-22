@@ -301,6 +301,10 @@ pub(crate) struct HeldKeys {
     /// held key behind it has its caret read only then.
     #[serde(default)]
     pub(crate) awaiting_watch: Option<QueryId>,
+    /// The held key whose wait for `awaiting_watch` the shell was asked to
+    /// end at its bound, so that it is asked once.
+    #[serde(default)]
+    pub(crate) bounded: Option<TraceId>,
 }
 
 impl HeldKeys {

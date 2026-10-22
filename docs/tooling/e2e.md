@@ -662,6 +662,17 @@ The scenarios, all named `measure_`:
   round's recorder dumped to `say-all-then-right-<round>`. They measure
   the stale caret cases of [holding caret keys](../design/key-holding.md),
   are not in the default set, and are named with `--scenario`.
+- `measure_held_repeat_text_box`: three times, Control+End in the
+  Windows Forms text box, then Right Arrow, which moves nothing there,
+  held about a second with auto-repeat through the agent's `RepeatKey`
+  (the press, 15 repeats from 500 ms, 33 ms apart, and the release at
+  995 ms), the release's time recorded in `measure-truth.jsonl` in
+  microseconds since the Unix epoch to compare with the times of
+  Verbatim's log; Verbatim may take up to 300 seconds to become idle
+  after it. It measures the wait of a held key for the key ahead of it
+  ([holding caret keys](../design/key-holding.md), "A key held with
+  auto-repeat"), is not in the default set, and is named with
+  `--scenario`.
 - `measure_speech_real` (`docs/design/communication.md`, section 10.3):
   the speech path through the real synthesizer host and audio device, so
   the ledger's host and device clock stages have figures: two Windows

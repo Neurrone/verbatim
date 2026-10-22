@@ -424,7 +424,11 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   whatever the answer, and the key reaches Core as `Input::HeldKey`, with
   the same fields as `Input::CaretKey`. A key that waited behind a held
   key has its effects wrapped in `Effect::ForKey(trace_id, effect)`, which
-  the shell executes on that key's trace.
+  the shell executes on that key's trace. A held key waiting for the
+  watch of the key ahead of it asks, with
+  `Effect::BoundHeldKeyWait { key, within_ms }`, for
+  `Input::HeldKeyWaitEnded { trace_id }` once `within_ms` have passed, a
+  later one replacing it.
 - `Read(TextRead { at, movement, unit })`: start at `at`, move by
   `movement` (a `TextMovement`: a unit and a signed count) when there is
   one, landing on that unit's start, then read the `unit` containing the

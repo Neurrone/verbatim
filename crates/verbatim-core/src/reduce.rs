@@ -103,6 +103,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             key,
             pressed_at_ms,
         } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
+        Input::HeldKeyWaitEnded { trace_id } => editing::held_wait_ended(state, *trace_id),
         Input::MarkReached { mark } => {
             let mut effects = say_all::mark_reached(state, *mark);
             effects.extend(terminal::mark_reached(state, *mark));

@@ -1021,6 +1021,40 @@ impl AgentClient {
         }
     }
 
+    /// Holds `key` down with auto-repeat (`Request::RepeatKey`): its press,
+    /// `repeats` more presses, the first `delay_ms` after it and then
+    /// `interval_ms` apart, and its release `interval_ms` after the last.
+    /// Returns the release's number.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails, including when the key name
+    /// is unknown, in which case nothing was sent.
+    pub fn repeat_key(
+        &mut self,
+        key: &str,
+        delay_ms: u32,
+        interval_ms: u32,
+        repeats: u32,
+    ) -> io::Result<u64> {
+        let wait = Duration::from_millis(u64::from(delay_ms + interval_ms * repeats));
+        match self.request_waiting(
+            Request::RepeatKey {
+                key: key.to_owned(),
+                delay_ms,
+                interval_ms,
+                repeats,
+            },
+            wait,
+        )? {
+            Frame::Reply {
+                payload: ReplyPayload::KeysSent { input },
+                ..
+            } => Ok(input),
+            other => Err(unexpected("RepeatKey", &other)),
+        }
+    }
+
     /// Types `text` as [`AgentClient::type_text`] does, one character
     /// every `interval_ms` (`Request::TypeTextPaced`), for a measurement
     /// workload's typing rate. Returns the last character's number.

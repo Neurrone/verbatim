@@ -128,7 +128,11 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   Windows still has it down, as NVDA's gesture send does, and a
   character typed as Unicode (`VK_PACKET`) as Unicode again. Each
   pass-on logs how long the key was held (`verbatim::held_key`,
-  `held_us`). `Effect::ForKey` is executed on the named key's trace. The read of the caret
+  `held_us`). `Effect::ForKey` is executed on the named key's trace.
+  `Effect::BoundHeldKeyWait` sets the one time at which a held key's wait
+  for the key ahead of it ends, kept beside the reducer thread's other
+  deadlines (`next_deadline`); when it passes, the thread enters
+  `Input::HeldKeyWaitEnded` with the key's trace ID. The read of the caret
   before the key (`TextOp::ReadCaret`) is a request with a deadline,
   `HELD_KEY_BOUND`, 150 milliseconds: past it the request ends as
   unanswered and Core passes the key on without it.

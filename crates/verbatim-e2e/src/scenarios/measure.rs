@@ -890,6 +890,73 @@ pub(crate) fn body_stale_caret_console_host(scenario: &mut Scenario, state: &mut
     }
 }
 
+/// How many times `measure_held_repeat_text_box` holds Right Arrow.
+const HELD_REPEAT_ROUNDS: usize = 3;
+
+/// Windows' default keyboard auto-repeat: the first repeat 500 ms after the
+/// press, then about 30 a second.
+const REPEAT_DELAY_MS: u32 = 500;
+const REPEAT_INTERVAL_MS: u32 = 33;
+
+/// The repeats in a hold of about one second: the release comes
+/// 500 + 15 × 33 = 995 ms after the press.
+const AUTO_REPEATS: u32 = 15;
+
+/// How long Verbatim may take to become idle after the hold's release: a
+/// bound on a hang, above the 10 seconds a held key waited for each key
+/// ahead of it that moved nothing before that wait was bounded.
+const HELD_REPEAT_IDLE_BOUND: std::time::Duration = std::time::Duration::from_secs(300);
+
+pub(crate) fn setup_held_repeat_text_box(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    text_box::open(scenario, "m-repeat-box", BOX_NAME, &arrow_text())?;
+    Ok(ScenarioState::None)
+}
+
+/// `measure_held_repeat_text_box`: the case where a held key's wait for
+/// the key ahead of it repeats (`docs/design/key-holding.md`, "Keys
+/// behind a held key"). [`HELD_REPEAT_ROUNDS`] times, Control+End puts the
+/// caret at the end of the Windows Forms text box's text, where Right
+/// Arrow moves nothing, and Right Arrow is held for about a second with
+/// auto-repeat. The ground truth records when the release was sent, in
+/// microseconds since the Unix epoch, to compare with the times of
+/// Verbatim's log, and what was said until Verbatim was idle.
+pub(crate) fn body_held_repeat_text_box(scenario: &mut Scenario, _state: &mut ScenarioState) {
+    let truth = Truth {
+        name: "measure_held_repeat_text_box",
+    };
+    let title = harness_marker("m-repeat-box");
+    truth.drain(scenario, "opened");
+    for round in 0..HELD_REPEAT_ROUNDS {
+        ready(scenario, &truth, &title);
+        scenario
+            .send_keys(&["control+end"])
+            .expect("presses control+end");
+        truth.drain(scenario, "after control+end");
+        ready(scenario, &truth, &title);
+        let (first, last) = scenario
+            .repeat_key(
+                "rightarrow",
+                REPEAT_DELAY_MS,
+                REPEAT_INTERVAL_MS,
+                AUTO_REPEATS,
+            )
+            .expect("holds right arrow");
+        let released_unix_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("the clock is after the epoch")
+            .as_micros();
+        let heard: Vec<String> = scenario
+            .take_all_queued_within(HELD_REPEAT_IDLE_BOUND)
+            .into_iter()
+            .map(|heard| heard.text)
+            .collect();
+        truth.write(&serde_json::json!({
+            "step": "held_right_at_the_end", "round": round, "first": first, "last": last,
+            "released_unix_us": released_unix_us.to_string(), "heard": heard,
+        }));
+    }
+}
+
 /// Moves the caret to the top of the text with Control+Home.
 fn top(scenario: &mut Scenario, truth: &Truth, title: &str) {
     ready(scenario, truth, title);

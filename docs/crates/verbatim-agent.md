@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 21) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 23) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -162,7 +162,12 @@ Public API:
     first, so a late one does not delay the rest. Every name or character
     is checked before any is sent, each is numbered as `SendKeys` and
     `TypeText` number theirs, and `KeysSent` and `TextTyped` answer once
-    the last is sent.
+    the last is sent. `RepeatKey` (protocol version 23) holds one key
+    down as auto-repeat does: its press, `repeats` more presses with no
+    release between them, the first `delay_ms` after the press and then
+    `interval_ms` apart, and its release `interval_ms` after the last,
+    each numbered and paced by the same timer; `KeysSent` answers with the
+    release's number once it is sent.
   - `SessionInfo` and `OpenControlTunnel`.
 
   `KillProcessesByName`, `BringToForeground`, and the Control tap and

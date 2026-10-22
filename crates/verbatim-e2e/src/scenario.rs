@@ -892,6 +892,16 @@ impl Scenario {
         self.speech.take_all_queued(self.last_input)
     }
 
+    /// [`Scenario::take_all_queued`], letting Verbatim take up to `bound`
+    /// to become idle.
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle within `bound`.
+    pub fn take_all_queued_within(&mut self, bound: Duration) -> Vec<crate::speech::Heard> {
+        self.speech.take_all_queued_within(self.last_input, bound)
+    }
+
     /// [`Scenario::send_keys`], one stroke every `interval_ms`, for a
     /// measurement workload's rate of key presses, such as auto-repeat's.
     /// Returns the first and last strokes' numbers.
@@ -911,6 +921,37 @@ impl Scenario {
         let last = self.agent.send_keys_paced(&keys, interval_ms)?;
         self.last_input = Some(last);
         Ok((last + 1 - keys.len() as u64, last))
+    }
+
+    /// Holds `key` down with auto-repeat for a measurement workload
+    /// ([`AgentClient::repeat_key`](crate::agent_client::AgentClient::repeat_key)):
+    /// its press, `repeats` more presses, the first `delay_ms` after it and
+    /// then `interval_ms` apart, and its release `interval_ms` after the
+    /// last, noted on the timeline once sent. Returns the first press's and
+    /// the release's numbers.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request fails.
+    ///
+    /// # Panics
+    ///
+    /// Panics if an utterance no assertion matched is waiting.
+    pub fn repeat_key(
+        &mut self,
+        key: &str,
+        delay_ms: u32,
+        interval_ms: u32,
+        repeats: u32,
+    ) -> io::Result<(u64, u64)> {
+        self.speech
+            .require_all_asserted(&format!("before holding {key:?} with auto-repeat"));
+        self.timeline
+            .push_keys(&[&format!("hold {key} with {repeats} repeats")]);
+        let last = self.agent.repeat_key(key, delay_ms, interval_ms, repeats)?;
+        self.timeline.push_keys(&[&format!("released {key}")]);
+        self.last_input = Some(last);
+        Ok((last - u64::from(repeats) - 1, last))
     }
 
     /// [`Scenario::type_text`], one character every `interval_ms`, for a

@@ -353,6 +353,12 @@ fn dispatch(connection: u64, id: u64, request: Request) -> Frame {
         Request::TypeText { text } => type_text(id, &text),
         Request::SendKeysPaced { keys, interval_ms } => send_keys_paced(id, &keys, interval_ms),
         Request::TypeTextPaced { text, interval_ms } => type_text_paced(id, &text, interval_ms),
+        Request::RepeatKey {
+            key,
+            delay_ms,
+            interval_ms,
+            repeats,
+        } => repeat_key(id, &key, (delay_ms, interval_ms), repeats),
         Request::OpenControlTunnel => {
             unreachable!("OpenControlTunnel is handled in handle_connection before dispatch")
         }
@@ -613,6 +619,46 @@ fn send_keys_paced(id: u64, keys: &[String], interval_ms: u32) -> Frame {
                     first + index as u64,
                 )?;
             }
+            Ok(last)
+        });
+    match sent {
+        Ok(input) => Frame::Reply {
+            to: id,
+            payload: ReplyPayload::KeysSent { input },
+        },
+        Err(error) => error_frame(id, &error),
+    }
+}
+
+/// Answers [`Request::RepeatKey`]: the key's press, `repeats` more presses
+/// `delay` then `interval` apart, and its release `interval` after the
+/// last, each numbered, paced by [`crate::pace::Pacer`] in milliseconds
+/// from the press.
+fn repeat_key(id: u64, name: &str, (delay, interval): (u32, u32), repeats: u32) -> Frame {
+    let sent = verbatim_control::send_keys::parse_key(name)
+        .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
+        .and_then(|key| {
+            let first = NEXT_INPUT.fetch_add(u64::from(repeats) + 2, Ordering::Relaxed);
+            let mut pacer = crate::pace::Pacer::new(1)?;
+            let due = |index: u32| -> usize {
+                let ms = if index == 0 {
+                    0
+                } else {
+                    delay + (index - 1) * interval
+                };
+                usize::try_from(ms).unwrap_or(usize::MAX)
+            };
+            for index in 0..=repeats {
+                pacer.wait_for(due(index))?;
+                verbatim_control::send_keys::inject_transition(
+                    key,
+                    false,
+                    Some(first + u64::from(index)),
+                )?;
+            }
+            pacer.wait_for(due(repeats + 1))?;
+            let last = first + u64::from(repeats) + 1;
+            verbatim_control::send_keys::inject_transition(key, true, Some(last))?;
             Ok(last)
         });
     match sent {

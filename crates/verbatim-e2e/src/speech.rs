@@ -1158,7 +1158,7 @@ impl SpeechCollector {
             self.close_step();
             return;
         }
-        self.await_idle(after_input);
+        self.await_idle(after_input, IDLE_TIMEOUT);
         if self.collect_only {
             // Collected, never failed on: the timeline keeps every
             // utterance with its time, and Verbatim's log its latency.
@@ -1195,7 +1195,7 @@ impl SpeechCollector {
     /// Panics if Verbatim does not become idle.
     pub fn take_until_idle(&mut self, after_input: Option<u64>) -> Vec<Heard> {
         self.refuse_in_compare_mode("take_until_idle");
-        self.await_idle(after_input);
+        self.await_idle(after_input, IDLE_TIMEOUT);
         let taken: Vec<Heard> = self
             .pending
             .drain(..)
@@ -1219,9 +1219,25 @@ impl SpeechCollector {
     ///
     /// Panics if Verbatim does not become idle or the connection fails.
     pub fn take_all_queued(&mut self, after_input: Option<u64>) -> Vec<Heard> {
+        self.take_all_queued_within(after_input, IDLE_TIMEOUT)
+    }
+
+    /// [`Self::take_all_queued`], letting Verbatim take up to `bound` to
+    /// become idle: for a measurement whose keys Verbatim is known to keep
+    /// waiting longer than [`IDLE_TIMEOUT`]. A bound on a hang.
+    ///
+    /// # Panics
+    ///
+    /// Panics if Verbatim does not become idle within `bound` or the
+    /// connection fails.
+    pub fn take_all_queued_within(
+        &mut self,
+        after_input: Option<u64>,
+        bound: Duration,
+    ) -> Vec<Heard> {
         self.refuse_in_compare_mode("take_all_queued");
         let mut taken = std::mem::take(&mut self.collected);
-        self.await_idle(after_input);
+        self.await_idle(after_input, bound);
         self.read_arrived();
         self.pauses.clear();
         taken.extend(self.pending.drain(..).map(|utterance| Heard {
@@ -1360,7 +1376,7 @@ impl SpeechCollector {
     /// what has arrived, and marks how many entries the timeline then
     /// held, as they were when the answer came.
     fn settle(&mut self) {
-        self.await_idle(None);
+        self.await_idle(None, IDLE_TIMEOUT);
         let count = self.timeline.entry_count();
         self.read_arrived();
         if let Some(comparison) = &mut self.compare {
@@ -1426,18 +1442,18 @@ impl SpeechCollector {
     /// Asks Verbatim, on this connection, to answer once it has handled
     /// the input numbered `after_input` and everything before it, and is
     /// idle, and reads every frame until the answer: every utterance
-    /// queued before it is then read.
-    fn await_idle(&mut self, after_input: Option<u64>) {
+    /// queued before it is then read. `bound` bounds the wait for idleness.
+    fn await_idle(&mut self, after_input: Option<u64>, bound: Duration) {
         let id = match self.sink.send(Request::AwaitIdle {
             after_input,
-            timeout_ms: u64::try_from(IDLE_TIMEOUT.as_millis()).unwrap_or(u64::MAX),
+            timeout_ms: u64::try_from(bound.as_millis()).unwrap_or(u64::MAX),
         }) {
             Ok(id) => id,
             Err(error) => self.fail(&format!(
                 "could not ask Verbatim whether it is idle: {error}"
             )),
         };
-        let deadline = Instant::now() + IDLE_TIMEOUT + IDLE_ANSWER_MARGIN;
+        let deadline = Instant::now() + bound + IDLE_ANSWER_MARGIN;
         loop {
             match self.read_by(deadline) {
                 Ok(Some(Absorbed::Reply { to, error })) if to == id => {

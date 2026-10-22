@@ -576,6 +576,14 @@ pub enum Input {
         #[serde(default)]
         pressed_at_ms: u64,
     },
+    /// The bound on a held key's wait for the key ahead of it has passed
+    /// ([`Effect::BoundHeldKeyWait`]): if the held key with this trace ID
+    /// still waits for the watch of the key ahead to be answered, its caret
+    /// is read now, as if that watch had been answered.
+    HeldKeyWaitEnded {
+        /// The trace ID of the held key whose wait was bounded.
+        trace_id: TraceId,
+    },
     /// Text was typed into the focused application: one character, or
     /// several at once when an input method commits a composition (one key
     /// press need not be one character). Sourced on the platform side,
@@ -796,6 +804,17 @@ pub enum Effect {
     /// this trace ID on to the application, re-sent as the user pressed
     /// it.
     PassHeldKey(TraceId),
+    /// The held key with this trace ID waits for the watch of the key ahead
+    /// of it to be answered: if it still waits `within_ms` from now, the
+    /// shell enters [`Input::HeldKeyWaitEnded`] with its trace ID. A later
+    /// one replaces it (`docs/design/key-holding.md`, "Keys behind a held
+    /// key").
+    BoundHeldKeyWait {
+        /// The waiting held key's trace ID.
+        key: TraceId,
+        /// How long from now the wait may last, in milliseconds.
+        within_ms: u64,
+    },
     /// The effect on behalf of the key with this trace ID, whatever input
     /// caused it: a key that waited behind a held key is handled while the
     /// reducer handles the held key's read (the read before a held key, or

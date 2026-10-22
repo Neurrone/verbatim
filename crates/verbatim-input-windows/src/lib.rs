@@ -724,7 +724,12 @@ enum Hold {
 /// a held one (`docs/design/key-holding.md`, "Keys behind a held key").
 /// Nothing is held or deferred while the foreground window's process has
 /// higher integrity than Verbatim's, which Windows would drop a key sent
-/// again to ([`integrity`]); Verbatim's own keys are never held.
+/// again to ([`integrity`]); Verbatim's own keys are never held, and the
+/// lock keys are never deferred: Windows translates the numpad's keys by
+/// Num Lock's state before the hook sees them, and a lock key's new state
+/// is announced from Windows' own, so a lock key held back would turn a
+/// numpad key behind it into the wrong key and be announced with its old
+/// state.
 fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decision) -> Hold {
     let stroke = (event.vk, event.extended);
     if !event.pressed && state.held_downs.remove(&stroke) {
@@ -732,7 +737,7 @@ fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decisi
         decision.decision = KeyDecision::Swallow;
         return Hold::No;
     }
-    if own || state.foreground_above {
+    if own || state.foreground_above || verbatim_input::ToggleKey::from_vk(event.vk).is_some() {
         return Hold::No;
     }
     let held = event.pressed
@@ -1116,6 +1121,66 @@ mod tests {
             pass
         );
         assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
+    }
+
+    /// A lock key pressed while a held key has not reached the application
+    /// passes at once, press and release, and is not deferred: its state is
+    /// announced from Windows' own, and Windows translates the numpad's
+    /// keys by Num Lock's state before the hook sees them. Caps Lock, the
+    /// Verbatim key by default, reaches the application on a double press,
+    /// whose first press is the Verbatim key's and swallowed. A letter after
+    /// them is still deferred.
+    #[test]
+    fn a_lock_key_passes_at_once_behind_a_held_key() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let (mut state, _routed, holding) = holding_state(&reports);
+        holding.set(true);
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Swallow
+        );
+        let lock = |vk, scan_code, extended, pressed| KeyEvent {
+            vk,
+            scan_code,
+            extended,
+            injected: false,
+            pressed,
+        };
+        let mut decided = Vec::new();
+        for (vk, scan_code, extended, presses) in [
+            (0x14, 0x3A, false, 2),
+            (0x90, 0x45, true, 1),
+            (0x91, 0x46, false, 1),
+        ] {
+            for _ in 0..presses {
+                for pressed in [true, false] {
+                    let event = lock(vk, scan_code, extended, pressed);
+                    decided.push((vk, pressed, decide(&mut state, event, scan_code, 0)));
+                }
+            }
+        }
+        let (swallowed, pass) = (KeyDecision::Swallow, KeyDecision::Pass);
+        assert_eq!(
+            decided,
+            [
+                (0x14, true, swallowed),
+                (0x14, false, swallowed),
+                (0x14, true, pass),
+                (0x14, false, pass),
+                (0x90, true, pass),
+                (0x90, false, pass),
+                (0x91, true, pass),
+                (0x91, false, pass),
+            ]
+        );
+        assert_eq!(
+            decide(&mut state, letter_x(true), 0x2D, 0),
+            KeyDecision::Swallow
+        );
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            ["held kb:rightarrow #1", "deferred 0x58 down #2", "typed x"]
+        );
     }
 
     /// While the foreground window's process has higher integrity than

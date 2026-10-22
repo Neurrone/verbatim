@@ -1217,6 +1217,35 @@ came to roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time per
 held key (6 and 7 percent more wake-ups in the console host's and Windows
 Terminal's windows, [holding caret keys](design/key-holding.md), "Costs").
 
+The other costs of holding, none of them a call into an application:
+
+- Each key transition deferred behind a held key (a typed character, a
+  modifier, a release, Enter) is swallowed by the hook, wakes the reducer
+  thread once more (`ShellCommand::DeferredKey`), is sent again with
+  `SendInput` once the keys ahead of it have gone (one `SendInput` for
+  everything that may go at once), and passes through the hook a second
+  time, where its tag passes it straight on.
+- Each change of the foreground window costs the hook's thread
+  `GetWindowThreadProcessId`, `OpenProcess`, `OpenProcessToken`, two
+  `GetTokenInformation` and two `CloseHandle`, to learn whether the new
+  window's process has higher integrity than Verbatim's (the guard for
+  elevated windows, `verbatim-input-windows`'s `integrity` module); a key
+  costs none of them.
+- The hook's thread now also wakes for foreground changes among
+  Verbatim's own windows, since its foreground event hook no longer skips
+  Verbatim's process (`WINEVENT_SKIPOWNPROCESS` dropped in `typed.rs`), so
+  that the guard sees Verbatim's own window come to the front.
+- A held key that waits for the watch of the key ahead of it costs the
+  reducer thread at most one wake-up more, at the wait's bound, 100 ms
+  after the key ahead was passed on, and only when that watch is still
+  unanswered then (`Effect::BoundHeldKeyWait`); the bound is one of the
+  reducer thread's existing deadlines, so it adds no thread, timer or
+  wake-up source. Holding a key that moves nothing with auto-repeat makes
+  every repeat wait for it (`measure_held_repeat_text_box`):
+  the last of 15 repeats reached the text box 1.05 to 1.06 s after the
+  release (about 110 ms per repeat), against 149.2 s before the bound
+  (`target/e2e-evidence/m42-key-holding-fixes-2026-10-22/held-repeat-analysis.txt`).
+
 ### The system caret's events
 
 The system caret's location change or show (`OBJID_CARET`), which NVDA

@@ -377,12 +377,18 @@ its identifier through the control plane. For the measure set,
 `send_keys_paced(keys, interval_ms)` and `type_text_paced(text,
 interval_ms)` inject one stroke or character every `interval_ms` through
 the agent's `SendKeysPaced` and `TypeTextPaced`, numbered like any other
-input, and return the first and last numbers; `send_keys_from_verbatim`
+input, and return the first and last numbers; `repeat_key(key, delay_ms,
+interval_ms, repeats)` holds a key down with auto-repeat through the
+agent's `RepeatKey` and returns the press's and the release's numbers;
+`take_all_queued_within(bound)` is `take_all_queued` with a longer bound
+on Verbatim becoming idle, for a measurement whose keys Verbatim keeps
+waiting; `send_keys_from_verbatim`
 injects keys through Verbatim's own control plane (`Request::SendKeys`),
 which carry no harness number; and `take_all_queued` and
 `close_windows_titled` (close every window whose title contains the text,
 failing unless all closed) serve their steps. The matching
-`AgentClient` methods are `send_keys_paced` and `type_text_paced`. Nothing taps keys or uses
+`AgentClient` methods are `send_keys_paced`, `type_text_paced` and
+`repeat_key`. Nothing taps keys or uses
 Alt+Tab to move the foreground, not even in a scenario about switching
 windows: the window is brought forward through the agent, as its
 taskbar button does; a window that does not take the foreground fails

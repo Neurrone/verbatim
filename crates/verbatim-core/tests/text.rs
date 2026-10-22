@@ -4379,11 +4379,20 @@ fn held_keys_are_passed_on_in_order_whatever_their_reads_answer() {
     assert_eq!(effects, []);
     // A read that failed, or passed its bound, still passes the key on,
     // watched as a key the hook passed itself, the watch asked for first.
+    // The second key waits for the first key's watch, no longer than 100 ms
+    // after the first key was passed on.
     let effects = reduce(&mut state, &completed(reading, TextReply::Unanswered));
-    let [Effect::Text(watched), Effect::PassHeldKey(passed)] = effects.as_slice() else {
-        panic!("expected the first key's watch, then the key passed on: {effects:?}");
+    let [
+        Effect::Text(watched),
+        Effect::PassHeldKey(passed),
+        Effect::BoundHeldKeyWait { key, within_ms },
+    ] = effects.as_slice()
+    else {
+        panic!(
+            "expected the first key's watch, then the key passed on, then the second key's wait: {effects:?}"
+        );
     };
-    assert_eq!(*passed, first);
+    assert_eq!((*passed, *key, *within_ms), (first, second, 95));
     let TextOp::AwaitCaret(watch) = &watched.op else {
         panic!("expected the first key's watch: {watched:?}");
     };
@@ -4470,6 +4479,13 @@ fn keys_pressed_behind_a_held_key_are_handled_after_it_in_order() {
             "watch Backspace".to_owned(),
             "pass Backspace".to_owned(),
             format!("echo {:?}", vec![character("c")]),
+            format!(
+                "{:?}",
+                Effect::BoundHeldKeyWait {
+                    key: right,
+                    within_ms: 100
+                }
+            ),
         ]
     );
     let effects = reduce(
@@ -4480,5 +4496,100 @@ fn keys_pressed_behind_a_held_key_are_handled_after_it_in_order() {
         panic!("expected Right Arrow's read alone: {effects:?}");
     };
     assert_eq!(*key, right);
+    assert!(matches!(&**read, Effect::Text(request) if request.op == TextOp::ReadCaret));
+}
+
+#[test]
+fn a_held_key_waits_for_the_key_aheads_answer_no_longer_than_the_bound() {
+    // Right Arrow, held, read and passed on at 411: its watch has no
+    // answer yet, as for a key that moved nothing.
+    let mut state = editing("Hello", 3);
+    let (first, second, third) = (TraceId::mint(), TraceId::mint(), TraceId::mint());
+    let effects = reduce(&mut state, &held_at(first, CaretMotion::NextCharacter, 400));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            read_before(line("Hello", 101, 3), 410),
+        ),
+    );
+    assert_eq!(effects.last(), Some(&Effect::PassHeldKey(first)));
+    let first_watch = request_of(&effects);
+    // A second Right Arrow pressed 20 ms later waits for that answer, and
+    // the shell is asked to end the wait 100 ms after the first key was
+    // passed on; a third pressed behind it asks nothing more.
+    let effects = reduce(
+        &mut state,
+        &held_at(second, CaretMotion::NextCharacter, 431),
+    );
+    assert_eq!(
+        effects,
+        [Effect::BoundHeldKeyWait {
+            key: second,
+            within_ms: 80
+        }]
+    );
+    assert_eq!(
+        reduce(&mut state, &held_at(third, CaretMotion::NextCharacter, 441)),
+        []
+    );
+    // The end of a wait for a key that is not waiting changes nothing.
+    assert_eq!(
+        reduce(&mut state, &Input::HeldKeyWaitEnded { trace_id: third }),
+        []
+    );
+    // At the bound, the second key's caret is read, on its own trace.
+    let effects = reduce(&mut state, &Input::HeldKeyWaitEnded { trace_id: second });
+    let [Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected the second key's read alone: {effects:?}");
+    };
+    assert_eq!(*key, second);
+    let Effect::Text(read) = &**read else {
+        panic!("expected the second key's read: {read:?}");
+    };
+    assert_eq!(read.op, TextOp::ReadCaret);
+    // The first key's watch was marked as having a later key, so its late
+    // answer keeps the caret current and says nothing.
+    let effects = reduce(
+        &mut state,
+        &completed(first_watch, caret_reply_at(line("Hello", 101, 4), 520)),
+    );
+    assert_eq!(effects, []);
+    // The second key is passed on, and the third waits for its watch, the
+    // wait bounded 100 ms from the second's pass-on.
+    let effects = reduce(
+        &mut state,
+        &completed(read.query_id, read_before(line("Hello", 101, 4), 530)),
+    );
+    let [
+        Effect::Text(watched),
+        Effect::PassHeldKey(passed),
+        Effect::BoundHeldKeyWait { key, within_ms },
+    ] = effects.as_slice()
+    else {
+        panic!("expected the second key's watch and pass-on, then the third's wait: {effects:?}");
+    };
+    assert!(matches!(watched.op, TextOp::AwaitCaret(_)));
+    assert_eq!((*passed, *key, *within_ms), (second, third, 100));
+
+    // A held key pressed once the bound has run out is read at once.
+    let mut state = editing("Hello", 3);
+    let effects = reduce(&mut state, &held_at(first, CaretMotion::NextCharacter, 400));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            read_before(line("Hello", 101, 3), 410),
+        ),
+    );
+    assert_eq!(effects.last(), Some(&Effect::PassHeldKey(first)));
+    let effects = reduce(
+        &mut state,
+        &held_at(second, CaretMotion::NextCharacter, 511),
+    );
+    let [Effect::ForKey(key, read)] = effects.as_slice() else {
+        panic!("expected the second key's read alone: {effects:?}");
+    };
+    assert_eq!(*key, second);
     assert!(matches!(&**read, Effect::Text(request) if request.op == TextOp::ReadCaret));
 }

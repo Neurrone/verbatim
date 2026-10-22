@@ -122,7 +122,10 @@ key Windows dropped is waited for only until a later one arrives. A key
 carrying the tag passes straight through, decided by nothing, numbered
 by nothing and reported to nobody, as NVDA ignores the keys its scripts
 send; a key the end-to-end harness injects carries its stroke number
-instead and is held like a typed one.
+instead and is held like a typed one. The lock keys (Caps Lock, Num Lock,
+Scroll Lock) are never deferred: they pass at once, since their new state
+is announced from Windows' own and Windows translates numpad keys by Num
+Lock's state before the hook sees them.
 
 Elevated windows (the `integrity` module): while the foreground window's
 process has higher integrity than Verbatim's, or its integrity cannot be
@@ -135,7 +138,7 @@ and kept in the hook's state (`HookState::foreground_above`), so a key
 costs no call. It is a temporary guard until uiAccess (`docs/roadmap.md`,
 M8.1). Unit tests drive `decide` with the hold on and off, with each tag,
 with keys deferred behind held ones and coming back in and out of order,
-and with a fixed integrity source above and equal to Verbatim's.
+with lock keys behind a held key, and with a fixed integrity source above and equal to Verbatim's.
 
 ## Typed text (the `typed` module)
 

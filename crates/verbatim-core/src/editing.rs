@@ -50,6 +50,14 @@ pub(crate) const MAX_TYPED_WORD: usize = 256;
 /// The most bytes of typing held for a terminal to show.
 pub(crate) const MAX_HELD_TYPING: usize = 1024;
 
+/// The longest a held key waits for the watch of the key ahead of it to be
+/// answered, counted from when that key was passed on: 100 ms, the longest
+/// NVDA's caret scripts wait for the caret to move. Past it the waiting
+/// key's caret is read as if the watch had been answered, since a key that
+/// moved nothing gets no answer before the watch's own bound
+/// (`docs/design/key-holding.md`, "Keys behind a held key").
+pub(crate) const KEY_AHEAD_BOUND_MS: u64 = 100;
+
 /// NVDA speaks a selection change of this many characters or more as a
 /// count rather than the text.
 const SELECTION_SPOKEN_AS_COUNT: u32 = 512;
@@ -168,6 +176,11 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         _ => Vec::new(),
     };
     let query_id = state.allocate_query_id();
+    // A held key waiting behind a held key's watch waits for the newest
+    // watch: a key handled between them moves the caret after it.
+    if state.held_keys.awaiting_watch.is_some() {
+        state.held_keys.awaiting_watch = Some(query_id);
+    }
     state.pending_caret = Some(PendingCaret {
         query_id,
         node,
@@ -224,7 +237,10 @@ pub(crate) fn held_key(
 /// application. A held key waits until the watch of the held key passed
 /// on before it has been answered (`HeldKeys::awaiting_watch`), so that
 /// its read comes after that key's effect, and that key's answer is read
-/// before the next key reaches the application. `behind` says the keys wait behind a key just passed on:
+/// before the next key reaches the application, but no longer than
+/// [`KEY_AHEAD_BOUND_MS`] after that key was passed on: the shell is asked
+/// to end the wait then ([`Effect::BoundHeldKeyWait`]), and a key pressed
+/// later than that is read at once. `behind` says the keys wait behind a key just passed on:
 /// that key's watch is then marked as having a later key
 /// ([`later_key`]), as the later key's press would have marked it had the
 /// watch existed then, so its answer only keeps the caret current, as
@@ -233,22 +249,37 @@ pub(crate) fn held_key(
 fn next_held(state: &mut SrState, mut behind: bool) -> Vec<Effect> {
     let mut effects = Vec::new();
     while state.held_keys.reading.is_none() {
-        let Some(front_held) = state
-            .held_keys
-            .waiting
-            .front()
-            .map(|front| matches!(front, WaitingKey::Held(_)))
-        else {
+        let Some(front) = state.held_keys.waiting.front() else {
             break;
+        };
+        let front_held = match front {
+            WaitingKey::Held(held) => Some(*held),
+            WaitingKey::Later(_) => None,
         };
         if behind {
             later_key(state, state.held_keys.passed_at_ms);
         }
         // A held key's caret is read once the key ahead of it has been
-        // answered, as NVDA's next caret script runs once the first has
-        // seen its caret move or given up waiting.
-        if front_held && state.held_keys.awaiting_watch.is_some() {
-            break;
+        // answered, so that the read sees the application after that key,
+        // or once the bound since that key was passed on has run out. This
+        // wait is Verbatim's own: NVDA's next caret script runs as soon as
+        // it is queued, the first giving up its wait at once.
+        if let Some(held) = front_held
+            && state.held_keys.awaiting_watch.is_some()
+        {
+            let due = state.held_keys.passed_at_ms + KEY_AHEAD_BOUND_MS;
+            if held.pressed_at_ms < due {
+                if state.held_keys.bounded != Some(held.trace_id) {
+                    state.held_keys.bounded = Some(held.trace_id);
+                    let now = held.pressed_at_ms.max(state.held_keys.passed_at_ms);
+                    effects.push(Effect::BoundHeldKeyWait {
+                        key: held.trace_id,
+                        within_ms: due - now,
+                    });
+                }
+                break;
+            }
+            state.held_keys.awaiting_watch = None;
         }
         let Some(waiting) = state.held_keys.waiting.pop_front() else {
             break;
@@ -318,6 +349,24 @@ fn pass_held(state: &mut SrState, held: HeldKey, at_ms: u64) -> Vec<Effect> {
 /// The watch of the held key last passed on was answered: the keys
 /// waiting behind it are handled ([`next_held`]).
 pub(crate) fn held_watch_answered(state: &mut SrState) -> Vec<Effect> {
+    next_held(state, true)
+}
+
+/// The bound on the wait of the held key `trace_id` for the watch of the
+/// key ahead has run out: if it still waits, its caret is read now, as if
+/// that watch had been answered, and the watch is left to end as it would
+/// ([`next_held`]).
+pub(crate) fn held_wait_ended(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
+    let waits = state.held_keys.reading.is_none()
+        && state.held_keys.awaiting_watch.is_some()
+        && matches!(
+            state.held_keys.waiting.front(),
+            Some(WaitingKey::Held(held)) if held.trace_id == trace_id
+        );
+    if !waits {
+        return Vec::new();
+    }
+    state.held_keys.awaiting_watch = None;
     next_held(state, true)
 }
 

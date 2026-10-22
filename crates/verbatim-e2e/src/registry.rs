@@ -1682,6 +1682,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: measure::teardown,
     },
     ScenarioDef {
+        name: "measure_held_repeat_text_box",
+        group: Group::Measure,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No("it is a measurement workload of Verbatim's caret keys"),
+        setup: measure::setup_held_repeat_text_box,
+        body: measure::body_held_repeat_text_box,
+        teardown: measure::teardown,
+    },
+    ScenarioDef {
         name: "measure_speech_real",
         group: Group::Measure,
         settings: None,

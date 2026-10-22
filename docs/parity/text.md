@@ -204,8 +204,20 @@ Differences:
   a key did to the text"). Keys pressed while a held key waits, typed
   characters included, wait behind it and reach the application in the
   order pressed, one step beyond NVDA, where a typed character overtakes
-  a held key. While a window of higher integrity than Verbatim's is in
-  front, nothing is held. The
+  a held key; the lock keys alone pass at once, since their state is
+  announced from Windows' and Num Lock's decides what a numpad key is
+  (Fable, 2026-10-22, pending Dickson's acceptance). A held key behind
+  another has its caret read once the key ahead's evidence has been
+  answered, or 100 ms after the key ahead was sent on, whichever comes
+  first, so that the read sees the application after the key ahead
+  (Fable, 2026-10-22, pending Dickson's acceptance). NVDA does not wait:
+  a caret script stops waiting for its evidence, and says nothing, the
+  moment another script is queued, and the next script reads the caret
+  at once (`_hasCaretMoved`'s short-circuits in
+  [Editable text and terminals](../nvda/editable-text-and-terminals.md));
+  100 ms is NVDA's own longest wait for a caret to move
+  (`caretMoveTimeoutMs`, `nvda/source/config/configSpec.py` 364). While a window
+  of higher integrity than Verbatim's is in front, nothing is held. The
   text removed at the caret is spoken, in any language, and nothing when
   nothing was removed (the classic edit control's Control+Backspace
   inserts a DEL character, where NVDA would speak the word it expected

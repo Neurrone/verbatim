@@ -250,6 +250,18 @@ deferred.
   Dickson, 2026-10-21).
 - `line_key_flood` once read a half-written line on GitHub's runner; it
   is to be repeated there (deferred, Dickson, 2026-10-21).
+- `text_box_selection_keys` fails at Control+Delete over the selection
+  "alpha " in some runs (3 of 14 on fd1b92a5, 5 of 15 with the
+  key-holding fixes), saying "alpha" where "beta", "selection removed"
+  is expected: the key's watch answers from its first check, made before
+  the edit control has handled the key, with the selection and the text
+  unchanged. The likely cause, not yet confirmed: Core's word to compare
+  for Control+Delete is "alpha" while the outpost reads the classic edit
+  control's word at the caret as "alpha ", with the white space after
+  it, so the unchanged text counts as evidence. The compared word and
+  the outpost's word unit are to be made to agree
+  (`target/e2e-evidence/m42-key-holding-fixes-2026-10-22/judges/`,
+  `text_box_selection_keys-*`).
 
 ## M4.2 — Parity small items
 

@@ -446,7 +446,13 @@ behind it (`WaitingKey`), since the hook deferred the key itself behind
 the held one, and is handled in order once the keys ahead are passed on
 (`editing::next_held`): a held key's read is asked for once the watch
 of the held key passed on before it has been answered
-(`HeldKeys::awaiting_watch`), and any
+(`HeldKeys::awaiting_watch`, which follows a newer watch a key handled in
+between starts), or once `KEY_AHEAD_BOUND_MS` (100 ms) have passed since
+that key was passed on: a held key that starts waiting asks the shell,
+once, to end its wait then (`Effect::BoundHeldKeyWait`), and
+`Input::HeldKeyWaitEnded` reads its caret if it still waits, leaving the
+earlier watch to end as it would; a held key pressed after the bound is
+read at once. Any
 other is handled as the input it came as (`reduce::key_input`), a caret
 key taken as pressed no earlier than the key ahead was passed on. The
 watch of the key just passed on is marked as having a later key
