@@ -90,7 +90,7 @@ refuses a bounded channel. The `hook_echo` example installs the
 real hook with two bound gestures and prints what fires and what each
 key reports; it needs an interactive desktop and is never run in CI.
 
-## Holding caret keys (the key-holding prototype)
+## Holding caret keys
 
 `holding` is a `KeyHolding`: the caret keys the hook holds back (the
 whole caret table, `verbatim_input::caret_bindings`) and an atomic
@@ -103,13 +103,39 @@ reported as `KeyReport::Held`, with its press time and the stroke it came
 from (`HeldStroke`: virtual key, scan code, extended flag), after its
 effect on speech as before; the key's release is swallowed too, so the
 application never sees a release without its press. The clearing keys,
-typed characters, Enter and any other key pass as before. A key carrying
-`PASSED_ON_TAG` in `dwExtraInfo`, a held key the app sends again once
-Core has read the caret, passes straight through, decided by nothing,
-numbered by nothing and reported to nobody, as NVDA ignores the keys its
-scripts send; a key the end-to-end harness injects carries its stroke
-number instead and is held like a typed one. Two unit tests drive
-`decide` with the hold on and off, and with each tag.
+typed characters, Enter and any other key are never held for a read.
+
+Keys behind a held key: while any key held back has not yet come back
+through the hook, every later transition the hook would pass, typed
+characters, modifiers and releases included, is swallowed too and
+reported as `KeyReport::Deferred` (its stroke and whether it is a press),
+after the reports it makes as before (a typed character is still
+reported `Typed`, translated with the deferred modifiers ahead of it
+taken as made), so the app sends it on after the held key, in the order
+pressed. Each key held or deferred gets a place in line
+(`HeldStroke::sequence`), kept by the hook (`HookState::outstanding`)
+until the key comes back carrying it: `dwExtraInfo` holds
+`PASSED_ON_TAG` in its high half and the place in its low half
+(`passed_on_info`), 0 on the modifiers and releases sent around a held
+key. A key coming back clears its place and every place before it, so a
+key Windows dropped is waited for only until a later one arrives. A key
+carrying the tag passes straight through, decided by nothing, numbered
+by nothing and reported to nobody, as NVDA ignores the keys its scripts
+send; a key the end-to-end harness injects carries its stroke number
+instead and is held like a typed one.
+
+Elevated windows (the `integrity` module): while the foreground window's
+process has higher integrity than Verbatim's, or its integrity cannot be
+read, nothing is held or deferred, since Windows drops input Verbatim
+sends to it; a held key's release is still swallowed. The answer is
+worked out on the hook thread when the foreground changes, from the
+foreground `WinEvent` the console watch already receives (now taken from
+every process, Verbatim's own included), and once when the hook starts,
+and kept in the hook's state (`HookState::foreground_above`), so a key
+costs no call. It is a temporary guard until uiAccess (`docs/roadmap.md`,
+M8.1). Unit tests drive `decide` with the hold on and off, with each tag,
+with keys deferred behind held ones and coming back in and out of order,
+and with a fixed integrity source above and equal to Verbatim's.
 
 ## Typed text (the `typed` module)
 

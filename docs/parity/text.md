@@ -195,10 +195,17 @@ Differences:
   event the control raises within 60 ms of the key, which it takes as
   evidence ("Protected (password) fields" in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
-- Verbatim never swallows and resends the key, so what Backspace deleted
-  is worked out by comparing Core's copy of the caret's line before the
-  key with the line after it (Dickson, 2026-10-08,
-  `docs/design/phase6-design.md`, "What a key did to the text"): the
+- Verbatim holds every caret key while the focus has text, as NVDA's
+  caret scripts do: the hook swallows it, the focus's outpost reads the
+  caret and its line, and the key is sent on, so what Backspace deleted
+  is worked out by comparing the line read before the key with the line
+  after it ([holding caret keys](../design/key-holding.md), adopted on
+  2026-10-22; Dickson, 2026-10-08, `docs/design/phase6-design.md`, "What
+  a key did to the text"). Keys pressed while a held key waits, typed
+  characters included, wait behind it and reach the application in the
+  order pressed, one step beyond NVDA, where a typed character overtakes
+  a held key. While a window of higher integrity than Verbatim's is in
+  front, nothing is held. The
   text removed at the caret is spoken, in any language, and nothing when
   nothing was removed (the classic edit control's Control+Backspace
   inserts a DEL character, where NVDA would speak the word it expected
@@ -240,7 +247,12 @@ Differences:
   carries no change, as does the one after say-all moves the caret. When
   the outpost merges a caret report waiting to be written with a newer one
   for the same node, the merged report carries both reports' changes, so
-  every intermediate change is spoken, where NVDA, whose event limiter
+  every intermediate change is spoken (Shift+Right followed at once by
+  Right says the selection, the character, and the selection cleared,
+  where NVDA says only the character, its Shift+Right script saying
+  nothing while Right's waits, `selection_keys` scenarios, captured
+  2026-10-22 in `target/e2e-evidence/m42-key-holding-merge-2026-10-22/captures/`),
+  where NVDA, whose event limiter
   keeps one caret event per object (`IAccessibleHandler/orderedWinEventLimiter.py`),
   compares only the last selection with the one it last saw.
 - A selection change that follows a change of the focus's text, and the

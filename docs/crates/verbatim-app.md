@@ -74,8 +74,9 @@ The end-to-end harness's hooks (private `harness` module):
   which holds its facts and its query. When every answer is in, the reducer takes in what is already
   on its port and checks its own conditions: no outpost request
   outstanding, no outpost still starting, no focus wanted from an outpost
-  being started (a crashed outpost's replacement), and no large frame
-  still being parsed. If they hold, the waiters are answered once
+  being started (a crashed outpost's replacement), no large frame
+  still being parsed, and no key the hook held back still waiting to be
+  passed on. If they hold, the waiters are answered once
   everything queued so far has reached the speech manager; if not, the
   round runs again once they clear. A wait that runs out answers with
   what was still outstanding.
@@ -113,16 +114,21 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   settings from `keyboard.speech_interrupt_for_characters` and
   `keyboard.speech_interrupt_for_enter`. The router maps a script action
   to its reducer command with `ScriptAction::review_command`.
-- Held caret keys (the key-holding prototype,
-  `docs/design/key-holding.md`): the hook holds the caret table's keys
-  while a `KeyHolding` switch is on, which the reducer thread sets after
-  every input from `SrState::holds_caret_keys`. A held key's report
-  becomes `Input::HeldKey`, its stroke kept by its trace (`held_keys`)
-  until Core emits `Effect::PassHeldKey`, which sends it with `SendInput`
-  tagged `PASSED_ON_TAG`, the gesture's Shift, Control or Alt that are no
-  longer down pressed around it and the key released first if Windows
-  still has it down, as NVDA's gesture send does, and logs how long the
-  key was held (`verbatim::held_key`, `held_us`). The read of the caret
+- Held caret keys (`docs/design/key-holding.md`): the hook holds the
+  caret table's keys while a `KeyHolding` switch is on, which the reducer
+  thread sets after every input from `SrState::holds_caret_keys`. A held
+  key's report becomes `Input::HeldKey`, and its stroke joins one line
+  (`held_keys`) with the transitions the hook deferred behind held keys
+  (`KeyReport::Deferred`), in the order reported. A held key waits at the
+  front until Core emits `Effect::PassHeldKey`; a deferred transition
+  goes as soon as it reaches the front. Whatever reaches the front is
+  sent with one `SendInput`, each key carrying its place in line
+  (`passed_on_info`): a held key with the gesture's Shift, Control or Alt
+  that are not down pressed around it and the key released first if
+  Windows still has it down, as NVDA's gesture send does, and a
+  character typed as Unicode (`VK_PACKET`) as Unicode again. Each
+  pass-on logs how long the key was held (`verbatim::held_key`,
+  `held_us`). `Effect::ForKey` is executed on the named key's trace. The read of the caret
   before the key (`TextOp::ReadCaret`) is a request with a deadline,
   `HELD_KEY_BOUND`, 150 milliseconds: past it the request ends as
   unanswered and Core passes the key on without it.

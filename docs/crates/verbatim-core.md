@@ -427,19 +427,33 @@ first review command reads the line at the caret, and a `NoText` answer
 makes the object flat text, reviewed by its value or name as in M3. Any
 other object is flat text without asking.
 
-Held caret keys (the key-holding prototype, `docs/design/key-holding.md`).
-An `Input::HeldKey`, a caret key the keyboard hook held back because
-`SrState::holds_caret_keys` was true, asks the focus's outpost to read
-the caret (`TextOp::ReadCaret`) and keeps the key (`HeldKeys`); a held
-key that comes while a read is in flight waits behind it. The read's
-answer becomes the focus's caret, as a report's does, and the key is
-passed on (`Effect::PassHeldKey`) and handled as an `Input::CaretKey`
-pressed one millisecond after the read ended, so the caret before the
-key, here and in the outpost, is the one the read found. Any other answer,
-a failure or the shell's bound passing, passes the key on with the hook's
-time. The next waiting key's read is asked for once the key before it was
-passed on; with no focus whose caret is read, a held key is passed on at
-once.
+Held caret keys (`docs/design/key-holding.md`). An `Input::HeldKey`, a
+caret key the keyboard hook held back because `SrState::holds_caret_keys`
+was true, asks the focus's outpost to read the caret
+(`TextOp::ReadCaret`) and keeps the key (`HeldKeys`). The read's answer
+becomes the focus's caret, as a report's does, and the key is handled as
+an `Input::CaretKey` pressed one millisecond after the read ended, so the
+caret before the key, here and in the outpost, is the one the read
+found, and then passed on (`Effect::PassHeldKey`), after its watch is
+asked for, so the watch reaches the outpost before the key reaches the
+application. Any other answer, a failure or
+the shell's bound passing, passes the key on with the hook's time. With
+no focus whose caret is read, a held key is passed on at once.
+
+Every key input that comes while a held key waits, a held key, an
+`Input::CaretKey`, `Input::CharacterTyped` or `Input::ClearingKey`, waits
+behind it (`WaitingKey`), since the hook deferred the key itself behind
+the held one, and is handled in order once the keys ahead are passed on
+(`editing::next_held`): a held key's read is asked for once the watch
+of the held key passed on before it has been answered
+(`HeldKeys::awaiting_watch`), and any
+other is handled as the input it came as (`reduce::key_input`), a caret
+key taken as pressed no earlier than the key ahead was passed on. The
+watch of the key just passed on is marked as having a later key
+(`later_key`), as the later key's press would have marked it had the
+watch existed, so its answer only keeps the caret current and says its
+selection's change. Each waiting key's effects carry its own trace
+(`Effect::ForKey`), so its requests' answers and its speech are its own.
 
 Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
 `Input::CaretKey` on a focus with text asks its outpost to watch for

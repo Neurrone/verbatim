@@ -663,6 +663,22 @@ Steps of [the communication design](design/communication.md), section 11.
   Alt+Tab (2026-10-10): f7556c8c, 2026-10-10.
 - The console host's scroll events cannot count a flood of identical
   lines: question closed, 2026-10-11.
+- Holding caret keys as NVDA does, the one mechanism for caret keys in
+  text fields and terminals, with the keys pressed behind a held key kept
+  in order and nothing held while an elevated window is in front
+  ([holding caret keys](design/key-holding.md); Dickson, 2026-10-22):
+  the prototype fafc7210 and 8ff48216, with the fixes and measurements
+  c04584db, 2026-10-22.
+- The caret problems that share one cause (Dickson, 2026-10-17), closed by
+  holding caret keys, since the read before each key replaces Core's and
+  the outpost's copies of the caret: select then copy followed by Right,
+  misjudged in 60 of 60 keys before and 0 of 60 after; a selection
+  reported after the next key (Shift+Right followed at once by Right),
+  misjudged in 58 of 60 Right Arrows before and 0 of 60 after; a say-all
+  caret move the application refuses, which the console host, the one
+  application found to refuse it, did not misjudge on either build (0 of
+  30 each) ([holding caret keys](design/key-holding.md), "How often a
+  key's effect was misjudged"), c04584db, 2026-10-22.
 
 ### Fixes
 

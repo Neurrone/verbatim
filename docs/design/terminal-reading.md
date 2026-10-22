@@ -247,10 +247,7 @@ Root cause 1 of the audit: Verbatim hears of a key in the outpost later than the
 
 The same mechanism serves text fields; this document covers terminals only, but the change in Core should be made once.
 
-Holding keys as NVDA does (measurements pending). Both ways:
-
-- Keys not held (the base): as above.
-- Keys held: the outpost reads before the key is re-sent, so the caret and line before the key are exact, and the read after the key is compared with it directly. The facts mechanism still works unchanged; holding only makes "before" exact. Typed characters and Escape, which NVDA does not hold, still go through the facts. Holding adds the round trip to every held key and needs re-injection with `uiAccess` considerations (verify-terminal.md, Part 4 (a)); nothing in the terminal design depends on choosing it.
+Holding keys as NVDA does. Caret keys are held ([holding caret keys](key-holding.md), adopted and built on 2026-10-22): the outpost reads the caret before the key is sent on, so the caret and line before the key are exact, and the read after the key is compared with it directly. The facts mechanism works unchanged; holding only makes "before" exact. Typed characters and Escape are never read before they are sent, as NVDA never holds them, and go through the facts; they wait behind a held key only to keep their order. In the terminals a held key costs 0.1 to 1.5 ms at the median and roughly 8 to 13 wake-ups per key (the measurements in [holding caret keys](key-holding.md), "Costs"). While an elevated window is in front nothing is held, since Verbatim, without `uiAccess`, cannot send keys to it.
 
 ### What Core keeps
 
@@ -458,7 +455,7 @@ Each step is verifiable on its own before the next.
 3. Keep the console host's WinEvents as change evidence (17538d0, not put to you before)? Recommended: keep, as evidence only, and investigate why UIA's text changes stopped (measurement 5). Dropping them risks a silent terminal mid-flood with nothing to recover from; keeping them costs only coalesced extra reads.
 4. Replace `Unwritten` (e2834a0, to be confirmed) with "a blank row below the caret is not a line yet"? Recommended: yes. It follows your coherence decision 1 by a fact the read already has, and it counts `echo ""` as your 2026-10-07 rule asks.
 5. The wrapped Escape: keep Verbatim saying the whole command removed (agent extension of your 2026-10-08 Escape decision; NVDA silent)? Recommended: keep. In this design it is not a separate rule: lines are logical, so a wrapped line's loss is one line's loss, and it needs no kept screens.
-6. Attribute keys in Core by read time (facts from the outpost, Core taking its inputs in time order), rather than the outpost keeping screens and carets from before each key? Recommended: yes, now, for terminals; decide on holding keys separately when its latency is measured. Both work with this design; holding only makes the state before a key exact.
+6. Attribute keys in Core by read time (facts from the outpost, Core taking its inputs in time order), rather than the outpost keeping screens and carets from before each key? Yes, for terminals. Caret keys are also held, so the state before each of them is exact ([holding caret keys](key-holding.md), measured and adopted on 2026-10-22).
 7. Accept that a flood of identical lines that also overflows the history cannot be counted (said as "skipped lines", or silent if nothing differs)? Recommended: accept and document it. No method can tell such a history's lines apart from text, NVDA included.
 8. Keep the main-screen memory, triggered only by evidence of a buffer switch? Recommended: yes. It keeps your coherence decision 5 and removes the shape rule that misfired (90f60c3); the cost is that a full-screen program opened on a console with no history yet re-speaks the main screen on close, as NVDA does.
 9. Keep on-demand reading with two states (Live, Held), dropping Owed? Recommended: yes. Owed exists only because a read could be disturbed; a snapshot cannot be.

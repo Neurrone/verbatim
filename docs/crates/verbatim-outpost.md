@@ -1974,8 +1974,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     out and reads their text in the same round trip when the selection
     moved (`CaretRead::changes`), and the edit controls work them out call
     by call.
-  - The caret before a held key (`TextOp::ReadCaret`, the key-holding
-    prototype, `docs/design/key-holding.md`) is read as a caret event's
+  - The caret before a held key (`TextOp::ReadCaret`,
+    `docs/design/key-holding.md`) is read as a caret event's
     report reads it, with no formatting and without comparing or
     replacing the selection kept for the node (`LastSelection::Ignore`),
     one round trip through UIA where the provider runs remote operations,

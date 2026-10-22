@@ -98,7 +98,10 @@ Public API:
   Control with Home and End, each with and without Shift; Backspace,
   Delete, and Control with each; and Control+A. They are observed, never
   bound: the shell adds them to the hook's map with `with_observed` and
-  turns each reported gesture into `Input::CaretKey`.
+  turns each reported gesture into `Input::CaretKey`, or, while the focus
+  has text, the hook holds them back until the caret has been read and
+  the shell turns each into `Input::HeldKey` (`docs/design/key-holding.md`;
+  the hook's `KeyHolding` is built from this table).
 - `clearing_keys()` — the keys that end or clear the command line being
   typed: Escape, Control+C, Control+D, and Control+Break, both as NVDA
   binds it (Control+Pause) and as Windows reports it (the `break` key,

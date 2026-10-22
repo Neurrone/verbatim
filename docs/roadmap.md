@@ -42,8 +42,7 @@ What has landed is in [Completed milestones](roadmap-done.md), "M4,
 completed so far". The open work was planned as three groups, each one
 session (Dickson, 2026-10-15). The first, the focus pipeline with its
 File Explorer evidence pass, landed on 2026-10-17, and its open
-follow-ups are under "Follow-ups from M4.1" below. Two groups remain: the terminal redesign with the key-holding
-question, and the audio step; within a group, the items are in the order they are done
+follow-ups are under "Follow-ups from M4.1" below. Two groups remain: the terminal redesign, and the audio step; within a group, the items are in the order they are done
 (Dickson, 2026-10-10 and 2026-10-13). Each item is one change,
 checked with `cargo xtask ci` and its related scenarios ten times, with the
 full suite where every scenario is affected. A change in what is heard goes
@@ -107,47 +106,6 @@ its measurements, with the corrections of
   times where the scenario allows one ([UIA faults](uia-bugs.md),
   "Windows Terminal raises focus from a second runtime identity";
   evidence under `target/e2e-evidence/listener-no-connections/step1/scen/`).
-
-- A prototype of holding keys, as NVDA holds every caret-table key
-  with a script: the hook swallows the key, the outpost reads the caret
-  (and for Backspace the character before it) from the application, the
-  key is re-sent, and the key's effect is judged from that exact
-  "before" and the existing evidence read after, without NVDA's polling.
-  Dickson decided on 2026-10-22 to build it, accepting a small latency
-  cost per held key if one mechanism then serves text fields and
-  terminals alike; the only permitted branch is NVDA's, on whether the
-  control's caret events are trusted. Its first case is select then copy
-  followed by Right, the stale-copy case below, measured beside plain
-  arrow keys in Notepad and a classic edit control for the latency added
-  per key, how often a key's effect is misjudged with and without
-  holding, and the cost of re-injection. Re-sent keys reaching elevated
-  windows is out of scope, since Verbatim runs without the uiAccess
-  privilege (Dickson, 2026-10-22). The measurement decides whether
-  holding replaces the per-case fixes below or stays a terminal tool.
-  `notepad_say_all` is not a case: its failure was not a key reaching
-  the application before say-all's caret move. Built and measured on
-  2026-10-22 on the unmerged branch `key-holding`; the design, figures
-  and recommendation are in [holding caret keys](design/key-holding.md),
-  and whether to merge is Dickson's decision.
-- The caret problems that share one cause, decided with the key-holding
-  question rather than fixed one by one (Dickson, 2026-10-17). NVDA keeps
-  no copy of the caret: its caret scripts read the caret from the
-  application when the key is pressed and wait for it to move from there.
-  Verbatim judges a key from Core's and the outpost's copies of the caret,
-  kept by events, so any caret change reported after the key leaves them
-  stale. Known cases: select then copy (Verbatim+F10) moves the caret but
-  neither Core nor the outpost records where, so a caret key pressed
-  before the application's report is judged from the caret before the
-  selection (Right speaks the character at the selection's end, Shift+Right
-  says the selection again; no test covers it); a say-all caret move the
-  application refuses still becomes Core's caret; and a selection reported
-  after the next key (Shift+Right followed at once by Right) leaves Core's
-  previous selection stale. The fix proposed for the first, deferred: the
-  outpost's reply to a select carries the caret it read after selecting,
-  and Core takes it as its caret. The outpost's caret history is not
-  cleared after its own select as it is after a caret move, so a key
-  pressed before the application's caret event for the select is judged
-  from the report before it, now for the kept selection too.
 
 ### The audio step
 
@@ -560,6 +518,13 @@ each of them end to end.
 
 - Secure-desktop instance (`--secure`), AT registration, UIAccess/test-signing
   story in the VM (R5).
+- Remove the keyboard hook's guard that holds no caret key while a
+  window of higher integrity is in front
+  (`verbatim_input_windows`'s `integrity::foreground_above`, kept in the
+  hook's `HookState::foreground_above`): with UIAccess, keys Verbatim
+  sends on reach elevated windows, so they are held there too
+  ([holding caret keys](design/key-holding.md), "Elevated windows";
+  Dickson, 2026-10-22).
 - The secure desktop and the lock screen wait for UIAccess support,
   without which Verbatim cannot read the secure desktop (Dickson,
   2026-10-12).

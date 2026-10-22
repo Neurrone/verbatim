@@ -1185,6 +1185,38 @@ does neither, since none of its reports compares a selection; a key's answer
 in a terminal still keeps the ends, its watch not knowing the node is a
 terminal.
 
+### The caret read before a held key
+
+A caret key pressed while the focus has text is held back by the hook
+until the focus's outpost has read the caret (`TextOp::ReadCaret`,
+[holding caret keys](design/key-holding.md)); the key's watch then runs
+as for any caret key. The read is a caret event's report's read that
+compares no selection. Measured by `crates/mockapp/tests/call_counts.rs`
+(`caret_moves_cost_exactly`): the caret moved on with nothing selected,
+after a report of a selection, through UIA both ways and in the Win32
+edit control.
+
+- Minimum: 1 UIA call remotely, 8 classically, a caret report's; 5
+  window messages in a Win32 edit control.
+- Today: the minimum: 1 UIA call remotely, with the caret report's
+  provider calls (the element's import and its text pattern, the
+  selection, two copies, a comparison, the line expanded, its text twice,
+  an endpoint moved, and the program's own copy of the caret); 8
+  classically; 5 window messages in the edit control. Every one is
+  pinned.
+- Target: the minimum. A possible reduction: the watch's first check,
+  which follows the read by a few milliseconds and finds nothing when the
+  application has not yet handled the key, could be skipped when the
+  read is that recent.
+
+Beside the calls, a held key costs the hook's thread two wake-ups more,
+for the key sent again and its release, and the reducer thread and the
+outpost's worker the read's round trip. In the terminals, traced with
+`cargo xtask trace scenario` over typing and arrows in a debug build, this
+came to roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time per
+held key (6 and 7 percent more wake-ups in the console host's and Windows
+Terminal's windows, [holding caret keys](design/key-holding.md), "Costs").
+
 ### The system caret's events
 
 The system caret's location change or show (`OBJID_CARET`), which NVDA
@@ -1735,6 +1767,11 @@ lines on screen.
   view down a row for each line written into a scroll region above a
   footer, and a read between the two had the rows above the view).
 - Target: 1.
+
+A caret key in a terminal is held for a read of the caret before it is
+sent on ("The caret read before a held key", above), which costs roughly
+8 to 13 wake-ups and 0.7 to 1.5 ms of processor time per key in a debug
+build; the output read after it is unchanged.
 
 A terminal's text change forgets no selection, so it takes no lock on the
 anchors for it, and a terminal's caret reports, the one after its focus

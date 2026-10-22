@@ -653,6 +653,15 @@ The scenarios, all named `measure_`:
   Arrows at 150 ms, then Escape, and typing at 60 ms then Backspace at
   33 ms; typing while a script prints a line every 50 ms; and five rounds
   of typing a line that wraps onto a second row, then Escape.
+- `measure_stale_caret_text_box` and `measure_stale_caret_notepad`: ten
+  rounds of Control+Home, then Shift+Right Arrow and Right Arrow in one
+  batch, each round's flight recorder dumped to
+  `shift-right-then-right-<round>`; and `measure_stale_caret_conhost`: a
+  command that wraps onto a second row, then ten rounds of Home, say-all
+  from the caret heard through its first utterance, and Right Arrow, each
+  round's recorder dumped to `say-all-then-right-<round>`. They measure
+  the stale caret cases of [holding caret keys](../design/key-holding.md),
+  are not in the default set, and are named with `--scenario`.
 - `measure_speech_real` (`docs/design/communication.md`, section 10.3):
   the speech path through the real synthesizer host and audio device, so
   the ledger's host and device clock stages have figures: two Windows
