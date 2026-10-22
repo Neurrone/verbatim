@@ -2205,8 +2205,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   focus the foreground tests compare with (`Tracking::queued`, with no
   event address), as NVDA's fake focus, queued as a focus event, becomes
   its last queued focus (`eventHandler.py`, `_trackFocusObject`), so a
-  late foreground change of its window is dropped (Fable, 2026-10-22,
-  pending Dickson's acceptance). It is not counted among the focuses
+  late foreground change of its window is dropped (Dickson,
+  2026-10-22). It is not counted among the focuses
   reported (`Tracking::reported`), and leaves the MSAA duplicate rule's
   qualifiers (`Tracking::foreground_since_focus`,
   `Tracking::focus_was_simple_child`) as the last reported focus left
