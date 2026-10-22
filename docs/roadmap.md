@@ -108,16 +108,23 @@ its measurements, with the corrections of
   "Windows Terminal raises focus from a second runtime identity";
   evidence under `target/e2e-evidence/listener-no-connections/step1/scen/`).
 
-- A throwaway prototype of holding keys, as NVDA holds a key with
-  a script while it reads the caret, measured, with a written analysis;
-  holding keys is Dickson's decision. Its first case is not chosen yet:
-  Dickson picks it. `notepad_say_all` is no longer a candidate, because
-  its failure was not a key reaching the application before say-all's
-  caret move: neither Core nor the outpost took that move as the caret,
-  so the key's watch compared against the line before, and both now do.
-  The prototype also measures what holding a key costs and how often a
-  key's effect is misjudged, the baseline the work order of 2026-10-10
-  asked for.
+- A prototype of holding keys, as NVDA holds every caret-table key
+  with a script: the hook swallows the key, the outpost reads the caret
+  (and for Backspace the character before it) from the application, the
+  key is re-sent, and the key's effect is judged from that exact
+  "before" and the existing evidence read after, without NVDA's polling.
+  Dickson decided on 2026-10-22 to build it, accepting a small latency
+  cost per held key if one mechanism then serves text fields and
+  terminals alike; the only permitted branch is NVDA's, on whether the
+  control's caret events are trusted. Its first case is select then copy
+  followed by Right, the stale-copy case below, measured beside plain
+  arrow keys in Notepad and a classic edit control for the latency added
+  per key, how often a key's effect is misjudged with and without
+  holding, and the cost of re-injection, including whether re-sent keys
+  reach elevated windows (uiAccess). The measurement decides whether
+  holding replaces the per-case fixes below or stays a terminal tool.
+  `notepad_say_all` is not a case: its failure was not a key reaching
+  the application before say-all's caret move.
 - The caret problems that share one cause, decided with the key-holding
   question rather than fixed one by one (Dickson, 2026-10-17). NVDA keeps
   no copy of the caret: its caret scripts read the caret from the
