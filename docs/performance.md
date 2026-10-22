@@ -440,7 +440,8 @@ verdict for the focus's window rather than asking the window again.
   whether that window is top-level, and for one that is not, the process
   boundary check's local calls (`parent_across_process_boundary`), and,
   when neither finds the top and the last element's cached window handle
-  is another, one `GetAncestor` more for that handle, so a walk is
+  is another, the same calls for that handle, one `GetAncestor` and, for
+  a window that is not top-level, the boundary check's, so a walk is
   complete only at the top (since 2026-10-22). No call into the
   application, no wake-up, and no instruction more in the program.
 - Target: the minimum, which the listener meets.

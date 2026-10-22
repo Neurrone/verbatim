@@ -266,10 +266,11 @@ deferred.
   the query path calls neither `note_focused` nor the intake's
   `set_focused` and sets no tracking focus, role, or window, where a
   reported focus's `emit_focus` does
-  (`crates/verbatim-outpost/src/outpost/worker.rs`). For a terminal
+  (`crates/verbatim-outpost/src/outpost/worker.rs`). For a control
   focused at startup or after a replaced outpost its line is spoken, but
   until a real focus event caret events no key caused are dropped
-  (`caret_of` reads only the outpost's focus), the terminal branch of
+  (`caret_of` reads only the outpost's focus); for a terminal, besides,
+  the terminal branch of
   `follow_text` never runs, text changes reach Core as plain
   `TextChanged`, and Core's on-demand terminal reads are answered empty,
   so its output stays silent (found by the review of the focus-now

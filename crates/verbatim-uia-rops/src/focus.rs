@@ -379,18 +379,16 @@ fn is_window_element(runtime_id: &[i32], hwnd: isize) -> bool {
 
 /// Whether the remote program's walk, ending at a null parent at the
 /// element whose runtime id is `runtime_id` and whose cached
-/// `NativeWindowHandle` is `hwnd`, reached the top: that element is a
-/// window's own element, `[42, handle]` ([`is_window_element`]), known by
-/// its runtime id since a read inside the provider can leave a window's
-/// handle out (`docs/uia-bugs.md`, "Inside a remote operation, conhost's
-/// window has no handle or title"), and its window is a top-level window
-/// or one below the process boundary, whose parent the program cannot
-/// reach; or the element reports a top-level window's handle, as the
-/// classic walk identifies an element's window by its handle first
-/// ([`below_the_boundary`]), whatever its runtime id. A handle the element
-/// reports of a window that no longer exists is not a top-level window's,
-/// so a fragment element reporting one does not end the walk at the top.
-/// Local calls only.
+/// `NativeWindowHandle` is `hwnd`, reached the top: that element's window
+/// is a top-level window or one below the process boundary, whose parent
+/// the program cannot reach, the rule the classic walk stops by
+/// ([`below_the_boundary`]). Its window is the one its runtime id names,
+/// `[42, handle]` ([`is_window_element`]), since a read inside the provider
+/// can leave a window's handle out (`docs/uia-bugs.md`, "Inside a remote
+/// operation, conhost's window has no handle or title"), or the one whose
+/// handle it reports. A handle the element reports of a window that no
+/// longer exists is neither, so a fragment element reporting one does not
+/// end the walk at the top. Local calls only.
 fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
     let own = match runtime_id {
         // A runtime id holds the handle's low 32 bits, which a window
@@ -398,10 +396,11 @@ fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
         &[42, handle] if handle != 0 => handle as isize,
         _ => 0,
     };
-    (own != 0
-        && (verbatim_uia::is_top_level_window(own)
-            || verbatim_uia::parent_across_process_boundary(own).is_some()))
-        || (hwnd != own && verbatim_uia::is_top_level_window(hwnd))
+    let at_the_top = |window: isize| {
+        verbatim_uia::is_top_level_window(window)
+            || verbatim_uia::parent_across_process_boundary(window).is_some()
+    };
+    (own != 0 && at_the_top(own)) || (hwnd != 0 && hwnd != own && at_the_top(hwnd))
 }
 
 /// The focus ancestry in one cross-process round trip: a program that
@@ -415,9 +414,9 @@ fn ends_at_the_top(runtime_id: &[i32], hwnd: isize) -> bool {
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
 /// ancestor read so far has a window handle. A walk that ends at a null
-/// parent anywhere but at a top-level window's own element, that of a
-/// window below the process boundary, or an element reporting a top-level
-/// window's handle, ended below the top, and is reported with the
+/// parent anywhere but at an element whose window, named by its runtime id
+/// or by the handle it reports, is a top-level window or one below the
+/// process boundary, ended below the top, and is reported with the
 /// ancestors unknown ([`Ancestry::failed_hop`]).
 ///
 /// `uia` is unused; it is in the signature so that this and
