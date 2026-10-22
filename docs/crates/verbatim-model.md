@@ -496,8 +496,8 @@ failed). A caret key's watch that ends with no evidence is answered
   key the keyboard hook observed and passed to the application, with when
   the hook saw it, in milliseconds since the Unix epoch, the clock of an
   event's `observed_at_ms` (0 when unknown). A `CaretKey` is a
-  `CaretMotion` (previous or next character, word, line, paragraph, or
-  page; start or end of the line; top or bottom; Backspace and
+  `CaretMotion` (previous or next character, word, line, paragraph,
+  sentence, or page; start or end of the line; top or bottom; Backspace and
   Control+Backspace; Delete and Control+Delete; Control+A; or `Other`, any
   other key that types no text, judged by its evidence) and whether
   Shift extends the selection. `CaretMotion::unit` is the unit spoken

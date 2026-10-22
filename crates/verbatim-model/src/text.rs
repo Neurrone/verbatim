@@ -762,6 +762,12 @@ pub enum CaretMotion {
     PreviousParagraph,
     /// Control+Down Arrow.
     NextParagraph,
+    /// Alt+Up Arrow: the previous sentence, where the application moves
+    /// by sentence.
+    PreviousSentence,
+    /// Alt+Down Arrow: the next sentence, where the application moves by
+    /// sentence.
+    NextSentence,
     /// Home.
     StartOfLine,
     /// End.
@@ -811,8 +817,9 @@ impl CaretMotion {
 
     /// The unit spoken after the motion: the character for character keys,
     /// Home, End, and Delete; the provider's word for word keys; the
-    /// paragraph for paragraph keys; the line for line, page, and document
-    /// keys.
+    /// paragraph for paragraph keys; the line for line, sentence, page, and
+    /// document keys, a sentence key's caret having been moved by the
+    /// application.
     #[must_use]
     pub const fn unit(self) -> TextUnit {
         match self {
@@ -830,6 +837,8 @@ impl CaretMotion {
             Self::PreviousParagraph | Self::NextParagraph => TextUnit::Paragraph,
             Self::PreviousLine
             | Self::NextLine
+            | Self::PreviousSentence
+            | Self::NextSentence
             | Self::PreviousPage
             | Self::NextPage
             | Self::Top

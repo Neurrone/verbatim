@@ -333,8 +333,9 @@ pub fn bindings_for(layout: KeyboardLayout) -> Vec<(GestureId, ScriptAction)> {
 
 /// The caret keys of NVDA's editable-text commands, every layout alike:
 /// moving by character, word, line, paragraph, page, to the line's ends and
-/// the document's, each with Shift to select, plus Backspace, Delete, their
-/// Control forms, and Control+A. They are observed, never bound: the hook
+/// the document's, each with Shift to select, plus Backspace and Delete
+/// (the numpad's too) with their Control and Shift forms, Alt with Up or
+/// Down Arrow, and Control+A. They are observed, never bound: the hook
 /// passes each to the application, which moves the caret, and reports it
 /// so the reducer can speak the result (`docs/nvda/editable-text-and-terminals.md`).
 /// Build the hook's map with [`GestureMap::with_observed`] over these
@@ -363,11 +364,22 @@ pub fn caret_bindings() -> Vec<(GestureId, CaretKey)> {
         ("control+home", CaretMotion::Top),
         ("control+end", CaretMotion::Bottom),
     ];
+    // NVDA's other keys without a Shift form: Shift with Backspace and
+    // Delete deletes as without it (Shift+Delete cuts a selection), the
+    // numpad's Delete is Delete, and Alt with Up or Down Arrow moves by
+    // sentence.
     const EDITS: &[(&str, CaretMotion)] = &[
         ("backspace", CaretMotion::Backspace),
+        ("shift+backspace", CaretMotion::Backspace),
         ("control+backspace", CaretMotion::BackspaceWord),
         ("delete", CaretMotion::Delete),
+        ("shift+delete", CaretMotion::Delete),
+        ("numpaddelete", CaretMotion::Delete),
+        ("shift+numpaddelete", CaretMotion::Delete),
         ("control+delete", CaretMotion::DeleteWord),
+        ("control+numpaddelete", CaretMotion::DeleteWord),
+        ("alt+uparrow", CaretMotion::PreviousSentence),
+        ("alt+downarrow", CaretMotion::NextSentence),
     ];
     let parse = |identifier: String| {
         GestureId::parse(&identifier).expect("caret table entries are well-formed")
@@ -658,8 +670,9 @@ mod tests {
     #[test]
     fn caret_keys_are_distinct_and_never_bound() {
         let caret = caret_bindings();
-        // 14 motions with and without Shift, 4 deletions, and Control+A.
-        assert_eq!(caret.len(), 33);
+        // 14 motions with and without Shift, 9 deletions, the 2 sentence
+        // keys, and Control+A.
+        assert_eq!(caret.len(), 40);
         let unique: HashSet<&GestureId> = caret.iter().map(|(gesture, _)| gesture).collect();
         assert_eq!(unique.len(), caret.len());
         for layout in [KeyboardLayout::Desktop, KeyboardLayout::Laptop] {

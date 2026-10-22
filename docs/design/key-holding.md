@@ -22,7 +22,7 @@ Terms used here:
 
 ### The hook
 
-The keys held are Verbatim's whole caret table (`verbatim_input::caret_bindings`): the arrows and their Control forms, Home, End, Page Up and Down, Control+Home and Control+End, each also with Shift, Backspace, Control+Backspace, Delete, Control+Delete, and Control+A. NVDA holds the Shift forms and Control+A only in controls that do not report their own selection changes; Verbatim holds them everywhere, keeping one rule. The clearing keys (Escape, Control+C, Control+D, Control+Break), typed characters, Enter, Control+X and Control+V and every other key pass as before, as NVDA never holds them.
+The keys held are Verbatim's whole caret table (`verbatim_input::caret_bindings`): the arrows and their Control forms, Home, End, Page Up and Down, Control+Home and Control+End, each also with Shift, Backspace and Delete (the numpad's Delete too) each alone and with Control or Shift, Alt with Up and Down Arrow, and Control+A. NVDA holds the Shift forms and Control+A only in controls that do not report their own selection changes; Verbatim holds them everywhere, keeping one rule. The clearing keys (Escape, Control+C, Control+D, Control+Break), typed characters, Enter, Control+X and Control+V and every other key pass as before, as NVDA never holds them.
 
 How the hook knows the focus is holdable: a `KeyHolding` switch, an atomic flag the reducer's thread sets after every input from Core's focus (`SrState::holds_caret_keys`: the focus is alive and has text, or has a role that may have it, the same test that decides whether a caret key's evidence is watched). The hook reads it with one relaxed load, so it never waits. A key held for a focus that turns out to have no text is passed on at once by Core.
 

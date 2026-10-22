@@ -96,7 +96,10 @@ Public API:
   `(GestureId, CaretKey)` pairs: Left and Right Arrow, Control with them,
   Up and Down Arrow, Control with them, Home, End, Page Up, Page Down, and
   Control with Home and End, each with and without Shift; Backspace,
-  Delete, and Control with each; and Control+A. They are observed, never
+  Delete and the numpad's Delete, each alone and with Control or Shift
+  (Shift deletes as the key alone does, and Shift+Delete cuts a
+  selection); Alt with Up and Down Arrow, NVDA's sentence keys; and
+  Control+A. They are observed, never
   bound: the shell adds them to the hook's map with `with_observed` and
   turns each reported gesture into `Input::CaretKey`, or, while the focus
   has text, the hook holds them back until the caret has been read and
