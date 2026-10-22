@@ -1047,11 +1047,12 @@ fn emit_selection_change(
     );
     let old: (ProgramEnd, ProgramEnd) = ((old, c.start), (old, old_end));
     let after = emit_caret_with(b, c, (element, pattern), pattern2, true);
+    let old_collapsed = b.not(before.has_selection);
     let arrays = emit_changes(
         b,
         c,
         (after.has_selection, after.selection, after.caret),
-        old,
+        (old, old_collapsed),
         (selected, max),
     );
     // The selection's text, kept with it to compare.
@@ -1449,7 +1450,11 @@ fn classic_changes_since(
             },
         )
     };
-    let changes = classic_changes(ends(old, old_end), ends(&new, new_end), max)?;
+    let changes = classic_changes(
+        (ends(old, old_end), ends(&new, new_end)),
+        (old_end == Endpoint::Start, new_end == Endpoint::Start),
+        max,
+    )?;
     let after = SelectionAfter {
         text: state
             .selection

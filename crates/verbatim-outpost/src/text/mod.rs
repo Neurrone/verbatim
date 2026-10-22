@@ -1315,9 +1315,10 @@ pub fn caret_report_checking<S: TextSource>(
                 .collect(),
             None,
         ),
-        (Some(last), None) if !(last.collapsed && state.selection.is_none()) => {
-            (selection_changes(source, &last.ends, &state)?, None)
-        }
+        (Some(last), None) if !(last.collapsed && state.selection.is_none()) => (
+            selection_changes(source, (&last.ends, last.collapsed), &state)?,
+            None,
+        ),
         _ => (Vec::new(), None),
     };
     let report = report_for(
@@ -2080,7 +2081,10 @@ fn answer_caret<S: TextSource>(
                 .collect(),
             None,
         ),
-        (Some(last), None) => (selection_changes(source, &last.ends, &state)?, None),
+        (Some(last), None) => (
+            selection_changes(source, (&last.ends, last.collapsed), &state)?,
+            None,
+        ),
         (None, _) => (Vec::new(), None),
     };
     Ok(TextReply::Caret(Box::new(CaretReply {
@@ -2194,13 +2198,15 @@ fn change_of(selected: bool, units: &[u16]) -> Option<SelectionChange> {
     })
 }
 
-/// How the selection changed from `previous` (its ends, equal for none) to
-/// what `state` holds, by the contract's rule: two selections that neither
-/// overlap nor touch are an unselection then a selection; otherwise the
-/// start side changes, then the end side.
+/// How the selection changed from `previous` (its ends, equal for none,
+/// and whether nothing was selected) to what `state` holds, by the
+/// contract's rule: two selections that neither overlap nor touch, or
+/// either of which holds nothing, are an unselection of the whole old then
+/// a selection of the whole new; otherwise the start side changes, then the
+/// end side.
 fn selection_changes<S: TextSource>(
     source: &mut S,
-    previous: &(S::Pos, S::Pos),
+    (previous, old_collapsed): (&(S::Pos, S::Pos), bool),
     state: &CaretState<S::Pos>,
 ) -> TextResult<Vec<SelectionChange>> {
     let (old_start, old_end) = previous;
@@ -2209,11 +2215,22 @@ fn selection_changes<S: TextSource>(
         .clone()
         .unwrap_or_else(|| (state.caret.clone(), state.caret.clone()));
     let mut changes = Vec::new();
-    let apart = source.compare(&new_end, old_start)? == Ordering::Less
+    // NVDA speaks the whole new selection when the old held nothing, and
+    // the whole old one when the new holds nothing, wherever the caret was
+    // in it (`speakSelectionChange`, `nvda/source/speech/speech.py` 1362 to
+    // 1365): a double-click inside a word is the word selected, once.
+    let whole = old_collapsed
+        || state.selection.is_none()
+        || source.compare(&new_end, old_start)? == Ordering::Less
         || source.compare(&new_start, old_end)? == Ordering::Greater;
-    if apart {
-        changes.extend(change(source, false, old_start, old_end)?);
-        changes.extend(change(source, true, &new_start, &new_end)?);
+    if whole {
+        // A side that holds nothing has no text to read.
+        if !old_collapsed {
+            changes.extend(change(source, false, old_start, old_end)?);
+        }
+        if state.selection.is_some() {
+            changes.extend(change(source, true, &new_start, &new_end)?);
+        }
         return Ok(changes);
     }
     match source.compare(&new_start, old_start)? {
@@ -2697,6 +2714,7 @@ fn select_text<S: TextSource>(
         });
     }
     let before = source.caret()?;
+    let was_collapsed = before.selection.is_none();
     let previous = before
         .selection
         .unwrap_or_else(|| (before.caret.clone(), before.caret));
@@ -2708,7 +2726,7 @@ fn select_text<S: TextSource>(
         return Ok(TextReply::Unsupported);
     }
     let state = source.caret()?;
-    let changes = selection_changes(source, &previous, &state)?;
+    let changes = selection_changes(source, (&previous, was_collapsed), &state)?;
     let selected = state.selection.is_some();
     let ends = state
         .selection

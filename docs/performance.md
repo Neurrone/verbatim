@@ -1146,11 +1146,13 @@ from the caret.
   is its text and is kept), are part of the caret read's program,
   which compares nothing when the last selection and the new one both hold
   nothing. Classically 8 with nothing selected (8 before remote
-  operations), and 25 for the selection of "al" (18 before 2026-10-22,
-  19 before the selection's start was read): the read of a caret with
-  text selected, which asks for the selection's caret (`GetCaretRange`),
-  six comparisons, among them the selection's ends with the old caret's
-  and the comparisons that place the change, the change's text (a copy,
+  operations), and 21 for the selection of "al" (25 before 2026-10-23,
+  18 before 2026-10-22, 19 before the selection's start was read): the
+  read of a caret with text selected, which asks for the selection's
+  caret (`GetCaretRange`), two comparisons, the selection's ends with the
+  old caret's (the old selection holding nothing, the change is the
+  whole new selection, as NVDA speaks it, with none of the four
+  comparisons that place a change, since 2026-10-23), the change's text (a copy,
   its two ends moved, its text), the selection's text, and where the
   selection starts, since `TextPattern2`'s caret can be its other end
   (its start compared with the line's, a copy of the line or of the
@@ -1158,7 +1160,7 @@ from the caret.
   line expanded and its text, for an earlier line), and, the start being
   at its line's start, as "al" at the text's start is, whether it is the
   text's (the document range and a comparison: 2). Inside a line it costs
-  23. Through UIA all of this is in the program. When the last selection held something, what
+  19. Through UIA all of this is in the program. When the last selection held something, what
   its ends now hold is read too, up to the same 513 units, to compare
   with its text as it was reported; through UIA a mismatch has the change
   said in general terms (`docs/parity/text.md`, "TextInfo-equivalent
@@ -1467,10 +1469,14 @@ to a selection of "alpha".
 - Today: 1 remotely (8 before: the caret read and then the selection's
   changes worked out call by call, two comparisons for whether the two
   selections are apart, one for each side, and three for the text of the
-  change). Classically 34 (30 before; 27 before the new selection's text
-  was read to keep, and 28 before where it starts was read, 2026-10-22):
-  the caret read's calls, and the same comparisons and text read, now
-  only when the selection moved. The key compares with the selection the
+  change). Classically 30 (34 before 2026-10-23, when the comparisons
+  that place a change were made from a selection that held nothing; 30
+  before that; 27 before the new selection's text was read to keep, and
+  28 before where it starts was read, 2026-10-22): the caret read's
+  calls, and the same comparisons and text read, now only when the
+  selection moved. A selection that held nothing before, or holds
+  nothing after, is one whole change, as NVDA speaks it, with no
+  comparison to place it (two fewer inside the provider remotely). The key compares with the selection the
   outpost kept, as every key does; Core sends no selection of its own
   since 2026-10-22, which changed no count.
 - Target: 1, met.
@@ -1638,13 +1644,16 @@ start by the text before each.
   bytecode, `TextRangeSelect`), reads the selection again, and compares
   the two and reads the text of each change inside the provider, and the
   selection's text up to 513 units, which the outpost keeps with the
-  selection for the next comparison, as a caret report's. It executes 165
+  selection for the next comparison, as a caret report's. It executes 163
   instructions (`instruction_limit.rs`, `range_selections_execute_exactly`;
-  160 before the selection's text was read, 2026-10-22).
+  165 before a selection from a collapsed caret was one whole change,
+  2026-10-23, and 160 before the selection's text was read, 2026-10-22).
 - Today: 1 remotely (4 before 2026-10-15: the selection read before by
   two classic calls, the selection as a program of its own, and the read
-  after as a caret read's program); classically 33 (32 before the
-  selection's text was read to keep, 2026-10-22; 22 with the range from
+  after as a caret read's program); classically 29 (33 before
+  2026-10-23, when a selection from a collapsed caret was placed by four
+  comparisons; 32 before the selection's text was read to keep,
+  2026-10-22; 22 with the range from
   the marker to the point past the review cursor's character, 30 before
   that).
 - When the program fails after its select, the selection is made: the

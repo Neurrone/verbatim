@@ -637,6 +637,33 @@ fn a_selection_no_key_made_is_reported_with_its_change() {
     app.quit();
 }
 
+/// A selection made around the caret, as a double-click inside a word
+/// makes it, is one change, the whole selection, and so is a caret left
+/// inside it, the whole selection unselected, as NVDA speaks each when the
+/// other side holds nothing (`docs/parity/text.md`, "TextInfo-equivalent
+/// layer").
+fn a_selection_around_the_caret_is_one_change_each_way() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-around");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 5");
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), []);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    app.send("caret doc 3 8");
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), [change(true, "ha be")]);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    app.send("caret doc 5");
+    app.send("caret-event doc");
+    assert_eq!(reported_changes(&outpost, notes), [change(false, "ha be")]);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// The caret report of `node` the outpost said next.
 fn reported_caret(outpost: &OutpostUnderTest, node: NodeId) -> CaretReport {
     match outpost.next() {
@@ -1350,6 +1377,7 @@ fn a_uia_deleting_key_over_a_selection_is_answered_in_general_terms() {
 }
 
 /// Runs each test on a desktop of its own (`common/harness.rs`).
+#[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
         (
@@ -1399,6 +1427,10 @@ fn main() {
         (
             "a_selection_no_key_made_is_reported_with_its_change",
             a_selection_no_key_made_is_reported_with_its_change,
+        ),
+        (
+            "a_selection_around_the_caret_is_one_change_each_way",
+            a_selection_around_the_caret_is_one_change_each_way,
         ),
         (
             "a_selections_start_on_the_carets_line_is_reported_in_it",

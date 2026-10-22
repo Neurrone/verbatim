@@ -397,8 +397,10 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   to `MAX_SELECTION_TEXT_BYTES` (4 KB), and the full count of its
   `characters` (grapheme clusters). With the old selection from
   old start to old end and the new from new start to new end, compare
-  endpoints: when the two neither overlap nor touch, the old text is
-  unselected and then the new text selected; otherwise, first the start
+  endpoints: when the two neither overlap nor touch, or either holds
+  nothing, the old text is unselected and then the new text selected,
+  each whole (a selection made around the caret, as a double-click inside
+  a word makes it, is one change); otherwise, first the start
   side (text between the new and the old start is selected when the start
   moved back, unselected when it moved forward), then the end side (text
   between the old and the new end is selected when the end moved forward,

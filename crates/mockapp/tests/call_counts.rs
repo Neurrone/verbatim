@@ -2971,8 +2971,11 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         // selection's text, kept with it for the next comparison, and
         // where the selection starts, here the text's start. Inside the
         // provider, the classic read's calls (below), the program's copy of
-        // the caret (`plus_copy`), one comparison and one pattern request
-        // more, and the element's import.
+        // the caret (`plus_copy`), three comparisons and one pattern
+        // request more, and the element's import. The last selection
+        // holding nothing, the change is the whole new selection, so the
+        // two comparisons that place a change on each side are not made
+        // (since 2026-10-23).
         ratchet.check(
             "UIA caret report with a selection change, remotely",
             &selected,
@@ -2988,7 +2991,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("DocumentRange", 1),
                 ("GetCaretRange", 1),
                 ("Clone", 5),
-                ("CompareEndpoints", 9),
+                ("CompareEndpoints", 7),
                 ("ExpandToEnclosingUnit", 1),
                 ("GetText", 5),
                 ("MoveEndpointByRange", 5),
@@ -3063,30 +3066,31 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &report_hits,
         );
         // The caret report's 8 with the selection's caret
-        // (`GetCaretRange`); its ends compared with the old caret's (2); the
-        // two comparisons for whether the selections are apart and one for
-        // each side; the change's text read (a copy, its two ends moved,
+        // (`GetCaretRange`); its ends compared with the old caret's (2);
+        // the old selection holding nothing, no comparison to place the
+        // change, which is the whole new selection (four before
+        // 2026-10-23); the change's text read (a copy, its two ends moved,
         // its text); the new selection's text, kept with it for the next
         // comparison; and where the selection starts, since
         // `TextPattern2`'s caret may be its other end (the start compared
         // with the line's, a copy of the line, its end moved to the start,
         // its text), and, the start being the line's, whether it is the
-        // text's (its document range, compared): 25 (18 before 2026-10-22,
-        // 19 before the selection's start was read). A selection starting
-        // inside a line costs 23. The report of a caret with nothing
+        // text's (its document range, compared): 21 (25 before
+        // 2026-10-23, 18 before 2026-10-22, 19 before the selection's
+        // start was read). A selection starting inside a line costs 19. The report of a caret with nothing
         // selected, after one with nothing selected, compares nothing (8,
         // above).
         ratchet.check(
             "UIA caret report with a selection change, classically",
             &selected,
-            calls(25, 0, 0),
+            calls(21, 0, 0),
             0,
             &[
                 ("ITextProvider::GetSelection", 1),
                 ("DocumentRange", 1),
                 ("GetCaretRange", 1),
                 ("Clone", 4),
-                ("CompareEndpoints", 8),
+                ("CompareEndpoints", 4),
                 ("ExpandToEnclosingUnit", 1),
                 ("GetText", 5),
                 ("MoveEndpointByRange", 4),
@@ -3536,7 +3540,9 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     // `GetText` more since 2026-10-22), and where the selection starts,
     // here the text's start (six calls more classically: 28 before, four
     // for a start inside a line). The key compares with the selection the
-    // outpost kept, its caret report's.
+    // outpost kept, its caret report's, which held nothing, so the change
+    // is the whole new selection and no comparison places it (two fewer
+    // remotely and four fewer classically since 2026-10-23).
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
@@ -3550,7 +3556,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("DocumentRange", 1),
                 ("GetCaretRange", 2),
                 ("Clone", 6),
-                ("CompareEndpoints", 12),
+                ("CompareEndpoints", 10),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 5),
@@ -3559,13 +3565,13 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(34, 0, 0),
+            calls(30, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 2),
                 ("DocumentRange", 1),
                 ("GetCaretRange", 2),
                 ("Clone", 5),
-                ("CompareEndpoints", 12),
+                ("CompareEndpoints", 8),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
                 ("GetText", 5),
@@ -3612,7 +3618,10 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     // `TextPattern2`'s caret, text now being selected), the select, and
     // the change's ends compared and its text read, and the selection's
     // text read after, up to 513 units, kept for the next comparison (one
-    // `GetText` more since 2026-10-22). Before 2026-10-15 the
+    // `GetText` more since 2026-10-22). The selection before holding
+    // nothing, the change is the whole new selection, with no comparison
+    // to place it (two fewer remotely, four classically, since
+    // 2026-10-23). Before 2026-10-15 the
     // read before was classic and the read after a caret read of its own:
     // 4 calls remotely, 30 classically; and the range was the marker to
     // the point past the review cursor's character, two points, before
@@ -3630,7 +3639,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("ITextProvider::GetSelection", 2),
                 ("GetCaretRange", 1),
                 ("Clone", 9),
-                ("CompareEndpoints", 7),
+                ("CompareEndpoints", 5),
                 ("GetText", 5),
                 ("MoveEndpointByUnit", 3),
                 ("MoveEndpointByRange", 10),
@@ -3639,12 +3648,12 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(33, 0, 0),
+            calls(29, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 2),
                 ("GetCaretRange", 1),
                 ("Clone", 5),
-                ("CompareEndpoints", 7),
+                ("CompareEndpoints", 3),
                 ("GetText", 5),
                 ("MoveEndpointByUnit", 3),
                 ("MoveEndpointByRange", 9),

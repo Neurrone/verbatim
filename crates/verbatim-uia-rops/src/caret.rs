@@ -1059,11 +1059,15 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
                 |b| compare_ends(b, point, c.start, c.start),
             );
         }
+        let old_collapsed = b.bool(query.previous_collapsed);
         changes = Some(emit_changes(
             b,
             &c,
             (has_selection, selection, point),
-            ((start_range, start_endpoint), (end_range, end_endpoint)),
+            (
+                ((start_range, start_endpoint), (end_range, end_endpoint)),
+                old_collapsed,
+            ),
             (selection_moved, query.max_change_text),
         ));
     }
@@ -1456,7 +1460,8 @@ pub(crate) type ProgramEnd = (Reg<kind::TextRange>, Reg<kind::Int>);
 /// Emits the selection's changes from the old ends to the new selection,
 /// read only when `moved`: two arrays, whether each change is a selection,
 /// and its text. The new selection is `selection` when `has_selection`,
-/// else collapsed at `point`.
+/// else collapsed at `point`; `old_collapsed` says the old ends are one
+/// position, nothing having been selected.
 pub(crate) fn emit_changes(
     b: &mut Builder,
     c: &Constants,
@@ -1465,7 +1470,7 @@ pub(crate) fn emit_changes(
         Reg<kind::TextRange>,
         Reg<kind::TextRange>,
     ),
-    (old_start, old_end): (ProgramEnd, ProgramEnd),
+    ((old_start, old_end), old_collapsed): ((ProgramEnd, ProgramEnd), Reg<kind::Bool>),
     (moved, max_text): (Reg<kind::Bool>, i32),
 ) -> (Reg<kind::Array>, Reg<kind::Array>) {
     let selected = b.new_array();
@@ -1514,11 +1519,21 @@ pub(crate) fn emit_changes(
         let after = order(b, new_start, old_end);
         let after = b.compare(after, c.zero, Comparison::GreaterThan);
         let apart = b.or(before, after);
+        // A selection holding nothing on either side makes a whole change
+        // too, as NVDA speaks the whole new selection when the old held
+        // nothing and the whole old one when the new holds nothing,
+        // wherever the caret was in it (`speakSelectionChange`,
+        // `nvda/source/speech/speech.py` 1362 to 1365).
+        let new_collapsed = b.not(has_selection);
+        let collapsed = b.or(old_collapsed, new_collapsed);
+        let whole = b.or(apart, collapsed);
         b.if_else(
-            apart,
+            whole,
             |b| {
-                change(b, false, old_start, old_end);
-                change(b, true, new_start, new_end);
+                // A side that holds nothing has no text to read.
+                let old_held = b.not(old_collapsed);
+                b.if_(old_held, |b| change(b, false, old_start, old_end));
+                b.if_(has_selection, |b| change(b, true, new_start, new_end));
             },
             |b| {
                 let starts = order(b, new_start, old_start);
@@ -1894,7 +1909,11 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
                     endpoint: end,
                 },
             );
-            Some(classic_changes(old, new, query.max_change_text)?)
+            Some(classic_changes(
+                (old, new),
+                (query.previous_collapsed, selection.is_none()),
+                query.max_change_text,
+            )?)
         }
         Some(_) => Some(Vec::new()),
         None => None,
@@ -2066,10 +2085,14 @@ fn classic_formats(
 }
 
 /// The selection's changes from `old` to `new`, the classic way, as
-/// [`emit_changes`] emits them.
+/// [`emit_changes`] emits them; `old_collapsed` and `new_collapsed` say
+/// either holds nothing.
 pub(crate) fn classic_changes(
-    (old_start, old_end): (RangeEnd<'_>, RangeEnd<'_>),
-    (new_start, new_end): (RangeEnd<'_>, RangeEnd<'_>),
+    ((old_start, old_end), (new_start, new_end)): (
+        (RangeEnd<'_>, RangeEnd<'_>),
+        (RangeEnd<'_>, RangeEnd<'_>),
+    ),
+    (old_collapsed, new_collapsed): (bool, bool),
     max_text: i32,
 ) -> Result<Vec<SelectionTextChange>, Error> {
     let order = |a: RangeEnd<'_>, b: RangeEnd<'_>| -> Result<i32, Error> {
@@ -2086,9 +2109,18 @@ pub(crate) fn classic_changes(
         }
         Ok(())
     };
-    if order(new_end, old_start)? < 0 || order(new_start, old_end)? > 0 {
-        change(false, old_start, old_end)?;
-        change(true, new_start, new_end)?;
+    if old_collapsed
+        || new_collapsed
+        || order(new_end, old_start)? < 0
+        || order(new_start, old_end)? > 0
+    {
+        // A side that holds nothing has no text to read.
+        if !old_collapsed {
+            change(false, old_start, old_end)?;
+        }
+        if !new_collapsed {
+            change(true, new_start, new_end)?;
+        }
     } else {
         match order(new_start, old_start)? {
             starts if starts < 0 => change(true, new_start, old_start)?,

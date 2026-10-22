@@ -647,8 +647,10 @@ key's watch for evidence costs one round trip remotely
 With a previous selection, the answer also carries the selection's
 changes (`changes`, `SelectionTextChange`s), worked out by the text
 protocol's rule and read only when the selection moved: two selections
-that neither overlap nor touch are the old text unselected and the new
-selected; otherwise the text between the new and the old start, then
+that neither overlap nor touch, or either of which holds nothing, are the
+old text unselected and the new selected, each whole (a side holding
+nothing read not at all; whether the old held nothing is the query's
+`previous_collapsed`, so no comparison is made for it); otherwise the text between the new and the old start, then
 between the old and the new end, each selected or unselected by the
 direction it moved, empty stretches left out, each read up to the query's
 `max_change_text`. The program compares the ends and reads the stretches

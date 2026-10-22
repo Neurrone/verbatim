@@ -44,7 +44,11 @@ that is neither has no text.
   pressed is not spoken for it, since it may show that key's effect.
 - Shift movement speaks the text followed by "selected" or
   "unselected", NVDA's word order, a single character by its name, and
-  512 characters or more as their number; a movement without Shift that
+  512 characters or more as their number; a selection made where nothing
+  was selected, or removed leaving nothing selected, is said whole, once,
+  wherever the caret was in it, as NVDA says it (a double-click on
+  "beta" says "beta selected" in both editors, captured 2026-10-23, item
+  21a; mockapp's `a_selection_around_the_caret_is_one_change_each_way`); a movement without Shift that
   leaves a selection speaks its unit and then the text unselected. Each
   text selected or unselected, and "selection removed", is an utterance
   of its own, as NVDA speaks each (Shift+Control+Home across the
@@ -453,12 +457,6 @@ Differences:
   - NVDA's classic edit control drops a caret event whose selection
     offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to
     1075); Verbatim reads each caret event.
-  - NVDA speaks the whole new selection when the old one held nothing,
-    and the whole old one when the new one holds nothing; Verbatim splits
-    either at the caret by the rule a selecting key's answer follows,
-    which differs only when the caret was inside the selection, as a
-    click inside a selection or a double-click inside a word leaves it:
-    two changes where NVDA speaks one.
   - Terminals are unresolved: NVDA's console class replaces the detection
     (`NVDAObjects/UIA/winConsoleUIA.py` line 416), which is not yet
     traced, and Verbatim reports no selection change in a terminal.

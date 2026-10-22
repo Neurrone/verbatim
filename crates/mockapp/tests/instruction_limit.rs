@@ -468,8 +468,10 @@ fn caret_reads_execute_exactly() {
     // 4425 and 84 before the caret read began reading the selection's texts,
     // 4434 before it read the selection's text only when its ends moved,
     // and 4435 and 87 before it read where the selection starts, whose
-    // conditions every read with `TextPattern2` runs (2026-10-22).
-    assert_eq!([worst, typical], [4456, 97], "caret read worst and typical");
+    // conditions every read with `TextPattern2` runs (2026-10-22), and
+    // 4456 before a selection holding nothing on either side was made one
+    // whole change (2026-10-23).
+    assert_eq!([worst, typical], [4462, 97], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one
@@ -619,8 +621,10 @@ fn range_selections_execute_exactly() {
     });
     fixture.app.quit();
     // 160 before the selection's text was read after the select, to keep
-    // for the next comparison (2026-10-22).
-    assert_eq!(press, 165, "the review copy's first press");
+    // for the next comparison (2026-10-22), and 165 before a selection
+    // made from a collapsed caret was one whole change, placed by no
+    // comparison (2026-10-23).
+    assert_eq!(press, 163, "the review copy's first press");
     assert!(press < LIMIT / 2);
 }
 
