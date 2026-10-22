@@ -236,6 +236,18 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
     // Control+Delete: the box deletes all of its text, leaving nothing at
     // the caret.
     press(scenario, "control+delete", &["blank"]);
+    // A typed character: the protected character
+    // (`m42-text-captures-2026-10-23/20a-forms-password-type-a-run1.txt`).
+    type_character(scenario);
+}
+
+/// Types "a" into the password field, which echoes only the protected
+/// character, "star", as NVDA's captures of both fields show
+/// (`target/e2e-evidence/m42-text-captures-2026-10-23/`, items 20a and
+/// 20b).
+fn type_character(scenario: &mut Scenario) {
+    scenario.type_text("a").expect("types a");
+    scenario.speech().expect(&["star"]);
 }
 
 /// The scenario in the WPF `PasswordBox`, whose text pattern gives its
@@ -285,4 +297,7 @@ pub(crate) fn wpf_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     // Control+Delete at the text's start: the two circles left go, leaving
     // nothing at the caret (`wpf-password-deleting-keys-without-home.txt`).
     press(scenario, "control+delete", &["blank"]);
+    // A typed character: the protected character
+    // (`m42-text-captures-2026-10-23/20b-wpf-password-type-a-run1.txt`).
+    type_character(scenario);
 }

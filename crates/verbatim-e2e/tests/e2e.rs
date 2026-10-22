@@ -54,6 +54,16 @@ scenario_tests! {
     text_box_editing
     notepad_selection_keys
     text_box_selection_keys
+    notepad_caret_keys
+    text_box_caret_keys
+    notepad_document_keys
+    text_box_document_keys
+    notepad_page_keys
+    text_box_page_keys
+    notepad_paragraph_keys
+    text_box_paragraph_keys
+    notepad_select_all_count
+    text_box_select_all_count
     text_box_password
     wpf_password
     notepad_review_cursor

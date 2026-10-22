@@ -87,8 +87,12 @@
 //!   [`system_information_tree`](crate::scenarios::system_information_tree)
 //!   against msinfo32's real Win32 tree view over MSAA, which is also the
 //!   suite's MSAA-only legacy application (the M3 exit item).
-//! - [`Group::Text`]: milestone M4's text — editing, word selection, typed
-//!   word echo, and the review cursor, each in the Windows Forms text box
+//! - [`Group::Text`]: milestone M4's text — editing, keys over a
+//!   selection, the caret table's other keys
+//!   ([`caret_keys`](crate::scenarios::caret_keys)) and the keys whose
+//!   words depend on the whole document
+//!   ([`document_keys`](crate::scenarios::document_keys)), word selection,
+//!   typed word echo, and the review cursor, each in the Windows Forms text box
 //!   (`text_box_`) and in Windows 11 Notepad (`notepad_`, local-only,
 //!   below); say-all in each
 //!   ([`text_box_say_all`](crate::scenarios::text_box_say_all) and
@@ -153,9 +157,9 @@ use crate::artifacts::{self, OutpostCrash, ScenarioSummary};
 use crate::compare::{self, ReportHeader};
 use crate::scenario::{Document, Scenario};
 use crate::scenarios::{
-    demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
-    demo_terminal_session, editing, explorer_folder_window, lock_key_announcements, measure,
-    menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
+    caret_keys, demo_notepad_editing, demo_review_cursor, demo_say_all, demo_settings_dialog_keys,
+    demo_terminal_session, document_keys, editing, explorer_folder_window, lock_key_announcements,
+    measure, menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery, password,
     rapid_tabbing_in_settings, return_after_retirement, review_cursor, review_words,
     second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
@@ -611,6 +615,116 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: selection_keys::text_box_setup,
         body: selection_keys::text_box_body,
         teardown: selection_keys::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_caret_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: true,
+        document: Some(caret_keys::document),
+        comparable: Comparable::Yes,
+        setup: caret_keys::notepad_setup,
+        body: caret_keys::notepad_body,
+        teardown: caret_keys::teardown,
+    },
+    ScenarioDef {
+        name: "text_box_caret_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: caret_keys::text_box_setup,
+        body: caret_keys::text_box_body,
+        teardown: caret_keys::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_document_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: true,
+        document: Some(document_keys::document),
+        comparable: Comparable::Yes,
+        setup: document_keys::notepad_setup,
+        body: document_keys::notepad_body,
+        teardown: document_keys::teardown,
+    },
+    ScenarioDef {
+        name: "text_box_document_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: document_keys::text_box_setup,
+        body: document_keys::text_box_body,
+        teardown: document_keys::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_page_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: true,
+        document: Some(document_keys::pages_document),
+        comparable: Comparable::Yes,
+        setup: document_keys::notepad_pages_setup,
+        body: document_keys::notepad_pages_body,
+        teardown: document_keys::teardown,
+    },
+    ScenarioDef {
+        name: "text_box_page_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: document_keys::text_box_pages_setup,
+        body: document_keys::text_box_pages_body,
+        teardown: document_keys::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_paragraph_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: true,
+        document: Some(document_keys::paragraphs_document),
+        comparable: Comparable::Yes,
+        setup: document_keys::notepad_paragraphs_setup,
+        body: document_keys::notepad_paragraphs_body,
+        teardown: document_keys::teardown,
+    },
+    ScenarioDef {
+        name: "text_box_paragraph_keys",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: document_keys::text_box_paragraphs_setup,
+        body: document_keys::text_box_paragraphs_body,
+        teardown: document_keys::teardown,
+    },
+    ScenarioDef {
+        name: "notepad_select_all_count",
+        group: Group::Text,
+        settings: None,
+        local_only: true,
+        document: Some(document_keys::count_document),
+        comparable: Comparable::Yes,
+        setup: document_keys::notepad_count_setup,
+        body: document_keys::notepad_count_body,
+        teardown: document_keys::teardown,
+    },
+    ScenarioDef {
+        name: "text_box_select_all_count",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: document_keys::text_box_count_setup,
+        body: document_keys::text_box_count_body,
+        teardown: document_keys::teardown,
     },
     ScenarioDef {
         name: "text_box_password",

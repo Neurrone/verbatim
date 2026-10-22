@@ -23,20 +23,42 @@ that is neither has no text.
   it, the text at the caret changing for Delete, or the selection
   changing), which it checks when the request arrives and at each caret,
   text, or selection change the application reports, never waiting for
-  it. Core then speaks NVDA's unit for the key: the character for Left
+  it (for Delete, the character at the caret, a line break at the
+  line's end included, as the outpost reads it). Core then speaks NVDA's
+  unit for the key: the character for Left
   and Right Arrow, Home, and End; the provider's word for Control with
   Left or Right Arrow, a word of one character (Notepad's full stop) by
   its name, as NVDA spells it; the line for Up and Down Arrow, the page
   keys, and Control with Home or End; the paragraph for Control with Up
   or Down Arrow; what Backspace deleted; and what Delete left at the
-  caret, as NVDA does.
+  caret, as NVDA does. NVDA's other forms of these keys are in the caret
+  table too: Shift+Backspace as Backspace, Shift+Delete (which cuts a
+  selection) and the numpad's Delete with and without Shift as Delete,
+  and Control with the numpad's Delete as Control+Delete (the
+  `caret_keys` scenarios, from the captures of 2026-10-23 in
+  `target/e2e-evidence/m42-text-captures-2026-10-23/`, items 4a to 4c).
+  Alt with Up or Down Arrow, NVDA's sentence keys, speak the line when
+  the application moves the caret, as NVDA does.
 - A newer key supersedes a watched one and a focus change drops it,
   NVDA's two short-circuits; a key's reply read after a later key was
   pressed is not spoken for it, since it may show that key's effect.
 - Shift movement speaks the text followed by "selected" or
   "unselected", NVDA's word order, a single character by its name, and
   512 characters or more as their number; a movement without Shift that
-  leaves a selection speaks its unit and then the text unselected.
+  leaves a selection speaks its unit and then the text unselected. Each
+  text selected or unselected, and "selection removed", is an utterance
+  of its own, as NVDA speaks each (Shift+Control+Home across the
+  selection's anchor says the first line selected and then the second
+  unselected, `document_keys` scenarios). Different (Dickson,
+  2026-10-22): a selection's characters are counted as grapheme
+  clusters, for the count and for naming a single character, where NVDA
+  counts code points, so a carriage return and line feed are one
+  character: Control+A over forty lines of "alpha beta gamma" says "680
+  characters selected" in the Windows Forms text box, where NVDA says
+  720 (`text_box_select_all_count`; Notepad, whose line break is one
+  character, says 680 in both). A selected carriage return and line feed
+  has no name of its own and is spoken as white space, which sounds as
+  NVDA's "selected" with no text (`text_box_caret_keys`).
 - A line break a unit lands on is named as NVDA names it ("A line break
   as a character" in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)):
@@ -165,7 +187,9 @@ Differences:
   NVDA waits 100 ms (300 in Windows Terminal) for evidence and, finding
   none, speaks the key's unit anyway: Home at the start of a line reads
   the character after the caret, Control+Home at the start of the text
-  reads the first line, Down Arrow on the last line reads that line.
+  reads the first line, Down Arrow on the last line reads that line,
+  and Control with Down or Up Arrow in the Windows Forms text box, which
+  does not move its caret, reads the line (`text_box_paragraph_keys`).
   Verbatim's outpost never waits for a caret key, so that nothing else
   of the application, a focus change above all, waits behind one; it
   watches for the evidence instead and speaks when it comes, however
@@ -180,6 +204,17 @@ Differences:
   whose Up Arrow on the first line, or Down Arrow on the last, moves the
   caret to the line's start or end has that move spoken as the key's
   answer, as NVDA speaks it.
+- Alt with Up or Down Arrow where the application does not move the
+  caret: NVDA, after its wait, moves the caret by sentence itself and
+  speaks the sentence, "delta epsilon" after Alt+Down on "alpha beta
+  gamma" in the Windows Forms text box, whose sentences it finds in each
+  paragraph (`04d-textbox-*` in
+  `target/e2e-evidence/m42-text-captures-2026-10-23/`); through UI
+  Automation, which has no sentence unit, it moves nothing (Notepad, where
+  its captures then say "Non Client Input Sink Window", a window behind
+  the document). Verbatim says nothing in both, since it never decides
+  that a key moved nothing; moving by sentence itself awaits Dickson's
+  decision.
 - A caret event alone is not evidence when the caret's position is
   known, since an application's late caret event can belong to an
   earlier key; the position, the characters either side of the caret,
@@ -187,8 +222,8 @@ Differences:
   2026-10-08, `docs/design/phase6-design.md`, "What a key did to the
   text"). For Backspace and Delete, alone or with Control, the caret's
   line differing from the line of the last caret reported before the
-  key is evidence too (Fable, 2026-10-22, pending Dickson's
-  acceptance), since deleting one of a run of the same character, such
+  key is evidence too (Dickson, 2026-10-22), since deleting one of a
+  run of the same character, such
   as a password field's mask, changes neither the caret's neighbors
   nor, in a WPF `PasswordBox`, whose positions follow edits, where the
   caret is (`wpf_password`). NVDA finds that key's effect by the caret
@@ -224,9 +259,14 @@ Differences:
   to go, "4 star" in a Windows Forms password box, `text_box_password`,
   from `winforms-password-deleting-keys.txt` in
   `target/e2e-evidence/m42-protected-fixes-2026-10-22/`). A backspace
-  over a line break names the kind of break the text was last seen to
-  use, which is what NVDA reads, since a text uses one kind throughout,
-  and says nothing when Core has seen no line break in it yet. In a terminal, Backspace and Control+Backspace say what
+  over a line break, with or without Control, names the kind of break
+  the text was last seen to use, which is what NVDA reads, since a text
+  uses one kind throughout, and says nothing when Core has seen no line
+  break in it yet: "line feed" in the text box and "carriage return" in
+  Notepad, at a later line's start with a selection there or none
+  (`selection_keys` scenarios; NVDA's Control+Backspace with no
+  selection was captured in Notepad only, where the classic edit
+  control's Control+Backspace inserts a DEL character instead). In a terminal, Backspace and Control+Backspace say what
   NVDA says ("o" and "tw" after `echo one two`, both terminals).
 - A key outside NVDA's caret keys that types no text (bash's Control+A,
   Control+E, Alt+B, Alt+F, Control+W, Control+K, and Escape clearing a
@@ -237,7 +277,11 @@ Differences:
   the word then the character). NVDA says nothing for such keys: Escape
   after `echo hi` is silent in NVDA and "echo hi" in Verbatim; Escape
   after inline prediction showed `git status` is silent in NVDA and
-  "git", the text typed, in Verbatim. Escape on a typed line that had
+  "git", the text typed, in Verbatim; Control+Z after typing "x" is
+  silent in NVDA and "x" in Verbatim; and pasting "kiwi" and "mango" on
+  two lines at a line's start is silent in NVDA and reads the line the
+  caret is left on, "mangoalpha beta gamma", in Verbatim (both editors,
+  `caret_keys` scenarios). Escape on a typed line that had
   wrapped onto a second row says all it removed, as on a line of one
   row, though the caret went up a row; NVDA is silent.
 - NVDA reports any selection change of a UIA or classic edit focus after
@@ -316,11 +360,14 @@ Differences:
     or "beta " selected with Shift+Control+Right Arrow, matched:
     Backspace says the character before the caret, the selection's
     start, read before the key, "blank" when there is none, then
-    "selection removed" ("blank", and over "beta " "space");
-    Control+Backspace the text from the word's start to the caret
-    ("blank", and over "beta " "alpha"); Delete the character now at the
-    caret ("b"); Control+Delete the word now at the caret ("beta"); each
-    then "selection removed". Typing over the selection echoes the
+    "selection removed" ("blank" at the text's start, "line feed" at a
+    later line's start, and over "beta " "space"); Control+Backspace the
+    text from the word's start to the caret ("blank" at the text's
+    start, "line feed" at a later line's start, and over "beta "
+    "alpha"); Delete and Shift+Delete the character now at the caret
+    ("b"); Control+Delete the word now at the caret ("beta"); each then
+    "selection removed" (the line breaks from `01a-*` and `02a-*` in
+    `target/e2e-evidence/m42-text-captures-2026-10-23/`). Typing over the selection echoes the
     character, then "selection removed"; Control+X, Control+V and Enter
     say only "selection removed", over a word and over Shift+End's rest
     of a line; Control+C says nothing (the `text_box_selection_keys` and
@@ -342,10 +389,11 @@ Differences:
     compares the old selection's range as it now is, which the provider
     moved with the edit, so it names what the range now holds or says
     nothing: "x" typed over the selection, "x" then "x unselected";
-    Backspace, Delete and Control+Delete over a word, only their own
-    words; Enter over a word or a line's rest, "carriage return
-    unselected"; Control+X and Control+V over a word, nothing, and
-    Control+V over a line's rest, "kiwi unselected", the pasted word.
+    Backspace, Delete, Shift+Delete and Control+Delete over a word, only
+    their own words; Enter over a word or a line's rest, "carriage return
+    unselected"; Control+X and Control+V over a word or a line's rest,
+    nothing (the line's rest captured on 2026-10-23, item 25a, where an
+    earlier capture had "kiwi unselected", the pasted word).
     Dickson judges these words wrong, since they name the new text as
     though it had been selected; Verbatim keeps the selection's text when
     it is reported and, when the old range no longer holds it, says the
@@ -362,7 +410,7 @@ Differences:
     NVDA's behavior is not offered as a setting. Both texts are read in
     the caret read's one round trip, each up to 513 UTF-16 code units, one
     more than the 512 characters from which a selection is spoken as a
-    count (Fable, 2026-10-22, pending Dickson's acceptance), and compared
+    count (Dickson, 2026-10-22), and compared
     as read: typing over, cutting and pasting change the first characters
     or the length, so a longer selection is compared by its first 513
     units and by being longer, and only an edit that leaves both as they
@@ -378,12 +426,15 @@ Differences:
     and both say nothing (`notepad_selection_keys`;
     `notepad-second-word-control-backspace.txt`,
     `notepad-third-word-to-end-control-backspace.txt`,
-    `notepad-word-control-backspace.txt`). Control+Backspace over a
-    selection starting at the beginning of a line that is not the first
-    is unverified: no capture has it, and the prediction is the line
-    break. Backspace over "alpha " was captured again because the first
-    capture had NVDA reading Notepad as a classic edit control, not
-    through UIA.
+    `notepad-word-control-backspace.txt`). Over "alpha " at a later
+    line's start, Notepad's Control+Backspace deletes the line break
+    before the selection, and both say "carriage return" then "alpha
+    unselected"; Backspace there says "carriage return" then "selection
+    removed", where NVDA says only "carriage return"
+    (`notepad_selection_keys`; `01b-*` and `02b-*` in
+    `target/e2e-evidence/m42-text-captures-2026-10-23/`). Backspace over
+    "alpha " was captured again because the first capture had NVDA
+    reading Notepad as a classic edit control, not through UIA.
   - Different: NVDA's delayed character description, "Bravo" after the
     "b" Delete reaches, is a setting Verbatim does not have yet; for a
     character with no description, such as the star or circle Left Arrow

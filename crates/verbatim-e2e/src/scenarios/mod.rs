@@ -14,11 +14,13 @@ use std::io;
 use crate::registry::ScenarioState;
 use crate::scenario::{Scenario, harness_marker};
 
+pub(crate) mod caret_keys;
 pub(crate) mod demo_notepad_editing;
 pub(crate) mod demo_review_cursor;
 pub(crate) mod demo_say_all;
 pub(crate) mod demo_settings_dialog_keys;
 pub(crate) mod demo_terminal_session;
+pub(crate) mod document_keys;
 pub(crate) mod editing;
 pub(crate) mod explorer_folder_window;
 pub(crate) mod lock_key_announcements;

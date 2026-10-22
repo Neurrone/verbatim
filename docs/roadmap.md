@@ -261,7 +261,16 @@ deferred.
   it, so the unchanged text counts as evidence. The compared word and
   the outpost's word unit are to be made to agree
   (`target/e2e-evidence/m42-key-holding-fixes-2026-10-22/judges/`,
-  `text_box_selection_keys-*`).
+  `text_box_selection_keys-*`). The same mismatch for Delete, whose
+  compared character left out a line break at the line's end, was fixed
+  on 2026-10-23.
+- Where NVDA's say-all starts is to be settled from NVDA's speech log
+  before any say-all expectation changes: in every capture of
+  2026-10-23 (`target/e2e-evidence/m42-text-captures-2026-10-23/`, items
+  23a to 23d and the readme's note on say-all), NVDA's recorded speech
+  began at the line after the caret's, in Notepad and in the text box,
+  and either this NVDA build starts there or the capture add-on misses
+  the first chunk of speech.
 
 ## M4.2 — Parity small items
 
