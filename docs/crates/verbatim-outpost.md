@@ -2202,11 +2202,15 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   and a terminal has its baseline read, so its text changes are reported
   as terminal output and Core's on-demand reads of it are answered. It
   gets no property subscription. Adopted or not, it becomes the last
-  focus the foreground tests compare with (`Tracking::queued`, with no
-  event address), as NVDA's fake focus, queued as a focus event, becomes
+  focus the foreground tests compare with (`Tracking::queued`, by
+  `queue_answer`), as NVDA's fake focus, queued as a focus event, becomes
   its last queued focus (`eventHandler.py`, `_trackFocusObject`), so a
   late foreground change of its window is dropped (Dickson,
-  2026-10-22). It is not counted among the focuses
+  2026-10-22): an answer for the node already queued refreshes only its
+  observation time, keeping the window and the MSAA event address its
+  report recorded, which the second foreground test compares with;
+  another node replaces it with no event address; and an answer with no
+  window leaves it as it was. It is not counted among the focuses
   reported (`Tracking::reported`), and leaves the MSAA duplicate rule's
   qualifiers (`Tracking::foreground_since_focus`,
   `Tracking::focus_was_simple_child`) as the last reported focus left

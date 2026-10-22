@@ -367,12 +367,13 @@ fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
 
 /// A focus or foreground change an outpost reported, as NVDA's
 /// `lastQueuedFocusObject` holds it for `processForegroundWinEvent`: its
-/// own window, which may be a child window; for an MSAA focus or a
+/// node; its own window, which may be a child window; for an MSAA focus or a
 /// foreground change, the window, object id and child id of the event it
 /// came from; and when it was observed, so that a focus Core queued from
 /// another application since replaces it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct QueuedFocus {
+    node: NodeId,
     window: isize,
     event: Option<(isize, i32, i32)>,
     observed_at_ms: u64,
@@ -411,6 +412,35 @@ fn foreground_repeats_focus(
         Some("it repeats the focus's own event")
     } else {
         None
+    }
+}
+
+/// The last focus queued once a focus-now answer for `node`, read in
+/// window `window` and observed at `observed_at_ms`, is sent, given
+/// `last`, the last focus queued before it: NVDA queues its fake focus as
+/// a focus event, which makes it the last focus queued. An answer for the
+/// node already queued refreshes only its observation time, keeping the
+/// window and the MSAA event address its report recorded, which NVDA's
+/// second foreground test compares with; an answer with no window leaves
+/// the last focus as it was.
+fn queue_answer(
+    last: Option<QueuedFocus>,
+    node: NodeId,
+    window: Option<isize>,
+    observed_at_ms: u64,
+) -> Option<QueuedFocus> {
+    match (last, window) {
+        (Some(last), _) if last.node == node => Some(QueuedFocus {
+            observed_at_ms,
+            ..last
+        }),
+        (_, Some(window)) => Some(QueuedFocus {
+            node,
+            window,
+            event: None,
+            observed_at_ms,
+        }),
+        (last, None) => last,
     }
 }
 
@@ -2228,6 +2258,7 @@ impl Worker<'_> {
             // change it queues replaces; an MSAA focus adds its event's
             // address once reported ([`Worker::msaa_focus`]).
             tracking.queued = window.map(|window| QueuedFocus {
+                node: node_id,
                 window,
                 event: foreground.then(|| foreground_event(window)),
                 observed_at_ms: if observed_at_ms == 0 {
@@ -3999,7 +4030,7 @@ impl Worker<'_> {
     /// element it has under another node, as File Explorer's reused runtime
     /// ids give (`docs/uia-bugs.md`), is, so the tracking names the
     /// answer's node. Either way the answer becomes the last focus queued,
-    /// as NVDA's fake focus does.
+    /// as NVDA's fake focus does ([`queue_answer`]).
     fn follow_answer(&mut self, answered: AnsweredFocus, trace: TraceId) {
         let AnsweredFocus {
             node,
@@ -4025,18 +4056,16 @@ impl Worker<'_> {
                 observed_at_ms,
             );
         }
-        // NVDA queues its fake focus as a focus event, which makes it the
-        // last focus queued, so a later foreground change of its window is
-        // dropped by the foreground tests.
-        self.context.tracking().queued = window.map(|window| QueuedFocus {
-            window,
-            event: None,
-            observed_at_ms: if observed_at_ms == 0 {
-                now_ms()
-            } else {
-                observed_at_ms
-            },
-        });
+        // The answer becomes the last focus queued, so a later foreground
+        // change of its window is dropped by the foreground tests.
+        let queued_at_ms = if observed_at_ms == 0 {
+            now_ms()
+        } else {
+            observed_at_ms
+        };
+        let mut tracking = self.context.tracking();
+        tracking.queued = queue_answer(tracking.queued, node.id, window, queued_at_ms);
+        drop(tracking);
         self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_ms));
     }
 
@@ -4066,6 +4095,7 @@ mod tests {
     /// A last focus in window `window`, from the MSAA event `event`.
     fn last_focus(window: isize, event: Option<(isize, i32, i32)>) -> QueuedFocus {
         QueuedFocus {
+            node: NodeId::new(1),
             window,
             event,
             observed_at_ms: 1,
@@ -4126,6 +4156,37 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// A focus-now answer becomes the last focus queued: for the node
+    /// already queued it refreshes only the observation time, so the MSAA
+    /// event address NVDA's second foreground test compares with is kept;
+    /// for another node it replaces the last focus with no event address;
+    /// with no window it leaves the last focus as it was.
+    #[test]
+    fn a_focus_now_answer_becomes_the_last_focus_queued() {
+        let event = Some((5, OBJID_CLIENT.0, CHILDID_SELF));
+        let last = Some(last_focus(8, event));
+        assert_eq!(
+            queue_answer(last, NodeId::new(1), Some(9), 20),
+            Some(QueuedFocus {
+                node: NodeId::new(1),
+                window: 8,
+                event,
+                observed_at_ms: 20,
+            })
+        );
+        assert_eq!(
+            queue_answer(last, NodeId::new(2), Some(9), 20),
+            Some(QueuedFocus {
+                node: NodeId::new(2),
+                window: 9,
+                event: None,
+                observed_at_ms: 20,
+            })
+        );
+        assert_eq!(queue_answer(last, NodeId::new(2), None, 20), last);
+        assert_eq!(queue_answer(None, NodeId::new(2), None, 20), None);
     }
 
     /// The idle barrier's answer never waits on the terminals' lock, which
