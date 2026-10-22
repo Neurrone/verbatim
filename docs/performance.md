@@ -1238,9 +1238,11 @@ The other costs of holding, none of them a call into an application:
   Verbatim's process (`WINEVENT_SKIPOWNPROCESS` dropped in `typed.rs`), so
   that the guard sees Verbatim's own window come to the front.
 - A held key that waits for the watch of the key ahead of it costs the
-  reducer thread at most one wake-up more, at the wait's bound, 100 ms
-  after the key ahead was passed on, and only when that watch is still
-  unanswered then (`Effect::BoundHeldKeyWait`); the bound is one of the
+  reducer thread one wake-up more, at the wait's bound, 100 ms after the
+  key ahead was passed on (`Effect::BoundHeldKeyWait`), whether or not
+  that watch was answered first: the shell keeps the bound until it is
+  due, so a watch answered early still wakes the thread then, and the
+  wait's end does nothing (`Input::HeldKeyWaitEnded`); the bound is one of the
   reducer thread's existing deadlines, so it adds no thread, timer or
   wake-up source. Holding a key that moves nothing with auto-repeat makes
   every repeat wait for it (`measure_held_repeat_text_box`):
@@ -2376,7 +2378,7 @@ share of the limit in brackets:
   The walk is bounded by the controlled list, not by the query, the one
   program whose worst case is the application's to set; the Settings
   app's search suggestions, checked live on 2026-10-03, were 25.
-- The caret read: 4,456 (45 percent) for a line of 64 stretches reached by
+- The caret read: 4,462 (45 percent) for a line of 64 stretches reached by
   walking one mixed format stretch by words and a mixed word by
   characters, every attribute read (eleven since 2026-10-07, ten of them
   being learned), with a word, the evidence, a selection's change, the
@@ -2389,7 +2391,9 @@ share of the limit in brackets:
   4,425 and 84 before the selection's texts were read, 4,434 before the
   selection's text was read only when its ends moved, and 4,435 and 87
   before where the selection starts was read, whose conditions every
-  read with `TextPattern2` runs (2026-10-22). It was 4,884 and 85 with seven attributes and
+  read with `TextPattern2` runs (2026-10-22), and 4,456 before a
+  selection made or removed around a collapsed caret was read as one
+  whole change (2026-10-23). It was 4,884 and 85 with seven attributes and
   one: the program now returns each value as the provider gave it, and
   the caller reads it by its type, where the program tested each value's
   type and the annotation types' array itself, which more than paid for

@@ -51,8 +51,9 @@ pub(crate) const MAX_TYPED_WORD: usize = 256;
 pub(crate) const MAX_HELD_TYPING: usize = 1024;
 
 /// The longest a held key waits for the watch of the key ahead of it to be
-/// answered, counted from when that key was passed on: 100 ms, the longest
-/// NVDA's caret scripts wait for the caret to move. Past it the waiting
+/// answered, counted from when that key was passed on: 100 ms, NVDA's
+/// default wait for the caret to move, which NVDA lengthens in Windows
+/// Terminal (`docs/design/key-holding.md`, "Core"). Past it the waiting
 /// key's caret is read as if the watch had been answered, since a key that
 /// moved nothing gets no answer before the watch's own bound
 /// (`docs/design/key-holding.md`, "Keys behind a held key").

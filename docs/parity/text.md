@@ -226,7 +226,8 @@ Differences:
   2026-10-08, `docs/design/phase6-design.md`, "What a key did to the
   text"). For Backspace and Delete, alone or with Control, the caret's
   line differing from the line of the last caret reported before the
-  key is evidence too (Dickson, 2026-10-22), since deleting one of a
+  key is evidence too (Fable, 2026-10-22, pending Dickson's
+  acceptance), since deleting one of a
   run of the same character, such
   as a password field's mask, changes neither the caret's neighbors
   nor, in a WPF `PasswordBox`, whose positions follow edits, where the
@@ -249,13 +250,17 @@ Differences:
   another has its caret read once the key ahead's evidence has been
   answered, or 100 ms after the key ahead was sent on, whichever comes
   first, so that the read sees the application after the key ahead
-  (Fable, 2026-10-22, pending Dickson's acceptance). NVDA does not wait:
+  (Dickson, 2026-10-22). NVDA does not wait:
   a caret script stops waiting for its evidence, and says nothing, the
   moment another script is queued, and the next script reads the caret
   at once (`_hasCaretMoved`'s short-circuits in
   [Editable text and terminals](../nvda/editable-text-and-terminals.md));
-  100 ms is NVDA's own longest wait for a caret to move
-  (`caretMoveTimeoutMs`, `nvda/source/config/configSpec.py` 364). While a window
+  100 ms is NVDA's default wait for a caret to move
+  (`caretMoveTimeoutMs`, `nvda/source/config/configSpec.py` 364), which
+  NVDA multiplies by 3 in Windows Terminal
+  (`_caretMovementTimeoutMultiplier`,
+  `nvda/source/NVDAObjects/UIA/winConsoleUIA.py` 470 and 486), so 300 ms
+  there; Verbatim's bound is 100 ms everywhere. While a window
   of higher integrity than Verbatim's is in front, nothing is held. The
   text removed at the caret is spoken, in any language, and nothing when
   nothing was removed (the classic edit control's Control+Backspace
@@ -307,14 +312,16 @@ Differences:
   carries no change, as does the one after say-all moves the caret. When
   the outpost merges a caret report waiting to be written with a newer one
   for the same node, the merged report carries both reports' changes, so
-  every intermediate change is spoken (Shift+Right followed at once by
-  Right says the selection, the character, and the selection cleared,
-  where NVDA says only the character, its Shift+Right script saying
-  nothing while Right's waits, `selection_keys` scenarios, captured
-  2026-10-22 in `target/e2e-evidence/m42-key-holding-merge-2026-10-22/captures/`),
-  where NVDA, whose event limiter
+  every intermediate change is spoken, where NVDA, whose event limiter
   keeps one caret event per object (`IAccessibleHandler/orderedWinEventLimiter.py`),
-  compares only the last selection with the one it last saw.
+  compares only the last selection with the one it last saw: Shift+Right
+  followed at once by Right says the selection, the character, and the
+  selection cleared, where NVDA says only the character, its Shift+Right
+  script saying nothing while Right's waits (`selection_keys` scenarios,
+  captured 2026-10-22 in
+  `target/e2e-evidence/m42-key-holding-merge-2026-10-22/captures/`).
+  Speaking every intermediate change is a difference (Fable, 2026-10-22,
+  pending Dickson's acceptance).
 - A selection change that follows a change of the focus's text, and the
   keys that change the text over a selection: **matched** in the classic
   edit control and **different** through UIA by Dickson's decision,

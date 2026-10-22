@@ -106,6 +106,21 @@ its measurements, with the corrections of
   times where the scenario allows one ([UIA faults](uia-bugs.md),
   "Windows Terminal raises focus from a second runtime identity";
   evidence under `target/e2e-evidence/listener-no-connections/step1/scen/`).
+- The console host's say-all repeats one row: say-all reads ahead by
+  moving one line and then expanding to the line; the console host's text
+  pattern moves by line through its whole buffer of 9,001 rows but
+  clamps an expansion below the last row with text back onto that row,
+  and nothing checks that the expanded line contains the point it was
+  expanded from, so every later row comes back as the command's second
+  row (`target/e2e-evidence/m42-key-holding-merge-2026-10-22/merged/measure_stale_caret_conhost/run1/say-all-then-right-0/flight-recorder.jsonl`).
+  Proposed fix: take a unit that does not contain its point as the end
+  of the text, one comparison inside the existing remote program, judged
+  by a fake-source unit test, a mockapp provider whose expansion clamps,
+  and a console host scenario step from a fresh NVDA capture. In the
+  same redesign, the console's row count walks all 9,001 rows on each
+  screen read that counts rows (`document_rows`,
+  `crates/verbatim-uia-rops/src/terminal.rs` around 866), a possible
+  cost to measure.
 
 ### The audio step
 
@@ -279,10 +294,48 @@ deferred.
   notification; this is the focus announcement's order with a
   notification, outside the caret keys, and is to be settled with a
   capture that does not depend on the text Notepad remembers in the box.
-- When a selection is replaced by one apart from it, NVDA speaks the new
-  text selected before the old text unselected (`speakSelectionChange`
-  speaks every selected text, then every unselected one), where Verbatim
-  says the old unselected first; no capture has it yet.
+- The order of a selection change's parts: NVDA speaks every text
+  selected, then every text unselected (`speakSelectionChange`,
+  `nvda/source/speech/speech.py` 1367 to 1417), where Verbatim says the
+  parts in the order of the text, the start side first. So when a
+  selection is replaced by one apart from it, Verbatim says the old
+  unselected first; and when a selection crosses its anchor, Verbatim
+  says the start side first: on "alpha beta gamma", a line break, "delta
+  epsilon" and a line break, Down Arrow, then
+  Shift+Control+Home, then Shift+Control+End, where NVDA says "delta
+  epsilon selected" then "alpha beta gamma unselected", Verbatim says
+  the two the other way round. No capture has the replaced selection
+  yet.
+- Alt+Up and Alt+Down Arrow in the Windows Forms text box: NVDA, finding
+  that the caret did not move after its wait, moves it by sentence
+  itself and says the sentence, "delta epsilon"
+  (`04d-textbox-docA-alt-down-run1.txt` in
+  `target/e2e-evidence/m42-text-captures-2026-10-23/`), where Verbatim
+  says nothing; whether Verbatim moves by sentence awaits Dickson's
+  decision. The ledger's statement that these keys speak the line when
+  the application moves the caret has no capture behind it.
+- The remote caret program could leave out its two comparisons of the
+  old and new selections' ends that judge whether they are apart when
+  the old selection is known at build time to hold nothing
+  (`previous_collapsed`, `crates/verbatim-uia-rops/src/caret.rs` around
+  1519), since that case is a whole change already.
+- Compare mode presses Verbatim+V (`kb:verbatim+v`) as Insert+V, which
+  under NVDA types "v" into Notepad and corrupts the later steps of
+  `notepad_editing`'s comparison.
+- Mockapp's `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`
+  (`crates/mockapp/tests/remote_ops.rs`) failed once on 2026-10-23, in
+  a full `cargo test -p mockapp` run on 4a82e004's tree, with mockapp
+  not acknowledging a command within its timeout
+  (`crates/mockapp/tests/common/mod.rs` 320); the next full run and five
+  runs of it alone passed. Its cause is to be found if it recurs.
+- Key holding's remaining gaps: no test covers a waiting key following
+  the newest watch (`crates/verbatim-core/src/editing.rs` around 197 to
+  201); no test or scenario covers a word read in a rich edit control;
+  `Modifiers::after` keeps one flag for left and right Shift, Control
+  and Alt together; a held key whose release is never seen leaves its
+  entry in `held_downs`; and `call_counts.rs` pins the read before a
+  held key by copying the production code's arguments rather than
+  calling it.
 - A double-click is checked only by hand (`dblclick2.ps1` in
   `target/e2e-evidence/m42-text-parity-2026-10-23/exploration/`): the
   agent has no mouse request, so no scenario pins "beta selected" for a
