@@ -348,57 +348,119 @@ platform-neutral crate's types.
 
 ## M5 — Extensions v1
 
-- Component host with epoch preemption; WIT `verbatim:ext` v0: event
-  subscription, tree queries, speech output, gestures, config, storage.
-  Ratify the D6 runtime choice here: verify wasmtime on Windows ARM64 and
-  measure host-call overhead against the extension-hook deadlines before
-  building further on it.
-- App-module activation keyed to processes; hot reload; capability manifests.
-- Dogfood: at least one first-party app module ported out of the core into
-  an extension — the Explorer cosmetic fixes deferred from M3 are the
-  designated first candidate — and a trivial Wasm synth proves the
-  `verbatim:synth` world.
-- Windows Terminal's second terminal identity, a candidate for a Windows
-  Terminal app module ([design](design/windows-terminal-twin-focus.md)):
-  Windows Terminal sometimes raises its terminal's focus under a second
-  runtime id starting 14 besides the usual one starting 42, and the
-  listener announces each as a new focus. The rule drops a 14 sender that
-  is the twin of a current 42 focus; a 42 sender that is the twin of a
-  current 14 focus is read and reported carrying the 14 id it replaces, so
-  the outpost reuses that node and follows the 42 element, which it cannot
-  find from the 14 id. Twins share a process, the class `TermControl`,
-  control type, the XAML framework, nearest window, and the 42 id's parts
-  after `[42, window]` as the 14 id's last parts; a failed
-  `CompareElements` means no twin. Its tests also check that the terminal
-  is followed afterwards and cover two panes in one window. Before
-  implementing, collect evidence that the runtime id's last part is never
-  reused (pane splits, pane moves, closing and reopening panes, new tabs).
-  Until then the tests accept one repeated "terminal" as an optional
-  utterance, which does not cover the late repeat ("window, terminal,
-  blank, terminal, terminal, blank", a 42 to 14 to 42 flip seen on
-  GitHub's slower runner), so that can still fail scenarios. Evidence:
+The design is [extensions](design/extensions.md); the order of work, with the
+tests that prove each step, is [the M5 work plan](design/m5-extensions-work.md).
+This entry keeps the scope and the exit criteria. M4.4 is the plan's
+precondition, because the extension surface exposes the messages it moves.
+
+- Modules as folders: a module is a `module.toml` beside a Wasm component;
+  a built-in is a module folder under `extensions/builtin/`, never listed
+  and never disabled by the user; an extension is a `.vext` bundle of
+  modules, installed by a request to the running Verbatim through a small
+  helper executable and the control plane (NVDA's `nvda_slave.exe`
+  pattern), never by a flag on `verbatim.exe`, whose single-instance
+  takeover would kill the running instance.
+- Rules as data: a matcher and an action with a required id and an explicit
+  backend, scoped to the sender's application identity, applied by the
+  outpost before any hook runs, refused at load when two rules of one module
+  contradict.
+- The component host on wasmtime with the component model (D6, decided
+  2026-10-22): epoch deadlines re-armed per hook from the outpost's
+  watchdog, node reading as bindings over the outpost's own readers, speech
+  enforced by attention, hooks `on-load`, `on-unload`, `on-event` with
+  `pass`, `drop`, `replace`, `rewrite` and `adopt`, `on-node`, `status-bar`
+  and `on-command`. The `ci-arm64` job ratifies Cranelift on ARM64 and
+  measures host-call overhead against the hook deadlines; Pulley is
+  switched on only if that ratification or a Cranelift fault requires it.
+  A hook's time is a stage in the latency timeline and two rows in the
+  performance ledger.
+- Capabilities derived from the component's imports, never declared; the
+  install and Extensions dialogs show only the sentences naming the user's
+  things or code outside the sandbox.
+- Binding by application identity (executable, console client, hosted app,
+  WebView2 parent) resolved by the supervisor, one module instance per
+  outpost; hot reload of installed, developer and built-in module folders
+  by validate-then-swap.
+- The minimal log ring, the log viewer window and the Verbatim+F1 focus
+  report, pulled forward from M9 because module failures and rule
+  provenance need somewhere to be read.
+- The guest workspace under `extensions/` with a permissively licensed SDK;
+  every built-in written in Rust, Calculator and Notepad first.
+- Every Windows inbox application as a built-in: Explorer (starting with the
+  cosmetic fixes deferred from M3), Windows Terminal, Notepad, Calculator,
+  Task Manager (proven by `mockapp` until M8.1 lets it be read end to
+  end), Settings, Start and search, Quick Settings and Open With; sleep mode
+  as a core per-application list rather than five modules.
+- Windows Terminal's second terminal identity
+  ([design](design/windows-terminal-twin-focus.md)) as the Terminal
+  built-in's `on-event` hook, never core code: Windows Terminal sometimes
+  raises its terminal's focus under a second runtime id starting 14 besides
+  the usual one starting 42, and the listener announces each as a new
+  focus. The hook answers `drop` for a 14 sender that is the twin of a
+  current 42 focus and `adopt` for a 42 sender that is the twin of a
+  current 14 focus, so the outpost keeps its node and follows the 42
+  element. Twins share a process, the class `TermControl`, control type,
+  the XAML framework, nearest window, and the 42 id's parts after
+  `[42, window]` as the 14 id's last parts; a failed `CompareElements`
+  means no twin. Its tests also check that the terminal is followed
+  afterwards and cover two panes in one window. Before implementing,
+  collect evidence that the runtime id's last part is never reused (pane
+  splits, pane moves, closing and reopening panes, new tabs). Until then
+  the tests accept one repeated "terminal" as an optional utterance, which
+  does not cover the late repeat ("window, terminal, blank, terminal,
+  terminal, blank", a 42 to 14 to 42 flip seen on GitHub's slower runner),
+  so that can still fail scenarios. Evidence:
   `target/e2e-evidence/github-38988118089/`,
   `target/e2e-evidence/github-39032739474/`, and
   `target/e2e-evidence/wt-twin-identity/` (the judge's runs and logs,
   `identity_judge.py`, `suffix.py`, and the scratch scenario's patch).
 
+Out of M5 by decision (Dickson, 2026-10-22): module settings and storage,
+the utterance, settings-changed, timer and response hooks, asynchronous
+imports, global modules, updating or reordering installed extensions,
+scripted modules and the interpreter console (M10), and the
+`verbatim:synth` world with its tone synthesizer (M6, where the host work
+is).
+
 Exit: an app module can be edited and hot-reloaded without restarting
-Verbatim; capability denial is enforced and tested. This milestone opens the
+Verbatim; a host function a module did not import is unreachable from it,
+a surface item outside the design is refused at load, and both are tested;
+the inbox built-ins' scenarios are green. This milestone opens the
 app-module porting track (see the section after M15), which then runs
 continuously alongside every later milestone.
 
-## M6 — Native synth host + Eloquence PoC
+## M6 — Native synth host + Eloquence
 
 This milestone comes right after M5 and before browse mode so that
 Eloquence can be delivered through the extension mechanism and
 Verbatim can become Dickson's daily screen reader sooner (Dickson,
-2026-10-15).
+2026-10-15). The design is section 13 of [extensions](design/extensions.md)
+and D18; the order of work, with its tests, is
+[the M6 work plan](design/m6-native-synth-work.md).
 
-- Sandboxed native synth host process (AppContainer, job object, shared-memory
-  PCM ring), arch-matched loading.
-- Eloquence proof of concept meeting the same latency budget.
+- The `verbatim_synth_v1` C ABI, the `SynthDriver` trait spelled as C
+  exports, and the adapter crate that generates them; the `verbatim:synth`
+  world with a tone synthesizer component, hosted by the same
+  `verbatim-synth-host`, so Wasm and native engines share one host from
+  the start.
+- The host loads adapters matched by architecture; a reduced x86 host
+  carrying only the adapter loader and the protocol, cross-built for
+  `i686-pc-windows-msvc` by `cargo xtask`, serves 32-bit engines. An x64
+  adapter on ARM64 is unsupported until an x64 cross-build is added.
+- The AppContainer in its less privileged form wherever the engine allows,
+  each hosted engine declaring the strictest level it works under, the
+  container's access entries set by the contained launch itself, and a
+  probe child asserting every denial.
+- The Eloquence adapter, written from IBM's documented SDK as
+  `eloquence-x86.dll`, with the engine files supplied by the user; the
+  `eloquence_` scenarios run by Dickson by hand with the engine files,
+  never in CI.
+- A shared-memory PCM ring only if the pipe path misses the budget for
+  Eloquence; pipes until numbers prove otherwise (D18).
 
-Exit: Eloquence speaks through Verbatim under sandbox; latency test green.
+Exit: Eloquence speaks through Verbatim under the sandbox; the latency
+scenario is green in Dickson's run of the `eloquence_` scenarios, recorded
+here.
 
 ## M7 — Browse mode, browsers, and the injection helper
 
@@ -540,31 +602,42 @@ in the VM.
 ## M9 — Logging and log viewer
 
 Proper user-facing observability, distinct from (and built on) the
-developer-facing flight recorder and tracing spans.
+developer-facing flight recorder and tracing spans. M5 brings forward the
+minimal pieces its modules need: the in-memory ring, a log viewer window
+and the Verbatim+F1 focus report; this milestone finishes the story.
 
-- User-facing log levels and categories; logging to file plus an in-memory
+- User-facing log levels and categories; logging to file on top of the
   ring; the existing tracing spans, collected stderr, and panic dumps
   absorbed into one coherent story.
-- A log viewer window in Verbatim itself, readable with Verbatim — the
-  viewer is its own dogfooding test.
+- The log viewer window grows from M5's minimal viewer into one readable
+  with Verbatim at every level and category — the viewer is its own
+  dogfooding test.
 - The commands NVDA users expect around it: open the log viewer, report the
   most recent error, cycle the log level at runtime.
 
 Exit: a user can reproduce a bug, open the log viewer, and read what
 happened, without touching developer tooling.
 
-## M10 — Extension console
+## M10 — Extension console and scripted modules
 
-The equivalent of NVDA's Python console for extension development. Python
-is an obvious fit for NVDA; with Wasm extensions the console is instead an
-interactive interpreter that is itself an extension: an interpreter
-compiled to Wasm, granted broad capabilities, evaluating against exactly
-the `verbatim:ext` WIT API every extension uses. No privileged side-channel
-API exists — if the console can do it, an extension can — so the console
-doubles as a standing test that the API is ergonomic enough for
-exploratory work. Convenience aliases in the NVDA console style (the
-focused object, the navigator object) are pre-bound bindings over the same
-calls, never separate host functions.
+The equivalent of NVDA's Python console for extension development, and
+the scripted module kind, both deferred from M5 (Dickson, 2026-10-22)
+because a script engine compiled to Wasm costs every outpost that hosts
+it. Until then M5's call console in `verbatim-inspect`, which calls a
+module's hooks and tests rules against a live Verbatim, is the smoke test.
+
+Python is an obvious fit for NVDA; with Wasm extensions the console is
+instead an interactive interpreter that is itself an extension: an
+interpreter compiled to Wasm, granted broad capabilities, evaluating
+against exactly the `verbatim:ext` WIT API every extension uses. No
+privileged side-channel API exists — if the console can do it, an
+extension can — so the console doubles as a standing test that the API is
+ergonomic enough for exploratory work. Convenience aliases in the NVDA
+console style (the focused object, the navigator object) are pre-bound
+bindings over the same calls, never separate host functions. A scripted
+module is the same interpreter loaded with a module's script, with
+TypeScript by type erasure, and sits in a module folder exactly as a
+component does.
 
 Design questions settled inside this milestone: which interpreter (QuickJS,
 RustPython, or similar, compiled to a component), how epoch preemption
@@ -676,12 +749,11 @@ consumer).
 
 Tiers, gated by the capabilities each module needs:
 
-- **Tier A — immediately after M5** (needs only extension API v0: events,
-  tree queries, speech, gestures): the Windows shell and utility modules —
-  Explorer (starting with the cosmetic fixes deferred from M3), Settings,
-  Task Manager, Calculator, search, Open With,
-  Notepad, Notepad++, VS Code, Poedit, Spotify, foobar2000, Audacity,
-  1Password, basic Zoom and Teams behavior. Notepad++'s support, the
+- **Tier A — immediately after M5** (needs only M5's surface: rules,
+  event and node hooks, speech, commands): the utility modules beyond the
+  Windows inbox applications, which are M5's own built-ins — Notepad++,
+  Poedit, Spotify, foobar2000, Audacity, 1Password, basic Zoom and Teams
+  behavior. Notepad++'s support, the
   first Scintilla editor, takes with it NVDA's per-class rule that a
   Scintilla editor's caret shows and hides are no caret event
   (`shouldAcceptShowHideCaretEvent`, `NVDAObjects/IAccessible/scintilla.py`,
@@ -697,8 +769,8 @@ Tiers, gated by the capabilities each module needs:
   all, so they are gated on the M14 display model — with ssh from Windows
   Terminal as the recommended interim answer.
 - **Tier C — after M7 browse mode** (web-content-hosting apps): WebView2
-  hosts, WhatsApp, deeper Teams support, Thunderbird, Kindle and other
-  readers.
+  hosts, VS Code, WhatsApp, deeper Teams support, Thunderbird, Kindle and
+  other readers.
 - **Tier D — after the object-model bridge capability lands (planned around
   M8)**: Word, Excel, PowerPoint, Outlook, LibreOffice, Visual Studio.
   NVDA's Office modules rely heavily on COM object-model automation, which
