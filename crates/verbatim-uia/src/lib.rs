@@ -90,7 +90,10 @@ pub use element::{ElementExt, WalkerExt, elements_of};
 pub use focus::FocusCallback;
 pub use nearest::nearest_window_handle;
 pub use probe::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe, raw_probe_verdict};
-pub use provider::{console_host_of, parent_across_process_boundary, provider_process, served_by};
+pub use provider::{
+    console_host_of, is_top_level_window, parent_across_process_boundary, provider_process,
+    served_by,
+};
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
     Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,

@@ -223,14 +223,20 @@ element it compares equal to still has the focus. The `Ancestry`:
   that fails or answers none sets this. Inside a program a top-level
   window's parent is null, so the program's walk ends at any null
   parent, and sets `NoParent` when it ended there, short of a known
-  ancestor and the depth limit, having found no window: no window
-  handle, and the last element read, or the focus itself with none, is
-  not a window's own element (runtime id `[42, handle]`). A walk that
-  ends at a top-level window always finds one of the two: the window's
-  element reports its handle, or, where a read inside the provider leaves
-  the handle out (`docs/uia-bugs.md`, "Inside a remote operation,
-  conhost's window has no handle or title"), it still has the window's
-  runtime id. A provider whose `Navigate` fails reaches the client as no
+  ancestor and the depth limit, anywhere but at the top: the last element
+  read, or the focus itself with none, must be a window's own element,
+  known by its runtime id `[42, handle]` since a read inside the provider
+  can leave the handle out (`docs/uia-bugs.md`, "Inside a remote
+  operation, conhost's window has no handle or title"), and that window
+  must be a top-level window or one below the process boundary
+  (`verbatim_uia::is_top_level_window`,
+  `verbatim_uia::parent_across_process_boundary`, local calls made once
+  after the program). A window handle reported below the top does not
+  make the walk complete: UIA reads a fragment element reporting a handle
+  as that window's element, and one reporting a window that no longer
+  exists has no parent
+  (`a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown`).
+  A provider whose `Navigate` fails reaches the client as no
   parent (verified against mockapp's `answer-parent`).
   `Ancestry::ancestors_unknown` is true for a walk out of time or with a
   failed step, and callers report such a focus with its ancestors
@@ -349,8 +355,9 @@ unknown. Pinned against mockapp with `slow` and `stall`
 and with `answer-parent`
 (`a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`).
 The program's walk ends at a null parent, which is how it reaches the top
-of a program's tree; one that ends there having found no window ended
-below the top-level window, and is reported with `failed_hop` set, its
+of a program's tree; one that ends there anywhere but at a top-level
+window's own element, or that of a window below the process boundary,
+ended below the top, and is reported with `failed_hop` set, its
 ancestors unknown (`a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`).
 
 NVDA makes each call site choose instead: code that can use remote

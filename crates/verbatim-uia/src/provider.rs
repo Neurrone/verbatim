@@ -12,7 +12,7 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumThreadWindows, GA_PARENT, GW_OWNER, GetAncestor, GetClassNameW, GetDesktopWindow,
+    EnumThreadWindows, GA_PARENT, GA_ROOT, GW_OWNER, GetAncestor, GetClassNameW, GetDesktopWindow,
     GetWindow, GetWindowThreadProcessId, IsWindowVisible,
 };
 use windows::core::BOOL;
@@ -186,6 +186,17 @@ pub fn parent_across_process_boundary(hwnd: isize) -> Option<isize> {
     };
     let above = above.0 as isize;
     (provider(hwnd)? != provider(above)?).then_some(above)
+}
+
+/// Whether `hwnd` is a top-level window, its own root window (`GetAncestor`
+/// with `GA_ROOT`); `false` for a child window and for a window that no
+/// longer exists. A local call.
+#[must_use]
+pub fn is_top_level_window(hwnd: isize) -> bool {
+    let window = HWND(hwnd as *mut _);
+    // SAFETY: GetAncestor tolerates any handle, answering null for an
+    // invalid one.
+    hwnd != 0 && unsafe { GetAncestor(window, GA_ROOT) } == window
 }
 
 #[link(name = "ntdll")]

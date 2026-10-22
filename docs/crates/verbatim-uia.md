@@ -564,6 +564,10 @@ Public API:
   `EnumThreadWindows`, which goes by the thread that created it, so a
   console host's outpost still recognizes its own console window. The
   tests' console comes from the dev-only crate `verbatim-test-console`.
+- `is_top_level_window(hwnd)` — whether `hwnd` is a top-level window,
+  its own root (`GetAncestor` with `GA_ROOT`); a local call. The remote
+  focus program's walk is complete only when it ends at such a window's
+  own element, or at that of a window below the process boundary.
 - `parent_across_process_boundary(hwnd)` — the window above `hwnd` in
   UIA's raw view when another process serves it, by
   `provider_process` (a console window being its console host's): its

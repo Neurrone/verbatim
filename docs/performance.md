@@ -435,6 +435,12 @@ verdict for the focus's window rather than asking the window again.
   when events are moved, by their handling time, 0.2 to 1.8 ms for each
   property change in Settings' Date and time page traces of 2026-10-21;
   the call counts above are unchanged.
+- In the outpost, after its remote focus program's walk ends at a null
+  parent at a window's own element, one local `GetAncestor` to tell
+  whether that window is top-level, and for one that is not, the process
+  boundary check's local calls (`parent_across_process_boundary`), so a
+  walk is complete only at the top (since 2026-10-22). No call into the
+  application, no wake-up, and no instruction more in the program.
 - Target: the minimum, which the listener meets.
 
 ### A WinEvent focus in a UIA window, and the read when no UIA focus follows

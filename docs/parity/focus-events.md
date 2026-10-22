@@ -557,7 +557,7 @@ read" names the failed step as `failed_hop`, `NoParent` or the failing
 code, and as `None` for a walk that reached the root. The outpost's own
 walks behave the same: its remote program's walk, which ends at a null
 parent inside the program, reports the ancestors unknown when it ended
-there having found no window, and its per-hop walk (`Uia::ancestors` in
+there anywhere but at a top-level window, and its per-hop walk (`Uia::ancestors` in
 `crates/verbatim-uia/src/client.rs`) ends at a failed or missing parent
 below the root as `AncestorWalk::Unknown`, so a focus-now answer or a
 focus the outpost reads itself carries no partial chain as if it were

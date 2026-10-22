@@ -859,12 +859,14 @@ fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
 
 /// What the focus-now query answers for "Deep button" when the step from
 /// its container "Inner group" to that container's parent answers
-/// `answer`, with remote operations on or off: the focus's name, the names
-/// of its ancestors, outermost first, or `None` when they are unknown, and
-/// the UIA calls the read made.
+/// `answer`, after `setup`'s further mockapp commands, with remote
+/// operations on or off: the focus's name, the names of its ancestors,
+/// outermost first, or `None` when they are unknown, and the UIA calls the
+/// read made.
 fn focus_now_with_a_missing_grandparent(
     remote: bool,
     answer: &str,
+    setup: &[&str],
 ) -> (Option<String>, Option<Vec<Option<String>>>, u32) {
     let path = if remote { "remote" } else { "classic" };
     let mut fixture = Fixture::start(&format!("mockapp-rops-now-{answer}-{path}"));
@@ -876,7 +878,13 @@ fn focus_now_with_a_missing_grandparent(
     );
     fixture.app.send("set-focus deep");
     fixture.app.send(&format!("answer-parent group2 {answer}"));
+    // The focus is found before `setup`'s commands, since UIA's search
+    // through the tree does not pass an element reporting a window handle
+    // it does not host.
     outpost.read_focus_as(&fixture.find("Deep button"));
+    for command in setup {
+        fixture.app.send(command);
+    }
     let (now, calls) = outpost.focus_now_with_calls();
     let now = now.unwrap_or_else(|| panic!("{answer} {path}: the focus now has a focused control"));
     drop(outpost);
@@ -898,7 +906,21 @@ fn focus_now_with_a_missing_grandparent(
 /// pass for the program's answer.
 fn a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown() {
     assert_eq!(
-        focus_now_with_a_missing_grandparent(true, "none"),
+        focus_now_with_a_missing_grandparent(true, "none", &[]),
+        (Some("Deep button".to_owned()), None, 2)
+    );
+}
+
+/// The same when the element above the missing parent, "Inner group", a
+/// fragment element, reports a window handle it does not host, of a window
+/// that no longer exists, so UIA reads it as that window's element with no
+/// parent: the walk found a window handle but did not reach a top-level
+/// window, so its ancestors are unknown too, where they were taken as
+/// complete before. A walk is complete only when it reached the top.
+fn a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown()
+ {
+    assert_eq!(
+        focus_now_with_a_missing_grandparent(true, "none", &["report-window group2"]),
         (Some("Deep button".to_owned()), None, 2)
     );
 }
@@ -909,7 +931,7 @@ fn a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_
 /// both ways (verified), so both are asked of the provider.
 fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown() {
     for answer in ["fail", "none"] {
-        let (name, ancestors, _) = focus_now_with_a_missing_grandparent(false, answer);
+        let (name, ancestors, _) = focus_now_with_a_missing_grandparent(false, answer, &[]);
         assert_eq!(
             (name, ancestors),
             (Some("Deep button".to_owned()), None),
@@ -1483,6 +1505,10 @@ fn main() {
         (
             "a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown",
             a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown,
+        ),
+        (
+            "a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown",
+            a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown,
         ),
         (
             "a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown",

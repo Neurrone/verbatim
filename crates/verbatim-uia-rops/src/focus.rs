@@ -123,9 +123,11 @@ pub struct Ancestry {
     /// step below it that fails or finds no parent sets this. Inside the
     /// remote program a top-level window's parent is null, so its walk
     /// ends at any null parent, and sets this, as
-    /// [`FailedHop::NoParent`], when it ended there without finding a
-    /// window: no window handle, and the last element read is not a
-    /// window's own element (runtime id `[42, handle]`).
+    /// [`FailedHop::NoParent`], unless the last element read is the own
+    /// element (runtime id `[42, handle]`) of a top-level window or of a
+    /// window below the process boundary: a window handle reported below
+    /// it, as a fragment element can report one it does not host, does not
+    /// make the walk complete.
     pub failed_hop: Option<FailedHop>,
     /// For a list or tab control, the first selected child, filled by the
     /// query's fill: what `verbatim_uia::Uia::selected_node` reports; for a
@@ -374,11 +376,27 @@ fn is_window_element(runtime_id: &[i32], hwnd: isize) -> bool {
     runtime_id == [42, handle]
 }
 
-/// Whether the element whose runtime id is `runtime_id` is some window's
-/// own element, `[42, handle]` ([`is_window_element`]); an element inside
-/// a window's provider has more parts.
-fn is_a_window_element(runtime_id: &[i32]) -> bool {
-    matches!(runtime_id, &[42, handle] if handle != 0)
+/// Whether the remote program's walk, ending at a null parent at the
+/// element whose runtime id is `runtime_id`, reached the top: that element
+/// is a window's own element, `[42, handle]` ([`is_window_element`]),
+/// known by its runtime id since a read inside the provider can leave a
+/// window's handle out (`docs/uia-bugs.md`, "Inside a remote operation,
+/// conhost's window has no handle or title"), and its window is a
+/// top-level window or one below the process boundary, whose parent the
+/// program cannot reach. An element inside a window's provider has more
+/// parts, whatever window handle it reports. Local calls only.
+fn ends_at_the_top(runtime_id: &[i32]) -> bool {
+    let &[42, handle] = runtime_id else {
+        return false;
+    };
+    if handle == 0 {
+        return false;
+    }
+    // A runtime id holds the handle's low 32 bits, which a window handle's
+    // value fits in, sign-extended.
+    let hwnd = handle as isize;
+    verbatim_uia::is_top_level_window(hwnd)
+        || verbatim_uia::parent_across_process_boundary(hwnd).is_some()
 }
 
 /// The focus ancestry in one cross-process round trip: a program that
@@ -392,7 +410,8 @@ fn is_a_window_element(runtime_id: &[i32]) -> bool {
 /// the top-level window, a known ancestor, or the depth limit, and finds
 /// the element's nearest window, walking on past where it stopped if no
 /// ancestor read so far has a window handle. A walk that ends at a null
-/// parent having found no window ended below the top-level window, and is
+/// parent anywhere but at a top-level window's own element, or that of a
+/// window below the process boundary, ended below the top, and is
 /// reported with the ancestors unknown ([`Ancestry::failed_hop`]).
 ///
 /// `uia` is unused; it is in the signature so that this and
@@ -630,21 +649,19 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let depth_limited = outcome.get(depth_limited)?;
     // A walk that stopped at neither a known ancestor nor the depth limit
     // ended at a null parent. Inside a program a top-level window's parent
-    // is null, and a walk that ends there has found a window: the window's
-    // handle, or, where a read inside the provider leaves the handle out
-    // (`docs/uia-bugs.md`, "Inside a remote operation, conhost's window
-    // has no handle or title"), the window's own runtime id. One that
-    // found neither ended at a missing parent below the window: its
-    // ancestors are unknown, as the classic walk reports a missing parent
-    // below the root, and as NVDA reads the window hierarchy when its
-    // parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145).
+    // is null, as is the parent of a window below the process boundary,
+    // and only a walk whose last element is such a window's own element
+    // is complete ([`ends_at_the_top`]). Any other ended at a missing
+    // parent below the window, even one whose elements reported a window
+    // handle, as a fragment element can report a handle it does not host:
+    // its ancestors are unknown, as the classic walk reports a missing
+    // parent below the root, and as NVDA reads the window hierarchy when
+    // its parent read fails (`NVDAObjects/UIA/__init__.py` 2142 to 2145).
     let failed_hop = (met_known.is_none()
         && !depth_limited
-        && window == 0
-        && !is_a_window_element(
-            &ancestors
-                .last()
-                .map_or_else(|| query.element.runtime_id(), Cached::runtime_id),
+        && !ancestors.last().map_or_else(
+            || ends_at_the_top(&query.element.runtime_id()),
+            |top| ends_at_the_top(&top.runtime_id()),
         ))
     .then_some(FailedHop::NoParent);
     let claimed = |element: Option<IUIAutomationElement>, absent: i32| {

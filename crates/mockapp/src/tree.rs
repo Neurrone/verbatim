@@ -68,6 +68,10 @@ pub(crate) struct NodeData {
     /// How the node's UIA provider answers `Navigate(Parent)`, once it has
     /// answered as many calls as usual as the count says (`answer-parent`).
     pub(crate) parent_answer: (crate::stdin::ParentAnswer, u32),
+    /// The handle of a window that no longer exists, which the node's UIA
+    /// provider answers `NativeWindowHandle` with (`report-window`), and
+    /// `None` for its usual answer.
+    pub(crate) reports_window: Option<isize>,
     /// Whether UIA counts the node as content (`IsContentElement`).
     pub(crate) content: bool,
 }
@@ -282,6 +286,7 @@ fn insert(
         runtime_id: index,
         dead: false,
         parent_answer: (crate::stdin::ParentAnswer::Usual, 0),
+        reports_window: None,
         content: node.content,
     });
     by_fixture_id.insert(node.id, index);

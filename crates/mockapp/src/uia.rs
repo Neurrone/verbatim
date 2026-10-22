@@ -292,6 +292,38 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             guard.nodes[index].parent_answer = (answer, after);
         }
+        Command::ReportWindow(id) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            // A window that existed, so its handle is one Windows gave out,
+            // and is destroyed at once: the node reports a window that no
+            // longer exists. SAFETY: a static window class Windows
+            // registers, a child of the host window, created on its
+            // thread; the title is static.
+            let child = unsafe {
+                windows::Win32::UI::WindowsAndMessaging::CreateWindowExW(
+                    windows::Win32::UI::WindowsAndMessaging::WINDOW_EX_STYLE(0),
+                    windows::core::w!("STATIC"),
+                    windows::core::w!(""),
+                    windows::Win32::UI::WindowsAndMessaging::WS_CHILD,
+                    0,
+                    0,
+                    10,
+                    10,
+                    Some(hwnd),
+                    None,
+                    None,
+                    None,
+                )
+            }
+            .map_err(|error| format!("the child window: {error}"))?;
+            // SAFETY: the window just created on this thread.
+            unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(child) }
+                .map_err(|error| format!("destroying the child window: {error}"))?;
+            guard.nodes[index].reports_window = Some(child.0 as isize);
+        }
         // Handled by the window thread before dispatch.
         Command::Stall(..)
         | Command::OnActivate(_)
@@ -799,7 +831,11 @@ mod props {
         } else if id == UIA_ProcessIdPropertyId.0 {
             i32_variant(i32::try_from(std::process::id()).unwrap_or(0))
         } else if id == UIA_NativeWindowHandlePropertyId.0 {
-            if index == 0 && !super::HIDE_WINDOW_HANDLE.load(std::sync::atomic::Ordering::Relaxed) {
+            if let Some(reported) = node.reports_window {
+                i32_variant(i32::try_from(reported).unwrap_or(0))
+            } else if index == 0
+                && !super::HIDE_WINDOW_HANDLE.load(std::sync::atomic::Ordering::Relaxed)
+            {
                 i32_variant(i32::try_from(hwnd.0 as isize).unwrap_or(0))
             } else {
                 i32_variant(0)

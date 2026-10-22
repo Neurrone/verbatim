@@ -1647,7 +1647,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   (`Ancestry::ancestors_unknown`;
   `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`).
   The outpost's own walks do the same: the remote program's walk that
-  ends at a null parent having found no window, and
+  ends at a null parent anywhere but at a top-level window, and
   `read::uia_enrichment`'s per-hop walk (`Uia::ancestors`) at such a step
   (`AncestorWalk::Unknown`), report the ancestors unknown: the focus-now
   answer's `FocusedControl::ancestors` is `None`, which Core receives as
@@ -1690,8 +1690,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   is used. A program that fails otherwise is answered by the classic walk
   for that call and logged with the failing instruction's source line.
   The program's walk ends at a null parent, as it reaches the top of a
-  program's tree; one that ends there having found no window ended below
-  the top-level window, and reports the ancestors unknown, as the classic
+  program's tree; one that ends there anywhere but at a top-level window
+  ended below it, and reports the ancestors unknown, as the classic
   walk does. A
   UIA focus event without text costs the outpost no UIA call before it is
   reported: the listener's read is its classic walk

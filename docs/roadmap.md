@@ -255,10 +255,6 @@ deferred.
   decision 11's wait cannot recover it, and what File Explorer raises
   then, beyond a name change and three state changes on the items view,
   is to be found.
-- The outpost's remote focus program still reports as a complete walk
-  one that ends at a missing parent above an element with its own window
-  handle when no top-level window was reached; only a fragment element
-  reporting a handle it does not host reaches this.
 - Why the `delta` item inside Inner in run 39558690998 still carried the
   parent folder's window title, File Explorer's title lagging or a stale
   ancestor name, is to be checked.

@@ -11,7 +11,7 @@
 //! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
 //! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
 //! `answer-property <property id> <fail|empty|usual>`,
-//! `answer-parent <id> <fail|none|usual> [<after>]`,
+//! `answer-parent <id> <fail|none|usual> [<after>]`, `report-window <id>`,
 //! `take-runtime-id <id> <from>`, `replace-items <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `hold`, `release`, and `quit`.
@@ -196,6 +196,13 @@ pub(crate) enum Command {
     /// walk to the nearest window, which steps to the node's parent once,
     /// pass before the answer takes effect. UIA-only.
     AnswerParent(String, ParentAnswer, u32),
+    /// `report-window <id>`: makes a child window of the host window and
+    /// destroys it, and node `id`'s provider answers `NativeWindowHandle`
+    /// with its handle, a window it does not host that no longer exists,
+    /// as a fragment element of some providers can. UIA then reads the
+    /// node as that window's element, runtime id `[42, handle]`, with no
+    /// parent. UIA-only.
+    ReportWindow(String),
     /// `take-runtime-id <id> <from>`: node `from` dies, leaving the tree
     /// (its parent no longer lists it, and every call on its elements fails
     /// as on an element that is gone, `UIA_E_ELEMENTNOTAVAILABLE`), and node
@@ -323,6 +330,18 @@ fn answer_parent(rest: &str) -> Option<Command> {
         .then(|| Command::AnswerParent(id.to_owned(), answer, after))
 }
 
+/// `take-runtime-id`'s arguments, the node that takes the runtime id and
+/// the node it is taken from.
+fn take_runtime_id(rest: &str) -> Option<Command> {
+    let mut parts = rest.split_whitespace();
+    let id = parts.next()?;
+    let from = parts.next()?;
+    parts
+        .next()
+        .is_none()
+        .then(|| Command::TakeRuntimeId(id.to_owned(), from.to_owned()))
+}
+
 /// `write-on-read`'s arguments, a node's id and the text to write.
 fn write_on_read(rest: &str) -> Option<Command> {
     let (id, text) = rest.split_once(' ')?;
@@ -367,15 +386,8 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         },
         "answer-property" => answer_property(rest),
         "answer-parent" => answer_parent(rest),
-        "take-runtime-id" => {
-            let mut parts = rest.split_whitespace();
-            let id = parts.next()?;
-            let from = parts.next()?;
-            parts
-                .next()
-                .is_none()
-                .then(|| Command::TakeRuntimeId(id.to_owned(), from.to_owned()))
-        }
+        "report-window" if !rest.is_empty() => Some(Command::ReportWindow(rest.to_owned())),
+        "take-runtime-id" => take_runtime_id(rest),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),
         "active-text-position" => {
             let mut parts = rest.split_whitespace();

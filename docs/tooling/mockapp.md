@@ -118,6 +118,14 @@ nothing. `crates/mockapp/src/stdin.rs` documents each command in full.
   node's provider answer `Navigate(Parent)` failing with `E_FAIL`, with no
   parent, or as usual again, after first answering `after` such calls as
   usual; UIA hands a client no parent either way.
+- `report-window <id>` (UIA only) makes a child window of the host
+  window and destroys it, and that node's provider answers
+  `NativeWindowHandle` with its handle, a window it does not host that
+  no longer exists, as a fragment element of some providers can. UIA
+  then reads the node as that window's element, runtime id
+  `[42, handle]`, with no parent. A live window's handle would not do:
+  UIA navigates from such an element by its window, up to the top-level
+  window.
 - `take-runtime-id <id> <from>` (UIA only) removes node `from` from the
   tree, every call on its elements failing with
   `UIA_E_ELEMENTNOTAVAILABLE`, and gives node `id` its runtime id, as File
