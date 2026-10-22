@@ -231,13 +231,14 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             crate::msaa::raise_console_caret(hwnd, column, row);
         }
         Command::SystemCaret(show) => crate::msaa::raise_system_caret(hwnd, show),
-        Command::Caret(id, start, end) => {
+        Command::Caret(id, start, end, at_end) => {
             let mut guard = tree
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             let length = guard.nodes[index].text.as_ref().map_or(0, Vec::len);
             guard.nodes[index].selection = (start.min(length), end.min(length));
+            guard.nodes[index].caret_at_end = at_end;
         }
         Command::Screen(id, rows) => {
             let mut guard = tree

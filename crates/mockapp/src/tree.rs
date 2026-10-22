@@ -45,6 +45,9 @@ pub(crate) struct NodeData {
     /// The text's selection, start and end as UTF-16 offsets; the caret is
     /// at its start, and a collapsed selection is the caret alone.
     pub(crate) selection: (usize, usize),
+    /// `TextPattern2`'s caret is the selection's end, not its start
+    /// (`caret <id> <start> <end> end`).
+    pub(crate) caret_at_end: bool,
     /// How many of the text's last lines are on screen, as a terminal shows
     /// the end of its buffer (`screen`); `None` shows the whole text.
     pub(crate) screen_rows: Option<usize>,
@@ -261,6 +264,7 @@ fn insert(
         controller_for: None,
         text: node.text.map(|text| text.encode_utf16().collect()),
         selection: (0, 0),
+        caret_at_end: false,
         screen_rows: None,
         write_on_read: None,
         formats: Formats {

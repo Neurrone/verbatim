@@ -248,9 +248,11 @@ Differences:
   [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
   Verbatim keeps that one old selection in the outpost, per node, and
   every comparison uses it: a caret event's report and the answer to
-  every key that does not select, deleting keys included, so each change
-  is compared once, by whichever reads it first; a selecting key compares
-  with the selection Core found before it. One decision says whether a
+  every key, selecting and deleting keys included, so each change is
+  compared once, by whichever reads it first; a selection Verbatim makes
+  itself (the review copy's first press) or a caret it moves is kept in
+  its place (mockapp's
+  `a_shift_key_after_verbatims_selection_compares_with_it`). One decision says whether a
   comparison is in general terms, the same for reports and answers: the
   note is set (a classic edit control's value change handled, as NVDA's
   `hasContentChangedSinceLastSelection`, read and cleared at each
@@ -267,7 +269,14 @@ Differences:
   A key's own words come first and the selection's change after, as NVDA
   speaks its script's words and then its caret event's; when the key's
   caret event was reported before its watch arrived, Core holds that
-  report's words and says them after the key's.
+  report's words and says them after the key's, and when a key's answer
+  carrying a change is superseded by a later key, the change is said
+  after the later key's words, so no change compared is lost.
+  Backspace and Control+Backspace over a selection say what comes before
+  the selection's start, NVDA's caret, whichever end the application's
+  caret is: the outpost reports the start in the caret's line or in the
+  earlier line it starts in (mockapp's
+  `a_selections_start_on_the_carets_line_is_reported_in_it`).
   - The classic edit control, the Windows Forms text box, over "alpha "
     or "beta " selected with Shift+Control+Right Arrow, matched:
     Backspace says the character before the caret, the selection's
@@ -306,7 +315,12 @@ Differences:
     though it had been selected; Verbatim keeps the selection's text when
     it is reported and, when the old range no longer holds it, says the
     change in general terms: "x" then "selection removed", and
-    "selection removed" after each of those keys' own words
+    "selection removed" after each of those keys' own words: Backspace
+    over "alpha " at the text's start, "blank" then "selection removed"
+    (`target/e2e-evidence/m42-selection-fixes-2026-10-22/notepad-first-word-backspace.txt`),
+    over "beta ", and over "gamma" selected with Shift+End to the line's
+    end, which in Notepad selects the line break too and puts the caret
+    at the next line's start, "space" then "selection removed"
     (`notepad_selection_keys` and `notepad_editing`; mockapp's
     `a_uia_selection_typed_over_is_said_in_general_terms` and
     `a_uia_deleting_key_over_a_selection_is_answered_in_general_terms`).
@@ -323,21 +337,17 @@ Differences:
     and is kept (mockapp's `remote_and_classic_caret_reads_agree`). A
     range that still holds its text is compared as NVDA compares it:
     Control+Backspace over "beta ", which Notepad answers by deleting the
-    word before the selection, says "beta unselected" in both
-    (`notepad-second-word-control-backspace.txt`; no scenario asserts it
-    yet, since Verbatim's words before it differ, as the next item
-    records).
-  - Different through UIA, recorded, not chosen: NVDA's caret over a
-    selection is the selection's start in both backends, and Verbatim's
-    through UIA is the selection's active end (`TextPattern2`'s caret),
-    so Backspace and Control+Backspace over a forward selection say what
-    was before its end. They agree where the two are the same character,
-    as over "alpha " and "beta " ("space"); they differ over "gamma" to the
-    line's end, where NVDA says "space" and Verbatim the line break, and
-    for Control+Backspace over "beta ", where NVDA says "alpha", the word
-    Notepad deletes, and Verbatim "beta". Over "alpha " at the start of
-    the text NVDA says "space" too, which its source does not explain,
-    the character before the start being none.
+    word before the selection, says "alpha" then "beta unselected" in
+    both, and over "gamma" to the line's end "beta" then "gamma
+    unselected"; over "alpha " at the text's start Notepad deletes nothing
+    and both say nothing (`notepad_selection_keys`;
+    `notepad-second-word-control-backspace.txt`,
+    `notepad-third-word-to-end-control-backspace.txt`,
+    `notepad-word-control-backspace.txt`). An earlier capture of Backspace
+    over "alpha " in which NVDA said "space" had NVDA reading the
+    document as an "edit multi line" object, not as Notepad's UIA
+    document; the capture taken again with the document read through UIA
+    says "blank".
   - Different: NVDA's delayed character description, "Bravo" after the
     "b" Delete reaches, is a setting Verbatim does not have yet.
   - A key outside the caret table that removes a selection (Control+X,

@@ -466,9 +466,10 @@ fn caret_reads_execute_exactly() {
     });
     fixture.app.quit();
     // 4425 and 84 before the caret read began reading the selection's texts,
-    // and 4434 before it read the selection's text only when its ends moved
-    // (2026-10-22).
-    assert_eq!([worst, typical], [4435, 87], "caret read worst and typical");
+    // 4434 before it read the selection's text only when its ends moved,
+    // and 4435 and 87 before it read where the selection starts, whose
+    // conditions every read with `TextPattern2` runs (2026-10-22).
+    assert_eq!([worst, typical], [4456, 97], "caret read worst and typical");
 }
 
 /// The caret read where every format stretch is two characters with one
@@ -497,7 +498,10 @@ fn densely_mixed_formatting_executes_exactly() {
     common::apply(&mut fixture.app, fixture.hwnd, "caret doc 50");
     let eighty = caret_read_remote(&query).map(|answer| answer.runs.len());
     fixture.app.quit();
-    assert_eq!([sixteen, thirty_two], [2148, 4140], "17 and 33 stretches");
+    // 2148 and 4140 before the read of where a selection starts in the
+    // caret's line, whose condition every read with `TextPattern2` runs
+    // (2026-10-22).
+    assert_eq!([sixteen, thirty_two], [2158, 4150], "17 and 33 stretches");
     match eighty {
         Ok(runs) => assert_eq!(runs, 64),
         Err(error) => panic!("80 characters: {error}"),
@@ -614,7 +618,9 @@ fn range_selections_execute_exactly() {
         assert_eq!(changes, [(true, "alpha".to_owned())]);
     });
     fixture.app.quit();
-    assert_eq!(press, 160, "the review copy's first press");
+    // 160 before the selection's text was read after the select, to keep
+    // for the next comparison (2026-10-22).
+    assert_eq!(press, 165, "the review copy's first press");
     assert!(press < LIMIT / 2);
 }
 

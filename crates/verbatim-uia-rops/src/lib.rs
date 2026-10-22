@@ -91,8 +91,8 @@ pub use terminal::{
 };
 pub use text::{
     ChangesUnread, FoundPoint, LocationAnswer, LocationQuery, Movement, Position, RangeAction,
-    RangeAnswer, RangeQuery, TextFrom, TextLocationFn, TextRangeFn, TextTarget, TextUnitsFn,
-    UnitText, UnitsAnswer, UnitsQuery, text_location, text_location_classic, text_location_remote,
-    text_range, text_range_classic, text_range_remote, text_units, text_units_classic,
-    text_units_remote,
+    RangeAnswer, RangeQuery, SelectionAfter, TextFrom, TextLocationFn, TextRangeFn, TextTarget,
+    TextUnitsFn, UnitText, UnitsAnswer, UnitsQuery, text_location, text_location_classic,
+    text_location_remote, text_range, text_range_classic, text_range_remote, text_units,
+    text_units_classic, text_units_remote,
 };

@@ -56,8 +56,8 @@ use verbatim_uia_rops::{
 
 use super::{
     CaretRead, CaretRequest, CaretState, FormatSpan, Located, MAX_CHUNK_UNITS, MAX_RANGE_UNITS,
-    PastEnds, PointFrom, RangeAction, RangeRead, Sentences, TextError, TextResult, TextSource,
-    Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
+    PastEnds, PointFrom, RangeAction, RangeRead, SelectionAfter, SelectionStart, Sentences,
+    TextError, TextResult, TextSource, Unit, UnitRead, UnitsAnswer, UnitsRead, UnitsRequest,
 };
 
 /// A position in UIA text: an end of a range.
@@ -332,6 +332,7 @@ impl UiaText {
             moved_while_read: false,
             selection_text: None,
             previous_text: None,
+            selection_start: SelectionStart::unknown(),
         })
     }
 
@@ -689,6 +690,11 @@ impl TextSource for UiaText {
             moved_while_read: answer.moved_while_read,
             selection_text: answer.selection_text,
             previous_text: answer.previous_text,
+            selection_start: SelectionStart {
+                in_line: answer.selection_start,
+                line: answer.selection_line.map(unit_read).transpose()?,
+                first: answer.start_first,
+            },
         }))
     }
 
@@ -803,6 +809,22 @@ impl TextSource for UiaText {
                     .map(|change| (change.selected, change.text))
                     .collect()
             }),
+            selection_after: answer
+                .selection_after
+                .map(|after| -> TextResult<SelectionAfter<UiaPos>> {
+                    let start = UiaPos::new(&after.range, Endpoint::Start, false)?;
+                    let end = if after.selected {
+                        UiaPos::new(&after.range, Endpoint::End, false)?
+                    } else {
+                        start.clone()
+                    };
+                    Ok(SelectionAfter {
+                        ends: (start, end),
+                        selected: after.selected,
+                        text: after.text,
+                    })
+                })
+                .transpose()?,
         }))
     }
 

@@ -100,6 +100,16 @@ impl TextProvider {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.nodes[self.index].selection
     }
+
+    /// Whether `TextPattern2`'s caret is the selection's end
+    /// (`caret <id> <start> <end> end`).
+    fn caret_at_end(&self) -> bool {
+        let guard = self
+            .tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        guard.nodes[self.index].caret_at_end
+    }
 }
 
 impl ITextProvider_Impl for TextProvider_Impl {
@@ -154,8 +164,9 @@ impl ITextProvider2_Impl for TextProvider_Impl {
             // SAFETY: a non-null out-parameter the caller provides.
             unsafe { *isactive = true.into() };
         }
-        let (start, _) = self.selection();
-        Ok(self.range(start, start))
+        let (start, end) = self.selection();
+        let caret = if self.caret_at_end() { end } else { start };
+        Ok(self.range(caret, caret))
     }
 }
 
@@ -851,6 +862,7 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         guard.nodes[self.index].selection = (self.start.get(), self.end.get());
+        guard.nodes[self.index].caret_at_end = false;
         Ok(())
     }
     fn AddToSelection(&self) -> WinResult<()> {

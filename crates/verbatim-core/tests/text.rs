@@ -6,11 +6,11 @@
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, Input, Message,
-    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, PreviousSelection,
-    QueryId, ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange,
-    SelectionText, SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp,
-    TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextThrough,
-    TextUnit, TraceId, TypingEcho, UtteranceSegment,
+    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, QueryId,
+    ReaderSettings, ReviewCommand, Role, SegmentContent, Selection, SelectionChange, SelectionText,
+    SpeechMark, State, StateSet, TextAnchor, TextChunk, TextMovement, TextOp, TextPoint,
+    TextPosition, TextRead, TextReadAhead, TextReply, TextRequest, TextThrough, TextUnit, TraceId,
+    TypingEcho, UtteranceSegment,
 };
 use verbatim_model::{BulletStyle, FocusText, FormatRun, LineStyle, TextAttributes, TextFormat};
 
@@ -81,6 +81,7 @@ fn caret_event(state: &mut SrState, number: u64, line: TextChunk) {
             caret: CaretReport {
                 line,
                 selection: None,
+                selection_line: None,
             },
             selection_changes: Vec::new(),
             content_changed: false,
@@ -205,6 +206,7 @@ fn caret_reply(moved: bool, line: TextChunk, unit: Option<TextChunk>) -> TextRep
         caret: CaretReport {
             line,
             selection: None,
+            selection_line: None,
         },
         unit,
         selection_changes: Vec::new(),
@@ -233,7 +235,6 @@ fn an_arrow_key_watches_for_evidence_then_speaks_the_character_at_the_caret() {
     // reports came before it.
     assert_eq!(watch.pressed_at_ms, KEY_PRESSED_AT);
     assert_eq!(watch.unit, TextUnit::Character);
-    assert!(watch.previous_selection.is_none());
 
     let effects = reduce(
         &mut state,
@@ -287,7 +288,6 @@ fn a_caret_key_that_moves_nothing_is_silent() {
             pressed_at_ms: KEY_PRESSED_AT,
             unit: TextUnit::Line,
             compare: None,
-            previous_selection: None,
         })
     );
     let effects = reduce(
@@ -478,20 +478,7 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
     let mut state = editing("hello, world\n", 5);
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, true));
     let request = request(&effects);
-    let TextOp::AwaitCaret(watch) = &request.op else {
-        panic!("expected a caret wait");
-    };
-    let caret = TextPosition {
-        anchor: TextAnchor(100),
-        offset: 5,
-    };
-    assert_eq!(
-        watch.previous_selection,
-        Some(PreviousSelection {
-            start: caret,
-            end: caret
-        })
-    );
+    assert!(matches!(request.op, TextOp::AwaitCaret(_)));
     let reply = TextReply::Caret(Box::new(CaretReply {
         same_line: None,
         removed: None,
@@ -500,6 +487,7 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
         caret: CaretReport {
             line: line("hello, world\n", 100, 6),
             selection: None,
+            selection_line: None,
         },
         unit: None,
         selection_changes: vec![
@@ -540,7 +528,6 @@ fn shift_movement_speaks_what_was_selected_and_unselected() {
 }
 
 #[test]
-#[expect(clippy::too_many_lines, reason = "one scenario's steps, each asserted")]
 fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() {
     let mut state = editing(
         "hello, world
@@ -570,6 +557,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
                 0,
             ),
             selection: Some(selected),
+            selection_line: None,
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -583,10 +571,6 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     // text unselected.
     let effects = reduce(&mut state, &key(CaretMotion::NextCharacter, false));
     let asked = request(&effects);
-    let TextOp::AwaitCaret(watch) = &asked.op else {
-        panic!("expected a caret wait");
-    };
-    assert_eq!(watch.previous_selection, None);
     let reply = TextReply::Caret(Box::new(CaretReply {
         same_line: None,
         removed: None,
@@ -600,6 +584,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
                 5,
             ),
             selection: None,
+            selection_line: None,
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -641,6 +626,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
                 5,
             ),
             selection: Some(selected),
+            selection_line: None,
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -649,10 +635,7 @@ fn a_movement_that_leaves_a_selection_speaks_the_unit_then_what_it_unselected() 
     }));
     let _ = reduce(&mut state, &completed(request_of(&effects), reply));
     let effects = reduce(&mut state, &key(CaretMotion::Delete, false));
-    let TextOp::AwaitCaret(watch) = &request(&effects).op else {
-        panic!("expected a caret wait");
-    };
-    assert_eq!(watch.previous_selection, None);
+    assert!(matches!(request(&effects).op, TextOp::AwaitCaret(_)));
 }
 
 /// A caret event for node 5 observed at `observed_at_ms`.
@@ -670,6 +653,7 @@ fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> 
                 caret: CaretReport {
                     line,
                     selection: None,
+                    selection_line: None,
                 },
                 selection_changes: Vec::new(),
                 content_changed: false,
@@ -700,6 +684,7 @@ fn caret_reply_at(line: TextChunk, read_at_ms: u64) -> TextReply {
         caret: CaretReport {
             line,
             selection: None,
+            selection_line: None,
         },
         read_at_ms,
         unit: None,
@@ -996,7 +981,11 @@ fn selection_event(
         state,
         &event(NormalizedEvent::CaretMoved {
             node_id: id(5),
-            caret: CaretReport { line, selection },
+            caret: CaretReport {
+                line,
+                selection,
+                selection_line: None,
+            },
             selection_changes: changes,
             content_changed,
             new_selection: None,
@@ -1015,6 +1004,7 @@ fn selection_removed_reply(line: TextChunk) -> TextReply {
         caret: CaretReport {
             line,
             selection: None,
+            selection_line: None,
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -1027,37 +1017,50 @@ fn selection_removed_reply(line: TextChunk) -> TextReply {
     }))
 }
 
-#[test]
-fn backspace_over_a_selection_says_what_was_before_the_caret_then_the_selection_change() {
-    // A classic edit control's caret is the selection's start; "beta " is
-    // selected (`target/e2e-evidence/m42-selection-keys-2026-10-22/`,
-    // `textbox-second-word-backspace.txt` and
-    // `textbox-second-word-control-backspace.txt`).
-    let text = "alpha beta gamma\r\n";
-    let beta = Some(Selection {
+/// A selection from byte `start` of the line whose anchor is 100 (or of
+/// another chunk, `on_line` false) to an end elsewhere.
+fn selection_from(start: u32, on_line: bool) -> Selection {
+    Selection {
         start: TextPosition {
-            anchor: TextAnchor(200),
-            offset: 0,
+            anchor: TextAnchor(if on_line { 100 } else { 200 }),
+            offset: start,
         },
         end: TextPosition {
             anchor: TextAnchor(201),
             offset: 0,
         },
-    });
-    for (motion, said) in [
-        (CaretMotion::Backspace, character(" ")),
-        (
-            CaretMotion::BackspaceWord,
-            UtteranceSegment::text("alpha".to_owned()),
-        ),
+    }
+}
+
+#[test]
+fn backspace_over_a_selection_says_what_was_before_its_start_then_the_selection_change() {
+    // What comes before the selection's start, where NVDA's caret is,
+    // whichever end the caret is
+    // (`target/e2e-evidence/m42-selection-keys-2026-10-22/`): a classic
+    // edit control's caret is the start of "beta " (`textbox-second-word-backspace.txt`,
+    // `textbox-second-word-control-backspace.txt`); Notepad's is the
+    // end of "beta " (`notepad-second-word-control-backspace.txt`) and of
+    // "gamma" up to the line's end
+    // (`notepad-third-word-to-end-backspace.txt`,
+    // `notepad-third-word-to-end-control-backspace.txt`).
+    let text = "alpha beta gamma\r\n";
+    let space = character(" ");
+    let alpha = UtteranceSegment::text("alpha".to_owned());
+    let beta = UtteranceSegment::text("beta".to_owned());
+    for (caret, start, motion, said) in [
+        (6, 6, CaretMotion::Backspace, &space),
+        (6, 6, CaretMotion::BackspaceWord, &alpha),
+        (11, 6, CaretMotion::BackspaceWord, &alpha),
+        (16, 11, CaretMotion::Backspace, &space),
+        (16, 11, CaretMotion::BackspaceWord, &beta),
     ] {
         let mut state = editing(text, 0);
-        let _ = selection_event(&mut state, (line(text, 100, 6), beta), (Vec::new(), false));
+        let _ = selection_event(
+            &mut state,
+            (line(text, 100, caret), Some(selection_from(start, true))),
+            (Vec::new(), false),
+        );
         let effects = reduce(&mut state, &key(motion, false));
-        let TextOp::AwaitCaret(watch) = request(&effects).op else {
-            panic!("expected a caret wait");
-        };
-        assert_eq!(watch.previous_selection, None);
         let effects = reduce(
             &mut state,
             &completed(
@@ -1067,17 +1070,22 @@ fn backspace_over_a_selection_says_what_was_before_the_caret_then_the_selection_
         );
         assert_eq!(
             spoken(&effects),
-            vec![said, message(Message::SelectionRemoved)]
+            vec![said.clone(), message(Message::SelectionRemoved)],
+            "{motion:?} with the caret at {caret} and the selection from {start}"
         );
     }
 
-    // With nothing before the caret, "blank" (`textbox-word-backspace.txt`).
+    // With nothing before the start, "blank" (`textbox-word-backspace.txt`).
     let mut state = editing(text, 0);
     let first = TextChunk {
         first: true,
         ..line(text, 100, 0)
     };
-    let _ = selection_event(&mut state, (first, beta), (Vec::new(), false));
+    let _ = selection_event(
+        &mut state,
+        (first, Some(selection_from(0, true))),
+        (Vec::new(), false),
+    );
     let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
     let effects = reduce(
         &mut state,
@@ -1090,6 +1098,78 @@ fn backspace_over_a_selection_says_what_was_before_the_caret_then_the_selection_
         spoken(&effects),
         vec![message(Message::Blank), message(Message::SelectionRemoved)]
     );
+}
+
+#[test]
+fn backspace_over_a_selection_from_an_earlier_line_says_what_was_before_its_start() {
+    let text = "alpha beta gamma\r\n";
+    let space = character(" ");
+    let beta = UtteranceSegment::text("beta".to_owned());
+    // A selection that starts on an earlier line than the caret's, as
+    // Notepad's Shift+End over "gamma" leaves it, the caret at the next
+    // line's start: what comes before its start, in the line the outpost
+    // reported with it (`notepad-third-word-to-end-backspace.txt`,
+    // `notepad-third-word-to-end-control-backspace.txt`).
+    for (motion, said) in [
+        (CaretMotion::Backspace, &space),
+        (CaretMotion::BackspaceWord, &beta),
+    ] {
+        let mut state = editing(text, 0);
+        let _ = reduce(
+            &mut state,
+            &event(NormalizedEvent::CaretMoved {
+                node_id: id(5),
+                caret: CaretReport {
+                    line: line(text, 100, 0),
+                    selection: Some(Selection {
+                        start: TextPosition {
+                            anchor: TextAnchor(300),
+                            offset: 11,
+                        },
+                        end: TextPosition {
+                            anchor: TextAnchor(201),
+                            offset: 0,
+                        },
+                    }),
+                    selection_line: Some(Box::new(line(text, 300, 11))),
+                },
+                selection_changes: Vec::new(),
+                content_changed: false,
+                new_selection: None,
+            }),
+        );
+        let effects = reduce(&mut state, &key(motion, false));
+        let effects = reduce(
+            &mut state,
+            &completed(
+                request_of(&effects),
+                selection_removed_reply(line(text, 100, 0)),
+            ),
+        );
+        assert_eq!(
+            spoken(&effects),
+            vec![said.clone(), message(Message::SelectionRemoved)],
+            "{motion:?} over a selection from an earlier line"
+        );
+    }
+
+    // A start in no line reported with it has nothing known before it:
+    // only the selection's change is said.
+    let mut state = editing(text, 0);
+    let _ = selection_event(
+        &mut state,
+        (line(text, 100, 6), Some(selection_from(3, false))),
+        (Vec::new(), false),
+    );
+    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            selection_removed_reply(line("gamma\r\n", 100, 0)),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
 #[test]
@@ -1211,6 +1291,70 @@ fn a_caret_reports_held_change_is_said_with_an_answer_not_spoken() {
             }
         );
     }
+}
+
+/// A key's answer that compared the selection with the one the outpost
+/// kept is the only one to carry that change, which no later answer
+/// carries again: Control+Backspace over the first word, which Notepad
+/// answers with nothing, then Backspace over it, whose effect the first
+/// key's watch may be answered with
+/// (`target/e2e-evidence/m42-selection-fixes-2026-10-22/`). The first
+/// key's answer, superseded by the second key, says nothing itself, and
+/// its change is said after the second key's words. An answer read once a
+/// later key that is not a caret key was pressed says its change too.
+#[test]
+fn a_superseded_answers_selection_change_is_said_after_the_next_keys_words() {
+    let text = "alpha beta gamma\r\n";
+    let first = TextChunk {
+        first: true,
+        ..line(text, 100, 6)
+    };
+    let mut state = editing(text, 0);
+    let _ = selection_event(
+        &mut state,
+        (first, Some(selection_from(0, true))),
+        (Vec::new(), false),
+    );
+    let effects = reduce(&mut state, &key(CaretMotion::BackspaceWord, false));
+    let superseded = request_of(&effects);
+    let effects = reduce(&mut state, &key(CaretMotion::Backspace, false));
+    let answered = request_of(&effects);
+    let effects = reduce(
+        &mut state,
+        &completed(
+            superseded,
+            selection_removed_reply(line("beta gamma\r\n", 100, 0)),
+        ),
+    );
+    assert_eq!(spoken(&effects), []);
+    let effects = reduce(
+        &mut state,
+        &completed(
+            answered,
+            caret_reply(true, line("beta gamma\r\n", 100, 0), None),
+        ),
+    );
+    assert_eq!(
+        spoken(&effects),
+        vec![message(Message::Blank), message(Message::SelectionRemoved)]
+    );
+
+    let mut state = editing(text, 0);
+    let _ = selection_event(
+        &mut state,
+        (line(text, 100, 6), Some(selection_from(6, true))),
+        (Vec::new(), false),
+    );
+    let effects = reduce(&mut state, &key(CaretMotion::Other, false));
+    let _ = reduce(&mut state, &Input::SpeechCancelled { at_ms: 50 });
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            selection_removed_reply(line("alpha gamma\r\n", 100, 6)),
+        ),
+    );
+    assert_eq!(spoken(&effects), vec![message(Message::SelectionRemoved)]);
 }
 
 #[test]
@@ -2339,7 +2483,6 @@ fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
             pressed_at_ms: KEY_PRESSED_AT,
             unit: TextUnit::Character,
             compare: None,
-            previous_selection: None,
         })
     );
 }
@@ -2617,6 +2760,7 @@ fn caret_at_anchor(anchor: u64) -> FocusText {
         caret: CaretReport {
             line: line("gamma\n", anchor, 0),
             selection: None,
+            selection_line: None,
         },
         selected_text: None,
     }
@@ -2714,6 +2858,7 @@ fn caret_read(selection: Option<Selection>, text: &str, selected_text: Option<&s
         caret: CaretReport {
             line: line(text, 100, 0),
             selection,
+            selection_line: None,
         },
         selected_text: selected_text.map(str::to_owned),
     }
@@ -2733,6 +2878,7 @@ fn caret_moved(selection: Option<Selection>, text: &str) -> Input {
         caret: CaretReport {
             line: line(text, 100, 0),
             selection,
+            selection_line: None,
         },
         selection_changes: Vec::new(),
         content_changed: false,
@@ -2833,6 +2979,7 @@ fn selection_report(
             caret: CaretReport {
                 line: line("alpha beta\r", 100, 5),
                 selection,
+                selection_line: None,
             },
             selection_changes: changes
                 .iter()
@@ -3032,6 +3179,7 @@ fn a_selecting_keys_answer_after_a_text_change_says_the_whole_new_selection() {
                     offset: 6,
                 },
             }),
+            selection_line: None,
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -3080,6 +3228,7 @@ fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_remove
                     offset: 11,
                 },
             }),
+            selection_line: None,
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -3096,6 +3245,7 @@ fn a_keys_answer_removing_the_selection_with_its_text_says_only_selection_remove
         caret: CaretReport {
             line: line("\n", 101, 0),
             selection: None,
+            selection_line: None,
         },
         unit: None,
         selection_changes: vec![SelectionChange {
@@ -3137,6 +3287,7 @@ fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_remov
                     offset: 24,
                 },
             }),
+            selection_line: None,
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -3153,6 +3304,7 @@ fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_remov
         caret: CaretReport {
             line: line("\n", 100, 0),
             selection: None,
+            selection_line: None,
         },
         unit: None,
         selection_changes: Vec::new(),
@@ -3164,9 +3316,11 @@ fn a_keys_answer_removing_the_selection_in_specific_terms_does_not_say_the_remov
 }
 
 #[test]
-fn a_selecting_keys_change_reported_before_its_answer_is_spoken_once() {
+fn a_selecting_keys_change_reported_while_it_waits_is_said_with_its_answer() {
     // The key's caret event reaches Core while its watch waits: the
-    // answer speaks the change.
+    // outpost compared the report with the selection it kept and replaced
+    // it, so the answer has no change left, and the report's words are
+    // said with it.
     let mut state = announced_field();
     let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
     let asked = request(&effects);
@@ -3179,56 +3333,13 @@ fn a_selecting_keys_change_reported_before_its_answer_is_spoken_once() {
         ),
     );
     assert_eq!(effects, []);
-    let mut answer = caret_reply(true, line("alpha beta\r", 100, 0), None);
-    if let TextReply::Caret(reply) = &mut answer {
-        reply.selection_changes = vec![SelectionChange {
-            selected: true,
-            text: "alpha".to_owned(),
-            characters: 5,
-        }];
-    }
+    let answer = caret_reply(true, line("alpha beta\r", 100, 0), None);
     let effects = reduce(&mut state, &completed(asked.query_id, answer));
     assert_eq!(
         spoken(&effects),
         vec![UtteranceSegment::new(SegmentContent::Phrase(
             Phrase::Selected(SelectionText::Text("alpha".to_owned()))
         ))]
-    );
-
-    // The key's caret event reaches Core before the key: the change is
-    // spoken, and the key's watch compares with the selection it made,
-    // not with the caret last reported before the key.
-    let mut state = announced_field();
-    let effects = reduce(
-        &mut state,
-        &selection_report(KEY_PRESSED_AT - 100, None, &[]),
-    );
-    assert_eq!(effects, []);
-    let effects = reduce(
-        &mut state,
-        &selection_report(
-            KEY_PRESSED_AT + 5,
-            Some(alpha_selected()),
-            &[(true, "alpha")],
-        ),
-    );
-    assert_eq!(
-        spoken(&effects),
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::Selected(SelectionText::Text("alpha".to_owned()))
-        ))]
-    );
-    let effects = reduce(&mut state, &key(CaretMotion::StartOfLine, true));
-    let TextOp::AwaitCaret(watch) = request(&effects).op else {
-        panic!("a caret watch in {effects:?}");
-    };
-    let selection = alpha_selected();
-    assert_eq!(
-        watch.previous_selection,
-        Some(PreviousSelection {
-            start: selection.start,
-            end: selection.end,
-        })
     );
 }
 
@@ -3478,6 +3589,7 @@ fn a_focus_reports_the_formatting_at_its_line_start_afresh() {
             caret: CaretReport {
                 line,
                 selection: None,
+                selection_line: None,
             },
             selected_text: None,
         },

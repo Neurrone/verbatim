@@ -25,9 +25,9 @@ use std::sync::atomic::AtomicU64;
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CaretWatch, Effect, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Pid, PreviousSelection, ReviewCommand, Role, SegmentContent, SpeechMark, StateSet,
-    TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply,
-    TextUnit, TraceId,
+    OutpostId, Pid, ReviewCommand, Role, SegmentContent, SpeechMark, StateSet, TextChunk,
+    TextMovement, TextOp, TextPoint, TextPosition, TextRead, TextReadAhead, TextReply, TextUnit,
+    TraceId,
 };
 use verbatim_outpost::text::edit::EditText;
 use verbatim_outpost::text::uia::UiaText;
@@ -318,7 +318,6 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
             since: Some(point_of(&before.line)),
             unit: TextUnit::Word,
             compare: None,
-            previous_selection: None,
         },
         &mut AlreadyMoved,
     ));
@@ -342,7 +341,6 @@ fn a_caret_key_is_answered_with_what_it_did<S: TextSource>(
             since: Some(at),
             unit: TextUnit::Character,
             compare: None,
-            previous_selection: Some(PreviousSelection { start: at, end: at }),
         },
         &mut AlreadyMoved,
     ));
@@ -428,6 +426,9 @@ struct CaretSummary {
     runs: Vec<(usize, RunAttributes)>,
     changes: Option<Vec<(bool, String)>>,
     texts: (Option<String>, Option<String>),
+    selection_start: Option<usize>,
+    selection_line: Option<(String, usize)>,
+    start_first: bool,
 }
 
 fn summary(answer: &CaretAnswer) -> CaretSummary {
@@ -455,6 +456,12 @@ fn summary(answer: &CaretAnswer) -> CaretSummary {
             answer.selection_text.as_deref().map(text),
             answer.previous_text.as_deref().map(text),
         ),
+        selection_start: answer.selection_start,
+        selection_line: answer
+            .selection_line
+            .as_ref()
+            .map(|line| (text(&line.text), line.offset)),
+        start_first: answer.start_first,
     }
 }
 
@@ -624,6 +631,44 @@ fn remote_and_classic_caret_reads_agree() {
         ..query(None, None)
     });
     assert_eq!(alone.texts, (Some("beta".to_owned()), None));
+    // The selection's start in the caret's line: the caret's own offset
+    // where the caret is the start; where `TextPattern2`'s caret is the
+    // end, as Windows 11 Notepad's is, read from the line's start; and for
+    // a selection that starts on an earlier line, that line, with the
+    // start's offset in it.
+    assert_eq!((alone.line.1, alone.selection_start), (6, Some(6)));
+    common::apply(&mut app, hwnd, "caret doc 6 10 end");
+    let at_end = caret_both(&query(None, None));
+    assert_eq!((at_end.line.1, at_end.selection_start), (10, Some(6)));
+    common::apply(&mut app, hwnd, "caret doc 6 13 end");
+    let below = caret_both(&query(None, None));
+    assert_eq!(
+        (below.line, below.selection_start, below.selection_line),
+        (
+            ("gamma\n".to_owned(), 2),
+            None,
+            Some(("alpha beta\n".to_owned(), 6))
+        )
+    );
+    // A selection from the text's start: the line it starts in is known
+    // to be the first, so nothing comes before it, whichever line the
+    // caret is on; one from the start of another line is not.
+    assert!(!at_end.start_first);
+    common::apply(&mut app, hwnd, "caret doc 0 5 end");
+    let first = caret_both(&query(None, None));
+    assert_eq!((first.selection_start, first.start_first), (Some(0), true));
+    common::apply(&mut app, hwnd, "caret doc 0 13 end");
+    let first_below = caret_both(&query(None, None));
+    assert_eq!(
+        (first_below.selection_line, first_below.start_first),
+        (Some(("alpha beta\n".to_owned(), 0)), true)
+    );
+    common::apply(&mut app, hwnd, "caret doc 11 13 end");
+    let second = caret_both(&query(None, None));
+    assert_eq!(
+        (second.selection_start, second.start_first),
+        (Some(0), false)
+    );
     // A selection longer than the cap for compared text: its first 513
     // units are read, and so are those of what the old ends hold.
     common::apply(

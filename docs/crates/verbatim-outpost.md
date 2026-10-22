@@ -1979,23 +1979,40 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     program compares nothing, so a typed character's report costs what it
     did. The edit controls compare offsets, with no message, and read a
     change's text with the window's text. The selection compared with is
-    forgotten, so the next report carries no change and sets it anew, at a
-    new focus (the report after it, whose selection Core already speaks
-    as the focus's), and when the outpost selects or moves the caret for Core
-    (`Select`, `MoveCaret`), whose own reply speaks what it did. The kept
-    selection is the only old selection a key that does not select
-    compares with: its answer compares with it exactly as a caret event's
-    report does, deleting keys included, and replaces it, so each change
-    is compared once, by whichever reads it first. When the key's caret
-    event is reported before its watch arrives, the report carries the
-    change and the answer has none left; Core says the report's change
-    after the key's own words (`docs/crates/verbatim-core.md`). A selecting
-    key compares with the selection Core found before it
-    (`CaretWatch::previous_selection`), which a report that came first
-    cannot have replaced. A terminal's reports carry no changes: NVDA's
+    forgotten at a new focus, so the next report carries no change and
+    sets it anew (the report after it, whose selection Core already speaks
+    as the focus's). When the outpost selects or moves the caret for Core
+    (`Select`, `MoveCaret`), whose own reply speaks what it did, it keeps
+    what it made instead (`NodeText::keep_selection`): the selection as
+    read after the select, with its text up to the cap for compared text,
+    in the select's one round trip through UIA (`RangeRead::selection_after`,
+    one `GetText` more), or the caret where it moved, collapsed; so the
+    application's report of it carries no change and the next key compares
+    with it. The kept selection is the only old selection any key compares
+    with, a selecting key's too: its answer compares with it exactly as a
+    caret event's report does and replaces it, so each change is compared
+    once, by whichever reads it first, and Core sends no selection of its
+    own. When the key's caret event is reported before its watch arrives,
+    the report carries the change and the answer has none left; Core says
+    the report's change after the key's own words
+    (`docs/crates/verbatim-core.md`). A terminal's reports carry no changes: NVDA's
     console class replaces the detection, which is not yet traced, so a
     terminal's reports keep no selection. A text change never forgets the
     selection.
+
+    A report's selection starts at a position Core can read before: in
+    the caret's line chunk when the selection starts there, or in the
+    line it starts in, sent as `CaretReport::selection_line`, when that
+    is an earlier line, so a Backspace over the selection says what comes
+    before its start, as NVDA's caret, the start, reads it. Through UIA,
+    where `TextPattern2`'s caret can be the selection's other end
+    (Windows 11 Notepad's after Shift with Right Arrow or End), the caret
+    read finds the start in the same program (`CaretRead::selection_start`):
+    its offset in the caret's line, or the earlier line it starts in and
+    its offset there, and, when it starts at its line's start, whether
+    that is the text's start, which marks the line `first`. Read by parts,
+    the start lies in the caret's line where it is the caret, as in a
+    classic edit control.
 
     Whether a comparison is made in general terms is one decision, the
     same for a caret event's report and every key's answer

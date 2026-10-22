@@ -49,9 +49,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use verbatim_model::{
     CaretReply, CaretReport, CaretWatch, FormatRun, LanguageRun, MAX_CHUNK_BYTES, MAX_RANGE_BYTES,
-    MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, PreviousSelection, Selection,
-    SelectionChange, TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint,
-    TextPosition, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit,
+    MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, MAX_SELECTION_TEXT_BYTES, Selection, SelectionChange,
+    TextAnchor, TextAttributes, TextChunk, TextMovement, TextOp, TextPoint, TextPosition, TextRead,
+    TextReadAhead, TextReply, TextThrough, TextUnit,
 };
 
 /// How many of its newest caret reports for a node the outpost remembers,
@@ -157,6 +157,35 @@ pub struct CaretRead<P> {
     /// ranges) moves as the text changes; `None` otherwise, and from a
     /// source that does not read it.
     pub previous_text: Option<Vec<u16>>,
+    /// Where the selection starts, when something is selected.
+    pub selection_start: SelectionStart<P>,
+}
+
+/// Where a selection starts, as a caret read in one go found it
+/// ([`CaretRead::selection_start`]), so the report can say what comes
+/// before it.
+pub struct SelectionStart<P> {
+    /// When the selection starts on the caret's line, the UTF-16 offset of
+    /// its start in the line's text.
+    pub in_line: Option<usize>,
+    /// When the selection starts on a line before the caret's, that line,
+    /// with the UTF-16 offset of the start in its text.
+    pub line: Option<(Unit<P>, usize)>,
+    /// The line the selection starts in is known to be the text's first,
+    /// found when the selection starts at that line's start.
+    pub first: bool,
+}
+
+impl<P> SelectionStart<P> {
+    /// Nothing known of where a selection starts.
+    #[must_use]
+    pub fn unknown() -> Self {
+        Self {
+            in_line: None,
+            line: None,
+            first: false,
+        }
+    }
 }
 
 impl<P> CaretRead<P> {
@@ -272,6 +301,21 @@ pub struct RangeRead<P> {
     /// it changed from the selection read just before (each change selected
     /// or not, and its UTF-16 text), by [`selection_changes`]'s rule.
     pub changes: Option<Vec<(bool, Vec<u16>)>>,
+    /// For [`RangeAction::SelectReporting`] when the selection was made and
+    /// its changes read, the selection read after it, which is kept for
+    /// the node's next comparison of selections; `None` otherwise.
+    pub selection_after: Option<SelectionAfter<P>>,
+}
+
+/// The selection read after a select ([`RangeRead::selection_after`]).
+pub struct SelectionAfter<P> {
+    /// Its ends, both the caret when nothing is selected.
+    pub ends: (P, P),
+    /// Whether something is selected.
+    pub selected: bool,
+    /// Its text, up to the source's cap for compared text, when something
+    /// is selected and the source read it.
+    pub text: Option<Vec<u16>>,
 }
 
 /// Why a source could not answer.
@@ -734,6 +778,21 @@ impl<P: Clone> NodeText<'_, P> {
         self.anchors.selection = None;
     }
 
+    /// Keeps the selection Verbatim made or the caret it moved, with its
+    /// ends (both the caret when nothing is `selected`) and its text when
+    /// read, for the node's next comparison of selections, as a caret
+    /// report's is kept: the application's caret event for it then carries
+    /// no change, and the next key compares with it. It is no report, so it
+    /// carries no report's number.
+    fn keep_selection(&mut self, ends: (P, P), selected: bool, text: Option<Vec<u16>>) {
+        self.anchors.selection = Some(KeptSelection {
+            ends,
+            collapsed: !selected,
+            text: text.filter(|_| selected).map(Arc::from),
+            report: 0,
+        });
+    }
+
     /// Whether the node's text changed since the selection kept was
     /// reported ([`Anchors::note_content_changed`]), clearing the note: a
     /// report that compares with the kept selection consumes it.
@@ -924,24 +983,22 @@ pub fn perform<S: TextSource>(
             end,
             through,
         } => {
-            let selected = select_text(source, anchors, (*start, *end), *through);
-            // Core speaks the selection it made from this reply, so the
-            // application's caret event for it carries no change of it.
-            if matches!(selected, Ok(TextReply::Selected(_))) {
-                anchors.forget_selection();
-            }
-            selected
+            // Core speaks the selection it made from this reply, and the
+            // selection is kept as a caret report's is, so the
+            // application's caret event for it carries no change of it,
+            // and the next key compares with it.
+            select_text(source, anchors, (*start, *end), *through)
         }
         TextOp::MoveCaret(point) => {
             let moved = select(source, anchors, *point, None);
             // The carets reported before are no longer where the caret is,
             // so a caret key's watch takes its baseline from Core, which
             // takes the move as its caret (say-all's), or from a caret read
-            // after the move; and a selection the move cleared is not
-            // reported as unselected.
+            // after the move; and the selection is kept collapsed where the
+            // caret was moved to (`select`), so one the move cleared is not
+            // reported as unselected, and the next key compares with it.
             if matches!(moved, Ok(TextReply::Done)) {
                 anchors.anchors.carets.clear();
-                anchors.forget_selection();
             }
             moved
         }
@@ -1222,9 +1279,13 @@ pub fn caret_report_checking<S: TextSource>(
         read_selection_text: keep,
         read_previous_text: last.as_ref().is_some_and(|last| last.text.is_some()),
     };
-    let (state, moved, read_at_ms, line, read_changes, (selection_text, previous_text)) =
+    let (state, moved, read_at_ms, line, read_changes, (selection_text, previous_text, start)) =
         if let Some(read) = source.caret_read(&request)? {
-            let texts = (read.kept_text(), read.previous_text.clone());
+            let texts = (
+                read.kept_text(),
+                read.previous_text.clone(),
+                Some(read.selection_start),
+            );
             let line = Some((read.line.0, read.line.1, read.formats));
             (read.state, read.moved, now_ms(), line, read.changes, texts)
         } else {
@@ -1234,7 +1295,7 @@ pub fn caret_report_checking<S: TextSource>(
                 Some(since) => source.compare(&state.caret, since)? != Ordering::Equal,
                 None => false,
             };
-            (state, moved, read_at_ms, None, None, (None, None))
+            (state, moved, read_at_ms, None, None, (None, None, None))
         };
     let content_changed = last.as_ref().is_some_and(|last| {
         content_changed(
@@ -1263,7 +1324,7 @@ pub fn caret_report_checking<S: TextSource>(
         source,
         anchors,
         (&state, read_at_ms),
-        line,
+        (line, start),
         (keep, selection_text),
     )?;
     Ok(ReportedCaret {
@@ -1347,7 +1408,10 @@ pub fn caret_report_from<S: TextSource>(
         source,
         anchors,
         (&read.state, read_at_ms),
-        Some((read.line.0, read.line.1, read.formats)),
+        (
+            Some((read.line.0, read.line.1, read.formats)),
+            Some(read.selection_start),
+        ),
         (false, None),
     )
 }
@@ -1371,17 +1435,26 @@ type UnitAt<P> = (Unit<P>, usize);
 /// its formatting, UTF-16 ranges of its text (empty when none was read).
 type ReadUnit<P> = (Unit<P>, usize, Vec<Formatting>);
 
+/// The caret's line when it was read already, and where the selection
+/// starts when the caret was read in one go ([`report_for`]).
+type LineRead<P> = (Option<ReadUnit<P>>, Option<SelectionStart<P>>);
+
 /// The report for a caret state already read, and the time its read
-/// finished, with its line when that was read already. With `keep`, its
+/// finished, with its line when that was read already, and, when the
+/// caret was read in one go, where the selection starts in that line
+/// ([`CaretRead::selection_start`]). The selection's start is reported as
+/// a position in the line's chunk when it lies on the line, so Core knows
+/// what comes before it (a Backspace over the selection says that); read
+/// by parts, it lies on the line where it is the caret. With `keep`, its
 /// selection is kept for the node's next comparison of selections
-/// ([`caret_report_since`], [`check_caret`]), with the selection's whole
-/// text when the read had it ([`CaretRead::selection_text`]); a
-/// terminal's reports leave it, since none compares with it.
+/// ([`caret_report_since`], [`check_caret`]), with the selection's text
+/// when the read had it ([`CaretRead::kept_text`]); a terminal's reports
+/// leave it, since none compares with it.
 fn report_for<S: TextSource>(
     source: &mut S,
     anchors: &mut NodeText<'_, S::Pos>,
     (state, read_at_ms): (&CaretState<S::Pos>, u64),
-    line: Option<ReadUnit<S::Pos>>,
+    (line, selection_start): LineRead<S::Pos>,
     (keep, selection_text): (bool, Option<Vec<u16>>),
 ) -> TextResult<CaretReport> {
     let (line, offset, formats) = if let Some(read) = line {
@@ -1390,13 +1463,42 @@ fn report_for<S: TextSource>(
         let (line, offset) = caret_line(source, state)?;
         (line, offset, Vec::new())
     };
-    let line = chunk(
+    let start = match (&state.selection, selection_start) {
+        (None, _) => SelectionStart::unknown(),
+        (Some(_), Some(read)) => read,
+        (Some((start, _)), None) => SelectionStart {
+            in_line: (source.compare(start, &state.caret)? == Ordering::Equal).then_some(offset),
+            ..SelectionStart::unknown()
+        },
+    };
+    let start_in_line = start
+        .in_line
+        .filter(|&start| start <= line.text.len())
+        .map(|start| to_utf8(&line.text, MAX_CHUNK_BYTES, &[start]).1[0]);
+    let mut line = chunk(
         source,
         anchors,
         (&line, TextUnit::Line),
         (offset, state.caret.clone()),
         (Vec::new(), &formats),
     );
+    line.first |= start.first && start_in_line.is_some();
+    // A selection that starts on an earlier line has that line reported
+    // with it, the start a position in it.
+    let selection_line = match (&state.selection, start.line) {
+        (Some((selection_start, _)), Some((unit, offset))) if start_in_line.is_none() => {
+            let mut chunk = chunk(
+                source,
+                anchors,
+                (&unit, TextUnit::Line),
+                (offset, selection_start.clone()),
+                (Vec::new(), &[]),
+            );
+            chunk.first |= start.first;
+            Some(Box::new(chunk))
+        }
+        _ => None,
+    };
     anchors.anchors.reports += 1;
     let report = anchors.anchors.reports;
     let carets = &mut anchors.anchors.carets;
@@ -1412,8 +1514,28 @@ fn report_for<S: TextSource>(
         selection: state.selection.clone(),
         report,
     });
+    let line_anchor = line.start;
+    let line_length = line.text.len();
     let selection = state.selection.as_ref().map(|(start, end)| Selection {
-        start: anchors.position_of(start.clone()),
+        start: match (
+            start_in_line.filter(|&offset| offset <= line_length),
+            &selection_line,
+        ) {
+            (Some(offset), _) => {
+                let position = TextPosition {
+                    anchor: line_anchor,
+                    offset: u32::try_from(offset).unwrap_or(u32::MAX),
+                };
+                anchors.remember(position, start.clone());
+                position
+            }
+            // `chunk` remembered the start at its offset.
+            (None, Some(chunk)) => TextPosition {
+                anchor: chunk.start,
+                offset: chunk.offset,
+            },
+            (None, None) => anchors.position_of(start.clone()),
+        },
         end: anchors.position_of(end.clone()),
     });
     if keep {
@@ -1429,7 +1551,11 @@ fn report_for<S: TextSource>(
             report,
         });
     }
-    Ok(CaretReport { line, selection })
+    Ok(CaretReport {
+        line,
+        selection,
+        selection_line,
+    })
 }
 
 /// Whether `state`'s selection differs from `previous`, a selection given
@@ -1535,6 +1661,9 @@ struct Polled<P> {
     /// What the compared selection's ends hold now, when the read had it
     /// ([`CaretRead::previous_text`]).
     previous_text: Option<Vec<u16>>,
+    /// Read in one go, where the selection starts in the line
+    /// ([`CaretRead::selection_start`]); `None` when read by parts.
+    selection_start: Option<SelectionStart<P>>,
 }
 
 /// Reads the caret for a caret key's watch: in one go where the source can
@@ -1560,6 +1689,7 @@ fn read_watched<S: TextSource>(
             moved_while_read: Some(read.moved_while_read),
             selection_text: kept_text,
             previous_text: read.previous_text,
+            selection_start: Some(read.selection_start),
         });
     }
     let state = source.caret()?;
@@ -1587,6 +1717,7 @@ fn read_watched<S: TextSource>(
         moved_while_read: None,
         selection_text: None,
         previous_text: None,
+        selection_start: None,
     })
 }
 
@@ -1630,18 +1761,15 @@ fn evidence<S: TextSource>(
     let Baseline {
         since,
         compared,
-        selecting,
         known,
         selected,
     } = baseline(source, anchors, watch)?;
     let request = CaretRequest {
         since: since.as_ref(),
         previous: compared.as_ref().map(|compared| &compared.ends),
-        // A selecting key's caret that moved is a selection that moved,
-        // evidence of the key; any other key's comparison, like a caret
-        // report's, has no change to tell when neither selection holds
-        // anything.
-        previous_collapsed: !selecting && compared.as_ref().is_some_and(|last| last.collapsed),
+        // A comparison, like a caret report's, has no change to tell when
+        // neither selection holds anything.
+        previous_collapsed: compared.as_ref().is_some_and(|last| last.collapsed),
         unit: extra_unit(source, watch.unit),
         formats: format_span(watch.unit),
         recheck: true,
@@ -1656,10 +1784,9 @@ fn evidence<S: TextSource>(
         // caret report read after the key may have replaced already; the
         // selection in the baseline's report is compared too, unless it is
         // the one the read compared with.
-        let compared_already = selecting
-            || compared
-                .as_ref()
-                .is_some_and(|compared| compared.report == *report);
+        let compared_already = compared
+            .as_ref()
+            .is_some_and(|compared| compared.report == *report);
         moved = match (before, &polled.state.selection) {
             (None, None) => false,
             (Some(_), None) | (None, Some(_)) => true,
@@ -1794,14 +1921,10 @@ fn on_line<S: TextSource>(source: &mut S, at: &S::Pos, line: &Unit<S::Pos>) -> T
 /// the caret, as known before the key.
 struct Baseline<P> {
     since: Option<P>,
-    /// A selecting key's selection as Core found it before the key
-    /// ([`CaretWatch::previous_selection`]); for any other key, the
-    /// selection kept for the node, the one a caret event's report
-    /// compares with, so each change is compared once, by whichever reads
-    /// it first.
+    /// The selection kept for the node, the one a caret event's report
+    /// compares with, whatever the key, so each change is compared once,
+    /// by whichever reads it first.
     compared: Option<KeptSelection<P>>,
-    /// `compared` is a selecting key's, from Core.
-    selecting: bool,
     known: Option<(String, String)>,
     /// The selection in the caret report `since` came from, and that
     /// report's number; `None` when it came from Core.
@@ -1844,26 +1967,7 @@ fn baseline<S: TextSource>(
         Some(position) => anchors.resolve(source, position)?,
         None => None,
     };
-    let (compared, selecting) = match watch.previous_selection {
-        Some(PreviousSelection { start, end }) => (
-            match (
-                anchors.resolve(source, start)?,
-                anchors.resolve(source, end)?,
-            ) {
-                (Some(start_pos), Some(end_pos)) => Some(KeptSelection {
-                    ends: (start_pos, end_pos),
-                    // Core sends the caret as both ends when nothing was
-                    // selected.
-                    collapsed: start == end,
-                    text: None,
-                    report: 0,
-                }),
-                _ => None,
-            },
-            true,
-        ),
-        None => (anchors.anchors.selection.clone(), false),
-    };
+    let compared = anchors.anchors.selection.clone();
     // The characters either side of the caret where Core last knew it. A
     // provider's positions follow edits (a deleted character takes the
     // position Core knew with it), and the application may have handled the
@@ -1878,7 +1982,6 @@ fn baseline<S: TextSource>(
     Ok(Baseline {
         since,
         compared,
-        selecting,
         known,
         selected,
     })
@@ -1906,6 +2009,7 @@ fn answer_caret<S: TextSource>(
         formats,
         changes,
         selection_text,
+        selection_start,
         ..
     } = polled;
     let (line_formats, unit_formats) = if span == Some(FormatSpan::Line) {
@@ -1920,7 +2024,7 @@ fn answer_caret<S: TextSource>(
         source,
         anchors,
         (&state, read_at_ms),
-        line,
+        (line, selection_start),
         (true, selection_text),
     )?;
     let unit = unit_at_caret(
@@ -2496,9 +2600,15 @@ fn select<S: TextSource>(
     start: TextPoint,
     end: Option<TextPoint>,
 ) -> TextResult<TextReply> {
+    let moving = end.is_none();
     if let Some(reply) = range_at_once(source, anchors, (start, end, None), RangeAction::Select)? {
         return Ok(match reply {
-            Ok(read) if read.selected => TextReply::Done,
+            Ok(read) if read.selected => {
+                if moving {
+                    anchors.keep_selection((read.start.clone(), read.start), false, None);
+                }
+                TextReply::Done
+            }
             Ok(_) => TextReply::Unsupported,
             Err(reply) => reply,
         });
@@ -2508,6 +2618,9 @@ fn select<S: TextSource>(
         Err(reply) => return Ok(reply),
     };
     Ok(if source.select(&start, &end)? {
+        if moving {
+            anchors.keep_selection((start.clone(), start), false, None);
+        }
         TextReply::Done
     } else {
         TextReply::Unsupported
@@ -2533,13 +2646,19 @@ fn select_text<S: TextSource>(
         RangeAction::SelectReporting,
     )? {
         return Ok(match reply {
-            Ok(read) if read.selected => TextReply::Selected(
-                read.changes
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|(selected, text)| change_of(selected, &text))
-                    .collect(),
-            ),
+            Ok(read) if read.selected => {
+                match read.selection_after {
+                    Some(after) => anchors.keep_selection(after.ends, after.selected, after.text),
+                    None => anchors.forget_selection(),
+                }
+                TextReply::Selected(
+                    read.changes
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|(selected, text)| change_of(selected, &text))
+                        .collect(),
+                )
+            }
             Ok(_) => TextReply::Unsupported,
             Err(reply) => reply,
         });
@@ -2556,9 +2675,13 @@ fn select_text<S: TextSource>(
         return Ok(TextReply::Unsupported);
     }
     let state = source.caret()?;
-    Ok(TextReply::Selected(selection_changes(
-        source, &previous, &state,
-    )?))
+    let changes = selection_changes(source, &previous, &state)?;
+    let selected = state.selection.is_some();
+    let ends = state
+        .selection
+        .unwrap_or_else(|| (state.caret.clone(), state.caret));
+    anchors.keep_selection(ends, selected, None);
+    Ok(TextReply::Selected(changes))
 }
 
 /// The screen position of a point.

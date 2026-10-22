@@ -58,8 +58,10 @@ nothing. `crates/mockapp/src/stdin.rs` documents each command in full.
 - `select <id>` marks the node selected, moving the state off any other,
   and raises `SelectionItem_ElementSelected` under UIA or
   `EVENT_OBJECT_SELECTION` under MSAA.
-- `caret <id> <start> [<end>]` selects a text node's text between two
-  UTF-16 offsets, or puts the caret alone at `start`, raising no event.
+- `caret <id> <start> [<end> [end]]` selects a text node's text between
+  two UTF-16 offsets, or puts the caret alone at `start`, raising no
+  event; with `end`, `TextPattern2`'s caret is the selection's end, as
+  Windows 11 Notepad's is after Shift with Right Arrow (UIA only).
 - `caret-event <id>` raises the backend's caret event for a text node:
   UIA's text selection changed event, or under MSAA
   `EVENT_OBJECT_TEXTSELECTIONCHANGED` from the edit control's client

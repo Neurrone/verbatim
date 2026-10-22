@@ -4,7 +4,7 @@
 //! `set-name <id> <text>`, `set-value <id> <text>`,
 //! `set-description <id> <text>`, `set-controller-for <id> [<controlled>]`,
 //! `set-states <id> <state>...`, `select <id>`,
-//! `caret <id> <start> [<end>]`, `caret-event <id>`,
+//! `caret <id> <start> [<end> [end]]`, `caret-event <id>`,
 //! `console-caret <column> <row>`, `system-caret [show]`,
 //! `set-text <id> <text>`, `write-on-read <id> <text>`, `text-changed <id>`,
 //! `screen <id> <rows>`, `active-text-position <id> <start> <end>`,
@@ -85,11 +85,14 @@ pub(crate) enum Command {
     /// selection notification — `SelectionItem_ElementSelected` for UIA,
     /// `EVENT_OBJECT_SELECTION` for MSAA.
     Select(String),
-    /// `caret <id> <start> [<end>]`: selects a text node's text from `start`
-    /// to `end` (UTF-16 offsets; the caret alone at `start` when `end` is
-    /// left out), raising no event, as an application's caret moves before
-    /// the client asks where it is.
-    Caret(String, usize, usize),
+    /// `caret <id> <start> [<end> [end]]`: selects a text node's text from
+    /// `start` to `end` (UTF-16 offsets; the caret alone at `start` when
+    /// `end` is left out), raising no event, as an application's caret
+    /// moves before the client asks where it is. `TextPattern2`'s caret is
+    /// the selection's start, or its end with the word `end` after the
+    /// offsets, as Windows 11 Notepad's is after Shift+Right Arrow (UIA
+    /// only).
+    Caret(String, usize, usize, bool),
     /// `caret-event <id>`: raises the backend's caret event for a text
     /// node, as an application reports its caret after moving it: UIA's
     /// text selection changed event from the node, or, in the MSAA backend,
@@ -265,7 +268,12 @@ fn caret(rest: &str) -> Option<Command> {
         Some(end) => end.parse().ok()?,
         None => start,
     };
-    Some(Command::Caret(id.to_owned(), start, end))
+    let at_end = match parts.next() {
+        Some("end") => true,
+        Some(_) => return None,
+        None => false,
+    };
+    Some(Command::Caret(id.to_owned(), start, end, at_end))
 }
 
 /// `stall`'s arguments: its length, and optionally when into it to apply
@@ -561,15 +569,24 @@ mod tests {
     #[test]
     fn parses_caret() {
         match parse_command("caret doc 3") {
-            Some(Command::Caret(id, start, end)) => {
-                assert_eq!((id.as_str(), start, end), ("doc", 3, 3));
+            Some(Command::Caret(id, start, end, at_end)) => {
+                assert_eq!((id.as_str(), start, end, at_end), ("doc", 3, 3, false));
             }
             _ => panic!("expected Caret"),
         }
         match parse_command("caret doc 3 7") {
-            Some(Command::Caret(_, start, end)) => assert_eq!((start, end), (3, 7)),
+            Some(Command::Caret(_, start, end, at_end)) => {
+                assert_eq!((start, end, at_end), (3, 7, false));
+            }
             _ => panic!("expected Caret"),
         }
+        match parse_command("caret doc 3 7 end") {
+            Some(Command::Caret(_, start, end, at_end)) => {
+                assert_eq!((start, end, at_end), (3, 7, true));
+            }
+            _ => panic!("expected Caret"),
+        }
+        assert!(parse_command("caret doc 3 7 middle").is_none());
         assert!(parse_command("caret doc").is_none());
     }
 

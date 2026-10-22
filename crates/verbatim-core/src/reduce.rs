@@ -367,6 +367,12 @@ fn reduce_text_completed(
     {
         return editing::caret_reply(state, trace_id, &pending, reply);
     }
+    if let Some((_, node)) = state
+        .superseded_caret
+        .take_if(|(superseded, _)| *superseded == query_id)
+    {
+        return editing::superseded_reply(state, trace_id, node, &reply);
+    }
     if let Some(pending) = state
         .pending_text
         .take_if(|pending| pending.query_id == query_id)
@@ -470,7 +476,7 @@ fn reduce_caret_moved(
     effects.extend(editing::selection_changed(
         state,
         trace_id,
-        (node, observed_at_ms),
+        node,
         (selection_changes, general),
     ));
     effects

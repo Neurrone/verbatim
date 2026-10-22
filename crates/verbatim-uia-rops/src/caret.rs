@@ -386,6 +386,20 @@ pub struct CaretAnswer {
     /// are now, up to [`MAX_COMPARED_TEXT`], which a provider moves as the
     /// text changes; `None` otherwise.
     pub previous_text: Option<Vec<u16>>,
+    /// When something is selected and the selection starts on the caret's
+    /// line, how many UTF-16 code units of the line's text come before the
+    /// selection's start: the caret's own offset where the caret is the
+    /// start, read from the line's start where `TextPattern2`'s caret is
+    /// another end; `None` otherwise.
+    pub selection_start: Option<usize>,
+    /// When something is selected and the selection starts on a line
+    /// before the caret's, as `TextPattern2`'s caret at its end can be,
+    /// that line, its `offset` being where the selection starts in it.
+    pub selection_line: Option<UnitRead>,
+    /// The line the selection starts in is the text's first, known when
+    /// the selection starts at that line's start, so that nothing comes
+    /// before the selection; false otherwise.
+    pub start_first: bool,
 }
 
 /// Whether a read with `query` reads the selection's text
@@ -458,6 +472,9 @@ impl CaretLineRegisters {
             moved_while_read: false,
             selection_text: None,
             previous_text: None,
+            selection_start: None,
+            selection_line: None,
+            start_first: false,
         })
     }
 }
@@ -1090,6 +1107,65 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
     // The line, the unit, and the formatting.
     let line_unit = b.int(TextUnit_Line.0);
     let line = c.unit_at(b, point, line_unit);
+    // Where the selection starts, when `TextPattern2`'s caret may be its
+    // other end (otherwise the caret is the start): in the caret's line,
+    // or in the line before it where it starts there.
+    let start_line = b.new_null().assume::<kind::TextRange>();
+    let start_offset = match query.pattern2 {
+        Some(_) => b.new_uint(0),
+        None => line.offset,
+    };
+    let selection_start = query.pattern2.is_some().then(|| {
+        let on_line = b.new_bool(false);
+        let on_line = b.add_to_results(on_line);
+        let start_offset = b.add_to_results(start_offset);
+        let other = b.new_null().assume::<kind::TextRange>();
+        let other = b.add_to_results(other);
+        let other_text = b.new_string("");
+        let other_text = b.add_to_results(other_text);
+        b.if_(has_selection, |b| {
+            let order = b.text_range_compare_endpoints(selection, c.start, line.range, c.start);
+            let after = b.compare(order, c.zero, Comparison::GreaterThanOrEqual);
+            b.if_else(
+                after,
+                |b| {
+                    b.set(start_line, line.range);
+                    let yes = b.bool(true);
+                    b.set(on_line, yes);
+                },
+                |b| {
+                    let range = c.collapsed(b, selection);
+                    let line_unit = b.int(TextUnit_Line.0);
+                    b.text_range_expand_to_enclosing_unit(range, line_unit);
+                    let text = b.text_range_get_text(range, c.max_text);
+                    b.set(other_text, text);
+                    b.set(other, range);
+                    b.set(start_line, range);
+                },
+            );
+            let before = b.text_range_clone(start_line);
+            b.text_range_move_endpoint_by_range(before, c.end, selection, c.start);
+            let text = b.text_range_get_text(before, c.max_text);
+            let size = b.string_size(text);
+            b.set(start_offset, size);
+        });
+        (on_line, start_offset, other, other_text)
+    });
+    if query.pattern2.is_none() {
+        b.set(start_line, line.range);
+    }
+    // Whether that start is the text's, when it is its line's.
+    let start_first = b.new_bool(false);
+    let start_first = b.add_to_results(start_first);
+    let none = b.uint(0);
+    let at_zero = b.equal(start_offset, none);
+    let check = b.and(has_selection, at_zero);
+    b.if_(check, |b| {
+        let document = b.text_pattern_get_document_range(pattern);
+        let order = b.text_range_compare_endpoints(start_line, c.start, document, c.start);
+        let first = b.equal(order, c.zero);
+        b.set(start_first, first);
+    });
     let unit = query.unit.map(|unit| {
         let unit = b.int(unit.0);
         c.unit_at(b, point, unit)
@@ -1140,6 +1216,8 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         moved_while_read,
         selection_text,
         previous_text,
+        selection_start,
+        start_first,
     }
 }
 
@@ -1219,7 +1297,44 @@ struct ReadRegisters {
     moved_while_read: Option<Reg<kind::Bool>>,
     selection_text: Option<Reg<kind::Str>>,
     previous_text: Option<Reg<kind::Str>>,
+    selection_start: Option<StartRegisters>,
+    start_first: Reg<kind::Bool>,
 }
+
+/// Where the selection starts, from the program's [`StartRegisters`]: its
+/// offset in the caret's line, or the earlier line it starts in.
+fn read_start(
+    outcome: &Outcome,
+    (on_line, offset, other, other_text): StartRegisters,
+) -> Result<(Option<usize>, Option<UnitRead>), Error> {
+    let offset = usize::try_from(outcome.get(offset)?).unwrap_or(usize::MAX);
+    if outcome.get(on_line)? {
+        return Ok((Some(offset), None));
+    }
+    let range = outcome
+        .get(other)?
+        .ok_or(Error::MissingResult(other.id()))?;
+    let text = string_of(outcome, other_text)?.encode_utf16().collect();
+    Ok((
+        None,
+        Some(UnitRead {
+            range,
+            text,
+            offset,
+        }),
+    ))
+}
+
+/// The registers of where a selection starts, read where `TextPattern2`'s
+/// caret may be its other end: whether it starts on the caret's line, its
+/// offset in the line it starts in, and that line's range and text when it
+/// is another.
+type StartRegisters = (
+    Reg<kind::Bool>,
+    Reg<kind::Uint>,
+    Reg<kind::TextRange>,
+    Reg<kind::Str>,
+);
 
 thread_local! {
     /// The caret read programs this thread built.
@@ -1258,6 +1373,8 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         moved_while_read,
         selection_text,
         previous_text,
+        selection_start,
+        start_first,
     } = r;
     let outcome = operation.execute()?;
     let caret_range = outcome
@@ -1279,6 +1396,12 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         .map(|text| string_of(&outcome, text).map(|text| text.encode_utf16().collect()))
         .transpose()?;
     let line = line.read(&outcome)?;
+    let (selection_start, selection_line) = match selection_start {
+        _ if !selected => (None, None),
+        None => (Some(line.offset), None),
+        Some(registers) => read_start(&outcome, registers)?,
+    };
+    let start_first = outcome.get(start_first)?;
     let unit = unit.map(|unit| unit.read(&outcome)).transpose()?;
     let (runs, unsupported) = match runs {
         Some(runs) => {
@@ -1310,6 +1433,9 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         },
         selection_text,
         previous_text,
+        selection_start,
+        selection_line,
+        start_first,
     })
 }
 
@@ -1789,6 +1915,10 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         _ => None,
     };
     let line = unit_at(&point, TextUnit_Line, query.max_text)?;
+    let (selection_start, selection_line, start_first) = match &selection {
+        None => (None, None, false),
+        Some(selection) => classic_start(query, selection, &line)?,
+    };
     let unit = query
         .unit
         .map(|unit| unit_at(&point, unit, query.max_text))
@@ -1814,7 +1944,62 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         moved_while_read,
         selection_text,
         previous_text,
+        selection_start,
+        selection_line,
+        start_first,
     })
+}
+
+/// Where `selection` starts, the classic way, as [`build`] emits it: its
+/// offset in the caret's `line` (the caret's own without `TextPattern2`),
+/// or the earlier line it starts in, and whether the line it starts in is
+/// the text's first, read when it starts at that line's start.
+fn classic_start(
+    query: &CaretQuery<'_>,
+    selection: &IUIAutomationTextRange,
+    line: &UnitRead,
+) -> Result<(Option<usize>, Option<UnitRead>, bool), Error> {
+    let (start, start_line) = if query.pattern2.is_none() {
+        (Some(line.offset), None)
+    } else {
+        let on_line =
+            selection.compare_endpoints(Endpoint::Start, &line.range, Endpoint::Start)? >= 0;
+        let (range, text) = if on_line {
+            (line.range.clone(), None)
+        } else {
+            let range = collapsed(selection)?;
+            range.expand(TextUnit_Line)?;
+            let text = range.text(query.max_text)?;
+            (range, Some(text))
+        };
+        let before = range.clone_range()?;
+        before.move_endpoint_to(Endpoint::End, selection, Endpoint::Start)?;
+        let offset = before.text(query.max_text)?.len();
+        match text {
+            None => (Some(offset), None),
+            Some(text) => (
+                None,
+                Some(UnitRead {
+                    range,
+                    text,
+                    offset,
+                }),
+            ),
+        }
+    };
+    let at_line_start = match (start, &start_line) {
+        (Some(0), _) => Some(&line.range),
+        (None, Some(start_line)) if start_line.offset == 0 => Some(&start_line.range),
+        _ => None,
+    };
+    let first = match at_line_start {
+        Some(range) => {
+            let document = query.pattern.document_range()?;
+            range.compare_endpoints(Endpoint::Start, &document, Endpoint::Start)? == 0
+        }
+        None => false,
+    };
+    Ok((start, start_line, first))
 }
 
 /// The caret, whether it is collapsed, and the selection, read the

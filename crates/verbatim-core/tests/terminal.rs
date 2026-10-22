@@ -929,6 +929,7 @@ fn moved_onto(line: &str) -> TextReply {
                 formats: Vec::new(),
             },
             selection: None,
+            selection_line: None,
         },
         read_at_ms: 11,
         unit: None,
@@ -1116,6 +1117,7 @@ fn caret_on(text: &str, offset: u32) -> verbatim_model::CaretReport {
             formats: Vec::new(),
         },
         selection: None,
+        selection_line: None,
     }
 }
 

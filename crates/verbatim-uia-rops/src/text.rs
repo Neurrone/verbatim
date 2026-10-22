@@ -21,9 +21,9 @@ use verbatim_uia::text::{Endpoint, Language, TextPatternExt, TextRangeExt, caret
 
 use crate::builder::{Builder, Reg, kind};
 use crate::caret::{
-    CaretRegisters, Constants, ProgramEnd, RangeEnd, SelectionTextChange, classic_changes,
-    emit_caret, emit_caret_with, emit_changes, endpoint_number, gone_or_timed_out, read_changes,
-    string_of,
+    CaretRegisters, Constants, MAX_COMPARED_TEXT, ProgramEnd, RangeEnd, SelectionTextChange,
+    classic_changes, emit_caret, emit_caret_with, emit_changes, endpoint_number, gone_or_timed_out,
+    read_changes, string_of,
 };
 use crate::error::Error;
 use crate::focus::Path;
@@ -237,6 +237,23 @@ pub struct RangeAnswer {
     /// that the changes can still be read ([`text_range`] reads them).
     /// `changes` is then `None`.
     pub unread: Option<ChangesUnread>,
+    /// For [`RangeAction::SelectReporting`] when the selection was made
+    /// and its changes read, the selection read after it.
+    pub selection_after: Option<SelectionAfter>,
+}
+
+/// The selection read after a select ([`RangeAnswer::selection_after`]),
+/// which the caller keeps to compare the next selection with.
+#[derive(Debug)]
+pub struct SelectionAfter {
+    /// The selection's range when something is selected, else a range
+    /// whose start is the caret.
+    pub range: IUIAutomationTextRange,
+    /// Whether something is selected.
+    pub selected: bool,
+    /// The selection's text, up to [`MAX_COMPARED_TEXT`], when something is
+    /// selected.
+    pub text: Option<Vec<u16>>,
 }
 
 /// A selection a remote program made whose changes it could not read
@@ -336,11 +353,10 @@ pub fn text_range(query: &RangeQuery<'_>, remote: bool) -> Result<(RangeAnswer, 
                     RangeAction::SelectReporting(max) => max,
                     RangeAction::Text(_) | RangeAction::Select => 0,
                 };
-                answer.changes = Some(classic_changes_since(
-                    query.target,
-                    (&unread.before, unread.before_end),
-                    max,
-                )?);
+                let (changes, after) =
+                    classic_changes_since(query.target, (&unread.before, unread.before_end), max)?;
+                answer.changes = Some(changes);
+                answer.selection_after = Some(after);
                 let failed = windows::core::Error::from(windows::core::HRESULT(unread.status));
                 Ok((answer, Path::Fallback(Error::Uia(failed))))
             }
@@ -883,9 +899,9 @@ pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
         start.clone()
     };
     let selected = outcome.get(selected)?;
-    let (changes, unread) = match changes {
+    let (changes, unread, selection_after) = match changes {
         Some(report) if selected => report.read(&outcome)?,
-        _ => (None, None),
+        _ => (None, None, None),
     };
     Ok(RangeAnswer {
         start,
@@ -894,6 +910,7 @@ pub fn text_range_remote(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> {
         selected,
         changes,
         unread,
+        selection_after,
     })
 }
 
@@ -921,11 +938,14 @@ fn emit_report(
         },
         |b, failed| b.set(status, failed),
     );
+    let (arrays, after, after_text) = arrays.expect("the try block's body is emitted");
     ReportRegisters {
-        arrays: arrays.expect("the try block's body is emitted"),
+        arrays,
         read,
         status,
         before,
+        after,
+        after_text,
     }
 }
 
@@ -937,18 +957,37 @@ struct ReportRegisters {
     read: Reg<kind::Bool>,
     status: Reg<kind::Int>,
     before: CaretRegisters,
+    after: CaretRegisters,
+    after_text: Reg<kind::Str>,
 }
 
 impl ReportRegisters {
     /// The changes, when the program read them, or else the selection
     /// before, for the caller to read them ([`ChangesUnread`]).
-    fn read(
-        &self,
-        outcome: &Outcome,
-    ) -> Result<(Option<Vec<SelectionTextChange>>, Option<ChangesUnread>), Error> {
+    fn read(&self, outcome: &Outcome) -> Result<ReportRead, Error> {
         if outcome.get(self.read)? {
             let (flags, texts) = self.arrays;
-            return Ok((Some(read_changes(outcome, flags, texts)?), None));
+            let selected = outcome.get(self.after.has_selection)?;
+            let range = if selected {
+                self.after.selection
+            } else {
+                self.after.caret
+            };
+            let after = SelectionAfter {
+                range: outcome
+                    .get(range)?
+                    .ok_or(Error::MissingResult(range.id()))?,
+                selected,
+                text: selected
+                    .then(|| string_of(outcome, self.after_text))
+                    .transpose()?
+                    .map(|text| text.encode_utf16().collect()),
+            };
+            return Ok((
+                Some(read_changes(outcome, flags, texts)?),
+                None,
+                Some(after),
+            ));
         }
         let (range, before_end) = if outcome.get(self.before.has_selection)? {
             (self.before.selection, Endpoint::End)
@@ -965,9 +1004,18 @@ impl ReportRegisters {
                 before_end,
                 status: outcome.get(self.status)?,
             }),
+            None,
         ))
     }
 }
+
+/// What [`ReportRegisters::read`] reads: the changes and the selection
+/// after, or the selection before for the caller to read them.
+type ReportRead = (
+    Option<Vec<SelectionTextChange>>,
+    Option<ChangesUnread>,
+    Option<SelectionAfter>,
+);
 
 /// Emits how the selection changed from `before`, when `selected`: the
 /// selection read again and compared with it, each change's text read up
@@ -978,7 +1026,11 @@ fn emit_selection_change(
     before: CaretRegisters,
     (element, pattern, pattern2): (Reg<kind::Element>, Reg<kind::TextPattern>, bool),
     (selected, max): (Reg<kind::Bool>, i32),
-) -> (Reg<kind::Array>, Reg<kind::Array>) {
+) -> (
+    (Reg<kind::Array>, Reg<kind::Array>),
+    CaretRegisters,
+    Reg<kind::Str>,
+) {
     // The ends before: the selection's, else the caret twice.
     let old = b.new_null().assume::<kind::TextRange>();
     let old_end = b.new_int(0);
@@ -994,14 +1046,23 @@ fn emit_selection_change(
         },
     );
     let old: (ProgramEnd, ProgramEnd) = ((old, c.start), (old, old_end));
-    let after = emit_caret_with(b, c, (element, pattern), pattern2, false);
-    emit_changes(
+    let after = emit_caret_with(b, c, (element, pattern), pattern2, true);
+    let arrays = emit_changes(
         b,
         c,
         (after.has_selection, after.selection, after.caret),
         old,
         (selected, max),
-    )
+    );
+    // The selection's text, kept with it to compare.
+    let text = b.new_string("");
+    let text = b.add_to_results(text);
+    b.if_(after.has_selection, |b| {
+        let compared = b.int(MAX_COMPARED_TEXT);
+        let read = b.text_range_get_text(after.selection, compared);
+        b.set(text, read);
+    });
+    (arrays, after, text)
 }
 
 /// A point's place on the screen in one round trip.
@@ -1347,11 +1408,12 @@ pub fn text_range_classic(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> 
             (Vec::new(), range.select().is_ok())
         }
     };
-    let changes = match (reporting, before) {
+    let (changes, selection_after) = match (reporting, before) {
         (Some(max), Some((old, old_end))) if selected => {
-            Some(classic_changes_since(query.target, (&old, old_end), max)?)
+            let (changes, after) = classic_changes_since(query.target, (&old, old_end), max)?;
+            (Some(changes), Some(after))
         }
-        _ => None,
+        _ => (None, None),
     };
     Ok(RangeAnswer {
         start,
@@ -1360,6 +1422,7 @@ pub fn text_range_classic(query: &RangeQuery<'_>) -> Result<RangeAnswer, Error> 
         selected,
         changes,
         unread: None,
+        selection_after,
     })
 }
 
@@ -1371,8 +1434,9 @@ fn classic_changes_since(
     target: TextTarget<'_>,
     (old, old_end): (&IUIAutomationTextRange, Endpoint),
     max: i32,
-) -> Result<Vec<SelectionTextChange>, Error> {
-    let (new, new_end) = ends_of(&classic_caret(target)?);
+) -> Result<(Vec<SelectionTextChange>, SelectionAfter), Error> {
+    let state = classic_caret(target)?;
+    let (new, new_end) = ends_of(&state);
     let ends = |range, end| {
         (
             RangeEnd {
@@ -1385,7 +1449,17 @@ fn classic_changes_since(
             },
         )
     };
-    classic_changes(ends(old, old_end), ends(&new, new_end), max)
+    let changes = classic_changes(ends(old, old_end), ends(&new, new_end), max)?;
+    let after = SelectionAfter {
+        text: state
+            .selection
+            .as_ref()
+            .map(|selection| selection.text(MAX_COMPARED_TEXT))
+            .transpose()?,
+        selected: state.selection.is_some(),
+        range: new,
+    };
+    Ok((changes, after))
 }
 
 /// The selection a caret read found, as a range and the end of it where

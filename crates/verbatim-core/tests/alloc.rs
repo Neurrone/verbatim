@@ -227,6 +227,7 @@ fn caret_moved(line: TextChunk, observed_at_ms: u64) -> Input {
             caret: CaretReport {
                 line,
                 selection: None,
+                selection_line: None,
             },
             selection_changes: Vec::new(),
             content_changed: false,
@@ -269,6 +270,7 @@ fn text_steps_allocate_the_same_whatever_the_ancestor_chain() {
             caret: CaretReport {
                 line: long_line(10, 1),
                 selection: None,
+                selection_line: None,
             },
             unit: None,
             selection_changes: Vec::new(),

@@ -288,15 +288,20 @@ the contract the Windows side implements.
   selection_changes, content_changed, new_selection }`: the caret or selection moved in a node with text.
   A `CaretReport` is the line at the caret, with its `offset` at the caret,
   and the `Selection` (a start and an end `TextPosition`), `None` when
-  nothing is selected. Send one on every caret or selection change in
+  nothing is selected, whose start is a position in that line when it
+  starts there, or in `selection_line` (`serde(default)`), the line it
+  starts in when that is an earlier one, so Core knows what comes before
+  the selection (a Backspace over it says that). Send one on every caret or selection change in
   the focus, coalesced so a burst sends only the
   latest, with the selection changes of every report it replaces before
   its own; a report carrying changes is not replaced across a reply. It keeps Core's copy of the caret current (Backspace knows what
   it deleted, the review cursor follows the caret). `selection_changes`
   (`serde(default)`, left out when empty) is how the selection changed
   from the one in the outpost's last report for the node, by the rule of
-  `CaretReply`'s: empty for a terminal, and for the first report after
-  Verbatim selected or moved the caret itself. `content_changed` and
+  `CaretReply`'s: empty for a terminal; after Verbatim selected text or
+  moved the caret itself, the comparison is with that selection or caret,
+  which the outpost keeps, so the application's report of it carries no
+  change. `content_changed` and
   `new_selection` (both `serde(default)`, left out when false or `None`)
   say the changes in general terms, as a `CaretReply`'s do. A report
   speaks only these changes, as
@@ -360,8 +365,8 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   which case its newest such report; a caret read at or after that time
   may already show the key's effect); the text of `unit` at the caret differing from `compare` (the
   character or word at the caret before a Delete); the selection no longer
-  `previous_selection`, or, without one, no longer the selection the
-  outpost kept for the node from its last caret report. A watch marked `landing` (a key judged by where the
+  the selection the outpost kept for the node: its last caret report's or
+  key answer's, or the selection Verbatim made or the caret it moved. A watch marked `landing` (a key judged by where the
   caret landed) is answered with `same_line`, whether the caret is still on
   the line where it was. In a terminal, a key answered by where the caret landed
   may carry `removed`, the text it removed from a typed line that had
@@ -378,12 +383,10 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   a later key's `pressed_at_ms`), the requested `unit` at the caret as a chunk
   (`None` when the unit is `Line`, which the caret's line already is, or
   when the provider does not have the unit, in which case Core speaks the
-  line), and `selection_changes`: from the watch's `previous_selection` (a
-  `PreviousSelection`, collapsed at the caret when nothing was selected),
-  which Core sends only for a key that selects, or otherwise from the
-  selection the outpost kept for the node, the one a caret event's report
-  compares with, none when neither it nor the new selection holds
-  anything. Each `SelectionChange` is `selected` (true for
+  line), and `selection_changes`: from the selection the outpost kept for
+  the node, whatever the key, the one a caret event's report compares
+  with, none when neither it nor the new selection holds anything; Core
+  sends no selection of its own. Each `SelectionChange` is `selected` (true for
   newly selected text, false for text no longer selected), its `text` cut
   to `MAX_SELECTION_TEXT_BYTES` (4 KB), and the full count of its
   `characters` (grapheme clusters). With the old selection from

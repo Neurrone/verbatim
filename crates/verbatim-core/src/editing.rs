@@ -31,10 +31,10 @@ use std::sync::Arc;
 
 use verbatim_model::{
     CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, Effect, FocusText, FocusValidity,
-    Message, NodeId, NodeSnapshot, Phrase, PreviousSelection, Role, SegmentContent, Selection,
-    SelectionChange, SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp,
-    TextPoint, TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho,
-    Utterance, UtteranceSegment,
+    Message, NodeId, NodeSnapshot, Phrase, Role, SegmentContent, Selection, SelectionChange,
+    SelectionText, SpeechPriority, State, TextAttributes, TextChunk, TextOp, TextPoint,
+    TextPosition, TextRead, TextReply, TextRequest, TextUnit, TraceId, TypingEcho, Utterance,
+    UtteranceSegment,
 };
 
 use crate::state::{
@@ -115,43 +115,57 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     // caret Core now has.
     let line_break = current.and_then(|caret| caret.line_break.as_deref());
     let context = caret_before(state, node, pressed_at_ms);
-    let deleted = context.and_then(|caret| deleted_text(caret.line, line_break, key.motion, grid));
+    // Over a selection, a Backspace removes what comes before the
+    // selection's start, where NVDA's caret is, which the outpost reports
+    // as a position in the caret's line or in the earlier line it starts
+    // in; a start in neither has nothing known before it.
+    let start = context
+        .and_then(|caret| caret.selection.map(|selection| (caret, selection)))
+        .filter(|_| key.motion.deletes_back())
+        .map(|(caret, selection)| {
+            [Some(caret.line), caret.selection_line]
+                .into_iter()
+                .flatten()
+                .find(|line| line.start == selection.start.anchor)
+                .map(|line| (line, selection.start.offset))
+        });
+    let before_unknown = matches!(start, Some(None));
+    let deleted = context.and_then(|caret| {
+        let (line, offset) = start.flatten().unwrap_or((caret.line, caret.line.offset));
+        deleted_text(line, offset, line_break, key.motion, grid)
+    });
     let before = context
         .filter(|_| key.motion.deletes_back() || key.motion == CaretMotion::Other)
         .map(|caret| (caret.line.text.clone(), caret.line.offset));
     let compare = context.and_then(|caret| compared_text(caret.line, key.motion, grid));
-    // A selection change spoken from a caret report observed no earlier
-    // than the key was this key's, its caret event having reached Core
-    // first: the key's watch compares with the selection now known, so the
-    // change is not spoken again ([`selection_changed`]).
-    let spoken_since_key = pressed_at_ms != 0
-        && state
-            .selection_spoken
-            .is_some_and(|(spoken, at_ms)| spoken == node && at_ms >= pressed_at_ms);
-    let selection_before = if spoken_since_key {
-        current.map(|caret| CaretBefore {
-            line: &caret.line,
-            selection: caret.selection,
-        })
-    } else {
-        context
-    };
-    let previous_selection = selection_before
-        .filter(|_| selects(key))
-        .map(previous_selection);
     let selected_before = context.is_some_and(|caret| caret.selection.is_some());
+    // The key's answer compares with the selection the outpost kept for
+    // the node, whatever the key, as a caret report does, so a selection it
+    // makes, leaves or replaces is spoken from one comparison, as NVDA
+    // reports any selection change of a control that reports its
+    // selection at the key's caret event
+    // (`docs/nvda/editable-text-and-terminals.md`, "Selection changes").
     let watch = CaretWatch {
         since: context.map(CaretBefore::caret),
         pressed_at_ms,
         unit,
         compare,
-        previous_selection,
         landing: key.motion == CaretMotion::Other,
     };
     // The key is moving the caret, which the review cursor follows: a
     // review command from now on reads where the caret is, not where Core
     // last saw it, however late the application reports the move.
     follow_caret(state, node);
+    // A key still waiting on the same node is superseded: the change of
+    // the selection its answer may yet carry, and the words of reports held
+    // for it, are said with this key's (`superseded_reply`).
+    let held = match state.pending_caret.take() {
+        Some(old) if old.node == node => {
+            state.superseded_caret = Some((old.query_id, old.node));
+            old.heard
+        }
+        _ => Vec::new(),
+    };
     let query_id = state.allocate_query_id();
     state.pending_caret = Some(PendingCaret {
         query_id,
@@ -161,7 +175,8 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         before,
         later_key_at_ms: None,
         selected_before,
-        heard: Vec::new(),
+        before_unknown,
+        heard: held,
     });
     effects.push(Effect::Text(TextRequest {
         query_id,
@@ -176,33 +191,14 @@ fn selects(key: CaretKey) -> bool {
     key.select || key.motion == CaretMotion::SelectAll
 }
 
-/// The selection before a key that selects, which its watch compares
-/// with, from the caret as `caret` found it: the selection, collapsed at
-/// the caret when nothing was selected. Any other key's answer compares
-/// with the selection the outpost kept for the node, as a caret report
-/// does, so a selection it leaves or replaces is spoken after its own
-/// words, as NVDA reports any selection change of a control that reports
-/// its selection at the key's caret event
-/// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes").
-fn previous_selection(caret: CaretBefore<'_>) -> PreviousSelection {
-    match caret.selection {
-        Some(selection) => PreviousSelection {
-            start: selection.start,
-            end: selection.end,
-        },
-        None => PreviousSelection {
-            start: caret.caret(),
-            end: caret.caret(),
-        },
-    }
-}
-
 /// The caret of a node as a caret key found it: its line, with the caret
-/// at the chunk's offset, and the selection.
+/// at the chunk's offset, the selection, and the line the selection starts
+/// in when that is an earlier line.
 #[derive(Clone, Copy)]
 struct CaretBefore<'a> {
     line: &'a TextChunk,
     selection: Option<Selection>,
+    selection_line: Option<&'a TextChunk>,
 }
 
 impl CaretBefore<'_> {
@@ -238,6 +234,7 @@ fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<Car
             .map(|caret| CaretBefore {
                 line: &caret.line,
                 selection: caret.selection,
+                selection_line: caret.selection_line.as_ref(),
             });
     }
     // Reports arrive in the order their paths deliver them, not the order
@@ -249,12 +246,14 @@ fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<Car
         .map(|report| CaretBefore {
             line: &report.line,
             selection: report.selection,
+            selection_line: report.selection_line.as_ref(),
         })
 }
 
 /// What a Backspace is about to delete, from the caret's line before the
-/// key: the character before the caret, or for Control+Backspace the text
-/// from the start of the word before the caret up to the caret. At the
+/// key, `offset` being the caret's byte offset in it, or a selection's
+/// start: the character before it, or for Control+Backspace the text from
+/// the start of the word before it up to it. At the
 /// start of a line other than a terminal's, a Backspace deletes the line
 /// break before it, the kind of break the text uses, `line_break`
 /// ([`CaretContext::line_break`]), which NVDA names
@@ -262,12 +261,13 @@ fn caret_before(state: &SrState, node: NodeId, pressed_at_ms: u64) -> Option<Car
 /// character"). `None` when that is not known, and for other keys.
 fn deleted_text(
     line: &TextChunk,
+    offset: u32,
     line_break: Option<&str>,
     motion: CaretMotion,
     grid: bool,
 ) -> Option<String> {
     let content = text::line_content(&line.text, grid);
-    let offset = text::boundary(content, line.offset as usize);
+    let offset = text::boundary(content, offset as usize);
     match motion {
         CaretMotion::Backspace => match text::previous_grapheme(content, offset) {
             Some(range) => Some(content[range].to_owned()),
@@ -387,10 +387,21 @@ pub(crate) fn caret_reply(
         .later_key_at_ms
         .is_some_and(|later| reply.read_at_ms == 0 || reply.read_at_ms >= later)
     {
-        if state.focus_matches(pending.node) {
-            update_caret(state, pending.node, reply.caret, reply.read_at_ms);
+        // Its selection's change is no later key's to say: the outpost
+        // compared it with the selection it kept, which the later key's
+        // answer or report then compares with no more.
+        let changed = reply_changes(&reply);
+        if !state.focus_matches(pending.node) {
+            return Vec::new();
         }
-        return heard(state, trace_id, pending);
+        update_caret(state, pending.node, reply.caret, reply.read_at_ms);
+        let mut said = pending.heard.clone();
+        said.extend(changed);
+        return if said.is_empty() {
+            Vec::new()
+        } else {
+            vec![speak(trace_id, said)]
+        };
     }
     if !reply.moved {
         return heard(state, trace_id, pending);
@@ -419,8 +430,10 @@ pub(crate) fn caret_reply(
         selection: new_selection.as_ref(),
         collapsed: caret.selection.is_none(),
     });
+    // A key that selects has no words of its own: what it selected or
+    // unselected follows, as for any key.
     let segments = if selects(pending.key) {
-        selection_segments(&selection_changes, general)
+        Vec::new()
     } else {
         match pending.key.motion {
             CaretMotion::Backspace | CaretMotion::BackspaceWord => {
@@ -464,29 +477,31 @@ pub(crate) fn caret_reply(
     if !segments.is_empty() {
         effects.push(speak(trace_id, segments));
     }
-    if !selects(pending.key) {
-        effects.extend(changed_after(
-            trace_id,
-            pending,
-            &selection_changes,
-            general,
-        ));
-    }
+    effects.extend(changed_after(
+        trace_id,
+        pending,
+        &selection_changes,
+        general,
+    ));
     effects
 }
 
 /// What a Backspace said, from `pending` and the caret's `line` after it.
-/// Over a selection, what was before the caret when the key was pressed,
-/// "blank" when nothing was, as NVDA's Backspace script reads it before
-/// passing the key and says it once the caret moved
-/// (`docs/nvda/editable-text-and-terminals.md`); the selection's change
-/// follows. Otherwise what the key removed, by comparing the line before
-/// and after it.
+/// Over a selection, what was before the selection's start when the key
+/// was pressed, "blank" when nothing was, as NVDA's Backspace script reads
+/// it from its caret, the selection's start, before passing the key and
+/// says it once the caret moved (`docs/nvda/editable-text-and-terminals.md`);
+/// nothing when the selection started on an earlier line, whose text
+/// before it is not known; the selection's change follows. Otherwise what
+/// the key removed, by comparing the line before and after it.
 fn backspace_segments(
     pending: &PendingCaret,
     line: &TextChunk,
     grid: bool,
 ) -> Vec<UtteranceSegment> {
+    if pending.before_unknown {
+        return Vec::new();
+    }
     if pending.selected_before {
         return match &pending.deleted {
             Some(deleted) => deleted_segments(deleted, pending.key.motion),
@@ -514,8 +529,8 @@ fn backspace_segments(
     }
 }
 
-/// What a key that does not select says after its own words, how the
-/// selection changed: the changes caret reports carried while it waited
+/// What a key says after its own words, how the selection changed: the
+/// changes caret reports carried while it waited
 /// ([`PendingCaret::heard`]), then its answer's, each compared once with
 /// the selection the outpost kept.
 fn changed_after(
@@ -533,6 +548,48 @@ fn changed_after(
         effects.push(speak(trace_id, answered));
     }
     effects
+}
+
+/// How a caret key's answer says the selection changed, apart from the
+/// key's own words.
+fn reply_changes(reply: &CaretReply) -> Vec<UtteranceSegment> {
+    let general = reply.content_changed.then_some(General {
+        selection: reply.new_selection.as_ref(),
+        collapsed: reply.caret.selection.is_none(),
+    });
+    selection_segments(&reply.selection_changes, general)
+}
+
+/// The answer to a caret key a later key on the same node superseded
+/// (`SrState::superseded_caret`), on `node`: its caret and words are not
+/// spoken, the later key's being the newer, but the selection's change it
+/// carries is, after the later key's own words, held as a caret report's
+/// is ([`PendingCaret::heard`]), or at once when no key waits: the
+/// outpost compared it with the selection it kept, which the later key's
+/// answer then compares with no more, so it is said once, as NVDA says
+/// every caret event's change.
+pub(crate) fn superseded_reply(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node: NodeId,
+    reply: &TextReply,
+) -> Vec<Effect> {
+    let TextReply::Caret(reply) = reply else {
+        return Vec::new();
+    };
+    let changed = reply_changes(reply);
+    if changed.is_empty() || !state.focus_matches(node) {
+        return Vec::new();
+    }
+    if let Some(pending) = state
+        .pending_caret
+        .as_mut()
+        .filter(|pending| pending.node == node)
+    {
+        pending.heard.extend(changed);
+        return Vec::new();
+    }
+    vec![speak(trace_id, changed)]
 }
 
 /// The selection changes caret reports carried while `pending`'s key
@@ -817,16 +874,14 @@ fn selection_text(change: &SelectionChange) -> SelectionText {
 /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes";
 /// `docs/parity/text.md`, "TextInfo-equivalent layer"). The caller passes
 /// only reports that came after the focus's announcement was complete.
-/// While a caret key waits for its answer, the report says nothing now: a
-/// selecting key's answer compares with the selection before the key and
-/// speaks the change itself; any other key's answer speaks the report's
-/// change after the key's own words ([`PendingCaret::heard`]), since the
-/// outpost compared it with the selection it kept, which the answer then
-/// compares with no more.
+/// While a caret key waits for its answer, the report says nothing now:
+/// the key's answer speaks the report's change after the key's own words
+/// ([`PendingCaret::heard`]), since the outpost compared it with the
+/// selection it kept, which the answer then compares with no more.
 pub(crate) fn selection_changed(
     state: &mut SrState,
     trace_id: TraceId,
-    (node, observed_at_ms): (NodeId, u64),
+    node: NodeId,
     (changes, general): (&[SelectionChange], Option<General<'_>>),
 ) -> Vec<Effect> {
     if changes.is_empty() || !state.focus_matches(node) {
@@ -837,16 +892,13 @@ pub(crate) fn selection_changed(
         .as_mut()
         .filter(|pending| pending.node == node)
     {
-        if !selects(pending.key) {
-            pending.heard.extend(selection_segments(changes, general));
-        }
+        pending.heard.extend(selection_segments(changes, general));
         return Vec::new();
     }
     let segments = selection_segments(changes, general);
     if segments.is_empty() {
         return Vec::new();
     }
-    state.selection_spoken = Some((node, observed_at_ms));
     vec![speak(trace_id, segments)]
 }
 
@@ -880,6 +932,7 @@ pub(crate) fn update_caret(
             node,
             line: Arc::clone(&line),
             selection: caret.selection,
+            selection_line: caret.selection_line.as_deref().cloned(),
         });
     }
     if let Some(known) = state.caret.as_mut().filter(|known| {
@@ -903,6 +956,7 @@ pub(crate) fn update_caret(
         node,
         line,
         selection: caret.selection,
+        selection_line: caret.selection_line.map(|line| *line),
         line_break,
         observed_at_ms,
     });
@@ -923,6 +977,7 @@ pub(crate) fn caret_moved_by_core(state: &mut SrState, node: NodeId, line: TextC
         CaretReport {
             line,
             selection: None,
+            selection_line: None,
         },
         0,
     );
@@ -932,6 +987,7 @@ pub(crate) fn caret_moved_by_core(state: &mut SrState, node: NodeId, line: TextC
             node,
             line: Arc::clone(&caret.line),
             selection: None,
+            selection_line: None,
         });
     }
 }

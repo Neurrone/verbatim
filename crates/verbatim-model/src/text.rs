@@ -348,9 +348,17 @@ pub struct SelectionChange {
 pub struct CaretReport {
     /// The line containing the caret; its `offset` is the caret.
     pub line: TextChunk,
-    /// The selection, when something is selected.
+    /// The selection, when something is selected. Its start is a position
+    /// in `line` when it starts there, or in `selection_line`, so that
+    /// what comes before it is known (a Backspace over the selection says
+    /// it).
     #[serde(default)]
     pub selection: Option<Selection>,
+    /// The line the selection starts in, when it starts on a line before
+    /// the caret's, as a selection does whose caret is its end on the next
+    /// line; `None` otherwise, and when the outpost did not read it.
+    #[serde(default)]
+    pub selection_line: Option<Box<TextChunk>>,
 }
 
 /// What the outpost's caret read found for a focus that may have text,
@@ -425,13 +433,6 @@ pub struct CaretWatch {
     /// The text of `unit` at the caret before the key, when a change of it is
     /// evidence.
     pub compare: Option<String>,
-    /// The selection before the key, for a key that changes the selection
-    /// (any Shift movement, Control+A); `None` otherwise. When the request
-    /// carries one, the reply's `selection_changes` describe how the
-    /// selection changed from it; otherwise they describe how it changed
-    /// from the selection the outpost kept from its last caret report for
-    /// the node, as a caret event's report does.
-    pub previous_selection: Option<PreviousSelection>,
     /// The key is judged by where the caret landed
     /// ([`CaretMotion::Other`]): the reply says whether the caret is still
     /// on the line it was on ([`CaretReply::same_line`]).
@@ -439,22 +440,16 @@ pub struct CaretWatch {
     pub landing: bool,
 }
 
-/// The selection before a selecting key: the selection Core knew, or a
-/// collapsed one at the caret when nothing was selected.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PreviousSelection {
-    /// Where it started.
-    pub start: TextPosition,
-    /// Where it ended; equal to `start` when nothing was selected.
-    pub end: TextPosition,
-}
-
 /// The outpost's answer to a [`CaretWatch`].
 ///
-/// `selection_changes`, when the watch carried a previous selection
-/// `[old_start, old_end)` and the selection is now `[new_start, new_end)`
-/// (each collapsed at the caret when nothing is selected), are worked out
-/// by comparing endpoints, which only the outpost can do:
+/// `selection_changes` describe how the selection changed from the one
+/// the outpost kept for the node, whatever the key: the selection of its
+/// last caret report or key's answer, or the selection Verbatim made or
+/// the caret it moved, as a caret event's report compares. With that
+/// selection `[old_start, old_end)` and the selection now
+/// `[new_start, new_end)` (each collapsed at the caret when nothing is
+/// selected), they are worked out by comparing endpoints, which only the
+/// outpost can do:
 ///
 /// - When the two do not overlap or touch (`new_end < old_start` or
 ///   `new_start > old_end`), the old text, if any, is unselected and the new

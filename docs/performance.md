@@ -1084,8 +1084,9 @@ and in its edit control.
   offsets (since 2026-10-22). Otherwise, the usual case, the read's own
   comparison covers it and nothing more is made.
 - Over a selection, any key compares with the selection the outpost kept,
-  in the same round trip, as a caret report does (below); a key that does
-  not select sends no selection of its own since 2026-10-22, so Backspace,
+  in the same round trip, as a caret report does (below); no key sends a
+  selection of its own since 2026-10-22 (a selecting key's comparison
+  costs what it did), so Backspace,
   Control+Backspace, Delete and Control+Delete over a selection now pay
   what a movement leaving a selection paid already: through UIA, the
   comparison and the texts read in the program, no round trip more; in an
@@ -1134,12 +1135,19 @@ from the caret.
   is its text and is kept), are part of the caret read's program,
   which compares nothing when the last selection and the new one both hold
   nothing. Classically 8 with nothing selected (8 before remote
-  operations), and 19 for the selection of "al" (18 before 2026-10-22):
-  the read of a caret with text selected, which asks for the selection's
-  caret (`GetCaretRange`), six comparisons in all, among them the
-  selection's ends with the old caret's and the comparisons that place
-  the change, the change's text (a copy, its two ends moved, its text),
-  and the selection's text. When the last selection held something, what
+  operations), and 25 for the selection of "al" (18 before 2026-10-22,
+  19 before the selection's start was read): the read of a caret with
+  text selected, which asks for the selection's caret (`GetCaretRange`),
+  six comparisons, among them the selection's ends with the old caret's
+  and the comparisons that place the change, the change's text (a copy,
+  its two ends moved, its text), the selection's text, and where the
+  selection starts, since `TextPattern2`'s caret can be its other end
+  (its start compared with the line's, a copy of the line or of the
+  earlier line it starts in, an end moved, its text: 4, and 3 more, the
+  line expanded and its text, for an earlier line), and, the start being
+  at its line's start, as "al" at the text's start is, whether it is the
+  text's (the document range and a comparison: 2). Inside a line it costs
+  23. Through UIA all of this is in the program. When the last selection held something, what
   its ends now hold is read too, up to the same 513 units, to compare
   with its text as it was reported; through UIA a mismatch has the change
   said in general terms (`docs/parity/text.md`, "TextInfo-equivalent
@@ -1254,10 +1262,10 @@ queues. The parts of a UIA focus's count are:
   connection remotely, 4 calls and the connection classically;
 - the focus's enrichment: 1 UIA call;
 - the caret read: 1 UIA call remotely; classically 35 for mockapp's
-  document ("The caret report after a focus, UIA" above), 37 when
-  something is selected (the selection's caret, and its text up to 513
-  units, kept for the next comparison since 2026-10-22), and 17 for its
-  terminal;
+  document ("The caret report after a focus, UIA" above), 43 when
+  something is selected (the selection's caret, its text up to 513
+  units, kept for the next comparison since 2026-10-22, and where it
+  starts, here at the text's start, 6), and 17 for its terminal;
 - the selected text, read only when something is selected and the
   field is not protected, since Core says none of a protected field's
   text: 1 UIA call remotely and 4 classically, the read of the range
@@ -1273,9 +1281,10 @@ queues. The parts of a UIA focus's count are:
   operation's 2, and the caret read costs its classic minimum.
 - Today: a UIA document (mockapp's `text.json`) read remotely costs 9 UIA
   calls, 1 window message and 1 connection; 10 with a selection; 9
-  protected with a selection. Classically it costs 45; 51 with a
-  selection; 47 protected with a selection (50 and 46 before the
-  selection's text was read to keep, 2026-10-22). A UIA terminal
+  protected with a selection. Classically it costs 45; 57 with a
+  selection; 53 protected with a selection (50 and 46 before the
+  selection's text was read to keep, and 51 and 47 before where it
+  starts was read, 2026-10-22). A UIA terminal
   (`terminal_reading.json`) costs 9 remotely and 27 classically, each
   with 1 window message and 1 connection. A classic edit control through
   MSAA costs 39 MSAA calls and 6 window messages. With nothing
@@ -1356,9 +1365,12 @@ to a selection of "alpha".
 - Today: 1 remotely (8 before: the caret read and then the selection's
   changes worked out call by call, two comparisons for whether the two
   selections are apart, one for each side, and three for the text of the
-  change). Classically 28 (30 before; 27 before the new selection's whole
-  text was read to keep, 2026-10-22): the caret read's calls, and the
-  same comparisons and text read, now only when the selection moved.
+  change). Classically 34 (30 before; 27 before the new selection's text
+  was read to keep, and 28 before where it starts was read, 2026-10-22):
+  the caret read's calls, and the same comparisons and text read, now
+  only when the selection moved. The key compares with the selection the
+  outpost kept, as every key does; Core sends no selection of its own
+  since 2026-10-22, which changed no count.
 - Target: 1, met.
 
 ### A review cursor line, UIA
@@ -1522,14 +1534,17 @@ start by the text before each.
 - Minimum: 1 UIA call: one program reads the selection, selects
   (`ITextRangeProvider::Select` is an instruction of the remote operations
   bytecode, `TextRangeSelect`), reads the selection again, and compares
-  the two and reads the text of each change inside the provider. It
-  executes 160 instructions (`instruction_limit.rs`,
-  `range_selections_execute_exactly`).
+  the two and reads the text of each change inside the provider, and the
+  selection's text up to 513 units, which the outpost keeps with the
+  selection for the next comparison, as a caret report's. It executes 165
+  instructions (`instruction_limit.rs`, `range_selections_execute_exactly`;
+  160 before the selection's text was read, 2026-10-22).
 - Today: 1 remotely (4 before 2026-10-15: the selection read before by
   two classic calls, the selection as a program of its own, and the read
-  after as a caret read's program); classically 32 (22 with the range
-  from the marker to the point past the review cursor's character, 30
-  before that).
+  after as a caret read's program); classically 33 (32 before the
+  selection's text was read to keep, 2026-10-22; 22 with the range from
+  the marker to the point past the review cursor's character, 30 before
+  that).
 - When the program fails after its select, the selection is made: the
   program, whose reads after the select are in a try block, still
   returns the selection before, and the after-read alone is made the
@@ -2218,17 +2233,20 @@ share of the limit in brackets:
   The walk is bounded by the controlled list, not by the query, the one
   program whose worst case is the application's to set; the Settings
   app's search suggestions, checked live on 2026-10-03, were 25.
-- The caret read: 4,435 (44 percent) for a line of 64 stretches reached by
+- The caret read: 4,456 (45 percent) for a line of 64 stretches reached by
   walking one mixed format stretch by words and a mixed word by
   characters, every attribute read (eleven since 2026-10-07, ten of them
   being learned), with a word, the evidence, a selection's change, the
   selection's text, read when its ends moved, and what the old
-  selection's ends hold now, each up to 513 units;
-  87 for the report after a focus on a line of plain text with the
+  selection's ends hold now, each up to 513 units, and where the
+  selection starts;
+  97 for the report after a focus on a line of plain text with the
   default theme's two attributes, the annotation types and the link,
   whose support is known, which asks for the selection's text. They were
-  4,425 and 84 before the selection's texts were read, and 4,434 before
-  the selection's text was read only when its ends moved (2026-10-22). It was 4,884 and 85 with seven attributes and
+  4,425 and 84 before the selection's texts were read, 4,434 before the
+  selection's text was read only when its ends moved, and 4,435 and 87
+  before where the selection starts was read, whose conditions every
+  read with `TextPattern2` runs (2026-10-22). It was 4,884 and 85 with seven attributes and
   one: the program now returns each value as the provider gave it, and
   the caller reads it by its type, where the program tested each value's
   type and the annotation types' array itself, which more than paid for
@@ -2236,7 +2254,8 @@ share of the limit in brackets:
   stretch is mixed (mockapp's `mixed.json`: stretches of two characters,
   one of them italic), each is walked by words and its word by
   characters, and each stretch adds 249 instructions (239 with seven
-  attributes): 2,148 for 17 stretches and 4,140 for 33, so the 64
+  attributes): 2,158 for 17 stretches and 4,150 for 33 (2,148 and 4,140
+  before where a selection starts was read, 2026-10-22), so the 64
   stretches a span may have come to about 8,000 (80 percent), which runs
   under the limit but cannot be counted. This is the one
   program that can come within a factor of two of the limit. A run that

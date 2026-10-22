@@ -554,6 +554,15 @@ spoken as a count, since they serve only that comparison. The `CaretAnswer`:
   ones were given), and the old ends' text now, each only when asked and
   up to `MAX_COMPARED_TEXT`. With the ends unchanged the selection's text
   is not read: the old ends' text is the same text.
+- `selection_start`, `selection_line` and `start_first`: where the
+  selection starts, since `TextPattern2`'s caret can be its other end
+  (Windows 11 Notepad's after Shift with Right Arrow or End): its offset
+  in the caret's line when it starts there (the caret's own offset
+  without `TextPattern2`), else the earlier line it starts in, a
+  `UnitRead` whose `offset` is the start; and, when it starts at that
+  line's start, whether that is the text's start (the document range
+  compared), so a Backspace over the selection can say what comes before
+  it, as NVDA's caret, the selection's start, reads it.
 
 The program imports the element and gets its text pattern with the
 pattern getter instructions (Microsoft's `GetTextPattern`, whose opcode
@@ -697,7 +706,12 @@ Every point is returned (`FoundPoint`) so the caller can remember it.
   is all of the classic implementation's work that remains, rather than
   running the classic implementation, which would select again and
   compare the new selection with itself, so the first press would say
-  nothing; the answer's path is a fallback.
+  nothing; the answer's path is a fallback. With the changes read, the
+  answer carries the selection read after the select
+  (`RangeAnswer::selection_after`, `SelectionAfter`): its range, whether
+  something is selected, and its text up to `MAX_COMPARED_TEXT`, read in
+  the program (one `GetText` more), which the outpost keeps as it keeps a
+  caret report's selection.
 - `text_location` (`LocationQuery`, `LocationAnswer`): the character at
   the point and its bounding rectangles, the first rectangle's left and
   top. The program returns them as an array of doubles (verified against

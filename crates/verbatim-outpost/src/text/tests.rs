@@ -255,7 +255,6 @@ fn watch(since: Option<TextPosition>, unit: TextUnit) -> CaretWatch {
         pressed_at_ms: PRESSED_AT,
         unit,
         compare: None,
-        previous_selection: None,
     }
 }
 
@@ -704,14 +703,10 @@ fn a_selecting_keys_answer_after_the_text_changed_is_in_general_terms() {
     source.selection = Some((0, 2));
     let mut anchors = store();
     let before = report(&mut source, &mut anchors);
-    let selection = before.selection.expect("a selection");
+    assert!(before.selection.is_some());
     anchors.note_content_changed(1);
     source.selection = Some((0, 5));
-    let mut watch = watch(None, TextUnit::Character);
-    watch.previous_selection = Some(PreviousSelection {
-        start: selection.start,
-        end: selection.end,
-    });
+    let watch = watch(None, TextUnit::Character);
     let reply = answered(check(
         &mut source,
         &mut anchors,
@@ -741,31 +736,15 @@ fn a_selecting_keys_answer_after_the_text_changed_is_in_general_terms() {
 }
 
 /// A selecting key's reply, from a selection of `old` (equal ends for none,
-/// with the caret there) to `new`.
+/// with the caret there), which the outpost reported and kept, to `new`.
 fn selection_after(old: (usize, usize), new: Option<(usize, usize)>) -> Vec<(bool, String, u32)> {
     let mut source = Fake::new("hello world", old.0);
     source.selection = (old.0 != old.1).then_some(old);
     let mut anchors = store();
-    let report = report(&mut source, &mut anchors);
-    let previous = if let Some(selection) = report.selection {
-        PreviousSelection {
-            start: selection.start,
-            end: selection.end,
-        }
-    } else {
-        let caret = TextPosition {
-            anchor: report.line.start,
-            offset: report.line.offset,
-        };
-        PreviousSelection {
-            start: caret,
-            end: caret,
-        }
-    };
+    let _ = report(&mut source, &mut anchors);
     source.selection = new;
     source.caret = new.map_or(old.0, |(start, _)| start);
-    let mut watch = watch(None, TextUnit::Character);
-    watch.previous_selection = Some(previous);
+    let watch = watch(None, TextUnit::Character);
     let reply = answered(check(
         &mut source,
         &mut anchors,

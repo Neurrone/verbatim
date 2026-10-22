@@ -428,11 +428,17 @@ other object is flat text without asking.
 Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
 `Input::CaretKey` on a focus with text asks its outpost to watch for
 evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when
-the key was pressed, the unit to report, for Delete the character or
-word at the caret (whose change is evidence), and for a selecting key
-the selection before it; any other key's answer compares with the
-selection the outpost kept for the node, as a caret event's report does
-(`docs/crates/verbatim-outpost.md`). The outpost never waits for the evidence: it
+the key was pressed, the unit to report, and for Delete the character or
+word at the caret (whose change is evidence); every key's answer, a
+selecting key's too, compares with the selection the outpost kept for
+the node, as a caret event's report does
+(`docs/crates/verbatim-outpost.md`). Backspace and Control+Backspace over
+a selection predict what comes before the selection's start, where
+NVDA's caret is, whichever end the application's caret is: the report
+gives the start as a position in the caret's line, or in the line it
+starts in when that is an earlier one (`CaretReport::selection_line`),
+and a start in neither has the key say only the selection's change
+(`PendingCaret::before_unknown`). The outpost never waits for the evidence: it
 answers once the evidence comes, and a watch that ends without it is
 answered `TextReply::WatchEnded`, for which Core says nothing, as it
 says nothing for a reply with `moved` false. A key that moves nothing,
@@ -531,16 +537,17 @@ then speaks, queued:
   the selection changes of a `CaretMoved` once the focus's announcement is
   complete, and is spoken with the same words (`editing::selection_changed`).
   While a caret key's answer is awaited for the node, nothing is spoken
-  then: a selecting key's answer compares with the selection before the
-  key and speaks the change itself; any other key's answer compares with
-  the selection the outpost kept, which the report already replaced, so
-  the report's words are held with the key (`PendingCaret::heard`) and
-  spoken after the key's own words, or alone when the watch ends with no
-  answer worth speaking. A key's caret event can reach Core before the key
-  does; once a change from a report observed no earlier than the key was
-  spoken (`SrState::selection_spoken`), a selecting key's watch compares
-  with the selection Core now knows rather than the one before the key,
-  so the change is not spoken twice.
+  then: the key's answer compares with the selection the outpost kept,
+  which the report already replaced, so the report's words are held with
+  the key (`PendingCaret::heard`) and spoken after the key's own words, or
+  alone when the watch ends with no answer worth speaking. A key that
+  supersedes another still waiting on the node takes over its held words,
+  and the superseded key's answer, whose caret and words are not spoken,
+  has its selection change said with the later key's
+  (`SrState::superseded_caret`, `editing::superseded_reply`); an answer
+  read once a later key that is not a caret key was pressed says its
+  selection change too. Each change is compared once, by whichever read
+  comes first, so none is said twice and none is lost.
 
 Formatting (milestone M4 item 7, `docs/nvda/document-formatting.md`).
 A caret key's character, word, or line, and a new focus's first line,

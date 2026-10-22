@@ -15,7 +15,9 @@
 //! its caret event and value change; and a deleting key's answer compares
 //! with the selection the outpost kept, in both backends, so a caret
 //! report that compared it first leaves the answer no change, and a
-//! selection moved by a report read after the key is evidence of it.
+//! selection moved by a report read after the key is evidence of it; a
+//! Shift key after a selection Verbatim made or a caret it moved compares
+//! with it; and a selection's start is reported in the line it starts in.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -26,8 +28,8 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    CaretReply, CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, PreviousSelection,
-    SelectionChange, TextOp, TextPoint, TextPosition, TextReply, TextUnit,
+    CaretReply, CaretReport, CaretWatch, FocusText, NodeId, NormalizedEvent, SelectionChange,
+    TextOp, TextPoint, TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::Heard;
 use verbatim_outpost::protocol::{
@@ -100,7 +102,6 @@ fn right_arrow(before: &CaretReport) -> TextOp {
         pressed_at_ms: 0,
         unit: TextUnit::Character,
         compare: None,
-        previous_selection: None,
     })
 }
 
@@ -312,7 +313,6 @@ fn a_text_pattern_missing_at_the_focus_is_read_at_the_next_caret_event() {
             pressed_at_ms: 0,
             unit: TextUnit::Character,
             compare: None,
-            previous_selection: None,
         }),
     });
     // The watch is open: nothing is said, and the worker has finished.
@@ -546,6 +546,94 @@ fn a_selection_no_key_made_is_reported_with_its_change() {
     app.quit();
 }
 
+/// The caret report of `node` the outpost said next.
+fn reported_caret(outpost: &OutpostUnderTest, node: NodeId) -> CaretReport {
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::CaretMoved { node_id, caret, .. },
+            ..
+        } if node_id == node => caret,
+        other => panic!("the outpost said {other:?}, not the caret of {node:?}"),
+    }
+}
+
+/// A selection whose caret is its end, as Windows 11 Notepad's
+/// `TextPattern2` caret is after Shift+Control+Right Arrow: the report
+/// gives the caret's line with the caret at that end, and the selection's
+/// start as a position in the same line, so Core knows what comes before
+/// the start, which a Backspace over the selection says, as NVDA reads it
+/// from its caret, the selection's start (`docs/parity/text.md`,
+/// "TextInfo-equivalent layer"). A selection that starts on an earlier
+/// line has that line reported with it, its start a position there.
+fn a_selections_start_on_the_carets_line_is_reported_in_it() {
+    let (mut app, hwnd, outpost) = start("mockapp-caret-watch-selection-start");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 6 10 end");
+    app.send("caret-event doc");
+    let caret = reported_caret(&outpost, notes);
+    assert_eq!(
+        (
+            caret.line.text.as_str(),
+            caret.line.offset,
+            caret.selection.map(|selection| selection.start)
+        ),
+        (
+            "alpha beta\n",
+            10,
+            Some(TextPosition {
+                anchor: caret.line.start,
+                offset: 6,
+            })
+        )
+    );
+    heard_caret_event(&outpost);
+    outpost.settled();
+    app.send("caret doc 6 13 end");
+    app.send("caret-event doc");
+    let caret = reported_caret(&outpost, notes);
+    assert_eq!(caret.line.text, "gamma\n");
+    let start_line = caret
+        .selection_line
+        .expect("the line the selection starts in");
+    assert_eq!(
+        (
+            start_line.text.as_str(),
+            caret.selection.map(|selection| selection.start)
+        ),
+        (
+            "alpha beta\n",
+            Some(TextPosition {
+                anchor: start_line.start,
+                offset: 6,
+            })
+        )
+    );
+    heard_caret_event(&outpost);
+    outpost.settled();
+    // A selection from the text's start: its line is reported as the
+    // text's first, so Core knows nothing comes before it.
+    app.send("caret doc 0 5 end");
+    app.send("caret-event doc");
+    let caret = reported_caret(&outpost, notes);
+    assert_eq!(
+        (
+            caret.line.first,
+            caret.selection.map(|selection| selection.start)
+        ),
+        (
+            true,
+            Some(TextPosition {
+                anchor: caret.line.start,
+                offset: 0,
+            })
+        )
+    );
+    heard_caret_event(&outpost);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// A selection a caret key made is answered to the key's watch, which takes
 /// the key's caret event, so no caret report carries it; nor does the
 /// report of a later caret event, the key's answer being the last report.
@@ -564,10 +652,6 @@ fn a_selection_a_key_made_is_reported_to_the_key_alone() {
             pressed_at_ms: 0,
             unit: TextUnit::Character,
             compare: None,
-            previous_selection: Some(PreviousSelection {
-                start: caret,
-                end: caret,
-            }),
         }),
     });
     outpost.settled();
@@ -611,6 +695,92 @@ fn a_selection_verbatim_made_is_not_reported_again() {
     outpost.settled();
     app.send("caret-event doc");
     assert_eq!(reported_changes(&outpost, notes), []);
+    heard_caret_event(&outpost);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A Shift key's watch from `caret`, as Core sends it: no selection of
+/// its own, the answer comparing with the selection the outpost kept.
+fn shift_key(caret: TextPosition) -> TextOp {
+    TextOp::AwaitCaret(CaretWatch {
+        landing: false,
+        since: Some(caret),
+        pressed_at_ms: 0,
+        unit: TextUnit::Character,
+        compare: None,
+    })
+}
+
+/// A Shift key after a selection Verbatim made, as the review copy's
+/// first press makes it, compares with that selection, which the outpost
+/// keeps as it keeps a caret report's: Shift+Right Arrow after "alpha"
+/// was selected says " " selected. So does one after Verbatim moved the
+/// caret, from the caret where it was moved: Shift+Control+Right Arrow
+/// there says "beta" selected. Core sends no selection of its own for
+/// either.
+fn a_shift_key_after_verbatims_selection_compares_with_it() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-after-own-selection");
+    let (notes, before) = focus_notes(&mut app, &outpost, hwnd);
+    let at = |offset| TextPosition {
+        anchor: before.line.start,
+        offset,
+    };
+    let select = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::Select {
+            start: TextPoint::At(at(0)),
+            end: TextPoint::At(at(5)),
+            through: None,
+        },
+    });
+    assert_eq!(
+        answer_to(&outpost, select),
+        TextReply::Selected(vec![change(true, "alpha")])
+    );
+    outpost.settled();
+    let key = outpost.ask(Query::Text {
+        node_id: notes,
+        op: shift_key(at(0)),
+    });
+    outpost.settled();
+    app.send("caret doc 0 6");
+    app.send("caret-event doc");
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        reply.selection_changes,
+        [SelectionChange {
+            selected: true,
+            text: " ".to_owned(),
+            characters: 1,
+        }]
+    );
+    heard_caret_event(&outpost);
+    outpost.settled();
+
+    let moved = outpost.ask(Query::Text {
+        node_id: notes,
+        op: TextOp::MoveCaret(TextPoint::At(at(6))),
+    });
+    assert_eq!(answer_to(&outpost, moved), TextReply::Done);
+    outpost.settled();
+    let key = outpost.ask(Query::Text {
+        node_id: notes,
+        op: shift_key(at(6)),
+    });
+    outpost.settled();
+    app.send("caret doc 6 10");
+    app.send("caret-event doc");
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        reply.selection_changes,
+        [SelectionChange {
+            selected: true,
+            text: "beta".to_owned(),
+            characters: 4,
+        }]
+    );
     heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
@@ -875,7 +1045,6 @@ fn delete_over(before: &CaretReport, pressed_at_ms: u64) -> TextOp {
         pressed_at_ms,
         unit: TextUnit::Character,
         compare: Some(at.chars().next().map(String::from).unwrap_or_default()),
-        previous_selection: None,
     })
 }
 
@@ -1015,7 +1184,6 @@ fn a_selection_moved_before_a_keys_watch_is_evidence_by_its_ends() {
             pressed_at_ms,
             unit: TextUnit::Word,
             compare: None,
-            previous_selection: None,
         }),
     });
     let reply = caret_reply(answer_to(&outpost, key));
@@ -1130,12 +1298,20 @@ fn main() {
             a_selection_no_key_made_is_reported_with_its_change,
         ),
         (
+            "a_selections_start_on_the_carets_line_is_reported_in_it",
+            a_selections_start_on_the_carets_line_is_reported_in_it,
+        ),
+        (
             "a_selection_a_key_made_is_reported_to_the_key_alone",
             a_selection_a_key_made_is_reported_to_the_key_alone,
         ),
         (
             "a_selection_verbatim_made_is_not_reported_again",
             a_selection_verbatim_made_is_not_reported_again,
+        ),
+        (
+            "a_shift_key_after_verbatims_selection_compares_with_it",
+            a_shift_key_after_verbatims_selection_compares_with_it,
         ),
         (
             "a_uia_selection_typed_over_is_said_in_general_terms",

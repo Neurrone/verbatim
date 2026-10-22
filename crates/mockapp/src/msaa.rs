@@ -248,7 +248,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
             raise_system_caret(edit, show);
         }
-        Command::Caret(_, start, end) => {
+        Command::Caret(_, _, _, true) => {
+            return Err("a caret at the selection's end is UIA's TextPattern2 only".into());
+        }
+        Command::Caret(_, start, end, false) => {
             // The text is the edit control's, in its own offsets.
             let edit = crate::edit::find(hwnd).ok_or("the window hosts no edit control")?;
             crate::edit::select(edit, start, end);

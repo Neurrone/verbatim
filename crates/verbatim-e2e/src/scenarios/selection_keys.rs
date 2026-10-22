@@ -3,16 +3,23 @@
 //! `notepad_selection_keys` in Windows 11 Notepad (each its own code, as
 //! `docs/testing.md` requires): Backspace, Control+Backspace, Delete,
 //! Control+Delete, Control+X, Control+V and Enter, each over a word
-//! selected with Shift+Control+Right Arrow, say the key's own words and
-//! then the selection's change, as NVDA says its script's words and then
-//! its caret event's (`docs/parity/text.md`, "TextInfo-equivalent layer").
+//! selected with Shift+Control+Right Arrow, and in Notepad Backspace and
+//! Control+Backspace over a line's last word selected with Shift+End, say
+//! the key's own words and then the selection's change, as NVDA says its
+//! script's words and then its caret event's (`docs/parity/text.md`,
+//! "TextInfo-equivalent layer"). Backspace and Control+Backspace say what
+//! comes before the selection's start, where NVDA's caret is, though
+//! Notepad's caret is the selection's other end.
 //!
 //! Every expectation comes from a capture of NVDA pressing the same key
 //! over the same selection in the same line, "alpha beta gamma", in
 //! `target/e2e-evidence/m42-selection-keys-2026-10-22/`, named by the
 //! control and the key (`textbox-word-backspace.txt`,
-//! `notepad-second-word-backspace.txt`, and so on); each key has a line of
-//! its own, so each starts from the text its capture started from. Two
+//! `notepad-second-word-backspace.txt`, and so on), and for Backspace over
+//! Notepad's first word in
+//! `target/e2e-evidence/m42-selection-fixes-2026-10-22/notepad-first-word-backspace.txt`;
+//! each key has a line of its own, so each starts from the text its capture
+//! started from. Two
 //! differences are deliberate and declared where they occur: Verbatim has
 //! no delayed character description, the "Bravo" NVDA says after the "b"
 //! Delete reaches; and in Notepad, whose text is read through UI
@@ -39,12 +46,12 @@ const NAME: &str = "selection-keys";
 /// Each line of the document, one for each key.
 const LINE: &str = "alpha beta gamma";
 
-/// The scenario's document: eight copies of [`LINE`], which Notepad opens
+/// The scenario's document: ten copies of [`LINE`], which Notepad opens
 /// before Verbatim starts.
 pub(crate) fn document() -> Document {
     Document {
         name: NAME,
-        contents: format!("{LINE}\r\n").repeat(8),
+        contents: format!("{LINE}\r\n").repeat(10),
     }
 }
 
@@ -147,20 +154,68 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 }
 
 /// The scenario in Windows 11 Notepad, read through UI Automation, whose
-/// caret is the selection's active end and whose old selection's range
-/// follows the edit.
+/// caret is the selection's active end, here its end, and whose old
+/// selection's range follows the edit.
 pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) {
     super::expect_notepad_in_front(scenario, NAME, LINE);
 
-    // Backspace over the first word and the second: the space before the
-    // caret (`notepad-word-backspace.txt`,
-    // `notepad-second-word-backspace.txt`), then the selection removed,
-    // where NVDA says nothing more.
+    // Control+Backspace over the first word deletes nothing, there being
+    // no word before it, and NVDA says nothing
+    // (`notepad-word-control-backspace.txt`): nor does Verbatim, which
+    // the next key's words, asserted exactly, show. Backspace over the
+    // same selection then has nothing before the selection's start,
+    // "blank" (`notepad-first-word-backspace.txt`), then the selection
+    // removed, where NVDA says nothing more.
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press_deviating(scenario, "backspace", &["space", "selection removed"]);
+    scenario
+        .send_keys(&["control+backspace"])
+        .expect("sends control+backspace");
+    press_deviating(scenario, "backspace", &["blank", "selection removed"]);
+
+    // Backspace over the second word: the space before the selection's
+    // start (`notepad-second-word-backspace.txt`), then the selection
+    // removed, where NVDA says nothing more.
     press(scenario, "downarrow", &[LINE]);
     press(scenario, "control+rightarrow", &["beta"]);
     press(scenario, "shift+control+rightarrow", &["beta  selected"]);
+    press_deviating(scenario, "backspace", &["space", "selection removed"]);
+
+    // Control+Backspace over the second word: Notepad deletes the word
+    // before the selection, which is said, and the selection's range still
+    // holds its text, so its change is said as NVDA says it
+    // (`notepad-second-word-control-backspace.txt`).
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "home", &["a"]);
+    press(scenario, "control+rightarrow", &["beta"]);
+    press(scenario, "shift+control+rightarrow", &["beta  selected"]);
+    press(
+        scenario,
+        "control+backspace",
+        &["alpha", "beta  unselected"],
+    );
+
+    // Control+Backspace and Backspace over the last word to the line's
+    // end: the word and the space before the selection's start
+    // (`notepad-third-word-to-end-control-backspace.txt`,
+    // `notepad-third-word-to-end-backspace.txt`), then the selection's
+    // change, as NVDA says it where the range still holds its text, and
+    // removed where it does not. Notepad's Shift+End selects the line
+    // break too, its caret then at the next line's start, so the Backspace
+    // joins the next line to this one, as in its capture.
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "control+rightarrow", &["beta"]);
+    press(scenario, "control+rightarrow", &["gamma"]);
+    press(scenario, "shift+end", &["gamma  selected"]);
+    press(
+        scenario,
+        "control+backspace",
+        &["beta", "gamma  unselected"],
+    );
+    press(scenario, "downarrow", &[LINE]);
+    press(scenario, "home", &["a"]);
+    press(scenario, "control+rightarrow", &["beta"]);
+    press(scenario, "control+rightarrow", &["gamma"]);
+    press(scenario, "shift+end", &["gamma  selected"]);
     press_deviating(scenario, "backspace", &["space", "selection removed"]);
 
     // Delete and Control+Delete over the first word: the character and the

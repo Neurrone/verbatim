@@ -157,6 +157,10 @@ pub(crate) struct CaretContext {
     )]
     pub(crate) line: SharedChunk,
     pub(crate) selection: Option<Selection>,
+    /// The line the selection starts in, when it starts on a line before
+    /// the caret's (`CaretReport::selection_line`).
+    #[serde(default)]
+    pub(crate) selection_line: Option<TextChunk>,
     /// The line break last seen ending a line of the node's text, such as
     /// a carriage return in Windows 11 Notepad or a carriage return and line
     /// feed in a standard edit control: what a Backspace at the start of a
@@ -203,6 +207,10 @@ pub(crate) struct TimedCaret {
     )]
     pub(crate) line: SharedChunk,
     pub(crate) selection: Option<Selection>,
+    /// The line the selection starts in, when it starts on a line before
+    /// the caret's (`CaretReport::selection_line`).
+    #[serde(default)]
+    pub(crate) selection_line: Option<TextChunk>,
 }
 
 /// A caret key passed to the application, waiting for the outpost's
@@ -232,12 +240,17 @@ pub(crate) struct PendingCaret {
     /// shows that selection removed says only the selection's change.
     #[serde(default)]
     pub(crate) selected_before: bool,
-    /// The selection changes of caret reports that came while a key that
-    /// does not select waited for its answer, as they are spoken: the
-    /// outpost compared them with the selection kept for the node, which
-    /// the key's answer then compares with no more, so they are said after
-    /// the key's own words, as NVDA says its caret event's words after the
-    /// key's script's (`editing::selection_changed`).
+    /// The key deletes backward over a selection that starts on an
+    /// earlier line than the caret's, so what comes before its start is
+    /// not known and the key says only the selection's change.
+    #[serde(default)]
+    pub(crate) before_unknown: bool,
+    /// The selection changes of caret reports that came while the key
+    /// waited for its answer, as they are spoken: the outpost compared them
+    /// with the selection kept for the node, which the key's answer then
+    /// compares with no more, so they are said after the key's own words,
+    /// as NVDA says its caret event's words after the key's script's
+    /// (`editing::selection_changed`).
     #[serde(default)]
     pub(crate) heard: Vec<verbatim_model::UtteranceSegment>,
 }
@@ -538,12 +551,11 @@ pub struct SrState {
     /// The caret key waiting for evidence.
     #[serde(default)]
     pub(crate) pending_caret: Option<PendingCaret>,
-    /// The node and the observed time of the last caret report whose
-    /// selection changes Core spoke without a key (`editing::selection_changed`):
-    /// a caret key pressed no later reaches Core after the change it made was
-    /// spoken, so its watch compares with the selection now known.
+    /// The query and node of the caret key a later key on the same node
+    /// superseded while it waited, whose answer may still carry a change
+    /// of the selection (`editing::superseded_reply`).
     #[serde(default)]
-    pub(crate) selection_spoken: Option<(NodeId, u64)>,
+    pub(crate) superseded_caret: Option<(QueryId, NodeId)>,
     /// The review or text command's request in flight.
     #[serde(default)]
     pub(crate) pending_text: Option<PendingText>,

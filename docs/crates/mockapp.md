@@ -142,9 +142,12 @@ on the MSAA backend, which has no notification event),
 `active-text-position <id> <start> <end>` (raises UIA's active text
 position changed event from a text node, with the range of its text from
 `start` to `end`, UTF-16 offsets; unsupported on the MSAA backend), `caret <id> <start>
-[<end>]` (selects the text node's text from `start` to `end`, UTF-16
+[<end> [end]]` (selects the text node's text from `start` to `end`, UTF-16
 offsets, the caret alone at `start` when `end` is left out, raising no
 event, as an application's caret moves before a client asks where it is;
+`TextPattern2`'s caret is the selection's start, or its end with the word
+`end`, as Windows 11 Notepad's is after Shift with Right Arrow, which the
+MSAA backend refuses;
 on the MSAA backend the offsets are the edit control's, with its carriage
 returns, sent as `EM_SETSEL`), `caret-event <id>` (raises the backend's
 caret event for a text node, as an application reports its caret once it

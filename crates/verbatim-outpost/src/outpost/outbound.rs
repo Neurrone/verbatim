@@ -758,6 +758,7 @@ mod tests {
                     formats: Vec::new(),
                 },
                 selection: None,
+                selection_line: None,
             },
             selection_changes: changes
                 .iter()
