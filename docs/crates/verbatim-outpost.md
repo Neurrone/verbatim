@@ -2193,15 +2193,28 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   (`adopt_focus`, which `emit_focus` calls too): a caret key's watch on
   another node ends, the intake is told (`note_focused`), and the
   tracking takes its node, role, states, window and chain; a control that
-  is already the focus this outpost last reported is not adopted again.
+  is already the focus this outpost last reported, under the same node,
+  is not adopted again, and one whose element it has under another node,
+  as File Explorer's reused runtime ids give (`docs/uia-bugs.md`), is.
   It is then followed as a reported focus is (`follow_text`): the
   focus-following subscription moves to it, so its caret events no key
   caused are reported and a caret key's watch on it is answered by them,
   and a terminal has its baseline read, so its text changes are reported
   as terminal output and Core's on-demand reads of it are answered. It
-  gets no property subscription, does not replace the last focus the
-  foreground tests compare with (`Tracking::queued`), and is not counted
-  among the focuses reported (`Tracking::reported`). The watch is
+  gets no property subscription. Adopted or not, it becomes the last
+  focus the foreground tests compare with (`Tracking::queued`, with no
+  event address), as NVDA's fake focus, queued as a focus event, becomes
+  its last queued focus (`eventHandler.py`, `_trackFocusObject`), so a
+  late foreground change of its window is dropped (Fable, 2026-10-22,
+  pending Dickson's acceptance). It is not counted among the focuses
+  reported (`Tracking::reported`), and leaves the MSAA duplicate rule's
+  qualifiers (`Tracking::foreground_since_focus`,
+  `Tracking::focus_was_simple_child`) as the last reported focus left
+  them, since they describe that focus's event. Whether the focus is a
+  terminal is decided by the focus's own role (`Tracking::focus_role`),
+  which a foreground report, naming a window, leaves as it was, so a
+  terminal stays followed through a foreground report that no focus
+  event follows. The watch is
   checked before a system caret event is taken as the caret event of a
   UIA focus this outpost last reported, at the cost of the watch's lock
   for each such event, and the registry's while a watch is open; while

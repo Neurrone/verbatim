@@ -35,7 +35,9 @@
 //!   them again once the focus is in a Win32 button read through MSAA.
 //! - A terminal that a focus-now query answered with, and no focus event
 //!   reported, is the outpost's focus: its text change is reported as
-//!   terminal output.
+//!   terminal output; so is a focused terminal the same query answers with
+//!   after a foreground report of another window, which names a window and
+//!   not the control focus is in.
 //!
 //! While the terminal is held, the evidence that the outpost has taken a
 //! text change is the report of a caret event raised after it: UI
@@ -238,6 +240,50 @@ fn a_focus_now_terminal_reports_its_output() {
         .expect("the focus now has a focused control");
     assert_eq!(control.node.role, Role::Terminal);
     let term = control.node.id;
+    write(&mut app, &["three"]);
+    assert_eq!(reported(&outpost, term), lines(&["three"]));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A focused terminal stays the outpost's terminal through a foreground
+/// report that no focus event follows, which names a window, here the
+/// window's Win32 button, and not the control focus is in; a focus-now
+/// answer for the terminal after it, as Core asks for one after Alt+Tab
+/// with no focus event, leaves the terminal reporting its output.
+fn a_terminal_stays_followed_through_a_foreground_report() {
+    let (mut app, mut outpost, term) = start_with(
+        "mockapp-terminal-foreground",
+        "terminal_reading_button.json",
+        "term",
+        OutpostOptions::default(),
+    );
+    let window = common::find_window(&app.title);
+    // SAFETY: a local search of the window's children.
+    let find = unsafe { FindWindowExW(Some(window), None, w!("Button"), w!("Find")) }
+        .expect("mockapp made the button");
+    outpost.set_foreground(find);
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: find.0 as isize,
+    });
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    foreground: true, ..
+                },
+            ..
+        } => {}
+        other => panic!("the outpost said {other:?}, not the button's window as the foreground"),
+    }
+    outpost.settled();
+    outpost.set_foreground(window);
+    outpost.read_focus_as(focused(window).live().element());
+    let control = outpost
+        .focus_now()
+        .expect("the focus now has a focused control");
+    assert_eq!(control.node.id, term);
     write(&mut app, &["three"]);
     assert_eq!(reported(&outpost, term), lines(&["three"]));
     outpost.settled();
@@ -666,6 +712,10 @@ fn main() {
         (
             "a_focus_now_terminal_reports_its_output",
             a_focus_now_terminal_reports_its_output,
+        ),
+        (
+            "a_terminal_stays_followed_through_a_foreground_report",
+            a_terminal_stays_followed_through_a_foreground_report,
         ),
         (
             "a_held_terminal_notes_changes_and_a_read_answers_them",

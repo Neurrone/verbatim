@@ -279,7 +279,9 @@ impl Watch {
 /// What the worker remembers between entries, across worker replacements.
 #[derive(Default)]
 pub(super) struct Tracking {
-    /// The role of the focus this outpost last reported.
+    /// The role of the focus or foreground window this outpost last
+    /// reported, which the menu rules compare with; the focus's own role is
+    /// `focus_role`.
     role: Option<Role>,
     /// The batch in which a focus was last reported.
     batch: Option<u64>,
@@ -1621,11 +1623,13 @@ impl Worker<'_> {
     }
 
     /// Whether `node_id` is the focus and a terminal read through UIA, whose
-    /// new output the outpost finds by diffing its text.
+    /// new output the outpost finds by diffing its text. The focus's own
+    /// role decides (`Tracking::focus_role`), which a foreground report,
+    /// naming a window and not the control focus is in, leaves as it was.
     fn focused_terminal(&self, node_id: NodeId) -> bool {
         self.context.uia_registry.runtime_id_of(node_id).is_some()
             && self.is_focus(node_id)
-            && self.context.tracking().role == Some(Role::Terminal)
+            && self.context.tracking().focus_role == Some(Role::Terminal)
     }
 
     /// For `reply`, the answer to a key judged by where the caret landed
@@ -2250,7 +2254,18 @@ impl Worker<'_> {
     /// the tracking takes it, so its caret events, a terminal's output and
     /// the menu rules follow it. A reported focus becomes the focus this
     /// way ([`emit_focus`](Self::emit_focus)), and so does a focus-now
-    /// answer's control, which Core takes as its focus.
+    /// answer's control, which Core takes as its focus
+    /// ([`follow_answer`](Self::follow_answer)). What a focus event's report
+    /// adds is left to the caller: the last focus queued
+    /// (`Tracking::queued`), which the answer sets too, and the batch and
+    /// count of reports (`Tracking::batch`, `Tracking::reported`), which it
+    /// does not, being no event. Nor does the answer replace
+    /// `Tracking::foreground_since_focus` or
+    /// `Tracking::focus_was_simple_child`: both qualify the MSAA duplicate
+    /// rule by the focus event it compares with, whether a foreground
+    /// change was reported after it and whether its child id can be
+    /// reused, and the answer has no event of its own, so they stay as the
+    /// last reported focus left them.
     fn adopt_focus(
         &mut self,
         (node_id, role, states): (NodeId, Role, StateSet),
@@ -3698,7 +3713,7 @@ impl Worker<'_> {
             && context.intake.focused() == Some(Object::Uia(runtime_id.clone()))
             && let Some(id) = self.find_focus_element(runtime_id)
         {
-            let role = context.tracking().role.unwrap_or(Role::Unknown);
+            let role = context.tracking().focus_role.unwrap_or(Role::Unknown);
             self.follow_focus((id, role));
         }
     }
@@ -3980,7 +3995,11 @@ impl Worker<'_> {
     /// is ([`emit_focus`](Self::emit_focus)), so what the follow-up sends,
     /// such as a terminal's empty answer to a read owed to Core, reaches
     /// Core after the focus it follows. A control this outpost already has
-    /// as its focus is not adopted again.
+    /// as its focus, under the same node, is not adopted again; one whose
+    /// element it has under another node, as File Explorer's reused runtime
+    /// ids give (`docs/uia-bugs.md`), is, so the tracking names the
+    /// answer's node. Either way the answer becomes the last focus queued,
+    /// as NVDA's fake focus does.
     fn follow_answer(&mut self, answered: AnsweredFocus, trace: TraceId) {
         let AnsweredFocus {
             node,
@@ -3989,7 +4008,8 @@ impl Worker<'_> {
             observed_at_ms,
             window,
         } = answered;
-        if !self.is_focus(node.id) {
+        let same_node = self.context.tracking().focus == Some(node.id);
+        if !same_node || !self.is_focus(node.id) {
             let object = object_of(self.context, &node);
             let chain = ancestors.map(|ancestors| {
                 ancestors
@@ -4005,6 +4025,18 @@ impl Worker<'_> {
                 observed_at_ms,
             );
         }
+        // NVDA queues its fake focus as a focus event, which makes it the
+        // last focus queued, so a later foreground change of its window is
+        // dropped by the foreground tests.
+        self.context.tracking().queued = window.map(|window| QueuedFocus {
+            window,
+            event: None,
+            observed_at_ms: if observed_at_ms == 0 {
+                now_ms()
+            } else {
+                observed_at_ms
+            },
+        });
         self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_ms));
     }
 
