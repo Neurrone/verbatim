@@ -691,8 +691,8 @@ The groups:
   provider), and `system_information_tree`.
 - Text: the editing scenarios, each in the Windows Forms text box and in
   Windows 11 Notepad, each its own code (`text_box_editing` and
-  `notepad_editing`, `_review_cursor`, `_review_words`, `_typed_words`,
-  `_word_selection`, `_say_all`), `spelling_errors` (`mockapp`'s scripted
+  `notepad_editing`, `_selection_keys`, `_review_cursor`,
+  `_review_words`, `_typed_words`, `_word_selection`, `_say_all`), `spelling_errors` (`mockapp`'s scripted
   text), `notepad_spelling_errors`, and the terminal scenarios, each in
   Windows Terminal and in the console host. The Notepad scenarios are
   local-only.

@@ -969,8 +969,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   check, once the caret is read and only for a comparison with a
   selection in either report, whether an unnoted change of the text
   waits, and then makes the comparison in general terms;
-  `Anchors::note_content_changed` notes such a change with when it was
-  observed, and
+  `Anchors::note_content_changed` notes such a change, and
   `NodeText::forget_selection` and `Anchors::forget_selection` make the
   next report carry no change. `Anchors` keeps one backend's anchors, by
   node, numbered from a counter both of an outpost's backends share, and never forgets
@@ -1919,8 +1918,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     trip remotely, so the check that finds the evidence is the answer, with
     nothing more to read. The evidence is the caret no longer where it was
     known to be, the characters either side of the caret changed from what
-    was known, the text at the caret changed after a Delete, or the
-    selection changed. Where it was known to be is the newest caret this
+    was known, the text at the caret changed after a Delete, the
+    selection changed, or text was selected in the report the caret was
+    known from and is not now, or the reverse. The last counts because a
+    caret event's report can compare the selection before the watch
+    arrives, and a provider's positions follow edits, so a Backspace over
+    a selection in Windows 11 Notepad can leave the caret's neighbors as
+    they were. Where it was known to be is the newest caret this
     outpost reported for the node from a read that finished before the key
     was pressed (the watch's `pressed_at_ms`, stamped by the keyboard hook
     on the same Unix millisecond clock as `observed_at_ms`), which can be
@@ -1971,40 +1975,57 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     forgotten, so the next report carries no change and sets it anew, at a
     new focus (the report after it, whose selection Core already speaks
     as the focus's), and when the outpost selects or moves the caret for Core
-    (`Select`, `MoveCaret`), whose own reply speaks what it did. A key's
-    selection reaches Core only in the key's answer, since the watch takes
-    the key's caret event. A terminal's reports carry no changes: NVDA's
+    (`Select`, `MoveCaret`), whose own reply speaks what it did. The kept
+    selection is the only old selection a key that does not select
+    compares with: its answer compares with it exactly as a caret event's
+    report does, deleting keys included, and replaces it, so each change
+    is compared once, by whichever reads it first. When the key's caret
+    event is reported before its watch arrives, the report carries the
+    change and the answer has none left; Core says the report's change
+    after the key's own words (`docs/crates/verbatim-core.md`). A selecting
+    key compares with the selection Core found before it
+    (`CaretWatch::previous_selection`), which a report that came first
+    cannot have replaced. A terminal's reports carry no changes: NVDA's
     console class replaces the detection, which is not yet traced, so a
     terminal's reports keep no selection. A text change never forgets the
-    selection. In a classic edit control, the text having changed since
-    the selection compared with was reported, the next comparison is made
-    in general terms, as NVDA's `hasContentChangedSinceLastSelection`
-    makes it (`docs/parity/text.md`, "TextInfo-equivalent layer"): the
-    node's note is set when the control's value change is handled
-    (`text_reads::note_value_change`), and is cleared by the next
-    report, a caret key's answer included, that has a selection to compare
-    with, and by a focus. A caret event's report and a caret key's answer
-    that compare a selection, a kept one or a new one that holds text,
-    are made in general terms too when the control's value change waits
-    once the caret is read (`text_reads::value_change_raised`, through
-    `caret_report_checking` and `CaretSignal::text_change_waiting`): the
-    Windows Forms text box raises its caret's move before its value
-    change, and may raise the value change while it answers the read, so
-    the check first waits for the `WinEvent` thread to handle every event
-    delivered to it (`Nudger::sync`); "x" typed over a selection and the
-    text box's Control+X are said so. A caret key's answer is made in
-    general terms as well when a value change observed at or after the
-    key's press was noted, even when a caret event's report, which Core
-    ignores while the key is pending, has since cleared the note
-    (`NodeText::value_changed_since`): the answer stands in for the one
-    caret event NVDA handles for the key. Such a comparison (`text::general_changes`)
+    selection.
+
+    Whether a comparison is made in general terms is one decision, the
+    same for a caret event's report and every key's answer
+    (`text::content_changed`): the text changed since the kept selection
+    was reported when the node's note is set, or, with a selection in the
+    kept one or now, when the kept selection's text as it was reported no
+    longer matches what its ends hold now, or when the control's value
+    change waits once the caret is read. The note is NVDA's
+    `hasContentChangedSinceLastSelection` (`docs/parity/text.md`,
+    "TextInfo-equivalent layer"): it is set when a classic edit control's
+    value change is handled (`text_reads::note_value_change`), and cleared
+    by the next report, a caret key's answer included, that has a
+    selection to compare with, and by a focus. The waiting value change
+    (`text_reads::value_change_raised`, through `caret_report_checking` and
+    `CaretSignal::text_change_waiting`) covers the Windows Forms text box,
+    which raises its caret's move before its value change and may raise
+    the value change while it answers the read, so the check first waits
+    for the `WinEvent` thread to handle every event delivered to it
+    (`Nudger::sync`); "x" typed over a selection, the text box's
+    Control+X, and Backspace or Delete over a selection are said so. The
+    remembered text is Verbatim's own, Dickson's decision of 2026-10-22:
+    through UIA the caret read reads the whole selection's text in the
+    same round trip and keeps it with the selection
+    (`CaretRequest::read_selection_text`, `KeptSelection::text`), and the
+    next comparison reads what the old selection's range holds now
+    (`CaretRequest::read_previous_text`), which a provider moves as the
+    text changes; when the two differ, the comparison is in general
+    terms, so "x" typed over a selection in Windows 11 Notepad says
+    "selection removed" where NVDA, which notes no UIA text change but for
+    Word and the terminals, says "x unselected". Both are read in full,
+    with no limit, and compared length first. An edit control's offsets do
+    not follow edits, and its note covers its changes, so it reads
+    neither. Such a comparison (`text::general_changes`)
     compares the ends only, and sends each change with no text, whether
     something was selected or unselected, with `content_changed` and the
     whole new selection's text in `new_selection`, the one text it reads,
-    when anything changed and something is selected. A UIA text change is
-    never noted, as NVDA notes one only for Word and the terminals: the
-    comparison reads the old selection's range as it now is, after it
-    followed the edit. Two caret reports merged while they wait to be
+    when anything changed and something is selected. Two caret reports merged while they wait to be
     written (`outbound::merged`) carry both reports' changes in order, a
     waiting report that carries changes is never merged across a reply
     (`Pending::waiting_with`), which would have it reach Core after the

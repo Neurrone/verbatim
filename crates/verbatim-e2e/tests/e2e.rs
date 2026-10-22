@@ -52,6 +52,8 @@ scenario_tests! {
     settings_combo_box_expanded
     notepad_editing
     text_box_editing
+    notepad_selection_keys
+    text_box_selection_keys
     notepad_review_cursor
     text_box_review_cursor
     notepad_say_all

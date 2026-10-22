@@ -200,6 +200,10 @@ impl Attributes {
 
 /// What [`caret_read`] and its two implementations are asked.
 #[derive(Clone, Copy)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each is a separate thing the read is asked to do"
+)]
 pub struct CaretQuery<'a> {
     /// The element with the text, which a program starts from.
     pub element: &'a IUIAutomationElement,
@@ -239,6 +243,14 @@ pub struct CaretQuery<'a> {
     /// Whether to read the caret again once everything else is read, to
     /// say whether it moved meanwhile ([`CaretAnswer::moved_while_read`]).
     pub recheck: bool,
+    /// Whether to read, in full, the selection's text when something is
+    /// selected ([`CaretAnswer::selection_text`]).
+    pub read_selection_text: bool,
+    /// Whether to read, in full, the text between the
+    /// [`previous_selection`](Self::previous_selection)'s ends as they now
+    /// are, when it was not [`previous_collapsed`](Self::previous_collapsed)
+    /// ([`CaretAnswer::previous_text`]).
+    pub read_previous_text: bool,
 }
 
 /// Text that became selected or stopped being selected
@@ -353,6 +365,14 @@ pub struct CaretAnswer {
     /// shows a character whose write moved the caret past where the caret
     /// was read. False without a recheck.
     pub moved_while_read: bool,
+    /// With [`CaretQuery::read_selection_text`], the selection's whole text
+    /// when something is selected; `None` otherwise.
+    pub selection_text: Option<Vec<u16>>,
+    /// With [`CaretQuery::read_previous_text`] and a previous selection not
+    /// collapsed, the whole text between the previous selection's ends as
+    /// they are now, which a provider moves as the text changes; `None`
+    /// otherwise.
+    pub previous_text: Option<Vec<u16>>,
 }
 
 /// The signature both implementations share.
@@ -413,6 +433,8 @@ impl CaretLineRegisters {
             changes: None,
             unsupported: None,
             moved_while_read: false,
+            selection_text: None,
+            previous_text: None,
         })
     }
 }
@@ -472,6 +494,8 @@ pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnsw
         max_text: query.max_text,
         max_change_text: 0,
         recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
     })
 }
 
@@ -1004,6 +1028,33 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         ));
     }
 
+    // The selection's whole text, and what the previous selection's ends
+    // hold now, read in full.
+    let all = (query.read_selection_text || query.read_previous_text).then(|| b.int(-1));
+    let selection_text = all.filter(|_| query.read_selection_text).map(|all| {
+        let text = b.new_string("");
+        let text = b.add_to_results(text);
+        b.if_(has_selection, |b| {
+            let read = b.text_range_get_text(selection, all);
+            b.set(text, read);
+        });
+        text
+    });
+    let previous_text = match (query.previous_selection, previous, all) {
+        (Some((old_start, old_end)), Some((start_range, end_range)), Some(all))
+            if query.read_previous_text && !query.previous_collapsed =>
+        {
+            let start_endpoint = b.int(endpoint_number(old_start.endpoint));
+            let end_endpoint = b.int(endpoint_number(old_end.endpoint));
+            let between = b.text_range_clone(start_range);
+            b.text_range_move_endpoint_by_range(between, c.start, start_range, start_endpoint);
+            b.text_range_move_endpoint_by_range(between, c.end, end_range, end_endpoint);
+            let text = b.text_range_get_text(between, all);
+            Some(b.add_to_results(text))
+        }
+        _ => None,
+    };
+
     // The line, the unit, and the formatting.
     let line_unit = b.int(TextUnit_Line.0);
     let line = c.unit_at(b, point, line_unit);
@@ -1055,6 +1106,8 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
         unit,
         runs,
         moved_while_read,
+        selection_text,
+        previous_text,
     }
 }
 
@@ -1062,6 +1115,10 @@ fn build(b: &mut Builder, query: &CaretQuery<'_>) -> ReadRegisters {
 /// ([`ProgramCache`]): whether it has `TextPattern2`, the ends compared
 /// with, the unit, the formatting and its attributes, and the text limits.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the query's separate things to do, each building another program"
+)]
 struct ProgramKey {
     pattern2: bool,
     since: Option<i32>,
@@ -1074,6 +1131,8 @@ struct ProgramKey {
     max_text: i32,
     max_change_text: i32,
     recheck: bool,
+    read_selection_text: bool,
+    read_previous_text: bool,
 }
 
 impl ProgramKey {
@@ -1095,6 +1154,8 @@ impl ProgramKey {
             max_text: query.max_text,
             max_change_text: query.max_change_text,
             recheck: query.recheck,
+            read_selection_text: query.read_selection_text,
+            read_previous_text: query.read_previous_text,
         }
     }
 }
@@ -1124,6 +1185,8 @@ struct ReadRegisters {
     unit: Option<UnitRegisters>,
     runs: Option<RunRegisters>,
     moved_while_read: Option<Reg<kind::Bool>>,
+    selection_text: Option<Reg<kind::Str>>,
+    previous_text: Option<Reg<kind::Str>>,
 }
 
 thread_local! {
@@ -1161,16 +1224,26 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
         unit,
         runs,
         moved_while_read,
+        selection_text,
+        previous_text,
     } = r;
     let outcome = operation.execute()?;
     let caret_range = outcome
         .get(caret)?
         .ok_or(Error::MissingResult(caret.id()))?;
-    let selection = if outcome.get(has_selection)? {
+    let selected = outcome.get(has_selection)?;
+    let selection = if selected {
         outcome.get(selection)?
     } else {
         None
     };
+    let selection_text = match selection_text {
+        Some(text) if selected => Some(string_of(&outcome, text)?.encode_utf16().collect()),
+        _ => None,
+    };
+    let previous_text = previous_text
+        .map(|text| string_of(&outcome, text).map(|text| text.encode_utf16().collect()))
+        .transpose()?;
     let line = line.read(&outcome)?;
     let unit = unit.map(|unit| unit.read(&outcome)).transpose()?;
     let (runs, unsupported) = match runs {
@@ -1201,6 +1274,8 @@ pub fn caret_read_remote(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> {
             Some(moved) => outcome.get(moved)?,
             None => false,
         },
+        selection_text,
+        previous_text,
     })
 }
 
@@ -1664,6 +1739,19 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         Some(_) => Some(Vec::new()),
         None => None,
     };
+    let selection_text = match &selection {
+        Some(selection) if query.read_selection_text => Some(selection.text(-1)?),
+        _ => None,
+    };
+    let previous_text = match query.previous_selection {
+        Some((old_start, old_end)) if query.read_previous_text && !query.previous_collapsed => {
+            let between = old_start.range.clone_range()?;
+            between.move_endpoint_to(Endpoint::Start, old_start.range, old_start.endpoint)?;
+            between.move_endpoint_to(Endpoint::End, old_end.range, old_end.endpoint)?;
+            Some(between.text(-1)?)
+        }
+        _ => None,
+    };
     let line = unit_at(&point, TextUnit_Line, query.max_text)?;
     let unit = query
         .unit
@@ -1688,6 +1776,8 @@ pub fn caret_read_classic(query: &CaretQuery<'_>) -> Result<CaretAnswer, Error> 
         changes,
         unsupported,
         moved_while_read,
+        selection_text,
+        previous_text,
     })
 }
 

@@ -226,12 +226,20 @@ pub(crate) struct PendingCaret {
     /// key's effect, not this one's, so it only keeps the caret current.
     #[serde(default)]
     pub(crate) later_key_at_ms: Option<u64>,
-    /// Whether text was selected when the key was pressed, by the
-    /// selection the key's watch compares with: a key outside the caret
-    /// table whose answer shows that selection removed says only the
-    /// selection's change.
+    /// Whether text was selected when the key was pressed, by the caret
+    /// Core found the key at: a Backspace over a selection says what was
+    /// before the caret, and a key outside the caret table whose answer
+    /// shows that selection removed says only the selection's change.
     #[serde(default)]
     pub(crate) selected_before: bool,
+    /// The selection changes of caret reports that came while a key that
+    /// does not select waited for its answer, as they are spoken: the
+    /// outpost compared them with the selection kept for the node, which
+    /// the key's answer then compares with no more, so they are said after
+    /// the key's own words, as NVDA says its caret event's words after the
+    /// key's script's (`editing::selection_changed`).
+    #[serde(default)]
+    pub(crate) heard: Vec<verbatim_model::UtteranceSegment>,
 }
 
 /// A text request a review or text command made, and what to do with its

@@ -2937,10 +2937,11 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
             &remote_hits(1, &plus_copy(&report_hits)),
         );
         // Still one round trip: the program compares the selection with
-        // the one last reported and reads the change it finds. Inside the
-        // provider, the classic read's calls (below), the program's copy of
-        // the caret (`plus_copy`), one comparison and one pattern request
-        // more, and the element's import.
+        // the one last reported, reads the change it finds, and reads the
+        // new selection's whole text, kept with it for the next comparison.
+        // Inside the provider, the classic read's calls (below), the
+        // program's copy of the caret (`plus_copy`), one comparison and one
+        // pattern request more, and the element's import.
         ratchet.check(
             "UIA caret report with a selection change, remotely",
             &selected,
@@ -2957,7 +2958,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Clone", 4),
                 ("CompareEndpoints", 7),
                 ("ExpandToEnclosingUnit", 1),
-                ("GetText", 3),
+                ("GetText", 4),
                 ("MoveEndpointByRange", 4),
             ],
         );
@@ -3024,13 +3025,15 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
         // The caret report's 8 with the selection's caret
         // (`GetCaretRange`); its ends compared with the old caret's (2); the
         // two comparisons for whether the selections are apart and one for
-        // each side; and the change's text read (a copy, its two ends moved,
-        // its text): 18. The report of a caret with nothing selected, after
-        // one with nothing selected, compares nothing (8, above).
+        // each side; the change's text read (a copy, its two ends moved,
+        // its text); and the new selection's whole text, kept with it for
+        // the next comparison: 19 (18 before 2026-10-22). The report of a
+        // caret with nothing selected, after one with nothing selected,
+        // compares nothing (8, above).
         ratchet.check(
             "UIA caret report with a selection change, classically",
             &selected,
-            calls(18, 0, 0),
+            calls(19, 0, 0),
             0,
             &[
                 ("ITextProvider::GetSelection", 1),
@@ -3038,7 +3041,7 @@ fn check_uia_caret_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Clone", 3),
                 ("CompareEndpoints", 6),
                 ("ExpandToEnclosingUnit", 1),
-                ("GetText", 3),
+                ("GetText", 4),
                 ("MoveEndpointByRange", 3),
             ],
         );
@@ -3481,7 +3484,9 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
     assert_eq!(changes, [(true, "alpha", 5)]);
     // The character's spelling error and link: two attribute reads (one
     // before the default theme reported links). The caret read again at
-    // the end, the selection and `TextPattern2`'s caret, and compared.
+    // the end, the selection and `TextPattern2`'s caret, and compared. The
+    // new selection's whole text, kept with it for the next comparison
+    // (one `GetText` more since 2026-10-22).
     let expected: (CallCounts, &[(&str, u32)]) = if remote {
         (
             calls(1, 0, 0),
@@ -3497,13 +3502,13 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("CompareEndpoints", 10),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
-                ("GetText", 3),
+                ("GetText", 4),
                 ("MoveEndpointByRange", 4),
             ],
         )
     } else {
         (
-            calls(27, 0, 0),
+            calls(28, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 2),
                 ("GetCaretRange", 2),
@@ -3511,7 +3516,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("CompareEndpoints", 10),
                 ("ExpandToEnclosingUnit", 2),
                 ("GetAttributeValue", 2),
-                ("GetText", 3),
+                ("GetText", 4),
                 ("MoveEndpointByRange", 3),
             ],
         )
@@ -4349,6 +4354,8 @@ fn text_field_focuses_cost_exactly() {
             Some("alpha"),
             with_connection(10),
         ),
+        // 50 before 2026-10-22, when the caret read began reading the
+        // selection's whole text to keep with it for the next comparison.
         (
             "UIA text field focus with a selection, classically",
             "text.json",
@@ -4356,12 +4363,13 @@ fn text_field_focuses_cost_exactly() {
             false,
             selected,
             Some("alpha"),
-            with_connection(50),
+            with_connection(51),
         ),
-        // A protected field's selected text is not read, since Core says
-        // none of its text: its focus costs what one with nothing
-        // selected does, but for the classic caret read's one call more
-        // for a selection, which the unprotected field's 50 includes too.
+        // A protected field's selected text is not read for Core, which
+        // says none of its text: its focus costs what one with nothing
+        // selected does, but for the classic caret read's two calls more
+        // for a selection, its caret and its whole text kept for the next
+        // comparison, which the unprotected field's 51 includes too.
         (
             "UIA protected text field focus with a selection, remotely",
             "text.json",
@@ -4378,7 +4386,7 @@ fn text_field_focuses_cost_exactly() {
             false,
             protected_selected,
             None,
-            with_connection(46),
+            with_connection(47),
         ),
         (
             "UIA terminal focus with its caret, remotely",

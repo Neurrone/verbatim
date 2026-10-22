@@ -330,6 +330,8 @@ impl UiaText {
             formats: Vec::new(),
             changes: None,
             moved_while_read: false,
+            selection_text: None,
+            previous_text: None,
         })
     }
 
@@ -639,6 +641,8 @@ impl TextSource for UiaText {
             max_text: i32::try_from(MAX_CHUNK_UNITS + 1).unwrap_or(i32::MAX),
             max_change_text: i32::try_from(MAX_RANGE_UNITS).unwrap_or(i32::MAX),
             recheck: request.recheck,
+            read_selection_text: request.read_selection_text,
+            read_previous_text: request.read_previous_text,
         };
         let (answer, path) =
             verbatim_uia_rops::caret_read(&query, self.remote).map_err(rops_failed)?;
@@ -683,6 +687,8 @@ impl TextSource for UiaText {
                     .collect()
             }),
             moved_while_read: answer.moved_while_read,
+            selection_text: answer.selection_text,
+            previous_text: answer.previous_text,
         }))
     }
 

@@ -136,10 +136,10 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     } else {
         context
     };
-    let previous_selection = selection_before.and_then(|caret| previous_selection(key, caret));
-    let selected_before = previous_selection
-        .as_ref()
-        .is_some_and(|selection| selection.start != selection.end);
+    let previous_selection = selection_before
+        .filter(|_| selects(key))
+        .map(previous_selection);
+    let selected_before = context.is_some_and(|caret| caret.selection.is_some());
     let watch = CaretWatch {
         since: context.map(CaretBefore::caret),
         pressed_at_ms,
@@ -161,6 +161,7 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
         before,
         later_key_at_ms: None,
         selected_before,
+        heard: Vec::new(),
     });
     effects.push(Effect::Text(TextRequest {
         query_id,
@@ -170,34 +171,29 @@ pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) 
     effects
 }
 
-/// The selection before `key` that its watch compares with, from the caret
-/// as `caret` found it: for a key that selects, the selection, collapsed
-/// at the caret when nothing was selected; for any other, a selection it
-/// may leave, unless it deletes.
-fn previous_selection(key: CaretKey, caret: CaretBefore<'_>) -> Option<PreviousSelection> {
-    if key.select || key.motion == CaretMotion::SelectAll {
-        Some(match caret.selection {
-            Some(selection) => PreviousSelection {
-                start: selection.start,
-                end: selection.end,
-            },
-            None => PreviousSelection {
-                start: caret.caret(),
-                end: caret.caret(),
-            },
-        })
-    } else {
-        // A movement that leaves a selection unselects it, spoken after
-        // the unit, as NVDA reports any selection change of a control
-        // that reports its selection (`docs/nvda/editable-text-and-terminals.md`,
-        // "Selection changes"). A deletion replaces the selected text.
-        caret
-            .selection
-            .filter(|_| !key.motion.deletes())
-            .map(|selection| PreviousSelection {
-                start: selection.start,
-                end: selection.end,
-            })
+/// Whether `key` selects: with Shift, or Control+A.
+fn selects(key: CaretKey) -> bool {
+    key.select || key.motion == CaretMotion::SelectAll
+}
+
+/// The selection before a key that selects, which its watch compares
+/// with, from the caret as `caret` found it: the selection, collapsed at
+/// the caret when nothing was selected. Any other key's answer compares
+/// with the selection the outpost kept for the node, as a caret report
+/// does, so a selection it leaves or replaces is spoken after its own
+/// words, as NVDA reports any selection change of a control that reports
+/// its selection at the key's caret event
+/// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes").
+fn previous_selection(caret: CaretBefore<'_>) -> PreviousSelection {
+    match caret.selection {
+        Some(selection) => PreviousSelection {
+            start: selection.start,
+            end: selection.end,
+        },
+        None => PreviousSelection {
+            start: caret.caret(),
+            end: caret.caret(),
+        },
     }
 }
 
@@ -381,7 +377,7 @@ pub(crate) fn caret_reply(
     // reply without it, says nothing: a key that did not move the caret is
     // silent (`docs/parity/text.md`, "TextInfo-equivalent layer").
     let TextReply::Caret(reply) = reply else {
-        return Vec::new();
+        return heard(state, trace_id, pending);
     };
     // Read once a later key had been pressed, the answer may show that
     // key's effect rather than this one's, so it is not spoken for this
@@ -394,10 +390,10 @@ pub(crate) fn caret_reply(
         if state.focus_matches(pending.node) {
             update_caret(state, pending.node, reply.caret, reply.read_at_ms);
         }
-        return Vec::new();
+        return heard(state, trace_id, pending);
     }
     if !reply.moved {
-        return Vec::new();
+        return heard(state, trace_id, pending);
     }
     let Some(focus) = state
         .focus
@@ -423,37 +419,18 @@ pub(crate) fn caret_reply(
         selection: new_selection.as_ref(),
         collapsed: caret.selection.is_none(),
     });
-    let segments = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
+    let segments = if selects(pending.key) {
         selection_segments(&selection_changes, general)
     } else {
         match pending.key.motion {
             CaretMotion::Backspace | CaretMotion::BackspaceWord => {
-                let removed = pending.before.as_ref().map(|(text, offset)| {
-                    removal(
-                        (text, *offset as usize),
-                        (&caret.line.text, caret.line.offset as usize),
-                        grid,
-                    )
-                });
-                match (removed, &pending.deleted) {
-                    (Some(Removal::Removed(text)), _) => {
-                        deleted_segments(&text, pending.key.motion)
-                    }
-                    // A line joined to the one before it: the line break
-                    // went, as predicted.
-                    (Some(Removal::Joined) | None, Some(deleted)) => {
-                        deleted_segments(deleted, pending.key.motion)
-                    }
-                    // Nothing removed (a control that inserted a character
-                    // instead, as the classic edit control does for
-                    // Control+Backspace), or no deletion predicted before
-                    // the key.
-                    _ => Vec::new(),
-                }
+                backspace_segments(pending, &caret.line, grid)
             }
             // The selection removed with its text, as by a cut: said by its
             // change alone, after, never the removed text, as NVDA's caret
             // event says it (`docs/parity/text.md`, "TextInfo-equivalent layer").
+            // NVDA has no script for these keys, and says only its caret
+            // event's words.
             CaretMotion::Other if removes_selection(pending, &caret) => Vec::new(),
             // A typed line that had wrapped onto more rows, removed.
             CaretMotion::Other if removed.is_some() => removed_segments(
@@ -487,16 +464,85 @@ pub(crate) fn caret_reply(
     if !segments.is_empty() {
         effects.push(speak(trace_id, segments));
     }
-    // A movement that unselected text says so after the unit.
-    let unselected = if pending.key.select || pending.key.motion == CaretMotion::SelectAll {
-        Vec::new()
-    } else {
-        selection_segments(&selection_changes, general)
-    };
-    if !unselected.is_empty() {
-        effects.push(speak(trace_id, unselected));
+    if !selects(pending.key) {
+        effects.extend(changed_after(
+            trace_id,
+            pending,
+            &selection_changes,
+            general,
+        ));
     }
     effects
+}
+
+/// What a Backspace said, from `pending` and the caret's `line` after it.
+/// Over a selection, what was before the caret when the key was pressed,
+/// "blank" when nothing was, as NVDA's Backspace script reads it before
+/// passing the key and says it once the caret moved
+/// (`docs/nvda/editable-text-and-terminals.md`); the selection's change
+/// follows. Otherwise what the key removed, by comparing the line before
+/// and after it.
+fn backspace_segments(
+    pending: &PendingCaret,
+    line: &TextChunk,
+    grid: bool,
+) -> Vec<UtteranceSegment> {
+    if pending.selected_before {
+        return match &pending.deleted {
+            Some(deleted) => deleted_segments(deleted, pending.key.motion),
+            None => text::character_segments(None, None),
+        };
+    }
+    let removed = pending.before.as_ref().map(|(text, offset)| {
+        removal(
+            (text, *offset as usize),
+            (&line.text, line.offset as usize),
+            grid,
+        )
+    });
+    match (removed, &pending.deleted) {
+        (Some(Removal::Removed(text)), _) => deleted_segments(&text, pending.key.motion),
+        // A line joined to the one before it: the line break went, as
+        // predicted.
+        (Some(Removal::Joined) | None, Some(deleted)) => {
+            deleted_segments(deleted, pending.key.motion)
+        }
+        // Nothing removed (a control that inserted a character instead, as
+        // the classic edit control does for Control+Backspace), or no
+        // deletion predicted before the key.
+        _ => Vec::new(),
+    }
+}
+
+/// What a key that does not select says after its own words, how the
+/// selection changed: the changes caret reports carried while it waited
+/// ([`PendingCaret::heard`]), then its answer's, each compared once with
+/// the selection the outpost kept.
+fn changed_after(
+    trace_id: TraceId,
+    pending: &PendingCaret,
+    changes: &[SelectionChange],
+    general: Option<General<'_>>,
+) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    if !pending.heard.is_empty() {
+        effects.push(speak(trace_id, pending.heard.clone()));
+    }
+    let answered = selection_segments(changes, general);
+    if !answered.is_empty() {
+        effects.push(speak(trace_id, answered));
+    }
+    effects
+}
+
+/// The selection changes caret reports carried while `pending`'s key
+/// waited ([`PendingCaret::heard`]), spoken when its answer says nothing
+/// of its own, while its node is still the focus.
+fn heard(state: &SrState, trace_id: TraceId, pending: &PendingCaret) -> Vec<Effect> {
+    if pending.heard.is_empty() || !state.focus_matches(pending.node) {
+        return Vec::new();
+    }
+    vec![speak(trace_id, pending.heard.clone())]
 }
 
 /// Whether the answer to `pending`'s key shows the selection removed:
@@ -771,21 +817,29 @@ fn selection_text(change: &SelectionChange) -> SelectionText {
 /// (`docs/nvda/editable-text-and-terminals.md`, "Selection changes";
 /// `docs/parity/text.md`, "TextInfo-equivalent layer"). The caller passes
 /// only reports that came after the focus's announcement was complete.
-/// While a caret key waits for its answer, that answer speaks the change,
-/// so the report says nothing.
+/// While a caret key waits for its answer, the report says nothing now: a
+/// selecting key's answer compares with the selection before the key and
+/// speaks the change itself; any other key's answer speaks the report's
+/// change after the key's own words ([`PendingCaret::heard`]), since the
+/// outpost compared it with the selection it kept, which the answer then
+/// compares with no more.
 pub(crate) fn selection_changed(
     state: &mut SrState,
     trace_id: TraceId,
     (node, observed_at_ms): (NodeId, u64),
     (changes, general): (&[SelectionChange], Option<General<'_>>),
 ) -> Vec<Effect> {
-    if changes.is_empty()
-        || !state.focus_matches(node)
-        || state
-            .pending_caret
-            .as_ref()
-            .is_some_and(|pending| pending.node == node)
+    if changes.is_empty() || !state.focus_matches(node) {
+        return Vec::new();
+    }
+    if let Some(pending) = state
+        .pending_caret
+        .as_mut()
+        .filter(|pending| pending.node == node)
     {
+        if !selects(pending.key) {
+            pending.heard.extend(selection_segments(changes, general));
+        }
         return Vec::new();
     }
     let segments = selection_segments(changes, general);

@@ -10,10 +10,11 @@
 //! after a `WinEvent` focus while a UIA focus's marker waits for its read;
 //! and a selection no key made is reported with its change, one a key or
 //! Verbatim made is not; and a selection change after a text change is
-//! compared through UIA as always, and said in general terms in a classic
-//! edit control in either order of its caret event and value change, and
-//! in a selecting key's answer while the value change waits or after a
-//! report the key ignored consumed it.
+//! said in general terms, through UIA once the old selection's range no
+//! longer holds its text, and in a classic edit control in either order of
+//! its caret event and value change; and a deleting key's answer compares
+//! with the selection the outpost kept, in both backends, so a caret
+//! report that compared it first leaves the answer no change.
 //!
 //! Each test runs on a desktop of its own (`harness::run_isolated`), so no
 //! other client sees mockapp's window or raises its events.
@@ -659,14 +660,16 @@ fn unselected_in_general() -> SelectionChange {
 }
 
 /// "x" typed over the selected "a" in a document read through UIA, its
-/// caret event raised before its text change: the report compares the
-/// selections as always, reading the old selection's range as it now is,
-/// so the typed "x" it now holds is unselected, as NVDA, which handles no
-/// text change for such a document, says in Windows 11 Notepad
-/// (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`).
+/// caret event raised before its text change: the old selection's range
+/// no longer holds the "a" it held when it was reported, so the report
+/// says its change in general terms, the selection removed, Dickson's
+/// deliberate difference from NVDA, which handles no text change for such
+/// a document and says "x unselected" in Windows 11 Notepad
+/// (`docs/parity/text.md`, "TextInfo-equivalent layer";
+/// `target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`).
 /// mockapp's ranges are offsets into the text as it now is, so the old
 /// range holds what a range that follows the edit would: one character.
-fn a_caret_event_before_its_text_change_compares_the_old_ranges_text() {
+fn a_uia_selection_typed_over_is_said_in_general_terms() {
     let (mut app, hwnd, outpost) = start("mockapp-caret-watch-typed-over");
     let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
     app.send("caret doc 0 1");
@@ -700,15 +703,7 @@ fn a_caret_event_before_its_text_change_compares_the_old_ranges_text() {
     outpost.release_worker();
     assert_eq!(
         reported_selection(&outpost, notes),
-        (
-            vec![SelectionChange {
-                selected: false,
-                text: "x".to_owned(),
-                characters: 1,
-            }],
-            false,
-            None
-        )
+        (vec![unselected_in_general()], true, None)
     );
     text_changed(&outpost, notes);
     outpost.settled();
@@ -865,32 +860,36 @@ fn an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general
     app.quit();
 }
 
-/// The selected "alpha" cut from a classic edit control with a key whose
-/// watch compares the selections, its caret event raised before its value
-/// change, as the Windows Forms text box raises them: the value change
-/// waiting when the caret event answers the key, the answer says its change
-/// in general terms, the selection removed, as NVDA's edit control does at
+/// Delete's watch over the selection `before` reports, with the character
+/// at its caret to compare, as Core sends it: no selection of its own, the
+/// answer comparing with the selection the outpost kept.
+fn delete_over(before: &CaretReport, pressed_at_ms: u64) -> TextOp {
+    let at = &before.line.text[before.line.offset as usize..];
+    TextOp::AwaitCaret(CaretWatch {
+        landing: false,
+        since: Some(TextPosition {
+            anchor: before.line.start,
+            offset: before.line.offset,
+        }),
+        pressed_at_ms,
+        unit: TextUnit::Character,
+        compare: Some(at.chars().next().map(String::from).unwrap_or_default()),
+        previous_selection: None,
+    })
+}
+
+/// The selected "alpha" deleted from a classic edit control with Delete,
+/// its caret event raised before its value change, as the Windows Forms
+/// text box raises them: the answer compares with the selection the
+/// outpost kept, and with the value change waiting says its change in
+/// general terms, the selection removed, as NVDA's edit control does at
 /// the key's caret event
-/// (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-textbox-2-cut.txt`).
-fn an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms() {
-    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-cut");
-    let selection = before.selection.expect("the selected alpha");
+/// (`target/e2e-evidence/m42-selection-keys-2026-10-22/textbox-word-delete.txt`).
+fn an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms() {
+    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-delete");
     let key = outpost.ask(Query::Text {
         node_id: node,
-        op: TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition {
-                anchor: before.line.start,
-                offset: before.line.offset,
-            }),
-            pressed_at_ms: 0,
-            unit: TextUnit::Word,
-            compare: None,
-            previous_selection: Some(PreviousSelection {
-                start: selection.start,
-                end: selection.end,
-            }),
-        }),
+        op: delete_over(&before, 0),
     });
     outpost.settled();
     outpost.hold_worker_on(common::another_applications_window().0 as isize);
@@ -921,18 +920,15 @@ fn an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general
     app.quit();
 }
 
-/// The selected "alpha" cut from a classic edit control with a key whose
-/// watch compares the selections, the control's value change and then its
-/// caret event both handled before the key's watch arrives: the caret
-/// event's report, which Core ignores while the key is pending, consumes
-/// the note that the text changed, and the key's answer, which stands in
-/// for the one caret event NVDA handles for the key and speaks with its
-/// note (`nvda/source/editableText.py` 437 to 451), still says its change
-/// in general terms, the selection removed, since the value change was
-/// observed after the key was pressed.
-fn an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms() {
-    let (mut app, mut outpost, node, before) = focus_edit("mockapp-caret-watch-edit-cut-reported");
-    let selection = before.selection.expect("the selected alpha");
+/// The selected "alpha" deleted from a classic edit control with Delete,
+/// the control's value change and then its caret event both handled
+/// before the key's watch arrives: the caret event's report compares with
+/// the selection kept, in general terms, the selection removed, and
+/// replaces it, so the key's answer has no change left to say; Core says
+/// the report's change after the key's own words.
+fn a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change() {
+    let (mut app, mut outpost, node, before) =
+        focus_edit("mockapp-caret-watch-edit-delete-reported");
     let pressed_at_ms = u64::try_from(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -956,21 +952,60 @@ fn an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_
     outpost.settled();
     let key = outpost.ask(Query::Text {
         node_id: node,
-        op: TextOp::AwaitCaret(CaretWatch {
-            landing: false,
-            since: Some(TextPosition {
-                anchor: before.line.start,
-                offset: before.line.offset,
-            }),
-            pressed_at_ms,
-            unit: TextUnit::Word,
-            compare: None,
-            previous_selection: Some(PreviousSelection {
-                start: selection.start,
-                end: selection.end,
-            }),
-        }),
+        op: delete_over(&before, pressed_at_ms),
     });
+    let reply = caret_reply(answer_to(&outpost, key));
+    assert_eq!(
+        (
+            reply.selection_changes,
+            reply.content_changed,
+            reply.new_selection
+        ),
+        (Vec::new(), false, None)
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The selected "alpha" deleted from a document read through UIA with
+/// Delete: the answer compares with the selection the outpost kept, whose
+/// range no longer holds the "alpha" it held when it was reported, so the
+/// answer says its change in general terms, the selection removed, as
+/// Verbatim says it in Windows 11 Notepad where NVDA says nothing
+/// (`docs/parity/text.md`, "TextInfo-equivalent layer";
+/// `target/e2e-evidence/m42-selection-keys-2026-10-22/notepad-word-delete.txt`).
+fn a_uia_deleting_key_over_a_selection_is_answered_in_general_terms() {
+    let (mut app, hwnd, mut outpost) = start("mockapp-caret-watch-delete");
+    let (notes, _) = focus_notes(&mut app, &outpost, hwnd);
+    app.send("caret doc 0 5");
+    app.send("caret-event doc");
+    let before = match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::CaretMoved {
+                    node_id,
+                    caret,
+                    selection_changes,
+                    ..
+                },
+            ..
+        } if node_id == notes => {
+            assert_eq!(selection_changes, [change(true, "alpha")]);
+            caret
+        }
+        other => panic!("the outpost said {other:?}, not the document's caret"),
+    };
+    heard_caret_event(&outpost);
+    outpost.settled();
+    let key = outpost.ask(Query::Text {
+        node_id: notes,
+        op: delete_over(&before, 0),
+    });
+    outpost.settled();
+    app.send(r"set-text doc  beta\ngamma\n");
+    app.send("caret doc 0");
+    app.send("caret-event doc");
     let reply = caret_reply(answer_to(&outpost, key));
     assert_eq!(
         (
@@ -980,6 +1015,7 @@ fn an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_
         ),
         (vec![unselected_in_general()], true, None)
     );
+    heard_caret_event(&outpost);
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -1037,8 +1073,8 @@ fn main() {
             a_selection_verbatim_made_is_not_reported_again,
         ),
         (
-            "a_caret_event_before_its_text_change_compares_the_old_ranges_text",
-            a_caret_event_before_its_text_change_compares_the_old_ranges_text,
+            "a_uia_selection_typed_over_is_said_in_general_terms",
+            a_uia_selection_typed_over_is_said_in_general_terms,
         ),
         (
             "an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms",
@@ -1053,12 +1089,16 @@ fn main() {
             an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms,
         ),
         (
-            "an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms",
-            an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms,
+            "an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms",
+            an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms,
         ),
         (
-            "an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms",
-            an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms,
+            "a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change",
+            a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change,
+        ),
+        (
+            "a_uia_deleting_key_over_a_selection_is_answered_in_general_terms",
+            a_uia_deleting_key_over_a_selection_is_answered_in_general_terms,
         ),
     ]);
 }

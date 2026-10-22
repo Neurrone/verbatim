@@ -428,7 +428,9 @@ pub struct CaretWatch {
     /// The selection before the key, for a key that changes the selection
     /// (any Shift movement, Control+A); `None` otherwise. When the request
     /// carries one, the reply's `selection_changes` describe how the
-    /// selection changed from it.
+    /// selection changed from it; otherwise they describe how it changed
+    /// from the selection the outpost kept from its last caret report for
+    /// the node, as a caret event's report does.
     pub previous_selection: Option<PreviousSelection>,
     /// The key is judged by where the caret landed
     /// ([`CaretMotion::Other`]): the reply says whether the caret is still

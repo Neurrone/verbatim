@@ -223,7 +223,8 @@ Differences:
   words, "alpha selected" and "alpha unselected" (mockapp's
   `a_selection_no_key_made_is_reported_with_its_change`). A key's
   selection is spoken once, by the key's answer, since its watch takes
-  the key's caret event; one Verbatim makes itself, select then copy's
+  the key's caret event, or, when that event was reported before the
+  watch arrived, by the report, after the key's own words; one Verbatim makes itself, select then copy's
   first press, is spoken by its own reply, and the caret event after it
   carries no change, as does the one after say-all moves the caret. When
   the outpost merges a caret report waiting to be written with a newer one
@@ -231,58 +232,103 @@ Differences:
   every intermediate change is spoken, where NVDA, whose event limiter
   keeps one caret event per object (`IAccessibleHandler/orderedWinEventLimiter.py`),
   compares only the last selection with the one it last saw.
-- A selection change that follows a change of the focus's text:
-  **matched** in both backends, against the captures in
+- A selection change that follows a change of the focus's text, and the
+  keys that change the text over a selection: **matched** in the classic
+  edit control and **different** through UIA by Dickson's decision,
+  against the captures in
+  `target/e2e-evidence/m42-selection-keys-2026-10-22/` (each named by the
+  control and the key, such as `textbox-word-backspace.txt` and
+  `notepad-second-word-control-backspace.txt`) and
   `target/e2e-evidence/m42-desktop-2-2026-10-22/` (`part3b-textbox-*.txt`
-  and `part3b-notepad-*.txt`). The selection compared with is never
-  forgotten when the text changes. In a classic edit control, the text
-  having changed since the selection compared with was reported, the
-  change is said in general terms: the whole new selection followed by
+  and `part3b-notepad-*.txt`). NVDA has one rule for every selection
+  change in an edit control, whatever key caused it: at each caret event
+  it compares the selection it last saw with the current one, replaces
+  it, and speaks the change, in general terms when its note that the
+  content changed is set ("Selection changes" in
+  [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
+  Verbatim keeps that one old selection in the outpost, per node, and
+  every comparison uses it: a caret event's report and the answer to
+  every key that does not select, deleting keys included, so each change
+  is compared once, by whichever reads it first; a selecting key compares
+  with the selection Core found before it. One decision says whether a
+  comparison is in general terms, the same for reports and answers: the
+  note is set (a classic edit control's value change handled, as NVDA's
+  `hasContentChangedSinceLastSelection`, read and cleared at each
+  comparison with a selection, and cleared by a focus), or, with a
+  selection in the old one or now, the control's value change waits once
+  the caret is read (the Windows Forms text box raises it after its
+  caret's move, sometimes while answering the read), or the old
+  selection's text as it was reported no longer matches what its range
+  holds now. General terms are the whole new selection followed by
   "selected" when anything was selected, then, when anything was
   unselected, the whole new selection followed by "selected instead", or
-  "selection removed" when nothing is selected now, both for a disjoint
-  replacement ("Selection changes" in
-  [Editable text and terminals](../nvda/editable-text-and-terminals.md)).
-  The control's text counts as changed once its value change is handled,
-  and at a caret event while its value change still waits, so both orders
-  of the two events give the general words, as NVDA's do (`x` typed over
-  the selected "hello ": "x" then "selection removed"; Control+X on a
-  selected line: "selection removed"; mockapp's
-  `an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms`
-  and
-  `an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms`).
-  A selecting key's answer is said the same way when the text changed
-  before it or its value change waits as the key is answered, since NVDA
-  answers the key at the same caret event (mockapp's
-  `an_edit_controls_selecting_key_before_its_value_change_is_answered_in_general_terms`),
-  and when a value change observed after the key was pressed was noted
-  and a caret event handled before the key's answer consumed the note,
-  since that event's report, which Core ignores while the key is
-  pending, stands in for no caret event of NVDA's (mockapp's
-  `an_edit_controls_selecting_keys_answer_after_its_reported_value_change_is_in_general_terms`).
-  A key outside the caret table whose answer shows the selection removed,
-  something selected before it and nothing after, as Control+X, Enter
-  and Control+V over a selection do, says only the selection's change,
-  in general or specific terms, never the text it removed, which was the
-  selection's. The outpost carries the general terms to Core as
-  `content_changed` with the whole new selection's text, read in the same
-  caret read in place of the changed pieces' text. A UIA text's change
-  never counts, as in NVDA, which handles UIA's text change as one only for
-  Word and the two terminals: the selections are compared as always, the
-  old selection's range read as it now is, so "x" typed over the selected
-  "hello " in Windows 11 Notepad says "x" then "x unselected", the old
-  range now holding the typed character, and Control+X on a selected line
-  says nothing, the old range now empty (mockapp's
-  `a_caret_event_before_its_text_change_compares_the_old_ranges_text`).
-  Enter and Control+V over a selection are unverified, needing a
-  capture, as Delete, Control+Backspace and Control+Delete are.
-  Different and unverified, needing a capture: after Backspace, Delete,
-  Control+Backspace or Control+Delete over a selection, NVDA's classic
-  edit control probably says "selection removed", by the general terms
-  above, at its caret event, where Verbatim's path for a deleting key
-  says what was deleted and nothing about the selection: the key's watch
-  carries no previous selection, and its answer clears the note of the
-  changed text without speaking it.
+  "selection removed" when nothing is selected now. The outpost carries
+  them to Core as `content_changed` with the whole new selection's text.
+  A key's own words come first and the selection's change after, as NVDA
+  speaks its script's words and then its caret event's; when the key's
+  caret event was reported before its watch arrived, Core holds that
+  report's words and says them after the key's.
+  - The classic edit control, the Windows Forms text box, over "alpha "
+    or "beta " selected with Shift+Control+Right Arrow, matched:
+    Backspace says the character before the caret, the selection's
+    start, read before the key, "blank" when there is none, then
+    "selection removed" ("blank", and over "beta " "space");
+    Control+Backspace the text from the word's start to the caret
+    ("blank", and over "beta " "alpha"); Delete the character now at the
+    caret ("b"); Control+Delete the word now at the caret ("beta"); each
+    then "selection removed". Typing over the selection echoes the
+    character, then "selection removed"; Control+X, Control+V and Enter
+    say only "selection removed", over a word and over Shift+End's rest
+    of a line; Control+C says nothing (the `text_box_selection_keys` and
+    `text_box_editing` scenarios; mockapp's
+    `an_edit_controls_deleting_key_over_a_selection_is_answered_in_general_terms`,
+    `an_edit_controls_caret_event_before_its_value_change_is_said_in_general_terms`,
+    `an_edit_controls_value_change_handled_first_has_the_next_change_said_in_general_terms`,
+    `an_edit_controls_value_change_raised_during_its_caret_read_is_said_in_general_terms`
+    and `a_caret_report_before_a_keys_watch_leaves_its_answer_no_selection_change`).
+    NVDA's Enter script reads the new line's text before the caret, which
+    is empty in every case captured, so neither says anything for it;
+    Verbatim has no such read, since Enter reaches it as typed text,
+    "\r", not as a caret key.
+  - Through UIA, Windows 11 Notepad, different (Dickson, 2026-10-22):
+    NVDA notes no UIA text change but for Word and the two terminals, and
+    compares the old selection's range as it now is, which the provider
+    moved with the edit, so it names what the range now holds or says
+    nothing: "x" typed over the selection, "x" then "x unselected";
+    Backspace, Delete and Control+Delete over a word, only their own
+    words; Enter over a word or a line's rest, "carriage return
+    unselected"; Control+X and Control+V over a word, nothing, and
+    Control+V over a line's rest, "kiwi unselected", the pasted word.
+    Dickson judges these words wrong, since they name the new text as
+    though it had been selected; Verbatim keeps the selection's whole text
+    when it is reported and, when the old range no longer holds it, says
+    the change in general terms: "x" then "selection removed", and
+    "selection removed" after each of those keys' own words. NVDA's
+    behavior is not offered as a setting. The text is read in the caret
+    read's one round trip, in full, and compared length first. A range
+    that still holds its text is compared as NVDA compares it:
+    Control+Backspace over "beta ", which Notepad answers by deleting the word
+    before the selection, says "beta unselected" in both
+    (`notepad_selection_keys` and `notepad_editing`; mockapp's
+    `a_uia_selection_typed_over_is_said_in_general_terms` and
+    `a_uia_deleting_key_over_a_selection_is_answered_in_general_terms`).
+  - Different through UIA, recorded, not chosen: NVDA's caret over a
+    selection is the selection's start in both backends, and Verbatim's
+    through UIA is the selection's active end (`TextPattern2`'s caret),
+    so Backspace and Control+Backspace over a forward selection say what
+    was before its end. They agree where the two are the same character,
+    as over "alpha " and "beta " ("space"); they differ over "gamma" to the
+    line's end, where NVDA says "space" and Verbatim the line break, and
+    for Control+Backspace over "beta ", where NVDA says "alpha", the word
+    Notepad deletes, and Verbatim "beta". Over "alpha " at the start of
+    the text NVDA says "space" too, which its source does not explain,
+    the character before the start being none.
+  - Different: NVDA's delayed character description, "Bravo" after the
+    "b" Delete reaches, is a setting Verbatim does not have yet.
+  - A key outside the caret table that removes a selection (Control+X,
+    Control+V), something selected before it and nothing after, says only
+    the selection's change, never the text it removed, which was the
+    selection's: NVDA has no script for these keys.
   Not yet built:
   - NVDA's classic edit control drops a caret event whose selection
     offsets equal the last one's (`NVDAObjects/window/edit.py` 1068 to

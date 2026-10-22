@@ -427,6 +427,7 @@ struct CaretSummary {
     unit: Option<(String, usize)>,
     runs: Vec<(usize, RunAttributes)>,
     changes: Option<Vec<(bool, String)>>,
+    texts: (Option<String>, Option<String>),
 }
 
 fn summary(answer: &CaretAnswer) -> CaretSummary {
@@ -450,6 +451,10 @@ fn summary(answer: &CaretAnswer) -> CaretSummary {
                 .map(|change| (change.selected, text(&change.text)))
                 .collect()
         }),
+        texts: (
+            answer.selection_text.as_deref().map(text),
+            answer.previous_text.as_deref().map(text),
+        ),
     }
 }
 
@@ -496,6 +501,8 @@ fn remote_and_classic_caret_reads_agree() {
         max_text: 1024,
         max_change_text: 1024,
         recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
     };
 
     // The caret in "beta", a spelling error after bold "alpha": the line's
@@ -589,6 +596,27 @@ fn remote_and_classic_caret_reads_agree() {
         ..query(None, None)
     });
     assert!(!again.moved && !again.selection_moved);
+    // With the texts asked for: the selection's whole text, and what the
+    // previous selection's ends hold now, here the same word.
+    let texts = caret_both(&CaretQuery {
+        previous_selection: Some((
+            RangeEnd {
+                range: selected.selection.as_ref().expect("a selection"),
+                endpoint: Endpoint::Start,
+            },
+            RangeEnd {
+                range: selected.selection.as_ref().expect("a selection"),
+                endpoint: Endpoint::End,
+            },
+        )),
+        read_selection_text: true,
+        read_previous_text: true,
+        ..query(None, None)
+    });
+    assert_eq!(
+        texts.texts,
+        (Some("beta".to_owned()), Some("beta".to_owned()))
+    );
     app.quit();
 }
 
@@ -618,6 +646,8 @@ fn a_failing_attribute_is_not_supported() {
         max_text: 1024,
         max_change_text: 1024,
         recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
     };
     common::apply(&mut app, hwnd, "caret doc 1");
     let classic = caret_read_classic(&query).expect("the classic reads run");
@@ -662,6 +692,8 @@ fn a_mixed_stretch_is_read_by_words_then_characters() {
         max_text: 1024,
         max_change_text: 1024,
         recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
     };
     let italic = |italic| RunAttributes {
         italic: Some(italic),
@@ -841,6 +873,8 @@ fn remote_and_classic_text_reads_agree() {
         max_text: 1024,
         max_change_text: 1024,
         recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
     })
     .expect("the caret");
     let selection = selected.selection.expect("the selection made");
@@ -1307,6 +1341,8 @@ fn every_attribute_is_read_both_ways() {
         max_text: 1024,
         max_change_text: 1024,
         recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
     };
     let plain = plain_formatting;
     let read = |formats| {
@@ -1436,6 +1472,8 @@ fn unsupported_attributes_are_found_both_ways() {
         max_text: 1024,
         max_change_text: 1024,
         recheck: false,
+        read_selection_text: false,
+        read_previous_text: false,
     };
     let unsupported = Some(Attributes::of(&[
         TextAttribute::StrikethroughStyle,

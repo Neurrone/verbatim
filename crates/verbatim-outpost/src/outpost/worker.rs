@@ -2581,7 +2581,7 @@ impl Worker<'_> {
                     self.context
                         .msaa_registry
                         .id_for((hwnd, OBJID_CLIENT.0, CHILDID_SELF));
-                text_reads::note_value_change(self.context, node_id, observed_at_ms);
+                text_reads::note_value_change(self.context, node_id);
                 self.check_open_watch(node_id, false);
                 self.emit(
                     trace,

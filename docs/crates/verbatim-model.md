@@ -360,7 +360,8 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   which case its newest such report; a caret read at or after that time
   may already show the key's effect); the text of `unit` at the caret differing from `compare` (the
   character or word at the caret before a Delete); the selection no longer
-  `previous_selection`. A watch marked `landing` (a key judged by where the
+  `previous_selection`, or, without one, no longer the selection the
+  outpost kept for the node from its last caret report. A watch marked `landing` (a key judged by where the
   caret landed) is answered with `same_line`, whether the caret is still on
   the line where it was. In a terminal, a key answered by where the caret landed
   may carry `removed`, the text it removed from a typed line that had
@@ -377,9 +378,12 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   a later key's `pressed_at_ms`), the requested `unit` at the caret as a chunk
   (`None` when the unit is `Line`, which the caret's line already is, or
   when the provider does not have the unit, in which case Core speaks the
-  line), and `selection_changes` when the watch carried a
-  `previous_selection` (a `PreviousSelection`, collapsed at the caret when
-  nothing was selected). Each `SelectionChange` is `selected` (true for
+  line), and `selection_changes`: from the watch's `previous_selection` (a
+  `PreviousSelection`, collapsed at the caret when nothing was selected),
+  which Core sends only for a key that selects, or otherwise from the
+  selection the outpost kept for the node, the one a caret event's report
+  compares with, none when neither it nor the new selection holds
+  anything. Each `SelectionChange` is `selected` (true for
   newly selected text, false for text no longer selected), its `text` cut
   to `MAX_SELECTION_TEXT_BYTES` (4 KB), and the full count of its
   `characters` (grapheme clusters). With the old selection from

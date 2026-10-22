@@ -430,7 +430,9 @@ Caret keys (`docs/nvda/editable-text-and-terminals.md`). An
 evidence (`TextOp::AwaitCaret`), with the caret Core last knew and when
 the key was pressed, the unit to report, for Delete the character or
 word at the caret (whose change is evidence), and for a selecting key
-the selection before it. The outpost never waits for the evidence: it
+the selection before it; any other key's answer compares with the
+selection the outpost kept for the node, as a caret event's report does
+(`docs/crates/verbatim-outpost.md`). The outpost never waits for the evidence: it
 answers once the evidence comes, and a watch that ends without it is
 answered `TextReply::WatchEnded`, for which Core says nothing, as it
 says nothing for a reply with `moved` false. A key that moves nothing,
@@ -472,7 +474,15 @@ then speaks, queued:
   line at the caret, "blank" when it has nothing to read.
 - Control with Up or Down Arrow: the provider's paragraph, or the line when
   the provider has no paragraphs.
-- Backspace and Control+Backspace: what the key removed, from evidence
+- Backspace and Control+Backspace over a selection: the character, or
+  the text from the start of the word, before the caret as the key found
+  it, read from the caret's line before the key, "blank" when there is
+  none, as NVDA's Backspace script reads it before passing the key; then
+  the selection's change. A classic edit control's caret is the
+  selection's start, as NVDA's; a UIA text's is the selection's active
+  end, where NVDA uses its start (`docs/parity/text.md`,
+  "TextInfo-equivalent layer").
+- Backspace and Control+Backspace otherwise: what the key removed, from evidence
   (`docs/design/phase6-design.md`, "What a key did to the text"): the caret's line as
   the key found it compared with the line the reply read, text that ended
   at the caret before the key and is gone, with the caret now where it
@@ -485,7 +495,8 @@ then speaks, queued:
   earlier line), a carriage return and line feed spoken as the line feed,
   as NVDA does. Nothing at the start of the text, or when no break has
   been seen.
-- Delete and Control+Delete: the character or word now at the caret.
+- Delete and Control+Delete: the character or word now at the caret,
+  then, over a selection, the selection's change.
 - Any other key passed to the application that types no text
   (`CaretMotion::Other`, from the hook's `KeyReport::Passed`, and the
   clearing keys): text it removed at the caret is spoken (Control+W, and
@@ -497,12 +508,18 @@ then speaks, queued:
   when it landed at a word's start or just after its end, and inside a
   word the word and then the character at the caret (bash's Control+A and
   Control+E, Alt+B and Alt+F). Text a key added says nothing here; typing
-  echo and terminal output speak it.
+  echo and terminal output speak it. A key that removed a selection,
+  something selected when it was pressed and nothing in its answer
+  (Control+X, Control+V), says none of this, only the selection's
+  change, since NVDA has no script for such keys and speaks only its
+  caret event (`editing::removes_selection`).
 - Any of them with Shift, and Control+A: what became selected and
   unselected, NVDA's "hello selected" and "hello unselected", a single
-  character by its name, 512 characters or more as their number. A
-  movement without Shift that leaves a selection speaks its unit, then
-  the text it unselected; a deletion does not. A change with no text says
+  character by its name, 512 characters or more as their number. Any
+  other key over a selection speaks its own words, then how the selection
+  changed, as NVDA speaks its script's words and then its caret event's:
+  a movement its unit then the text it unselected, a deletion its own
+  words then "selection removed". A change with no text says
   nothing. A change in general terms, the text having changed since the
   selection compared with was reported (`content_changed`), speaks the
   whole new selection: "hello selected" when something was selected, then,
@@ -513,12 +530,17 @@ then speaks, queued:
 - A selection no key made, the mouse's or the application's, arrives as
   the selection changes of a `CaretMoved` once the focus's announcement is
   complete, and is spoken with the same words (`editing::selection_changed`).
-  While a caret key's answer is awaited for the node, the answer speaks
-  the change instead. A key's caret event can reach Core before the key
+  While a caret key's answer is awaited for the node, nothing is spoken
+  then: a selecting key's answer compares with the selection before the
+  key and speaks the change itself; any other key's answer compares with
+  the selection the outpost kept, which the report already replaced, so
+  the report's words are held with the key (`PendingCaret::heard`) and
+  spoken after the key's own words, or alone when the watch ends with no
+  answer worth speaking. A key's caret event can reach Core before the key
   does; once a change from a report observed no earlier than the key was
-  spoken (`SrState::selection_spoken`), the key's watch compares with the
-  selection Core now knows rather than the one before the key, so the
-  change is not spoken twice.
+  spoken (`SrState::selection_spoken`), a selecting key's watch compares
+  with the selection Core now knows rather than the one before the key,
+  so the change is not spoken twice.
 
 Formatting (milestone M4 item 7, `docs/nvda/document-formatting.md`).
 A caret key's character, word, or line, and a new focus's first line,

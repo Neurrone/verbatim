@@ -34,6 +34,7 @@ pub(crate) mod return_after_retirement;
 pub(crate) mod review_cursor;
 pub(crate) mod review_words;
 pub(crate) mod second_application_and_verbatim_menu;
+pub(crate) mod selection_keys;
 pub(crate) mod settings_combo_box_expanded;
 pub(crate) mod settings_dialog_keys;
 pub(crate) mod settings_search_suggestions;

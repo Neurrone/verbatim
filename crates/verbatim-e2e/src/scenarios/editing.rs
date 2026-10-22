@@ -8,8 +8,10 @@
 //! (`docs/nvda/editable-text-and-terminals.md`, "A line break as a
 //! character"): Windows 11 Notepad breaks lines with a carriage return, an
 //! edit control with a carriage return and a line feed; and a selection
-//! changed by typing over it or cutting it, said in general terms in the
-//! text box and compared as always in Notepad, as NVDA says each. The
+//! changed by typing over it or cutting it, said in general terms in both,
+//! as NVDA says it in the text box, and in Notepad by Dickson's deliberate
+//! difference from NVDA (`docs/parity/text.md`, "TextInfo-equivalent
+//! layer"). The
 //! Notepad scenario is local-only: GitHub's Windows Server runner has
 //! classic Notepad.
 //!
@@ -179,14 +181,14 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // Backspace at the line's start deletes the line break before it.
     press(scenario, "backspace", &["carriage return"]);
 
-    // A selection changed by a change of the text is compared as any other,
-    // the old selection's range read as it now is, as NVDA does in Windows
-    // 11 Notepad
-    // (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`
-    // and `part3b-notepad-2.txt`): "x" typed over the selected word is
-    // echoed, then unselected, the old range holding it now; the line cut
-    // with Control+X says nothing, its old range now empty, once Verbatim
-    // reports the key handled and itself idle.
+    // A selection whose old range no longer holds the text it held when it
+    // was reported is said in general terms, the selection removed, as in
+    // the text box: "x" typed over the selected word is echoed, then the
+    // selection is removed; so is the line cut with Control+X. NVDA, which
+    // reads the old range as it now is, says "x unselected" and then
+    // nothing (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-notepad-1.txt`
+    // and `part3b-notepad-2.txt`); the difference is Dickson's decision of
+    // 2026-10-22 (`docs/parity/text.md`, "TextInfo-equivalent layer").
     //
     // Notepad's spell checker marks a misspelt word a moment after the
     // caret leaves it, raising no event, and never while the caret is in
@@ -203,7 +205,9 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
     // (`target/e2e-evidence/m42-desktop-4-2026-10-22/notepad-cut-after-typing-over.txt`).
     press(scenario, "control+home", &["alpha beta gammaelta epsilon"]);
     press(scenario, "shift+control+rightarrow", &["alpha  selected"]);
-    press(scenario, "x", &["x", "x unselected"]);
+    scenario.send_keys(&["x"]).expect("sends x");
+    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
+    scenario.speech().expect(&["x", "selection removed"]);
     assert_eq!(
         scenario
             .misspelt_words()
@@ -222,6 +226,8 @@ pub(crate) fn notepad_body(scenario: &mut Scenario, _state: &mut ScenarioState) 
         &["xbeta gammaelta epsilon  selected"],
     );
     scenario.send_keys(&["control+x"]).expect("sends control+x");
+    scenario.deviates_from_nvda("docs/parity/text.md", "TextInfo-equivalent layer");
+    scenario.speech().expect(&["selection removed"]);
     scenario.expect_nothing_more();
     press(scenario, "x", &["x"]);
     scenario
