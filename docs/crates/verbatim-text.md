@@ -209,21 +209,32 @@ plain output, a scroll, rotation, a footer kept at its coordinate while
 the history rotates, a footer redrawn in place, Pi's status row drawn a row
 lower with its spinner changed, Ink's region erased and drawn again in one
 write and caught erased between two, a repeated row kept in place rather
-than paired with its copy, a wrapped line split across the read's top,
-Windows Terminal's cut last row, a clear and a reprint, output repeated
-after `cls`, the alternate screen opened and closed, and the review
-position through a scroll, a rotation and a redraw elsewhere.
+than paired with its copy, a wrapped line split across the read's top, Windows Terminal's cut
+last row, a clear and a reprint, output repeated after `cls`, the
+alternate screen opened and closed, and the review position through a
+scroll, a rotation and a redraw elsewhere.
 
 `tests/terminal_oracle.rs` checks a reader built on the memory against
-the simulator's oracle over the conformance corpus in both terminals, the
-oracle's 512 random streams and every stream of up to four operations of
-its tiny alphabet. The reader reports every new line, every line with a
-rewritten row as redrawn, growth as growth, and withholds kept rows that
-moved, lingering rows taken back elsewhere and reprints for those
-reasons, with where each row went and its review position. Each test
-asserts the exact violations left, counted by kind; the file's comment
-lists their causes, each a judgement by row identity that a reader of
-text cannot make, awaiting a decision on the oracle or the design.
+the simulator's oracle, which judges by text, over the conformance corpus
+in both terminals, the oracle's 512 random streams and every stream of up
+to four operations of its tiny alphabet. The reader speaks a line with a
+new row as a line, growth as growth and a line with a rewritten row as
+redrawn; it is silent on a line whose rows were all kept, taken back,
+reprinted or found in the history, but withholds such a line as having
+lost text when the line its first row was in had more, and speaks it as
+redrawn when its rows were joined into a line no read held; and it
+reports where each row went and its review position. Every case passes
+but those the file pins, each with its violations and one of three open
+design questions: the alternate screen opened with no history, which no
+read shows (Pi's fullscreen mode in both terminals, four tiny streams,
+seven random ones); the rotation measured from kept rows when the last
+screen was blank, its only kept rows moved down with the end of the text,
+or its rows repeat text found elsewhere (seventeen random streams); and
+erasing the history taken for the alternate screen opening (one random
+stream). Rows moved past others, which a longest common subsequence keeps
+in order and so does not map where their text went, are pinned too
+(Claude Code's stream and two tiny streams in both terminals, two random
+streams, and counted in three random streams pinned for the rotation).
 
 ## Units
 

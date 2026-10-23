@@ -1,50 +1,20 @@
 //! The terminal memory's alignment checked by the simulated terminal's
-//! oracle (`docs/design/terminal-model.md`, section 9): a reader built on
-//! `TerminalMemory` reports every new row's line as a line, a line with a
-//! rewritten row as a redrawn change, a line that only gained at its end
-//! as growth, and withholds kept rows that moved, lingering rows taken
-//! back elsewhere and reprints for those reasons, with where each row went
-//! and its review position, over the conformance corpus in both
-//! terminals, the random streams, and every stream of up to four
-//! operations of the tiny alphabet.
+//! oracle (`docs/design/terminal-model.md`, section 9). A reader built on
+//! `TerminalMemory` speaks a line with a new row as a line, a line that
+//! only gained at its end as its growth, and a line with a rewritten row
+//! as a redrawn change; it is silent on a line whose rows were all kept,
+//! taken back while lingering, reprinted or found in the history, since a
+//! read showed their text before, but withholds such a line as one that
+//! only lost text when the line its first row was in had more, and speaks
+//! it as a redrawn change when its rows were joined into a line no read
+//! held. It reports where each row went and its review position. It is
+//! checked over the conformance corpus in both terminals, the oracle's
+//! random streams, and every stream of up to four operations of the tiny
+//! alphabet.
 //!
-//! Each test asserts the exact violations that remain, counted by kind.
-//! They are not yet zero: each remaining one is a case where the oracle
-//! judges by the simulator's row identities what a reader of text cannot
-//! see, awaiting Dickson's decision on whether the oracle or the design
-//! changes:
-//!
-//! - `FalseReason Moved` and `FalseReason Lingering`: a row moved or
-//!   returned with its identity (rows inserted or deleted, a scroll region
-//!   that does not start at the screen's top, a footer below a region that
-//!   does) is withheld as moved or lingering, as section 5.3 makes every
-//!   kept row silent wherever it moved, but the oracle checks the reason
-//!   on a line it does not count as shown for the first time and finds the
-//!   text was on the same row. From text, such a row cannot be told from
-//!   one a program drew again elsewhere, which must be withheld.
-//! - `ReviewMoved`: section 5.6 carries the review position with its text
-//!   when a kept row moves, as when Ink draws its frame a row lower or Pi
-//!   repaints its transcript higher; the oracle keeps it on the same row
-//!   identity.
-//! - `Repeated`: a row erased and drawn again in place with the same text
-//!   after it stopped lingering (a list closed and opened again, hint rows
-//!   back after a list closes) is new by section 4.1; the oracle never
-//!   allows a text to be said again on the same row identity.
-//! - `Mismapped`: the alignment keeps the most rows (section 4.3, item 3),
-//!   which can prefer rows moved over fewer rows that stayed in place, as
-//!   when a list is redrawn around two entries that did not move, or a
-//!   wrapped line is written again from its second row.
-//! - `Missed` and `Incomplete`: a line whose first row is above the read
-//!   (a wrapped line longer than the screen, its start rotated above the
-//!   read's start) can only be reported from rows the read holds; growth
-//!   is credited by the oracle to the row that started the line, which a
-//!   rotation from the document's start replaces; the alternate screen in
-//!   a terminal with no history cannot be seen opening, so text it showed
-//!   and the main screen shows after is kept; and a row destroyed and
-//!   drawn again with the same text in the same place is unchanged to a
-//!   read.
-//! - `FalseReason Reprint`: rows found again in the known history are
-//!   matched row by row, the oracle's premise line by line.
+//! No violation remains but in the cases pinned below, each with its
+//! violations and the design question that decides it ([`Question`]),
+//! which a change of the design, not of the reader, would settle.
 
 use proptest::prelude::*;
 use verbatim_term_sim::conformance::{Stream, history, streams};
@@ -75,6 +45,12 @@ struct Core {
     reads: usize,
     /// The texts of the rows of the read being answered.
     texts: Vec<String>,
+    /// For each row of the last read, the text of its line.
+    lines: Vec<String>,
+    /// The texts of the rows of the last read.
+    old_texts: Vec<String>,
+    /// For each lingering row's text, the text of its line when it went.
+    gone: std::collections::HashMap<String, String>,
     quiet: bool,
 }
 
@@ -87,6 +63,9 @@ impl Core {
             at_ms: stream.at_ms.clone(),
             reads: 0,
             texts: Vec::new(),
+            lines: Vec::new(),
+            old_texts: Vec::new(),
+            gone: std::collections::HashMap::new(),
             quiet: false,
         }
     }
@@ -106,13 +85,30 @@ impl Core {
     }
 
     /// What the reader says of a read the memory aligned.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "each kind of line in turn: changed, then silent, then the mapping and review"
+    )]
     fn heard(&mut self, outcome: &Outcome) -> Heard {
         let mut heard = Heard::default();
+        for (from, fate) in outcome.old.iter().enumerate() {
+            if *fate == (OldRow::Gone { lingering: true })
+                && let (Some(text), Some(line)) = (self.old_texts.get(from), self.lines.get(from))
+            {
+                self.gone.insert(text.clone(), line.clone());
+            }
+        }
         let mut said = vec![None; outcome.rows.len()];
         for line in &outcome.lines {
             let start = line.rows.start;
             let kinds = &outcome.rows[line.rows.clone()];
-            let from = match kinds[0] {
+            // The line's first row with text says where it came from.
+            let first = kinds
+                .iter()
+                .zip(&self.texts[line.rows.clone()])
+                .find(|(_, text)| !text.trim_end().is_empty())
+                .map_or(kinds[0], |(kind, _)| *kind);
+            let from = match first {
                 NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } => Some(from),
                 _ => None,
             };
@@ -130,8 +126,15 @@ impl Core {
                 });
             if changed {
                 let text = line.text.clone();
+                // A line continued from above the read grows from its part
+                // in the last read, which was said with the line it began.
+                let above = start == 0 && outcome.continued;
                 heard.spoken.push(match (line.grew_from, &before) {
                     (Some(was), Some(before)) if text[..was] == *before => Spoken::Growth {
+                        row: start,
+                        text: text[was..].to_owned(),
+                    },
+                    (Some(was), _) if above => Spoken::Growth {
                         row: start,
                         text: text[was..].to_owned(),
                     },
@@ -148,44 +151,51 @@ impl Core {
                 continue;
             }
             said[start] = before;
-            // A line is withheld for a reason its rows with text all share;
-            // one whose rows were kept, returned or reprinted differently is
-            // a line the rows of no earlier read made, and is redrawn.
-            let shown: Vec<NewRow> = kinds
+            // A line none of whose rows with text is new or rewritten is
+            // silent: its rows were kept, returned, reprinted or are
+            // history, so a read showed their text before. When the line
+            // its first kept row was in had other text, the line only lost
+            // text, as when a wrapped line's last row is erased or a line
+            // break splits it, or rows were joined into a line no read
+            // showed, which is spoken as a redrawn change.
+            let was = kinds
                 .iter()
                 .zip(&self.texts[line.rows.clone()])
-                .filter(|(_, text)| !text.trim_end().is_empty())
-                .map(|(kind, _)| *kind)
-                .collect();
-            let all = |test: fn(&NewRow) -> bool| shown.iter().all(test);
-            let reason = if all(|kind| *kind == NewRow::Reprint) {
-                Some(Reason::Reprint)
-            } else if all(|kind| *kind == NewRow::Returned { moved: true }) {
-                Some(Reason::Lingering)
-            } else if all(|kind| matches!(kind, NewRow::Kept { moved: true, .. })) {
-                Some(Reason::Moved)
-            } else if all(|kind| {
-                matches!(
-                    kind,
-                    NewRow::Kept { moved: false, .. }
-                        | NewRow::Returned { moved: false }
-                        | NewRow::Earlier
-                )
-            }) {
-                None
+                .find(|(_, text)| !text.trim_end().is_empty())
+                .and_then(|(kind, text)| match kind {
+                    NewRow::Kept { from, .. } => self.lines.get(*from),
+                    NewRow::Returned { .. } => self.gone.get(text),
+                    _ => None,
+                });
+            let Some(was) = was else {
+                continue;
+            };
+            if *was == line.text {
+                continue;
+            }
+            let squeezed =
+                |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
+            let (was, now) = (squeezed(was), squeezed(&line.text));
+            if was.len() > now.len() && was.contains(&now) {
+                heard.withheld.push(Withheld {
+                    row: start,
+                    reason: Reason::LostText,
+                });
             } else {
                 heard.spoken.push(Spoken::Redrawn {
                     row: start,
                     text: line.text.clone(),
                 });
                 said[start] = Some(line.text.clone());
-                None
-            };
-            if let Some(reason) = reason {
-                heard.withheld.push(Withheld { row: start, reason });
             }
         }
         self.said = said;
+        self.lines = vec![String::new(); outcome.rows.len()];
+        for line in &outcome.lines {
+            for row in line.rows.clone() {
+                self.lines[row].clone_from(&line.text);
+            }
+        }
         if !outcome.first {
             heard.moved = Some(
                 outcome
@@ -241,6 +251,7 @@ impl Reader for Core {
             self.memory
                 .set_review(outcome.caret.unwrap_or(0), snapshot.caret_column);
         }
+        self.old_texts = std::mem::take(&mut self.texts);
         self.texts = self
             .memory
             .rows()
@@ -300,6 +311,49 @@ fn counts(expected: &[(&str, usize)]) -> Vec<(String, usize)> {
         .collect()
 }
 
+/// A question about the design that decides a pinned case: the reader
+/// cannot reach zero violations there without a change of the design or
+/// of the oracle's specification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Question {
+    /// The alternate screen opened while the main screen had no history,
+    /// so no read shows the switch (section 5.8): the reader takes the
+    /// alternate screen for the main one, and when the main screen comes
+    /// back holding text the alternate screen showed, as Pi's fullscreen
+    /// mode prints its last frame on leaving, it keeps those rows silent.
+    /// The oracle counts as shown only what reads on the main screen
+    /// showed. Does text a read showed on the alternate screen count as
+    /// shown, since a reader cannot tell which screen it read?
+    AlternateUnseen,
+    /// The rotation is measured from kept rows that stayed or moved up
+    /// (section 4.3, items 3 and 5). When the last screen was blank, when
+    /// its only kept rows moved down with the end of the text (a footer, a
+    /// redrawn bottom region), or when its rows repeat text found elsewhere
+    /// (the first rows of similar wrapped lines, a frame drawn twice), the
+    /// alignment measures no rotation or a wrong one: lines rotated above
+    /// the read's start are missed, or rows kept in place are taken for
+    /// new and spoken again. Should the reader read the whole document in
+    /// these cases, and how would it then tell history it never read from
+    /// new output?
+    RotationUnmeasured,
+    /// Erasing the history looks like the alternate screen opening, and
+    /// the next scroll into a history like it closing (section 5.8), so the
+    /// memory kept aside at the erase is restored and lines read since are
+    /// spoken again. Should the restore be refused when rows the memory
+    /// read since are found in the read?
+    HistoryEraseAsAlternate,
+    /// Not a question but a fault of the alignment, pinned until it is
+    /// fixed: a longest common subsequence keeps rows in order, so a row
+    /// moved past others, as a list entry drawn elsewhere in the list, is
+    /// not mapped where its text went (section 4.3, item 6) and is taken
+    /// for new.
+    CrossingMove,
+}
+
+/// A random case pinned: its number, the question that decides it, and
+/// its violations counted by kind.
+type Pin = (u32, Question, Vec<(&'static str, usize)>);
+
 #[test]
 fn the_cores_violations_over_the_corpus() {
     let corpus = streams();
@@ -322,39 +376,29 @@ fn the_cores_violations_over_the_corpus() {
         })
         .filter(|(_, _, tally)| !tally.is_empty())
         .collect();
-    let console = Flavor::ConsoleHost;
-    let windows = Flavor::WindowsTerminal;
+    // Question::AlternateUnseen: Pi's fullscreen mode opens the alternate
+    // screen on a main screen with no history and prints its last frame on
+    // the main screen as it leaves. In the console host two of its lines
+    // are withheld as having lost text against the lines the alternate
+    // screen showed, which the oracle does not count.
+    // Question::CrossingMove: Claude Code's command list moved through.
     let expected: Vec<StreamTally> = [
         (
             "claude-code",
-            console,
-            &[("Mismapped", 2), ("Repeated", 3)][..],
+            Flavor::ConsoleHost,
+            &[("Mismapped", 3), ("Repeated", 1)][..],
         ),
-        ("claude-code", windows, &[("Mismapped", 2), ("Repeated", 3)]),
-        ("footer", console, &[("FalseReason Moved", 2)]),
-        ("footer", windows, &[("FalseReason Moved", 2)]),
-        ("ink", console, &[("ReviewMoved", 1)]),
-        ("ink", windows, &[("ReviewMoved", 1)]),
-        ("pending-wrap", console, &[("FalseReason Moved", 1)]),
-        ("pending-wrap", windows, &[("FalseReason Moved", 1)]),
         (
-            "pi-fullscreen",
-            console,
-            &[("Missed", 19), ("ReviewMoved", 1)],
+            "claude-code",
+            Flavor::WindowsTerminal,
+            &[("Mismapped", 3), ("Repeated", 1)],
         ),
         (
             "pi-fullscreen",
-            windows,
-            &[("Missed", 19), ("ReviewMoved", 1)],
+            Flavor::ConsoleHost,
+            &[("FalseReason LostText", 2), ("Missed", 17)][..],
         ),
-        (
-            "pi-regular",
-            console,
-            &[("FalseReason Moved", 3), ("Repeated", 11)],
-        ),
-        ("pi-regular", windows, &[("Repeated", 10)]),
-        ("rows-edit", console, &[("FalseReason Moved", 6)]),
-        ("rows-edit", windows, &[("FalseReason Moved", 6)]),
+        ("pi-fullscreen", Flavor::WindowsTerminal, &[("Missed", 19)]),
     ]
     .into_iter()
     .map(|(name, flavor, kinds)| (name.to_owned(), flavor, counts(kinds)))
@@ -366,31 +410,74 @@ fn the_cores_violations_over_the_corpus() {
 fn the_cores_violations_over_every_stream_of_four_tiny_operations() {
     let streams = every_stream(&TINY_ALPHABET, 4);
     assert_eq!(streams.len(), 9 + 81 + 729 + 6561);
-    let found: Vec<Violation> = streams
+    let found: Vec<(String, Flavor, Vec<Violation>)> = streams
         .iter()
         .flat_map(|stream| {
-            [Flavor::ConsoleHost, Flavor::WindowsTerminal]
-                .into_iter()
-                .flat_map(|flavor| violations(stream, flavor, Size::TINY))
+            [Flavor::ConsoleHost, Flavor::WindowsTerminal].map(|flavor| {
+                (
+                    stream.about.clone(),
+                    flavor,
+                    violations(stream, flavor, Size::TINY),
+                )
+            })
         })
+        .filter(|(_, _, violations)| !violations.is_empty())
         .collect();
-    assert_eq!(
-        tally(&found),
-        counts(&[
-            ("FalseReason Moved", 3),
-            ("Incomplete", 2),
-            ("Missed", 10),
-            ("Repeated", 1),
-            ("ReviewMoved", 48),
-        ])
-    );
+    // Question::AlternateUnseen: a line written on the alternate screen,
+    // which opened with no history, and written again on the main screen.
+    let unseen = |word: &str| {
+        let about = format!(
+            "[(EnterAlternate, true), (Write({word:?}), true), (LeaveAlternate, true), \
+             (Write({word:?}), true)]"
+        );
+        let missed = vec![Violation::Missed {
+            read: 4,
+            coordinate: 0,
+            text: word.to_owned(),
+        }];
+        [Flavor::ConsoleHost, Flavor::WindowsTerminal]
+            .map(|flavor| (about.clone(), flavor, missed.clone()))
+    };
+    // Question::CrossingMove: the review position's row moved past
+    // another as the line rotated.
+    let crossing = |about: &str| {
+        let violations = vec![
+            Violation::Mismapped {
+                read: 4,
+                row: 0,
+                went: 2,
+                said: None,
+            },
+            Violation::ReviewMoved {
+                read: 4,
+                went: 2,
+                said: None,
+            },
+        ];
+        [Flavor::ConsoleHost, Flavor::WindowsTerminal]
+            .map(|flavor| (about.to_owned(), flavor, violations.clone()))
+    };
+    let expected: Vec<(String, Flavor, Vec<Violation>)> = crossing(
+        "[(Write(\"cdefg\"), true), (Write(\"ab\"), true), (Write(\"cdefg\"), true), \
+         (Write(\"cdefg\"), true)]",
+    )
+    .into_iter()
+    .chain(crossing(
+        "[(Write(\"cdefg\"), true), (Write(\"cdefg\"), true), (Write(\"ab\"), true), \
+         (Write(\"cdefg\"), true)]",
+    ))
+    .chain(unseen("ab"))
+    .chain(unseen("cdefg"))
+    .collect();
+    assert_eq!(found, expected);
 }
 
 #[test]
 fn the_cores_violations_over_random_streams() {
     // The random streams of the oracle's own tests, taken in the same
     // order from the same seed, every case run rather than stopping at the
-    // first failure.
+    // first failure, each case numbered in that order.
+    use Question::{AlternateUnseen, CrossingMove, HistoryEraseAsAlternate, RotationUnmeasured};
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let config = random_config();
@@ -398,7 +485,7 @@ fn the_cores_violations_over_random_streams() {
     let mut runner = TestRunner::new(config);
     let strategy = (random_steps(), any::<bool>());
     let mut found = Vec::new();
-    for _ in 0..cases {
+    for case in 0..cases {
         let (steps, windows_terminal) = strategy
             .new_tree(&mut runner)
             .expect("the random streams' strategy makes a stream")
@@ -408,19 +495,65 @@ fn the_cores_violations_over_random_streams() {
         } else {
             Flavor::ConsoleHost
         };
-        found.extend(violations(&stream(&steps), flavor, Size::SMALL));
+        let violations = violations(&stream(&steps), flavor, Size::SMALL);
+        if !violations.is_empty() {
+            found.push((case, tally(&violations)));
+        }
     }
-    assert_eq!(
-        tally(&found),
-        counts(&[
-            ("FalseReason Lingering", 12),
-            ("FalseReason Moved", 76),
-            ("FalseReason Reprint", 2),
-            ("Incomplete", 1),
-            ("Mismapped", 20),
-            ("Missed", 95),
-            ("Repeated", 22),
-            ("ReviewMoved", 72),
-        ])
-    );
+    let missed = |count| vec![("Missed", count)];
+    let repeated = |count| vec![("Repeated", count)];
+    let both = || vec![("Missed", 1), ("Repeated", 1)];
+    // Case 384 needs both the alternate screen seen and the rotation
+    // measured; it is listed under the first.
+    let pinned: Vec<Pin> = vec![
+        (56, CrossingMove, vec![("Mismapped", 1)]),
+        (61, RotationUnmeasured, missed(1)),
+        (65, RotationUnmeasured, missed(2)),
+        (
+            70,
+            RotationUnmeasured,
+            vec![
+                ("Mismapped", 2),
+                ("Missed", 5),
+                ("Repeated", 1),
+                ("ReviewMoved", 1),
+            ],
+        ),
+        (71, RotationUnmeasured, both()),
+        (82, AlternateUnseen, missed(1)),
+        (126, RotationUnmeasured, missed(3)),
+        (
+            168,
+            RotationUnmeasured,
+            vec![("Mismapped", 1), ("Missed", 2)],
+        ),
+        (196, RotationUnmeasured, missed(1)),
+        (213, RotationUnmeasured, missed(1)),
+        (290, RotationUnmeasured, missed(1)),
+        (296, CrossingMove, vec![("Mismapped", 2)]),
+        (301, RotationUnmeasured, repeated(1)),
+        (318, RotationUnmeasured, missed(2)),
+        (341, AlternateUnseen, missed(1)),
+        (349, AlternateUnseen, missed(1)),
+        (350, RotationUnmeasured, missed(1)),
+        (364, RotationUnmeasured, repeated(1)),
+        (384, AlternateUnseen, missed(1)),
+        (397, AlternateUnseen, missed(1)),
+        (409, AlternateUnseen, missed(1)),
+        (415, RotationUnmeasured, missed(5)),
+        (446, AlternateUnseen, missed(1)),
+        (458, RotationUnmeasured, missed(6)),
+        (
+            498,
+            RotationUnmeasured,
+            vec![("Mismapped", 1), ("Repeated", 1)],
+        ),
+        (508, RotationUnmeasured, both()),
+        (510, HistoryEraseAsAlternate, repeated(3)),
+    ];
+    let expected: Vec<(u32, Vec<(String, usize)>)> = pinned
+        .iter()
+        .map(|(case, _, kinds)| (*case, counts(kinds)))
+        .collect();
+    assert_eq!(found, expected);
 }

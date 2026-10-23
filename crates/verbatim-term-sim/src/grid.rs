@@ -171,6 +171,9 @@ pub struct Buffer {
     pub capacity: usize,
     /// The coordinate of the screen's first row.
     pub top: usize,
+    /// Whether the buffer's first row continues a line whose earlier rows
+    /// left the buffer, rotated out or erased with the history.
+    pub continued: bool,
 }
 
 /// The cursor.
@@ -245,6 +248,7 @@ impl Grid {
                 rows: VecDeque::new(),
                 capacity: history + height,
                 top: 0,
+                continued: false,
             },
             alternate: None,
             cursor: Cursor {
@@ -421,7 +425,8 @@ impl Grid {
             buffer.top += 1;
             return;
         }
-        buffer.rows.pop_front();
+        let gone = buffer.rows.pop_front();
+        buffer.continued = gone.is_some_and(|gone| gone.wraps);
         buffer.rows.push_back(row);
     }
 
@@ -555,29 +560,6 @@ impl Grid {
         }
     }
 
-    /// The active screen's lines with text, top to bottom: its rows joined
-    /// while each wraps onto the next, padding left out, the screen's first
-    /// row starting a line.
-    #[must_use]
-    pub fn screen_lines(&self) -> Vec<String> {
-        let buffer = self.buffer();
-        let mut lines = Vec::new();
-        let mut line = String::new();
-        for row in buffer.rows.range(buffer.top..buffer.top + self.height) {
-            line.push_str(&row.text());
-            if !row.wraps {
-                let text = std::mem::take(&mut line);
-                if !text.trim_end().is_empty() {
-                    lines.push(text.trim_end().to_owned());
-                }
-            }
-        }
-        if !line.trim_end().is_empty() {
-            lines.push(line.trim_end().to_owned());
-        }
-        lines
-    }
-
     /// Erases the history above the screen: the screen's rows become the
     /// buffer's first.
     fn clear_history(&mut self) {
@@ -585,6 +567,9 @@ impl Grid {
             return;
         }
         let top = self.main.top;
+        if top > 0 {
+            self.main.continued = self.main.rows[top - 1].wraps;
+        }
         self.main.rows.drain(..top);
         self.main.top = 0;
     }
@@ -665,6 +650,7 @@ impl Grid {
             rows: VecDeque::new(),
             capacity: self.height,
             top: 0,
+            continued: false,
         };
         for _ in 0..self.height {
             buffer.rows.push_back(self.scrolled_in_row());

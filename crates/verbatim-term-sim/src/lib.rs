@@ -128,12 +128,16 @@ impl Terminal {
             .map(|(snapshot, _)| snapshot)
     }
 
-    /// One read, as [`Terminal::snapshot`] takes it, with the rows its text
-    /// covers as they truly are, identities included.
-    pub(crate) fn observe(&self, query: &Query) -> Result<(Snapshot, Vec<oracle::Seen>), Refused> {
+    /// One read, as [`Terminal::snapshot`] takes it, with the coordinate of
+    /// the first row its text covers and those rows as they truly are,
+    /// identities included.
+    pub(crate) fn observe(
+        &self,
+        query: &Query,
+    ) -> Result<(Snapshot, usize, Vec<oracle::Seen>), Refused> {
         let provider = self.provider();
         let (snapshot, start) = provider.snapshot(query)?;
-        Ok((snapshot, provider.seen(start)))
+        Ok((snapshot, start, provider.seen(start)))
     }
 
     /// The main buffer's rows from its first to the document's end, as
