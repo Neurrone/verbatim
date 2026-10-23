@@ -1,0 +1,231 @@
+{
+  "flavor": "ConsoleHost",
+  "width": 120,
+  "height": 30,
+  "answers": [
+    {
+      "text": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\n                                                                                                                        ",
+      "screen": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": false,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 wor",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n                                                                                                                        ",
+      "screen": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 wor",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy                    ",
+      "screen": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy                    \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 wor",
+      "caret_rows_to_end": 1,
+      "caret_line": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy                    ",
+      "caret_column": 100,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz                                                                                          \r\n                                                                                                                        ",
+      "screen": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29 word30 word31 word32 word33 word34 word35 word36 word37 word38 word39 word40                                                                                          \r\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\r\nyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz                                                                                          \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 wor",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "about": "Several rows rewritten in place above the cursor, as docker pull draws its layers.",
+  "chunks": [
+    "layer1: 10%\r\nlayer2: 10%\r\nlayer3: 10%\r\n",
+    "\u001b[2A\u001b[2K\rlayer2: 20%\u001b[2B\r",
+    "\u001b[?2026h\u001b[1A\u001b[2K\rlayer3: 30%\r\n\u001b[?2026l"
+  ]
+}

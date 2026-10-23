@@ -21,10 +21,11 @@ use verbatim_uia::{Ancestor, Cached, Fill, FocusInput, Kept, Live, Node, Shape, 
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
-    RangeAction, RangeEnd, RangeQuery, ScreenAnchor, ScreenQuery, Status, StepQuery, TextAttribute,
-    TextFrom, TextTarget, UnitsQuery, caret_read_remote, controlled_selection_remote, counting,
-    element_by_path_remote, focus_ancestry_remote, navigation_step_remote, terminal_screen_remote,
-    text_range_remote, text_units_remote,
+    RangeAction, RangeEnd, RangeQuery, ScreenAnchor, ScreenQuery, SnapshotQuery, Status, StepQuery,
+    TextAttribute, TextFrom, TextTarget, UnitsQuery, caret_read_remote,
+    controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
+    navigation_step_remote, terminal_screen_remote, terminal_snapshot_remote, text_range_remote,
+    text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -693,6 +694,63 @@ fn terminal_screens_execute_exactly() {
     assert!(worst < LIMIT / 2);
 }
 
+/// A terminal's snapshot: a first read, and a read from where it said to
+/// start with the caret read in the same program, as the outpost reads a
+/// focused terminal on each change of its text. The program has no loop of
+/// its own, so a long text costs the same instructions as a short one.
+fn terminal_snapshots_execute_exactly() {
+    common::init_com();
+    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal");
+    let terminal = fixture.find("Terminal");
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
+    let lines = numbered(80);
+    common::apply(
+        &mut fixture.app,
+        fixture.hwnd,
+        &format!(r"set-text term {lines}ready> ls\na\nb"),
+    );
+    let first_query = SnapshotQuery {
+        element: &terminal,
+        pattern: &pattern,
+        start: None,
+        screen_rows: 0,
+        whole: false,
+        caret: None,
+    };
+    let mut start = None;
+    let first = counted(|| {
+        let snapshot =
+            terminal_snapshot_remote(&fixture.uia, &first_query).expect("the program runs");
+        start = snapshot.next_start;
+    });
+    let start = start.expect("where the next read starts");
+    let started_query = SnapshotQuery {
+        start: Some(&start),
+        screen_rows: 30,
+        caret: Some(CaretLineQuery {
+            element: &terminal,
+            pattern: &pattern,
+            pattern2: pattern2.as_ref(),
+            max_text: 4096,
+            since: None,
+        }),
+        ..first_query
+    };
+    let started = counted(|| {
+        let snapshot =
+            terminal_snapshot_remote(&fixture.uia, &started_query).expect("the program runs");
+        assert!(snapshot.from_start);
+    });
+    fixture.app.quit();
+    assert_eq!(
+        [first, started],
+        [45, 85],
+        "terminal snapshot first and started"
+    );
+    assert!(started < LIMIT / 2);
+}
+
 /// `count` numbered lines, `line 000` on, as mockapp's `set-text` takes
 /// them, each line feed escaped.
 fn numbered(count: u32) -> String {
@@ -739,6 +797,10 @@ fn main() {
         (
             "terminal_screens_execute_exactly",
             terminal_screens_execute_exactly,
+        ),
+        (
+            "terminal_snapshots_execute_exactly",
+            terminal_snapshots_execute_exactly,
         ),
     ]);
 }

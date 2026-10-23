@@ -1,0 +1,10 @@
+{
+  "about": "Rows inserted and deleted, and characters inserted and deleted.",
+  "chunks": [
+    "row 1\r\nrow 2\r\nrow 3\r\nrow 4\r\nrow 5\r\n",
+    "\u001b[3;1H\u001b[2L",
+    "\u001b[2;1H\u001b[1M",
+    "\u001b[1;1H\u001b[3@",
+    "\u001b[1;1H\u001b[2P"
+  ]
+}

@@ -54,6 +54,7 @@ mod opcode;
 mod operation;
 mod path;
 mod terminal;
+mod terminal_snapshot;
 mod text;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
@@ -88,6 +89,10 @@ pub use path::{
 pub use terminal::{
     SEARCH_MATCHES, Screen, ScreenAnchor, ScreenQuery, TerminalScreenFn, terminal_screen,
     terminal_screen_classic, terminal_screen_remote,
+};
+pub use terminal_snapshot::{
+    Snapshot, SnapshotQuery, TerminalSnapshotFn, terminal_snapshot, terminal_snapshot_classic,
+    terminal_snapshot_remote,
 };
 pub use text::{
     ChangesUnread, FoundPoint, LocationAnswer, LocationQuery, Movement, Position, RangeAction,

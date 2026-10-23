@@ -1,0 +1,10 @@
+{
+  "about": "The screen erased, then the history erased, as cls and clear do.",
+  "chunks": [
+    "before 1\r\nbefore 2\r\nbefore 3\r\nbefore 4\r\nbefore 5\r\nbefore 6\r\nbefore 7\r\nbefore 8\r\nbefore 9\r\nbefore 10\r\nbefore 11\r\nbefore 12\r\nbefore 13\r\nbefore 14\r\nbefore 15\r\nbefore 16\r\nbefore 17\r\nbefore 18\r\nbefore 19\r\nbefore 20\r\nbefore 21\r\nbefore 22\r\nbefore 23\r\nbefore 24\r\nbefore 25\r\nbefore 26\r\nbefore 27\r\nbefore 28\r\nbefore 29\r\nbefore 30\r\nbefore 31\r\nbefore 32\r\nbefore 33\r\nbefore 34\r\nbefore 35\r\nbefore 36\r\nbefore 37\r\nbefore 38\r\nbefore 39\r\nbefore 40\r\n",
+    "\u001b[2J\u001b[H",
+    "after the screen was erased\r\n",
+    "\u001b[2J\u001b[3J\u001b[H",
+    "after the history was erased\r\n"
+  ]
+}

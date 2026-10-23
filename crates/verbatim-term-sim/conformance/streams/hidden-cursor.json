@@ -1,0 +1,9 @@
+{
+  "about": "The cursor hidden and moved, as Pi parks it in its editor after each frame.",
+  "chunks": [
+    "transcript line\r\n> typed text\r\nfooter row\r\n",
+    "\u001b[?25l\u001b[2;9H",
+    "\u001b[30;1H\u001b[2;3H",
+    "\u001b[?25h"
+  ]
+}

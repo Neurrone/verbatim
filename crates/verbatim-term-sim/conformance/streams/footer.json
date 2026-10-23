@@ -1,0 +1,14 @@
+{
+  "about": "A footer drawn on the last row with save and restore, redrawn the same, changed, and a scroll region above it.",
+  "chunks": [
+    "line 1\r\nline 2\r\nline 3\r\nline 4\r\nline 5\r\nline 6\r\nline 7\r\nline 8\r\nline 9\r\nline 10\r\n",
+    "\u001b[s\u001b[30;1Hstatus: busy\u001b[u",
+    "\u001b[s\u001b[30;1H\u001b[2Kstatus: busy\u001b[u",
+    "\u001b[s\u001b[30;1H\u001b[2Kstatus: done\u001b[u",
+    "\u001b[1;29r\u001b[29;1H",
+    "region line 1\r\nregion line 2\r\nregion line 3\r\n",
+    "region line 4\r\nregion line 5\r\nregion line 6\r\nregion line 7\r\nregion line 8\r\nregion line 9\r\nregion line 10\r\nregion line 11\r\nregion line 12\r\nregion line 13\r\nregion line 14\r\nregion line 15\r\nregion line 16\r\nregion line 17\r\nregion line 18\r\nregion line 19\r\nregion line 20\r\nregion line 21\r\nregion line 22\r\nregion line 23\r\nregion line 24\r\nregion line 25\r\nregion line 26\r\nregion line 27\r\nregion line 28\r\nregion line 29\r\nregion line 30\r\nregion line 31\r\nregion line 32\r\nregion line 33\r\nregion line 34\r\nregion line 35\r\nregion line 36\r\nregion line 37\r\nregion line 38\r\nregion line 39\r\n",
+    "\u001b[s\u001b[30;1H\u001b[2Kstatus: done\u001b[u",
+    "\u001b[r\u001b[2J\u001b[Hfooter gone\r\n"
+  ]
+}

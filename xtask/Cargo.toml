@@ -23,6 +23,13 @@ verbatim-config.workspace = true
 verbatim-control.workspace = true
 verbatim-e2e.workspace = true
 verbatim-model.workspace = true
+# The terminal conformance runner (`cargo xtask
+# regenerate-terminal-conformance-expectations`) reads real terminals with
+# Verbatim's own read program and writes the simulated terminal's
+# expectations.
+verbatim-term-sim.workspace = true
+verbatim-uia.workspace = true
+verbatim-uia-rops.workspace = true
 # The OneCore speech binding, for `xtask warm-speech`.
 windows.workspace = true
 workspace-hack = { version = "0.1", path = "../crates/workspace-hack" }

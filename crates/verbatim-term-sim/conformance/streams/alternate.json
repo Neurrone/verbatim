@@ -1,0 +1,11 @@
+{
+  "about": "The alternate screen opened, written, scrolled by a region, and closed.",
+  "chunks": [
+    "main 1\r\nmain 2\r\nmain 3\r\nmain 4\r\nmain 5\r\nmain 6\r\nmain 7\r\nmain 8\r\nmain 9\r\nmain 10\r\nmain 11\r\nmain 12\r\nmain 13\r\nmain 14\r\nmain 15\r\nmain 16\r\nmain 17\r\nmain 18\r\nmain 19\r\nmain 20\r\nmain 21\r\nmain 22\r\nmain 23\r\nmain 24\r\nmain 25\r\nmain 26\r\nmain 27\r\nmain 28\r\nmain 29\r\nmain 30\r\nmain 31\r\nmain 32\r\nmain 33\r\nmain 34\r\nmain 35\r\nmain 36\r\nmain 37\r\nmain 38\r\nmain 39\r\nmain 40\r\n",
+    "\u001b[?1049h\u001b[2J\u001b[HALT TOP\r\nalt second",
+    "\u001b[10;5Hrow ten",
+    "\u001b[2;20r\u001b[20;1H\nscrolled in\u001b[r",
+    "\u001b[?1049l",
+    "back on main\r\n"
+  ]
+}

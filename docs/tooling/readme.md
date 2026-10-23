@@ -53,5 +53,9 @@ before debugging anything downstream.
   the golden image.
 - [Recording what NVDA says](nvda.md): `cargo xtask nvda capture` and the
   rules it follows.
+- [The simulated terminal's conformance](../crates/verbatim-term-sim.md),
+  "Conformance": `cargo xtask regenerate-terminal-conformance-expectations`,
+  run on demand on a desktop to record what the real console host and
+  Windows Terminal answer, which the simulated terminal is tested against.
 - [Troubleshooting](troubleshooting.md): the traps, each with its rule and
   its reason.

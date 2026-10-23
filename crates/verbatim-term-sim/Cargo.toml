@@ -1,0 +1,16 @@
+[package]
+name = "verbatim-term-sim"
+description = "A simulated terminal for tests: a VT emulator with row identities that answers as the console host's and Windows Terminal's UI Automation providers do"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+vte.workspace = true
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[lints]
+workspace = true

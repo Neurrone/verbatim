@@ -1,0 +1,365 @@
+{
+  "flavor": "WindowsTerminal",
+  "width": 120,
+  "height": 30,
+  "answers": [
+    {
+      "text": "before 12                                                                                                               \r\nbefore 13                                                                                                               \r\nbefore 14                                                                                                               \r\nbefore 15                                                                                                               \r\nbefore 16                                                                                                               \r\nbefore 17                                                                                                               \r\nbefore 18                                                                                                               \r\nbefore 19                                                                                                               \r\nbefore 20                                                                                                               \r\nbefore 21                                                                                                               \r\nbefore 22                                                                                                               \r\nbefore 23                                                                                                               \r\nbefore 24                                                                                                               \r\nbefore 25                                                                                                               \r\nbefore 26                                                                                                               \r\nbefore 27                                                                                                               \r\nbefore 28                                                                                                               \r\nbefore 29                                                                                                               \r\nbefore 30                                                                                                               \r\nbefore 31                                                                                                               \r\nbefore 32                                                                                                               \r\nbefore 33                                                                                                               \r\nbefore 34                                                                                                               \r\nbefore 35                                                                                                               \r\nbefore 36                                                                                                               \r\nbefore 37                                                                                                               \r\nbefore 38                                                                                                               \r\nbefore 39                                                                                                               \r\nbefore 40                                                                                                               \r\n                                                                                                                        \r\n",
+      "screen": "before 12                                                                                                               \r\nbefore 13                                                                                                               \r\nbefore 14                                                                                                               \r\nbefore 15                                                                                                               \r\nbefore 16                                                                                                               \r\nbefore 17                                                                                                               \r\nbefore 18                                                                                                               \r\nbefore 19                                                                                                               \r\nbefore 20                                                                                                               \r\nbefore 21                                                                                                               \r\nbefore 22                                                                                                               \r\nbefore 23                                                                                                               \r\nbefore 24                                                                                                               \r\nbefore 25                                                                                                               \r\nbefore 26                                                                                                               \r\nbefore 27                                                                                                               \r\nbefore 28                                                                                                               \r\nbefore 29                                                                                                               \r\nbefore 30                                                                                                               \r\nbefore 31                                                                                                               \r\nbefore 32                                                                                                               \r\nbefore 33                                                                                                               \r\nbefore 34                                                                                                               \r\nbefore 35                                                                                                               \r\nbefore 36                                                                                                               \r\nbefore 37                                                                                                               \r\nbefore 38                                                                                                               \r\nbefore 39                                                                                                               \r\nbefore 40                                                                                                               \r\n                                                                                                                        \r\n",
+      "from_start": false,
+      "shrank": false,
+      "at_document_start": false,
+      "alternate": false,
+      "first_row": "before 1                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "before 12                                                                                                               \r\nbefore 13                                                                                                               \r\nbefore 14                                                                                                               \r\nbefore 15                                                                                                               \r\nbefore 16                                                                                                               \r\nbefore 17                                                                                                               \r\nbefore 18                                                                                                               \r\nbefore 19                                                                                                               \r\nbefore 20                                                                                                               \r\nbefore 21                                                                                                               \r\nbefore 22                                                                                                               \r\nbefore 23                                                                                                               \r\nbefore 24                                                                                                               \r\nbefore 25                                                                                                               \r\nbefore 26                                                                                                               \r\nbefore 27                                                                                                               \r\nbefore 28                                                                                                               \r\nbefore 29                                                                                                               \r\nbefore 30                                                                                                               \r\nbefore 31                                                                                                               \r\nbefore 32                                                                                                               \r\nbefore 33                                                                                                               \r\nbefore 34                                                                                                               \r\nbefore 35                                                                                                               \r\nbefore 36                                                                                                               \r\nbefore 37                                                                                                               \r\nbefore 38                                                                                                               \r\nbefore 39                                                                                                               \r\nbefore 40                                                                                                               \r\n                                                                                                                        \r\n",
+      "screen": "                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": false,
+      "alternate": false,
+      "first_row": "before 1                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "before 12                                                                                                               \r\nbefore 13                                                                                                               \r\nbefore 14                                                                                                               \r\nbefore 15                                                                                                               \r\nbefore 16                                                                                                               \r\nbefore 17                                                                                                               \r\nbefore 18                                                                                                               \r\nbefore 19                                                                                                               \r\nbefore 20                                                                                                               \r\nbefore 21                                                                                                               \r\nbefore 22                                                                                                               \r\nbefore 23                                                                                                               \r\nbefore 24                                                                                                               \r\nbefore 25                                                                                                               \r\nbefore 26                                                                                                               \r\nbefore 27                                                                                                               \r\nbefore 28                                                                                                               \r\nbefore 29                                                                                                               \r\nbefore 30                                                                                                               \r\nbefore 31                                                                                                               \r\nbefore 32                                                                                                               \r\nbefore 33                                                                                                               \r\nbefore 34                                                                                                               \r\nbefore 35                                                                                                               \r\nbefore 36                                                                                                               \r\nbefore 37                                                                                                               \r\nbefore 38                                                                                                               \r\nbefore 39                                                                                                               \r\nbefore 40                                                                                                               \r\nafter the screen was erased                                                                                             \r\n                                                                                                                        \r\n",
+      "screen": "after the screen was erased                                                                                             \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": false,
+      "alternate": false,
+      "first_row": "before 1                                                                                                                \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "                                                                                                                        \r\n",
+      "screen": "                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": false,
+      "shrank": true,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "                                                                                                                        \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "after the history was erased                                                                                            \r\n                                                                                                                        \r\n",
+      "screen": "after the history was erased                                                                                            \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "after the history was erased                                                                                            \r\n",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        \r\n",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    }
+  ]
+}

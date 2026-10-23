@@ -505,6 +505,58 @@ only contain its text and a row with another partner, a provider whose
 `FindText` fails finds it nowhere, and each read's cost is pinned, one
 round trip remotely (`docs/performance.md`, "A terminal output line").
 
+## Layer 3: a terminal's snapshot
+
+`terminal_snapshot_remote` and `terminal_snapshot_classic` share one
+signature (`TerminalSnapshotFn`), and `terminal_snapshot(uia, query,
+remote)` chooses between them as `focus_ancestry` does, answering with a
+`Path`. It is the read of `docs/design/terminal-model.md`, section 4.2:
+`cargo xtask regenerate-terminal-conformance-expectations` reads the real
+terminals with it, and the redesigned terminal reading replaces
+`terminal_screen` with it. A `SnapshotQuery` names the element and its
+text pattern, where the last read said to start (`start`, a range; none
+for a first read), the screen's height in rows as the last read found it
+(`screen_rows`, 0 when not known), whether to read the whole text instead
+(`whole`), and, with `caret` (a `CaretLineQuery`), the caret and its line,
+read in the same program or, classically, after the text, and back as
+`Snapshot::caret`.
+
+The unit of reading is one `GetText`. Both terminals answer one from one
+locked state of their buffer (measured on 2026-10-23 in both, with a
+writer printing numbered, checksummed lines while snapshots were taken
+back to back: no snapshot of 3,561 held a gap or a torn line), while
+separate calls are not atomic with each other. So the snapshot's text is
+the only thing anything spoken or counted comes from, and every other
+field is a hint. The answer, a `Snapshot`, gives text as the provider
+gave it, padding and line breaks included; how each provider pads, breaks
+and ends its text is recorded by the conformance expectations
+(`docs/crates/verbatim-term-sim.md`, "How it works"):
+
+- `text`: from the start to the document's end, in one call. The start is
+  the query's `start` when it lies no lower than where the next read
+  starts (`from_start`). Otherwise it is refused (`shrank`): a start below
+  that, or one the provider cannot compare (a range on the other screen,
+  whose row lies beyond its height), means the text was cleared or
+  switched, and the snapshot starts where the next read will. A first read
+  starts at the screen's top; a `whole` read at the document's start.
+- `screen`: the first visible range's text, for the screen's height in
+  rows.
+- `next_start`: the document's end moved back by `screen_rows` lines, the
+  top of the screen output is written to, wherever the user has scrolled
+  the view; the screen's top when the height is not known. A range stays
+  on its coordinate: once a terminal's history is full, newer text moves
+  up beneath it.
+- `at_document_start` and `alternate`: whether the snapshot, and the
+  screen, start at the document's start.
+- `first_row`: the document's first row; when it reads otherwise, the
+  history rotated.
+- `caret_rows_to_end`: how many lines the caret moves to reach the
+  document's end.
+
+The program has no loop, so its cost does not grow with the text: 45
+instructions for a first read and 85 with a start and the caret
+(`crates/mockapp/tests/instruction_limit.rs`).
+
 ## Layer 3: the caret read
 
 `caret_read_remote` and `caret_read_classic` share one signature

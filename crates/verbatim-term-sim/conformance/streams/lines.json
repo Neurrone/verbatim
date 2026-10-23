@@ -1,0 +1,14 @@
+{
+  "about": "Lines, a character with no line feed, cursor moves that write nothing, and a carriage return rewrite.",
+  "chunks": [
+    "hello world\r\n",
+    "out line 1\r\nout line 2\r\nout line 3\r\nout line 4\r\nout line 5\r\n",
+    "a",
+    "\u001b[1D",
+    "\r",
+    "\r\u001b[2Kprogress 50%",
+    "\rprogress 51%",
+    "\rprogress 51%",
+    "\r\n"
+  ]
+}

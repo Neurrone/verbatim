@@ -1,0 +1,8 @@
+{
+  "about": "Blank rows printed, and blank rows the cursor jumps over.",
+  "chunks": [
+    "first\r\n\r\n\r\nafter two blank\r\n",
+    "\u001b[3Bjumped",
+    "\r\n"
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "about": "A program's bottom rows erased and rewritten, the same and moved down by output, as Ink draws a frame.",
+  "chunks": [
+    "------\r\n> input\r\ncost $1\r\n",
+    "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G------\r\n> input\r\ncost $1\r\n",
+    "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[Gstreamed line\r\n------\r\n> input\r\ncost $1\r\n",
+    "\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[1A\u001b[2K\u001b[G",
+    "------\r\n> input\r\ncost $2\r\n"
+  ]
+}

@@ -49,6 +49,8 @@ commit updated only the changed crate's own guide.
   benchmark for Verbatim's pipes and relay (`cargo xtask relay-floor`).
 - [verbatim-trace-waits](verbatim-trace-waits.md) — how long threads
   waited to run, from a WPR trace (`cargo xtask trace waits`).
+- [verbatim-term-sim](verbatim-term-sim.md) — a simulated terminal for the
+  tests, checked against the real console host and Windows Terminal.
 - [verbatim-test-console](verbatim-test-console.md) — a console the tests
   start, for tests of a console window's provider process; a
   dev-dependency only.

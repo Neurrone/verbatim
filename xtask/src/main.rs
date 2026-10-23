@@ -31,6 +31,11 @@
 //! long that took, so a CI job pays the platform's cold first activation
 //! before the tests that start synthesizer hosts in parallel.
 //!
+//! `regenerate-terminal-conformance-expectations` records what the real
+//! console host and Windows Terminal answer to the simulated terminal's
+//! corpus, running `conformance-player` in each. See
+//! `xtask/src/conformance.rs`.
+//!
 //! `trace start` and `trace stop` record a WPR trace of the CPU's
 //! scheduling through two elevated tasks. See `xtask/src/trace.rs`.
 
@@ -43,6 +48,7 @@ use windows::Media::SpeechSynthesis::SpeechSynthesizer;
 use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
+mod conformance;
 mod demo;
 mod nvda;
 mod park;
@@ -88,6 +94,8 @@ fn main() -> ExitCode {
         Some("windows-terminal") => windows_terminal(),
         Some("relay-floor") => relay_floor(&args[1..]),
         Some("warm-speech") => warm_speech(),
+        Some("regenerate-terminal-conformance-expectations") => conformance::regenerate(&args[1..]),
+        Some("conformance-player") => conformance::player(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");

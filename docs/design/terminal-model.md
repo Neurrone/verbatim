@@ -59,13 +59,15 @@ From the decisions already made (`docs/parity/terminals.md`, `docs/design/phase6
 ### 2.1 What the terminals do (measured)
 
 - One `GetText` is atomic in both terminals; separate calls are not atomic with each other, but the calls of one remote operation run together in the terminal's process.
-- The document ends one row below the lower of the last written row and the cursor's row.
+- The document ends with the lower of the last row with text and the cursor's row, as each provider finds them when asked: rows an insertion moved down stay in it, and a row erased leaves it (conformance, 2026-10-23).
 - Rows keep their coordinates until the history is full; then the whole buffer rotates under fixed coordinates, so a kept range reads newer text. The history's length is the user's setting and is never needed: rotation shows in the document's first row.
 - Both terminals pad every row to the width, and give a wrapped line whole, its padding filling its last row.
+- The console host's ranges end before a row's line break, so an expanded line, the screen and the document end without one; Windows Terminal's end after it, except on the buffer's last row, where the range ends one cell short of the width: the alternate screen's last row, and the main screen's once the history is full. A width taken from the narrowest line is therefore wrong in Windows Terminal unless the screen's last line is left out, as it is (conformance, 2026-10-23).
+- The console host keeps 9,001 rows in all, Windows Terminal 9,001 rows of history above its screen, by default.
 - The alternate screen is one screen tall, with no history; a range kept on the main screen reads the alternate screen silently when its row is inside the alternate screen's height, and fails beyond it. The console host raises a layout event when the screen switches, and also on some clears; Windows Terminal raises nothing particular.
 - The console host's `cls` pushes the screen into the history; Windows Terminal's clear erases the screen and the history, so the document shrinks.
-- The console host moves its view down a row for each line written into a scroll region above a footer, and writes the next line over the footer's row until the program draws the footer again.
-- Reverse video covers only the cells written in it, not the row's padding, so a selected row's colours read as mixed over the whole row; telling a selected row needs the row's colour runs (section 10).
+- A scroll region from the screen's top, with a footer below it, scrolls into the history in both terminals: the footer keeps its row on the screen and the new blank row comes in at the region's bottom (conformance, 2026-10-23). The console host was seen writing a line over the footer's row in the footer scenarios, whose scripts draw differently; a read can also land in the middle of a program's own redraw, which lingering rows absorb (section 4.1).
+- Reverse video covers only the cells written in it, not the row's padding, so a selected row's colours read as mixed over the whole row; telling a selected row needs the row's colour runs (section 10). Over a stretch of two colours both providers answer 0 rather than "mixed", and their format unit does not stop at every change of colour, so colours are read cell by cell, or by halving a stretch only when its two halves are known to agree (conformance, 2026-10-23).
 
 ### 2.2 What NVDA does
 
@@ -155,7 +157,7 @@ The rows from the kept start, which is the top of the screen as last read, to th
 
 ### 4.3 The alignment
 
-1. The unit is the row. Lines are split into rows by the width (every line's padded length is a whole number of rows), and rebuilt from rows for speech.
+1. The unit is the row. Lines are split into rows by the width, the narrowest of the screen's lines but its last (every line's padded length is a whole number of rows, but for Windows Terminal's cut last row, section 2.1), and rebuilt from rows for speech.
 2. Old rows can be in only two places of the new read: near its top (rows that stayed, or moved up when the history rotated) and near its end (rows that moved down with the end of the text, as a program's bottom rows do when output is written above them). So the old screen's rows are aligned against the new read's first rows (the old screen and a screen more) and its last rows (a screen); every row between is new. No operation of section 3.2 moves a row down by more than the text grew. A reprint after a clear is the one case outside this bound, and section 4.4 handles it.
 3. The alignment is a longest common subsequence of row hashes, by dynamic programming over those windows: at most about 60 by 180 cells, each a comparison of two integers, so microseconds per read. Among alignments that keep equally many rows, the one whose kept rows move in the fewest blocks wins (a block is a run of kept rows that moved by the same number of rows), and then the one that moves fewest rows. So a repeated row (a prompt, a blank, a rule line, a list entry) is never paired with a copy of itself elsewhere, a program's bottom rows that stay at their coordinates while the history above them rotates are kept, and a transcript repainted one row higher is kept as one block.
 4. Between two kept rows, the old and new rows left over are paired as rewrites by likeness: two rows are alike when they share at least half the characters of the longer in order, and among alike pairings the one that moves rows by the same amount as the kept row below them wins. An old row with no partner is gone (and lingers if it was a redrawn row); a new row with no partner is new. So Pi's status row "⠋ Working..." that moved down a row as a streamed line was written above it pairs with "⠙ Working...", and the streamed line is new.
@@ -219,7 +221,8 @@ None of these depends on where the row is or on the caret. A row's kind is learn
 - A redraw elsewhere (Claude Code's or Pi's footer, a spinner, a timer) never moves it.
 - With "review follows caret" on, it follows the caret when a key moved the caret, within the key's window, and not when a program moves the cursor while it draws. With it off, only the user moves it. A focus change moves it to the new focus, as everywhere in Verbatim.
 - When the alternate screen opens, it moves to the caret, and the main screen's position is kept with the main memory; when the main screen comes back, that position is restored.
-- Above the memory, in the history, it reads the provider's rows directly, its coordinate moved by each rotation.
+- Review commands never act on a live provider range, which could point at other text from the moment output rotates the history until the next read. A review command first takes a read (the same atomic snapshot as for output, so its alignment maps the anchor onto the text as it is now), then moves and speaks within that snapshot. The anchor is therefore always on its text when the command acts; between reads nothing acts on it.
+- Above the memory, in the history, rows are read from the provider by coordinate, in the same remote operation as that read, each checked against the hash of the line the anchor expects there; a row that does not match is found again by its hash near the coordinate the measured rotation gives, and the anchor moves to it.
 
 ### 5.7 Rows away from the caret that keys change: lists, menus, colours
 
@@ -372,7 +375,7 @@ Pi (`github.com/earendil-works/pi`, version 1.4.0 read):
 - Fullscreen mode, the default: the alternate screen, no terminal history, the transcript scrolled by repainting rows. Earlier turns are reviewed only through Pi's own scrolling.
 - Regular mode (`--tui-mode regular`): the main screen with history; its bottom rows rewritten one row lower for each streamed line; a clear and full reprint on a resize or a change above the screen. The history holds the whole conversation, so the review cursor and moving by command reach all of it.
 - Its rows: the transcript (header, messages, tool output); then queued messages, a status line with an 80-millisecond spinner ("⠋ Working..."), extension widgets, the editor between rule lines, an autocomplete list ("→" before the selected entry), and a footer of two or three lines.
-- Its cursor is hidden; Pi draws its own in reverse video and moves the hidden cursor to it after each frame. Whether Windows Terminal's caret follows a hidden cursor is measured in the recordings step.
+- Its cursor is hidden; Pi draws its own in reverse video and moves the hidden cursor to it after each frame. Both terminals report the caret where the hidden cursor is (conformance, 2026-10-23), so the caret is in Pi's editor.
 - Its editing keys are bash's: Control+B and Control+F, Alt+B and Alt+F, Control+A and Control+E, Control+W, Control+U, Control+K and Alt+D, Control+Y.
 - A tool's state is shown by background colour; a running command's output in a five-line window, with an "Elapsed" line updated every second.
 
@@ -434,7 +437,7 @@ Each part is one step in the sense of `REVIEW.md`: built with its tests and docu
 4. Documents: what still holds in `docs/design/terminal-reading.md` moves here and that document is deleted; `docs/parity/terminals.md` takes the changed decisions; the roadmap's M4 entries point here.
 5. The simulated terminal (`verbatim-term-sim`).
 6. Conformance: the read program brought back beside the current one in `verbatim-uia-rops`; the stream player; `cargo xtask regenerate-terminal-conformance-expectations`; the expectation files for the hand-written corpus; the unit test that checks the simulator against them; the simulator fixed until it matches both terminals.
-7. Recordings: a ConPTY recorder; streams of Pi in both modes, PSReadLine in both modes, an Ink program, and vim, htop, fzf, less and bash in WSL, with docker-like progress from a script; their conformance expectations; whether Windows Terminal's caret follows a hidden cursor.
+7. Recordings: a ConPTY recorder; streams of Pi in both modes, PSReadLine in both modes, an Ink program, and vim, htop, fzf, less and bash in WSL, with docker-like progress from a script; their conformance expectations.
 8. The oracle and random tests, first shown to fail against the current reading.
 9. The core, in `verbatim-text`: the memory, the alignment, lingering rows, the known history, anchors, and the rules of section 5 on the virtual clock. The line diff becomes the row alignment.
 10. The read program's colours and the remote operations audit.

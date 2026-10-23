@@ -1,0 +1,9 @@
+{
+  "about": "Colours: a list whose selection is shown by reverse video only, moved, and coloured words.",
+  "chunks": [
+    "  item one\r\n\u001b[7m  item two\u001b[0m\r\n  item three\r\n",
+    "\u001b[2A\r  item two\u001b[1B\r\u001b[7m  item three\u001b[0m\u001b[1B\r",
+    "\u001b[32mPS\u001b[0m \u001b[33mGet-Item\u001b[0m \u001b[90m-Path\u001b[0m \u001b[36m'x.txt'\u001b[0m\r\n",
+    "\u001b[38;5;208morange\u001b[0m \u001b[48;2;10;20;30mrgb\u001b[0m\r\n"
+  ]
+}
