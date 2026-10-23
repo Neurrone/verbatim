@@ -517,7 +517,10 @@ further above, rather than taking that read (`TerminalMemory::restart`):
 the command marks and the review position are kept, each moved as the
 read's start moved, or kept when it is above the read, where it cannot be
 checked; a mark whose line is not where it should be is dropped, and the
-review position then goes to the caret; keys are still answered.
+review position then goes to the caret. When where the memory's rows are in
+the read is not known, as when Windows Terminal refused the read's start,
+the marks are dropped and the review position goes to the caret. Keys are
+still answered.
 
 ### Cost
 

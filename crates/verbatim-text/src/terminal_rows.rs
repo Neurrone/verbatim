@@ -841,23 +841,26 @@ impl TerminalMemory {
     /// review position are kept: each moved as the read's start moved,
     /// with no rotation, and kept when its line is there, or when it is
     /// above the read, where it cannot be checked; a review position whose
-    /// line is not there goes to the caret.
+    /// line is not there goes to the caret. When where the memory's rows are
+    /// in the read is not known, as when the read's start was refused, the
+    /// marks are dropped and the review position goes to the caret.
     pub fn restart(&mut self, read: &Read) -> Outcome {
-        let (marks, review): (Vec<Anchor>, Option<Anchor>) = self
-            .screen
-            .as_ref()
-            .and_then(|screen| {
-                let base = base_of(screen, read)? - isize_of(screen.skipped);
-                let moved = |anchor: &Anchor| Anchor {
-                    row: anchor.row + base,
-                    ..*anchor
+        // Each anchor moved as the read's start moved, or none when where
+        // the memory's rows are in the read is not known.
+        let (marks, review): (Vec<Anchor>, Option<Option<Anchor>>) =
+            self.screen.as_ref().map_or_default(|screen| {
+                let base = base_of(screen, read).map(|base| base - isize_of(screen.skipped));
+                let moved = |anchor: &Anchor| {
+                    base.map(|base| Anchor {
+                        row: anchor.row + base,
+                        ..*anchor
+                    })
                 };
-                Some((
-                    screen.marks.iter().map(moved).collect(),
+                (
+                    screen.marks.iter().filter_map(moved).collect(),
                     screen.review.as_ref().map(moved),
-                ))
-            })
-            .unwrap_or_default();
+                )
+            });
         *self = Self::new();
         let outcome = self.read(read);
         if let Some(screen) = &mut self.screen {
@@ -868,14 +871,15 @@ impl TerminalMemory {
             // goes to the caret (sections 4.3, item 5, and 5.6).
             let caret = screen.caret;
             screen.review = review.and_then(|anchor| {
-                match usize::try_from(anchor.row) {
-                    Ok(row) => rows
-                        .get(row)
-                        .filter(|found| found.line_hash == anchor.line_hash)
-                        .map(|_| anchor_at(rows, row, anchor.column)),
-                    Err(_) => (!read.at_document_start).then_some(anchor),
-                }
-                .or_else(|| caret.map(|row| anchor_at(rows, row, read.caret_column)))
+                anchor
+                    .and_then(|anchor| match usize::try_from(anchor.row) {
+                        Ok(row) => rows
+                            .get(row)
+                            .filter(|found| found.line_hash == anchor.line_hash)
+                            .map(|_| anchor_at(rows, row, anchor.column)),
+                        Err(_) => (!read.at_document_start).then_some(anchor),
+                    })
+                    .or_else(|| caret.map(|row| anchor_at(rows, row, read.caret_column)))
             });
             screen.marks = marks
                 .into_iter()
@@ -1203,9 +1207,11 @@ fn classify(
     let topmost = kept
         .first()
         .map(|&(from, to)| isize_of(to) - isize_of(from));
-    // A screen with no history above it, as the alternate screen, never
-    // rotates: rows a scroll moved up moved, and those it moved off the
-    // top are gone.
+    // The alternate screen, which has no history above it, never rotates:
+    // rows a scroll moved up moved, and those it moved off the top are
+    // gone. Only the read's alternate flag is checked: on the main screen,
+    // rows moved off the top went into the history, or out of a full one,
+    // which is a rotation even when the history holds no rows.
     let (rotation, shift) = match (base, how.rotation, topmost) {
         (Some(base), Some(rotation), _) => (rotation, base - isize_of(rotation)),
         (Some(base), None, Some(top)) if top < base && !read.alternate => {

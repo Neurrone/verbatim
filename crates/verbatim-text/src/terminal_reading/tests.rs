@@ -29,8 +29,13 @@ impl Term {
     }
 
     fn with(width: usize, height: usize, history: usize, settings: Settings) -> Self {
+        Self::of(Flavor::ConsoleHost, width, height, history, settings)
+    }
+
+    /// A terminal of `flavor`, read once at time 0 as `new` reads it.
+    fn of(flavor: Flavor, width: usize, height: usize, history: usize, settings: Settings) -> Self {
         let mut term = Self {
-            terminal: Terminal::new(Flavor::ConsoleHost, width, height, history),
+            terminal: Terminal::new(flavor, width, height, history),
             reader: TerminalReader::new(settings),
             query: Query::default(),
         };
@@ -339,6 +344,27 @@ fn a_flood_past_the_history_with_every_line_spoken_is_counted_as_unknown() {
             },
         ])
     );
+}
+
+#[test]
+fn a_flood_past_the_history_speaking_more_lines_than_the_first_is_counted_after_the_last() {
+    // Fifty lines through a buffer of forty-three rows: the forty-three
+    // lines the history holds are fewer than the first thirty and the last
+    // thirty together, so each is spoken, and how many went by, not known,
+    // is said after the last of them.
+    let mut term = Term::with(20, 3, 40, Settings::default());
+    term.write("a\r\nb\r\nc", 100);
+    let flood: String = (1..=50)
+        .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
+        .collect();
+    let mut expected: Vec<Speech> = (0..43)
+        .map(|row| line(row, &(row + 8).to_string()))
+        .collect();
+    expected.push(Speech::Skipped {
+        rows: vec![],
+        count: Counted::Unknown,
+    });
+    assert_eq!(term.write(&flood, 200), says(expected));
 }
 
 #[test]
@@ -1080,6 +1106,36 @@ fn with_output_unreported_the_review_position_stays_on_a_kept_row_through_a_floo
             row: 6,
             column: 2,
             line_hash: hash("footer")
+        })
+    );
+}
+
+#[test]
+fn with_output_unreported_the_review_position_goes_to_the_caret_when_a_clear_refuses_the_start() {
+    // Section 5.6: Windows Terminal's clear moves the screen into the
+    // history, so the read's start is refused and the memory's rows cannot
+    // be placed in the read; with "report new output" off the memory is
+    // taken from the read (section 4.2), and the review position, whose
+    // line cannot be found, goes to the caret.
+    let settings = Settings {
+        report_new_output: false,
+        ..Settings::default()
+    };
+    let mut term = Term::of(Flavor::WindowsTerminal, 10, 3, 20, settings);
+    let lines = (1..=22)
+        .map(|number| format!("line {number}"))
+        .collect::<Vec<_>>()
+        .join("\r\n");
+    term.write(&lines, 100);
+    let screen_row = term.reader.memory().rows().len() - 2;
+    term.reader.memory_mut().set_review(screen_row, 2);
+    assert_eq!(term.write("\x1b[H\x1b[2Jx", 200), quiet(None));
+    assert_eq!(
+        term.reader.memory().review(),
+        Some(Anchor {
+            row: 6,
+            column: 1,
+            line_hash: hash("x")
         })
     );
 }

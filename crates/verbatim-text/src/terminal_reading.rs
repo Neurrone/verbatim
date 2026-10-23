@@ -1286,9 +1286,9 @@ impl TerminalReader {
             }
             if tail > head || outcome.overflowed {
                 let counted = &fresh_lines[head..tail];
-                // The summary comes after the lines spoken first: at the
-                // first line it counts, or the line after them.
-                let row = fresh_lines.get(head).map_or_else(
+                // The summary comes at the first line it counts, or, when
+                // it counts none, after the last line spoken.
+                let row = counted.first().map_or_else(
                     || {
                         fresh_lines.last().map_or(0, |&(last, _)| {
                             outcome
