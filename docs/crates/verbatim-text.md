@@ -2,8 +2,9 @@
 
 Platform-neutral text segmentation for the text model of milestone M4
 (`docs/design/phase6-design.md`, "Internationalization in the text model"),
-and the memory of a terminal's rows that reading terminals is built on
-(`docs/design/terminal-model.md`, section 4). Original
+and the reading of terminals: the memory of a terminal's rows and the
+rules that decide what is spoken (`docs/design/terminal-model.md`,
+sections 4 and 5). Original
 code over ICU4X's segmenters, jieba, and `unicode-width`; it never touches a
 Windows API, and `cargo xtask ci` checks that it does not.
 
@@ -74,8 +75,8 @@ Windows API, and `cargo xtask ci` checks that it does not.
 `terminal_rows` is the platform-neutral core of the terminal model's
 section 4, "Changes as alignments of rows" (`docs/design/terminal-model.md`),
 written from that design. It classifies; it does not speak: the reading
-rules of section 5 (growing lines, redrawn and volatile rows, keys,
-colours) are built on its `Outcome`. It is not wired into the outpost yet.
+rules of section 5 (`terminal_reading`, below) are built on its
+`Outcome`. Neither is wired into the outpost yet.
 
 ### Public API
 
@@ -219,24 +220,196 @@ last row, a clear and a reprint, output repeated after `cls`, the
 alternate screen opened and closed, and the review position through a
 scroll, a rotation and a redraw elsewhere.
 
-`tests/terminal_oracle.rs` checks a reader built on the memory against
-the simulator's oracle, which judges by text, over the conformance corpus
-in both terminals, the oracle's 512 random streams and every stream of up
-to four operations of its tiny alphabet. The reader speaks a line with a
-new row as a line, growth as growth and a line with a rewritten row as
-redrawn; it is silent on a line whose rows were all kept, taken back,
-reprinted or found in the history, but withholds such a line as having
-lost text when the line its first row was in had more, and speaks it as
-redrawn when its rows were joined into a line no read held; and it
-reports where each row went and its review position. Every case passes
-but those the file pins, each with its violations and one of three open
-design questions: the alternate screen opened with no history, which no
-read shows (Pi's fullscreen mode in both terminals, four tiny streams,
-seven random ones); the rotation measured from kept rows when the last
-screen was blank, its only kept rows moved down with the end of the text,
-or its rows repeat text found elsewhere (seventeen random streams); and
+The memory is also checked by the oracle, through the reading rules built
+on it (below).
+
+## The terminal reading rules
+
+`terminal_reading` is the platform-neutral core of the terminal model's
+section 5, "The reading rules", written from that design on top of the row
+memory. It is a state machine with no clock and no thread of its own:
+every input carries its time, and every input answers with what to say,
+what it withholds and why, and when the quiet-period timer should next
+fire. Reading on demand and moving by command (sections 5.11 and 5.13)
+are not built here; they act on the memory, which the reader lends out.
+
+### Public API
+
+- `TerminalReader::new(Settings)`: one reader per terminal, owning its
+  `TerminalMemory` (`memory`, and `memory_mut` for the review commands).
+  `Settings` holds "report new output", "review follows caret", and the
+  flood policy's "lines spoken in full" and "last lines to speak".
+- The inputs, each returning a `Step`:
+  - `read(&Read, waited, colours)`: a read of the terminal, with whether
+    it waited for Core's speech queue and, for the first read after a key,
+    the screen's colour runs (`ColourRun`), row by row from the screen's
+    top to the document's end.
+  - `key(Key)`: a key as it reached the program, with when. `KeyKind` is a
+    typed character (`Typed`), a caret key Verbatim knows with its `Unit`
+    (character, word or line), a key that forgets held typing (`Forget`:
+    Enter, Tab, Escape, Control+C, Control+D, Control+Break), or any other
+    key (`Other`).
+  - `focus(at_ms)` and `blur()`: the focus arriving and leaving.
+  - `timer(now_ms)`: the timer the last step asked for came due.
+  - `set_settings(Settings)`.
+- `Step`: the `Speech` in order, the lines `Withheld` with a `Reason`, the
+  `timer` due time, `whole_document` when the read is to be taken again
+  over the whole document, and the read's `Outcome`. `Speech` is a new
+  line (`Line`), what a growing line gained (`Growth`), a redrawn row from
+  the word that changed (`Changed`), a flood's count (`Skipped`, with the
+  first rows of its lines, how many, and whether the history overflowed),
+  typing shown (`Echo`), a key's answer on the caret's line in a unit
+  (`Caret`), text the caret's line gained or lost (`Gained`, `Lost`), a row
+  away from the caret that is a key's answer (`Answer`), and a suggestion
+  after the caret (`Suggestion`). Each names the first row of its line in
+  the memory's last read. A `Reason` is one of the design's silences:
+  `Volatile`, `UnfinishedWord`, `HeldForKeys`, `Spinner`, `LostText`,
+  `HeldTyping` and `KeyAnswer`.
+- The time limits of section 5.14 as constants: `KEY_WINDOW_MS` and
+  `TYPED_LIMIT_MS` (300), `VOLATILE_MS` and `UNPROMPTED_MS` (2,000),
+  `LINGERING_MS` (2,000, the memory's), `QUIET_MS` (1,000), and
+  `quiet_period`, 1 second or 1.5 times the interval between the last two
+  changes when that is longer.
+
+### How the rules are built
+
+Beside the memory's rows the reader keeps, for each row, its colours when
+last read and, on a line's first row, the line's history: its text as last
+read, what the user was last told of it, whether it was redrawn and is
+volatile, when it last changed and the interval before, when it last
+changed outside a key's window, when it last grew, what it waits for, and
+whether a key changed it since it appeared. That history moves with the
+alignment as the memory's does: from the old line a kept or rewritten
+first row started, or that the read's first row continues; a lingering
+line taken back brings its history with it; a row split off a line starts
+a line of its own, with the old line's text kept only to tell whether it
+lost text. A line the read's first row continues keeps the part above the
+read in its text, and speech quotes only the part the read shows. The
+history kept aside when the alternate screen opens is restored with the
+memory.
+
+Each read, line by line, top to bottom:
+
+- The first read, the first after the focus arrives, a read while the
+  focus is away, and a read of a new size speak nothing; each line's text
+  becomes what the user knows of it. A new size speaks the caret's line
+  when it changed, and finds the review position again by its line's hash
+  nearest its old row.
+- A line with no history whose rows with text are new is new output,
+  spoken whole, unless it is the input the shell reprinted: the caret's
+  new line, equal to the caret's line at the last read with any typing
+  since, that line holding input and still above with new rows between.
+  New lines go through the flood policy: with more than "lines spoken in
+  full" and "last lines to speak" together, the first and last are spoken
+  and the lines between counted in one `Skipped`, blank lines counted but
+  not those after the last line with text; a whole-document read that did
+  not find the last screen counts them as more than.
+- A line that grew, and whose last read was all heard or held back only
+  by its unfinished word, speaks what it gained since what was said. When
+  the caret is at its end after a character that is not a space, the last
+  word is held (`UnfinishedWord`) and spoken when the line grows past it,
+  when the caret leaves the line, or after the quiet period. Spaces alone
+  wait with the word after them.
+- A line rewritten in place is a redrawn row. Within a key's window, away
+  from the caret, and with no change of its own in the 2 seconds before
+  the key, it is the key's: one that gained text other than at its end
+  (compared without spaces, the old text in order within the new) is the
+  answer, spoken whole; one that only lost text is silent; any other is
+  held until the keys pause (`HeldForKeys`). Otherwise a row that only
+  lost text is silent (`LostText`), a spinner's symbol replaced alone is
+  silent (`Spinner`), and a row that changed within 2 seconds of its last
+  spoken change, or at two reads in a row when the second waited for
+  speech, is volatile: withheld (`Volatile`) and spoken once it has not
+  changed for the quiet period. Any other change is spoken by the
+  changed-word rule: from the start of the word, by Unicode's word rules,
+  where the line first differs, by whole graphemes, from what was last
+  said or from its last read, whichever is earlier, to its end.
+- Kept, returned, reprinted and earlier lines are silent; such a line that
+  now holds less of its old line's text is withheld as `LostText`, and one
+  whose rows were joined into a line no read held is spoken as a change.
+- A held line that has scrolled above the screen, where no program redraws
+  it and the next read does not reach, is spoken at once, as when its time
+  has come.
+
+Keys open a window of 300 milliseconds after the last of them reached the
+program; a key arriving while a window is open joins it. The caret's line
+before the window's first key, without any suggestion, is what its first
+read compares with, and each read in the window leaves the line as it
+found it for the next, so an erase over several reads is spoken as it
+goes. At a read in the window, the caret's line
+is the keys' answer and is not output: typing shown at the caret, inserted
+or over text that showed it already, is echoed, and typing not shown
+within 300 milliseconds of reaching the program is dropped unspoken; a
+caret moved with no text change says a caret key's unit, or for any other
+key the landing rule (one character, that character; the line's start or
+end, the character there; a word's start or end, the word); a line key
+says the line; a line that gained text says the gain, one that lost text
+next to the caret says the loss, and one changed otherwise drops held
+typing and speaks from the changed word. A new line at the caret, as after
+Enter, is output. With "review follows caret" on, a key that moved the
+caret moves the review position to it; the focus arriving does so too.
+
+Colours are compared only in the first read after a key: among rows whose
+text did not change, one whose colours changed is the answer; of two, the
+one whose colours now differ from both its neighbours'; with no colours
+read before, the one row that differs from both its neighbours. Text
+after the caret in other colours than the cell before the caret is a
+suggestion, spoken when it appears and not again while typing follows it.
+
+"Report new output" off speaks no output and holds nothing, and the
+memory is taken from a read that asks for the whole document rather than
+reading it; keys are still answered.
+
+### Cost
+
+In a release build on Dickson's x64 machine, with 120 by 30 screens of
+ASCII text, the rules add to each read on top of the alignment: about 7
+microseconds to a read of the last screen and one line more (the
+alignment about 40); about 210 microseconds when every row of the screen
+is rewritten, the changed-word rule's word segmentation about 7
+microseconds a row; and about 170 microseconds to a read of 1,000 new
+rows. Nothing is done between inputs, and the only wake-up the rules ask
+for is the quiet-period timer, while something waits for it.
+
+### Tests
+
+`src/terminal_reading/tests.rs` drives the rules with `verbatim-term-sim`,
+reading as the outpost does at given times, with keys as they reach the
+program, one rule of section 5 or one case of sections 7 and 8 each,
+asserting the whole step: new output line by line, a line seen first
+spoken whole, growth with its unfinished word held and spoken when the
+line grows past it or after the quiet period, kept rows silent, a flood's
+first and last lines with the rest counted, and counted as more than past
+the history, the input reprinted below a completion list, padding; a
+redrawn row's changed word, a spinner, a volatile row heard at its first
+change and once settled, a row volatile at two reads after waiting, a row
+that only lost text, a held row scrolled above the screen; typing echoed,
+shown late, never shown and changed otherwise, the landing rule at a word,
+a character and the line's start, a known caret key, text gained and lost
+at the caret, Up Arrow and a character at once, a change after the
+window; the review cursor following a key, not following with the setting
+off, and moved by the focus; a marker list, a meter that is not the key's
+answer, a ruler held until the keys pause, a filtered list with its echo,
+current entry and count, a highlight moved by colour, a suggestion; the
+alternate screen; a resize; output in the background; "report new output"
+off; Pi streaming above its status row, Ink's region drawn again with a
+changed cost, and several progress lines settling.
+
+`tests/terminal_oracle.rs` checks the rules against the simulator's
+oracle, which judges by text, over the conformance corpus in both
+terminals, the oracle's 512 random streams and every stream of up to four
+operations of its tiny alphabet, reading at the streams' times. Every
+case passes but those the file pins, each with its violations and one of
+four open design questions: the alternate screen opened with no history,
+which no read shows (Pi's fullscreen mode in both terminals, four tiny
+streams, six random ones); the rotation measured from kept rows when
+the last screen was blank, its only kept rows moved down with the end of
+the text, or its rows repeat text found elsewhere (the corpus's footer
+over a rotating history in both terminals, sixteen random streams);
 erasing the history taken for the alternate screen opening (one random
-stream).
+stream); and a line holding its unfinished word pushed out of a full
+history between two reads, so the word is never spoken (146 tiny streams,
+whose history is one row, and six random streams with floods).
 
 ## Units
 

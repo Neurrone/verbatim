@@ -1,20 +1,19 @@
-//! The terminal memory's alignment checked by the simulated terminal's
-//! oracle (`docs/design/terminal-model.md`, section 9). A reader built on
-//! `TerminalMemory` speaks a line with a new row as a line, a line that
-//! only gained at its end as its growth, and a line with a rewritten row
-//! as a redrawn change; it is silent on a line whose rows were all kept,
-//! taken back while lingering, reprinted or found in the history, since a
-//! read showed their text before, but withholds such a line as one that
-//! only lost text when the line its first row was in had more, and speaks
-//! it as a redrawn change when its rows were joined into a line no read
-//! held. It reports where each row went and its review position. It is
-//! checked over the conformance corpus in both terminals, the oracle's
-//! random streams, and every stream of up to four operations of the tiny
-//! alphabet.
+//! The terminal reading rules (`verbatim_text::terminal_reading`, the
+//! design's section 5, on the row memory of section 4) checked by the
+//! simulated terminal's oracle (`docs/design/terminal-model.md`, section
+//! 9). The reader under test is the real rules: every read is given to a
+//! `TerminalReader` at the stream's times (a recorded stream's, or 10
+//! milliseconds apart for one written by hand, the last read 10 seconds
+//! after the last chunk), its speech reported as the oracle takes it (a
+//! line, growth, a redrawn row's change, a flood's summary), its silences
+//! stated with the oracle's reasons, and where each row went and its
+//! review position taken from the memory. It is checked over the
+//! conformance corpus in both terminals, the oracle's random streams, and
+//! every stream of up to four operations of the tiny alphabet.
 //!
 //! No violation remains but in the cases pinned below, each with its
 //! violations and the design question that decides it ([`Question`]),
-//! which a change of the design, not of the reader, would settle.
+//! which a change of the design, not of the rules, would settle.
 
 use proptest::prelude::*;
 use verbatim_term_sim::conformance::{Stream, history, streams};
@@ -23,7 +22,8 @@ use verbatim_term_sim::oracle::{
     observe, random_config, random_steps, stream,
 };
 use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
-use verbatim_text::terminal_rows::{NewRow, OldRow, Outcome, Read, TerminalMemory};
+use verbatim_text::terminal_reading::{self as rules, Settings, Speech, Step, TerminalReader};
+use verbatim_text::terminal_rows::{OldRow, Read};
 
 /// How long after the last chunk the stream's last read comes: past the
 /// quiet period and the time a row lingers.
@@ -32,40 +32,26 @@ const QUIET_MS: u64 = 10_000;
 /// The time between reads of a stream written by hand, which records none.
 const HAND_STEP_MS: u64 = 10;
 
-/// A reader on the terminal memory.
+/// The reading rules under test, read as the outpost reads: each read
+/// starts where the last said, and the whole document is read when the
+/// rules ask.
 struct Core {
-    memory: TerminalMemory,
+    reader: TerminalReader,
     query: Query,
-    /// For each row of the last read starting a line, what was reported
-    /// of that line.
-    said: Vec<Option<String>>,
     /// When each chunk came, for a recorded stream.
     at_ms: Vec<u64>,
     /// The reads answered so far.
     reads: usize,
-    /// The texts of the rows of the read being answered.
-    texts: Vec<String>,
-    /// For each row of the last read, the text of its line.
-    lines: Vec<String>,
-    /// The texts of the rows of the last read.
-    old_texts: Vec<String>,
-    /// For each lingering row's text, the text of its line when it went.
-    gone: std::collections::HashMap<String, String>,
     quiet: bool,
 }
 
 impl Core {
     fn new(stream: &Stream) -> Self {
         Self {
-            memory: TerminalMemory::new(),
+            reader: TerminalReader::new(Settings::default()),
             query: Query::default(),
-            said: Vec::new(),
             at_ms: stream.at_ms.clone(),
             reads: 0,
-            texts: Vec::new(),
-            lines: Vec::new(),
-            old_texts: Vec::new(),
-            gone: std::collections::HashMap::new(),
             quiet: false,
         }
     }
@@ -83,138 +69,71 @@ impl Core {
         };
         if self.quiet { last + QUIET_MS } else { last }
     }
+}
 
-    /// What the reader says of a read the memory aligned.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "each kind of line in turn: changed, then silent, then the mapping and review"
-    )]
-    fn heard(&mut self, outcome: &Outcome) -> Heard {
-        let mut heard = Heard::default();
-        for (from, fate) in outcome.old.iter().enumerate() {
-            if *fate == (OldRow::Gone { lingering: true })
-                && let (Some(text), Some(line)) = (self.old_texts.get(from), self.lines.get(from))
-            {
-                self.gone.insert(text.clone(), line.clone());
+/// What the rules said, as the oracle takes reports: a flood's summary is
+/// split into runs of rows that each start a line.
+fn heard(step: &Step, review: Option<usize>, rows: usize) -> Heard {
+    let mut heard = Heard::default();
+    for speech in &step.speech {
+        match speech {
+            Speech::Line { row, text } => heard.spoken.push(Spoken::Line {
+                row: *row,
+                text: text.clone(),
+            }),
+            Speech::Growth { row, text } => heard.spoken.push(Spoken::Growth {
+                row: *row,
+                text: text.clone(),
+            }),
+            Speech::Changed { row, text } => heard.spoken.push(Spoken::Redrawn {
+                row: *row,
+                text: text.clone(),
+            }),
+            Speech::Skipped { rows, .. } => {
+                let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
+                for &row in rows {
+                    match runs.last_mut() {
+                        Some(run) if run.end == row => run.end += 1,
+                        _ => runs.push(row..row + 1),
+                    }
+                }
+                heard
+                    .spoken
+                    .extend(runs.into_iter().map(|rows| Spoken::Summary { rows }));
             }
+            other => panic!("the oracle's streams press no keys, but the rules said {other:?}"),
         }
-        let mut said = vec![None; outcome.rows.len()];
-        for line in &outcome.lines {
-            let start = line.rows.start;
-            let kinds = &outcome.rows[line.rows.clone()];
-            // The line's first row with text says where it came from.
-            let first = kinds
-                .iter()
-                .zip(&self.texts[line.rows.clone()])
-                .find(|(_, text)| !text.trim_end().is_empty())
-                .map_or(kinds[0], |(kind, _)| *kind);
-            let from = match first {
-                NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } => Some(from),
-                _ => None,
-            };
-            let before = from.and_then(|from| self.said.get(from).cloned().flatten());
-            if line.text.is_empty() {
-                continue;
-            }
-            // A blank row wrapped onto a kept row adds nothing to its line.
-            let changed = kinds
-                .iter()
-                .zip(&self.texts[line.rows.clone()])
-                .any(|(kind, text)| {
-                    !text.trim_end().is_empty()
-                        && matches!(kind, NewRow::New | NewRow::Rewritten { .. })
-                });
-            if changed {
-                let text = line.text.clone();
-                // A line continued from above the read grows from its part
-                // in the last read, which was said with the line it began.
-                let above = start == 0 && outcome.continued;
-                heard.spoken.push(match (line.grew_from, &before) {
-                    (Some(was), Some(before)) if text[..was] == *before => Spoken::Growth {
-                        row: start,
-                        text: text[was..].to_owned(),
-                    },
-                    (Some(was), _) if above => Spoken::Growth {
-                        row: start,
-                        text: text[was..].to_owned(),
-                    },
-                    _ if from.is_some() => Spoken::Redrawn {
-                        row: start,
-                        text: text.clone(),
-                    },
-                    _ => Spoken::Line {
-                        row: start,
-                        text: text.clone(),
-                    },
-                });
-                said[start] = Some(text);
-                continue;
-            }
-            said[start] = before;
-            // A line none of whose rows with text is new or rewritten is
-            // silent: its rows were kept, returned, reprinted or are
-            // history, so a read showed their text before. When the line
-            // its first kept row was in had other text, the line only lost
-            // text, as when a wrapped line's last row is erased or a line
-            // break splits it, or rows were joined into a line no read
-            // showed, which is spoken as a redrawn change.
-            let was = kinds
-                .iter()
-                .zip(&self.texts[line.rows.clone()])
-                .find(|(_, text)| !text.trim_end().is_empty())
-                .and_then(|(kind, text)| match kind {
-                    NewRow::Kept { from, .. } => self.lines.get(*from),
-                    NewRow::Returned { .. } => self.gone.get(text),
-                    _ => None,
-                });
-            let Some(was) = was else {
-                continue;
-            };
-            if *was == line.text {
-                continue;
-            }
-            let squeezed =
-                |text: &str| -> String { text.chars().filter(|c| !c.is_whitespace()).collect() };
-            let (was, now) = (squeezed(was), squeezed(&line.text));
-            if was.len() > now.len() && was.contains(&now) {
-                heard.withheld.push(Withheld {
-                    row: start,
-                    reason: Reason::LostText,
-                });
-            } else {
-                heard.spoken.push(Spoken::Redrawn {
-                    row: start,
-                    text: line.text.clone(),
-                });
-                said[start] = Some(line.text.clone());
-            }
-        }
-        self.said = said;
-        self.lines = vec![String::new(); outcome.rows.len()];
-        for line in &outcome.lines {
-            for row in line.rows.clone() {
-                self.lines[row].clone_from(&line.text);
-            }
-        }
-        if !outcome.first {
-            heard.moved = Some(
-                outcome
-                    .old
-                    .iter()
-                    .map(|fate| match fate {
-                        OldRow::Kept(to) | OldRow::Rewritten(to) => Some(*to),
-                        OldRow::Gone { .. } | OldRow::Above => None,
-                    })
-                    .collect(),
-            );
-        }
-        heard.review = self
-            .memory
-            .review()
-            .and_then(|anchor| usize::try_from(anchor.row).ok())
-            .filter(|&row| row < outcome.rows.len());
-        heard
     }
+    heard.withheld = step
+        .withheld
+        .iter()
+        .map(|withheld| Withheld {
+            row: withheld.row,
+            reason: match withheld.reason {
+                rules::Reason::Volatile => Reason::Volatile,
+                rules::Reason::UnfinishedWord => Reason::UnfinishedWord,
+                rules::Reason::HeldForKeys => Reason::HeldForKeys,
+                rules::Reason::Spinner => Reason::Spinner,
+                rules::Reason::LostText => Reason::LostText,
+                rules::Reason::HeldTyping => Reason::HeldTyping,
+                rules::Reason::KeyAnswer => Reason::KeyAnswer,
+            },
+        })
+        .collect();
+    if let Some(outcome) = step.outcome.as_ref().filter(|outcome| !outcome.first) {
+        heard.moved = Some(
+            outcome
+                .old
+                .iter()
+                .map(|fate| match fate {
+                    OldRow::Kept(to) | OldRow::Rewritten(to) => Some(*to),
+                    OldRow::Gone { .. } | OldRow::Above => None,
+                })
+                .collect(),
+        );
+    }
+    heard.review = review.filter(|&row| row < rows);
+    heard
 }
 
 impl Reader for Core {
@@ -226,39 +145,37 @@ impl Reader for Core {
         let snapshot = read
             .as_ref()
             .expect("the simulated terminal answers every read");
-        let outcome = self.memory.read(&Read {
-            text: snapshot.text.clone(),
-            screen: snapshot.screen.clone(),
-            from_start: snapshot.from_start,
-            shrank: snapshot.shrank,
-            at_document_start: snapshot.at_document_start,
-            alternate: snapshot.alternate,
-            first_row: snapshot.first_row.clone(),
-            caret_rows_to_end: snapshot.caret_rows_to_end,
-            caret_line: snapshot.caret_line.clone(),
-            caret_column: snapshot.caret_column,
-            at_ms: self.now(),
-        });
-        let screen_rows = u32::try_from(outcome.height).unwrap_or(u32::MAX);
-        if outcome.whole_document {
+        let step = self.reader.read(
+            &Read {
+                text: snapshot.text.clone(),
+                screen: snapshot.screen.clone(),
+                from_start: snapshot.from_start,
+                shrank: snapshot.shrank,
+                at_document_start: snapshot.at_document_start,
+                alternate: snapshot.alternate,
+                first_row: snapshot.first_row.clone(),
+                caret_rows_to_end: snapshot.caret_rows_to_end,
+                caret_line: snapshot.caret_line.clone(),
+                caret_column: snapshot.caret_column,
+                at_ms: self.now(),
+            },
+            false,
+            None,
+        );
+        let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
+        let screen_rows = u32::try_from(height).unwrap_or(u32::MAX);
+        if step.whole_document {
             return Reply::Again(Query {
                 start: None,
                 screen_rows,
                 whole: true,
             });
         }
-        if outcome.first {
-            self.memory
-                .set_review(outcome.caret.unwrap_or(0), snapshot.caret_column);
-        }
-        self.old_texts = std::mem::take(&mut self.texts);
-        self.texts = self
-            .memory
-            .rows()
-            .iter()
-            .map(|row| row.text.clone())
-            .collect();
-        let heard = self.heard(&outcome);
+        let memory = self.reader.memory();
+        let review = memory
+            .review()
+            .and_then(|anchor| usize::try_from(anchor.row).ok());
+        let heard = heard(&step, review, memory.rows().len());
         self.query = Query {
             start: Some(snapshot.next_start),
             screen_rows,
@@ -311,7 +228,7 @@ fn counts(expected: &[(&str, usize)]) -> Vec<(String, usize)> {
         .collect()
 }
 
-/// A question about the design that decides a pinned case: the reader
+/// A question about the design that decides a pinned case: the rules
 /// cannot reach zero violations there without a change of the design or
 /// of the oracle's specification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -332,9 +249,10 @@ enum Question {
     /// (the first rows of similar wrapped lines, a frame drawn twice), the
     /// alignment measures no rotation or a wrong one: lines rotated above
     /// the read's start are missed, or rows kept in place are taken for
-    /// new and spoken again. Should the reader read the whole document in
-    /// these cases, and how would it then tell history it never read from
-    /// new output?
+    /// rewritten, so the rules hold them as volatile or as having lost
+    /// text, or speak them again. Should the reader read the whole document
+    /// in these cases, and how would it then tell history it never read
+    /// from new output?
     RotationUnmeasured,
     /// Erasing the history looks like the alternate screen opening, and
     /// the next scroll into a history like it closing (section 5.8), so the
@@ -342,6 +260,19 @@ enum Question {
     /// spoken again. Should the restore be refused when rows the memory
     /// read since are found in the read?
     HistoryEraseAsAlternate,
+    /// A growing line's unfinished word is held until the line grows past
+    /// it, the cursor leaves it, or the quiet period passes (section 5.3).
+    /// When output pushes the line out of a full history between two reads
+    /// before any of these, no later read shows it, so the word is never
+    /// spoken, and the oracle, which does not count a row rotated out of
+    /// the buffer as resolving a hold, reports the hold as false. The rules
+    /// speak a held line once it is above the screen, so this needs more
+    /// than a screen of output past a full history in one read: the tiny
+    /// terminal's history of one row, or a flood. Should a hold be
+    /// accounted for when its line leaves a full history before the quiet
+    /// period, as lines that leave between two reads unseen are, or should
+    /// the word not be held then?
+    HeldPastHistory,
 }
 
 /// A random case pinned: its number, the question that decides it, and
@@ -375,6 +306,11 @@ fn the_cores_violations_over_the_corpus() {
     // the main screen as it leaves. In the console host two of its lines
     // are withheld as having lost text against the lines the alternate
     // screen showed, which the oracle does not count.
+    // Question::RotationUnmeasured: the footer kept by a scroll region
+    // over a full history is the last screen's only row kept in place, so
+    // the rotation is not measured: the lines rotated above the read are
+    // missed, and the region's rows kept in place are taken for rows
+    // rewritten twice and held as volatile.
     let expected: Vec<StreamTally> = [
         (
             "pi-fullscreen",
@@ -382,12 +318,29 @@ fn the_cores_violations_over_the_corpus() {
             &[("FalseReason LostText", 2), ("Missed", 17)][..],
         ),
         ("pi-fullscreen", Flavor::WindowsTerminal, &[("Missed", 19)]),
+        (
+            "rotation-footer",
+            Flavor::ConsoleHost,
+            &[("FalseReason Volatile", 29), ("Missed", 74)],
+        ),
+        (
+            "rotation-footer",
+            Flavor::WindowsTerminal,
+            &[("FalseReason Volatile", 29), ("Missed", 74)],
+        ),
     ]
     .into_iter()
     .map(|(name, flavor, kinds)| (name.to_owned(), flavor, counts(kinds)))
     .collect();
     assert_eq!(found, expected);
 }
+
+/// How many tiny streams, counted once in each terminal, push a held word
+/// out of the tiny history (`Question::HeldPastHistory`).
+const HELD_TINY_STREAMS: usize = 146;
+
+/// How many words those streams hold that are never resolved.
+const HELD_TINY_WORDS: usize = 146;
 
 #[test]
 fn the_cores_violations_over_every_stream_of_four_tiny_operations() {
@@ -421,9 +374,43 @@ fn the_cores_violations_over_every_stream_of_four_tiny_operations() {
         [Flavor::ConsoleHost, Flavor::WindowsTerminal]
             .map(|flavor| (about.clone(), flavor, missed.clone()))
     };
-    let expected: Vec<(String, Flavor, Vec<Violation>)> =
+    let expected_unseen: Vec<(String, Flavor, Vec<Violation>)> =
         unseen("ab").into_iter().chain(unseen("cdefg")).collect();
-    assert_eq!(found, expected);
+    let (found_unseen, held): (Vec<_>, Vec<_>) = found
+        .into_iter()
+        .partition(|case| expected_unseen.contains(case));
+    assert_eq!(found_unseen, expected_unseen);
+    // Question::HeldPastHistory: the tiny terminal's history is one row,
+    // so a clear, or a line growing past the buffer, pushes a line holding
+    // its unfinished word out of it between two reads. Every other stream
+    // with violations holds such a word; in four, the line grows on past
+    // the buffer and its rest is missed, since what was heard of it never
+    // covered its start.
+    let holding = held
+        .iter()
+        .filter(|(_, _, violations)| {
+            violations.iter().any(|violation| {
+                matches!(
+                    violation,
+                    Violation::FalseReason {
+                        reason: Reason::UnfinishedWord,
+                        ..
+                    }
+                )
+            })
+        })
+        .count();
+    assert_eq!(
+        (held.len(), holding),
+        (HELD_TINY_STREAMS, HELD_TINY_STREAMS)
+    );
+    assert_eq!(
+        tally(held.iter().flat_map(|(_, _, violations)| violations)),
+        counts(&[
+            ("FalseReason UnfinishedWord", HELD_TINY_WORDS),
+            ("Missed", 4)
+        ])
+    );
 }
 
 #[test]
@@ -431,7 +418,7 @@ fn the_cores_violations_over_random_streams() {
     // The random streams of the oracle's own tests, taken in the same
     // order from the same seed, every case run rather than stopping at the
     // first failure, each case numbered in that order.
-    use Question::{AlternateUnseen, HistoryEraseAsAlternate, RotationUnmeasured};
+    use Question::{AlternateUnseen, HeldPastHistory, HistoryEraseAsAlternate, RotationUnmeasured};
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let config = random_config();
@@ -457,33 +444,51 @@ fn the_cores_violations_over_random_streams() {
     let missed = |count| vec![("Missed", count)];
     let repeated = |count| vec![("Repeated", count)];
     let both = || vec![("Missed", 1), ("Repeated", 1)];
-    // Case 384 needs both the alternate screen seen and the rotation
-    // measured; it is listed under the first.
+    let held = || vec![("FalseReason UnfinishedWord", 1)];
+    // Case 446 misses a line the alternate screen showed, so the growth
+    // that follows it never covers its start and the word it holds is
+    // never resolved; it is listed under the alternate screen.
     let pinned: Vec<Pin> = vec![
         (61, RotationUnmeasured, missed(1)),
         (65, RotationUnmeasured, missed(2)),
-        (70, RotationUnmeasured, missed(5)),
+        (
+            70,
+            RotationUnmeasured,
+            vec![("FalseReason LostText", 1), ("Missed", 5)],
+        ),
         (71, RotationUnmeasured, both()),
         (82, AlternateUnseen, missed(1)),
-        (126, RotationUnmeasured, missed(3)),
+        (
+            126,
+            RotationUnmeasured,
+            vec![("FalseReason Volatile", 2), ("Missed", 3)],
+        ),
         (168, RotationUnmeasured, missed(2)),
         (196, RotationUnmeasured, missed(1)),
+        (212, HeldPastHistory, held()),
         (213, RotationUnmeasured, missed(1)),
         (290, RotationUnmeasured, missed(1)),
-        (301, RotationUnmeasured, repeated(1)),
+        (298, HeldPastHistory, held()),
         (318, RotationUnmeasured, missed(2)),
         (341, AlternateUnseen, missed(1)),
         (349, AlternateUnseen, missed(1)),
         (350, RotationUnmeasured, missed(1)),
         (364, RotationUnmeasured, repeated(1)),
-        (384, AlternateUnseen, missed(1)),
+        (379, HeldPastHistory, held()),
         (397, AlternateUnseen, missed(1)),
         (409, AlternateUnseen, missed(1)),
         (415, RotationUnmeasured, missed(5)),
-        (446, AlternateUnseen, missed(1)),
+        (445, HeldPastHistory, held()),
+        (
+            446,
+            AlternateUnseen,
+            vec![("FalseReason UnfinishedWord", 1), ("Missed", 1)],
+        ),
         (458, RotationUnmeasured, missed(6)),
         (498, RotationUnmeasured, repeated(2)),
-        (508, RotationUnmeasured, both()),
+        (502, HeldPastHistory, held()),
+        (506, HeldPastHistory, held()),
+        (508, RotationUnmeasured, missed(1)),
         (510, HistoryEraseAsAlternate, repeated(3)),
     ];
     let expected: Vec<(u32, Vec<(String, usize)>)> = pinned

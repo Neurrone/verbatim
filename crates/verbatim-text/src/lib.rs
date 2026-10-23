@@ -26,6 +26,9 @@
 //! - [`terminal_rows`] is a terminal's memory of its rows and the
 //!   alignment of each read against it: what each row of the read is, and
 //!   where each row of the last read went.
+//! - [`terminal_reading`] is the reading rules on that memory: what is
+//!   spoken of each read, each key and the quiet period, as a state machine
+//!   driven by inputs with times.
 //!
 //! Offsets are byte offsets into the UTF-8 string given. Positions in a
 //! provider's own units (UTF-16 code units, text ranges) are converted at
@@ -47,6 +50,7 @@ use icu_segmenter::options::{
 use icu_segmenter::{GraphemeClusterSegmenter, SentenceSegmenter, WordSegmenter};
 use jieba_rs::Jieba;
 
+pub mod terminal_reading;
 pub mod terminal_rows;
 
 /// The grapheme clusters of `text`, each as its byte range, in order.
