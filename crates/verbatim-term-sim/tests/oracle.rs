@@ -9,11 +9,10 @@
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
-use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
 use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::oracle::{
-    Heard, Observation, Op, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation, WORDS,
-    Withheld, every_stream, observe, stream,
+    Heard, Observation, Op, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation,
+    Withheld, every_stream, observe, random_config, random_steps, stream,
 };
 use verbatim_term_sim::{Flavor, Query, Refused, RowId, Snapshot, screen_rows};
 
@@ -674,65 +673,12 @@ fn the_ground_truth_reader_passes_the_corpus() {
     assert_eq!(failures, []);
 }
 
-fn op() -> impl Strategy<Value = Op> {
-    let word = || prop::sample::select(&WORDS[..]);
-    prop_oneof![
-        4 => word().prop_map(Op::Write),
-        4 => Just(Op::Newline),
-        1 => Just(Op::LineFeed),
-        1 => Just(Op::CarriageReturn),
-        1 => (1..=5_u8, 1..=12_u8).prop_map(|(row, column)| Op::MoveTo { row, column }),
-        1 => (-3..=3_i8).prop_map(Op::MoveRows),
-        1 => (-6..=6_i8).prop_map(Op::MoveColumns),
-        1 => (0..=2_u8).prop_map(Op::EraseLine),
-        1 => Just(Op::EraseBelow),
-        1 => word().prop_map(Op::Footer),
-        1 => word().prop_map(Op::Redraw),
-        1 => (1..=5_u8, 1..=5_u8).prop_map(|(top, bottom)| Op::Region { top, bottom }),
-        1 => Just(Op::ResetRegion),
-        1 => (1..=2_u8).prop_map(Op::InsertRows),
-        1 => (1..=2_u8).prop_map(Op::DeleteRows),
-        1 => (8..=16_u8, word()).prop_map(|(lines, word)| Op::Flood { lines, word }),
-        1 => Just(Op::Clear),
-        1 => Just(Op::ClearHistory),
-        1 => Just(Op::EnterAlternate),
-        1 => Just(Op::LeaveAlternate),
-    ]
-}
-
-/// The random streams' configuration, every field written out:
-/// `Config::default()` reads `PROPTEST_` environment variables, which would
-/// let the machine change what is checked. A fixed seed makes every run
-/// check the same streams, and no failure files are kept: a failure prints
-/// its shrunk steps.
-fn config() -> Config {
-    Config {
-        cases: 512,
-        max_local_rejects: 65_536,
-        max_global_rejects: 1024,
-        max_flat_map_regens: 1_000_000,
-        failure_persistence: None,
-        source_file: None,
-        test_name: None,
-        fork: false,
-        timeout: 0,
-        max_shrink_time: 0,
-        max_shrink_iters: u32::MAX,
-        max_default_size_range: 100,
-        result_cache: proptest::test_runner::noop_result_cache,
-        verbose: 0,
-        rng_algorithm: RngAlgorithm::ChaCha,
-        rng_seed: RngSeed::Fixed(20_261_023),
-        _non_exhaustive: (),
-    }
-}
-
 proptest! {
-    #![proptest_config(config())]
+    #![proptest_config(random_config())]
 
     #[test]
     fn the_ground_truth_reader_passes_random_streams(
-        steps in prop::collection::vec((op(), any::<bool>()), 1..40),
+        steps in random_steps(),
         windows_terminal in any::<bool>(),
     ) {
         let flavor = if windows_terminal { Flavor::WindowsTerminal } else { Flavor::ConsoleHost };

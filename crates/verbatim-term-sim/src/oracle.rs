@@ -68,6 +68,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::ops::Range;
 
+use proptest::prelude::*;
+use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
+
 use crate::conformance::Stream;
 use crate::{Flavor, Query, Refused, RowId, Snapshot, Terminal};
 
@@ -1275,4 +1278,67 @@ pub fn every_stream(alphabet: &[Op], longest: usize) -> Vec<Stream> {
         }));
     }
     streams
+}
+
+/// One operation of the random streams, with their weights: words written
+/// and lines ended most often, and every other operation of [`Op`] with
+/// arguments on [`Size::SMALL`].
+pub fn random_op() -> impl Strategy<Value = Op> {
+    let word = || prop::sample::select(&WORDS[..]);
+    prop_oneof![
+        4 => word().prop_map(Op::Write),
+        4 => Just(Op::Newline),
+        1 => Just(Op::LineFeed),
+        1 => Just(Op::CarriageReturn),
+        1 => (1..=5_u8, 1..=12_u8).prop_map(|(row, column)| Op::MoveTo { row, column }),
+        1 => (-3..=3_i8).prop_map(Op::MoveRows),
+        1 => (-6..=6_i8).prop_map(Op::MoveColumns),
+        1 => (0..=2_u8).prop_map(Op::EraseLine),
+        1 => Just(Op::EraseBelow),
+        1 => word().prop_map(Op::Footer),
+        1 => word().prop_map(Op::Redraw),
+        1 => (1..=5_u8, 1..=5_u8).prop_map(|(top, bottom)| Op::Region { top, bottom }),
+        1 => Just(Op::ResetRegion),
+        1 => (1..=2_u8).prop_map(Op::InsertRows),
+        1 => (1..=2_u8).prop_map(Op::DeleteRows),
+        1 => (8..=16_u8, word()).prop_map(|(lines, word)| Op::Flood { lines, word }),
+        1 => Just(Op::Clear),
+        1 => Just(Op::ClearHistory),
+        1 => Just(Op::EnterAlternate),
+        1 => Just(Op::LeaveAlternate),
+    ]
+}
+
+/// The steps of a random stream: 1 to 39 operations of [`random_op`], each
+/// followed by a read or not, for [`stream`].
+pub fn random_steps() -> impl Strategy<Value = Vec<(Op, bool)>> {
+    prop::collection::vec((random_op(), any::<bool>()), 1..40)
+}
+
+/// The random streams' configuration, every field written out:
+/// `Config::default()` reads `PROPTEST_` environment variables, which would
+/// let the machine change what is checked. A fixed seed makes every run
+/// check the same streams, and no failure files are kept: a failure prints
+/// its shrunk steps.
+#[must_use]
+pub fn random_config() -> Config {
+    Config {
+        cases: 512,
+        max_local_rejects: 65_536,
+        max_global_rejects: 1024,
+        max_flat_map_regens: 1_000_000,
+        failure_persistence: None,
+        source_file: None,
+        test_name: None,
+        fork: false,
+        timeout: 0,
+        max_shrink_time: 0,
+        max_shrink_iters: u32::MAX,
+        max_default_size_range: 100,
+        result_cache: proptest::test_runner::noop_result_cache,
+        verbose: 0,
+        rng_algorithm: RngAlgorithm::ChaCha,
+        rng_seed: RngSeed::Fixed(20_261_023),
+        _non_exhaustive: (),
+    }
 }
