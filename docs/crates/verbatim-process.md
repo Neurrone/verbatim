@@ -62,6 +62,16 @@ Public API:
   creates, can hold Core's pipes open after the child exits. The outpost
   binary, as an outpost and as the listener, the synthesizer host, and the
   relay floor use it.
+- `clock` (`docs/design/communication.md`, section 3.3) — the clock every
+  process of a run stamps the times it compares across processes with:
+  `now_us()`, the performance counter in microseconds plus one offset to
+  the Unix epoch. `offset()` is the offset the launching process handed on
+  in `VERBATIM_CLOCK_OFFSET_US`, or, in the first process, the system's
+  clock less the counter, taken once; `hand_on()`, called first thing in
+  verbatim.exe's `main`, puts it in the environment every child inherits.
+  The counter is monotonic and the same in every process, so a key's
+  press, an outpost's read and Core's receipt compare on one clock however
+  the system's clock is set meanwhile.
 - `overlapped` (`docs/design/communication.md`, sections 4 and 6) —
   `pipe(flow, buffer, other)` makes a pipe with no name, as the standard
   library makes its child pipes (`NtCreateNamedPipeFile` on the named

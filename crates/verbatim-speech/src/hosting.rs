@@ -117,7 +117,8 @@ impl FromHost {
 }
 
 /// The host's stamps on an utterance's start ([`FromHost::FirstAudio`]):
-/// times on the clock every process shares ([`now_us`]), and one duration
+/// times on the clock every process shares (`verbatim_process::clock` in the
+/// Windows host), and one duration
 /// measured in the host alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostTiming {
@@ -130,18 +131,6 @@ pub struct HostTiming {
     /// When the host wrote this message, just before the first chunk, in
     /// microseconds since the Unix epoch.
     pub sent_at_us: u64,
-}
-
-/// Microseconds since the Unix epoch on the system's precise clock, which
-/// is the same in every process, for the stamps that cross a process
-/// boundary.
-#[must_use]
-pub fn now_us() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
-        })
 }
 
 /// The JSON-encoded part of [`FromHost`]: everything but PCM.

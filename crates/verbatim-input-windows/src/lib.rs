@@ -58,7 +58,7 @@ use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
@@ -610,13 +610,10 @@ impl Drop for Apartment {
     }
 }
 
-/// Microseconds since the Unix epoch, as outposts stamp their observations.
+/// Microseconds since the Unix epoch on the run's shared clock, as
+/// outposts stamp their observations ([`verbatim_process::clock`]).
 fn unix_us() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_micros()).unwrap_or(u64::MAX)
-        })
+    verbatim_process::clock::now_us()
 }
 
 /// Runs the message loop until `WM_QUIT` (or a `GetMessageW` error) ends it.

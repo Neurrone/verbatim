@@ -96,6 +96,9 @@ macro_rules! report_error {
 }
 
 fn main() -> ExitCode {
+    // SAFETY: first thing in `main`, before any thread starts: every
+    // process Verbatim launches reads the same clock.
+    unsafe { verbatim_process::clock::hand_on() };
     // Keep Core's trace IDs disjoint from every outpost's; they meet in the
     // latency ledger and the flight recorder.
     TraceId::namespace(std::process::id());

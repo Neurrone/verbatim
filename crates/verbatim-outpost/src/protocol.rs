@@ -95,17 +95,12 @@ pub fn hop_us(from_us: u64, to_us: u64) -> Option<u64> {
     (from_us != 0 && to_us != 0).then(|| to_us.saturating_sub(from_us))
 }
 
-/// Microseconds since the Unix epoch, the clock [`EventTiming`] and the
-/// latency log share across processes.
+/// Microseconds since the Unix epoch on the run's shared clock
+/// ([`verbatim_process::clock`]), which [`EventTiming`], the latency log,
+/// and every time compared across processes share.
 #[must_use]
 pub fn now_us() -> u64 {
-    u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros(),
-    )
-    .unwrap_or(u64::MAX)
+    verbatim_process::clock::now_us()
 }
 use verbatim_model::{
     Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,

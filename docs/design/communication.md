@@ -59,7 +59,7 @@ Established from the code unless marked.
 - Writing from the pushing thread (finding 9) put encoding and `WriteFile` under the child's lock, a brief contention point.
 - Stamping "just before `WriteFile`" was not possible as `relay.md` 4.5 described, because the stamp is inside the encoded message. The requests' verbatim.exe stage became "push to write".
 - Platform-neutral crates can take a thread priority only through a callback.
-- The cross-process benchmark clock is `GetSystemTimePreciseAsFileTime`, because enabling `Win32_System_Performance` would change `workspace-hack`.
+- The cross-process clock is the performance counter plus one offset to the Unix epoch, which the first Verbatim process takes and hands to every process it launches (`verbatim_process::clock`), so a key's press, an outpost's read and Core's receipt compare on one monotonic clock however the system's clock is set (2026-10-23; it was the system's precise file time until then).
 - Putting the stamps inside messages changed every outpost message's wire format; serde defaults keep older peers readable.
 - A command too large to send is skipped with a warning; a failed write closes the queue.
 
@@ -484,7 +484,7 @@ Estimated, not measured: at the relay's measured median of 0.06 ms per hand-off 
 
 ### 10.1 Stages
 
-Every hop has a stage. A stage inside one process is a duration measured with the performance counter (`Instant`) on one thread, or between two threads of one process; a stage that crosses processes is a difference of the shared clock (`now_us`, which on Windows reads `GetSystemTimePreciseAsFileTime`, derived from the performance counter and the same in every process). Every cross-process hop on an announcement's way has two stamps: the sender's, taken as its writer begins the write, just before the frame is encoded, since the stamp travels inside it; and the receiver's, taken as the frame is read. The sender's own time before its write is a stage of its own, so a hop's stage is the pipe and the receiver's wake. Each stage below gives its `LatencyStageKind` and, in quotes, the label the latency line, `verbatim-inspect latency` and `stages.txt` print. The stage names from 43adba8 are kept where they exist.
+Every hop has a stage. A stage inside one process is a duration measured with the performance counter (`Instant`) on one thread, or between two threads of one process; a stage that crosses processes is a difference of the shared clock (`now_us`, `verbatim_process::clock`: the performance counter, the same in every process, plus one offset to the Unix epoch handed from the launching process to every process it starts). Every cross-process hop on an announcement's way has two stamps: the sender's, taken as its writer begins the write, just before the frame is encoded, since the stamp travels inside it; and the receiver's, taken as the frame is read. The sender's own time before its write is a stage of its own, so a hop's stage is the pipe and the receiver's wake. Each stage below gives its `LatencyStageKind` and, in quotes, the label the latency line, `verbatim-inspect latency` and `stages.txt` print. The stage names from 43adba8 are kept where they exist.
 
 The event side, in path order:
 - Windows (`Windows`, "Windows"): the WinEvent's raised time to its observation (tick-count resolution, so partly quantization).
@@ -537,7 +537,7 @@ The listener's messages outside the ledger, logged at trace level under the `ver
 - Each process also keeps a fixed-size in-memory ring of (trace, stage, counter value) for measurement builds, written out at exit, as `relay.md` 4.5 planned. Nothing on the path writes a file or a console.
 - The stamps ride in the speech records of section 8.6, which the reporting thread takes from its one channel; the ledger adds no hand-off of its own, and the push that carries the first sample's stamp is after the measured span. The reporting thread assembles the timeline (today's `Stages::breakdown`, `latency.rs:104-249`), writes the latency line, serves `verbatim-inspect latency` and broadcasts to the control plane.
 - The ledger keeps a bounded number of timelines, and every event an outpost sends starts one, spoken or not. Since 2026-10-14 a timeline whose speech is still owed (asked for or queued, and neither measured nor ended) is evicted only when every other timeline but the newest is owed too: before, a burst's unspoken events pushed out the timelines of flood lines spoken 300 to 700 ms later, which were then never measured (`docs/design/wake-ups.md`, "Measurements after the terminal and typing changes").
-- Clocks: if skew between processes ever shows as a negative cross-process stage, the shared clock can move to the performance counter scaled to microseconds, as `relay.md` 4.5 allows; the branch kept the precise file time for the reason in section 3.3.
+- Clocks: the shared clock is the performance counter scaled to microseconds, with one offset shared by the run's processes (section 3.3), so no setting of the system's clock moves one process's stamps against another's.
 
 ### 10.3 The measurement scenario the audit asks for first
 

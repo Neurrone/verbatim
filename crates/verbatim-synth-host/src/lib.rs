@@ -34,11 +34,11 @@ use std::time::Instant;
 
 use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
+use verbatim_process::clock::now_us;
 use verbatim_process::event::{Event, wait_any};
 use verbatim_process::transport::{EventReader, EventWriter, Taken, put_frame};
 use verbatim_speech::hosting::{
     FromHost, HostDescription, HostTiming, ToHost, decode_to_host, encode_from_host, encode_pcm,
-    now_us,
 };
 use verbatim_speech::{
     CancelWake, IndexMark, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError,

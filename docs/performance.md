@@ -230,8 +230,9 @@ no worse than the platform's floor, every exception attributed.
   as a duration (`EventTiming::core_relay_us`). It does not depend on
   clocks agreeing across processes.
 - The spans either side of it, from the listener to verbatim.exe and from
-  verbatim.exe to the outpost, are on the wall clock every process shares
-  (`now_us`), as the other cross-process stages are.
+  verbatim.exe to the outpost, are on the clock every process of the run
+  shares (`now_us`, `verbatim_process::clock`), as the other
+  cross-process stages are.
 - A fact held while its outpost started is reported as "waiting for the
   outpost to start", never pooled with verbatim.exe's own time. Since
   2026-10-16 an application's outpost is usually a spare, started before

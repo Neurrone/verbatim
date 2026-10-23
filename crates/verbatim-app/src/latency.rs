@@ -18,7 +18,6 @@
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
 use verbatim_control::server::ControlServer;
@@ -26,16 +25,11 @@ use verbatim_model::{CallCounts, Indication, TraceId, UtteranceEnding, Utterance
 use verbatim_outpost::protocol::{EventTiming, now_us};
 use verbatim_speech::{SpeechEvents, SynthTiming};
 
-/// Milliseconds since the Unix epoch, the ledger's shared time base — the
-/// outpost stamps its observations with the same clock.
+/// Milliseconds since the Unix epoch on the run's shared clock
+/// ([`verbatim_process::clock`]), the ledger's time base: the outposts
+/// stamp their observations with the same clock.
 pub fn now_ms() -> u64 {
-    u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(u64::MAX)
+    verbatim_process::clock::now_us() / 1_000
 }
 
 /// One timeline under assembly.

@@ -58,12 +58,13 @@ use std::time::{Duration, Instant};
 
 use tracing::warn;
 use verbatim_model::UtteranceId;
+use verbatim_process::clock::now_us;
 use verbatim_process::event::{Event, wait_any};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::transport::{EventReader, EventWriter, Taken, put_frame};
 use verbatim_process::{ChildEnds, ChildSpec, Contained};
 use verbatim_speech::hosting::{
-    FromHost, HostDescription, HostTiming, ToHost, decode_from_host, encode_to_host, now_us,
+    FromHost, HostDescription, HostTiming, ToHost, decode_from_host, encode_to_host,
 };
 use verbatim_speech::{
     SettingDescriptor, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError,

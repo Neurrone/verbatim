@@ -41,8 +41,8 @@ use std::time::Duration;
 
 use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
+use verbatim_process::clock::now_us;
 use verbatim_process::event::Event;
-use verbatim_speech::hosting::now_us;
 use verbatim_speech::{
     CancelToken, CancelWake, IndexMark, SettingDescriptor, SettingId, SettingValue, SpeechItem,
     SpeechSequence, SynthDriver, SynthError, SynthId, SynthSink, SynthTiming,
