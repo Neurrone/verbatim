@@ -60,10 +60,6 @@ recordings, the oracle, and the core's memory, alignment and reading
 rules in `verbatim-text` are committed. What remains, in section 12's
 order:
 
-- The baseline measurements of processor time, wake-ups and
-  change-to-speech time for section 10's workloads, on the build before
-  the reading changes (the memory baseline is in
-  [performance](performance.md), "Memory use").
 - The read program's colours, read in the first read after each key, and
   the remote operations audit.
 - The outpost and Core: reading moved onto the core; the review position
@@ -82,7 +78,11 @@ order:
   host's real password prompt; the existing terminal scenarios brought
   back to passing; then streaming and redrawing at a real program's rate,
   with a test program of Verbatim's own.
-- The measurements after, against the baseline, in
+- The measurements after, against the baseline of processor time,
+  wake-ups and change-to-speech time taken on 2026-10-23 on the build
+  before the reading changes (its runs are kept under
+  `target/perf/terminal-baseline-*`; the memory baseline is in
+  [performance](performance.md), "Memory use"), in
   [performance](performance.md).
 - The model rewritten to describe the design as built, its decisions
   moved to [the terminals parity entry](parity/terminals.md).
