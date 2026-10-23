@@ -2434,3 +2434,134 @@ share of the limit in brackets:
   steps for a growth of 9,000 rows (2026-10-09). Both were one more until
   2026-10-13, when the caret's read stopped getting the text pattern from
   the element again and uses the one the program already has.
+
+## Memory use
+
+Measured on 2026-10-24 on the development machine, a QEMU virtual
+machine with 12 virtual processors of an AMD Ryzen 7 5700G and 16 GB of
+memory, running Windows 11 Pro build 26200, with a release build of
+commit 975fb269 and its default settings, speaking through eSpeak NG in
+its synthesizer host. It is the baseline for the terminal memory of
+`docs/design/terminal-model.md`, section 4.1, which the terminal outposts
+do not keep yet. A script sampled every process run from the build's
+folder four times a second with `Get-Process`: private bytes (the
+process's commit), working set, and the peak working set and peak commit
+Windows keeps for the process's lifetime. Steady is a workload's median,
+and peak its highest sample, or the lifetime peak where that is higher.
+Figures are in megabytes (MB, 2 to the power 20 bytes).
+
+Private bytes is the figure to compare. Every outpost maps the same
+images, so most of an outpost's working set is shared pages that cost
+the machine once; a first run while another build's tests ran raised
+every outpost's working set by 6 to 8 MB and left its private bytes
+unchanged.
+
+The workloads, in the order run:
+
+- Verbatim idle at its own Settings dialog, for a minute.
+- The console host focused, 120 columns by 30 rows with a 9,001-row
+  buffer, with a small history of 20 lines, then after 9,100 lines of
+  120 columns filled its history.
+- Windows Terminal (the end-to-end suite's portable copy, with its default
+  history of 9,001 rows) opened beside it, 120 by 30, focused, with the
+  same small history and then a full one.
+- With both terminals open: 10,000 lines of 120 columns printed in
+  Windows Terminal (1.7 seconds), then 30 seconds after; the console host
+  focused again, then the same flood printed in it (3.3 seconds), then 30
+  seconds after. "Report new output" was on, so each flood was spoken.
+- Both terminals closed, and 90 seconds with the focus on another Windows
+  Terminal window.
+
+The processes and their figures:
+
+- `verbatim.exe`, the core process: 7.5 MB private and a 33.4 MB working
+  set idle at its own dialog, growing slowly to 8.2 MB and 32.5 MB after
+  the terminals were left; its peak commit was 8.3 MB and its peak
+  working set 33.5 MB, reached at startup and at the dialog. No terminal
+  workload moved it by more than 0.3 MB.
+- The focus listener (`verbatim-outpost.exe --listener`): 3.6 MB private
+  and a 19.8 MB working set idle, 3.8 MB with the console host, and 4.0 to
+  4.1 MB from Windows Terminal on; peaks 4.1 MB and 20.7 MB.
+- The outpost for Verbatim's own window: 2.2 MB private and 13.1 MB
+  working set throughout; peaks 2.4 MB commit and 13.3 MB.
+- The console host's outpost: 3.4 MB private and 18.9 MB working set with
+  the small history, 3.5 to 3.6 MB and 19.0 MB with the full history, and
+  the same 3.6 MB and 19.3 to 19.5 MB in the background while Windows
+  Terminal was used and during and after its own flood; peaks 3.7 MB
+  commit and 19.5 MB working set. It ended with its terminal.
+- Windows Terminal's outpost: 3.0 MB private and 17.6 MB working set with
+  the small history, 3.0 to 3.2 MB and 17.7 MB with the full history, and
+  3.0 to 3.1 MB and 17.8 to 18.0 MB during and after its flood and in the
+  background; peaks 3.3 MB commit and 18.2 MB working set. It ended with
+  its terminal.
+- The outpost for the other Windows Terminal window, focused after
+  leaving: 3.2 MB private and 18.1 MB working set; peaks 3.4 MB and
+  18.3 MB. An outpost for that window was also running at the start, at
+  3.3 MB and 19.3 MB, and was retired while the test terminals were used.
+- Spare outposts, started ahead of need, two at a time: 1.9 to 2.1 MB
+  private and 12.3 to 12.9 MB working set each, with no peak above
+  2.1 MB and 12.9 MB. Three of the five became the outposts above.
+- The synthesizer host (`verbatim-synth-host.exe`, eSpeak NG): 2.5 MB
+  private and 9.3 to 9.4 MB working set in every workload, both floods'
+  speech included; peaks 2.6 MB and 9.4 MB.
+
+In total, Verbatim's processes held about 23 MB of private bytes idle at
+its own dialog, about 28 MB with both terminals open, and about 24 MB
+after leaving them. The terminals cost little: neither a full history nor
+a flood moved a terminal's outpost by more than 0.3 MB, since today's
+outpost reads only the screen and the rows written since its last read,
+keeps nothing of the history, and frees each read once it is reported.
+
+### The terminal memory's cost, estimated
+
+The terminal memory of section 4.1 (`TerminalMemory` in
+`crates/verbatim-text/src/terminal_rows.rs`) and the reading rules'
+per-row state beside it (`TerminalReader` in `terminal_reading.rs`) will
+be kept by the outpost of the terminal's application, where the reads are
+made (`docs/design/terminal-model.md`, section 12), one of each for every
+terminal. Windows Terminal's tabs share one process, so its outpost will
+hold one memory for each tab, under the outpost's memory cap of 200 MB.
+
+The sizes, on x64, for a row of 120 columns: a 120-byte string costs 134
+bytes of heap, measured. The memory's `Row` is 56 bytes, so with its
+string it takes about 190 bytes, and one more byte records whether the
+row was read since a switch of screens. The reader's `RowState` is 216
+bytes with a copy of the row's text, and the `LineState` of the line the
+row begins (160 bytes, inside the `RowState`) holds the line's text
+twice, as last read and as last said; each row's line start takes 8
+bytes more. That is about 630 bytes of the reader's for a row that begins
+a line, and about 820 bytes a row in all. Colours add 24 bytes a run,
+only for the screen's rows and only after a key.
+
+For a 120 by 30 screen with a full history of 9,001 rows:
+
+- The last read's rows, with their text and history: the screen and the
+  rotation block above it (4 to 30 rows), so 34 to 60 rows, 28 to 49 KB.
+- Lingering rows: at most the rows a read found gone, for 2 seconds,
+  each with its row (72 bytes and its text) and the reader's gone line
+  (176 bytes and its two strings), about 650 bytes a row: under 20 KB for
+  a screen's worth.
+- The known history: one 8-byte hash for every row above the screen,
+  9,001 hashes, 72 KB, up to 128 KB with the queue's unused capacity.
+- Anchors: the review position and the command marks, 24 bytes each.
+
+So a terminal's memory in its steady state is about 100 to 200 KB (0.1 to
+0.2 MB) in the terminal's outpost, a few percent of today's outpost.
+
+After a read of the whole document (section 4.2: more than a screen went
+by between reads, as in every flood and in filling the history), the
+memory keeps every row of that read, not only the screen and the block:
+`remember` takes the read's rows whole, and only the next read, which
+starts at the screen, moves the rows above it into the known history.
+Until the terminal's next read, which a terminal left idle may not make
+for a long time, it holds 9,001 rows of about 820 bytes, about 7.4 MB.
+While that read is handled, the outpost also holds the read's text
+(9,001 rows of 122 bytes, 1.1 MB, and the 2.2 MB UTF-16 string UI
+Automation returned), the reader's copy of the memory's rows (1.7 MB),
+and the read's lines (about 1.8 MB), so the outpost's peak rises by about
+14 MB for that read. Two flooded terminals would therefore hold about
+15 MB between them, and a Windows Terminal with several flooded tabs
+about 7.4 MB for each. Cutting the memory's rows down to the block and
+the screen once a whole-document read is handled, keeping the rest as
+hashes in the known history, would hold every terminal at the steady
+figure.
