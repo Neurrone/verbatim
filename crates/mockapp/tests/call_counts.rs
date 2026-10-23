@@ -3328,7 +3328,7 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Navigate", 1),
                 ("ITextProvider::GetSelection", 1),
                 ("Clone", 7),
-                ("CompareEndpoints", 1),
+                ("CompareEndpoints", 3),
                 ("ExpandToEnclosingUnit", 3),
                 ("GetAttributeValue", 1),
                 ("GetText", 4),
@@ -3338,11 +3338,11 @@ fn check_uia_text_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(24, 0, 0),
+            calls(26, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 1),
                 ("Clone", 6),
-                ("CompareEndpoints", 1),
+                ("CompareEndpoints", 3),
                 ("ExpandToEnclosingUnit", 3),
                 ("GetAttributeValue", 1),
                 ("GetText", 4),
@@ -3758,12 +3758,15 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
 
     // Classically, the first batch: the caret (2), the first line and the
     // caret's offset in it (5), each later line a copy collapsed, moved,
-    // expanded, and read (5 each, 95), the move that finds a next line
-    // after the twentieth (3), and one `Culture` read over the whole batch
-    // (3). The later batch starts from a held position moved by a line (4)
-    // and needs no offset (3 for its first line). 165 and 166 before
-    // (2026-10-07): two collapses and two copies per line, and a `Culture`
-    // read per line.
+    // expanded, compared with the line before it, and read (6 each, 114),
+    // the move that finds a next line after the twentieth (3), and one
+    // `Culture` read over the whole batch (3). The later batch starts from
+    // a held position moved by a line (4) and needs no offset (3 for its
+    // first line). The comparison, since 2026-10-23, ends a batch at a line
+    // that starts before the one read before it, as the console host's
+    // expansion below its last line with text gives (109 and 108 before).
+    // 165 and 166 before 2026-10-07: two collapses and two copies per line,
+    // and a `Culture` read per line.
     let expected: [(CallCounts, &[(&str, u32)]); 2] = if remote {
         [
             (
@@ -3776,7 +3779,7 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
                     ("Navigate", 1),
                     ("ITextProvider::GetSelection", 1),
                     ("Clone", 24),
-                    ("CompareEndpoints", 1),
+                    ("CompareEndpoints", 20),
                     ("ExpandToEnclosingUnit", 20),
                     ("GetAttributeValue", 1),
                     ("GetText", 21),
@@ -3788,6 +3791,7 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
                 calls(1, 0, 0),
                 &[
                     ("Clone", 24),
+                    ("CompareEndpoints", 19),
                     ("ExpandToEnclosingUnit", 21),
                     ("GetAttributeValue", 1),
                     ("GetText", 20),
@@ -3799,11 +3803,11 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
     } else {
         [
             (
-                calls(109, 0, 0),
+                calls(128, 0, 0),
                 &[
                     ("ITextProvider::GetSelection", 1),
                     ("Clone", 23),
-                    ("CompareEndpoints", 1),
+                    ("CompareEndpoints", 20),
                     ("ExpandToEnclosingUnit", 20),
                     ("GetAttributeValue", 1),
                     ("GetText", 21),
@@ -3812,9 +3816,10 @@ fn check_uia_say_all_batch_costs(ratchet: &mut Ratchet, remote: bool) {
                 ],
             ),
             (
-                calls(108, 0, 0),
+                calls(127, 0, 0),
                 &[
                     ("Clone", 23),
+                    ("CompareEndpoints", 19),
                     ("ExpandToEnclosingUnit", 21),
                     ("GetAttributeValue", 1),
                     ("GetText", 20),
@@ -3894,7 +3899,7 @@ fn check_uia_say_all_language_costs(ratchet: &mut Ratchet, remote: bool) {
                 ("Navigate", 1),
                 ("ITextProvider::GetSelection", 1),
                 ("Clone", 8),
-                ("CompareEndpoints", 1),
+                ("CompareEndpoints", 4),
                 ("ExpandToEnclosingUnit", 4),
                 ("GetAttributeValue", 5),
                 ("GetText", 5),
@@ -3904,11 +3909,11 @@ fn check_uia_say_all_language_costs(ratchet: &mut Ratchet, remote: bool) {
         )
     } else {
         (
-            calls(33, 0, 0),
+            calls(36, 0, 0),
             &[
                 ("ITextProvider::GetSelection", 1),
                 ("Clone", 7),
-                ("CompareEndpoints", 1),
+                ("CompareEndpoints", 4),
                 ("ExpandToEnclosingUnit", 4),
                 ("GetAttributeValue", 5),
                 ("GetText", 5),

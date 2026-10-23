@@ -1632,10 +1632,58 @@ fn a_backward_move_is_counted_backward_both_ways() {
     app.quit();
 }
 
+/// A provider whose expansion to a line below its last line with text
+/// gives that line (`lines_clamp.json`), as the console host's does: reading
+/// ahead ends at the last line with text, rather than reading it again for
+/// every row below it, the same remotely and classically.
+fn reading_ahead_ends_where_lines_clamp_back_both_ways() {
+    common::init_com();
+    let title = common::unique_title("mockapp-lines-clamp");
+    let mut app = common::spawn("lines_clamp.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let element = notes_element(hwnd);
+    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&element).expect("a text pattern");
+    let query = UnitsQuery {
+        target: TextTarget {
+            element: &element,
+            pattern: &pattern,
+            pattern2: pattern2.as_ref(),
+        },
+        from: TextFrom::Caret,
+        movement: None,
+        unit: TextUnit_Line,
+        count: 6,
+        max_text: 1024,
+        max_total: 1024,
+        culture: false,
+    };
+    common::apply(&mut app, hwnd, "caret doc 0");
+    let remote = units_summary(&text_units_remote(&query).expect("the remote program runs"));
+    let classic = units_summary(&text_units_classic(&query).expect("the classic reads run"));
+    assert_eq!(remote, classic);
+    assert_eq!(
+        remote,
+        (
+            0,
+            vec![
+                ("one\n".to_owned(), 0, None),
+                ("two\n".to_owned(), 0, None),
+                ("three\n".to_owned(), 0, None),
+            ],
+            true
+        )
+    );
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "reading_ahead_ends_where_lines_clamp_back_both_ways",
+            reading_ahead_ends_where_lines_clamp_back_both_ways,
+        ),
         (
             "every_attribute_is_read_both_ways",
             every_attribute_is_read_both_ways,

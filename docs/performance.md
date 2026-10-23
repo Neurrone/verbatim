@@ -2411,8 +2411,8 @@ share of the limit in brackets:
   (`Path::Fallback`), at a cost of hundreds of calls; programs are not
   made resumable (Dickson, 2026-10-07), and none is needed while the 64
   stretches bound the walk.
-- Say-all's batch of twenty lines: 626 (6 percent) a line on from a held
-  position with its lines in three languages, each line's then read; 647
+- Say-all's batch of twenty lines: 683 (7 percent) a line on from a held
+  position with its lines in three languages, each line's then read; 704
   for a first batch from the caret in one language. The count does not
   grow with the lines' length.
 - A terminal's screen, with the caret and its line read in the same

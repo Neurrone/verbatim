@@ -564,7 +564,7 @@ fn say_all_batches_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [languages, first],
-        [626, 647],
+        [683, 704],
         "a later batch in three languages, a first batch in one"
     );
     assert!(languages < LIMIT / 2 && first < LIMIT / 2);

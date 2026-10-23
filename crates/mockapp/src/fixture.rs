@@ -105,6 +105,8 @@ struct RawNode {
     #[serde(default)]
     find_text_fails: bool,
     #[serde(default)]
+    lines_clamp: bool,
+    #[serde(default)]
     cultures: Vec<(usize, usize, i32)>,
     /// Boxed, so a node nested sixty deep still parses on the main
     /// thread's stack.
@@ -210,6 +212,9 @@ pub(crate) struct FixtureNode {
     /// Whether `FindText` on the text fails, as Windows Terminal's has
     /// thrown.
     pub(crate) find_text_fails: bool,
+    /// Whether expanding to a line below the last line with text gives
+    /// that line instead, as the console host's provider does.
+    pub(crate) lines_clamp: bool,
     /// Stretches of the text in a language other than English, each a
     /// start and an end UTF-16 offset and a Windows locale id, served as
     /// UIA's `Culture` attribute.
@@ -376,6 +381,7 @@ fn convert(
         italic: raw.italic,
         italic_fails: raw.italic_fails,
         find_text_fails: raw.find_text_fails,
+        lines_clamp: raw.lines_clamp,
         cultures: raw.cultures,
         styles: raw.styles,
         backward_moves_positive: raw.backward_moves_positive,

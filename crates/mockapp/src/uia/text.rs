@@ -31,7 +31,9 @@
 //! otherwise unsupported, as every other text attribute is. A fixture can
 //! make the `IsItalic` read fail (`italic_fails`), as a provider that fails
 //! an attribute read, its `FindText` fail (`find_text_fails`), as Windows
-//! Terminal's has, and its backward moves answer with a positive count
+//! Terminal's has, its expansion to a line below the last line with text
+//! give that line (`lines_clamp`), as the console host's does, and its
+//! backward moves answer with a positive count
 //! (`backward_moves_positive`), as some providers do.
 //!
 //! Every provider method counts a hit ([`crate::hits`]), so the tests pin a
@@ -586,10 +588,21 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
     fn ExpandToEnclosingUnit(&self, unit: TextUnit) -> WinResult<()> {
         hits::hit(Method::RangeExpandToEnclosingUnit);
         let spans = spans_of(&self.tree, self.index, unit);
-        let (start, end) = spans
-            .get(containing(&spans, self.start.get()))
-            .copied()
-            .unwrap_or((0, 0));
+        let mut at = containing(&spans, self.start.get());
+        if unit == TextUnit_Line && formats_of(&self.tree, self.index).lines_clamp {
+            // Below the last line with text, the console host's provider
+            // gives that line.
+            let text = text_of(&self.tree, self.index);
+            let written = |&(start, end): &(usize, usize)| {
+                String::from_utf16_lossy(&text[start..end.min(text.len())])
+                    .chars()
+                    .any(|character| !character.is_whitespace())
+            };
+            if let Some(last) = spans.iter().rposition(written) {
+                at = at.min(last);
+            }
+        }
+        let (start, end) = spans.get(at).copied().unwrap_or((0, 0));
         self.start.set(start);
         self.end.set(end);
         Ok(())

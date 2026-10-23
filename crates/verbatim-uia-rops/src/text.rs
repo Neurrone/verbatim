@@ -744,6 +744,18 @@ pub fn text_units_remote(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> {
                     b.break_loop();
                 });
                 b.text_range_expand_to_enclosing_unit(next, unit);
+                // A unit that starts before the one read last is no unit
+                // after it: the console host clamps an expansion below its
+                // last row with text back onto that row, so the text ends.
+                let order = b.text_range_compare_endpoints(next, c.start, current, c.end);
+                let back = b.compare(order, c.zero, Comparison::LessThan);
+                b.if_(back, |b| {
+                    let yes = b.bool(true);
+                    b.set(ended, yes);
+                    let no = b.bool(false);
+                    b.set(going, no);
+                    b.break_loop();
+                });
                 let text = b.text_range_get_text(next, c.max_text);
                 b.array_append(ranges, next);
                 b.array_append(texts, text);
@@ -1314,6 +1326,16 @@ pub fn text_units_classic(query: &UnitsQuery<'_>) -> Result<UnitsAnswer, Error> 
                 break;
             }
             let unit = read(next)?;
+            // A unit that starts before the one read last is no unit after
+            // it, as the program checks.
+            if unit
+                .range
+                .compare_endpoints(Endpoint::Start, &current.range, Endpoint::End)?
+                < 0
+            {
+                ended = true;
+                break;
+            }
             total += unit.text.len();
             units.push(unit);
         }

@@ -78,16 +78,22 @@ pub(crate) struct NodeData {
 
 /// A text's formatting: stretches that are spelling errors, that are bold,
 /// and that are italic, each a start and an end UTF-16 offset, whether its
-/// `IsItalic` attribute fails to read, whether `FindText` fails, stretches
-/// in another language, each with its locale id, its other formatting, and
-/// whether a backward move answers with a positive count.
+/// `IsItalic` attribute fails to read, whether `FindText` fails, whether
+/// lines below the last with text clamp back to it, stretches in another
+/// language, each with its locale id, its other formatting, and whether a
+/// backward move answers with a positive count.
 #[derive(Clone, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent fixture option"
+)]
 pub(crate) struct Formats {
     pub(crate) spelling_errors: Vec<(usize, usize)>,
     pub(crate) bold: Vec<(usize, usize)>,
     pub(crate) italic: Vec<(usize, usize)>,
     pub(crate) italic_fails: bool,
     pub(crate) find_text_fails: bool,
+    pub(crate) lines_clamp: bool,
     pub(crate) cultures: Vec<(usize, usize, i32)>,
     pub(crate) styles: crate::fixture::Styles,
     pub(crate) backward_moves_positive: bool,
@@ -277,6 +283,7 @@ fn insert(
             italic: node.italic,
             italic_fails: node.italic_fails,
             find_text_fails: node.find_text_fails,
+            lines_clamp: node.lines_clamp,
             cultures: node.cultures,
             styles: *node.styles,
             backward_moves_positive: node.backward_moves_positive,
@@ -332,6 +339,7 @@ mod tests {
             italic: Vec::new(),
             italic_fails: false,
             find_text_fails: false,
+            lines_clamp: false,
             cultures: Vec::new(),
             styles: Box::default(),
             backward_moves_positive: false,

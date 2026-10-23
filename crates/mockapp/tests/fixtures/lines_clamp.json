@@ -1,0 +1,15 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Lines Clamp Fixture",
+  "children": [
+    {
+      "id": "doc",
+      "role": "editable_text",
+      "name": "Notes",
+      "states": ["focusable"],
+      "text": "one\ntwo\nthree\n\n\n",
+      "lines_clamp": true
+    }
+  ]
+}
