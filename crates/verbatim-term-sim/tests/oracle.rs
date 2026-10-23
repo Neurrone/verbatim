@@ -889,6 +889,50 @@ fn a_held_row_that_leaves_the_buffer_is_not_resolved() {
     );
 }
 
+/// "50%", "60%" and "70%" written over each other, then `then`.
+fn held_then(then: Op) -> Stream {
+    let rewrite = |text| {
+        [
+            (Op::CarriageReturn, false),
+            (Op::EraseLine(2), false),
+            (Op::Write(text), true),
+        ]
+    };
+    let mut steps = vec![(Op::Write("50%"), true)];
+    steps.extend(rewrite("60%"));
+    steps.extend(rewrite("70%"));
+    steps.push((then, true));
+    stream(&steps)
+}
+
+/// The reader for [`held_then`]: "70%" held as volatile, then silent.
+fn holding_seventy() -> Scripted {
+    Scripted::new(vec![
+        Heard::default(),
+        says(vec![line(0, "50%")]),
+        says(vec![redrawn(0, "60%")]),
+        holds(vec![], &[(0, Reason::Volatile)]),
+        Heard::default(),
+        Heard::default(),
+    ])
+}
+
+#[test]
+fn a_held_row_deleted_is_resolved_by_its_text_going() {
+    assert_eq!(
+        violations(&held_then(Op::DeleteRows(1)), &mut holding_seventy()),
+        []
+    );
+}
+
+#[test]
+fn a_held_row_the_alternate_screen_covers_is_resolved() {
+    assert_eq!(
+        violations(&held_then(Op::EnterAlternate), &mut holding_seventy()),
+        []
+    );
+}
+
 #[test]
 fn the_reader_holding_every_line_of_a_flood_as_volatile_is_caught() {
     let mut expected: Vec<Violation> = (1..=10)

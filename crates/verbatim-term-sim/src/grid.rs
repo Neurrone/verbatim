@@ -174,6 +174,10 @@ pub struct Buffer {
     /// Whether the buffer's first row continues a line whose earlier rows
     /// left the buffer, rotated out or erased with the history.
     pub continued: bool,
+    /// The identities of the rows discarded from its front as the full
+    /// history rotated, oldest first: rows that left with their text, as
+    /// opposed to rows deleted or erased.
+    pub rotated: Vec<RowId>,
 }
 
 /// The cursor.
@@ -249,6 +253,7 @@ impl Grid {
                 capacity: history + height,
                 top: 0,
                 continued: false,
+                rotated: Vec::new(),
             },
             alternate: None,
             cursor: Cursor {
@@ -426,7 +431,10 @@ impl Grid {
             return;
         }
         let gone = buffer.rows.pop_front();
-        buffer.continued = gone.is_some_and(|gone| gone.wraps);
+        buffer.continued = gone.as_ref().is_some_and(|gone| gone.wraps);
+        if !alternate && let Some(gone) = gone {
+            buffer.rotated.push(gone.id);
+        }
         buffer.rows.push_back(row);
     }
 
@@ -651,6 +659,7 @@ impl Grid {
             capacity: self.height,
             top: 0,
             continued: false,
+            rotated: Vec::new(),
         };
         for _ in 0..self.height {
             buffer.rows.push_back(self.scrolled_in_row());

@@ -50,8 +50,9 @@
 //!   checked, by a report at a later read that says the held text's line (a
 //!   line, a summary's count, growth that completes it, or a redrawn row's
 //!   speech covering its change from the text its place had before the
-//!   hold), or by the held text being replaced on the main screen while its
-//!   row is still in the buffer; the row leaving the buffer, or a report
+//!   hold), or by the held text being replaced on the main screen, written
+//!   over, erased or deleted, or by the alternate screen coming up without
+//!   it; the row leaving a full history as it rotates, or a report
 //!   merely naming the row, resolves nothing. Lines written and erased between two
 //!   reads, and lines that left a full history or a scroll region between
 //!   two reads, are never shown to a read, so nothing accounts for them.
@@ -280,6 +281,10 @@ pub struct Observation {
     /// Whether the main buffer's first row continues a line whose start
     /// left the buffer.
     pub continued: bool,
+    /// The identities of the rows the main buffer discarded as its full
+    /// history rotated since the previous read: rows that left the buffer
+    /// with their text, as opposed to rows deleted or erased.
+    pub rotated: Vec<RowId>,
     /// What the reader said.
     pub heard: Heard,
 }
@@ -312,18 +317,20 @@ impl Run {
 /// When the reader asks to read again twice at one point, which no reader
 /// needs.
 pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader) -> Run {
-    let mut reads = vec![read(terminal, reader)];
+    let mut rotated = 0;
+    let mut reads = vec![read(terminal, reader, &mut rotated)];
     for chunk in &stream.chunks {
         terminal.write(chunk.as_bytes());
-        reads.push(read(terminal, reader));
+        reads.push(read(terminal, reader, &mut rotated));
     }
     reader.quiet();
-    reads.push(read(terminal, reader));
+    reads.push(read(terminal, reader, &mut rotated));
     Run { reads }
 }
 
-/// One read of `terminal` by `reader`, taken again if the reader asks.
-fn read(terminal: &Terminal, reader: &mut dyn Reader) -> Observation {
+/// One read of `terminal` by `reader`, taken again if the reader asks;
+/// `rotated` counts the rows the main buffer rotated out before it.
+fn read(terminal: &Terminal, reader: &mut dyn Reader, rotated: &mut usize) -> Observation {
     let mut query = reader.query();
     let mut again = false;
     loop {
@@ -334,6 +341,8 @@ fn read(terminal: &Terminal, reader: &mut dyn Reader) -> Observation {
         match reader.read(&snapshot) {
             Reply::Heard(heard) => {
                 let grid = terminal.grid();
+                let left = grid.main.rotated[*rotated..].to_vec();
+                *rotated = grid.main.rotated.len();
                 return Observation {
                     alternate: grid.alternate.is_some(),
                     start,
@@ -341,6 +350,7 @@ fn read(terminal: &Terminal, reader: &mut dyn Reader) -> Observation {
                     main: terminal.document(),
                     screen_top: grid.main.top,
                     continued: grid.main.continued,
+                    rotated: left,
                     heard,
                 };
             }
@@ -620,6 +630,8 @@ struct Check<'a> {
     /// The places where the line changed from one text to another at a
     /// read checked so far.
     changed: HashSet<isize>,
+    /// The rows the main buffer rotated out up to the read checked.
+    rotated: HashSet<RowId>,
     holds: Vec<Hold>,
     violations: Vec<Violation>,
 }
@@ -774,6 +786,7 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
         heard: Vec::new(),
         covered: HashMap::new(),
         changed: HashSet::new(),
+        rotated: HashSet::new(),
         aside: false,
         holds: Vec::new(),
         violations: Vec::new(),
@@ -801,6 +814,7 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
 fn check_read(check: &mut Check, index: usize) {
     let reads = check.reads;
     let read = &reads[index];
+    check.rotated.extend(read.rotated.iter().copied());
     let main = check.lines[index].is_some();
     let mut state = ReadState {
         new: Vec::new(),
@@ -837,6 +851,9 @@ fn check_read(check: &mut Check, index: usize) {
         uncover(&mut check.covered, |text| {
             shown.get(text).copied().unwrap_or_default()
         });
+        // The alternate screen replaces the main screen's text on the
+        // screen, so a hold whose text it does not show is resolved.
+        check.holds.retain(|hold| shown.contains_key(&hold.text));
         // Nothing on the alternate screen must be accounted for; only
         // what is reported is checked against the read.
         for spoken in &read.heard.spoken {
@@ -910,12 +927,14 @@ fn alternate_lines(rows: &[Seen]) -> HashMap<String, usize> {
 /// The holds a report at read `index` or the main screen's text resolves:
 /// a report said the held text's line (a redrawn row's speech covering its
 /// change from the text its place had before the hold), or no line has the
-/// held text while its row is still in the buffer.
+/// held text and its row did not leave the buffer as the full history
+/// rotated, which takes it away with its text; a row written over, erased
+/// or deleted had its text replaced.
 fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
     let lines = check.lines[index]
         .as_ref()
         .expect("a read on the main screen");
-    let read = &check.reads[index];
+    let rotated = &check.rotated;
     let said: HashSet<&str> = lines
         .list
         .iter()
@@ -923,7 +942,6 @@ fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
         .filter(|(_, said)| **said)
         .map(|(line, _)| line.text.as_str())
         .collect();
-    let rows: HashSet<RowId> = read.main.iter().map(|seen| seen.id).collect();
     check.holds.retain(|hold| {
         let redrawn = state.redrawn.iter().any(|(number, _, text)| {
             let line = &lines.list[*number].text;
@@ -935,7 +953,7 @@ fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
         });
         let resolved = said.contains(hold.text.as_str())
             || redrawn
-            || (lines.count(&hold.text) == 0 && rows.contains(&hold.first));
+            || (lines.count(&hold.text) == 0 && !rotated.contains(&hold.first));
         !resolved
     });
 }
