@@ -5,7 +5,7 @@
 
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
-use super::{NewRow, OldRow, Outcome, Read, Switch, TerminalMemory};
+use super::{Anchor, NewRow, OldRow, Outcome, Read, Switch, TerminalMemory, hash};
 
 /// A terminal watched as the outpost watches it: each read starts where
 /// the last said, as many rows above it as the memory asks, with the height
@@ -460,4 +460,97 @@ fn a_history_erase_is_not_restored_when_rows_read_since_are_shown() {
         scrolled.rows,
         [kept(0), kept(1), kept(2), kept(3), NEW, NEW]
     );
+}
+
+#[test]
+fn a_scroll_on_the_alternate_screen_is_no_rotation() {
+    // The alternate screen has no history (section 5.8), so a scroll
+    // rotates nothing: the rows it moved up are kept, moved, and the row
+    // it scrolled off the top is gone. The review position on that row
+    // goes to the caret, since no row above it survived (section 5.6).
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write("\x1b[?1049h\x1b[Ha\r\nb\r\nc");
+    watch.memory.set_review(0, 0);
+    let outcome = watch.write("\r\nd");
+    assert_eq!(watch.texts(), ["b", "c", "d"]);
+    assert_eq!(outcome.rows, [moved(1), moved(2), NEW]);
+    assert_eq!(outcome.old, [GONE, OldRow::Kept(0), OldRow::Kept(1)]);
+    assert_eq!(outcome.rotation, 0);
+    assert_eq!(
+        watch.memory.review(),
+        Some(Anchor {
+            row: 2,
+            column: 1,
+            line_hash: hash("d")
+        })
+    );
+}
+
+#[test]
+fn the_review_position_on_a_gone_row_goes_to_the_nearest_surviving_row_above() {
+    // Section 5.6: the row it was on erased, it moves to the row above.
+    let mut watch = Watch::console(10, 5, 10);
+    watch.write("x\r\na\r\nb");
+    watch.memory.set_review(1, 0);
+    watch.write("\x1b[2;1H\x1b[2K");
+    assert_eq!(watch.texts(), ["x", "", "b"]);
+    assert_eq!(
+        watch.memory.review(),
+        Some(Anchor {
+            row: 0,
+            column: 0,
+            line_hash: hash("x")
+        })
+    );
+}
+
+#[test]
+fn the_known_history_moves_up_with_the_rotation() {
+    // Section 4.1: the known history is kept by coordinate and shifted as
+    // the history rotates. In a buffer of nine rows, read after each line,
+    // the memory keeps the screen and the block, seven rows, so the known
+    // history holds the two rows above them and no row that left.
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("1");
+    for number in 2..=30 {
+        watch.write(&format!("\r\n{number}"));
+    }
+    assert_eq!(watch.texts(), ["24", "25", "26", "27", "28", "29", "30"]);
+    assert_eq!(watch.memory.known_history(), [hash("22"), hash("23")]);
+}
+
+#[test]
+fn a_whole_document_read_takes_the_known_history_from_the_document() {
+    // Thirty lines read one at a time through a buffer of thirteen rows,
+    // then a flood of twenty, read whole: the known history is the rows
+    // the document holds above the memory's, 38 to 43, and none from
+    // before them.
+    let mut watch = Watch::console(10, 3, 10);
+    watch.write("1");
+    for number in 2..=30 {
+        watch.write(&format!("\r\n{number}"));
+    }
+    let flood: String = (31..=50)
+        .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
+        .collect();
+    watch.write(&flood);
+    assert_eq!(watch.taken, 2, "the flood read whole");
+    watch.memory.trim();
+    assert_eq!(watch.texts(), ["44", "45", "46", "47", "48", "49", "50"]);
+    let above: Vec<u64> = (38..=43).map(|number| hash(&number.to_string())).collect();
+    assert_eq!(watch.memory.known_history(), above);
+}
+
+#[test]
+fn output_repeated_after_a_clear_that_lost_the_old_screen_is_new() {
+    // Windows Terminal: `type f.txt`, more output, then `cls` and `type
+    // f.txt` within one read. The clear takes the history too, so the
+    // whole document is read, and the old screen is not in it: the rows
+    // that repeat the known history are not a reprint (section 4.4).
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
+    watch.write("alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
+    watch.write("1111\r\n2222\r\n3333\r\n4444");
+    let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
+    assert_eq!(watch.texts(), ["alpha", "bravo", "charlie", "delta", ""]);
+    assert_eq!(outcome.rows, [NEW, NEW, NEW, NEW, NEW]);
 }

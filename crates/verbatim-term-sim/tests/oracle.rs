@@ -56,7 +56,10 @@ impl Reader for SameCoordinate {
             })
             .collect();
         let moved = Some((0..self.previous.len()).map(Some).collect());
-        let review = rows.len().checked_sub(1);
+        let review = rows
+            .len()
+            .checked_sub(1)
+            .and_then(|row| isize::try_from(row).ok());
         self.previous = rows;
         Reply::Heard(Heard {
             spoken,
@@ -405,7 +408,7 @@ impl Reader for Truth {
         Reply::Heard(Heard {
             spoken,
             moved,
-            review,
+            review: review.and_then(|row| isize::try_from(row).ok()),
             ..Heard::default()
         })
     }
@@ -1397,6 +1400,48 @@ fn a_held_line_spoken_as_last_read_after_it_left_the_full_history_is_resolved() 
 }
 
 #[test]
+fn a_held_line_spoken_without_its_change_does_not_resolve_its_hold() {
+    // "70%" held as volatile, its change from "60%" the "7"; the flood
+    // rotates it out of the full buffer, and the reader says only "%" of
+    // it, which does not report the held line (section 9).
+    let stream = stream(&[
+        (Op::Write("50%"), true),
+        (Op::CarriageReturn, false),
+        (Op::Write("60%"), true),
+        (Op::CarriageReturn, false),
+        (Op::Write("70%"), true),
+        (Op::Newline, false),
+        (
+            Op::Flood {
+                lines: 12,
+                word: "b",
+            },
+            true,
+        ),
+    ]);
+    let script = |held: &str| Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![line(0, "50%")]),
+            says(vec![redrawn(0, "60%")]),
+            holds(vec![], &[(0, Reason::Volatile)]),
+            says(vec![
+                Spoken::Held {
+                    text: held.to_owned(),
+                },
+                Spoken::Summary { rows: 0..10 },
+            ]),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut script("70%")), []);
+    assert_eq!(
+        violations(&stream, &mut script("%")),
+        [false_reason(3, 0, "70%", Reason::Volatile)]
+    );
+}
+
+#[test]
 fn the_reader_holding_every_line_of_a_flood_as_volatile_is_caught() {
     let mut expected: Vec<Violation> = (1..=10)
         .map(|line| false_reason(1, line - 1, &format!("a{line}"), Reason::Volatile))
@@ -1746,6 +1791,47 @@ fn a_review_position_is_not_judged_where_the_history_was_erased() {
                 went: 1,
                 said: Some(4)
             }
+        ]
+    );
+}
+
+#[test]
+fn a_review_position_outside_the_document_is_caught() {
+    // The review position is on a row of the read or of the history above
+    // it, down to the document's first row: here "a", the one row above the
+    // read.
+    let reviewed = |review: isize| {
+        let mut reader = Scripted::new(vec![
+            Heard::default(),
+            Heard {
+                review: Some(review),
+                ..says(vec![
+                    line(0, "b"),
+                    line(1, "c"),
+                    line(2, "d"),
+                    line(3, "e"),
+                    line(4, "f"),
+                ])
+            },
+        ]);
+        violations(
+            &stream(&[(Op::Write("a\r\nb\r\nc\r\nd\r\ne\r\nf"), true)]),
+            &mut reader,
+        )
+    };
+    assert_eq!(reviewed(-1), [missed(1, 0, "a")]);
+    assert_eq!(
+        reviewed(-2),
+        [
+            missed(1, 0, "a"),
+            Violation::ReviewOutside { read: 1, row: -2 }
+        ]
+    );
+    assert_eq!(
+        reviewed(5),
+        [
+            missed(1, 0, "a"),
+            Violation::ReviewOutside { read: 1, row: 5 }
         ]
     );
 }

@@ -2543,9 +2543,11 @@ For a 120 by 30 screen with a full history of 9,001 rows:
   each with its row (64 bytes and its text) and the reader's gone line
   (24 bytes and its 144-byte state), about 370 bytes a row: under 12 KB
   for a screen's worth.
-- The known history: one 8-byte hash for every row above the rows kept,
-  9,001 hashes, 72 KB, up to as much again with the queue's unused
-  capacity.
+- The known history: one 8-byte hash for every row the buffer holds
+  above the rows kept, since a rotation takes the hashes of the rows that
+  left and a read from the document's start replaces them (section 4.1):
+  at most about 9,000 hashes, 72 KB, up to as much again with the queue's
+  unused capacity. Measured after 100,000 lines, 8,997 hashes.
 - Anchors: the review position and the command marks, 24 bytes each.
 
 Once a read is handled, the memory and the reading rules keep of it only
@@ -2553,13 +2555,14 @@ the screen, the rows written below it and the block above it, the rows
 above the block as hashes in the known history (`TerminalMemory::trim`),
 so a read of the whole document (section 4.2: more than a screen went by
 between reads, as in every flood and in filling the history) leaves the
-same memory as an ordinary read. Measured with a counting allocator in a
-release build, 120 by 30 with a full history of 9,001 rows, a terminal's
-memory and reading rules hold 162 KB after an ordinary read and 85 KB
-after a whole-document read, the difference the known history's unused
-capacity, so a terminal's memory in its steady state is about 0.1 to
-0.2 MB in the terminal's outpost, a few percent of today's outpost,
-however it was flooded. While a whole-document read is handled, the
+same memory as an ordinary read. Measured on 2026-10-24 with a counting
+allocator in a release build, 120 by 30 with a full history of 9,001
+rows, after 100,000 lines read 20 at a time and then a flood read whole,
+a terminal's memory and reading rules hold 125 KB after the ordinary
+reads, 122 KB after the whole-document read and 127 KB after one more
+ordinary read, so a terminal's memory in its steady state is about
+0.1 MB in the terminal's outpost, a few percent of today's outpost,
+however long it ran and however it was flooded. While a whole-document read is handled, the
 reading rules' peak rises by 4.5 MB: the read's rows (9,001 of about 185
 bytes, 1.7 MB), its lines (56 bytes each, a one-row line sharing its
 row's text), the outcome, and a 56-byte state for each row, with no line

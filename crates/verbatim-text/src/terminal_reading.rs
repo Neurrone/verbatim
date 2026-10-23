@@ -50,6 +50,19 @@ pub fn quiet_period(interval_ms: Option<u64>) -> u64 {
     })
 }
 
+/// How many lines a flood's summary counts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Counted {
+    /// This many, blank ones included.
+    Lines(usize),
+    /// More than this many: the history overflowed, more going by than it
+    /// holds, and this many are the lines it holds that are not spoken.
+    MoreThan(usize),
+    /// Some, but how many is not known: the history overflowed, and every
+    /// line it holds is spoken.
+    Unknown,
+}
+
 /// The reader's settings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
@@ -195,10 +208,8 @@ pub enum Speech {
     Skipped {
         /// The first rows of the lines counted that have text.
         rows: Vec<usize>,
-        /// How many lines, blank ones included.
-        count: usize,
-        /// The history overflowed: more went by than it holds.
-        more_than: bool,
+        /// How many lines.
+        count: Counted,
     },
     /// Typed characters the terminal showed (section 5.5).
     Echo {
@@ -1275,16 +1286,34 @@ impl TerminalReader {
             }
             if tail > head || outcome.overflowed {
                 let counted = &fresh_lines[head..tail];
+                // The summary comes after the lines spoken first: at the
+                // first line it counts, or the line after them.
+                let row = fresh_lines.get(head).map_or_else(
+                    || {
+                        fresh_lines.last().map_or(0, |&(last, _)| {
+                            outcome
+                                .lines
+                                .iter()
+                                .find(|line| line.rows.start == last)
+                                .map_or(last + 1, |line| line.rows.end)
+                        })
+                    },
+                    |&(row, _)| row,
+                );
+                let count = match (outcome.overflowed, counted.len()) {
+                    (false, lines) => Counted::Lines(lines),
+                    (true, 0) => Counted::Unknown,
+                    (true, lines) => Counted::MoreThan(lines),
+                };
                 items.push((
-                    counted.first().map_or(head, |(row, _)| *row),
+                    row,
                     Speech::Skipped {
                         rows: counted
                             .iter()
                             .filter(|(_, text)| text.is_some())
                             .map(|(row, _)| *row)
                             .collect(),
-                        count: counted.len(),
-                        more_than: outcome.overflowed,
+                        count,
                     },
                 ));
             }

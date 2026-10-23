@@ -278,9 +278,12 @@ pub(super) fn pair(
 /// bottom) against `known` (the rows the known history held above the old
 /// screen, oldest first), by the histogram method: the row rarest in
 /// `known` among those both hold is matched at its last place in `known`,
-/// nearest the old screen, and the rows before and after it are matched
-/// the same way, so the work is about linear in the rows. Gives the
-/// indices of `new` matched.
+/// nearest the old screen, the match is extended above and below it while
+/// the rows agree, and the rows before and after that run are matched the
+/// same way. Each part costs its rows once, and the parts at one depth are
+/// apart, so a reprint that repeats the known history but for a few rows
+/// costs about its rows once for each of those. Gives the indices of `new`
+/// matched.
 pub(super) fn reprinted(new: &[u64], known: &[u64]) -> Vec<usize> {
     let mut matched = Vec::new();
     let mut pending = vec![(0..new.len(), 0..known.len())];
@@ -288,22 +291,33 @@ pub(super) fn reprinted(new: &[u64], known: &[u64]) -> Vec<usize> {
         if a.is_empty() || b.is_empty() {
             continue;
         }
-        let mut counts: HashMap<u64, (usize, usize)> = HashMap::new();
+        let mut counts: HashMap<u64, (usize, usize)> = HashMap::with_capacity(b.len());
         for at in b.clone() {
             let entry = counts.entry(known[at]).or_insert((0, at));
             entry.0 += 1;
             entry.1 = at;
         }
+        let middle = a.start + a.len() / 2;
         let rarest = a
             .clone()
             .filter_map(|at| counts.get(&new[at]).map(|&(count, last)| (count, at, last)))
-            .min_by_key(|&(count, at, _)| (count, std::cmp::Reverse(at)));
+            .min_by_key(|&(count, at, _)| (count, at.abs_diff(middle)));
         let Some((_, at, last)) = rarest else {
             continue;
         };
-        matched.push(at);
-        pending.push((a.start..at, b.start..last));
-        pending.push((at + 1..a.end, last + 1..b.end));
+        let (mut first, mut first_known) = (at, last);
+        while first > a.start && first_known > b.start && new[first - 1] == known[first_known - 1] {
+            first -= 1;
+            first_known -= 1;
+        }
+        let (mut end, mut end_known) = (at + 1, last + 1);
+        while end < a.end && end_known < b.end && new[end] == known[end_known] {
+            end += 1;
+            end_known += 1;
+        }
+        matched.extend(first..end);
+        pending.push((a.start..first, b.start..first_known));
+        pending.push((end..a.end, end_known..b.end));
     }
     matched.sort_unstable();
     matched

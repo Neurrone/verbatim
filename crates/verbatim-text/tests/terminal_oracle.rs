@@ -79,7 +79,7 @@ impl Core {
 
 /// What the rules said, as the oracle takes reports: a flood's summary is
 /// split into runs of rows that each start a line.
-fn heard(step: &Step, review: Option<usize>, rows: usize) -> Heard {
+fn heard(step: &Step, review: Option<isize>) -> Heard {
     let mut heard = Heard::default();
     for speech in &step.speech {
         match speech {
@@ -139,7 +139,7 @@ fn heard(step: &Step, review: Option<usize>, rows: usize) -> Heard {
                 .collect(),
         );
     }
-    heard.review = review.filter(|&row| row < rows);
+    heard.review = review;
     heard
 }
 
@@ -187,10 +187,8 @@ impl Reader for Core {
             });
         }
         let memory = self.reader.memory();
-        let review = memory
-            .review()
-            .and_then(|anchor| usize::try_from(anchor.row).ok());
-        let heard = heard(&step, review, memory.rows().len());
+        let review = memory.review().map(|anchor| anchor.row);
+        let heard = heard(&step, review);
         self.query = Query {
             start: Some(snapshot.next_start),
             screen_rows,

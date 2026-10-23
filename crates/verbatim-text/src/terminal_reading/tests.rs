@@ -7,9 +7,10 @@
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
 use super::{
-    ColourRun, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit, Withheld,
+    ColourRun, Counted, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit,
+    Withheld,
 };
-use crate::terminal_rows::Read;
+use crate::terminal_rows::{Anchor, Read, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
 /// said, as many rows above it as the memory asks, and the whole document,
@@ -282,8 +283,7 @@ fn a_flood_speaks_its_first_and_last_lines_and_counts_the_rest() {
             line(1, "2"),
             Speech::Skipped {
                 rows: vec![2, 3, 4],
-                count: 3,
-                more_than: false
+                count: Counted::Lines(3)
             },
             line(5, "6"),
             line(6, "7"),
@@ -308,10 +308,35 @@ fn a_flood_past_the_history_is_counted_as_more_than() {
             line(0, "4"),
             Speech::Skipped {
                 rows: vec![1, 2, 3, 4, 5],
-                count: 5,
-                more_than: true
+                count: Counted::MoreThan(5)
             },
             line(6, "10"),
+        ])
+    );
+}
+
+#[test]
+fn a_flood_past_the_history_with_every_line_spoken_is_counted_as_unknown() {
+    // Ten lines through a buffer of seven rows, which holds five of them,
+    // two wrapped: every line the history holds is spoken, so how many
+    // went by is not known, said after the last of those lines.
+    let mut term = Term::with(20, 3, 4, Settings::default());
+    term.write("a\r\nb\r\nc\r\nd", 100);
+    assert_eq!(
+        term.write(
+            "\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\nseven is a wrapped line\r\n8\r\nnine is a wrapped line\r\n10",
+            200
+        ),
+        says(vec![
+            line(0, "6"),
+            line(1, "seven is a wrapped line"),
+            line(3, "8"),
+            line(4, "nine is a wrapped line"),
+            line(6, "10"),
+            Speech::Skipped {
+                rows: vec![],
+                count: Counted::Unknown
+            },
         ])
     );
 }
@@ -339,8 +364,7 @@ fn a_whole_document_read_leaves_only_the_screen_and_the_block_held() {
             line(0, "8"),
             Speech::Skipped {
                 rows: (1..=11).collect(),
-                count: 11,
-                more_than: true
+                count: Counted::MoreThan(11)
             },
             line(12, "20"),
         ])
@@ -387,8 +411,7 @@ fn an_unfinished_word_pushed_out_of_a_full_history_is_spoken_before_the_count() 
             line(0, "4"),
             Speech::Skipped {
                 rows: vec![1, 2, 3, 4, 5],
-                count: 5,
-                more_than: true
+                count: Counted::MoreThan(5)
             },
             line(6, "10"),
         ])
@@ -420,8 +443,7 @@ fn a_volatile_row_pushed_out_of_a_full_history_is_spoken_before_the_count() {
             line(0, "4"),
             Speech::Skipped {
                 rows: vec![1, 2, 3, 4, 5],
-                count: 5,
-                more_than: true
+                count: Counted::MoreThan(5)
             },
             line(6, "10"),
         ])
@@ -773,21 +795,19 @@ fn other_rows_a_key_changed_are_spoken_once_the_keys_pause() {
 #[test]
 fn filtering_a_list_says_the_echo_then_the_current_entry_and_the_count_when_typing_pauses() {
     let mut term = Term::new(20, 6, 10);
-    // The entries that survive stay in place here: one moved up is
-    // measured as the history rotating (section 4.3, item 5).
+    // "e" keeps apple and cherry: cherry moves up into banana's row, a
+    // kept row that moved, silent (section 5.7), with no history above the
+    // screen to rotate.
     term.write("  apple\r\n> banana\r\n  cherry\r\n  3/3\r\n> ", 100);
-    term.typed("a", 1000);
+    term.typed("e", 1000);
     assert_eq!(
         term.write(
-            "\x1b[1;1H> apple\x1b[2;1H  banana\x1b[3;1H\x1b[K\x1b[4;1H  2/3\x1b[5;3Ha",
+            "\x1b[1;1H> apple\x1b[2;1H  cherry\x1b[K\x1b[3;1H\x1b[K\x1b[4;1H  2/3\x1b[5;3He",
             1050
         ),
         step(
-            vec![echo(4, "a"), answer(0, "> apple")],
-            vec![
-                withheld(1, Reason::LostText),
-                withheld(3, Reason::HeldForKeys)
-            ],
+            vec![echo(4, "e"), answer(0, "> apple")],
+            vec![withheld(3, Reason::HeldForKeys)],
             Some(2000)
         )
     );
@@ -1030,5 +1050,36 @@ fn several_progress_lines_are_each_heard_when_they_settle() {
     assert_eq!(
         term.reader.timer(3600),
         says(vec![changed(0, "30%"), changed(1, "30%")])
+    );
+}
+
+#[test]
+fn with_output_unreported_the_review_position_stays_on_a_kept_row_through_a_flood() {
+    // Section 4.3, item 5, and 5.6: a flood under a footer, with "report
+    // new output" off, takes the memory from the read; the review position
+    // on the footer, which the read still shows where it was, stays on it.
+    let settings = Settings {
+        report_new_output: false,
+        ..Settings::default()
+    };
+    let mut term = Term::with(10, 3, 6, settings);
+    term.write(
+        "\x1b[3;1Hfooter\x1b[1;2r\x1b[1;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh",
+        100,
+    );
+    let footer = term.reader.memory().rows().len() - 1;
+    term.reader.memory_mut().set_review(footer, 2);
+    term.write(
+        "\r\nn\r\no\r\np\r\nq\r\nr\r\ns\r\nt\r\nu\r\nv\r\nw\r\nx\r\ny",
+        200,
+    );
+    assert_eq!(footer, 8);
+    assert_eq!(
+        term.reader.memory().review(),
+        Some(Anchor {
+            row: 6,
+            column: 2,
+            line_hash: hash("footer")
+        })
     );
 }

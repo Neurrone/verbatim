@@ -61,8 +61,9 @@
 //!   text's line (a
 //!   line, a summary's count, growth that completes it, or a redrawn row's
 //!   speech covering its change from the text its place had before the
-//!   hold), or by the held text being replaced on the main screen, written
-//!   over, erased or deleted, or by the alternate screen coming up without
+//!   hold, or the held line spoken as last read covering that change after
+//!   it left the read), or by the held text being replaced on the main
+//!   screen, written over, erased or deleted, or by the alternate screen coming up without
 //!   it; the row leaving a full history as it rotates, or a report
 //!   merely naming the row, resolves nothing. Lines written and erased between two
 //!   reads, and lines that left a full history or a scroll region between
@@ -93,8 +94,10 @@
 //! - A reader with a review position keeps it on its text: when the text
 //!   of the row it was on at one read is on exactly one row of that read
 //!   and of the next, on the screen in both and with no switch between
-//!   them, it is on that row. No key is ever pressed and following is never
-//!   on in the oracle's streams.
+//!   them, it is on that row; and it is always on a row of the document:
+//!   of the read, or of the history above it down to the document's first
+//!   row. No key is ever pressed and following is never on in the oracle's
+//!   streams.
 //!
 //! What redrawn rows, keys, lists and colours say is decided speech, not a
 //! property of the stream, so it is tested by unit tests that state a
@@ -175,9 +178,9 @@ pub enum Spoken {
     /// A line held at an earlier read that left the read before it was
     /// spoken, as when a flood pushed it out of a full history, spoken as
     /// it was last read (`docs/design/terminal-model.md`, section 4.3, item
-    /// 5). It names no row; it resolves a hold still unresolved whose text
-    /// ends with what is spoken, and with none, it must be the end of a line
-    /// an earlier read showed.
+    /// 5). It names no row; it resolves a hold still unresolved whose
+    /// change from what its row had before the hold it covers, and with
+    /// none, it must be the end of a line an earlier read showed.
     Held {
         /// What is spoken.
         text: String,
@@ -254,9 +257,10 @@ pub struct Heard {
     /// those rows, the row of this read it became, or `None` for a row it
     /// thinks gone. `None` when the reader tracks no movement.
     pub moved: Option<Vec<Option<usize>>>,
-    /// The row of this read its review position is on after the read;
-    /// `None` when it has none.
-    pub review: Option<usize>,
+    /// The row of this read its review position is on after the read,
+    /// counted from the read's first row, negative above it in the
+    /// history; `None` when it has none.
+    pub review: Option<isize>,
 }
 
 /// A reader's answer to a read.
@@ -494,23 +498,24 @@ pub enum Violation {
         /// The row with the review position's text.
         went: usize,
         /// Where the reader said its review position is.
-        said: Option<usize>,
+        said: Option<isize>,
     },
-    /// A held line was spoken as last read, but no hold still unresolved,
-    /// and no line an earlier read showed, has text ending with what was
-    /// said.
+    /// A held line was spoken as last read, but what was said covers the
+    /// change of no hold still unresolved, and ends no line an earlier read
+    /// showed.
     Unheld {
         /// The read.
         read: usize,
         /// What it said.
         said: String,
     },
-    /// The review position is on no row of the read.
+    /// The review position is on no row of the document: below the read's
+    /// last row, or above the document's first.
     ReviewOutside {
         /// The read.
         read: usize,
-        /// The row the reader named.
-        row: usize,
+        /// The row the reader named, counted from the read's first row.
+        row: isize,
     },
 }
 
@@ -1197,10 +1202,12 @@ fn check_spoken(check: &mut Check, index: usize, spoken: &Spoken, state: &mut Re
     let rows = &check.reads[index].rows;
     let (row, text) = match spoken {
         Spoken::Held { text } => {
-            let held = check
-                .holds
-                .iter()
-                .position(|hold| !text.is_empty() && hold.text.ends_with(text.as_str()));
+            // The held line itself is reported: what is said covers its
+            // change from what its row had before the hold.
+            let held = check.holds.iter().position(|hold| {
+                !text.is_empty()
+                    && covers_change(hold.before.as_deref().unwrap_or_default(), &hold.text, text)
+            });
             match held {
                 Some(at) => {
                     check.holds.remove(at);
@@ -1649,8 +1656,11 @@ fn check_review(
     read: &Observation,
 ) {
     let said = read.heard.review;
+    // Rows above the read are in the history, down to the document's
+    // first row; none is below the read's last.
     if let Some(row) = said
-        && row >= read.rows.len()
+        && (usize::try_from(row).is_ok_and(|row| row >= read.rows.len())
+            || row.unsigned_abs() > read.start && row < 0)
     {
         violations.push(Violation::ReviewOutside { read: index, row });
         return;
@@ -1661,6 +1671,7 @@ fn check_review(
     let Some(row) = previous
         .heard
         .review
+        .and_then(|row| usize::try_from(row).ok())
         .filter(|&row| row < previous.rows.len())
     else {
         return;
@@ -1671,7 +1682,7 @@ fn check_review(
         && on_screen(previous, row)
         && let Some(&went) = now.get(text)
         && on_screen(read, went)
-        && said != Some(went)
+        && said != Some(isize::try_from(went).unwrap_or(isize::MAX))
     {
         violations.push(Violation::ReviewMoved {
             read: index,
