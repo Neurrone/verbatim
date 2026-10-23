@@ -11,7 +11,6 @@ pub mod conformance;
 mod grid;
 pub mod oracle;
 mod provider;
-mod truth;
 mod vt;
 
 pub use grid::{
@@ -19,7 +18,6 @@ pub use grid::{
     RowId, Style,
 };
 pub use provider::{Flavor, Position, Query, Range, Refused};
-pub use truth::PrintedLine;
 
 use provider::Provider;
 
@@ -74,6 +72,7 @@ pub struct Terminal {
     grid: Grid,
     parser: vte::Parser,
     flavor: Flavor,
+    writes: u64,
 }
 
 impl Terminal {
@@ -85,12 +84,13 @@ impl Terminal {
             grid: Grid::new(width, height, history, flavor == Flavor::ConsoleHost),
             parser: vte::Parser::new(),
             flavor,
+            writes: 0,
         }
     }
 
     /// Writes `bytes` to the terminal, as a program writes to its output.
     pub fn write(&mut self, bytes: &[u8]) {
-        self.grid.record.writes += 1;
+        self.writes += 1;
         let mut performer = vt::Performer {
             grid: &mut self.grid,
         };
@@ -100,16 +100,7 @@ impl Terminal {
     /// How many times [`Terminal::write`] has been called.
     #[must_use]
     pub fn writes(&self) -> u64 {
-        self.grid.record.writes
-    }
-
-    /// Every line printed and ended with a line feed so far, in the order
-    /// they were finished, with when each changed and left (see
-    /// [`PrintedLine`]): the oracle's ground truth, from which it decides
-    /// which lines were new output.
-    #[must_use]
-    pub fn printed(&self) -> &[PrintedLine] {
-        self.grid.record.printed()
+        self.writes
     }
 
     /// The terminal's state, row identities included.
@@ -143,6 +134,17 @@ impl Terminal {
         let provider = self.provider();
         let (snapshot, start) = provider.snapshot(query)?;
         Ok((snapshot, provider.seen(start)))
+    }
+
+    /// The main buffer's rows from its first to the document's end, as
+    /// they truly are, their text as a read gives it; empty while the
+    /// alternate screen is up.
+    pub(crate) fn document(&self) -> Vec<oracle::Seen> {
+        if self.grid.alternate.is_some() {
+            Vec::new()
+        } else {
+            self.provider().seen(0)
+        }
     }
 
     /// The colours of the screen's rows, each row's stretches of one

@@ -1,6 +1,7 @@
 //! The oracle checked against readers whose faults are known
-//! (`docs/design/terminal-model.md`, section 9): two deliberately simple
-//! readers, a silent one and one that miscounts, are caught on fixed
+//! (`docs/design/terminal-model.md`, section 9): deliberately flawed
+//! readers, a silent one, ones that miscount or misplace, and ones that
+//! withhold lines for reasons whose premise is false, are caught on fixed
 //! streams, with exactly the violations their faults cause, and a reader
 //! that reads the ground truth passes those streams, random streams, every
 //! short stream of the tiny alphabet and the conformance corpus.
@@ -11,10 +12,10 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
 use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::oracle::{
-    Heard, Observation, Op, Reader, Reply, Size, Spoken, TINY_ALPHABET, Violation, WORDS,
-    every_stream, observe, stream,
+    Heard, Observation, Op, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation, WORDS,
+    Withheld, every_stream, observe, stream,
 };
-use verbatim_term_sim::{Flavor, PrintedLine, Query, Refused, RowId, Snapshot, screen_rows};
+use verbatim_term_sim::{Flavor, Query, Refused, RowId, Snapshot, screen_rows};
 
 /// A read's text as rows of `width`, padding left out.
 fn rows(snapshot: &Result<Snapshot, Refused>, width: usize) -> Vec<String> {
@@ -61,6 +62,7 @@ impl Reader for SameCoordinate {
             spoken,
             moved,
             review,
+            ..Heard::default()
         })
     }
 }
@@ -129,7 +131,7 @@ impl Reader for TextDiff {
         Reply::Heard(Heard {
             spoken,
             moved: Some(moved),
-            review: None,
+            ..Heard::default()
         })
     }
 }
@@ -165,6 +167,53 @@ impl Reader for CountsEveryRow {
     }
 }
 
+/// Reads the screen, speaks a line on a row that was blank at the same
+/// place in the previous read, and withholds for `reason` every line whose
+/// text differs from the other text the row at the same place had.
+struct ClaimsEveryChange {
+    reason: Reason,
+    previous: Vec<String>,
+}
+
+impl ClaimsEveryChange {
+    fn new(reason: Reason) -> Self {
+        Self {
+            reason,
+            previous: Vec::new(),
+        }
+    }
+}
+
+impl Reader for ClaimsEveryChange {
+    fn query(&self) -> Query {
+        Query::default()
+    }
+
+    fn read(&mut self, read: &Result<Snapshot, Refused>) -> Reply {
+        let rows = rows(read, Size::SMALL.width);
+        let mut heard = Heard::default();
+        for (row, text) in rows.iter().enumerate() {
+            let before = self.previous.get(row).map_or("", String::as_str);
+            if text.is_empty() || text == before {
+                continue;
+            }
+            if before.is_empty() {
+                heard.spoken.push(Spoken::Line {
+                    row,
+                    text: text.clone(),
+                });
+            } else {
+                heard.withheld.push(Withheld {
+                    row,
+                    reason: self.reason,
+                });
+            }
+        }
+        self.previous = rows;
+        Reply::Heard(heard)
+    }
+}
+
 /// Reads the whole text and hears nothing, to learn which rows each read
 /// covers.
 struct Whole;
@@ -182,18 +231,17 @@ impl Reader for Whole {
     }
 }
 
-/// Reads the whole text and reports from the ground truth: each printed
-/// line when a read first shows it as it was finished, every row where it
-/// really went, and a review position that stays on its row while the row
-/// is in the read and otherwise goes to the read's first row. It is given
-/// the rows of the same reads taken by [`Whole`].
+/// Reads the whole text and reports from the ground truth: on the main
+/// screen, every line of the main buffer one of whose rows has a text the
+/// reader has not reported on that row, as the read shows it; every row
+/// where it really went; and a review position that stays on its row while
+/// the row is in the read and otherwise goes to the read's first row. It is
+/// given the rows of the same reads taken by [`Whole`].
 struct Truth {
-    printed: Vec<PrintedLine>,
-    /// The printed lines by their first row.
-    by_first: HashMap<RowId, Vec<usize>>,
     reads: Vec<Observation>,
     at: usize,
-    reported: HashSet<usize>,
+    /// The texts reported on each row.
+    reported: HashMap<RowId, HashSet<String>>,
     review: Option<RowId>,
 }
 
@@ -204,37 +252,46 @@ impl Reader for Truth {
 
     fn read(&mut self, _read: &Result<Snapshot, Refused>) -> Reply {
         let read = &self.reads[self.at];
-        let mut spoken = Vec::new();
-        for (row, seen) in read.rows.iter().enumerate() {
-            let shown = self.by_first.get(&seen.id).and_then(|lines| {
-                lines.iter().copied().find(|&line| {
-                    let line = &self.printed[line];
-                    !read.alternate
-                        && line.finished <= read.writes
-                        && line.changed.is_none_or(|changed| changed > read.writes)
-                        && line.left.is_none_or(|left| left > read.writes)
-                })
-            });
-            if let Some(line) = shown
-                && self.reported.insert(line)
-            {
-                // A line's last rows can lie past the document's end, when
-                // they are blank and below the cursor.
-                let mut text: String = read.rows[row..]
-                    .iter()
-                    .take(self.printed[line].rows.len())
-                    .map(|seen| seen.text.as_str())
-                    .collect();
-                text.truncate(text.trim_end().len());
-                spoken.push(Spoken::Line { row, text });
-            }
-        }
         let now: HashMap<RowId, usize> = read
             .rows
             .iter()
             .enumerate()
             .map(|(row, seen)| (seen.id, row))
             .collect();
+        let mut spoken = Vec::new();
+        let mut first = 0;
+        for (at, seen) in read.main.iter().enumerate() {
+            if seen.wraps && at + 1 < read.main.len() {
+                continue;
+            }
+            let line = &read.main[first..=at];
+            first = at + 1;
+            let texts: Vec<(RowId, &str)> = line
+                .iter()
+                .map(|seen| (seen.id, seen.text.trim_end()))
+                .filter(|(_, text)| !text.is_empty())
+                .collect();
+            let new = texts.iter().any(|(id, text)| {
+                !self
+                    .reported
+                    .get(id)
+                    .is_some_and(|reported| reported.contains(*text))
+            });
+            if !new {
+                continue;
+            }
+            for (id, text) in texts {
+                self.reported.entry(id).or_default().insert(text.to_owned());
+            }
+            let row = now[&line[0].id];
+            let mut text: String = read.rows[row..]
+                .iter()
+                .take(line.len())
+                .map(|seen| seen.text.as_str())
+                .collect();
+            text.truncate(text.trim_end().len());
+            spoken.push(Spoken::Line { row, text });
+        }
         let moved = self.at.checked_sub(1).map(|previous| {
             self.reads[previous]
                 .rows
@@ -251,6 +308,7 @@ impl Reader for Truth {
             spoken,
             moved,
             review,
+            ..Heard::default()
         })
     }
 }
@@ -269,16 +327,10 @@ fn violations(stream: &Stream, reader: &mut dyn Reader) -> Vec<Violation> {
 /// The violations of the ground-truth reader over `stream`.
 fn truth_violations(stream: &Stream, flavor: Flavor, size: Size) -> Vec<Violation> {
     let learned = observe(&mut size.terminal(flavor), stream, &mut Whole);
-    let mut by_first: HashMap<RowId, Vec<usize>> = HashMap::new();
-    for (index, line) in learned.printed.iter().enumerate() {
-        by_first.entry(line.rows[0]).or_default().push(index);
-    }
     let mut truth = Truth {
-        printed: learned.printed,
-        by_first,
         reads: learned.reads,
         at: 0,
-        reported: HashSet::new(),
+        reported: HashMap::new(),
         review: None,
     };
     observe(&mut size.terminal(flavor), stream, &mut truth).violations()
@@ -352,19 +404,43 @@ fn reprint() -> Stream {
     ])
 }
 
-fn missed(line: usize, text: &str) -> Violation {
+/// A row written and then rewritten after a carriage return, read after
+/// each write.
+fn rewritten(texts: &[&'static str]) -> Stream {
+    let steps: Vec<(Op, bool)> = texts
+        .iter()
+        .enumerate()
+        .flat_map(|(index, &text)| {
+            let rewrite = (index > 0).then_some((Op::CarriageReturn, false));
+            rewrite.into_iter().chain([(Op::Write(text), true)])
+        })
+        .collect();
+    stream(&steps)
+}
+
+fn missed(read: usize, coordinate: usize, text: &str) -> Violation {
     Violation::Missed {
-        line,
+        read,
+        coordinate,
         text: text.to_owned(),
+    }
+}
+
+fn false_reason(read: usize, row: usize, text: &str, reason: Reason) -> Violation {
+    Violation::FalseReason {
+        read,
+        row,
+        text: text.to_owned(),
+        reason,
     }
 }
 
 #[test]
 fn the_same_coordinate_reader_repeats_mismaps_and_moves_its_review_with_a_scroll() {
-    let repeated = |line: usize, text: &str| Violation::Repeated {
-        line,
-        text: text.to_owned(),
+    let repeated = |row: usize, text: &str| Violation::Repeated {
         read: 2,
+        row,
+        text: text.to_owned(),
     };
     let mismapped = |row: usize, went: usize| Violation::Mismapped {
         read: 2,
@@ -385,8 +461,9 @@ fn the_same_coordinate_reader_repeats_mismaps_and_moves_its_review_with_a_scroll
                 went: 0,
                 said: Some(4)
             },
-            repeated(2, "c"),
-            repeated(3, "d"),
+            repeated(0, "c"),
+            repeated(1, "d"),
+            repeated(2, "e"),
             mismapped(2, 0),
             mismapped(3, 1),
             mismapped(4, 2),
@@ -409,16 +486,16 @@ fn the_same_coordinate_reader_misses_the_lines_a_flood_pushed_into_the_history()
             }
         ),
         [
-            missed(0, "a1"),
-            missed(1, "a2"),
-            missed(2, "a3"),
-            missed(3, "a4"),
-            missed(4, "a5"),
-            missed(5, "a6"),
-            missed(10, "b1"),
-            missed(11, "b2"),
-            missed(12, "b3"),
-            missed(13, "b4"),
+            missed(1, 0, "a1"),
+            missed(1, 1, "a2"),
+            missed(1, 2, "a3"),
+            missed(1, 3, "a4"),
+            missed(1, 4, "a5"),
+            missed(1, 5, "a6"),
+            missed(2, 2, "b1"),
+            missed(2, 3, "b2"),
+            missed(2, 4, "b3"),
+            missed(2, 5, "b4"),
         ]
     );
 }
@@ -434,52 +511,103 @@ fn the_text_diff_reader_misses_the_lines_a_flood_rotated_above_its_kept_start() 
             }
         ),
         [
-            missed(10, "b1"),
-            missed(11, "b2"),
-            missed(12, "b3"),
-            missed(13, "b4"),
+            missed(2, 2, "b1"),
+            missed(2, 3, "b2"),
+            missed(2, 4, "b3"),
+            missed(2, 5, "b4"),
         ]
     );
 }
 
 #[test]
-fn a_silent_reader_misses_new_output_but_not_a_line_the_footer_showed_before() {
-    assert_eq!(violations(&footer(), &mut Silent), [missed(0, "cat")]);
+fn a_silent_reader_misses_plain_output() {
+    assert_eq!(
+        violations(&scroll(), &mut Silent),
+        [
+            missed(1, 0, "a"),
+            missed(1, 1, "b"),
+            missed(1, 2, "c"),
+            missed(1, 3, "d"),
+            missed(1, 4, "e"),
+            missed(2, 5, "f"),
+        ]
+    );
 }
 
 #[test]
 fn a_silent_reader_misses_inks_frames_and_the_line_streamed_over_them() {
-    // The first frame is new, and stays required although the next frame
-    // erases and redraws it; the frames redrawn with text the screen
-    // showed are not; the streamed line written over the frame's first
-    // row is; and the frame drawn after a read found it erased is new
-    // again.
+    // The first frame is new; the frame redrawn on the same rows is not;
+    // the streamed line written over the frame's first row is, and so is
+    // the frame drawn a row lower, each row's text new to its row; the
+    // frame drawn again after a read found it erased is new only where its
+    // cost changed.
     assert_eq!(
         violations_in(&corpus_stream("ink"), corpus_size(), &mut Silent),
         [
-            missed(0, "------"),
-            missed(1, "> input"),
-            missed(2, "cost $1"),
-            missed(6, "streamed line"),
-            missed(10, "------"),
-            missed(11, "> input"),
-            missed(12, "cost $2"),
+            missed(1, 0, "------"),
+            missed(1, 1, "> input"),
+            missed(1, 2, "cost $1"),
+            missed(3, 0, "streamed line"),
+            missed(3, 1, "------"),
+            missed(3, 2, "> input"),
+            missed(3, 3, "cost $1"),
+            missed(5, 3, "cost $2"),
         ]
     );
-}
-
-#[test]
-fn a_silent_reader_need_not_speak_a_reprint_after_a_read_found_the_screen_cleared() {
-    assert_eq!(violations(&reprint(), &mut Silent), [missed(0, "ok")]);
 }
 
 #[test]
 fn a_summary_naming_a_wrapped_lines_second_row_or_a_row_past_the_read_is_caught() {
     let stream = stream(&[(Op::Write("wrapping-word"), false), (Op::Newline, true)]);
     let not_a_line = |read: usize, row: usize| Violation::NotALine { read, row };
+    // The last read, after the quiet period, counts the line again.
     assert_eq!(
         violations(&stream, &mut CountsEveryRow),
-        [not_a_line(0, 1), not_a_line(1, 1), not_a_line(1, 3)]
+        [
+            not_a_line(0, 1),
+            not_a_line(1, 1),
+            not_a_line(1, 3),
+            Violation::Repeated {
+                read: 2,
+                row: 0,
+                text: "wrapping-word".to_owned()
+            },
+            not_a_line(2, 1),
+            not_a_line(2, 3),
+        ]
+    );
+}
+
+#[test]
+fn a_spinner_claimed_for_a_changed_word_is_caught_and_one_for_a_symbol_is_not() {
+    assert_eq!(
+        violations(
+            &rewritten(&["- cat", "| cat", "| dog"]),
+            &mut ClaimsEveryChange::new(Reason::Spinner)
+        ),
+        [false_reason(3, 0, "| dog", Reason::Spinner)]
+    );
+}
+
+#[test]
+fn a_reprint_claimed_for_new_text_is_caught_and_one_for_text_shown_before_is_not() {
+    assert_eq!(
+        violations(
+            &rewritten(&["ok", "no", "ok"]),
+            &mut ClaimsEveryChange::new(Reason::Reprint)
+        ),
+        [false_reason(2, 0, "no", Reason::Reprint)]
+    );
+}
+
+#[test]
+fn a_volatile_hold_never_reported_nor_replaced_is_caught_and_one_replaced_is_not() {
+    assert_eq!(
+        violations(
+            &rewritten(&["50%", "60%", "70%"]),
+            &mut ClaimsEveryChange::new(Reason::Volatile)
+        ),
+        [false_reason(3, 0, "70%", Reason::Volatile)]
     );
 }
 
@@ -490,6 +618,7 @@ fn the_ground_truth_reader_passes_the_fixed_streams() {
         ("footer", footer()),
         ("flood", flood()),
         ("reprint", reprint()),
+        ("rewritten", rewritten(&["- cat", "| cat", "| dog"])),
     ];
     let failures: Vec<(&str, Vec<Violation>)> = fixed
         .iter()

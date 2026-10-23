@@ -6,8 +6,6 @@
 
 use std::collections::VecDeque;
 
-use crate::truth::Record;
-
 /// A colour as UI Automation reports it: `0x00BBGGRR`.
 pub type Colour = u32;
 
@@ -233,8 +231,6 @@ pub struct Grid {
     /// 2026-10-23).
     pub marks_wrap_when_full: bool,
     next_id: RowId,
-    /// The oracle's ground truth, recorded as the stream is written.
-    pub(crate) record: Record,
 }
 
 impl Grid {
@@ -263,7 +259,6 @@ impl Grid {
             screen_reversed: false,
             marks_wrap_when_full,
             next_id: 0,
-            record: Record::default(),
         };
         for _ in 0..height {
             let row = grid.new_row();
@@ -326,14 +321,9 @@ impl Grid {
         let (row, column, style) = (self.cursor.row, self.cursor.column, self.style);
         let cell = Cell { character, style };
         let target = self.row_mut(row);
-        let old = target.cells[column].character;
         if target.cells[column] != cell {
             target.cells[column] = cell;
             target.writes += 1;
-        }
-        let id = target.id;
-        if old != character {
-            self.record.changed(id);
         }
         if column + 1 == self.width {
             self.cursor.pending_wrap = true;
@@ -353,64 +343,16 @@ impl Grid {
 
     /// A line feed written by the program, as opposed to one a wrap makes:
     /// it ends the row's line where the console host marked it as wrapping.
-    /// On the main screen, a line feed that moves the cursor off its row
-    /// finishes the row's line for the oracle's ground truth.
     pub fn explicit_line_feed(&mut self) {
         if self.marks_wrap_when_full {
             self.set_wraps(self.cursor.row, false);
         }
-        let line = if self.alternate.is_none() {
-            self.line_at_cursor()
-        } else {
-            None
-        };
         self.line_feed();
-        // A line feed that moved the cursor off the line leaves the line
-        // just above the cursor, whether the cursor moved down or the rows
-        // scrolled up; the line must still be whole there, and not joined
-        // to a row above it that wraps.
-        if let Some((rows, text)) = line
-            && let Some(start) = self.cursor_coordinate().checked_sub(rows.len())
-            && rows
-                .iter()
-                .enumerate()
-                .all(|(offset, &id)| self.main.rows[start + offset].id == id)
-            && (start == 0 || !self.main.rows[start - 1].wraps)
-        {
-            self.record.finish(rows, text);
-        }
     }
 
-    /// The main screen's line ending on the cursor's row: its rows'
-    /// identities and its text without padding; `None` when the cursor's
-    /// row wraps onto the next, so the line does not end there.
-    fn line_at_cursor(&self) -> Option<(Vec<RowId>, String)> {
-        let rows = &self.main.rows;
-        let last = self.cursor_coordinate();
-        if rows[last].wraps {
-            return None;
-        }
-        let mut first = last;
-        while first > 0 && rows[first - 1].wraps {
-            first -= 1;
-        }
-        let text: String = (first..=last).map(|at| rows[at].text()).collect();
-        Some((
-            (first..=last).map(|at| rows[at].id).collect(),
-            text.trim_end().to_owned(),
-        ))
-    }
-
-    /// Sets whether screen row `row` wraps onto the next, telling the
-    /// record when that changes.
+    /// Sets whether screen row `row` wraps onto the next.
     fn set_wraps(&mut self, row: usize, wraps: bool) {
-        let at = self.coordinate(row);
-        let buffer = self.alternate.as_mut().unwrap_or(&mut self.main);
-        if buffer.rows[at].wraps != wraps {
-            buffer.rows[at].wraps = wraps;
-            let next = buffer.rows.get(at + 1).map(|row| row.id);
-            self.record.wraps_changed(buffer.rows[at].id, next);
-        }
+        self.row_mut(row).wraps = wraps;
     }
 
     /// Moves the cursor up or down `delta` rows. Moving up from at or below
@@ -458,8 +400,6 @@ impl Grid {
                     if let Some(blank) = buffer.rows.remove(last) {
                         buffer.rows.insert(into, blank);
                     }
-                    self.seam(into);
-                    self.seam(into + 1);
                 }
             } else {
                 self.scroll_region_up(1);
@@ -481,12 +421,8 @@ impl Grid {
             buffer.top += 1;
             return;
         }
-        let gone = buffer.rows.pop_front();
+        buffer.rows.pop_front();
         buffer.rows.push_back(row);
-        let next = buffer.rows.front().map(|row| row.id);
-        if let Some(gone) = gone {
-            self.record.left(&gone, next);
-        }
     }
 
     /// The scroll region's rows move up `count`, its top rows going, blank
@@ -498,15 +434,9 @@ impl Grid {
             let first = self.coordinate(top);
             let last = self.coordinate(bottom);
             let buffer = self.buffer_mut();
-            let gone = buffer.rows.remove(first);
-            let next = buffer.rows.get(first).map(|row| row.id);
+            buffer.rows.remove(first);
             buffer.rows.insert(last, row);
-            if let Some(gone) = gone {
-                self.record.left(&gone, next);
-            }
         }
-        self.seam(self.coordinate(top));
-        self.seam(self.coordinate(bottom) + 1);
     }
 
     /// The scroll region's rows move down `count`, its bottom rows going.
@@ -517,28 +447,8 @@ impl Grid {
             let first = self.coordinate(top);
             let last = self.coordinate(bottom);
             let buffer = self.buffer_mut();
-            let gone = buffer.rows.remove(last);
-            let next = buffer.rows.get(last).map(|row| row.id);
+            buffer.rows.remove(last);
             buffer.rows.insert(first, row);
-            if let Some(gone) = gone {
-                self.record.left(&gone, next);
-            }
-        }
-        self.seam(self.coordinate(top));
-        self.seam(self.coordinate(bottom) + 1);
-    }
-
-    /// The row at coordinate `at` has a new row above it, or that row a new
-    /// row below it: when the row above wraps, it now joins the two rows'
-    /// lines, which changes both.
-    fn seam(&mut self, at: usize) {
-        let buffer = self.alternate.as_ref().unwrap_or(&self.main);
-        if at > 0
-            && let (Some(above), Some(row)) = (buffer.rows.get(at - 1), buffer.rows.get(at))
-            && above.wraps
-        {
-            let (above, row) = (above.id, row.id);
-            self.record.wraps_changed(above, Some(row));
         }
     }
 
@@ -579,7 +489,6 @@ impl Grid {
         let width = self.width;
         let target = self.row_mut(row);
         let cells = &mut target.cells[from.min(width)..to.min(width)];
-        let had_text = cells.iter().any(|cell| cell.character != ' ');
         let mut changed = false;
         for cell in cells {
             if *cell != blank {
@@ -589,10 +498,6 @@ impl Grid {
         }
         if changed {
             target.writes += 1;
-        }
-        let id = target.id;
-        if had_text {
-            self.record.changed(id);
         }
     }
 
@@ -634,8 +539,6 @@ impl Grid {
     /// the history as a screenful of blank rows follows them.
     fn clear_screen(&mut self) {
         if self.alternate.is_none() {
-            let shown = self.screen_lines();
-            self.record.cleared(shown);
             let last = (0..self.height)
                 .rev()
                 .find(|&row| self.main.rows[self.coordinate(row)].has_text());
@@ -682,13 +585,8 @@ impl Grid {
             return;
         }
         let top = self.main.top;
-        let gone: Vec<Row> = self.main.rows.drain(..top).collect();
+        self.main.rows.drain(..top);
         self.main.top = 0;
-        let first = self.main.rows.front().map(|row| row.id);
-        for (index, row) in gone.iter().enumerate() {
-            let next = gone.get(index + 1).map(|next| next.id).or(first);
-            self.record.left(row, next);
-        }
     }
 
     /// Inserts `count` blank rows at the cursor's row, within the region.
@@ -728,16 +626,11 @@ impl Grid {
         let (row, column, width) = (self.cursor.row, self.cursor.column, self.width);
         let blank = self.erased();
         let target = self.row_mut(row);
-        let before = target.text();
         for _ in 0..count.min(width - column) {
             target.cells.pop();
             target.cells.insert(column, blank);
         }
         target.writes += 1;
-        let (id, changed) = (target.id, target.text() != before);
-        if changed {
-            self.record.changed(id);
-        }
     }
 
     /// Deletes `count` cells at the cursor, shifting the rest left; the
@@ -747,16 +640,11 @@ impl Grid {
         let (row, column, width) = (self.cursor.row, self.cursor.column, self.width);
         let blank = self.erased();
         let target = self.row_mut(row);
-        let before = target.text();
         for _ in 0..count.min(width - column) {
             target.cells.remove(column);
             target.cells.push(blank);
         }
         target.writes += 1;
-        let (id, changed) = (target.id, target.text() != before);
-        if changed {
-            self.record.changed(id);
-        }
     }
 
     /// Switches to the alternate screen, a blank one erased in the current
