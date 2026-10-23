@@ -34,7 +34,11 @@
 //! A line's place is its first row's row on the screen, counted from the
 //! screen's top (negative in the history), so it stays as the history
 //! grows or rotates. The premises that speak of "the row" compare the
-//! lines starting at, or covering, the same place. A row's text is its
+//! lines starting at, or covering, the same place, but for a volatile row:
+//! a row the buffer held at the last read on the main screen is followed
+//! up by the rows its full history rotated out since, as a reader follows
+//! it by the rotation it measures (section 4.3), and a row written since is
+//! compared with the line at its place. A row's text is its
 //! text with the padding after a line's end left out, so a row that wraps
 //! onto the next keeps the spaces at its end (section 5.12).
 //!
@@ -49,7 +53,8 @@
 //!   reported with its new text (see [`Spoken`] for what each report must
 //!   say) or withheld with a [`Reason`] whose premise is true (see
 //!   [`Reason`] for each). A hold is then resolved, before the last read is
-//!   checked, by a report at a later read that says the held text's line (a
+//!   checked, by a report at the same or a later read that says the held
+//!   text's line (a
 //!   line, a summary's count, growth that completes it, or a redrawn row's
 //!   speech covering its change from the text its place had before the
 //!   hold), or by the held text being replaced on the main screen, written
@@ -177,8 +182,8 @@ pub enum Spoken {
 
 /// Why a reader withholds a new line, each the silence of a rule of
 /// `docs/design/terminal-model.md`, sections 4 and 5, with the premise the
-/// oracle checks against the ground truth. Two are holds, which a later
-/// read must resolve (see the module's documentation), the last read,
+/// oracle checks against the ground truth. Two are holds, which the same or
+/// a later read must resolve (see the module's documentation), the last read,
 /// taken after the quiet period, included.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
@@ -186,7 +191,9 @@ pub enum Reason {
     /// spoken once it settles (section 5.4). Premise: the line starting at
     /// the same place at the last read on the main screen had other text,
     /// and at an earlier read the line there had changed from one text to
-    /// another too.
+    /// another too; the place follows the row up by the rows the full
+    /// history rotated out since, when the buffer held the row then (see
+    /// the module's documentation).
     Volatile,
     /// A hold: a growing line's unfinished last word waits for the line to
     /// grow past it, the cursor to leave, or the quiet period (section
@@ -678,11 +685,16 @@ struct Check<'a> {
     /// For each text, how many lines with it were reported while it stayed
     /// on the main screen.
     covered: HashMap<String, usize>,
-    /// The places where the line changed from one text to another at a
-    /// read checked so far.
+    /// Where the line changed from one text to another at a read checked
+    /// so far: its place plus the rows the full history had rotated out
+    /// by that read, which stays as a row moves up with the rotation.
     changed: HashSet<isize>,
     /// The rows the main buffer rotated out up to the read checked.
     rotated: HashSet<RowId>,
+    /// How many rows the main buffer rotated out up to the read checked.
+    rotations: usize,
+    /// How many it had rotated out up to the last read on the main screen.
+    rotations_at_last: usize,
     holds: Vec<Hold>,
     violations: Vec<Violation>,
 }
@@ -780,6 +792,35 @@ impl Check<'_> {
             .map_or_else(|| line.text.clone(), |&number| self.heard[number].clone())
     }
 
+    /// The place at the last read on the main screen of `line`, a line of
+    /// the read checked: its place moved down by the rows the full history
+    /// rotated out since, when the buffer held its first row then, and
+    /// otherwise its place, as for a row written since; its place when
+    /// the last read is the alternate screen's.
+    fn followed(&self, line: &Line) -> isize {
+        let Some(last) = self.last.filter(|_| self.alternate.is_none()) else {
+            return line.place;
+        };
+        let moved = self.rotations - self.rotations_at_last;
+        if line.rows.start + moved < self.reads[last].main.len() {
+            line.place + isize::try_from(moved).unwrap_or(isize::MAX)
+        } else {
+            line.place
+        }
+    }
+
+    /// The key in `changed` of the place `place` at the last read on the
+    /// main screen, or at the read checked when the last read is the
+    /// alternate screen's.
+    fn changed_key(&self, place: isize) -> isize {
+        let rotations = if self.alternate.is_some() {
+            self.rotations
+        } else {
+            self.rotations_at_last
+        };
+        place + isize::try_from(rotations).unwrap_or(isize::MAX)
+    }
+
     /// `number`, a line of read `index`, reported with its new text, as a
     /// line or in a summary when `counted`, naming row `row`.
     fn say(
@@ -841,6 +882,8 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
         covered: HashMap::new(),
         changed: HashSet::new(),
         rotated: HashSet::new(),
+        rotations: 0,
+        rotations_at_last: 0,
         aside: false,
         alternate: None,
         holds: Vec::new(),
@@ -870,6 +913,7 @@ fn check_read(check: &mut Check, index: usize) {
     let reads = check.reads;
     let read = &reads[index];
     check.rotated.extend(read.rotated.iter().copied());
+    check.rotations += read.rotated.len();
     let main = check.lines[index].is_some();
     let mut state = ReadState {
         new: Vec::new(),
@@ -1084,19 +1128,21 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
             });
         }
     }
+    let rotations = isize::try_from(check.rotations).unwrap_or(isize::MAX);
     let changes: Vec<isize> = match check.last_lines() {
         Some(last) => lines
             .list
             .iter()
             .filter(|line| {
-                last.text_at(line.place)
+                last.text_at(check.followed(line))
                     .is_some_and(|before| before != line.text)
             })
-            .map(|line| line.place)
+            .map(|line| line.place + rotations)
             .collect(),
         None => Vec::new(),
     };
     check.changed.extend(changes);
+    check.rotations_at_last = check.rotations;
     check
         .shown
         .extend(lines.list.iter().map(|line| line.key.clone()));
@@ -1378,7 +1424,14 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
         if premise && matches!(withheld.reason, Reason::Spinner | Reason::LostText) {
             state.heard[number].clone_from(&lines.list[number].text);
         }
-        settle(check, index, withheld, &lines.list[number], premise);
+        settle(
+            check,
+            index,
+            withheld,
+            &lines.list[number],
+            premise,
+            state.said[number],
+        );
     }
 }
 
@@ -1389,9 +1442,11 @@ fn premise(check: &Check, lines: &Lines, line: &Line, reason: Reason) -> bool {
         return false;
     };
     match reason {
-        // A new line's text differs from what its place had.
+        // A new line's text differs from what its place had, its row
+        // followed through the rotation.
         Reason::Volatile => {
-            last.text_at(line.place).is_some() && check.changed.contains(&line.place)
+            let place = check.followed(line);
+            last.text_at(place).is_some() && check.changed.contains(&check.changed_key(place))
         }
         Reason::LostText => {
             let now = without_spaces(&line.text);
@@ -1416,8 +1471,17 @@ fn premise(check: &Check, lines: &Lines, line: &Line, reason: Reason) -> bool {
 }
 
 /// A withholding at read `index` of `line` whose premise is `premise`: a
-/// violation when false, and a hold to resolve when true and a hold.
-fn settle(check: &mut Check, index: usize, withheld: Withheld, line: &Line, premise: bool) {
+/// violation when false, and a hold to resolve when true, a hold, and the
+/// line not `said` with its new text at the same read, as a reader says a
+/// held row at once when it has scrolled above the screen.
+fn settle(
+    check: &mut Check,
+    index: usize,
+    withheld: Withheld,
+    line: &Line,
+    premise: bool,
+    said: bool,
+) {
     if !premise {
         check.violations.push(Violation::FalseReason {
             read: index,
@@ -1425,10 +1489,10 @@ fn settle(check: &mut Check, index: usize, withheld: Withheld, line: &Line, prem
             text: line.text.clone(),
             reason: withheld.reason,
         });
-    } else if matches!(withheld.reason, Reason::Volatile | Reason::UnfinishedWord) {
+    } else if !said && matches!(withheld.reason, Reason::Volatile | Reason::UnfinishedWord) {
         let before = check
             .last_lines()
-            .and_then(|last| last.text_at(line.place))
+            .and_then(|last| last.text_at(check.followed(line)))
             .map(str::to_owned);
         check.holds.push(Hold {
             read: index,

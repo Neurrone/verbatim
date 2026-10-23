@@ -262,19 +262,10 @@ enum Question {
     /// with no block the rotation is taken from kept rows, and a row whose
     /// text a flood wrote again in its place is taken as kept or rewritten.
     /// A line holding its unfinished word is then carried by a line that
-    /// replaced it, so the word is never spoken, or a row is held as
-    /// volatile where the oracle finds no change at its place. Should a
+    /// replaced it, so the word is never spoken. Should a
     /// read whose document grew past a screen from one with no history be
     /// taken as the whole document's, searched for the old screen?
     RotationWithoutBlock,
-    /// A row rewritten and then rotated into the history between two reads
-    /// is the same row to the reader, which follows it by the rotation the
-    /// block measured (section 4.3, item 6), and holds it as volatile when
-    /// it changed before; the oracle's premise compares the lines at one
-    /// place counted from the screen's top, which does not follow the
-    /// rotation, and finds no change there. Should the oracle's places
-    /// follow the history's rotation for rows that moved with it?
-    VolatileAcrossRotation,
 }
 
 /// A random case pinned: its number, the question that decides it, and
@@ -331,7 +322,7 @@ fn the_cores_violations_over_random_streams() {
     // The random streams of the oracle's own tests, taken in the same
     // order from the same seed, every case run rather than stopping at the
     // first failure, each case numbered in that order.
-    use Question::{PeriodicHistory, RotationWithoutBlock, VolatileAcrossRotation};
+    use Question::{PeriodicHistory, RotationWithoutBlock};
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let config = random_config();
@@ -356,16 +347,10 @@ fn the_cores_violations_over_random_streams() {
     }
     let pinned: Vec<Pin> = vec![
         (
-            126,
-            VolatileAcrossRotation,
-            vec![("FalseReason Volatile", 2)],
-        ),
-        (
             212,
             RotationWithoutBlock,
             vec![("FalseReason UnfinishedWord", 1)],
         ),
-        (213, RotationWithoutBlock, vec![("FalseReason Volatile", 1)]),
         (508, PeriodicHistory, vec![("Missed", 1)]),
     ];
     let expected: Vec<(u32, Vec<(String, usize)>)> = pinned

@@ -890,6 +890,112 @@ fn a_held_row_that_leaves_the_buffer_is_not_resolved() {
     );
 }
 
+#[test]
+fn a_volatile_row_held_and_said_at_the_same_read_needs_no_later_report() {
+    // As a reader says a held row at once when it has scrolled above the
+    // screen.
+    let mut reader = Scripted::new(vec![
+        Heard::default(),
+        says(vec![line(0, "50%")]),
+        says(vec![redrawn(0, "60%")]),
+        holds(vec![redrawn(0, "70%")], &[(0, Reason::Volatile)]),
+    ]);
+    assert_eq!(
+        violations(&rewritten(&["50%", "60%", "70%"]), &mut reader),
+        []
+    );
+}
+
+/// `lines` lines of "a" and then `then`, which fills the buffer's rows
+/// and ends with a newline and "b" that rotates the history by one row.
+fn rotated_after(lines: u8, then: &[&[(Op, bool)]]) -> Stream {
+    let mut steps = vec![(Op::Flood { lines, word: "a" }, true)];
+    steps.extend(then.iter().flat_map(|step| step.iter().copied()));
+    stream(&steps)
+}
+
+#[test]
+fn a_volatile_row_rewritten_as_the_full_history_rotates_is_followed_up() {
+    // "50%" changes to "60%", then to "70%" just before a newline rotates
+    // the history, which moves the row up from row 10 to row 9.
+    let stream = rotated_after(
+        10,
+        &[
+            &[(Op::Write("50%"), true)],
+            &[
+                (Op::CarriageReturn, false),
+                (Op::EraseLine(2), false),
+                (Op::Write("60%"), true),
+            ],
+            &[
+                (Op::CarriageReturn, false),
+                (Op::EraseLine(2), false),
+                (Op::Write("70%"), false),
+                (Op::Newline, false),
+                (Op::Write("b"), true),
+            ],
+        ],
+    );
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![Spoken::Summary { rows: 0..10 }]),
+            says(vec![line(10, "50%")]),
+            says(vec![redrawn(10, "60%")]),
+            holds(vec![line(10, "b")], &[(9, Reason::Volatile)]),
+            says(vec![redrawn(9, "70%")]),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut reader), []);
+}
+
+#[test]
+fn a_volatile_row_moved_up_by_the_rotation_to_where_another_row_changed_is_caught() {
+    // "50%" above "x" changes to "60%"; then "x" changes to "y" as a
+    // newline rotates the history, which moves "y" up to the row "60%"
+    // had, while "60%" moves up too: the row of "y" never changed before.
+    let stream = rotated_after(
+        9,
+        &[
+            &[
+                (Op::Write("50%"), false),
+                (Op::Newline, false),
+                (Op::Write("x"), true),
+            ],
+            &[
+                (Op::MoveRows(-1), false),
+                (Op::CarriageReturn, false),
+                (Op::EraseLine(2), false),
+                (Op::Write("60%"), true),
+            ],
+            &[
+                (Op::MoveRows(1), false),
+                (Op::CarriageReturn, false),
+                (Op::EraseLine(2), false),
+                (Op::Write("y"), false),
+                (Op::Newline, false),
+                (Op::Write("b"), true),
+            ],
+        ],
+    );
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![Spoken::Summary { rows: 0..9 }]),
+            says(vec![line(9, "50%"), line(10, "x")]),
+            says(vec![redrawn(9, "60%")]),
+            holds(vec![line(10, "b")], &[(9, Reason::Volatile)]),
+            says(vec![redrawn(9, "y")]),
+        ])
+    };
+    assert_eq!(
+        violations(&stream, &mut reader),
+        [false_reason(4, 9, "y", Reason::Volatile)]
+    );
+}
+
 /// "50%", "60%" and "70%" written over each other, then `then`.
 fn held_then(then: Op) -> Stream {
     let rewrite = |text| {
