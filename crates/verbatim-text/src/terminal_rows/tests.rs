@@ -258,6 +258,27 @@ fn a_repeated_row_is_kept_in_place_rather_than_paired_with_a_copy() {
 }
 
 #[test]
+fn a_row_moved_past_others_is_kept_where_its_text_went() {
+    // A list drawn again with its first entry last: the longest common
+    // subsequence keeps the entries that did not cross it, and the entry
+    // whose text is on no other row is kept where that text went.
+    let mut watch = Watch::console(10, 5, 10);
+    watch.write("x\r\na\r\nb\r\nc");
+    let outcome = watch.write("\x1b[2;1Hb\x1b[K\r\nc\x1b[K\r\na\x1b[K");
+    assert_eq!(watch.texts(), ["x", "b", "c", "a"]);
+    assert_eq!(outcome.rows, [kept(0), moved(2), moved(3), moved(1)]);
+    assert_eq!(
+        outcome.old,
+        [
+            OldRow::Kept(0),
+            OldRow::Kept(3),
+            OldRow::Kept(1),
+            OldRow::Kept(2)
+        ]
+    );
+}
+
+#[test]
 fn a_wrapped_line_split_across_the_reads_top_grows() {
     // A line of three rows on a screen of two: the read starts at its
     // second row, which continues it from above.

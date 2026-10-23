@@ -342,12 +342,6 @@ enum Question {
     /// spoken again. Should the restore be refused when rows the memory
     /// read since are found in the read?
     HistoryEraseAsAlternate,
-    /// Not a question but a fault of the alignment, pinned until it is
-    /// fixed: a longest common subsequence keeps rows in order, so a row
-    /// moved past others, as a list entry drawn elsewhere in the list, is
-    /// not mapped where its text went (section 4.3, item 6) and is taken
-    /// for new.
-    CrossingMove,
 }
 
 /// A random case pinned: its number, the question that decides it, and
@@ -381,18 +375,7 @@ fn the_cores_violations_over_the_corpus() {
     // the main screen as it leaves. In the console host two of its lines
     // are withheld as having lost text against the lines the alternate
     // screen showed, which the oracle does not count.
-    // Question::CrossingMove: Claude Code's command list moved through.
     let expected: Vec<StreamTally> = [
-        (
-            "claude-code",
-            Flavor::ConsoleHost,
-            &[("Mismapped", 3), ("Repeated", 1)][..],
-        ),
-        (
-            "claude-code",
-            Flavor::WindowsTerminal,
-            &[("Mismapped", 3), ("Repeated", 1)],
-        ),
         (
             "pi-fullscreen",
             Flavor::ConsoleHost,
@@ -438,37 +421,8 @@ fn the_cores_violations_over_every_stream_of_four_tiny_operations() {
         [Flavor::ConsoleHost, Flavor::WindowsTerminal]
             .map(|flavor| (about.clone(), flavor, missed.clone()))
     };
-    // Question::CrossingMove: the review position's row moved past
-    // another as the line rotated.
-    let crossing = |about: &str| {
-        let violations = vec![
-            Violation::Mismapped {
-                read: 4,
-                row: 0,
-                went: 2,
-                said: None,
-            },
-            Violation::ReviewMoved {
-                read: 4,
-                went: 2,
-                said: None,
-            },
-        ];
-        [Flavor::ConsoleHost, Flavor::WindowsTerminal]
-            .map(|flavor| (about.to_owned(), flavor, violations.clone()))
-    };
-    let expected: Vec<(String, Flavor, Vec<Violation>)> = crossing(
-        "[(Write(\"cdefg\"), true), (Write(\"ab\"), true), (Write(\"cdefg\"), true), \
-         (Write(\"cdefg\"), true)]",
-    )
-    .into_iter()
-    .chain(crossing(
-        "[(Write(\"cdefg\"), true), (Write(\"cdefg\"), true), (Write(\"ab\"), true), \
-         (Write(\"cdefg\"), true)]",
-    ))
-    .chain(unseen("ab"))
-    .chain(unseen("cdefg"))
-    .collect();
+    let expected: Vec<(String, Flavor, Vec<Violation>)> =
+        unseen("ab").into_iter().chain(unseen("cdefg")).collect();
     assert_eq!(found, expected);
 }
 
@@ -477,7 +431,7 @@ fn the_cores_violations_over_random_streams() {
     // The random streams of the oracle's own tests, taken in the same
     // order from the same seed, every case run rather than stopping at the
     // first failure, each case numbered in that order.
-    use Question::{AlternateUnseen, CrossingMove, HistoryEraseAsAlternate, RotationUnmeasured};
+    use Question::{AlternateUnseen, HistoryEraseAsAlternate, RotationUnmeasured};
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let config = random_config();
@@ -506,31 +460,16 @@ fn the_cores_violations_over_random_streams() {
     // Case 384 needs both the alternate screen seen and the rotation
     // measured; it is listed under the first.
     let pinned: Vec<Pin> = vec![
-        (56, CrossingMove, vec![("Mismapped", 1)]),
         (61, RotationUnmeasured, missed(1)),
         (65, RotationUnmeasured, missed(2)),
-        (
-            70,
-            RotationUnmeasured,
-            vec![
-                ("Mismapped", 2),
-                ("Missed", 5),
-                ("Repeated", 1),
-                ("ReviewMoved", 1),
-            ],
-        ),
+        (70, RotationUnmeasured, missed(5)),
         (71, RotationUnmeasured, both()),
         (82, AlternateUnseen, missed(1)),
         (126, RotationUnmeasured, missed(3)),
-        (
-            168,
-            RotationUnmeasured,
-            vec![("Mismapped", 1), ("Missed", 2)],
-        ),
+        (168, RotationUnmeasured, missed(2)),
         (196, RotationUnmeasured, missed(1)),
         (213, RotationUnmeasured, missed(1)),
         (290, RotationUnmeasured, missed(1)),
-        (296, CrossingMove, vec![("Mismapped", 2)]),
         (301, RotationUnmeasured, repeated(1)),
         (318, RotationUnmeasured, missed(2)),
         (341, AlternateUnseen, missed(1)),
@@ -543,11 +482,7 @@ fn the_cores_violations_over_random_streams() {
         (415, RotationUnmeasured, missed(5)),
         (446, AlternateUnseen, missed(1)),
         (458, RotationUnmeasured, missed(6)),
-        (
-            498,
-            RotationUnmeasured,
-            vec![("Mismapped", 1), ("Repeated", 1)],
-        ),
+        (498, RotationUnmeasured, repeated(2)),
         (508, RotationUnmeasured, both()),
         (510, HistoryEraseAsAlternate, repeated(3)),
     ];

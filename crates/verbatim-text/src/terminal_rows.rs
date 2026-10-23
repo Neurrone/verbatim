@@ -14,7 +14,7 @@
 //! last read held above that start); the history's rotation shows as kept
 //! rows shifted up from it.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
 
 mod align;
@@ -627,6 +627,44 @@ fn classify(
             moved: isize_of(to) - isize_of(from) != shift,
         };
         fates[from] = OldRow::Kept(to);
+    }
+    // A row whose text is on no other row of the old rows or of the read
+    // is kept where that text went, even across rows the longest common
+    // subsequence kept, as a list entry moved past others (item 6: the
+    // alignment maps every old row to its new place).
+    let mut once_new: HashMap<u64, Option<usize>> = HashMap::new();
+    for (to, row) in rows.iter().enumerate() {
+        if !row.is_blank() {
+            once_new
+                .entry(row.hash)
+                .and_modify(|at| *at = None)
+                .or_insert(Some(to));
+        }
+    }
+    let mut once_old: HashMap<u64, Option<usize>> = HashMap::new();
+    for (from, row) in old.iter().enumerate() {
+        if !row.is_blank() {
+            once_old
+                .entry(row.hash)
+                .and_modify(|at| *at = None)
+                .or_insert(Some(from));
+        }
+    }
+    for from in start..count {
+        if fates[from] != (OldRow::Gone { lingering: false })
+            || once_old.get(&old[from].hash) != Some(&Some(from))
+        {
+            continue;
+        }
+        if let Some(&Some(to)) = once_new.get(&old[from].hash)
+            && new[to] == NewRow::New
+        {
+            new[to] = NewRow::Kept {
+                from,
+                moved: isize_of(to) - isize_of(from) != shift,
+            };
+            fates[from] = OldRow::Kept(to);
+        }
     }
     // A blank row is kept where the kept row above it, or else below it,
     // puts it.

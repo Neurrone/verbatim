@@ -145,7 +145,11 @@ rows the one with the fewest blocks wins, and then the one with the fewest
 rows off the known shift. A blank row is kept only in place, where the
 kept row above it, or else below it, puts it. The rotation is how far the
 topmost kept row moved up from its known place; rows that moved with it
-are kept unmoved, and the others kept as moved.
+are kept unmoved, and the others kept as moved. A longest common
+subsequence keeps rows in order, so a row moved past others, as a list
+entry drawn again elsewhere in the list, is kept afterwards where its
+text went when that text is on no other row of the old rows or of the
+read, so every such row is mapped where it went.
 
 Between two kept rows, the old and new rows left over are paired as
 rewritten by likeness: alike when neither is blank and one begins the
@@ -209,7 +213,8 @@ plain output, a scroll, rotation, a footer kept at its coordinate while
 the history rotates, a footer redrawn in place, Pi's status row drawn a row
 lower with its spinner changed, Ink's region erased and drawn again in one
 write and caught erased between two, a repeated row kept in place rather
-than paired with its copy, a wrapped line split across the read's top, Windows Terminal's cut
+than paired with its copy, a row moved past others kept where its text
+went, a wrapped line split across the read's top, Windows Terminal's cut
 last row, a clear and a reprint, output repeated after `cls`, the
 alternate screen opened and closed, and the review position through a
 scroll, a rotation and a redraw elsewhere.
@@ -231,10 +236,7 @@ seven random ones); the rotation measured from kept rows when the last
 screen was blank, its only kept rows moved down with the end of the text,
 or its rows repeat text found elsewhere (seventeen random streams); and
 erasing the history taken for the alternate screen opening (one random
-stream). Rows moved past others, which a longest common subsequence keeps
-in order and so does not map where their text went, are pinned too
-(Claude Code's stream and two tiny streams in both terminals, two random
-streams, and counted in three random streams pinned for the rotation).
+stream).
 
 ## Units
 
