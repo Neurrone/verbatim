@@ -45,6 +45,9 @@ pub struct Style {
     pub background: Colour,
     /// Whether foreground and background are swapped when shown.
     pub reverse: bool,
+    /// Whether the text is bold, which both terminals show as the bright
+    /// version of one of the eight basic foregrounds (measured 2026-10-23).
+    pub bold: bool,
 }
 
 impl Default for Style {
@@ -53,18 +56,27 @@ impl Default for Style {
             foreground: DEFAULT_FOREGROUND,
             background: DEFAULT_BACKGROUND,
             reverse: false,
+            bold: false,
         }
     }
 }
 
 impl Style {
-    /// The foreground and background as shown, reverse video applied.
+    /// The foreground and background as shown: bold brightening a basic
+    /// foreground, then reverse video applied.
     #[must_use]
     pub fn shown(self) -> (Colour, Colour) {
+        let foreground = match PALETTE[..8]
+            .iter()
+            .position(|&basic| basic == self.foreground)
+        {
+            Some(index) if self.bold => PALETTE[index + 8],
+            _ => self.foreground,
+        };
         if self.reverse {
-            (self.background, self.foreground)
+            (self.background, foreground)
         } else {
-            (self.foreground, self.background)
+            (foreground, self.background)
         }
     }
 }
@@ -184,10 +196,22 @@ pub struct Grid {
     pub main_cursor: Cursor,
     /// The style the next character is written in.
     pub style: Style,
-    /// The saved cursor.
+    /// The main screen's saved cursor.
     pub saved: Saved,
+    /// The alternate screen's saved cursor: each screen keeps its own.
+    pub saved_alternate: Saved,
     /// The scroll region, first and last screen row, inclusive.
     pub region: (usize, usize),
+    /// Whether the whole screen is shown in reverse video (mode 5, a
+    /// visual bell's flash), which swaps every cell's colours as the
+    /// providers report them (measured 2026-10-23).
+    pub screen_reversed: bool,
+    /// Whether writing a row's last column marks the row as wrapping at
+    /// once, before anything wraps onto the next row, as the console host
+    /// does; an explicit line feed on the row clears the mark. Windows
+    /// Terminal marks a row only when a character wraps (measured
+    /// 2026-10-23).
+    pub marks_wrap_when_full: bool,
     next_id: RowId,
 }
 
@@ -195,7 +219,7 @@ impl Grid {
     /// An empty terminal `width` cells wide and `height` rows tall, its
     /// history holding up to `history` rows above the screen.
     #[must_use]
-    pub fn new(width: usize, height: usize, history: usize) -> Self {
+    pub fn new(width: usize, height: usize, history: usize, marks_wrap_when_full: bool) -> Self {
         let mut grid = Self {
             width,
             height,
@@ -212,7 +236,10 @@ impl Grid {
             main_cursor: Cursor::default(),
             style: Style::default(),
             saved: Saved::default(),
+            saved_alternate: Saved::default(),
             region: (0, height - 1),
+            screen_reversed: false,
+            marks_wrap_when_full,
             next_id: 0,
         };
         for _ in 0..height {
@@ -226,6 +253,15 @@ impl Grid {
         let id = self.next_id;
         self.next_id += 1;
         Row::blank(id, self.width)
+    }
+
+    /// A row scrolled in at a region's edge: blank, in the current
+    /// background, as erasing leaves cells (measured 2026-10-23).
+    fn scrolled_in_row(&mut self) -> Row {
+        let blank = self.erased();
+        let mut row = self.new_row();
+        row.cells.fill(blank);
+        row
     }
 
     /// The active buffer.
@@ -273,6 +309,9 @@ impl Grid {
         }
         if column + 1 == self.width {
             self.cursor.pending_wrap = true;
+            if self.marks_wrap_when_full {
+                self.row_mut(row).wraps = true;
+            }
         } else {
             self.cursor.column += 1;
         }
@@ -282,6 +321,31 @@ impl Grid {
     pub fn carriage_return(&mut self) {
         self.cursor.column = 0;
         self.cursor.pending_wrap = false;
+    }
+
+    /// A line feed written by the program, as opposed to one a wrap makes:
+    /// it ends the row's line where the console host marked it as wrapping.
+    pub fn explicit_line_feed(&mut self) {
+        if self.marks_wrap_when_full {
+            self.row_mut(self.cursor.row).wraps = false;
+        }
+        self.line_feed();
+    }
+
+    /// Moves the cursor up or down `delta` rows, stopping at the scroll
+    /// region's margins while it is inside the region, and at the screen's
+    /// edges otherwise.
+    pub fn move_vertically(&mut self, delta: isize) {
+        let (top, bottom) = self.region;
+        let row = self.cursor.row;
+        let (low, high) = if (top..=bottom).contains(&row) {
+            (top, bottom)
+        } else {
+            (0, self.height - 1)
+        };
+        let target = row.saturating_add_signed(delta).clamp(low, high);
+        let column = self.cursor.column;
+        self.move_to(target, column);
     }
 
     /// A line feed: down a row, or the screen or the region scrolls.
@@ -316,7 +380,7 @@ impl Grid {
     /// down the buffer, or, with the buffer full, every row's content moves
     /// up one coordinate; on the alternate buffer the top row goes.
     fn scroll_screen(&mut self) {
-        let row = self.new_row();
+        let row = self.scrolled_in_row();
         let alternate = self.alternate.is_some();
         let buffer = self.buffer_mut();
         if alternate {
@@ -338,7 +402,7 @@ impl Grid {
     pub fn scroll_region_up(&mut self, count: usize) {
         let (top, bottom) = self.region;
         for _ in 0..count {
-            let row = self.new_row();
+            let row = self.scrolled_in_row();
             let first = self.coordinate(top);
             let last = self.coordinate(bottom);
             let buffer = self.buffer_mut();
@@ -351,7 +415,7 @@ impl Grid {
     pub fn scroll_region_down(&mut self, count: usize) {
         let (top, bottom) = self.region;
         for _ in 0..count {
-            let row = self.new_row();
+            let row = self.scrolled_in_row();
             let first = self.coordinate(top);
             let last = self.coordinate(bottom);
             let buffer = self.buffer_mut();
@@ -362,6 +426,7 @@ impl Grid {
 
     /// Reverse index: up a row, or the region scrolls down.
     pub fn reverse_index(&mut self) {
+        self.cursor.pending_wrap = false;
         if self.cursor.row == self.region.0 {
             self.scroll_region_down(1);
         } else {
@@ -376,15 +441,21 @@ impl Grid {
         self.cursor.pending_wrap = false;
     }
 
-    /// Erases cells `from` to `to` (exclusive) of screen row `row`.
-    pub fn erase_cells(&mut self, row: usize, from: usize, to: usize) {
-        let blank = Cell {
+    /// A cell as erasing leaves it: a space in the current colours, without
+    /// reverse video.
+    fn erased(&self) -> Cell {
+        Cell {
             character: ' ',
             style: Style {
                 reverse: false,
                 ..self.style
             },
-        };
+        }
+    }
+
+    /// Erases cells `from` to `to` (exclusive) of screen row `row`.
+    pub fn erase_cells(&mut self, row: usize, from: usize, to: usize) {
+        let blank = self.erased();
         let width = self.width;
         let target = self.row_mut(row);
         let mut changed = false;
@@ -393,9 +464,6 @@ impl Grid {
                 *cell = blank;
                 changed = true;
             }
-        }
-        if to >= width {
-            target.wraps = false;
         }
         if changed {
             target.writes += 1;
@@ -439,19 +507,20 @@ impl Grid {
     /// Erases the screen: on the main buffer, its rows with text move into
     /// the history as a screenful of blank rows follows them.
     fn clear_screen(&mut self) {
-        if self.alternate.is_some() {
-            for row in 0..self.height {
-                self.erase_cells(row, 0, self.width);
+        if self.alternate.is_none() {
+            let last = (0..self.height)
+                .rev()
+                .find(|&row| self.main.rows[self.coordinate(row)].has_text());
+            if let Some(last) = last {
+                for _ in 0..=last {
+                    self.scroll_screen();
+                }
             }
-            return;
         }
-        let last = (0..self.height)
-            .rev()
-            .find(|&row| self.main.rows[self.coordinate(row)].has_text());
-        if let Some(last) = last {
-            for _ in 0..=last {
-                self.scroll_screen();
-            }
+        // Every cell left on the screen is erased too, rows of colour with
+        // no text included (measured 2026-10-23).
+        for row in 0..self.height {
+            self.erase_cells(row, 0, self.width);
         }
     }
 
@@ -472,10 +541,17 @@ impl Grid {
         if self.cursor.row < region.0 || self.cursor.row > region.1 {
             return;
         }
+        let wraps = self.marks_wrap_when_full && self.row_mut(self.cursor.row).wraps;
         self.region = (self.cursor.row, region.1);
         self.scroll_region_down(count);
         self.region = region;
+        // The console host's inserted rows take the wrap mark of the row
+        // they were inserted at (measured 2026-10-23).
+        for offset in 0..count.min(region.1 + 1 - self.cursor.row) {
+            self.row_mut(self.cursor.row + offset).wraps = wraps;
+        }
         self.cursor.column = 0;
+        self.cursor.pending_wrap = false;
     }
 
     /// Deletes `count` rows at the cursor's row, within the region.
@@ -488,15 +564,17 @@ impl Grid {
         self.scroll_region_up(count);
         self.region = region;
         self.cursor.column = 0;
+        self.cursor.pending_wrap = false;
     }
 
     /// Inserts `count` blank cells at the cursor, shifting the rest right.
     pub fn insert_cells(&mut self, count: usize) {
         let (row, column, width) = (self.cursor.row, self.cursor.column, self.width);
+        let blank = self.erased();
         let target = self.row_mut(row);
         for _ in 0..count.min(width - column) {
             target.cells.pop();
-            target.cells.insert(column, Cell::default());
+            target.cells.insert(column, blank);
         }
         target.writes += 1;
     }
@@ -551,30 +629,40 @@ impl Grid {
         self.region = (0, self.height - 1);
     }
 
-    /// Sets the scroll region, 0-based and inclusive; the cursor goes home.
+    /// Sets the scroll region, 0-based and inclusive, and sends the cursor
+    /// home; margins out of order are ignored.
     pub fn set_region(&mut self, top: usize, bottom: usize) {
         let bottom = bottom.min(self.height - 1);
         if top < bottom {
             self.region = (top, bottom);
-        } else {
-            self.region = (0, self.height - 1);
+            self.move_to(0, 0);
         }
-        self.move_to(0, 0);
     }
 
-    /// Saves the cursor and style.
+    /// The active screen's saved-cursor slot.
+    fn slot(&mut self) -> &mut Saved {
+        if self.alternate.is_some() {
+            &mut self.saved_alternate
+        } else {
+            &mut self.saved
+        }
+    }
+
+    /// Saves the cursor and style in the active screen's slot.
     pub fn save_cursor(&mut self) {
-        self.saved = Saved {
+        let saved = Saved {
             cursor: self.cursor,
             style: self.style,
         };
+        *self.slot() = saved;
     }
 
-    /// Restores the cursor and style saved last.
+    /// Restores the cursor and style saved last on the active screen.
     pub fn restore_cursor(&mut self) {
+        let saved = *self.slot();
         let visible = self.cursor.visible;
-        self.cursor = self.saved.cursor;
+        self.cursor = saved.cursor;
         self.cursor.visible = visible;
-        self.style = self.saved.style;
+        self.style = saved.style;
     }
 }

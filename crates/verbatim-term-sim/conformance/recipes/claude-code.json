@@ -1,0 +1,99 @@
+{
+  "about": "Claude Code, an Ink program: its startup screen, typing in its input box, its slash-command list opened and moved through, Escape, and leaving with Control+C twice. Nothing is sent.",
+  "command": "cmd.exe /c claude",
+  "steps": [
+    {
+      "quiet": 6000
+    },
+    {
+      "type": {
+        "text": "hello there",
+        "each": 80
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0015",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "/",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1000
+    },
+    {
+      "type": {
+        "text": "\u001b[B",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u001b[B",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u001b[A",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "mo",
+        "each": 150
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u001b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1500
+    }
+  ]
+}

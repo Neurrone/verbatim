@@ -1,0 +1,198 @@
+{
+  "about": "Git Bash's bash with readline: typing, Control+B and F, Alt+B, Control+A and E, Control+W, U and K, a completion list printed below the prompt, output arriving while typing, and a flood.",
+  "command": "\"C:\\Program Files\\Git\\bin\\bash.exe\" --norc --noprofile -i",
+  "steps": [
+    {
+      "quiet": 1500
+    },
+    {
+      "type": {
+        "text": "echo hello brave new world",
+        "each": 50
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u0002\u0002\u0002",
+        "each": 200
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001bb",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001bb",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u0006",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001bf",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u0001",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u0005",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u0017",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u0001",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u000b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u0015",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "ls /c/Windows/Sys",
+        "each": 40
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\t",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\t",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0015",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "(sleep 1; echo background done) &\r",
+        "each": 30
+      }
+    },
+    {
+      "quiet": 300
+    },
+    {
+      "type": {
+        "text": "partial",
+        "each": 250
+      }
+    },
+    {
+      "quiet": 2000
+    },
+    {
+      "type": {
+        "text": "\u0015",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "seq 1 300\r",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "exit\r",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 500
+    }
+  ]
+}

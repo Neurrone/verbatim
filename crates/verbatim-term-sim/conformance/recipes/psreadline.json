@@ -1,0 +1,135 @@
+{
+  "about": "Windows PowerShell 5.1 with PSReadLine 2.0 in its default mode: typing recoloured on each key, tab completion, caret keys, Escape, history, output, and cls.",
+  "command": "powershell.exe -NoLogo -NoProfile -NoExit -Command \"Import-Module PSReadLine; Set-Location C:\\Windows\"",
+  "steps": [
+    {
+      "quiet": 1500
+    },
+    {
+      "type": {
+        "text": "Get-ChildItem Sys",
+        "each": 60
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\t",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\t",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u001b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "echo one two three",
+        "each": 60
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001b[D\u001b[D\u001b[D",
+        "each": 150
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001b[H",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001b[F",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u007f\u007f",
+        "each": 150
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\r",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u001b[A",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "cls\r",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1000
+    },
+    {
+      "type": {
+        "text": "exit\r",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 500
+    }
+  ]
+}

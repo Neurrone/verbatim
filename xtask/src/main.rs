@@ -36,6 +36,10 @@
 //! corpus, running `conformance-player` in each. See
 //! `xtask/src/conformance.rs`.
 //!
+//! `record-terminal-streams` records what real programs write to a
+//! terminal, from the recipes beside that corpus, as streams of it. See
+//! `xtask/src/record.rs`.
+//!
 //! `trace start` and `trace stop` record a WPR trace of the CPU's
 //! scheduling through two elevated tasks. See `xtask/src/trace.rs`.
 
@@ -53,6 +57,7 @@ mod demo;
 mod nvda;
 mod park;
 mod perf;
+mod record;
 mod shapes;
 mod trace;
 mod vm;
@@ -96,6 +101,7 @@ fn main() -> ExitCode {
         Some("warm-speech") => warm_speech(),
         Some("regenerate-terminal-conformance-expectations") => conformance::regenerate(&args[1..]),
         Some("conformance-player") => conformance::player(&args[1..]),
+        Some("record-terminal-streams") => record::run(&args[1..]),
         _ => {
             eprintln!("usage: cargo xtask <command>");
             eprintln!("commands:");

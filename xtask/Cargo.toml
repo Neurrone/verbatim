@@ -17,6 +17,7 @@ license.workspace = true
 # --scenario, --group, --list, and per-scenario artifact collection, rather
 # than duplicating that catalog here.
 base64.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 verbatim-agent.workspace = true
 verbatim-config.workspace = true

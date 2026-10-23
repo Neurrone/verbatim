@@ -1,0 +1,10 @@
+{
+  "about": "Relative cursor moves inside a scroll region, and margins set out of order.",
+  "chunks": [
+    "\u001b[5;20r\u001b[10;1H\u001b[20Ax",
+    "\u001b[15;1H\u001b[30By",
+    "\u001b[r",
+    "\u001b[5;10r\u001b[20;1H\u001b[7;7rw",
+    "\u001b[r"
+  ]
+}

@@ -10,7 +10,9 @@ use verbatim_term_sim::conformance::{Expectation, expectation_path, replay, stre
 #[test]
 fn the_simulated_terminal_answers_as_the_real_ones() {
     let mut failures = Vec::new();
-    for (name, stream) in streams() {
+    let streams = streams();
+    assert!(!streams.is_empty(), "the corpus has no streams");
+    for (name, stream) in streams {
         for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
             let path = expectation_path(&name, flavor);
             let text = std::fs::read_to_string(&path).unwrap_or_else(|_| {
@@ -21,6 +23,12 @@ fn the_simulated_terminal_answers_as_the_real_ones() {
             });
             let expected: Expectation =
                 serde_json::from_str(&text).expect("an expectation's contents");
+            assert_eq!(
+                expected.flavor,
+                flavor,
+                "{} is another terminal's",
+                path.display()
+            );
             let differences = replay(&stream, &expected);
             if !differences.is_empty() {
                 failures.push(format!("{name} in {flavor:?}:\n{}", differences.join("\n")));

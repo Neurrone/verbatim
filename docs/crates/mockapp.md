@@ -560,6 +560,13 @@ nothing for an item elsewhere, for the list itself, or from a box that
 controls nothing; over `typed_search.json`, a search box holding text,
 it asserts that the box's focus comes with the line at its caret in the
 one message, ahead of a selection in its list delivered after the focus.
+`terminal_snapshot.rs` reads `terminal.json`'s terminal with
+`verbatim-uia-rops`'s terminal read program both ways, the two required
+to agree on every field: a first read, one from where the last said to
+start with nothing new and with output since, one whose start the text
+cleared below, one asked for fewer rows than the screen holds, and the
+whole text, each pinned exactly.
+
 `remote_ops.rs` runs `verbatim-uia-rops`'s remote and
 classic focus ancestry over `ancestry.json` (a five-level chain, a list
 and a tab control with selected children) and asserts they return the

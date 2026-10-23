@@ -1,0 +1,23 @@
+{
+  "about": "less paging 300 lines: down a line, a page, back a page, a search, and quitting.",
+  "chunks": [
+    "\u001b[?25l\u001b[2J\u001b[m\u001b[H\u001b[?25h\u001b[?1049h\u001b[?25l\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h\u001b[22;0;0t\u001b[?1h\u001b=\u001b[?25l\u001b[30;1H1\u001b[?25h\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10\r\n11\r\n12\r\n13\r\n14\r\n15\r\n16\r\n17\r\n18\r\n19\r\n20\r\n21\r\n22\r\n23\r\n24\r\n25\r\n26\r\n27\r\n28\r\n29\r\n:",
+    "\r30\u001b[K\r\n:",
+    "\r31\u001b[K\r\n:",
+    "\r32\u001b[K\r\n:",
+    "\r33\u001b[K\r\n34\r\n35\r\n36\r\n37\r\n38\r\n39\r\n40\r\n41\r\n42\r\n43\r\n44\r\n45\r\n46\r\n47\r\n48\r\n49\r\n50\r\n51\r\n52\r\n53\r\n54\r\n55\r\n56\r\n57\r\n58\r\n59\r\n60\r\n61\r\n:",
+    "\r\u001b[?25l\u001b[H4\u001b[K\r\n5\u001b[K\r\n6\u001b[K\r\n7\u001b[K\r\n8\u001b[K\r\n9\u001b[K\r\n10\u001b[K\r\n11\u001b[K\r\n12\u001b[K\r\n13\u001b[K\r\n14\u001b[K\r\n15\u001b[K\r\n16\u001b[K\r\n17\u001b[K\r\n18\u001b[K\r\n19\u001b[K\r\n20\u001b[K\r\n21\u001b[K\r\n22\u001b[K\r\n23\u001b[K\r\n24\u001b[K\r\n25\u001b[K\r\n26\u001b[K\r\n27\u001b[K\r\n28\u001b[K\r\n29\u001b[K\r\n30\u001b[K\r\n31\u001b[K\r\n32\u001b[K\r\n:\u001b[K\u001b[?25h",
+    "\r\u001b[?25l\u001b[H4\u001b[K\r\n5\u001b[K\r\n6\u001b[K\r\n7\u001b[K\r\n8\u001b[K\r\n9\u001b[K\r\n10\u001b[K\r\n11\u001b[K\r\n12\u001b[K\r\n13\u001b[K\r\n14\u001b[K\r\n15\u001b[K\r\n16\u001b[K\r\n17\u001b[K\r\n18\u001b[K\r\n19\u001b[K\r\n20\u001b[K\r\n21\u001b[K\r\n22\u001b[K\r\n23\u001b[K\r\n24\u001b[K\r\n25\u001b[K\r\n26\u001b[K\r\n27\u001b[K\r\n28\u001b[K\r\n29\u001b[K\r\n30\u001b[K\r\n31\u001b[K\r\n32\u001b[K\r\n...skipping...\u001b[K\u001b[?25h\r\n\u001b[7m150\u001b[27m\u001b[K\r\n151\r\n152\r\n153\r\n154\r\n155\r\n156\r\n157\r\n158\r\n159\r\n160\r\n161\r\n162\r\n163\r\n164\r\n165\r\n166\r\n167\r\n168\r\n169\r\n170\r\n171\r\n172\r\n173\r\n174\r\n175\r\n176\r\n177\r\n178\r\n:",
+    "\r\u001b[?1l\u001b>\u001b[K\u001b[?1049l\u001b[23;0;0t\u001b[?25l\u001b[H\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\r\n\u001b[K\u001b[H\u001b[?25h"
+  ],
+  "at_ms": [
+    221,
+    1745,
+    1951,
+    2158,
+    2775,
+    3201,
+    3629,
+    4246
+  ]
+}

@@ -116,18 +116,27 @@ impl Provider<'_> {
     /// The end of row `row`: after its line break when the provider's rows
     /// include it, which a column one past the width stands for. Windows
     /// Terminal's last row of the buffer has no row after it to hold the
-    /// break, and its range ends one cell short of the width instead: the
-    /// alternate screen's last row, and the main screen's once the history
-    /// is full (measured 2026-10-23).
+    /// break, and ends at the width (measured 2026-10-23).
     fn row_end(&self, row: usize) -> Position {
-        let column = if !self.row_includes_break {
-            self.grid.width
-        } else if row + 1 == self.rows() {
-            self.grid.width - 1
-        } else {
+        let column = if self.row_includes_break && row + 1 < self.rows() {
             self.grid.width + 1
+        } else {
+            self.grid.width
         };
         Position { row, column }
+    }
+
+    /// How many cells of row `row` its text gives: all of them, but for
+    /// Windows Terminal's last row of the buffer, whose text leaves out its
+    /// last cell though its range ends after it: the alternate screen's last
+    /// row, and the main screen's once the history is full (measured
+    /// 2026-10-23).
+    fn cells_given(&self, row: usize) -> usize {
+        if self.row_includes_break && row + 1 == self.rows() {
+            self.grid.width - 1
+        } else {
+            self.grid.width
+        }
     }
 
     /// The whole document.
@@ -175,9 +184,9 @@ impl Provider<'_> {
         let mut column = range.start.column;
         while row <= range.end.row {
             let last = if row == range.end.row {
-                range.end.column.min(self.grid.width)
+                range.end.column.min(self.cells_given(row))
             } else {
-                self.grid.width
+                self.cells_given(row)
             };
             text.extend((column..last).map(|column| cell(row, column)));
             if row == range.end.row {
@@ -323,7 +332,12 @@ impl Provider<'_> {
             .map(|row| {
                 let mut runs: Vec<crate::Run> = Vec::new();
                 for (column, cell) in buffer.rows[row].cells.iter().enumerate() {
-                    let (foreground, background) = cell.style.shown();
+                    let (foreground, background) = if self.grid.screen_reversed {
+                        let (foreground, background) = cell.style.shown();
+                        (background, foreground)
+                    } else {
+                        cell.style.shown()
+                    };
                     match runs.last_mut() {
                         Some(run)
                             if run.foreground == foreground && run.background == background =>

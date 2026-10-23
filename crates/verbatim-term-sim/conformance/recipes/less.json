@@ -1,0 +1,54 @@
+{
+  "about": "less paging 300 lines: down a line, a page, back a page, a search, and quitting.",
+  "command": "\"C:\\Program Files\\Git\\bin\\bash.exe\" --norc --noprofile -c \"seq 1 300 | less\"",
+  "steps": [
+    {
+      "quiet": 1500
+    },
+    {
+      "type": {
+        "text": "jjj",
+        "each": 200
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": " ",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "/150\r",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "q",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    }
+  ]
+}

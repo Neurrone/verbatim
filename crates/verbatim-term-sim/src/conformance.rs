@@ -18,6 +18,10 @@ pub struct Stream {
     pub about: String,
     /// The chunks, each written whole before the terminal is read.
     pub chunks: Vec<String>,
+    /// For a recorded stream, when each chunk came, in milliseconds from
+    /// the program's start; empty for a stream written by hand.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub at_ms: Vec<u64>,
 }
 
 /// What one read of a real terminal answered after a chunk.

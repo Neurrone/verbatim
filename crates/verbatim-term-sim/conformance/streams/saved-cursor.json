@@ -1,0 +1,10 @@
+{
+  "about": "The cursor saved inside the alternate screen, and where it is after leaving it.",
+  "chunks": [
+    "\u001b[3;3H",
+    "\u001b[?1049h\u001b[10;10H\u001b7",
+    "\u001b[?1049lz",
+    "\u001b7\u001b[?1049h\u001b[5;5H\u001b8q",
+    "\u001b[?1049l"
+  ]
+}

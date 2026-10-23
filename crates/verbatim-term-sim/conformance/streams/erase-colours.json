@@ -1,0 +1,11 @@
+{
+  "about": "Erasing and scrolling in a background colour: whole-screen erase over coloured blank rows, new rows scrolled in, inserted and erased characters.",
+  "chunks": [
+    "\u001b[41m\u001b[2K\u001b[0m\r\n\u001b[2J",
+    "\u001b[5;1H\u001b[44m\u001b[K\u001b[0m\u001b[1;1Htext\u001b[2J",
+    "\u001b[30;1H\u001b[44m\r\n\u001b[0m",
+    "\u001b[1;1Habcdef\u001b[1;3H\u001b[46m\u001b[3@\u001b[0m",
+    "\u001b[2;1Hghijkl\u001b[2;2H\u001b[43m\u001b[3X\u001b[0m",
+    "\u001b[3;1Hmnopqr\u001b[3;4H\u001b[45m\u001b[1K\u001b[0m"
+  ]
+}

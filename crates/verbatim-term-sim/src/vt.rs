@@ -27,6 +27,11 @@ fn values(params: &Params, default: u16) -> Vec<u16> {
     values
 }
 
+/// A count as a signed number of rows.
+fn signed(count: usize) -> isize {
+    isize::try_from(count).unwrap_or(isize::MAX)
+}
+
 /// A 256-colour palette index as UI Automation reports it.
 fn indexed(index: u16) -> Colour {
     let index = usize::from(index);
@@ -65,6 +70,8 @@ impl Performer<'_> {
             let code = flat[at];
             match code {
                 0 => self.grid.style = crate::grid::Style::default(),
+                1 => self.grid.style.bold = true,
+                22 => self.grid.style.bold = false,
                 7 => self.grid.style.reverse = true,
                 27 => self.grid.style.reverse = false,
                 30..=37 => self.grid.style.foreground = PALETTE[usize::from(code - 30)],
@@ -108,6 +115,7 @@ impl Performer<'_> {
     fn private_mode(&mut self, params: &Params, set: bool) {
         for mode in values(params, 0) {
             match mode {
+                5 => self.grid.screen_reversed = set,
                 25 => self.grid.cursor.visible = set,
                 47 | 1047 => {
                     if set {
@@ -136,7 +144,7 @@ impl Perform for Performer<'_> {
 
     fn execute(&mut self, byte: u8) {
         match byte {
-            b'\n' | 0x0b | 0x0c => self.grid.line_feed(),
+            b'\n' | 0x0b | 0x0c => self.grid.explicit_line_feed(),
             b'\r' => self.grid.carriage_return(),
             0x08 => {
                 self.grid.cursor.pending_wrap = false;
@@ -166,12 +174,18 @@ impl Perform for Performer<'_> {
         let grid = &mut *self.grid;
         let (row, column) = (grid.cursor.row, grid.cursor.column);
         match action {
-            'A' => grid.move_to(row.saturating_sub(first), column),
-            'B' | 'e' => grid.move_to(row + first, column),
+            'A' => grid.move_vertically(-signed(first)),
+            'B' | 'e' => grid.move_vertically(signed(first)),
             'C' | 'a' => grid.move_to(row, column + first),
             'D' => grid.move_to(row, column.saturating_sub(first)),
-            'E' => grid.move_to(row + first, 0),
-            'F' => grid.move_to(row.saturating_sub(first), 0),
+            'E' => {
+                grid.move_vertically(signed(first));
+                grid.carriage_return();
+            }
+            'F' => {
+                grid.move_vertically(-signed(first));
+                grid.carriage_return();
+            }
             'G' | '`' => grid.move_to(row, first - 1),
             'd' => grid.move_to(first - 1, column),
             'H' | 'f' => {

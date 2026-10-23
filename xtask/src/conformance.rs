@@ -7,13 +7,14 @@
 //! so it runs on demand on a desktop, never in continuous integration.
 //!
 //! The terminal runs this program's `conformance-player`, which connects
-//! back over a local socket, writes each chunk it is sent, and then asks
-//! the terminal where its cursor is: the terminal answers that only once it
-//! has handled everything written before it, so the reply is the evidence
-//! that the chunk is on the screen before it is read.
+//! back over a local socket, writes each chunk it is sent, and then sets
+//! the window's title to a token naming the chunk: the terminal changes its
+//! title only once it has parsed everything written before, so the new
+//! title is the evidence that the chunk is in the buffer the terminal's
+//! provider reads, and the runner reads it only then.
 
 use std::fmt::Write as _;
-use std::io::{BufRead as _, BufReader, Read as _, Write as IoWrite};
+use std::io::{BufRead as _, BufReader, Write as IoWrite};
 use std::net::{TcpListener, TcpStream};
 use std::os::windows::io::AsRawHandle as _;
 use std::process::{Command, ExitCode, Stdio};
@@ -24,13 +25,12 @@ use verbatim_term_sim::conformance::{Answer, Expectation, expectation_path, stre
 use verbatim_term_sim::{Flavor, Run};
 use verbatim_uia::Uia;
 use verbatim_uia::text::{Endpoint, TextPatternExt as _, TextRangeExt as _};
-use verbatim_uia_rops::{SnapshotQuery, terminal_snapshot};
+use verbatim_uia_rops::{Path, SnapshotQuery, terminal_snapshot};
 use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, WPARAM};
 use windows::Win32::Globalization::CP_UTF8;
 use windows::Win32::System::Console::{
-    CONSOLE_MODE, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_PROCESSED_OUTPUT,
-    ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING, ENABLE_WRAP_AT_EOL_OUTPUT,
-    SetConsoleMode, SetConsoleOutputCP, SetConsoleTitleW,
+    DISABLE_NEWLINE_AUTO_RETURN, ENABLE_PROCESSED_OUTPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+    ENABLE_WRAP_AT_EOL_OUTPUT, SetConsoleMode, SetConsoleOutputCP, SetConsoleTitleW,
 };
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
@@ -38,7 +38,9 @@ use windows::Win32::UI::Accessibility::{
     TextUnit_Line, TreeScope_Subtree, UIA_BackgroundColorAttributeId, UIA_ClassNamePropertyId,
     UIA_ForegroundColorAttributeId, UIA_IsTextPatternAvailablePropertyId,
 };
-use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, PostMessageW, WM_CLOSE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, GetWindowTextW, PostMessageW, WM_CLOSE,
+};
 use windows::core::{BSTR, HSTRING, PCWSTR};
 
 /// How long anything the runner waits for may take: a terminal starting,
@@ -180,7 +182,6 @@ fn run(
                 .args([
                     "-w", "new", "--size", "120,30", "new-tab", "--title", &title,
                 ])
-                .arg("--suppressApplicationTitle")
                 .arg(&player)
                 .args(&player_args);
             command
@@ -190,14 +191,15 @@ fn run(
         .spawn()
         .map_err(|error| format!("could not start the terminal: {error}"))?;
     let connection = accept(&listener)?;
-    let result = read_stream(uia, &connection, &title, chunks, flavor);
+    // Found once, by the title the player set before writing anything: a
+    // stream may set the title itself.
+    let window = find_window(&title).ok_or("the terminal's window did not appear")?;
+    let result = read_stream(uia, &connection, window, &title, chunks, flavor);
     let mut writer = &connection;
     let _ = writer.write_all(b"quit\n");
-    if let Some(window) = find_window(&title) {
-        // SAFETY: posting a message to a window handle is sound whatever
-        // the window's state.
-        let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
-    }
+    // SAFETY: posting a message to a window handle is sound whatever the
+    // window's state.
+    let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
     result
 }
 
@@ -233,6 +235,29 @@ fn find_window(title: &str) -> Option<HWND> {
             return None;
         }
         std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Waits until the window's title reads `title`: the player sets it after
+/// each chunk, and a terminal changes its title only once it has parsed
+/// everything written before, so the title is the evidence that the chunk
+/// is in the buffer the terminal's provider reads. Windows Terminal's own
+/// parser handles the title, where a cursor-position query could be
+/// answered by the pseudoconsole in front of it.
+fn wait_for_title(window: HWND, title: &str) -> Result<(), String> {
+    let deadline = Instant::now() + PATIENCE;
+    let mut buffer = [0u16; 512];
+    loop {
+        // SAFETY: the buffer outlives the call.
+        let length = unsafe { GetWindowTextW(window, &mut buffer) };
+        let length = usize::try_from(length).unwrap_or(0);
+        if String::from_utf16_lossy(&buffer[..length]) == title {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            return Err(format!("the window's title never became {title:?}"));
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -287,11 +312,11 @@ fn text_element(
 fn read_stream(
     uia: &Uia,
     connection: &TcpStream,
+    window: HWND,
     title: &str,
     chunks: &[String],
     flavor: Flavor,
 ) -> Result<Expectation, String> {
-    let window = find_window(title).ok_or("the terminal's window did not appear")?;
     let (element, pattern) = text_element(uia, window, flavor)?;
     let mut lines = BufReader::new(connection.try_clone().map_err(|error| error.to_string())?);
     let mut writer = connection;
@@ -299,21 +324,22 @@ fn read_stream(
     let mut screen_rows = 0;
     let mut answers = Vec::new();
     let mut size = (0, 0);
-    for chunk in chunks {
+    for (index, chunk) in chunks.iter().enumerate() {
         let hex = chunk.bytes().fold(String::new(), |mut hex, byte| {
             let _ = write!(hex, "{byte:02x}");
             hex
         });
         writer
-            .write_all(format!("chunk {hex}\n").as_bytes())
+            .write_all(format!("chunk {index} {hex}\n").as_bytes())
             .map_err(|error| error.to_string())?;
         let mut reply = String::new();
         lines
             .read_line(&mut reply)
             .map_err(|error| format!("no reply from the player: {error}"))?;
-        if reply.trim() != "done" {
+        if reply.trim() != "written" {
             return Err(format!("the player answered {reply:?}"));
         }
+        wait_for_title(window, &format!("{title}#{index}"))?;
         let query = SnapshotQuery {
             element: &element,
             pattern: &pattern,
@@ -322,8 +348,11 @@ fn read_stream(
             whole: false,
             caret: None,
         };
-        let (snapshot, _) =
+        let (snapshot, path) =
             terminal_snapshot(uia, &query, true).map_err(|error| error.to_string())?;
+        if let Path::Fallback(error) = path {
+            return Err(format!("the read program failed and fell back: {error}"));
+        }
         let screen = String::from_utf16_lossy(&snapshot.screen);
         if size == (0, 0) {
             size = screen_size(&screen);
@@ -354,12 +383,21 @@ fn read_stream(
 }
 
 /// The screen's width and height from its first text: the narrowest line's
-/// length, and the rows its lines fill.
+/// length, leaving out the last line, which Windows Terminal cuts one cell
+/// short when it is the buffer's last row; and the rows its lines fill.
 fn screen_size(screen: &str) -> (usize, usize) {
-    let width = screen
+    let lines: Vec<&str> = screen
         .strip_suffix("\r\n")
         .unwrap_or(screen)
         .split("\r\n")
+        .collect();
+    let measured = if lines.len() > 1 {
+        &lines[..lines.len() - 1]
+    } else {
+        &lines[..]
+    };
+    let width = measured
+        .iter()
         .map(|line| line.chars().count())
         .filter(|&cells| cells > 0)
         .min()
@@ -472,8 +510,8 @@ fn colours(
 }
 
 /// `conformance-player <port> <title>`: run by the terminal; writes each
-/// chunk the runner sends, then waits for the terminal's answer to a
-/// cursor-position query before saying it is done.
+/// chunk the runner sends to its console, then sets the window's title to
+/// `<title>#<chunk's index>` for the runner to wait for.
 pub fn player(args: &[String]) -> ExitCode {
     let (Some(port), Some(title)) = (args.first(), args.get(1)) else {
         eprintln!("usage: conformance-player <port> <title>");
@@ -481,25 +519,23 @@ pub fn player(args: &[String]) -> ExitCode {
     };
     // The console itself, not the standard handles, which the terminal may
     // have been handed from whatever started it.
-    let (Ok(mut output), Ok(mut input)) = (
-        std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("CONOUT$"),
-        std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open("CONIN$"),
-    ) else {
+    let Ok(mut output) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("CONOUT$")
+    else {
         return ExitCode::FAILURE;
     };
     // SAFETY: the title outlives the call.
-    let _ = unsafe { SetConsoleTitleW(&HSTRING::from(title.as_str())) };
+    let titled = unsafe { SetConsoleTitleW(&HSTRING::from(title.as_str())) };
     // SAFETY: setting this process's console's code page.
-    let _ = unsafe { SetConsoleOutputCP(CP_UTF8) };
+    let utf8 = unsafe { SetConsoleOutputCP(CP_UTF8) };
+    // The mode programs run with: processed output, wrapping at the end of
+    // a line, VT processing, and a line feed that does not return the
+    // carriage.
     // SAFETY: the handle is this process's console output, open for the
     // call.
-    let _ = unsafe {
+    let moded = unsafe {
         SetConsoleMode(
             HANDLE(output.as_raw_handle()),
             ENABLE_PROCESSED_OUTPUT
@@ -508,14 +544,9 @@ pub fn player(args: &[String]) -> ExitCode {
                 | DISABLE_NEWLINE_AUTO_RETURN,
         )
     };
-    // SAFETY: the handle is this process's console input, open for the
-    // call.
-    let _ = unsafe {
-        SetConsoleMode(
-            HANDLE(input.as_raw_handle()),
-            CONSOLE_MODE(ENABLE_VIRTUAL_TERMINAL_INPUT.0),
-        )
-    };
+    if titled.is_err() || utf8.is_err() || moded.is_err() {
+        return ExitCode::FAILURE;
+    }
     let Ok(connection) = TcpStream::connect(format!("127.0.0.1:{port}")) else {
         return ExitCode::FAILURE;
     };
@@ -530,30 +561,24 @@ pub fn player(args: &[String]) -> ExitCode {
         if command == "quit" {
             return ExitCode::SUCCESS;
         }
-        let Some(hex) = command.strip_prefix("chunk ") else {
+        let Some((index, hex)) = command
+            .strip_prefix("chunk ")
+            .and_then(|rest| rest.split_once(' '))
+        else {
             return ExitCode::FAILURE;
         };
         let bytes: Vec<u8> = (0..hex.len())
             .step_by(2)
             .filter_map(|at| u8::from_str_radix(&hex[at..at + 2], 16).ok())
             .collect();
+        let marker = format!("\x1b]2;{title}#{index}\x07");
         if output
             .write_all(&bytes)
-            .and_then(|()| output.write_all(b"\x1b[6n"))
+            .and_then(|()| output.write_all(marker.as_bytes()))
             .and_then(|()| output.flush())
             .is_err()
+            || writer.write_all(b"written\n").is_err()
         {
-            return ExitCode::FAILURE;
-        }
-        let mut byte = [0u8; 1];
-        loop {
-            match input.read(&mut byte) {
-                Ok(1) if byte[0] == b'R' => break,
-                Ok(1) => {}
-                _ => return ExitCode::FAILURE,
-            }
-        }
-        if writer.write_all(b"done\n").is_err() {
             return ExitCode::FAILURE;
         }
     }

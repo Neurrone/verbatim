@@ -1,0 +1,12 @@
+{
+  "about": "Progress as programs draw it: a carriage-return bar, several rows rewritten above the cursor, a spinner with a message, and an elapsed timer ticking once a second.",
+  "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File crates\\verbatim-term-sim\\conformance\\recipes\\progress.ps1",
+  "steps": [
+    {
+      "wait": 9000
+    },
+    {
+      "quiet": 800
+    }
+  ]
+}

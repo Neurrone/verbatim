@@ -79,7 +79,7 @@ impl Terminal {
     #[must_use]
     pub fn new(flavor: Flavor, width: usize, height: usize, history: usize) -> Self {
         Self {
-            grid: Grid::new(width, height, history),
+            grid: Grid::new(width, height, history, flavor == Flavor::ConsoleHost),
             parser: vte::Parser::new(),
             flavor,
         }

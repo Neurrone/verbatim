@@ -1,0 +1,72 @@
+{
+  "about": "vim on a short file with no settings: moving by lines and a page, to the end and back, inserting, and leaving.",
+  "command": "\"C:\\Program Files\\Git\\usr\\bin\\vim.exe\" -u NONE -N -c \"set ruler\" C:\\Windows\\system.ini",
+  "steps": [
+    {
+      "quiet": 1500
+    },
+    {
+      "type": {
+        "text": "jjj",
+        "each": 200
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "G",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "gg",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "wwi",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "inserted ",
+        "each": 80
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": "\u001b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 400
+    },
+    {
+      "type": {
+        "text": ":q!\r",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    }
+  ]
+}
