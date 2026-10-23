@@ -1963,11 +1963,18 @@ text moves beneath it, and the row is then sought by its text
 matches a row's padding, so a longer row starting with the same text is
 not a match (a flood of numbered lines made "flood line 14" match "flood
 line 1499" down to "flood line 140" before reaching itself, exhausting
-the 20 matches, on 2026-10-08). Windows Terminal's `FindText` throws on
-padding, so there the row is sought without it. Neither terminal can
-search across a line break: the console host's `FindText` returns a range
-for such a needle whose text then cannot be read, and Windows Terminal's
-matches none (measured 2026-10-08).
+the 20 matches, on 2026-10-08). In Windows Terminal the row is sought
+without its padding, because its `FindText` was measured to throw on
+padding on 2026-10-08. That did not reproduce on 2026-10-24, in the
+pinned Windows Terminal 1.24.12741: a row sought with its padding was
+found in both terminals. A `FindText` that finds nothing returned a range
+rather than null, whose `GetText`, `CompareEndpoints` and
+`MoveEndpointByRange` fail, with no access violation. Neither terminal
+can search across a line break: the console host's `FindText` returns a
+range for such a needle whose text then cannot be read, and Windows
+Terminal's matches none (measured 2026-10-08). The redesigned reading
+(`docs/design/terminal-model.md`) does not use `FindText`: its read
+program keeps a range where the next read starts and never searches.
 
 Measured on 2026-10-07 for the tail read this replaced, against Windows
 Terminal and the console host each with a full scrollback of 9,001 lines:
@@ -1979,6 +1986,75 @@ could not look further than its bound. In a console host whose
 scrollback is not yet full, lines are slow to walk one at a time (about
 1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), which
 the screen read never does: it moves by many rows in one call.
+
+### A terminal's colours
+
+The first read of a focused terminal after each key reads the screen's
+colours too, each row's runs of one foreground and background
+(`docs/design/terminal-model.md`, section 5.7;
+`docs/crates/verbatim-uia-rops.md`, "The colours"). Measured on
+2026-10-24 on this machine (x64, debug build), 120 by 30 screens, in the
+console host and the pinned Windows Terminal 1.24.12741, each figure the
+median of 20 reads with the snapshot's own fields, against the same read
+without colours; instructions counted with `verbatim_uia_rops::counting`.
+
+What the providers answer decides the method. A cell's colour attribute
+is its own; a stretch answers its first cell's colour when every cell but
+its last has it, and "mixed" otherwise (neither provider compares the
+last cell); the format unit stops only at rows; and Windows Terminal does
+not implement `FindAttribute`. So a check of a stretch reads it and its
+last cell, four attribute reads.
+
+The candidates, on the worst case, every cell's colours differing from
+its neighbours', with reverse video on every other cell and true colour
+throughout (3,600 runs):
+
+- Every cell read separately in a program (a cell a `Move` and two
+  attribute reads, five instructions): 18,000 or so instructions in all,
+  four programs of under 4,900, 55 to 70 milliseconds in the console host
+  and 23 to 36 in Windows Terminal, the same for any screen, a plain one
+  included. Classically, cell by cell as the conformance runner reads:
+  0.9 seconds and 1.9.
+- Chunks of 8, 16, 30 or 120 cells each checked and read cell by cell
+  when of several colours, without a check of the row first: 19,000 to
+  27,000 instructions in the worst case, which costs about what every cell
+  read separately does; on Pi's colourful screen 7.6 to 17 milliseconds in
+  the console host and 12 to 15 in Windows Terminal, the 16- and 30-cell
+  chunks fastest, every plain row paying a check a chunk.
+- Halving a stretch of several colours down to its cells: in the worst
+  case about twice as many checks as cells, each four attribute reads, so
+  more than every cell read separately; rejected without building it.
+- What is built: each row checked whole, a row of several colours in
+  chunks of 16 cells, and a chunk of several cell by cell. A plain row
+  costs one check, and a row with a few colours a check a chunk and a
+  walk of the chunks its colours change in.
+
+What is built costs, beyond the read without colours, on each screen as
+a stream of the corpus leaves it:
+
+- A plain shell screen (bash's, 30 rows, 30 runs): 1,349 instructions in
+  the snapshot's own program; 2.6 milliseconds more in the console host
+  (2.9 against 0.35) and 1.6 in Windows Terminal (2.1 against 0.48).
+- PSReadLine's coloured command line (2 rows, 4 runs): 555 instructions;
+  1.9 milliseconds more in the console host and 1.2 in Windows Terminal.
+- Claude Code's screen (8 rows, 8 runs): 425 instructions; 1.0
+  milliseconds more in the console host and 0.7 in Windows Terminal.
+- Pi's colourful screen (30 rows and 39 runs in the console host, 23 rows
+  and 32 runs in Windows Terminal): two programs, 3,451 and 457
+  instructions, and 3,451 and 163; 8.0 milliseconds more in the console
+  host (8.3 against 0.35) and 4.9 in Windows Terminal (5.4 against 0.46).
+- The worst case above: six programs, the snapshot's of 4,151
+  instructions and five of 4,099 or fewer (24,644 in all), 72
+  milliseconds in the console host and 31 in Windows Terminal, about what
+  reading every cell separately costs.
+
+So the colours cost a key 1 to 3 milliseconds on an ordinary screen and up
+to 8 on a colourful one, on the first read after it only, read after the
+key has reached the program; section 10 of the design estimated 2 to 4
+for a colourful screen. Each check and cell is a provider call inside the
+program, about 2 to 6 microseconds each, the console host's the slower;
+no wake-up is added, the reads being in the read the key already causes,
+and a screen of many colours adds only round trips, one a program.
 
 ## Newer UIA features
 
@@ -2414,8 +2490,19 @@ share of the limit in brackets:
 - A terminal's snapshot (`terminal_snapshot`): 50 for a first read, and 90
   with a start and the caret and its line read in the same program, each
   taking four rows above its start (the history's block); without rows
-  above the start, 5 fewer. The program has no loop, so the count does not
-  grow with the history, the rows above or the lines read.
+  above the start, 5 fewer. Without colours the program has no loop, so
+  the count does not grow with the history, the rows above or the lines
+  read.
+- A terminal's colours, read with its snapshot on a 120 by 30 screen
+  ("A terminal's colours" above): 1,349 for a plain screen, in the
+  snapshot's own program; in the worst case, every cell's colours
+  differing from its neighbours', six programs of 4,151 (42 percent), the
+  snapshot's, and 4,099, 4,099, 4,099, 4,099 and 4,097, five rows each.
+  Each program reads rows while a worst-case row (887 instructions at 120
+  cells, about 7.4 a cell) still fits its budget of 4,600, so at widths up
+  to about 600 cells none comes near half the limit, whatever the screen
+  holds; a row wider than about 300 cells is read alone, and one wider
+  than about 1,300 cells exceeds the limit and is answered classically.
 - Say-all's batch of twenty lines: 683 (7 percent) a line on from a held
   position with its lines in three languages, each line's then read; 704
   for a first batch from the caret in one language. The count does not

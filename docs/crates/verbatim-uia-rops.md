@@ -465,8 +465,10 @@ breaks included, so comparisons are exact and the caller trims:
   end of the screen's second row to the start of the text, for the more
   distinctive of the two rows (not blank, then the longer), padded where
   the provider matches padding (so a longer row starting with the same
-  text does not match) and without its padding otherwise (Windows
-  Terminal's `FindText` throws on padding). A match counts when it starts
+  text does not match) and without its padding otherwise, as Windows
+  Terminal's `FindText` was measured to throw on padding on 2026-10-08,
+  which did not reproduce on 2026-10-24 (`docs/performance.md`, "A
+  terminal's upward search"). A match counts when it starts
   its row, the row holds exactly the row sought, and the other row of the
   pair is beside it; at most `SEARCH_MATCHES` (20) matches are checked
   (Dickson, 2026-10-07), and a search that throws is not found. A needle
@@ -1125,6 +1127,32 @@ runs as a named operation above, except these:
 - The arbitration probe and the checks of a console's and a Windows Forms
   window's provider: window messages and one-time checks made before the
   window's backend is known.
+
+The terminal reading, audited call by call on 2026-10-24:
+
+- The read program (`terminal_snapshot`): one program with the screen,
+  where the next read starts, the start's check, the rows above it, the
+  text, the first row, the caret's distance to the end, the caret and its
+  line, and the first rows' colours; the pattern is got from the element
+  inside it. Only a screen of many colours takes more, each further
+  program reading as many rows as stay under its budget. Classic only as
+  the per-call fallback.
+- The screen read the outpost runs until the redesign replaces it
+  (`terminal_screen`), with the caret and its line: one program.
+- The caret event's read in a terminal, and the caret read before a held
+  key: the caret read's program (`caret_read`), one program each.
+- The outpost's terminal code (`crates/verbatim-outpost/src/terminal.rs`
+  and `terminal/`): no UIA call of its own; it runs the screen read above.
+  Around it, the text patterns are fetched once a node and kept (above),
+  the class name comes from the element's cache, the console window's
+  class from `GetClassName`, and the caret's positions are kept as the
+  ranges the program returned, all without a call.
+- The conformance runner (`xtask`) reads the caret's line, and the colours
+  cell by cell, classically, as an independent reference against which
+  the program's colours are checked; it is a measuring tool, not
+  Verbatim.
+
+No sequence was found that should be one program and is not.
 
 ## A stalled or exited provider
 
