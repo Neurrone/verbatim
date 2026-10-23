@@ -59,7 +59,8 @@ pub enum Flavor {
 }
 
 /// What the read program asks: where to start, the screen's height as
-/// last found, and whether to read the whole text.
+/// last found, whether to read the whole text, and how many rows to read
+/// above the start.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Query {
     /// Where the last read said to start; `None` for a first read.
@@ -69,6 +70,9 @@ pub struct Query {
     pub screen_rows: u32,
     /// Whether to read the whole text from the document's start.
     pub whole: bool,
+    /// How many rows above the start to begin the read, as far as the
+    /// document's start allows; ignored when reading the whole text.
+    pub above: u32,
 }
 
 /// More lines than any terminal holds.
@@ -301,6 +305,13 @@ impl Provider<'_> {
                 Ok(_) | Err(Refused) => shrank = true,
             }
         }
+        let mut above = 0;
+        if query.above > 0 && !query.whole {
+            let rows = isize::try_from(query.above).unwrap_or(isize::MAX);
+            let (moved_to, moved) = self.move_rows(start.start, -rows)?;
+            start = Range::at(moved_to);
+            above = u32::try_from(-moved).unwrap_or(0);
+        }
         let text = self.text(Range {
             start: start.start,
             end: document.end,
@@ -328,6 +339,7 @@ impl Provider<'_> {
             caret_line,
             caret_column,
             next_start: next,
+            above,
         };
         Ok((snapshot, start.start.row))
     }

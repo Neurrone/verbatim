@@ -11,8 +11,11 @@
 //! index in the read that found it. Reads start where the last read said
 //! to start, the top of the screen as last read, so a row that did not
 //! move has a known shift between two reads (its index less the rows the
-//! last read held above that start); the history's rotation shows as kept
-//! rows shifted up from it.
+//! last read held above that start). Once the history is full, the
+//! buffer rotates under those fixed coordinates, which no provider
+//! reports, so each read also takes a few history rows above its start,
+//! the block, and the rotation is how far the block moved up (section
+//! 4.3, item 5).
 
 use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
@@ -28,6 +31,15 @@ pub const LINGERING_MS: u64 = 2000;
 /// terminal's buffer holds by default (9,001 rows), so it is the
 /// terminal's own history that bounds it in practice.
 const KNOWN_LIMIT: usize = 32_768;
+
+/// How many history rows above the kept start the block holds at least
+/// (section 4.3, item 5).
+const BLOCK: usize = 4;
+
+/// How many of the block's rows have text at least: the block extends
+/// upward past blank rows until it holds this many, or a screen's height
+/// of rows.
+const BLOCK_TEXT: usize = 2;
 
 /// What one read of a terminal returned, as the read program gives it
 /// (`verbatim_uia_rops::Snapshot`), with its text as UTF-8 and the time
@@ -64,6 +76,10 @@ pub struct Read {
     pub caret_column: usize,
     /// When the read was taken, in milliseconds on the reader's clock.
     pub at_ms: u64,
+    /// How many rows the read holds above the start it was asked for
+    /// ([`TerminalMemory::above`], or [`Outcome::search_above`]): fewer
+    /// than asked when the document's start came first.
+    pub above: usize,
 }
 
 /// A row of the memory: one row of the last read.
@@ -157,6 +173,9 @@ pub enum OldRow {
     },
     /// Above the read: it scrolled or rotated past the read's start.
     Above,
+    /// Out of the buffer: it rotated past the read's start, which is the
+    /// document's start, as the full history rotated.
+    Left,
 }
 
 /// A switch of screens (section 5.8), or a clear that looks like one.
@@ -202,6 +221,12 @@ pub struct Outcome {
     /// read instead (section 4.2). Nothing else is set, and the memory is
     /// unchanged.
     pub whole_document: bool,
+    /// The history's block is not where it was, and no kept row tells how
+    /// far the history rotated, so the caller reads again from the same
+    /// start with this many rows above it, and gives that read instead
+    /// (section 4.3, item 5). Nothing else is set, and the memory is
+    /// unchanged.
+    pub search_above: Option<usize>,
     /// The memory's first read: every row is new, and nothing was heard
     /// before it.
     pub first: bool,
@@ -211,12 +236,13 @@ pub struct Outcome {
     pub old: Vec<OldRow>,
     /// The read's lines.
     pub lines: Vec<Line>,
-    /// How many rows the history rotated: how far the topmost kept row
-    /// moved up from where it would be had nothing moved.
+    /// How many rows the history rotated: how far the block moved up, or
+    /// the topmost kept row when the block did not show it.
     pub rotation: usize,
-    /// A whole-document read did not find the last screen in a document
-    /// longer than a screen: the history overflowed, and more went by than
-    /// it holds (section 4.3, item 5).
+    /// More went by than the history holds (section 4.3, item 5): a
+    /// whole-document read did not find the last screen in a document
+    /// longer than a screen, or a read reaching the document's start did
+    /// not find the block.
     pub overflowed: bool,
     /// A switch of screens.
     pub switch: Switch,
@@ -256,6 +282,16 @@ struct Screen {
     marks: Vec<Anchor>,
     /// Whether the first row continues a line that starts above it.
     continued: bool,
+    /// How many rows directly above the screen's top form the block, whose
+    /// place the next read checks (section 4.3, item 5).
+    block: usize,
+    /// How many rows the next read takes above its start: the block, and
+    /// more while the block is still to be extended.
+    above: usize,
+    /// For each row, whether its text was read since the switch that began
+    /// this memory: what a restore of the memory kept aside checks
+    /// (section 5.8).
+    read_since: Vec<bool>,
 }
 
 impl Screen {
@@ -267,15 +303,58 @@ impl Screen {
     fn has_text(rows: &[Row]) -> bool {
         rows.iter().any(|row| !row.is_blank())
     }
+
+    /// Takes as the block the rows directly above the screen's top: at
+    /// least [`BLOCK`], extended upward past blank rows to take in
+    /// [`BLOCK_TEXT`] with text, at most a screen's height, and as many as
+    /// the read holds; and asks the next read for more rows above its start
+    /// while the block is still short of that and the history goes on
+    /// above the read.
+    fn take_block(&mut self, at_document_start: bool) {
+        let top = self.screen_start();
+        let limit = self.height.max(BLOCK);
+        let (mut count, mut texts) = (0, 0);
+        while count < top && count < limit && (count < BLOCK || texts < BLOCK_TEXT) {
+            count += 1;
+            if !self.rows[top - count].is_blank() {
+                texts += 1;
+            }
+        }
+        let complete = (count >= BLOCK && texts >= BLOCK_TEXT)
+            || count >= limit
+            || (count == top && at_document_start);
+        self.block = count;
+        self.above = if complete {
+            count
+        } else {
+            (count + BLOCK).min(limit)
+        };
+    }
 }
 
-/// Why the memory asked for the whole document.
+/// Why the memory asked for the whole document, or, for a read that
+/// reached it, why it was read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Whole {
     /// The read's start was refused: the text shrank, as after a clear.
     Shrank,
     /// No row of the last screen was in the read.
     Lost,
+    /// A read reaching the document's start did not find the block, so the
+    /// history rotated past it: an old row kept, its index in the read less
+    /// its index in the memory, moved down no further than this; one that
+    /// did was drawn again or repeats text.
+    Unfound(isize),
+}
+
+/// What the memory asked for, until the read comes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Pending {
+    /// The whole document.
+    Whole(Whole),
+    /// A read from the same start with this many rows above it, to find
+    /// the block.
+    Search(usize),
 }
 
 /// The memory of one terminal (section 4.1), kept while the terminal
@@ -288,8 +367,8 @@ pub struct TerminalMemory {
     /// The main screen's memory, kept aside while the alternate screen is
     /// up.
     aside: Option<Screen>,
-    /// Why the whole document was asked for, until it is read.
-    pending: Option<Whole>,
+    /// What was asked for, until it is read.
+    pending: Option<Pending>,
 }
 
 impl TerminalMemory {
@@ -297,6 +376,14 @@ impl TerminalMemory {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// How many rows the next read takes above its start (section 4.3,
+    /// item 5), which the read program is asked for. A first read takes
+    /// [`BLOCK`] rows above the screen, so that the block is known at once.
+    #[must_use]
+    pub fn above(&self) -> usize {
+        self.screen.as_ref().map_or(BLOCK, |screen| screen.above)
     }
 
     /// The rows of the last read.
@@ -357,11 +444,11 @@ impl TerminalMemory {
     }
 
     /// Aligns `read` with the memory, and takes it as the memory's last
-    /// read, unless [`Outcome::whole_document`] asks for the whole
-    /// document first.
+    /// read, unless [`Outcome::whole_document`] or [`Outcome::search_above`]
+    /// asks for another read first.
     #[expect(
         clippy::too_many_lines,
-        reason = "one read's steps in order: switches, the whole document, the alignment, the anchors"
+        reason = "one read's steps in order: switches, the rotation, the whole document, the alignment, the anchors"
     )]
     pub fn read(&mut self, read: &Read) -> Outcome {
         let last_height = self.screen.as_ref().map(|screen| screen.height);
@@ -369,7 +456,20 @@ impl TerminalMemory {
         let rows = split_rows(&read.text, width, read.at_ms);
         let caret = caret_row(rows.len(), read.caret_rows_to_end);
         let pending = self.pending.take();
-        let whole = pending.filter(|_| read.at_document_start && !read.from_start);
+        let whole = match pending {
+            Some(Pending::Whole(cause)) if read.at_document_start && !read.from_start => {
+                Some(cause)
+            }
+            // A refused start, the read taken from as far above where the
+            // next read starts as the document's start: the whole document,
+            // read at once.
+            _ if read.shrank && read.at_document_start && !read.alternate => Some(Whole::Shrank),
+            _ => None,
+        };
+        let searching = match pending {
+            Some(Pending::Search(asked)) if read.from_start => Some(asked),
+            _ => None,
+        };
         let shape = Outcome {
             caret,
             width,
@@ -378,13 +478,15 @@ impl TerminalMemory {
         };
         let Some(current) = self.screen.take() else {
             self.alternate = read.alternate;
-            let screen = Screen {
+            let mut screen = Screen {
+                read_since: vec![false; rows.len()],
                 rows,
                 height,
                 at_document_start: read.at_document_start,
                 caret,
                 ..Screen::default()
             };
+            screen.take_block(read.at_document_start);
             let outcome = Outcome {
                 first: true,
                 rows: vec![NewRow::New; screen.rows.len()],
@@ -395,10 +497,21 @@ impl TerminalMemory {
             return outcome;
         };
         let opened = read.alternate && !self.alternate;
+        let own = align(&current, &rows, read, height, caret, whole, searching);
+        // A memory kept aside is not restored when the read shows, where
+        // they were, rows read since the switch: the screen never changed,
+        // as when the history was erased (section 5.8).
+        let shows_read_since = match &own {
+            Aligned::Done(classified) => classified.new.iter().any(|kind| {
+                matches!(kind, NewRow::Kept { from, moved: false }
+                    if current.read_since[*from] && !current.rows[*from].is_blank())
+            }),
+            Aligned::Search(_) => false,
+        };
         let restored = self
             .aside
             .as_ref()
-            .filter(|_| !read.alternate)
+            .filter(|_| !read.alternate && !shows_read_since)
             .map(|aside| {
                 // The read started where the alternate screen's memory said,
                 // so where the kept memory's rows would be is not known.
@@ -406,7 +519,13 @@ impl TerminalMemory {
                     from_start: false,
                     ..read.clone()
                 };
-                classify(aside, &rows, &unanchored, height, caret, whole, true)
+                let how = How {
+                    base: None,
+                    rotation: None,
+                    whole,
+                    restoring: true,
+                };
+                classify(aside, &rows, &unanchored, height, caret, how)
             })
             .filter(|attempt| attempt.restores);
         let switch = if restored.is_some() {
@@ -416,9 +535,18 @@ impl TerminalMemory {
         } else {
             Switch::None
         };
-        let classified = match restored {
-            Some(attempt) => attempt,
-            None => classify(&current, &rows, read, height, caret, whole, false),
+        let classified = match (restored, own) {
+            (Some(attempt), _) => attempt,
+            (None, Aligned::Done(classified)) => classified,
+            (None, Aligned::Search(above)) => {
+                // The memory is unchanged until the block is found.
+                self.pending = Some(Pending::Search(above));
+                self.screen = Some(current);
+                return Outcome {
+                    search_above: Some(above),
+                    ..shape
+                };
+            }
         };
         if whole.is_none() {
             let cause = if read.shrank && !read.at_document_start {
@@ -430,7 +558,7 @@ impl TerminalMemory {
             };
             if let Some(cause) = cause {
                 // The memory is unchanged until the whole document is read.
-                self.pending = Some(cause);
+                self.pending = Some(Pending::Whole(cause));
                 self.screen = Some(current);
                 return Outcome {
                     whole_document: true,
@@ -441,6 +569,10 @@ impl TerminalMemory {
         // A memory kept aside is restored when the read matches it, and is
         // replaced at the next switch when the main screen came back
         // without it, as after a clear (section 5.8).
+        // The main screen back without the memory kept aside shows other
+        // rows than the alternate screen did: none of its rows is one of
+        // the alternate screen's rewritten.
+        let unrestored = switch == Switch::None && !read.alternate && self.aside.is_some();
         let mut reference = if switch == Switch::Closed {
             self.aside.take().unwrap_or(current)
         } else {
@@ -450,13 +582,23 @@ impl TerminalMemory {
             current
         };
         let Classified {
-            new: kinds,
-            old: fates,
+            new: mut kinds,
+            old: mut fates,
             rotation,
             shift,
             overflowed,
             ..
         } = classified;
+        if unrestored {
+            for (to, kind) in kinds.iter_mut().enumerate() {
+                if let NewRow::Rewritten { from, .. } = *kind {
+                    *kind = NewRow::New;
+                    if fates.get(from) == Some(&OldRow::Rewritten(to)) {
+                        fates[from] = OldRow::Gone { lingering: false };
+                    }
+                }
+            }
+        }
         // The read's first row continues a line from above it when the old
         // row it was did (section 4.3, a row at a read's top).
         let continued = match kinds.first() {
@@ -489,8 +631,26 @@ impl TerminalMemory {
         );
         next.continued = continued;
         if overflowed {
-            next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
-            next.marks.clear();
+            // Where the history went is not known: each anchor is checked
+            // against its line where the alignment put it, and dropped if
+            // its line is gone (section 4.3, item 5), the review position
+            // then going to the caret.
+            next.review = reference
+                .review
+                .and_then(|anchor| {
+                    let from = usize::try_from(anchor.row).ok()?;
+                    match fates.get(from)? {
+                        OldRow::Kept(to) => Some(anchor_at(&next.rows, *to, anchor.column)),
+                        _ => None,
+                    }
+                })
+                .or_else(|| caret.map(|row| anchor_at(&next.rows, row, read.caret_column)));
+            next.marks = reference
+                .marks
+                .iter()
+                .filter(|mark| mark.row >= 0)
+                .filter_map(|&mark| map_mark(mark, &fates, shift, &next.rows))
+                .collect();
         } else {
             next.review = reference
                 .review
@@ -503,12 +663,17 @@ impl TerminalMemory {
         }
         if opened {
             // The memory before the switch is kept aside with its anchors;
-            // on the new screen the review position is at the caret.
+            // on the new screen the review position is at the caret, and
+            // every row not kept from before the switch was read since it.
             self.aside = Some(reference);
             next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
             next.marks.clear();
             next.known.clear();
+            for (flag, kind) in next.read_since.iter_mut().zip(&kinds) {
+                *flag = !matches!(kind, NewRow::Kept { .. });
+            }
         }
+        next.take_block(read.at_document_start);
         self.alternate = read.alternate;
         self.screen = Some(next);
         Outcome {
@@ -522,6 +687,217 @@ impl TerminalMemory {
             ..shape
         }
     }
+
+    /// Takes `read` as a first read, as when the whole document or a search
+    /// for the block was asked for and the caller will not read it, with
+    /// "report new output" off (section 4.2). The command marks are kept:
+    /// each moved as the read's start moved, with no rotation, and kept
+    /// when its line is there, or when it is above the read, where it
+    /// cannot be checked.
+    pub fn restart(&mut self, read: &Read) -> Outcome {
+        let marks: Vec<Anchor> = self
+            .screen
+            .as_ref()
+            .and_then(|screen| {
+                let base = base_of(screen, read)?;
+                Some(
+                    screen
+                        .marks
+                        .iter()
+                        .map(|mark| Anchor {
+                            row: mark.row + base,
+                            ..*mark
+                        })
+                        .collect(),
+                )
+            })
+            .unwrap_or_default();
+        *self = Self::new();
+        let outcome = self.read(read);
+        if let Some(screen) = &mut self.screen {
+            let rows = &screen.rows;
+            screen.marks = marks
+                .into_iter()
+                .filter(|mark| match usize::try_from(mark.row) {
+                    Ok(row) => {
+                        row < rows.len()
+                            && line_start(rows, row) == row
+                            && rows[row].line_hash == mark.line_hash
+                    }
+                    Err(_) => true,
+                })
+                .collect();
+        }
+        outcome
+    }
+}
+
+/// What aligning a read with one screen's memory gave: the classification,
+/// or a read from further above to find the block, with how many rows above
+/// the start.
+enum Aligned {
+    Done(Classified),
+    Search(usize),
+}
+
+/// Where a row of `memory` that did not move is in `read`, its index there
+/// less its index in the memory, when the read started where the memory's
+/// last read said to start.
+fn base_of(memory: &Screen, read: &Read) -> Option<isize> {
+    if !read.from_start {
+        return None;
+    }
+    let count = memory.rows.len();
+    let above = isize_of(read.above);
+    if count >= memory.height || memory.at_document_start {
+        Some(above - isize_of(memory.screen_start()))
+    } else if read.at_document_start && read.above == 0 {
+        // The start may have stopped at the document's start, above where
+        // the memory's rows begin by a number of rows not known.
+        None
+    } else {
+        Some(above + isize_of(memory.height - count))
+    }
+}
+
+/// Whether the rows of `rows` from `at` hold `block`, a run of hashes; in
+/// a read from the document's start, the rows above which rotated out of
+/// the buffer, so `at` is negative, its rows that are left.
+fn block_at(block: &[u64], rows: &[Row], at: isize, at_document_start: bool) -> bool {
+    let cut = usize::try_from(-at).unwrap_or(0);
+    if cut >= block.len() || (cut > 0 && !at_document_start) {
+        return false;
+    }
+    let from = usize::try_from(at).unwrap_or(0);
+    rows.get(from..from + block.len() - cut)
+        .is_some_and(|found| {
+            found
+                .iter()
+                .zip(&block[cut..])
+                .all(|(row, hash)| row.hash == *hash)
+        })
+}
+
+/// Whether what of `block` the rows of `rows` would show, were it at `at`,
+/// they show: a rotation measured from kept rows must agree with the block
+/// where the read shows it.
+fn shown_part_agrees(block: &[u64], rows: &[Row], at: isize) -> bool {
+    block.iter().enumerate().all(|(index, hash)| {
+        usize::try_from(at + isize_of(index))
+            .ok()
+            .and_then(|to| rows.get(to))
+            .is_none_or(|row| row.hash == *hash)
+    })
+}
+
+/// Aligns the rows of `read` with `memory`, finding how far the history
+/// rotated (section 4.3, item 5): when the read's rows above its start show
+/// the block where it was, nothing rotated; otherwise the topmost kept row
+/// that moved up tells, when it is trustworthy; otherwise the block is
+/// searched for from further above, a screen, then four times as far each
+/// time, and found at the lowest place it is, the smallest rotation
+/// consistent with the text; a read reaching the document's start without
+/// it means the history overflowed.
+fn align(
+    memory: &Screen,
+    rows: &[Row],
+    read: &Read,
+    height: usize,
+    caret: Option<usize>,
+    whole: Option<Whole>,
+    searching: Option<usize>,
+) -> Aligned {
+    let base = base_of(memory, read);
+    let how = |rotation| How {
+        base,
+        rotation,
+        whole,
+        restoring: false,
+    };
+    let block = memory.block;
+    let top = memory.screen_start();
+    let hashes: Vec<u64> = memory.rows[top - block..top]
+        .iter()
+        .map(|row| row.hash)
+        .collect();
+    if whole == Some(Whole::Lost) && block > 0 {
+        // The whole document, read because no row of the last screen was in
+        // the read: the block, where it is lowest, anchors the old rows. No
+        // row of the history moves down, so when the memory's rows began at
+        // the document's start, the block is no lower than it was.
+        let lowest = if memory.at_document_start {
+            isize_of(top - block)
+        } else {
+            isize_of(rows.len()) - 1
+        };
+        let found = (1 - isize_of(block)..=lowest)
+            .rev()
+            .find(|&at| block_at(&hashes, rows, at, true));
+        if let Some(at) = found {
+            let how = How {
+                base: Some(at + isize_of(block) - isize_of(top)),
+                rotation: Some(0),
+                whole,
+                restoring: false,
+            };
+            return Aligned::Done(classify(memory, rows, read, height, caret, how));
+        }
+    }
+    let Some(base) = base.filter(|_| block > 0 && whole.is_none() && !read.alternate) else {
+        return Aligned::Done(classify(memory, rows, read, height, caret, how(None)));
+    };
+    // Where the block is when nothing rotated.
+    let in_place = base + isize_of(top - block);
+    if searching.is_none() {
+        if block_at(&hashes, rows, in_place, read.at_document_start) {
+            return Aligned::Done(classify(memory, rows, read, height, caret, how(Some(0))));
+        }
+        let free = classify(memory, rows, read, height, caret, how(None));
+        let agrees = shown_part_agrees(&hashes, rows, in_place - isize_of(free.rotation));
+        // With no row of the last screen kept, the whole document is read
+        // instead (section 4.2).
+        let lost = free.old_had_text && !free.kept_text && !read.at_document_start;
+        if free.trusted && agrees || lost {
+            return Aligned::Done(free);
+        }
+        if !read.at_document_start {
+            return Aligned::Search(block + height);
+        }
+    }
+    // The read holds every row from as far above as it reached: the block
+    // is in it, or the history rotated past it.
+    let lowest = if read.at_document_start {
+        1 - isize_of(block)
+    } else {
+        0
+    };
+    let found = (lowest..=in_place)
+        .rev()
+        .find(|&at| block_at(&hashes, rows, at, read.at_document_start));
+    if let Some(at) = found {
+        let rotation = usize::try_from(in_place - at).unwrap_or(0);
+        return Aligned::Done(classify(
+            memory,
+            rows,
+            read,
+            height,
+            caret,
+            how(Some(rotation)),
+        ));
+    }
+    if read.at_document_start {
+        let how = How {
+            base: None,
+            rotation: None,
+            // The block is not even partly in the read, so the old screen's
+            // first row, just below it, is now above the read's second row.
+            whole: Some(Whole::Unfound(-isize_of(top))),
+            restoring: false,
+        };
+        return Aligned::Done(classify(memory, rows, read, height, caret, how));
+    }
+    let asked = searching.unwrap_or(block + height);
+    Aligned::Search(block + asked.saturating_sub(block).max(1) * 4)
 }
 
 /// A kept pair: an old row's index and the new row's it became.
@@ -546,6 +922,24 @@ struct Classified {
     /// kept aside matches the read.
     restores: bool,
     overflowed: bool,
+    /// Whether the rotation was measured from the topmost kept row and
+    /// that row is trustworthy: it moved up, and its text is on no other
+    /// row of the old screen or of the read.
+    trusted: bool,
+}
+
+/// How a read is aligned with a memory.
+#[derive(Clone, Copy)]
+struct How {
+    /// Where a row that did not move is in the read: its index there less
+    /// its index in the memory; `None` when not known.
+    base: Option<isize>,
+    /// How far the history rotated, when the block showed it.
+    rotation: Option<usize>,
+    /// Why the read is of the whole document, or reached its start.
+    whole: Option<Whole>,
+    /// Whether the memory is one kept aside, matched against the read.
+    restoring: bool,
 }
 
 /// Aligns the rows of `read` with `memory` (section 4.3).
@@ -559,24 +953,16 @@ fn classify(
     read: &Read,
     height: usize,
     caret: Option<usize>,
-    whole: Option<Whole>,
-    restoring: bool,
+    how: How,
 ) -> Classified {
+    let How {
+        base,
+        whole,
+        restoring,
+        ..
+    } = how;
     let old = &memory.rows;
     let (count, total) = (old.len(), rows.len());
-    // Where a row that did not move is in this read, when the read
-    // started where the last one said to.
-    let base = if read.from_start {
-        if count >= memory.height || memory.at_document_start {
-            Some(-isize_of(memory.screen_start()))
-        } else if read.at_document_start {
-            None
-        } else {
-            Some(isize_of(memory.height - count))
-        }
-    } else {
-        None
-    };
     // The old rows aligned: the old screen; when the read started
     // elsewhere than the last read said, as after a refused start, rows
     // above it may be in the read too, so a screen more, except in a
@@ -587,13 +973,21 @@ fn classify(
         memory.screen_start()
     };
     let old_screen = &old[start..];
-    let guess = base.unwrap_or_else(|| isize_of(total) - isize_of(count));
+    // Where a row that did not move is when the block showed the rotation.
+    let known = base
+        .zip(how.rotation)
+        .map(|(base, rotation)| base - isize_of(rotation));
+    let guess = known
+        .or(base)
+        .unwrap_or_else(|| isize_of(total) - isize_of(count));
     // The windows (item 2): the old screen and a screen more at the top,
-    // and a screen at the end; a whole-document read is aligned whole.
+    // from where the old screen would be, and a screen at the end; a
+    // whole-document read is aligned whole.
     let window: Vec<usize> = if whole.is_some() {
         (0..total).collect()
     } else {
-        let top = total.min(old_screen.len() + height);
+        let at = base.map_or(0, |_| usize::try_from(guess + isize_of(start)).unwrap_or(0));
+        let top = total.min(at + old_screen.len() + height);
         let bottom = top.max(total.saturating_sub(height));
         (0..top).chain(bottom..total).collect()
     };
@@ -604,21 +998,49 @@ fn classify(
         .map(|from| (from, old[from].hash))
         .collect();
     let new_hashes: Vec<u64> = rows.iter().map(|row| row.hash).collect();
+    // When the block showed how far the history rotated, a row now above
+    // the screen is an old screen row only where that rotation put it: no
+    // program writes into the history, so the old screen's rows found
+    // elsewhere there repeat text.
+    let history_end = total.saturating_sub(height);
+    let in_place = |to: usize| {
+        known.is_some_and(|shift| {
+            usize::try_from(isize_of(to) - shift)
+                .is_ok_and(|from| from >= start && from < count && old[from].hash == rows[to].hash)
+        })
+    };
     let text_window: Vec<usize> = window
         .iter()
         .copied()
-        .filter(|&to| !rows[to].is_blank())
+        .filter(|&to| {
+            !rows[to].is_blank() && (known.is_none() || to >= history_end || in_place(to))
+        })
         .collect();
     let kept = align::keep(&old_text, &new_hashes, &text_window, guess);
     let topmost = kept
         .first()
         .map(|&(from, to)| isize_of(to) - isize_of(from));
-    let (rotation, shift) = match (base, topmost) {
-        (Some(base), Some(top)) if top < base => (usize::try_from(base - top).unwrap_or(0), top),
-        (Some(base), _) => (0, base),
-        (None, Some(top)) => (0, top),
-        (None, None) => (0, guess),
+    let (rotation, shift) = match (base, how.rotation, topmost) {
+        (Some(base), Some(rotation), _) => (rotation, base - isize_of(rotation)),
+        (Some(base), None, Some(top)) if top < base => {
+            (usize::try_from(base - top).unwrap_or(0), top)
+        }
+        (Some(base), None, _) => (0, base),
+        (None, _, Some(top)) => (0, top),
+        (None, _, None) => (0, guess),
     };
+    // Whether the text of an old row is on no other row of the old screen
+    // or of the read.
+    let unique = |from: usize| {
+        let hash = old[from].hash;
+        old_text.iter().filter(|(_, old)| *old == hash).count() == 1
+            && rows.iter().filter(|row| row.hash == hash).count() == 1
+    };
+    // The topmost kept row tells the rotation only when it moved up and
+    // its text is unique.
+    let trusted = base
+        .zip(kept.first())
+        .is_some_and(|(base, &(from, to))| isize_of(to) - isize_of(from) < base && unique(from));
     let mut new = vec![NewRow::New; total];
     let mut fates = vec![OldRow::Gone { lingering: false }; count];
     for &(from, to) in &kept {
@@ -708,7 +1130,8 @@ fn classify(
                 new[to] = NewRow::Kept { from, moved: false };
                 OldRow::Kept(to)
             }
-            None if to < 0 && !read.at_document_start => OldRow::Above,
+            None if to < 0 && read.at_document_start => OldRow::Left,
+            None if to < 0 => OldRow::Above,
             None => OldRow::Gone { lingering: false },
         };
     }
@@ -787,20 +1210,42 @@ fn classify(
     let top_kept = kept.first().map_or(total, |&(_, to)| to);
     // Rows above found again by a whole-document read, or above a memory
     // kept aside and restored, are history; above a normal read, a reprint.
+    // Rows above where the old rows begin, in a read that started where the
+    // last said, are history too: no program writes into the history, and
+    // they are older than any row the memory read. After a read reaching
+    // the document's start did not find the block, the rows above a kept
+    // row now in the history, whose text is on no other row of the old
+    // screen or of the read, are older than it; with no such row, as when
+    // only a footer on the screen was kept, they may be output that went by
+    // unread, and how much went by is not known: the history overflowed.
+    let unfound = matches!(whole, Some(Whole::Unfound(_)));
+    let history_kept = match whole {
+        Some(Whole::Unfound(furthest)) => kept
+            .iter()
+            .find(|&&(from, to)| {
+                to + height < total && unique(from) && isize_of(to) - isize_of(from) <= furthest
+            })
+            .map(|&(_, to)| to),
+        _ => None,
+    };
     let earlier = whole == Some(Whole::Lost) || restoring;
     let mut candidates = Vec::new();
     for to in 0..top_kept {
         if new[to] != NewRow::New || rows[to].is_blank() {
             continue;
         }
-        if earlier && kept_text && isize_of(to) < shift {
+        if unfound {
+            if history_kept.is_some_and(|kept| to < kept) {
+                new[to] = NewRow::Earlier;
+            }
+        } else if (earlier && kept_text || base.is_some()) && isize_of(to) < shift {
             new[to] = NewRow::Earlier;
         } else {
             candidates.push(to);
         }
     }
     let mut found_known = false;
-    if (kept_text || whole.is_some()) && !candidates.is_empty() {
+    if (kept_text || whole.is_some()) && !unfound && !candidates.is_empty() {
         let first_kept = kept.first().map_or(count, |&(from, _)| from);
         let mut known: Vec<u64> = memory.known.iter().copied().collect();
         known.extend(old[..first_kept].iter().map(|row| row.hash));
@@ -821,8 +1266,19 @@ fn classify(
             };
         }
     }
-    let overflowed =
-        whole == Some(Whole::Lost) && old_had_text && !kept_text && !found_known && total > height;
+    // A read of the whole document that finds no row of the old screen in a
+    // document longer than a screen: more went by than the history holds.
+    // So does a read from the kept start reaching the document's start
+    // whose only old rows kept moved down with the end of the text, as a
+    // footer does: the rows above it went by.
+    let stayed = base.is_some_and(|base| {
+        kept.iter()
+            .any(|&(from, to)| isize_of(to) - isize_of(from) <= base)
+    });
+    let whole_read = whole == Some(Whole::Lost) && !kept_text
+        || whole.is_none() && base.is_some() && read.at_document_start && !restoring && !stayed;
+    let overflowed = unfound && history_kept.is_none()
+        || whole_read && old_had_text && !found_known && total > height;
     // Gone rows that linger, and lingering rows taken back (section 4.1).
     let blank = !Screen::has_text(rows);
     let old_caret = memory.caret;
@@ -831,12 +1287,14 @@ fn classify(
             continue;
         }
         let at = isize_of(from) + shift;
-        // A row that went past the read's start is in the history, unless
-        // the read starts at the document's start, which has none above.
+        // A row that went past the read's start is in the history, or out
+        // of the buffer when the read starts at the document's start.
         if at < 0 {
-            if !read.at_document_start {
-                fates[from] = OldRow::Above;
-            }
+            fates[from] = if read.at_document_start {
+                OldRow::Left
+            } else {
+                OldRow::Above
+            };
             continue;
         }
         if old[from].is_blank() {
@@ -880,6 +1338,7 @@ fn classify(
         kept_text,
         restores,
         overflowed,
+        trusted,
     }
 }
 
@@ -953,6 +1412,16 @@ fn remember(
     while known.len() > KNOWN_LIMIT {
         known.pop_front();
     }
+    // A row kept carries whether it was read since the switch that began
+    // the memory; any other row with text was read now.
+    let read_since = kinds
+        .iter()
+        .map(|kind| match *kind {
+            NewRow::Kept { from, .. } => memory.read_since.get(from).copied().unwrap_or(false),
+            NewRow::New | NewRow::Rewritten { .. } | NewRow::Returned { .. } => true,
+            NewRow::Reprint | NewRow::Earlier => false,
+        })
+        .collect();
     Screen {
         rows,
         height,
@@ -963,6 +1432,9 @@ fn remember(
         review: None,
         marks: Vec::new(),
         continued: false,
+        block: 0,
+        above: 0,
+        read_since,
     }
 }
 
@@ -998,7 +1470,7 @@ fn map_anchor(
             OldRow::Kept(to) | OldRow::Rewritten(to) => Some(isize_of(*to)),
             OldRow::Above => Some(row + shift),
             // A row written over keeps it at its place.
-            OldRow::Gone { .. } => {
+            OldRow::Gone { .. } | OldRow::Left => {
                 Some(row + shift).filter(|&to| to >= 0 && to < isize_of(rows.len()))
             }
         }
@@ -1040,7 +1512,7 @@ fn map_mark(mark: Anchor, fates: &[OldRow], shift: isize, rows: &[Row]) -> Optio
                     ..mark
                 });
             }
-            OldRow::Rewritten(_) | OldRow::Gone { .. } => return None,
+            OldRow::Rewritten(_) | OldRow::Gone { .. } | OldRow::Left => return None,
         },
     };
     let first = line_start(rows, to);

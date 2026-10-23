@@ -8,13 +8,15 @@ use verbatim_term_sim::{Flavor, Query, Terminal};
 use super::{NewRow, OldRow, Outcome, Read, Switch, TerminalMemory};
 
 /// A terminal watched as the outpost watches it: each read starts where
-/// the last said, with the height the memory found, and a read the memory
-/// asks for is taken at once.
+/// the last said, as many rows above it as the memory asks, with the height
+/// the memory found, and a read the memory asks for is taken at once.
 struct Watch {
     terminal: Terminal,
     memory: TerminalMemory,
     query: Query,
     at_ms: u64,
+    /// How many snapshots the last read took.
+    taken: usize,
 }
 
 /// Milliseconds between two reads.
@@ -26,8 +28,12 @@ impl Watch {
         let mut watch = Self {
             terminal: Terminal::new(flavor, width, height, history),
             memory: TerminalMemory::new(),
-            query: Query::default(),
+            query: Query {
+                above: u32::try_from(TerminalMemory::new().above()).expect("a few rows"),
+                ..Query::default()
+            },
             at_ms: 0,
+            taken: 0,
         };
         let first = watch.read();
         assert!(first.first, "the first read is the memory's first");
@@ -48,8 +54,10 @@ impl Watch {
     fn read(&mut self) -> Outcome {
         self.at_ms += STEP_MS;
         let mut query = self.query;
+        self.taken = 0;
         loop {
             let snapshot = self.terminal.snapshot(&query).expect("a simulated read");
+            self.taken += 1;
             let outcome = self.memory.read(&Read {
                 text: snapshot.text,
                 screen: snapshot.screen,
@@ -62,6 +70,7 @@ impl Watch {
                 caret_line: snapshot.caret_line,
                 caret_column: snapshot.caret_column,
                 at_ms: self.at_ms,
+                above: usize::try_from(snapshot.above).expect("a few rows"),
             });
             let screen_rows = u32::try_from(outcome.height).expect("a small screen");
             if outcome.whole_document {
@@ -69,13 +78,19 @@ impl Watch {
                     start: None,
                     screen_rows,
                     whole: true,
+                    above: 0,
                 };
+                continue;
+            }
+            if let Some(above) = outcome.search_above {
+                query.above = u32::try_from(above).expect("a small buffer");
                 continue;
             }
             self.query = Query {
                 start: Some(snapshot.next_start),
                 screen_rows,
                 whole: false,
+                above: u32::try_from(self.memory.above()).expect("a small screen"),
             };
             return outcome;
         }
@@ -125,20 +140,21 @@ fn a_scroll_keeps_the_rows_where_they_are() {
 #[test]
 fn rotation_is_how_far_the_rows_moved_up() {
     // Five rows fill a buffer of five; the read after starts at the third,
-    // which after two more rows holds the fifth's text.
+    // less the block of the two rows above it, which after two more rows
+    // holds the third's text: the block left the buffer.
     let mut watch = Watch::console(10, 3, 2);
     watch.write("1\r\n2\r\n3\r\n4\r\n5");
     let outcome = watch.write("\r\n6\r\n7");
-    assert_eq!(watch.texts(), ["5", "6", "7"]);
-    assert_eq!(outcome.rows, [kept(4), NEW, NEW]);
+    assert_eq!(watch.texts(), ["3", "4", "5", "6", "7"]);
+    assert_eq!(outcome.rows, [kept(2), kept(3), kept(4), NEW, NEW]);
     assert_eq!(
         outcome.old,
         [
-            OldRow::Above,
-            OldRow::Above,
-            OldRow::Above,
-            OldRow::Above,
-            OldRow::Kept(0)
+            OldRow::Left,
+            OldRow::Left,
+            OldRow::Kept(0),
+            OldRow::Kept(1),
+            OldRow::Kept(2)
         ]
     );
     assert_eq!(outcome.rotation, 2);
@@ -152,8 +168,8 @@ fn a_footer_at_its_coordinate_is_kept_while_the_history_rotates() {
     let mut watch = Watch::console(10, 3, 1);
     watch.write("\x1b[3;1Hfooter\x1b[1;2r\x1b[1;1Ha\r\nb\r\nc");
     let outcome = watch.write("\r\nd");
-    assert_eq!(watch.texts(), ["c", "d", "footer"]);
-    assert_eq!(outcome.rows, [kept(2), NEW, moved(3)]);
+    assert_eq!(watch.texts(), ["b", "c", "d", "footer"]);
+    assert_eq!(outcome.rows, [kept(1), kept(2), NEW, moved(3)]);
     assert_eq!(outcome.rotation, 1);
 }
 
@@ -280,20 +296,27 @@ fn a_row_moved_past_others_is_kept_where_its_text_went() {
 
 #[test]
 fn a_wrapped_line_split_across_the_reads_top_grows() {
-    // A line of three rows on a screen of two: the read starts at its
-    // second row, which continues it from above.
+    // A line of seven rows on a screen of two: the read starts at its
+    // sixth row, less the block of the four rows above it, so at its second
+    // row, which continues it from above.
     let mut watch = Watch::console(4, 2, 10);
-    watch.write("abcdefghijkl");
-    let outcome = watch.write("mn");
-    assert_eq!(watch.texts(), ["efgh", "ijkl", "mn"]);
+    watch.write("abcdefghijklmnopqrstuvwxyz12");
+    let outcome = watch.write("34");
+    assert_eq!(
+        watch.texts(),
+        ["efgh", "ijkl", "mnop", "qrst", "uvwx", "yz12", "34"]
+    );
     assert!(
         outcome.continued,
         "the first row continues a line from above"
     );
-    assert_eq!(outcome.rows, [kept(1), kept(2), NEW]);
+    assert_eq!(
+        outcome.rows,
+        [kept(1), kept(2), kept(3), kept(4), kept(5), kept(6), NEW]
+    );
     assert_eq!(outcome.lines.len(), 1);
-    assert_eq!(outcome.lines[0].text, "efghijklmn");
-    assert_eq!(outcome.lines[0].grew_from, Some(8));
+    assert_eq!(outcome.lines[0].text, "efghijklmnopqrstuvwxyz1234");
+    assert_eq!(outcome.lines[0].grew_from, Some(24));
 }
 
 #[test]
@@ -356,14 +379,84 @@ fn the_review_position_stays_on_its_text_through_a_scroll_a_rotation_and_a_redra
     let review = |watch: &Watch| watch.memory.review().map(|anchor| anchor.row);
     assert_eq!(review(&watch), Some(1), "scrolled: still on b");
     watch.write("\r\ne\r\nf");
-    assert_eq!(watch.texts(), ["c", "d", "e", "f"]);
+    assert_eq!(watch.texts(), ["b", "c", "d", "e", "f"]);
     assert_eq!(
         review(&watch),
-        Some(-1),
-        "rotated: b is a row above the read"
+        Some(0),
+        "rotated: b is the block's row above the screen"
     );
-    watch.memory.set_review(1, 0);
+    watch.memory.set_review(2, 0);
     watch.write("\x1b[3;1Hg");
-    assert_eq!(watch.texts(), ["d", "e", "g"]);
-    assert_eq!(review(&watch), Some(0), "a redraw elsewhere: still on d");
+    assert_eq!(watch.texts(), ["b", "c", "d", "e", "g"]);
+    assert_eq!(review(&watch), Some(2), "a redraw elsewhere: still on d");
+}
+
+#[test]
+fn a_rotation_kept_rows_cannot_tell_is_found_by_searching_for_the_block() {
+    // A region above a footer, full of one repeated line, rotates a full
+    // history by two: the rows kept repeat and the footer stayed, so the
+    // read is taken again from further above, where the block shows it.
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("\x1b[3;1Hfooter\x1b[1;2r\x1b[1;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\nx\r\nx");
+    let outcome = watch.write("\r\nx\r\nx");
+    assert_eq!(
+        watch.texts(),
+        ["c", "d", "e", "f", "x", "x", "x", "x", "footer"]
+    );
+    assert_eq!(watch.taken, 2, "read again from further above");
+    assert_eq!(outcome.rotation, 2);
+    // The repeated lines and the footer kept as one block (section 4.3,
+    // item 3), the two new lines above them.
+    assert_eq!(
+        outcome.rows,
+        [
+            kept(2),
+            kept(3),
+            kept(4),
+            kept(5),
+            NEW,
+            NEW,
+            moved(6),
+            moved(7),
+            moved(8)
+        ]
+    );
+    assert!(!outcome.overflowed, "the block was found");
+}
+
+#[test]
+fn a_footer_over_more_output_than_the_history_holds_overflows() {
+    // The block is not found by a read reaching the document's start: every
+    // row above the footer went by unread.
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("\x1b[3;1Hfooter\x1b[1;2r\x1b[1;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh");
+    let outcome = watch.write("\r\nn\r\no\r\np\r\nq\r\nr\r\ns\r\nt\r\nu\r\nv\r\nw\r\nx\r\ny");
+    assert_eq!(
+        watch.texts(),
+        ["r", "s", "t", "u", "v", "w", "x", "y", "footer"]
+    );
+    assert!(outcome.overflowed, "more went by than the history holds");
+    assert_eq!(
+        outcome.rows,
+        [NEW, NEW, NEW, NEW, NEW, NEW, NEW, NEW, kept(8)]
+    );
+}
+
+#[test]
+fn a_history_erase_is_not_restored_when_rows_read_since_are_shown() {
+    // Erasing the history looks like the alternate screen opening (section
+    // 5.8); output then scrolls into a history again, showing the rows read
+    // since, so the memory kept aside is not restored.
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write("m1\r\nm2\r\nm3\r\nm4");
+    let erased = watch.write("\x1b[3J");
+    assert_eq!(erased.switch, Switch::Opened);
+    watch.write("\r\nn1");
+    let scrolled = watch.write("\r\nn2\r\nn3");
+    assert_eq!(scrolled.switch, Switch::None);
+    assert_eq!(watch.texts(), ["m2", "m3", "m4", "n1", "n2", "n3"]);
+    assert_eq!(
+        scrolled.rows,
+        [kept(0), kept(1), kept(2), kept(3), NEW, NEW]
+    );
 }

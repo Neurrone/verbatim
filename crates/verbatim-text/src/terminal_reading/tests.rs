@@ -12,7 +12,8 @@ use super::{
 use crate::terminal_rows::Read;
 
 /// A terminal read as the outpost reads it: each read starts where the last
-/// said, and the whole document is read when the reader asks.
+/// said, as many rows above it as the memory asks, and the whole document,
+/// or a read from further above, is read when the reader asks.
 struct Term {
     terminal: Terminal,
     reader: TerminalReader,
@@ -32,6 +33,7 @@ impl Term {
             reader: TerminalReader::new(settings),
             query: Query::default(),
         };
+        term.query.above = u32::try_from(term.reader.memory().above()).expect("a few rows");
         let first = term.read(0);
         assert_eq!(first, quiet(None), "the first read speaks nothing");
         term
@@ -91,6 +93,7 @@ impl Term {
                     caret_line: snapshot.caret_line,
                     caret_column: snapshot.caret_column,
                     at_ms,
+                    above: usize::try_from(snapshot.above).expect("a few rows"),
                 },
                 waited,
                 colours,
@@ -107,13 +110,19 @@ impl Term {
                     start: None,
                     screen_rows,
                     whole: true,
+                    above: 0,
                 };
+                continue;
+            }
+            if let Some(above) = step.search_above {
+                query.above = u32::try_from(above).expect("a small buffer");
                 continue;
             }
             self.query = Query {
                 start: Some(snapshot.next_start),
                 screen_rows,
                 whole: false,
+                above: u32::try_from(self.reader.memory().above()).expect("a small screen"),
             };
             return Step {
                 outcome: None,
@@ -143,6 +152,7 @@ fn step(speech: Vec<Speech>, withheld: Vec<Withheld>, timer: Option<u64>) -> Ste
         withheld,
         timer,
         whole_document: false,
+        search_above: None,
         outcome: None,
     }
 }
@@ -295,6 +305,75 @@ fn a_flood_past_the_history_is_counted_as_more_than() {
     assert_eq!(
         term.write("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10", 200),
         says(vec![
+            line(0, "4"),
+            Speech::Skipped {
+                rows: vec![1, 2, 3, 4, 5],
+                count: 5,
+                more_than: true
+            },
+            line(6, "10"),
+        ])
+    );
+}
+
+#[test]
+fn an_unfinished_word_pushed_out_of_a_full_history_is_spoken_before_the_count() {
+    let settings = Settings {
+        lines_in_full: 1,
+        last_lines: 1,
+        ..Settings::default()
+    };
+    let mut term = Term::with(20, 3, 4, settings);
+    term.write("abc", 100);
+    assert_eq!(
+        term.write("de", 200),
+        step(
+            Vec::new(),
+            vec![withheld(0, Reason::UnfinishedWord)],
+            Some(1200)
+        )
+    );
+    // Ten lines through a buffer of seven before the quiet period: the
+    // held word is spoken as it was last read, then the flood.
+    assert_eq!(
+        term.write("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10", 300),
+        says(vec![
+            Speech::Held {
+                text: "de".to_owned()
+            },
+            line(0, "4"),
+            Speech::Skipped {
+                rows: vec![1, 2, 3, 4, 5],
+                count: 5,
+                more_than: true
+            },
+            line(6, "10"),
+        ])
+    );
+}
+
+#[test]
+fn a_volatile_row_pushed_out_of_a_full_history_is_spoken_before_the_count() {
+    let settings = Settings {
+        lines_in_full: 1,
+        last_lines: 1,
+        ..Settings::default()
+    };
+    let mut term = Term::with(20, 3, 4, settings);
+    term.write("Working 0s", 100);
+    term.write("\rWorking 1s", 1100);
+    assert_eq!(
+        term.write("\rWorking 2s", 2100),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(3600))
+    );
+    // Ten lines through a buffer of seven before it settles: its latest
+    // value is spoken as it was last read, then the flood.
+    assert_eq!(
+        term.write("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10", 2200),
+        says(vec![
+            Speech::Held {
+                text: "2s".to_owned()
+            },
             line(0, "4"),
             Speech::Skipped {
                 rows: vec![1, 2, 3, 4, 5],
@@ -766,6 +845,7 @@ fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms:
         caret_line: padded[caret].clone(),
         caret_column: column,
         at_ms,
+        above: 0,
     }
 }
 
@@ -806,6 +886,50 @@ fn with_report_new_output_off_output_is_silent_and_keys_are_answered() {
     assert_eq!(term.write("output\r\n$ ", 100), quiet(None));
     term.typed("l", 200);
     assert_eq!(term.write("l", 250), says(vec![echo(1, "l")]));
+}
+
+#[test]
+fn with_report_new_output_off_a_flood_through_a_full_history_keeps_marks_it_cannot_refute() {
+    // Ten lines rotate a full history of twenty past the last screen, which
+    // would have the whole document read; with nothing reported the memory
+    // is taken from the read, keeping each command mark whose line is where
+    // it was, or that is above the read, where it cannot be checked
+    // (section 4.2).
+    let settings = Settings {
+        report_new_output: false,
+        ..Settings::default()
+    };
+    let mut term = Term::with(20, 3, 20, settings);
+    let filler: String = (1..=20)
+        .flat_map(|number| ["f".to_owned(), number.to_string(), "\r\n".to_owned()])
+        .collect();
+    term.write(&format!("{filler}$ one\r\n$ two\r\n$ three"), 100);
+    let row_of = |term: &Term, text: &str| {
+        term.reader
+            .memory()
+            .rows()
+            .iter()
+            .position(|row| row.text == text)
+            .expect("the line is in the read")
+    };
+    let f5 = row_of(&term, "f5");
+    let two = row_of(&term, "$ two");
+    term.reader.memory_mut().add_mark(f5);
+    term.reader.memory_mut().add_mark(two);
+    let flood: String = (1..=10)
+        .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
+        .collect();
+    assert_eq!(term.write(&flood, 200), quiet(None));
+    // The read starts four rows above the last screen's top, where "f5"
+    // was sixteen rows above; "$ two"'s place holds other text now.
+    let marks: Vec<isize> = term
+        .reader
+        .memory()
+        .marks()
+        .iter()
+        .map(|mark| mark.row)
+        .collect();
+    assert_eq!(marks, [-12]);
 }
 
 // Sections 7 and 8: programs.

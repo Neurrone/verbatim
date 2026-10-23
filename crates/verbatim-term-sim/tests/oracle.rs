@@ -126,6 +126,7 @@ impl Reader for TextDiff {
             start: Some(snapshot.next_start),
             screen_rows: screen_rows(&snapshot.screen),
             whole: false,
+            above: 0,
         };
         self.previous = rows;
         Reply::Heard(Heard {
@@ -930,6 +931,128 @@ fn a_held_row_the_alternate_screen_covers_is_resolved() {
     assert_eq!(
         violations(&held_then(Op::EnterAlternate), &mut holding_seventy()),
         []
+    );
+}
+
+#[test]
+fn a_line_the_alternate_screen_showed_is_not_new_on_the_main_screen() {
+    // With no history on the main screen no read shows the switch, so a
+    // reader cannot tell the screens apart (section 5.8).
+    let shown_there = |main: &'static str| {
+        stream(&[
+            (Op::EnterAlternate, true),
+            (Op::Write("ab"), true),
+            (Op::LeaveAlternate, true),
+            (Op::Write(main), true),
+        ])
+    };
+    assert_eq!(violations(&shown_there("ab"), &mut Silent), []);
+    assert_eq!(
+        violations(&shown_there("cd"), &mut Silent),
+        [missed(4, 0, "cd")]
+    );
+}
+
+#[test]
+fn a_line_growing_from_what_the_alternate_screen_showed_is_reported_by_its_growth() {
+    // With no history on the main screen no read shows the switch, so the
+    // main screen is judged against what the alternate screen showed.
+    let stream = stream(&[
+        (Op::EnterAlternate, false),
+        (Op::Write("ab"), true),
+        (Op::LeaveAlternate, false),
+        (Op::Write("abc"), true),
+    ]);
+    let script =
+        |grown: Heard| Scripted::new(vec![Heard::default(), says(vec![line(0, "ab")]), grown]);
+    assert_eq!(
+        violations(&stream, &mut script(says(vec![growth(0, "c")]))),
+        []
+    );
+    assert_eq!(
+        violations(&stream, &mut script(Heard::default())),
+        [missed(2, 0, "abc")]
+    );
+}
+
+/// The lines of a flood of `count` lines of "cat" at rows from `from`, each
+/// spoken.
+fn cats(from: usize, count: usize) -> Vec<Spoken> {
+    (1..=count)
+        .map(|number| line(from + number - 1, &format!("cat{number}")))
+        .collect()
+}
+
+#[test]
+fn a_line_printed_again_after_its_text_left_the_full_history_may_be_reported() {
+    // "dog" leaves the small terminal's full buffer of eleven rows as the
+    // flood rotates it, and is printed again on the last row.
+    let stream = stream(&[
+        (Op::Write("dog"), false),
+        (Op::Newline, true),
+        (
+            Op::Flood {
+                lines: 10,
+                word: "cat",
+            },
+            false,
+        ),
+        (Op::Write("dog"), true),
+    ]);
+    let mut again = cats(0, 10);
+    again.push(line(10, "dog"));
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![line(0, "dog")]),
+            says(again),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut reader), []);
+}
+
+#[test]
+fn a_held_line_spoken_as_last_read_after_it_left_the_full_history_is_resolved() {
+    // "abc" grows from "ab" with its word held, and the flood rotates it
+    // out of the small terminal's full buffer before the next read.
+    let stream = stream(&[
+        (Op::Write("ab"), true),
+        (Op::Write("c"), true),
+        (Op::Newline, false),
+        (
+            Op::Flood {
+                lines: 10,
+                word: "cat",
+            },
+            true,
+        ),
+    ]);
+    let script = |held: &str| {
+        let mut flood = vec![Spoken::Held {
+            text: held.to_owned(),
+        }];
+        flood.extend(cats(0, 10));
+        Scripted {
+            whole: true,
+            ..Scripted::new(vec![
+                Heard::default(),
+                says(vec![line(0, "ab")]),
+                holds(vec![], &[(0, Reason::UnfinishedWord)]),
+                says(flood),
+            ])
+        }
+    };
+    assert_eq!(violations(&stream, &mut script("c")), []);
+    assert_eq!(
+        violations(&stream, &mut script("xyz")),
+        [
+            Violation::Unheld {
+                read: 3,
+                said: "xyz".to_owned()
+            },
+            false_reason(2, 0, "abc", Reason::UnfinishedWord)
+        ]
     );
 }
 

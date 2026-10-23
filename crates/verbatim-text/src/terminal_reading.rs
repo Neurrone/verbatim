@@ -180,6 +180,14 @@ pub enum Speech {
         /// The line from the word that changed.
         text: String,
     },
+    /// A held line that left the read before it was spoken, as when a
+    /// flood pushed it out of a full history: what it held, as it was last
+    /// read, spoken before the read's other output (section 4.3, item 5).
+    Held {
+        /// The held text: a growing line's unfinished word, or a volatile
+        /// row from the word that changed.
+        text: String,
+    },
     /// A flood's lines counted, not spoken (the flood policy).
     Skipped {
         /// The first rows of the lines counted that have text.
@@ -251,6 +259,11 @@ pub struct Step {
     /// nothing changed, and only the outcome's shape (the screen's width
     /// and height) is set.
     pub whole_document: bool,
+    /// Read again from the same start with this many rows above it, to
+    /// find how far a full history rotated, and give that read instead
+    /// (section 4.3, item 5); nothing changed, and only the outcome's shape
+    /// is set.
+    pub search_above: Option<usize>,
     /// The alignment of the read, for a read.
     pub outcome: Option<Outcome>,
 }
@@ -599,6 +612,21 @@ impl TerminalReader {
         }
     }
 
+    /// What `line` holds, as [`TerminalReader::release`] would speak it: a
+    /// growing line's unfinished word, or a volatile row, or a row the keys
+    /// changed, from the word that changed; `None` when it holds nothing.
+    fn held_text(&self, line: &LineState) -> Option<String> {
+        let text = &line.text;
+        let start = match line.hold? {
+            Hold::Word => text
+                .strip_prefix(line.said.as_str())
+                .filter(|rest| !rest.is_empty())
+                .map(|rest| text.len() - rest.len())?,
+            Hold::Volatile | Hold::Keys => self.changed_start(&[&line.said], text)?,
+        };
+        Some(text[start.max(line.cut)..].to_owned())
+    }
+
     /// Where the changed-word rule speaks `new` from (section 5.4): the
     /// start of the word where it first differs, by whole graphemes, from
     /// the earliest of `before`; `None` when it differs from none of them
@@ -632,22 +660,22 @@ impl TerminalReader {
     pub fn read(&mut self, read: &Read, waited: bool, colours: Option<&[Vec<ColourRun>]>) -> Step {
         let now = read.at_ms;
         let mut outcome = self.memory.read(read);
-        if outcome.whole_document {
+        if outcome.whole_document || outcome.search_above.is_some() {
             if self.settings.report_new_output {
                 return Step {
-                    whole_document: true,
+                    whole_document: outcome.whole_document,
+                    search_above: outcome.search_above,
                     timer: self.next_due(),
                     outcome: Some(outcome),
                     ..Step::default()
                 };
             }
             // With nothing reported nothing waits, so the memory is simply
-            // taken from the read (section 4.2).
-            self.memory = TerminalMemory::new();
+            // taken from the read (section 4.2), its command marks kept.
             self.screen = Screen::default();
             self.aside = None;
             self.lingering.clear();
-            outcome = self.memory.read(read);
+            outcome = self.memory.restart(read);
         }
         self.reads += 1;
         let previous = match outcome.switch {
@@ -790,6 +818,8 @@ impl TerminalReader {
             .as_ref()
             .map(|keys| keys.last_ms.saturating_sub(UNPROMPTED_MS));
         let old_caret = previous.caret.clone();
+        // The old lines whose history a line of the read carries.
+        let mut carried: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for line in &outcome.lines {
             let start = line.rows.start;
             let kinds = &outcome.rows[line.rows.clone()];
@@ -820,8 +850,12 @@ impl TerminalReader {
                 NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } => previous
                     .starts
                     .get(from)
-                    .filter(|&&old| old == from || (continued && first == start))
-                    .and_then(|&old| previous.rows.get(old))
+                    .copied()
+                    .filter(|&old| old == from || (continued && first == start))
+                    .and_then(|old| {
+                        carried.insert(old);
+                        previous.rows.get(old)
+                    })
                     .and_then(|row| row.line.clone()),
                 NewRow::Returned { .. } => self
                     .lingering
@@ -1187,9 +1221,33 @@ impl TerminalReader {
             }
             self.refind_review(&rows);
         }
+        // A held line that left the read, above its start or out of a full
+        // history, with no line of the read carrying it, is spoken as it
+        // was last read, before the read's output (section 4.3, item 5).
+        let held: Vec<Speech> = if report {
+            previous
+                .rows
+                .iter()
+                .enumerate()
+                .filter(|&(old, _)| {
+                    previous.starts.get(old) == Some(&old) && !carried.contains(&old)
+                })
+                .filter(|&(old, _)| match outcome.old.get(old) {
+                    Some(OldRow::Above | OldRow::Left) => true,
+                    Some(OldRow::Gone { .. }) => outcome.overflowed,
+                    _ => false,
+                })
+                .filter_map(|(_, row)| row.line.as_ref())
+                .filter_map(|line| self.held_text(line))
+                .map(|text| Speech::Held { text })
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.fresh = false;
         self.screen = screen;
         step.speech = key_speech;
+        step.speech.extend(held);
         step.speech
             .extend(items.into_iter().map(|(_, speech)| speech));
         if report {

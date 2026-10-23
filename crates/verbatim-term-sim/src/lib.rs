@@ -52,6 +52,10 @@ pub struct Snapshot {
     pub caret_column: usize,
     /// Where the next read starts.
     pub next_start: Range,
+    /// How many rows the read holds above the start it was asked for: as
+    /// many as the query asked, or fewer when the document's start came
+    /// first.
+    pub above: u32,
 }
 
 /// A stretch of a row in one foreground and background, as shown.

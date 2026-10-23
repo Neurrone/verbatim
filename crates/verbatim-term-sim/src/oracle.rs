@@ -20,10 +20,12 @@
 //! The main screen of a read is the main buffer from its first row to the
 //! document's end, history included, whatever the read's own text covered,
 //! since a reader chooses where its reads start. A line is new at a read
-//! on the main screen when no earlier read on the main screen showed a line
-//! with its text, anywhere, leaving out the rows of only spaces at its
-//! start, which show nothing (the console host joins a row filled with
-//! spaces to the line below it). A line whose start left a full history
+//! on the main screen when no earlier read showed a line with its text,
+//! anywhere on the main screen or in what the read showed of the alternate
+//! screen, which a reader cannot always tell from the main one (section
+//! 5.8), leaving out the rows of only spaces at its start, which show
+//! nothing (the console host joins a row filled with spaces to the line
+//! below it). A line whose start left a full history
 //! (the buffer's first row continuing a line rotated out) is new only when
 //! its text ends no line shown before. A line whose start is above the
 //! read's first row is reported by naming the read's first row, with the
@@ -161,6 +163,16 @@ pub enum Spoken {
         /// The rows whose lines the summary counts.
         rows: Range<usize>,
     },
+    /// A line held at an earlier read that left the read before it was
+    /// spoken, as when a flood pushed it out of a full history, spoken as
+    /// it was last read (`docs/design/terminal-model.md`, section 4.3, item
+    /// 5). It names no row; it resolves a hold still unresolved whose text
+    /// ends with what is spoken, and with none, it must be the end of a line
+    /// an earlier read showed.
+    Held {
+        /// What is spoken.
+        text: String,
+    },
 }
 
 /// Why a reader withholds a new line, each the silence of a rule of
@@ -243,7 +255,9 @@ pub enum Reply {
     Heard(Heard),
     /// Read again at once with this query, before anything more is
     /// written, as a reader reads the whole text when its last screen is
-    /// not in the read (`docs/design/terminal-model.md`, section 4.2).
+    /// not in the read (`docs/design/terminal-model.md`, section 4.2), or
+    /// reads from further above its start to find how far a full history
+    /// rotated (section 4.3, item 5).
     Again(Query),
 }
 
@@ -314,8 +328,8 @@ impl Run {
 ///
 /// # Panics
 ///
-/// When the reader asks to read again twice at one point, which no reader
-/// needs.
+/// When the reader asks to read again more than [`AGAIN_LIMIT`] times at
+/// one point, which no reader needs.
 pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader) -> Run {
     let mut rotated = 0;
     let mut reads = vec![read(terminal, reader, &mut rotated)];
@@ -328,11 +342,16 @@ pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader
     Run { reads }
 }
 
-/// One read of `terminal` by `reader`, taken again if the reader asks;
+/// The most times a reader may ask to read again at one point: a reader
+/// searching upward from a screen above its start, four times as far each
+/// time, reaches the start of any buffer the oracle writes in far fewer.
+pub const AGAIN_LIMIT: usize = 16;
+
+/// One read of `terminal` by `reader`, taken again as often as the reader asks;
 /// `rotated` counts the rows the main buffer rotated out before it.
 fn read(terminal: &Terminal, reader: &mut dyn Reader, rotated: &mut usize) -> Observation {
     let mut query = reader.query();
-    let mut again = false;
+    let mut again = 0;
     loop {
         let (snapshot, start, rows) = match terminal.observe(&query) {
             Ok((snapshot, start, rows)) => (Ok(snapshot), start, rows),
@@ -355,8 +374,11 @@ fn read(terminal: &Terminal, reader: &mut dyn Reader, rotated: &mut usize) -> Ob
                 };
             }
             Reply::Again(next) => {
-                assert!(!again, "the reader asked to read again twice at one point");
-                again = true;
+                again += 1;
+                assert!(
+                    again <= AGAIN_LIMIT,
+                    "the reader asked to read again more than {AGAIN_LIMIT} times at one point"
+                );
                 query = next;
             }
         }
@@ -457,6 +479,15 @@ pub enum Violation {
         /// Where the reader said its review position is.
         said: Option<usize>,
     },
+    /// A held line was spoken as last read, but no hold still unresolved,
+    /// and no line an earlier read showed, has text ending with what was
+    /// said.
+    Unheld {
+        /// The read.
+        read: usize,
+        /// What it said.
+        said: String,
+    },
     /// The review position is on no row of the read.
     ReviewOutside {
         /// The read.
@@ -508,9 +539,23 @@ struct Lines {
 }
 
 impl Lines {
+    /// The lines of a read's main screen.
     fn of(read: &Observation) -> Self {
-        let main = &read.main;
-        let top = isize::try_from(read.screen_top).unwrap_or(isize::MAX);
+        Self::from_rows(&read.main, 0, read.screen_top, read.continued)
+    }
+
+    /// The lines a read on the alternate screen showed, its screen's top at
+    /// its first row.
+    fn alternate(read: &Observation) -> Self {
+        Self::from_rows(&read.rows, read.start, 0, false)
+    }
+
+    /// The lines of `main`, rows from coordinate `from`, the screen's top at
+    /// coordinate `top`; `continued` when the first row continues a line
+    /// whose start left the buffer.
+    fn from_rows(main: &[Seen], from: usize, top: usize, continued: bool) -> Self {
+        let top = isize::try_from(top).unwrap_or(isize::MAX);
+        let from = isize::try_from(from).unwrap_or(isize::MAX);
         let mut lines = Vec::new();
         let mut first = 0;
         for (at, seen) in main.iter().enumerate() {
@@ -533,9 +578,9 @@ impl Lines {
                     key: text[blank..].to_owned(),
                     first: main[first].id,
                     rows: first..at + 1,
-                    place: isize::try_from(first).unwrap_or(isize::MAX) - top,
+                    place: isize::try_from(first).unwrap_or(isize::MAX) + from - top,
                     text: text.to_owned(),
-                    cut: first == 0 && read.continued,
+                    cut: first == 0 && continued,
                 });
             }
             first = at + 1;
@@ -617,8 +662,14 @@ struct Check<'a> {
     aside: bool,
     /// Each read's lines; `None` for a read on the alternate screen.
     lines: Vec<Option<Rc<Lines>>>,
-    /// Every text a line had at the reads on the main screen checked so
-    /// far.
+    /// The lines the last read showed on the alternate screen, when it was
+    /// up and no read showed the switch to it, since the main screen had no
+    /// history: a reader cannot tell it from the main screen (section 5.8),
+    /// so the next read is judged against it.
+    alternate: Option<Rc<Lines>>,
+    /// Every text a line had at the reads checked so far: on the main
+    /// screen, its lines; on the alternate screen, the lines the read
+    /// showed.
     shown: HashSet<String>,
     /// The last read on the main screen checked so far.
     last: Option<usize>,
@@ -671,9 +722,12 @@ impl Check<'_> {
         )
     }
 
-    /// The lines of the last read on the main screen before this one.
+    /// The lines of the last read on the main screen before this one, or of
+    /// the alternate screen when no read showed the switch to it.
     fn last_lines(&self) -> Option<&Lines> {
-        self.last.and_then(|last| self.lines[last].as_deref())
+        self.alternate
+            .as_deref()
+            .or_else(|| self.last.and_then(|last| self.lines[last].as_deref()))
     }
 
     /// Whether `line` is new: no read checked so far showed its text.
@@ -788,6 +842,7 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
         changed: HashSet::new(),
         rotated: HashSet::new(),
         aside: false,
+        alternate: None,
         holds: Vec::new(),
         violations: Vec::new(),
     };
@@ -837,6 +892,24 @@ fn check_read(check: &mut Check, index: usize) {
         }
         state.accounted = vec![false; lines.list.len()];
         state.said = vec![false; lines.list.len()];
+        // A line of the last read on the main screen that the full history
+        // rotated out since took its text off the screen, so its report no
+        // longer covers a line with that text printed again.
+        let left: Vec<String> = check
+            .last_lines()
+            .map(|last| {
+                last.list
+                    .iter()
+                    .filter(|line| check.rotated.contains(&line.first))
+                    .map(|line| line.text.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for text in left {
+            if let Some(covered) = check.covered.get_mut(&text) {
+                *covered = covered.saturating_sub(1);
+            }
+        }
         let now = check.shared(index);
         uncover(&mut check.covered, |text| now.count(text));
         for spoken in &read.heard.spoken {
@@ -854,6 +927,18 @@ fn check_read(check: &mut Check, index: usize) {
         // The alternate screen replaces the main screen's text on the
         // screen, so a hold whose text it does not show is resolved.
         check.holds.retain(|hold| shown.contains_key(&hold.text));
+        // What the alternate screen shows counts as shown: a reader cannot
+        // always tell the screens apart (section 5.8), so a line it showed
+        // here that a program prints again on the main screen is not new.
+        check.shown.extend(alternate_keys(&read.rows));
+        // With no history on the main screen no read shows the switch, so
+        // what this read showed is what the next is judged against, as if
+        // all of it was heard.
+        let unseen = check.last.is_none_or(|last| reads[last].screen_top == 0);
+        check.alternate = unseen.then(|| Rc::new(Lines::alternate(read)));
+        if let Some(lines) = &check.alternate {
+            check.heard = lines.list.iter().map(|line| line.text.clone()).collect();
+        }
         // Nothing on the alternate screen must be accounted for; only
         // what is reported is checked against the read.
         for spoken in &read.heard.spoken {
@@ -924,6 +1009,34 @@ fn alternate_lines(rows: &[Seen]) -> HashMap<String, usize> {
     counts
 }
 
+/// The texts by which the lines with text of `rows`, an alternate
+/// screen's rows, are new or not: each line's text without the rows of only
+/// spaces at its start, as a main screen's line's.
+fn alternate_keys(rows: &[Seen]) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut first = 0;
+    for (at, seen) in rows.iter().enumerate() {
+        if seen.wraps && at + 1 < rows.len() {
+            continue;
+        }
+        let text: String = rows[first..=at]
+            .iter()
+            .map(|seen| seen.text.as_str())
+            .collect();
+        let text = text.trim_end();
+        if !text.is_empty() {
+            let blank = rows[first..=at]
+                .iter()
+                .take_while(|seen| seen.text.trim_end().is_empty())
+                .map(|seen| seen.text.len())
+                .sum::<usize>();
+            keys.push(text[blank..].to_owned());
+        }
+        first = at + 1;
+    }
+    keys
+}
+
 /// The holds a report at read `index` or the main screen's text resolves:
 /// a report said the held text's line (a redrawn row's speech covering its
 /// change from the text its place had before the hold), or no line has the
@@ -988,6 +1101,7 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
         .shown
         .extend(lines.list.iter().map(|line| line.key.clone()));
     check.last = Some(index);
+    check.alternate = None;
     check.heard.clone_from(&state.heard);
 }
 
@@ -1008,6 +1122,29 @@ fn line_number(check: &Check, index: usize, row: usize) -> Option<usize> {
 fn check_spoken(check: &mut Check, index: usize, spoken: &Spoken, state: &mut ReadState) {
     let rows = &check.reads[index].rows;
     let (row, text) = match spoken {
+        Spoken::Held { text } => {
+            let held = check
+                .holds
+                .iter()
+                .position(|hold| !text.is_empty() && hold.text.ends_with(text.as_str()));
+            match held {
+                Some(at) => {
+                    check.holds.remove(at);
+                }
+                // A line held that was not new needed no hold, but what is
+                // said of it is still the end of a line a read showed.
+                None if !text.is_empty()
+                    && check
+                        .shown
+                        .iter()
+                        .any(|shown| shown.ends_with(text.as_str())) => {}
+                None => check.violations.push(Violation::Unheld {
+                    read: index,
+                    said: text.clone(),
+                }),
+            }
+            return;
+        }
         Spoken::Line { row, text }
         | Spoken::Growth { row, text }
         | Spoken::Redrawn { row, text } => (*row, text),
@@ -1080,7 +1217,7 @@ fn check_spoken(check: &mut Check, index: usize, spoken: &Spoken, state: &mut Re
             }
         }
         Spoken::Redrawn { .. } => state.redrawn.push((number, row, text.clone())),
-        Spoken::Summary { .. } => {}
+        Spoken::Summary { .. } | Spoken::Held { .. } => {}
     }
 }
 

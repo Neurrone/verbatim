@@ -33,8 +33,9 @@ const QUIET_MS: u64 = 10_000;
 const HAND_STEP_MS: u64 = 10;
 
 /// The reading rules under test, read as the outpost reads: each read
-/// starts where the last said, and the whole document is read when the
-/// rules ask.
+/// starts where the last said, as many rows above that start as the memory
+/// asks, and the whole document, or a read from further above, is read at
+/// once when the rules ask.
 struct Core {
     reader: TerminalReader,
     query: Query,
@@ -47,9 +48,14 @@ struct Core {
 
 impl Core {
     fn new(stream: &Stream) -> Self {
+        let reader = TerminalReader::new(Settings::default());
+        let above = u32::try_from(reader.memory().above()).unwrap_or(u32::MAX);
         Self {
-            reader: TerminalReader::new(Settings::default()),
-            query: Query::default(),
+            reader,
+            query: Query {
+                above,
+                ..Query::default()
+            },
             at_ms: stream.at_ms.clone(),
             reads: 0,
             quiet: false,
@@ -89,6 +95,7 @@ fn heard(step: &Step, review: Option<usize>, rows: usize) -> Heard {
                 row: *row,
                 text: text.clone(),
             }),
+            Speech::Held { text } => heard.spoken.push(Spoken::Held { text: text.clone() }),
             Speech::Skipped { rows, .. } => {
                 let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
                 for &row in rows {
@@ -127,7 +134,7 @@ fn heard(step: &Step, review: Option<usize>, rows: usize) -> Heard {
                 .iter()
                 .map(|fate| match fate {
                     OldRow::Kept(to) | OldRow::Rewritten(to) => Some(*to),
-                    OldRow::Gone { .. } | OldRow::Above => None,
+                    OldRow::Gone { .. } | OldRow::Above | OldRow::Left => None,
                 })
                 .collect(),
         );
@@ -158,6 +165,7 @@ impl Reader for Core {
                 caret_line: snapshot.caret_line.clone(),
                 caret_column: snapshot.caret_column,
                 at_ms: self.now(),
+                above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
             },
             false,
             None,
@@ -169,6 +177,13 @@ impl Reader for Core {
                 start: None,
                 screen_rows,
                 whole: true,
+                above: 0,
+            });
+        }
+        if let Some(above) = step.search_above {
+            return Reply::Again(Query {
+                above: u32::try_from(above).unwrap_or(u32::MAX),
+                ..self.query
             });
         }
         let memory = self.reader.memory();
@@ -180,6 +195,7 @@ impl Reader for Core {
             start: Some(snapshot.next_start),
             screen_rows,
             whole: false,
+            above: u32::try_from(memory.above()).unwrap_or(u32::MAX),
         };
         self.reads += 1;
         Reply::Heard(heard)
@@ -233,46 +249,32 @@ fn counts(expected: &[(&str, usize)]) -> Vec<(String, usize)> {
 /// of the oracle's specification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Question {
-    /// The alternate screen opened while the main screen had no history,
-    /// so no read shows the switch (section 5.8): the reader takes the
-    /// alternate screen for the main one, and when the main screen comes
-    /// back holding text the alternate screen showed, as Pi's fullscreen
-    /// mode prints its last frame on leaving, it keeps those rows silent.
-    /// The oracle counts as shown only what reads on the main screen
-    /// showed. Does text a read showed on the alternate screen count as
-    /// shown, since a reader cannot tell which screen it read?
-    AlternateUnseen,
-    /// The rotation is measured from kept rows that stayed or moved up
-    /// (section 4.3, items 3 and 5). When the last screen was blank, when
-    /// its only kept rows moved down with the end of the text (a footer, a
-    /// redrawn bottom region), or when its rows repeat text found elsewhere
-    /// (the first rows of similar wrapped lines, a frame drawn twice), the
-    /// alignment measures no rotation or a wrong one: lines rotated above
-    /// the read's start are missed, or rows kept in place are taken for
-    /// rewritten, so the rules hold them as volatile or as having lost
-    /// text, or speak them again. Should the reader read the whole document
-    /// in these cases, and how would it then tell history it never read
-    /// from new output?
-    RotationUnmeasured,
-    /// Erasing the history looks like the alternate screen opening, and
-    /// the next scroll into a history like it closing (section 5.8), so the
-    /// memory kept aside at the erase is restored and lines read since are
-    /// spoken again. Should the restore be refused when rows the memory
-    /// read since are found in the read?
-    HistoryEraseAsAlternate,
-    /// A growing line's unfinished word is held until the line grows past
-    /// it, the cursor leaves it, or the quiet period passes (section 5.3).
-    /// When output pushes the line out of a full history between two reads
-    /// before any of these, no later read shows it, so the word is never
-    /// spoken, and the oracle, which does not count a row rotated out of
-    /// the buffer as resolving a hold, reports the hold as false. The rules
-    /// speak a held line once it is above the screen, so this needs more
-    /// than a screen of output past a full history in one read: the tiny
-    /// terminal's history of one row, or a flood. Should a hold be
-    /// accounted for when its line leaves a full history before the quiet
-    /// period, as lines that leave between two reads unseen are, or should
-    /// the word not be held then?
-    HeldPastHistory,
+    /// The history rotated between two reads, and the block of history rows
+    /// above the kept start shows the smallest rotation consistent with the
+    /// text (section 4.3, item 5), but output repeating earlier output
+    /// rotated it further: the first rows of the document changed above
+    /// the read, which no read covered, and their lines are missed. The
+    /// document's first row, which every read takes, changed too. Should a
+    /// changed first row refuse a block found in place?
+    PeriodicHistory,
+    /// The last read had no history, so the memory keeps no block, and the
+    /// next read finds the buffer filled and rotated (section 4.3, item 5):
+    /// with no block the rotation is taken from kept rows, and a row whose
+    /// text a flood wrote again in its place is taken as kept or rewritten.
+    /// A line holding its unfinished word is then carried by a line that
+    /// replaced it, so the word is never spoken, or a row is held as
+    /// volatile where the oracle finds no change at its place. Should a
+    /// read whose document grew past a screen from one with no history be
+    /// taken as the whole document's, searched for the old screen?
+    RotationWithoutBlock,
+    /// A row rewritten and then rotated into the history between two reads
+    /// is the same row to the reader, which follows it by the rotation the
+    /// block measured (section 4.3, item 6), and holds it as volatile when
+    /// it changed before; the oracle's premise compares the lines at one
+    /// place counted from the screen's top, which does not follow the
+    /// rotation, and finds no change there. Should the oracle's places
+    /// follow the history's rotation for rows that moved with it?
+    VolatileAcrossRotation,
 }
 
 /// A random case pinned: its number, the question that decides it, and
@@ -301,46 +303,8 @@ fn the_cores_violations_over_the_corpus() {
         })
         .filter(|(_, _, tally)| !tally.is_empty())
         .collect();
-    // Question::AlternateUnseen: Pi's fullscreen mode opens the alternate
-    // screen on a main screen with no history and prints its last frame on
-    // the main screen as it leaves. In the console host two of its lines
-    // are withheld as having lost text against the lines the alternate
-    // screen showed, which the oracle does not count.
-    // Question::RotationUnmeasured: the footer kept by a scroll region
-    // over a full history is the last screen's only row kept in place, so
-    // the rotation is not measured: the lines rotated above the read are
-    // missed, and the region's rows kept in place are taken for rows
-    // rewritten twice and held as volatile.
-    let expected: Vec<StreamTally> = [
-        (
-            "pi-fullscreen",
-            Flavor::ConsoleHost,
-            &[("FalseReason LostText", 2), ("Missed", 17)][..],
-        ),
-        ("pi-fullscreen", Flavor::WindowsTerminal, &[("Missed", 19)]),
-        (
-            "rotation-footer",
-            Flavor::ConsoleHost,
-            &[("FalseReason Volatile", 29), ("Missed", 74)],
-        ),
-        (
-            "rotation-footer",
-            Flavor::WindowsTerminal,
-            &[("FalseReason Volatile", 29), ("Missed", 74)],
-        ),
-    ]
-    .into_iter()
-    .map(|(name, flavor, kinds)| (name.to_owned(), flavor, counts(kinds)))
-    .collect();
-    assert_eq!(found, expected);
+    assert_eq!(found, []);
 }
-
-/// How many tiny streams, counted once in each terminal, push a held word
-/// out of the tiny history (`Question::HeldPastHistory`).
-const HELD_TINY_STREAMS: usize = 146;
-
-/// How many words those streams hold that are never resolved.
-const HELD_TINY_WORDS: usize = 146;
 
 #[test]
 fn the_cores_violations_over_every_stream_of_four_tiny_operations() {
@@ -359,58 +323,7 @@ fn the_cores_violations_over_every_stream_of_four_tiny_operations() {
         })
         .filter(|(_, _, violations)| !violations.is_empty())
         .collect();
-    // Question::AlternateUnseen: a line written on the alternate screen,
-    // which opened with no history, and written again on the main screen.
-    let unseen = |word: &str| {
-        let about = format!(
-            "[(EnterAlternate, true), (Write({word:?}), true), (LeaveAlternate, true), \
-             (Write({word:?}), true)]"
-        );
-        let missed = vec![Violation::Missed {
-            read: 4,
-            coordinate: 0,
-            text: word.to_owned(),
-        }];
-        [Flavor::ConsoleHost, Flavor::WindowsTerminal]
-            .map(|flavor| (about.clone(), flavor, missed.clone()))
-    };
-    let expected_unseen: Vec<(String, Flavor, Vec<Violation>)> =
-        unseen("ab").into_iter().chain(unseen("cdefg")).collect();
-    let (found_unseen, held): (Vec<_>, Vec<_>) = found
-        .into_iter()
-        .partition(|case| expected_unseen.contains(case));
-    assert_eq!(found_unseen, expected_unseen);
-    // Question::HeldPastHistory: the tiny terminal's history is one row,
-    // so a clear, or a line growing past the buffer, pushes a line holding
-    // its unfinished word out of it between two reads. Every other stream
-    // with violations holds such a word; in four, the line grows on past
-    // the buffer and its rest is missed, since what was heard of it never
-    // covered its start.
-    let holding = held
-        .iter()
-        .filter(|(_, _, violations)| {
-            violations.iter().any(|violation| {
-                matches!(
-                    violation,
-                    Violation::FalseReason {
-                        reason: Reason::UnfinishedWord,
-                        ..
-                    }
-                )
-            })
-        })
-        .count();
-    assert_eq!(
-        (held.len(), holding),
-        (HELD_TINY_STREAMS, HELD_TINY_STREAMS)
-    );
-    assert_eq!(
-        tally(held.iter().flat_map(|(_, _, violations)| violations)),
-        counts(&[
-            ("FalseReason UnfinishedWord", HELD_TINY_WORDS),
-            ("Missed", 4)
-        ])
-    );
+    assert_eq!(found, []);
 }
 
 #[test]
@@ -418,7 +331,7 @@ fn the_cores_violations_over_random_streams() {
     // The random streams of the oracle's own tests, taken in the same
     // order from the same seed, every case run rather than stopping at the
     // first failure, each case numbered in that order.
-    use Question::{AlternateUnseen, HeldPastHistory, HistoryEraseAsAlternate, RotationUnmeasured};
+    use Question::{PeriodicHistory, RotationWithoutBlock, VolatileAcrossRotation};
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let config = random_config();
@@ -441,55 +354,19 @@ fn the_cores_violations_over_random_streams() {
             found.push((case, tally(&violations)));
         }
     }
-    let missed = |count| vec![("Missed", count)];
-    let repeated = |count| vec![("Repeated", count)];
-    let both = || vec![("Missed", 1), ("Repeated", 1)];
-    let held = || vec![("FalseReason UnfinishedWord", 1)];
-    // Case 446 misses a line the alternate screen showed, so the growth
-    // that follows it never covers its start and the word it holds is
-    // never resolved; it is listed under the alternate screen.
     let pinned: Vec<Pin> = vec![
-        (61, RotationUnmeasured, missed(1)),
-        (65, RotationUnmeasured, missed(2)),
-        (
-            70,
-            RotationUnmeasured,
-            vec![("FalseReason LostText", 1), ("Missed", 5)],
-        ),
-        (71, RotationUnmeasured, both()),
-        (82, AlternateUnseen, missed(1)),
         (
             126,
-            RotationUnmeasured,
-            vec![("FalseReason Volatile", 2), ("Missed", 3)],
+            VolatileAcrossRotation,
+            vec![("FalseReason Volatile", 2)],
         ),
-        (168, RotationUnmeasured, missed(2)),
-        (196, RotationUnmeasured, missed(1)),
-        (212, HeldPastHistory, held()),
-        (213, RotationUnmeasured, missed(1)),
-        (290, RotationUnmeasured, missed(1)),
-        (298, HeldPastHistory, held()),
-        (318, RotationUnmeasured, missed(2)),
-        (341, AlternateUnseen, missed(1)),
-        (349, AlternateUnseen, missed(1)),
-        (350, RotationUnmeasured, missed(1)),
-        (364, RotationUnmeasured, repeated(1)),
-        (379, HeldPastHistory, held()),
-        (397, AlternateUnseen, missed(1)),
-        (409, AlternateUnseen, missed(1)),
-        (415, RotationUnmeasured, missed(5)),
-        (445, HeldPastHistory, held()),
         (
-            446,
-            AlternateUnseen,
-            vec![("FalseReason UnfinishedWord", 1), ("Missed", 1)],
+            212,
+            RotationWithoutBlock,
+            vec![("FalseReason UnfinishedWord", 1)],
         ),
-        (458, RotationUnmeasured, missed(6)),
-        (498, RotationUnmeasured, repeated(2)),
-        (502, HeldPastHistory, held()),
-        (506, HeldPastHistory, held()),
-        (508, RotationUnmeasured, missed(1)),
-        (510, HistoryEraseAsAlternate, repeated(3)),
+        (213, RotationWithoutBlock, vec![("FalseReason Volatile", 1)]),
+        (508, PeriodicHistory, vec![("Missed", 1)]),
     ];
     let expected: Vec<(u32, Vec<(String, usize)>)> = pinned
         .iter()

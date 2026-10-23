@@ -95,6 +95,7 @@ fn a_kept_start_reads_from_where_it_was() {
             start: Some(read.next_start),
             screen_rows: screen_rows(&read.screen),
             whole: false,
+            above: 0,
         })
         .expect("the read succeeds");
     assert!(next.from_start);
