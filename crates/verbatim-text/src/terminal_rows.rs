@@ -16,9 +16,16 @@
 //! reports, so each read also takes a few history rows above its start,
 //! the block, and the rotation is how far the block moved up (section
 //! 4.3, item 5).
+//!
+//! Once a read is handled, the memory keeps of it only the block and the
+//! rows below it, the screen and any rows written since (section 4.1): the
+//! rows above the block are held as hashes in the known history. Rows keep
+//! their places, counted from the read's first row, so what refers to a
+//! row of the last read is unchanged by the trim.
 
 use std::collections::{HashMap, VecDeque};
 use std::ops::Range;
+use std::sync::Arc;
 
 mod align;
 
@@ -87,8 +94,9 @@ pub struct Read {
 pub struct Row {
     /// Its text, padding left out (section 5.12): only a line's last row
     /// has padding, so the earlier rows of a wrapped line keep the spaces
-    /// at their end.
-    pub text: String,
+    /// at their end. Shared, so the line it makes up and the reading rules'
+    /// state of that line hold no copy of it.
+    pub text: Arc<str>,
     /// A 64-bit hash of `text`.
     pub hash: u64,
     /// Whether its line continues onto the next row.
@@ -198,8 +206,8 @@ pub enum Switch {
 pub struct Line {
     /// Its rows.
     pub rows: Range<usize>,
-    /// Its text, padding left out.
-    pub text: String,
+    /// Its text, padding left out: a one-row line's is its row's, shared.
+    pub text: Arc<str>,
     /// The hash of `text`.
     pub hash: u64,
     /// When the line only gained at its end since the last read, rows
@@ -207,6 +215,47 @@ pub struct Line {
     /// "Growing"): the length in bytes of what it was, so `text[from..]`
     /// is what it gained.
     pub grew_from: Option<usize>,
+}
+
+/// The rows of the last read ([`TerminalMemory::rows`]), counted from its
+/// first row: those from [`Rows::first_kept`] on are kept, and those above
+/// it are held only as hashes in the known history (section 4.1).
+#[derive(Clone, Copy, Debug)]
+pub struct Rows<'a> {
+    above: usize,
+    kept: &'a [Row],
+}
+
+impl<'a> Rows<'a> {
+    /// How many rows the last read held.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.above + self.kept.len()
+    }
+
+    /// Whether the last read held no rows.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The first row kept.
+    #[must_use]
+    pub fn first_kept(&self) -> usize {
+        self.above
+    }
+
+    /// The rows kept, from [`Rows::first_kept`] on.
+    #[must_use]
+    pub fn kept(&self) -> &'a [Row] {
+        self.kept
+    }
+
+    /// Row `row` of the last read, when it is kept.
+    #[must_use]
+    pub fn get(&self, row: usize) -> Option<&'a Row> {
+        self.kept.get(row.checked_sub(self.above)?)
+    }
 }
 
 /// What the memory made of one read.
@@ -263,20 +312,28 @@ struct Lingering {
     row: Row,
     /// When it was found gone.
     since_ms: u64,
-    /// Where it would be now had it stayed, counted as a memory row is.
+    /// Where it would be now had it stayed, counted as the last read's
+    /// rows are.
     at: isize,
 }
 
-/// One screen's memory.
+/// One screen's memory. Its rows are the last read's from `skipped` on;
+/// rows, anchors, lingering rows and the caret are counted as the last
+/// read's rows are.
 #[derive(Clone, Debug, Default)]
 struct Screen {
     rows: Vec<Row>,
+    /// How many of the last read's rows lie above `rows`, trimmed once the
+    /// read was handled (section 4.1): their hashes are the newest of
+    /// `known`.
+    skipped: usize,
     /// The screen's height at the last read.
     height: usize,
+    /// Whether the last read started at the document's start.
     at_document_start: bool,
     caret: Option<usize>,
     lingering: Vec<Lingering>,
-    /// The hashes of the rows above `rows`, oldest first.
+    /// The hashes of the rows above `rows`, oldest first: the known history.
     known: VecDeque<u64>,
     review: Option<Anchor>,
     marks: Vec<Anchor>,
@@ -288,16 +345,56 @@ struct Screen {
     /// How many rows the next read takes above its start: the block, and
     /// more while the block is still to be extended.
     above: usize,
-    /// For each row, whether its text was read since the switch that began
-    /// this memory: what a restore of the memory kept aside checks
+    /// For each of `rows`, whether its text was read since the switch that
+    /// began this memory: what a restore of the memory kept aside checks
     /// (section 5.8).
     read_since: Vec<bool>,
 }
 
 impl Screen {
-    /// The rows from the next read's start: the screen as last read.
+    /// The rows from the next read's start: the screen as last read, an
+    /// index of `rows`.
     fn screen_start(&self) -> usize {
         self.rows.len().saturating_sub(self.height)
+    }
+
+    /// The index in `rows` of the last read's row `row`, when it is kept.
+    fn index(&self, row: usize) -> Option<usize> {
+        row.checked_sub(self.skipped)
+            .filter(|&index| index < self.rows.len())
+    }
+
+    /// The last read's row `row`, when it is kept.
+    fn row(&self, row: usize) -> Option<&Row> {
+        self.index(row).map(|index| &self.rows[index])
+    }
+
+    /// The index in `rows` of the first row kept once the read is trimmed:
+    /// the block's first row.
+    fn trim_point(&self) -> usize {
+        self.screen_start().saturating_sub(self.block)
+    }
+
+    /// Keeps only the block and the rows below it, the hashes of those
+    /// above going to the known history (section 4.1). Returns how many
+    /// rows it dropped.
+    fn trim(&mut self) -> usize {
+        let dropped = self.trim_point();
+        if dropped == 0 {
+            return 0;
+        }
+        self.known
+            .extend(self.rows[..dropped].iter().map(|row| row.hash));
+        while self.known.len() > KNOWN_LIMIT {
+            self.known.pop_front();
+        }
+        self.continued = self.rows[dropped - 1].wraps;
+        self.rows = self.rows.split_off(dropped);
+        self.read_since = self
+            .read_since
+            .split_off(dropped.min(self.read_since.len()));
+        self.skipped += dropped;
+        dropped
     }
 
     fn has_text(rows: &[Row]) -> bool {
@@ -386,13 +483,45 @@ impl TerminalMemory {
         self.screen.as_ref().map_or(BLOCK, |screen| screen.above)
     }
 
-    /// The rows of the last read.
+    /// The rows of the last read, counted from its first row, of which
+    /// the memory keeps those from the block on once the read is trimmed
+    /// ([`TerminalMemory::trim`]).
     #[must_use]
-    pub fn rows(&self) -> &[Row] {
-        self.screen.as_ref().map_or(&[], |screen| &screen.rows)
+    pub fn rows(&self) -> Rows<'_> {
+        self.screen.as_ref().map_or(
+            Rows {
+                above: 0,
+                kept: &[],
+            },
+            |screen| Rows {
+                above: screen.skipped,
+                kept: &screen.rows,
+            },
+        )
     }
 
-    /// The hashes of the rows known above the last read, oldest first.
+    /// The row of the last read from which the memory keeps rows once the
+    /// read is trimmed: the first row of the block above the screen.
+    #[must_use]
+    pub fn first_kept(&self) -> usize {
+        self.screen
+            .as_ref()
+            .map_or(0, |screen| screen.skipped + screen.trim_point())
+    }
+
+    /// Keeps of the last read only what section 4.1 needs: the screen as
+    /// last read, the rows written below it, and the block above it, the
+    /// rows above the block held as hashes in the known history. The
+    /// reading rules call it once they have handled a read, and every
+    /// read first trims what the last left; the rows keep their places, so
+    /// nothing counted from the last read's first row moves. Returns how
+    /// many rows it dropped.
+    pub fn trim(&mut self) -> usize {
+        self.screen.as_mut().map_or(0, Screen::trim)
+    }
+
+    /// The hashes of the rows known above the rows the memory keeps, oldest
+    /// first.
     #[must_use]
     pub fn known_history(&self) -> Vec<u64> {
         self.screen
@@ -407,10 +536,11 @@ impl TerminalMemory {
     }
 
     /// Puts the review position on row `row` of the last read, at
-    /// `column`. Does nothing before the first read or past its rows.
+    /// `column`. Does nothing before the first read or on a row the
+    /// memory does not keep.
     pub fn set_review(&mut self, row: usize, column: usize) {
         if let Some(screen) = &mut self.screen
-            && let Some(found) = screen.rows.get(row)
+            && let Some(found) = screen.row(row)
         {
             screen.review = Some(Anchor {
                 row: isize_of(row),
@@ -427,16 +557,16 @@ impl TerminalMemory {
     }
 
     /// Sets a command mark on the line holding row `row` of the last read,
-    /// at the line's first row. Does nothing before the first read or past
-    /// its rows.
+    /// at the line's first row, or the first row kept of it. Does nothing
+    /// before the first read or on a row the memory does not keep.
     pub fn add_mark(&mut self, row: usize) {
         if let Some(screen) = &mut self.screen
-            && row < screen.rows.len()
+            && let Some(index) = screen.index(row)
         {
-            let first = line_start(&screen.rows, row);
+            let first = line_start(&screen.rows, index);
             let line_hash = screen.rows[first].line_hash;
             screen.marks.push(Anchor {
-                row: isize_of(first),
+                row: isize_of(screen.skipped + first),
                 column: 0,
                 line_hash,
             });
@@ -445,12 +575,14 @@ impl TerminalMemory {
 
     /// Aligns `read` with the memory, and takes it as the memory's last
     /// read, unless [`Outcome::whole_document`] or [`Outcome::search_above`]
-    /// asks for another read first.
+    /// asks for another read first. What the last read left untrimmed is
+    /// trimmed first ([`TerminalMemory::trim`]).
     #[expect(
         clippy::too_many_lines,
         reason = "one read's steps in order: switches, the rotation, the whole document, the alignment, the anchors"
     )]
     pub fn read(&mut self, read: &Read) -> Outcome {
+        self.trim();
         let last_height = self.screen.as_ref().map(|screen| screen.height);
         let (width, height) = measure(&read.screen, &read.caret_line, last_height);
         let rows = split_rows(&read.text, width, read.at_ms);
@@ -504,7 +636,9 @@ impl TerminalMemory {
         let shows_read_since = match &own {
             Aligned::Done(classified) => classified.new.iter().any(|kind| {
                 matches!(kind, NewRow::Kept { from, moved: false }
-                    if current.read_since[*from] && !current.rows[*from].is_blank())
+                if current.index(*from).is_some_and(|index| {
+                    current.read_since[index] && !current.rows[index].is_blank()
+                }))
             }),
             Aligned::Search(_) => false,
         };
@@ -601,12 +735,14 @@ impl TerminalMemory {
         }
         // The read's first row continues a line from above it when the old
         // row it was did (section 4.3, a row at a read's top).
+        // A row the memory held only as a hash, found again by a read from
+        // the document's start, is taken to start its line.
         let continued = match kinds.first() {
             Some(NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. }) => {
-                if *from == 0 {
-                    reference.continued
-                } else {
-                    reference.rows[from - 1].wraps
+                match reference.index(*from) {
+                    Some(0) => reference.continued,
+                    Some(index) => reference.rows[index - 1].wraps,
+                    None => false,
                 }
             }
             _ => false,
@@ -699,7 +835,7 @@ impl TerminalMemory {
             .screen
             .as_ref()
             .and_then(|screen| {
-                let base = base_of(screen, read)?;
+                let base = base_of(screen, read)? - isize_of(screen.skipped);
                 Some(
                     screen
                         .marks
@@ -823,10 +959,10 @@ fn align(
     if whole == Some(Whole::Lost) && block > 0 {
         // The whole document, read because no row of the last screen was in
         // the read: the block, where it is lowest, anchors the old rows. No
-        // row of the history moves down, so when the memory's rows began at
-        // the document's start, the block is no lower than it was.
+        // row of the history moves down, so when the last read began at the
+        // document's start, the block is no lower than it was.
         let lowest = if memory.at_document_start {
-            isize_of(top - block)
+            isize_of(memory.skipped + top - block)
         } else {
             isize_of(rows.len()) - 1
         };
@@ -942,7 +1078,9 @@ struct How {
     restoring: bool,
 }
 
-/// Aligns the rows of `read` with `memory` (section 4.3).
+/// Aligns the rows of `read` with `memory` (section 4.3). The alignment
+/// counts old rows as indices of the memory's rows; what it returns counts
+/// them as the last read's rows.
 #[expect(
     clippy::too_many_lines,
     reason = "the alignment's steps in the design's order, each short"
@@ -962,6 +1100,7 @@ fn classify(
         ..
     } = how;
     let old = &memory.rows;
+    let skip = memory.skipped;
     let (count, total) = (old.len(), rows.len());
     // The old rows aligned: the old screen; when the read started
     // elsewhere than the last read said, as after a refused start, rows
@@ -1120,6 +1259,27 @@ fn classify(
     }
     // Rows the last read held above its screen were not aligned: each
     // follows the topmost kept row's shift where its text is found there.
+    // So do the rows above the memory's, held only as hashes: one found is
+    // marked history until the old rows are counted as the last read's
+    // below.
+    let first_dropped = memory.known.len().checked_sub(skip);
+    let mut above_fates = Vec::with_capacity(skip);
+    for dropped in 0..skip {
+        let to = isize_of(dropped) - isize_of(skip) + shift;
+        let hash = first_dropped.and_then(|first| memory.known.get(first + dropped));
+        let found = usize::try_from(to)
+            .ok()
+            .filter(|&to| to < total && new[to] == NewRow::New && Some(&rows[to].hash) == hash);
+        above_fates.push(match found {
+            Some(to) => {
+                new[to] = NewRow::Earlier;
+                OldRow::Kept(to)
+            }
+            None if to < 0 && read.at_document_start => OldRow::Left,
+            None if to < 0 => OldRow::Above,
+            None => OldRow::Gone { lingering: false },
+        });
+    }
     for from in 0..start {
         let to = isize_of(from) + shift;
         let found = usize::try_from(to)
@@ -1281,7 +1441,7 @@ fn classify(
         || whole_read && old_had_text && !found_known && total > height;
     // Gone rows that linger, and lingering rows taken back (section 4.1).
     let blank = !Screen::has_text(rows);
-    let old_caret = memory.caret;
+    let old_caret = memory.caret.map(|row| row.saturating_sub(skip));
     for from in start..count {
         if fates[from] != (OldRow::Gone { lingering: false }) {
             continue;
@@ -1310,7 +1470,7 @@ fn classify(
         .lingering
         .iter()
         .filter(|row| read.at_ms.saturating_sub(row.since_ms) <= LINGERING_MS)
-        .map(|row| (row.at + shift, row.row.hash))
+        .map(|row| (row.at - isize_of(skip) + shift, row.row.hash))
         .collect();
     for to in 0..total {
         if new[to] != NewRow::New || rows[to].is_blank() {
@@ -1329,11 +1489,23 @@ fn classify(
             lingering.remove(index);
         }
     }
+    // The old rows counted as the last read's.
+    for kind in &mut new {
+        if let NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } = kind {
+            *from += skip;
+        }
+    }
+    for (from, fate) in above_fates.iter().enumerate() {
+        if let OldRow::Kept(to) = *fate {
+            new[to] = NewRow::Kept { from, moved: false };
+        }
+    }
+    above_fates.extend(fates);
     Classified {
         new,
-        old: fates,
+        old: above_fates,
         rotation,
-        shift,
+        shift: shift - isize_of(skip),
         old_had_text,
         kept_text,
         restores,
@@ -1357,7 +1529,6 @@ fn remember(
     caret: Option<usize>,
 ) -> Screen {
     let now = read.at_ms;
-    let old = &memory.rows;
     let mut lingering: Vec<Lingering> = memory
         .lingering
         .iter()
@@ -1370,12 +1541,18 @@ fn remember(
     for (to, kind) in kinds.iter().enumerate() {
         let row = &mut rows[to];
         match *kind {
+            // A row held only as a hash, found again, starts its history
+            // anew.
             NewRow::Kept { from, .. } => {
-                row.redrawn = old[from].redrawn;
-                row.changed_ms = old[from].changed_ms;
+                if let Some(old) = memory.row(from) {
+                    row.redrawn = old.redrawn;
+                    row.changed_ms = old.changed_ms;
+                }
             }
             NewRow::Rewritten { from, .. } => {
-                row.redrawn = old[from].redrawn || !row.text.starts_with(&old[from].text);
+                if let Some(old) = memory.row(from) {
+                    row.redrawn = old.redrawn || !row.text.starts_with(&*old.text);
+                }
             }
             NewRow::Returned { .. } => {
                 let back = lingering
@@ -1394,18 +1571,33 @@ fn remember(
         }
     }
     for (from, fate) in fates.iter().enumerate() {
-        if *fate == (OldRow::Gone { lingering: true }) {
+        if *fate == (OldRow::Gone { lingering: true })
+            && let Some(old) = memory.row(from)
+        {
             lingering.push(Lingering {
-                row: old[from].clone(),
+                row: old.clone(),
                 since_ms: now,
                 at: isize_of(from) + shift,
             });
         }
     }
+    // The rows above the memory's, whose hashes the trim put in the known
+    // history, stay there only when they went above the read: a row the read
+    // found again is in the read, and one that left the buffer is gone.
+    let skip = memory.skipped.min(fates.len());
+    let held = known.len().min(skip);
+    let first = known.len() - held;
+    let above: Vec<u64> = known
+        .drain(first..)
+        .zip(&fates[skip - held..skip])
+        .filter(|(_, fate)| **fate == OldRow::Above)
+        .map(|(hash, _)| hash)
+        .collect();
+    known.extend(above);
     known.extend(
-        fates
+        fates[skip..]
             .iter()
-            .zip(old)
+            .zip(&memory.rows)
             .filter(|(fate, _)| **fate == OldRow::Above)
             .map(|(_, row)| row.hash),
     );
@@ -1417,13 +1609,18 @@ fn remember(
     let read_since = kinds
         .iter()
         .map(|kind| match *kind {
-            NewRow::Kept { from, .. } => memory.read_since.get(from).copied().unwrap_or(false),
+            NewRow::Kept { from, .. } => memory
+                .index(from)
+                .and_then(|index| memory.read_since.get(index))
+                .copied()
+                .unwrap_or(false),
             NewRow::New | NewRow::Rewritten { .. } | NewRow::Returned { .. } => true,
             NewRow::Reprint | NewRow::Earlier => false,
         })
         .collect();
     Screen {
         rows,
+        skipped: 0,
         height,
         at_document_start: read.at_document_start,
         caret,
@@ -1540,10 +1737,18 @@ fn lines(rows: &[Row]) -> Vec<Line> {
         if row.wraps && at + 1 < rows.len() {
             continue;
         }
-        let text = line_text(&rows[first..=at]);
+        // A line's last row has no padding, so a one-row line's text is
+        // its row's.
+        let (text, line_hash) = if first == at {
+            (Arc::clone(&row.text), row.hash)
+        } else {
+            let text = line_text(&rows[first..=at]);
+            let line_hash = hash(&text);
+            (Arc::from(text), line_hash)
+        };
         lines.push(Line {
             rows: first..at + 1,
-            hash: hash(&text),
+            hash: line_hash,
             text,
             grew_from: None,
         });
@@ -1554,7 +1759,7 @@ fn lines(rows: &[Row]) -> Vec<Line> {
 
 /// The text of a line's rows, joined, padding left out.
 fn line_text(rows: &[Row]) -> String {
-    let joined: String = rows.iter().map(|row| row.text.as_str()).collect();
+    let joined: String = rows.iter().map(|row| &*row.text).collect();
     crate::trim_padding(&joined).to_owned()
 }
 
@@ -1565,7 +1770,9 @@ fn line_text(rows: &[Row]) -> String {
 fn grew_from(line: &Line, kinds: &[NewRow], memory: &Screen, continued: bool) -> Option<usize> {
     let old = &memory.rows;
     let from = match kinds.get(line.rows.start)? {
-        NewRow::Kept { from, moved: false } | NewRow::Rewritten { from, moved: false } => *from,
+        NewRow::Kept { from, moved: false } | NewRow::Rewritten { from, moved: false } => {
+            memory.index(*from)?
+        }
         _ => return None,
     };
     let starts = if from == 0 {
@@ -1635,41 +1842,41 @@ fn split_rows(text: &str, width: usize, now: u64) -> Vec<Row> {
     let text = text.strip_suffix("\r\n").unwrap_or(text);
     let mut rows = Vec::new();
     for line in text.split("\r\n") {
-        let mut pieces: Vec<String> = Vec::new();
+        let mut pieces: Vec<&str> = Vec::new();
         if line.is_ascii() && width > 0 {
             // Every printable ASCII character takes one cell.
             let mut at = 0;
             loop {
                 let end = (at + width).min(line.len());
-                pieces.push(line[at..end].to_owned());
+                pieces.push(&line[at..end]);
                 at = end;
                 if at >= line.len() {
                     break;
                 }
             }
         } else {
-            let mut piece = String::new();
-            let mut cells = 0;
-            for c in line.chars() {
+            let (mut start, mut cells) = (0, 0);
+            for (at, c) in line.char_indices() {
                 let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-                if width > 0 && cells + cell > width && !piece.is_empty() {
-                    pieces.push(std::mem::take(&mut piece));
-                    cells = 0;
+                if width > 0 && cells + cell > width && at > start {
+                    pieces.push(&line[start..at]);
+                    (start, cells) = (at, 0);
                 }
-                piece.push(c);
                 cells += cell;
             }
-            pieces.push(piece);
+            pieces.push(&line[start..]);
         }
         let last = pieces.len() - 1;
         let line_hash = hash(crate::trim_padding(line));
-        for (at, mut piece) in pieces.into_iter().enumerate() {
-            if at == last {
-                piece.truncate(crate::trim_padding(&piece).len());
-            }
+        for (at, piece) in pieces.into_iter().enumerate() {
+            let piece = if at == last {
+                crate::trim_padding(piece)
+            } else {
+                piece
+            };
             rows.push(Row {
-                hash: hash(&piece),
-                text: piece,
+                hash: hash(piece),
+                text: Arc::from(piece),
                 wraps: at < last,
                 line_hash,
                 redrawn: false,

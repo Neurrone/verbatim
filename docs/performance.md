@@ -2522,46 +2522,50 @@ made (`docs/design/terminal-model.md`, section 12), one of each for every
 terminal. Windows Terminal's tabs share one process, so its outpost will
 hold one memory for each tab, under the outpost's memory cap of 200 MB.
 
-The sizes, on x64, for a row of 120 columns: a 120-byte string costs 134
-bytes of heap, measured. The memory's `Row` is 56 bytes, so with its
-string it takes about 190 bytes, and one more byte records whether the
-row was read since a switch of screens. The reader's `RowState` is 216
-bytes with a copy of the row's text, and the `LineState` of the line the
-row begins (160 bytes, inside the `RowState`) holds the line's text
-twice, as last read and as last said; each row's line start takes 8
-bytes more. That is about 630 bytes of the reader's for a row that begins
-a line, and about 820 bytes a row in all. Colours add 24 bytes a run,
-only for the screen's rows and only after a key.
+The sizes, on x64, for a row of 120 columns: a row's text is one shared
+string of 136 bytes of heap (the 120 bytes and two counts), which the
+memory's row, the line it makes up when the line is one row, and the
+reading rules' state of that line all point to. The memory's `Row` is 48
+bytes, so with its text it takes about 185 bytes, and one more byte
+records whether the row was read since a switch of screens. The reader's
+`RowState` is 56 bytes, the `LineState` of the line the row begins 144
+bytes more, and each row's line start 8 bytes; what was last said of a
+line is the same string as its text until the two differ. That is about
+210 bytes of the reader's for a row that begins a line, and about 400
+bytes a row in all. Colours add 24 bytes a run, only for the screen's rows
+and only after a key.
 
 For a 120 by 30 screen with a full history of 9,001 rows:
 
 - The last read's rows, with their text and history: the screen and the
-  rotation block above it (4 to 30 rows), so 34 to 60 rows, 28 to 49 KB.
+  rotation block above it (4 to 30 rows), so 34 to 60 rows, 14 to 27 KB.
 - Lingering rows: at most the rows a read found gone, for 2 seconds,
-  each with its row (72 bytes and its text) and the reader's gone line
-  (176 bytes and its two strings), about 650 bytes a row: under 20 KB for
-  a screen's worth.
-- The known history: one 8-byte hash for every row above the screen,
-  9,001 hashes, 72 KB, up to 128 KB with the queue's unused capacity.
+  each with its row (64 bytes and its text) and the reader's gone line
+  (24 bytes and its 144-byte state), about 370 bytes a row: under 12 KB
+  for a screen's worth.
+- The known history: one 8-byte hash for every row above the rows kept,
+  9,001 hashes, 72 KB, up to as much again with the queue's unused
+  capacity.
 - Anchors: the review position and the command marks, 24 bytes each.
 
-So a terminal's memory in its steady state is about 100 to 200 KB (0.1 to
-0.2 MB) in the terminal's outpost, a few percent of today's outpost.
-
-After a read of the whole document (section 4.2: more than a screen went
-by between reads, as in every flood and in filling the history), the
-memory keeps every row of that read, not only the screen and the block:
-`remember` takes the read's rows whole, and only the next read, which
-starts at the screen, moves the rows above it into the known history.
-Until the terminal's next read, which a terminal left idle may not make
-for a long time, it holds 9,001 rows of about 820 bytes, about 7.4 MB.
-While that read is handled, the outpost also holds the read's text
-(9,001 rows of 122 bytes, 1.1 MB, and the 2.2 MB UTF-16 string UI
-Automation returned), the reader's copy of the memory's rows (1.7 MB),
-and the read's lines (about 1.8 MB), so the outpost's peak rises by about
-14 MB for that read. Two flooded terminals would therefore hold about
-15 MB between them, and a Windows Terminal with several flooded tabs
-about 7.4 MB for each. Cutting the memory's rows down to the block and
-the screen once a whole-document read is handled, keeping the rest as
-hashes in the known history, would hold every terminal at the steady
-figure.
+Once a read is handled, the memory and the reading rules keep of it only
+the screen, the rows written below it and the block above it, the rows
+above the block as hashes in the known history (`TerminalMemory::trim`),
+so a read of the whole document (section 4.2: more than a screen went by
+between reads, as in every flood and in filling the history) leaves the
+same memory as an ordinary read. Measured with a counting allocator in a
+release build, 120 by 30 with a full history of 9,001 rows, a terminal's
+memory and reading rules hold 162 KB after an ordinary read and 85 KB
+after a whole-document read, the difference the known history's unused
+capacity, so a terminal's memory in its steady state is about 0.1 to
+0.2 MB in the terminal's outpost, a few percent of today's outpost,
+however it was flooded. While a whole-document read is handled, the
+reading rules' peak rises by 4.5 MB: the read's rows (9,001 of about 185
+bytes, 1.7 MB), its lines (56 bytes each, a one-row line sharing its
+row's text), the outcome, and a 56-byte state for each row, with no line
+state for the lines above the rows that will be kept. The outpost also
+holds the read's text (1.1 MB as UTF-8, and the 2.2 MB UTF-16 string UI
+Automation returned), so its peak rises by about 8 MB for that read, and
+falls back once the read is handled. The reading rules take about 35
+microseconds for an ordinary read of one line more and about 9
+milliseconds for a whole-document read.

@@ -91,17 +91,22 @@ rules of section 5 (`terminal_reading`, below) are built on its
   the outpost keeps.
 - `TerminalMemory::new` and `TerminalMemory::read(&Read) -> Outcome`: one
   memory per terminal, kept while the terminal exists. `rows` gives the
-  last read's rows (`Row`: its text without padding, a 64-bit hash, whether
-  it wraps onto the next row, the hash of its whole line, whether it has
-  been redrawn, and when its text last changed); `known_history` the hashes
-  of the rows known above the last read; `review` and `set_review` the
-  review position, and `marks` and `add_mark` the command marks, each an
-  `Anchor` (a row counted from the last read's first row, negative in the
-  history above it, a column in characters, and its line's hash). `above`
-  gives how many rows the next read takes above its start, which the read
-  program is asked for. `restart(&Read)` takes a read as a first read,
-  keeping the command marks it cannot refute, for a caller that will not
-  take a read the memory asked for.
+  last read's rows as `Rows`, counted from the read's first row: `len` is
+  how many the read held, `first_kept` the first the memory keeps, `kept`
+  those rows and `get` one of them (`Row`: its text without padding,
+  shared as an `Arc<str>`, a 64-bit hash, whether it wraps onto the next
+  row, the hash of its whole line, whether it has been redrawn, and when
+  its text last changed). `trim` keeps only the block and the rows below
+  it (below), and `first_kept` says before it from which row it will keep.
+  `known_history` gives the hashes of the rows known above the rows kept;
+  `review` and `set_review` the review position, and `marks` and
+  `add_mark` the command marks, each an `Anchor` (a row counted from the
+  last read's first row, negative in the history above it, a column in
+  characters, and its line's hash), set only on a row the memory keeps.
+  `above` gives how many rows the next read takes above its start, which
+  the read program is asked for. `restart(&Read)` takes a read as a first
+  read, keeping the command marks it cannot refute, for a caller that will
+  not take a read the memory asked for.
 - `Outcome`: for each row of the read a `NewRow` (`New`; `Kept`, from which
   old row and whether it moved other than with the history; `Rewritten`,
   from which old row and whether it moved; `Returned`, a lingering row taken
@@ -110,7 +115,7 @@ rules of section 5 (`terminal_reading`, below) are built on its
   `Rewritten` and where, `Gone` and whether it lingers, `Above`, past
   the read's start, or `Left`, out of the buffer past the document's
   start); the read's `Line`s (rows joined while each wraps, with
-  their text and hash, and `grew_from` when a line that did not move only
+  their text, a one-row line's shared with its row, and hash, and `grew_from` when a line that did not move only
   gained at its end, so the text after that offset is what it gained);
   the rotation; whether the first row continues a line from above the
   read; the caret's row; the screen's width and height; a `Switch` of
@@ -242,6 +247,31 @@ with the shift and the rotation. A command mark moves to the first row of
 its line, and is dropped when its row was rewritten or is gone. The known
 history takes each old row that went above the read, up to 32,768 hashes.
 
+### What the memory keeps
+
+Section 4.1 needs of the last read only the screen, the rows written below
+it, and the block above it; the rows above the block matter only as hashes
+in the known history, and the review commands read history rows from the
+provider (section 5.6). So once a read is handled, `trim` drops the rows
+above the block, putting their hashes in the known history, and the
+reading rules drop their state of those rows with it. The reader trims
+after every read, and every read first trims what the last left, so the
+alignment always works on the trimmed memory. Nothing counted from the
+last read's first row moves: the memory keeps how many rows it dropped,
+and anchors, lingering rows, the caret and what the next `Outcome` says
+of old rows are still counted from that row. The first row kept carries
+whether the row above it wrapped onto it.
+
+The next read finds a dropped row only by its hash. A read that reaches
+it, the whole document or a read that restores a memory, keeps it where
+the shift puts it when the read's row there has its hash, and its
+history starts anew; otherwise it went above the read, left the buffer,
+or is gone, as a row above the old screen does. The known history keeps
+a dropped row's hash only when the row went above the read, so it holds
+what it held when the memory kept every row of the last read. A whole
+document of 9,000 rows therefore leaves the same memory as an ordinary
+read: about 34 rows of a 120 by 30 screen and its block.
+
 ### Cost
 
 In a release build on Dickson's x64 machine, with 120 by 30 screens of
@@ -262,6 +292,17 @@ read of 1,000 new rows after a screen 1.2 milliseconds; a whole-document
 read of 9,030 rows 12 milliseconds, against the 9.4 to 29 milliseconds
 the read itself takes. The read program's added instructions for the rows
 above the start are five (`docs/performance.md`).
+
+With the reading rules on top, measured on 2026-10-24 with a counting
+allocator in a release build, 120 by 30 with a full history of 9,001 rows:
+an ordinary read of one line more takes about 35 microseconds and a
+whole-document read about 9 milliseconds. Held between reads, a
+terminal's memory and rules take 85 to 160 KB after either kind of read,
+most of it the known history's 9,000 hashes (72 KB) and its queue's spare
+capacity; the rows kept take about 400 bytes each with the rules' state.
+Handling a whole-document read raises the peak by 4.5 MB: the read's rows
+and lines, the outcome, and a small state for each row, with no line state
+for the lines above the rows the memory will keep.
 
 ### Tests
 
@@ -351,6 +392,16 @@ lost text. A line the read's first row continues keeps the part above the
 read in its text, and speech quotes only the part the read shows. The
 history kept aside when the alternate screen opens is restored with the
 memory.
+
+The reader keeps state for the rows the memory keeps, and trims it with
+the memory once a read is handled: a line that starts above the first row
+kept moves its history to that row, the text above it counted as above
+the read. A line's text, what was said of it, and its row's text are one
+shared string while they are the same, so a row read whole costs one copy
+of its text. While a read is handled the reader reads the memory's rows in
+place, and keeps no history for a line above the rows the memory will
+keep that holds nothing, so a whole-document read does not build a line
+state for each of its thousands of rows.
 
 Each read, line by line, top to bottom:
 

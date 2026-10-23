@@ -13,6 +13,8 @@
 //! passes keys as they reach the program, and calls [`TerminalReader::timer`]
 //! when the timer it asked for comes due.
 
+use std::sync::Arc;
+
 use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, Switch, TerminalMemory};
 use crate::{Segmenter, WordRules, graphemes, is_space};
 
@@ -156,7 +158,8 @@ pub struct Withheld {
 }
 
 /// Something to say. Rows are rows of the memory's last read
-/// ([`TerminalMemory::rows`]), each the first row of the line spoken of.
+/// ([`TerminalMemory::rows`]), counted from its first row, each the first
+/// row of the line spoken of.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Speech {
     /// A line of new output, whole (section 5.3).
@@ -279,14 +282,17 @@ enum Hold {
     Keys,
 }
 
-/// A line's history (section 5.2), kept on its first row.
+/// A line's history (section 5.2), kept on its first row, or on the
+/// first row kept of it once the rows above are trimmed.
 #[derive(Clone, Debug, Default)]
 struct LineState {
-    /// Its text as last read.
-    text: String,
+    /// Its text as last read, shared with the memory's row when it is one
+    /// row read whole.
+    text: Arc<str>,
     /// What the user was last told of it, or knew of it when it was read
     /// silently: a growing line's spoken start while its word is held.
-    said: String,
+    /// Usually the same text as `text`, shared.
+    said: Arc<str>,
     /// Whether it was rewritten in place other than by growth.
     redrawn: bool,
     /// Whether it is volatile.
@@ -306,16 +312,17 @@ struct LineState {
     hold: Option<Hold>,
     /// Whether a key changed it since it appeared: it holds input.
     input: bool,
-    /// How much of `text`, in bytes, is above the read: the start of a
-    /// line the read's first row continues. Speech quotes only the rest.
+    /// How much of `text`, in bytes, is above the read, or above the
+    /// rows kept once they are trimmed: the start of a line the first row
+    /// continues. Speech quotes only the rest.
     cut: usize,
 }
 
 impl LineState {
-    fn read(text: &str) -> Self {
+    fn read(text: &Arc<str>) -> Self {
         Self {
-            text: text.to_owned(),
-            said: text.to_owned(),
+            text: Arc::clone(text),
+            said: Arc::clone(text),
             ..Self::default()
         }
     }
@@ -339,17 +346,18 @@ impl LineState {
 #[derive(Clone, Debug, Default)]
 struct RowState {
     hash: u64,
-    text: String,
+    /// The memory's row's text, shared.
+    text: Arc<str>,
     colours: Option<Vec<ColourRun>>,
-    line: Option<LineState>,
+    line: Option<Box<LineState>>,
 }
 
-/// The caret as a read left it.
+/// The caret as a read left it, its rows counted from the read's first.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Caret {
     /// Its row.
     row: usize,
-    /// The first row of its line.
+    /// The first row of its line, or the first row kept of it.
     line: usize,
     /// Its line's text.
     text: String,
@@ -357,17 +365,65 @@ struct Caret {
     column: usize,
 }
 
-/// The reader's view of one read.
+/// The reader's view of one read: its rows from `skipped` on, the rows
+/// the memory keeps.
 #[derive(Clone, Debug, Default)]
 struct Screen {
     rows: Vec<RowState>,
-    /// The first row of each row's line.
+    /// The first row of each row's line, an index of `rows`.
     starts: Vec<usize>,
     caret: Option<Caret>,
     size: (usize, usize),
-    /// The screen's first row: rows above it are in the history, where no
-    /// program redraws them.
+    /// The screen's first row, an index of `rows`: rows above it are in
+    /// the history, where no program redraws them.
     top: usize,
+    /// How many of the read's rows lie above `rows`, trimmed with the
+    /// memory's.
+    skipped: usize,
+}
+
+impl Screen {
+    /// The read's row `row`, when it is kept.
+    fn row(&self, row: usize) -> Option<&RowState> {
+        self.rows.get(row.checked_sub(self.skipped)?)
+    }
+
+    /// The first row of the line holding the read's row `row`, counted from
+    /// the read's first row, when it is kept.
+    fn start(&self, row: usize) -> Option<usize> {
+        let start = self.starts.get(row.checked_sub(self.skipped)?)?;
+        Some(start + self.skipped)
+    }
+
+    /// Drops the first `dropped` rows, as the memory trimmed them: a line
+    /// that starts above the first row kept keeps its history on that row,
+    /// the text above it as its cut.
+    fn trim(&mut self, dropped: usize) {
+        if dropped == 0 || dropped >= self.rows.len() {
+            return;
+        }
+        let start = self.starts[dropped];
+        if start < dropped {
+            let above: usize = self.rows[start..dropped]
+                .iter()
+                .map(|row| row.text.len())
+                .sum();
+            if let Some(mut line) = self.rows[start].line.take() {
+                line.cut = (line.cut + above).min(line.text.len());
+                self.rows[dropped].line = Some(line);
+            }
+        }
+        self.rows = self.rows.split_off(dropped);
+        self.starts = self.starts[dropped..]
+            .iter()
+            .map(|start| start.saturating_sub(dropped))
+            .collect();
+        self.top = self.top.saturating_sub(dropped);
+        self.skipped += dropped;
+        if let Some(caret) = &mut self.caret {
+            caret.line = caret.line.max(self.skipped);
+        }
+    }
 }
 
 /// The keys whose window is open.
@@ -391,7 +447,7 @@ struct Keys {
 #[derive(Clone, Debug)]
 struct Gone {
     hash: u64,
-    line: LineState,
+    line: Box<LineState>,
     since_ms: u64,
 }
 
@@ -567,7 +623,7 @@ impl TerminalReader {
     /// word as growth.
     fn release(&mut self, now: u64, speech: &mut Vec<Speech>) {
         let keys = self.last_key;
-        let top = self.screen.top;
+        let (top, skipped) = (self.screen.top, self.screen.skipped);
         for index in 0..self.screen.rows.len() {
             let Some(line) = &self.screen.rows[index].line else {
                 continue;
@@ -581,23 +637,27 @@ impl TerminalReader {
             if due > now && end > top {
                 continue;
             }
-            let (text, said, hold, cut) =
-                (line.text.clone(), line.said.clone(), line.hold, line.cut);
+            let (text, said, hold, cut) = (
+                Arc::clone(&line.text),
+                Arc::clone(&line.said),
+                line.hold,
+                line.cut,
+            );
             match hold {
                 Some(Hold::Word) => {
-                    if let Some(rest) = text.strip_prefix(said.as_str())
+                    if let Some(rest) = text.strip_prefix(&*said)
                         && !rest.is_empty()
                     {
                         speech.push(Speech::Growth {
-                            row: index,
+                            row: index + skipped,
                             text: text[(text.len() - rest.len()).max(cut)..].to_owned(),
                         });
                     }
                 }
                 Some(Hold::Volatile | Hold::Keys) => {
-                    if let Some(start) = self.changed_start(&[&said], &text) {
+                    if let Some(start) = self.changed_start(&[&*said], &text) {
                         speech.push(Speech::Changed {
-                            row: index,
+                            row: index + skipped,
                             text: text[start.max(cut)..].to_owned(),
                         });
                     }
@@ -619,10 +679,10 @@ impl TerminalReader {
         let text = &line.text;
         let start = match line.hold? {
             Hold::Word => text
-                .strip_prefix(line.said.as_str())
+                .strip_prefix(&*line.said)
                 .filter(|rest| !rest.is_empty())
                 .map(|rest| text.len() - rest.len())?,
-            Hold::Volatile | Hold::Keys => self.changed_start(&[&line.said], text)?,
+            Hold::Volatile | Hold::Keys => self.changed_start(&[&*line.said], text)?,
         };
         Some(text[start.max(line.cut)..].to_owned())
     }
@@ -653,13 +713,29 @@ impl TerminalReader {
     /// queue, and the screen's colour runs, row by row from the screen's
     /// top to the document's end, when the read took them (the first read
     /// after each key).
+    pub fn read(&mut self, read: &Read, waited: bool, colours: Option<&[Vec<ColourRun>]>) -> Step {
+        // The memory is taken out while the read is handled, so its rows are
+        // read in place rather than copied.
+        let mut memory = std::mem::take(&mut self.memory);
+        let step = self.handle(&mut memory, read, waited, colours);
+        self.memory = memory;
+        step
+    }
+
+    /// One read, against `memory`, as [`TerminalReader::read`].
     #[expect(
         clippy::too_many_lines,
         reason = "one read's rules in the design's order, each a short step"
     )]
-    pub fn read(&mut self, read: &Read, waited: bool, colours: Option<&[Vec<ColourRun>]>) -> Step {
+    fn handle(
+        &mut self,
+        memory: &mut TerminalMemory,
+        read: &Read,
+        waited: bool,
+        colours: Option<&[Vec<ColourRun>]>,
+    ) -> Step {
         let now = read.at_ms;
-        let mut outcome = self.memory.read(read);
+        let mut outcome = memory.read(read);
         if outcome.whole_document || outcome.search_above.is_some() {
             if self.settings.report_new_output {
                 return Step {
@@ -675,7 +751,7 @@ impl TerminalReader {
             self.screen = Screen::default();
             self.aside = None;
             self.lingering.clear();
-            outcome = self.memory.restart(read);
+            outcome = memory.restart(read);
         }
         self.reads += 1;
         let previous = match outcome.switch {
@@ -694,16 +770,21 @@ impl TerminalReader {
             .retain(|gone| now.saturating_sub(gone.since_ms) <= LINGERING_MS);
         for (from, fate) in outcome.old.iter().enumerate() {
             if *fate == (OldRow::Gone { lingering: true })
-                && let Some(line) = previous.rows.get(from).and_then(|row| row.line.clone())
+                && let Some(row) = previous.row(from)
+                && let Some(line) = row.line.clone()
             {
                 self.lingering.push(Gone {
-                    hash: previous.rows[from].hash,
+                    hash: row.hash,
                     line,
                     since_ms: now,
                 });
             }
         }
-        let rows: Vec<Row> = self.memory.rows().to_vec();
+        // The read's rows, all of them until the read is handled.
+        let rows: &[Row] = memory.rows().kept();
+        // A line above the rows kept once the read is handled, holding
+        // nothing, needs no history beyond this read.
+        let keep_from = memory.first_kept();
         let mut screen = Screen {
             rows: outcome
                 .rows
@@ -714,7 +795,7 @@ impl TerminalReader {
                     text: rows[to].text.clone(),
                     colours: match kind {
                         NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } => {
-                            previous.rows.get(*from).and_then(|row| row.colours.clone())
+                            previous.row(*from).and_then(|row| row.colours.clone())
                         }
                         _ => None,
                     },
@@ -725,6 +806,7 @@ impl TerminalReader {
             caret: None,
             size: (outcome.width, outcome.height),
             top: rows.len().saturating_sub(outcome.height),
+            skipped: 0,
         };
         for line in &outcome.lines {
             for row in line.rows.clone() {
@@ -740,7 +822,7 @@ impl TerminalReader {
             Some(Caret {
                 row,
                 line: line.rows.start,
-                text: line.text.clone(),
+                text: line.text.to_string(),
                 column: before + read.caret_column,
             })
         });
@@ -778,6 +860,8 @@ impl TerminalReader {
         let first_colours = window && self.keys.as_ref().is_some_and(|keys| !keys.read);
         let mut answered: Option<usize> = None;
         let mut key_speech: Vec<Speech> = Vec::new();
+        // Where the review position goes, set once the read is handled.
+        let mut reviews: Vec<(usize, usize)> = Vec::new();
         if window && !silent {
             let moved = match (
                 &caret,
@@ -792,7 +876,7 @@ impl TerminalReader {
             answered = self.answer_caret(
                 caret.as_ref(),
                 &outcome,
-                &rows,
+                rows,
                 new_colours.as_deref(),
                 &mut key_speech,
             );
@@ -800,18 +884,19 @@ impl TerminalReader {
                 && self.settings.review_follows_caret
                 && moved
             {
-                self.memory.set_review(caret.row, read.caret_column);
+                reviews.push((caret.row, read.caret_column));
             }
         }
         if self.fresh
             && let Some(caret) = &caret
         {
             // The focus moves the review cursor to the caret (section 5.6).
-            self.memory.set_review(caret.row, read.caret_column);
+            reviews.push((caret.row, read.caret_column));
         }
         // The lines, top to bottom.
         let mut items: Vec<(usize, Speech)> = Vec::new();
-        let mut fresh_lines: Vec<(usize, bool)> = Vec::new();
+        // New lines, each with its text, or none when it is blank.
+        let mut fresh_lines: Vec<(usize, Option<Arc<str>>)> = Vec::new();
         let mut emphasis_candidates: Vec<usize> = Vec::new();
         let unprompted_before = self
             .keys
@@ -836,7 +921,11 @@ impl TerminalReader {
                 _ => String::new(),
             };
             let cut = cut_text.len();
-            let text = format!("{cut_text}{}", line.text);
+            let text: Arc<str> = if cut_text.is_empty() {
+                Arc::clone(&line.text)
+            } else {
+                Arc::from(format!("{cut_text}{}", line.text))
+            };
             let part = |at: usize| text[at.max(cut)..].to_owned();
             let first = line
                 .rows
@@ -848,56 +937,58 @@ impl TerminalReader {
             // split off a line starts a line of its own.
             let base = match outcome.rows[first] {
                 NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } => previous
-                    .starts
-                    .get(from)
-                    .copied()
+                    .start(from)
                     .filter(|&old| old == from || (continued && first == start))
                     .and_then(|old| {
                         carried.insert(old);
-                        previous.rows.get(old)
+                        previous.row(old)
                     })
-                    .and_then(|row| row.line.clone()),
+                    .and_then(|row| row.line.as_deref().cloned()),
                 NewRow::Returned { .. } => self
                     .lingering
                     .iter()
                     .position(|gone| gone.hash == rows[first].hash)
-                    .map(|at| self.lingering.remove(at).line),
+                    .map(|at| *self.lingering.remove(at).line),
                 _ => None,
             };
             // The text of the old line a row split off a line was in.
             let split = match outcome.rows[first] {
                 NewRow::Kept { from, .. } if base.is_none() => previous
-                    .starts
-                    .get(from)
-                    .and_then(|&old| previous.rows.get(old))
+                    .start(from)
+                    .and_then(|old| previous.row(old))
                     .and_then(|row| row.line.as_ref())
-                    .map(|line| line.text.clone()),
+                    .map(|line| Arc::clone(&line.text)),
                 _ => None,
             };
             let changed = line.rows.clone().zip(kinds).any(|(row, kind)| {
                 !rows[row].is_blank() && matches!(kind, NewRow::New | NewRow::Rewritten { .. })
             });
             if answered == Some(start) {
-                screen.rows[start].line = Some(LineState {
-                    input: true,
-                    cut,
-                    ..base.map_or_else(
-                        || LineState::read(&text),
-                        |mut base| {
-                            base.text.clone_from(&text);
-                            base.said.clone_from(&text);
-                            base.hold = None;
-                            base
-                        },
-                    )
-                });
+                put(
+                    &mut screen,
+                    &line.rows,
+                    keep_from,
+                    LineState {
+                        input: true,
+                        cut,
+                        ..base.map_or_else(
+                            || LineState::read(&text),
+                            |mut base| {
+                                base.text.clone_from(&text);
+                                base.said.clone_from(&text);
+                                base.hold = None;
+                                base
+                            },
+                        )
+                    },
+                );
                 continue;
             }
             if line.text.is_empty() {
                 if kinds.iter().all(|kind| *kind == NewRow::New) {
-                    fresh_lines.push((start, false));
+                    fresh_lines.push((start, None));
                 }
-                screen.rows[start].line = Some(LineState::default());
+                put(&mut screen, &line.rows, keep_from, LineState::default());
                 continue;
             }
             if silent || !report {
@@ -907,7 +998,7 @@ impl TerminalReader {
                 state.said.clone_from(&text);
                 state.hold = None;
                 state.volatile = false;
-                screen.rows[start].line = Some(state);
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
             let Some(mut state) = base.map(|mut base| {
@@ -922,7 +1013,7 @@ impl TerminalReader {
                 if reprint {
                     state.input = true;
                 } else if changed {
-                    fresh_lines.push((start, true));
+                    fresh_lines.push((start, Some(Arc::clone(&text))));
                 } else if let Some(old) = split.filter(|old| *old != text) {
                     // Kept rows split off a line: silent when that line held
                     // their text, spoken as a change otherwise.
@@ -942,7 +1033,7 @@ impl TerminalReader {
                         ));
                     }
                 }
-                screen.rows[start].line = Some(state);
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             };
             let old_text = state.text.clone();
@@ -978,7 +1069,7 @@ impl TerminalReader {
                 if state.hold == Some(Hold::Word)
                     && caret.as_ref().is_none_or(|caret| caret.line != start)
                 {
-                    if let Some(rest) = text.strip_prefix(state.said.as_str())
+                    if let Some(rest) = text.strip_prefix(&*state.said)
                         && !rest.is_empty()
                     {
                         items.push((
@@ -992,7 +1083,7 @@ impl TerminalReader {
                     state.said.clone_from(&text);
                     state.hold = None;
                 }
-                screen.rows[start].line = Some(state);
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
             state.text.clone_from(&text);
@@ -1004,7 +1095,7 @@ impl TerminalReader {
             // that lost text or was held for another reason since is spoken
             // by the changed-word rule below.
             let heard = state.said == old_text || state.hold == Some(Hold::Word);
-            if line.grew_from.is_some() && heard && text.starts_with(state.said.as_str()) {
+            if line.grew_from.is_some() && heard && text.starts_with(&*state.said) {
                 // A growing line speaks what it gained, holding back an
                 // unfinished last word (section 5.3).
                 state.grew_interval_ms = state.grew_ms.map(|at| now.saturating_sub(at));
@@ -1039,7 +1130,11 @@ impl TerminalReader {
                             text: text[said.max(cut).min(end)..end].to_owned(),
                         },
                     ));
-                    text[..end].clone_into(&mut state.said);
+                    state.said = if end == text.len() {
+                        Arc::clone(&text)
+                    } else {
+                        Arc::from(&text[..end])
+                    };
                 }
                 if end < text.len() {
                     step.withheld.push(Withheld {
@@ -1050,7 +1145,7 @@ impl TerminalReader {
                 } else {
                     state.hold = None;
                 }
-                screen.rows[start].line = Some(state);
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
             // A redrawn row (section 5.4), or a row a key changed away from
@@ -1084,7 +1179,7 @@ impl TerminalReader {
                     });
                     state.hold = Some(Hold::Keys);
                 }
-                screen.rows[start].line = Some(state);
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
             if lost_text(&old_text, &text) {
@@ -1093,7 +1188,7 @@ impl TerminalReader {
                     reason: Reason::LostText,
                 });
                 drop_word(&mut state);
-                screen.rows[start].line = Some(state);
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
             if spinner_step(&old_text, &text) {
@@ -1104,7 +1199,7 @@ impl TerminalReader {
                 if state.hold.is_none() {
                     state.said.clone_from(&text);
                 }
-                screen.rows[start].line = Some(state);
+                put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
             let interval = state.changed_ms.map(|at| now.saturating_sub(at));
@@ -1122,7 +1217,7 @@ impl TerminalReader {
                     reason: Reason::Volatile,
                 });
             } else {
-                if let Some(at) = self.changed_start(&[&state.said, &old_text], &text) {
+                if let Some(at) = self.changed_start(&[&*state.said, &*old_text], &text) {
                     items.push((
                         start,
                         Speech::Changed {
@@ -1134,7 +1229,7 @@ impl TerminalReader {
                 state.said.clone_from(&text);
                 state.hold = None;
             }
-            screen.rows[start].line = Some(state);
+            put(&mut screen, &line.rows, keep_from, state);
         }
         // Gained emphasis: a row whose colours changed while its text did
         // not (section 5.7).
@@ -1146,7 +1241,7 @@ impl TerminalReader {
                 if let Some(line) = &mut screen.rows[row].line {
                     key_speech.push(Speech::Answer {
                         row,
-                        text: line.text.clone(),
+                        text: line.text.to_string(),
                     });
                     line.said.clone_from(&line.text);
                 }
@@ -1163,7 +1258,7 @@ impl TerminalReader {
             keys.read = true;
         }
         // New output, by the flood policy.
-        while fresh_lines.last().is_some_and(|(_, text)| !text) {
+        while fresh_lines.last().is_some_and(|(_, text)| text.is_none()) {
             fresh_lines.pop();
         }
         let limit = self.settings.lines_in_full + self.settings.last_lines;
@@ -1173,9 +1268,9 @@ impl TerminalReader {
                 .len()
                 .saturating_sub(self.settings.last_lines)
                 .max(head);
-            for &(row, text) in &fresh_lines[..head] {
-                if text {
-                    items.push((row, line_speech(&screen, row)));
+            for (row, text) in &fresh_lines[..head] {
+                if let Some(text) = text {
+                    items.push((*row, line_speech(*row, text)));
                 }
             }
             if tail > head || outcome.overflowed {
@@ -1185,7 +1280,7 @@ impl TerminalReader {
                     Speech::Skipped {
                         rows: counted
                             .iter()
-                            .filter(|(_, text)| *text)
+                            .filter(|(_, text)| text.is_some())
                             .map(|(row, _)| *row)
                             .collect(),
                         count: counted.len(),
@@ -1193,15 +1288,15 @@ impl TerminalReader {
                     },
                 ));
             }
-            for &(row, text) in &fresh_lines[tail..] {
-                if text {
-                    items.push((row, line_speech(&screen, row)));
+            for (row, text) in &fresh_lines[tail..] {
+                if let Some(text) = text {
+                    items.push((*row, line_speech(*row, text)));
                 }
             }
         } else {
-            for &(row, text) in &fresh_lines {
-                if text {
-                    items.push((row, line_speech(&screen, row)));
+            for (row, text) in &fresh_lines {
+                if let Some(text) = text {
+                    items.push((*row, line_speech(*row, text)));
                 }
             }
         }
@@ -1219,7 +1314,6 @@ impl TerminalReader {
                     text: caret.text.clone(),
                 });
             }
-            self.refind_review(&rows);
         }
         // A held line that left the read, above its start or out of a full
         // history, with no line of the read carrying it, is spoken as it
@@ -1229,9 +1323,8 @@ impl TerminalReader {
                 .rows
                 .iter()
                 .enumerate()
-                .filter(|&(old, _)| {
-                    previous.starts.get(old) == Some(&old) && !carried.contains(&old)
-                })
+                .map(|(index, row)| (index + previous.skipped, row))
+                .filter(|&(old, _)| previous.start(old) == Some(old) && !carried.contains(&old))
                 .filter(|&(old, _)| match outcome.old.get(old) {
                     Some(OldRow::Above | OldRow::Left) => true,
                     Some(OldRow::Gone { .. }) => outcome.overflowed,
@@ -1259,6 +1352,18 @@ impl TerminalReader {
         {
             self.keys = None;
         }
+        for (row, column) in reviews {
+            memory.set_review(row, column);
+        }
+        if resized
+            && !outcome.first
+            && let Some((row, column)) = refound_review(memory)
+        {
+            memory.set_review(row, column);
+        }
+        // Of the read, only what section 4.1 needs is kept.
+        let dropped = memory.trim();
+        self.screen.trim(dropped);
         step.timer = self.next_due();
         step.outcome = Some(outcome);
         step
@@ -1518,8 +1623,7 @@ impl TerminalReader {
             return false;
         };
         let held = previous
-            .rows
-            .get(old.line)
+            .row(old.line)
             .and_then(|row| row.line.as_ref())
             .is_some_and(|line| line.input);
         let above = match outcome.old.get(old.line) {
@@ -1597,43 +1701,47 @@ impl TerminalReader {
             _ => Vec::new(),
         }
     }
-
-    /// After a resize, the review position found again by its line's hash
-    /// near its old place, counted from the read's end (section 5.9).
-    fn refind_review(&mut self, rows: &[Row]) {
-        let Some(review) = self.memory.review() else {
-            return;
-        };
-        let found = rows
-            .iter()
-            .enumerate()
-            .filter(|(at, row)| {
-                row.line_hash == review.line_hash && (*at == 0 || !rows[at - 1].wraps)
-            })
-            .min_by_key(|(at, _)| (isize::try_from(*at).unwrap_or(isize::MAX) - review.row).abs())
-            .map(|(at, _)| at);
-        if let Some(row) = found {
-            self.memory.set_review(row, review.column);
-        }
-    }
 }
 
-/// The start of the line holding row `from` of `previous`, up to that
-/// row: the part of a line above a read whose first row continues it.
+/// After a resize, the review position found again by its line's hash near
+/// its old place, counted from the read's end (section 5.9), in `memory`
+/// before it is trimmed: its row and column.
+fn refound_review(memory: &TerminalMemory) -> Option<(usize, usize)> {
+    let review = memory.review()?;
+    let rows = memory.rows().kept();
+    rows.iter()
+        .enumerate()
+        .filter(|(at, row)| row.line_hash == review.line_hash && (*at == 0 || !rows[at - 1].wraps))
+        .min_by_key(|(at, _)| (isize::try_from(*at).unwrap_or(isize::MAX) - review.row).abs())
+        .map(|(at, _)| (at, review.column))
+}
+
+/// The start of the line holding row `from` of `previous`, counted from
+/// its read's first row, up to that row: the part of a line above a read
+/// whose first row continues it.
 fn above_read(previous: &Screen, from: usize) -> String {
-    let Some(&start) = previous.starts.get(from) else {
+    let Some(start) = previous.start(from) else {
         return String::new();
     };
-    let own: String = previous.rows[start..from]
-        .iter()
-        .map(|row| row.text.as_str())
+    let own: String = (start..from)
+        .filter_map(|row| previous.row(row))
+        .map(|row| &*row.text)
         .collect();
-    let earlier = previous.rows[start]
-        .line
-        .as_ref()
+    let earlier = previous
+        .row(start)
+        .and_then(|row| row.line.as_ref())
         .and_then(|line| line.text.get(..line.cut))
         .unwrap_or_default();
     format!("{earlier}{own}")
+}
+
+/// Puts `state` on the first of `rows`, unless the line is above the rows
+/// kept once the read is handled, `keep_from` on, and holds nothing: its
+/// history would be dropped unused.
+fn put(screen: &mut Screen, rows: &std::ops::Range<usize>, keep_from: usize, state: LineState) {
+    if rows.end > keep_from || state.hold.is_some() {
+        screen.rows[rows.start].line = Some(Box::new(state));
+    }
 }
 
 /// A line that lost text no longer holds its unfinished word.
@@ -1643,15 +1751,11 @@ fn drop_word(state: &mut LineState) {
     }
 }
 
-/// The speech of a new line starting at `row` of `screen`.
-fn line_speech(screen: &Screen, row: usize) -> Speech {
+/// The speech of a new line starting at `row`, with `text`.
+fn line_speech(row: usize, text: &str) -> Speech {
     Speech::Line {
         row,
-        text: screen.rows[row]
-            .line
-            .as_ref()
-            .map(|line| line.text.clone())
-            .unwrap_or_default(),
+        text: text.to_owned(),
     }
 }
 

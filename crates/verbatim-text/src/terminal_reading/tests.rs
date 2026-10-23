@@ -317,6 +317,49 @@ fn a_flood_past_the_history_is_counted_as_more_than() {
 }
 
 #[test]
+fn a_whole_document_read_leaves_only_the_screen_and_the_block_held() {
+    // Section 4.1: once a read of the whole document is handled, the memory
+    // and the rules keep its screen and the block of four rows above it,
+    // and the rows above the block only as hashes in the known history.
+    let settings = Settings {
+        lines_in_full: 1,
+        last_lines: 1,
+        ..Settings::default()
+    };
+    let mut term = Term::with(20, 3, 10, settings);
+    term.write("a\r\nb\r\nc\r\nd", 100);
+    let flood: String = (1..=20)
+        .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
+        .collect();
+    // Twenty lines through a buffer of thirteen: the whole document is read,
+    // the rows "8" to "20".
+    assert_eq!(
+        term.write(&flood, 200),
+        says(vec![
+            line(0, "8"),
+            Speech::Skipped {
+                rows: (1..=11).collect(),
+                count: 11,
+                more_than: true
+            },
+            line(12, "20"),
+        ])
+    );
+    let memory = term.reader.memory();
+    let rows = memory.rows();
+    assert_eq!(rows.len(), 13);
+    assert_eq!(rows.first_kept(), 6);
+    let kept: Vec<&str> = rows.kept().iter().map(|row| &*row.text).collect();
+    assert_eq!(kept, ["14", "15", "16", "17", "18", "19", "20"]);
+    let above: Vec<u64> = (8..=13)
+        .map(|number| crate::terminal_rows::hash(&number.to_string()))
+        .collect();
+    assert_eq!(memory.known_history(), above);
+    assert_eq!(term.reader.screen.rows.len(), 7);
+    assert_eq!(term.reader.screen.skipped, 6);
+}
+
+#[test]
 fn an_unfinished_word_pushed_out_of_a_full_history_is_spoken_before_the_count() {
     let settings = Settings {
         lines_in_full: 1,
@@ -900,21 +943,28 @@ fn with_report_new_output_off_a_flood_through_a_full_history_keeps_marks_it_cann
         ..Settings::default()
     };
     let mut term = Term::with(20, 3, 20, settings);
-    let filler: String = (1..=20)
-        .flat_map(|number| ["f".to_owned(), number.to_string(), "\r\n".to_owned()])
-        .collect();
-    term.write(&format!("{filler}$ one\r\n$ two\r\n$ three"), 100);
+    // The memory keeps only the screen and the block above it, so each
+    // mark is set on its line while the line is on the screen.
     let row_of = |term: &Term, text: &str| {
-        term.reader
-            .memory()
-            .rows()
-            .iter()
-            .position(|row| row.text == text)
-            .expect("the line is in the read")
+        let rows = term.reader.memory().rows();
+        rows.first_kept()
+            + rows
+                .kept()
+                .iter()
+                .position(|row| &*row.text == text)
+                .expect("the line is kept")
     };
+    assert_eq!(term.write("f1\r\nf2\r\nf3\r\nf4\r\nf5", 50), quiet(None));
     let f5 = row_of(&term, "f5");
-    let two = row_of(&term, "$ two");
     term.reader.memory_mut().add_mark(f5);
+    let filler: String = (6..=20)
+        .flat_map(|number| ["\r\nf".to_owned(), number.to_string()])
+        .collect();
+    assert_eq!(
+        term.write(&format!("{filler}\r\n$ one\r\n$ two\r\n$ three"), 100),
+        quiet(None)
+    );
+    let two = row_of(&term, "$ two");
     term.reader.memory_mut().add_mark(two);
     let flood: String = (1..=10)
         .flat_map(|number| ["\r\n".to_owned(), number.to_string()])

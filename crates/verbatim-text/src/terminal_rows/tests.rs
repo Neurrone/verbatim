@@ -100,8 +100,9 @@ impl Watch {
     fn texts(&self) -> Vec<&str> {
         self.memory
             .rows()
+            .kept()
             .iter()
-            .map(|row| row.text.as_str())
+            .map(|row| &*row.text)
             .collect()
     }
 }
@@ -315,7 +316,7 @@ fn a_wrapped_line_split_across_the_reads_top_grows() {
         [kept(1), kept(2), kept(3), kept(4), kept(5), kept(6), NEW]
     );
     assert_eq!(outcome.lines.len(), 1);
-    assert_eq!(outcome.lines[0].text, "efghijklmnopqrstuvwxyz1234");
+    assert_eq!(&*outcome.lines[0].text, "efghijklmnopqrstuvwxyz1234");
     assert_eq!(outcome.lines[0].grew_from, Some(24));
 }
 
