@@ -1973,6 +1973,7 @@ dependencies = [
  "icu_segmenter",
  "jieba-rs",
  "unicode-width",
+ "verbatim-model",
  "workspace-hack",
 ]
 
