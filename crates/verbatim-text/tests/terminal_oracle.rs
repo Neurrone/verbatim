@@ -266,7 +266,22 @@ enum Question {
     /// read whose document grew past a screen from one with no history be
     /// taken as the whole document's, searched for the old screen?
     RotationWithoutBlock,
+    /// A program redraws its bottom rows lower as the history grows, and
+    /// the alignment pairs a volatile row with a new row further down that
+    /// is alike to it (section 4.3, item 4), as Pi's input row "/model"
+    /// with its model selector's "Model catalogs refreshed.", and carries
+    /// the row's changes to it (item 6), so the new row is held as
+    /// volatile and never spoken once the selector erases it. Every row
+    /// keeps its coordinate as the history grows, and the new row's was
+    /// blank at the last read, so the oracle finds no change there. Should
+    /// a row's volatility move with a rewrite that moves it by other than
+    /// the history's growth or rotation?
+    VolatileMovedByRewrite,
 }
+
+/// A corpus stream pinned in one terminal: its name, the question that
+/// decides it, and its violations counted by kind.
+type CorpusPin = (&'static str, Flavor, Question, Vec<(&'static str, usize)>);
 
 /// A random case pinned: its number, the question that decides it, and
 /// its violations counted by kind.
@@ -294,7 +309,17 @@ fn the_cores_violations_over_the_corpus() {
         })
         .filter(|(_, _, tally)| !tally.is_empty())
         .collect();
-    assert_eq!(found, []);
+    let pinned: Vec<CorpusPin> = vec![(
+        "pi-regular",
+        Flavor::ConsoleHost,
+        Question::VolatileMovedByRewrite,
+        vec![("FalseReason Volatile", 1)],
+    )];
+    let expected: Vec<StreamTally> = pinned
+        .iter()
+        .map(|(name, flavor, _, kinds)| ((*name).to_owned(), *flavor, counts(kinds)))
+        .collect();
+    assert_eq!(found, expected);
 }
 
 #[test]

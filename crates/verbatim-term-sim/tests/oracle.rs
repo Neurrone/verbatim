@@ -996,6 +996,240 @@ fn a_volatile_row_moved_up_by_the_rotation_to_where_another_row_changed_is_caugh
     );
 }
 
+#[test]
+fn a_volatile_row_rewritten_as_the_history_grows_is_followed() {
+    // "50%" on the screen's last row changes to "60%", then to "70%" just
+    // before a newline grows the history, which moves the screen down a
+    // row while the row keeps its coordinate.
+    let stream = stream(&[
+        (Op::Write("a\r\nb\r\nc\r\nd\r\n50%"), true),
+        (Op::CarriageReturn, false),
+        (Op::EraseLine(2), false),
+        (Op::Write("60%"), true),
+        (Op::CarriageReturn, false),
+        (Op::EraseLine(2), false),
+        (Op::Write("70%"), false),
+        (Op::Newline, false),
+        (Op::Write("e"), true),
+    ]);
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![
+                line(0, "a"),
+                line(1, "b"),
+                line(2, "c"),
+                line(3, "d"),
+                line(4, "50%"),
+            ]),
+            says(vec![redrawn(4, "60%")]),
+            holds(vec![line(5, "e")], &[(4, Reason::Volatile)]),
+            says(vec![redrawn(4, "70%")]),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut reader), []);
+}
+
+#[test]
+fn a_volatile_row_whose_place_another_row_changed_as_the_history_grows_is_caught() {
+    // "50%" above "x" changes to "60%"; then "x" changes to "y" as a
+    // newline grows the history, which brings "y" to the place on the
+    // screen "60%" had: the row of "y" never changed before.
+    let stream = stream(&[
+        (Op::Write("a\r\nb\r\nc\r\n50%\r\nx"), true),
+        (Op::MoveRows(-1), false),
+        (Op::CarriageReturn, false),
+        (Op::EraseLine(2), false),
+        (Op::Write("60%"), true),
+        (Op::MoveRows(1), false),
+        (Op::CarriageReturn, false),
+        (Op::EraseLine(2), false),
+        (Op::Write("y"), false),
+        (Op::Newline, false),
+        (Op::Write("e"), true),
+    ]);
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![
+                line(0, "a"),
+                line(1, "b"),
+                line(2, "c"),
+                line(3, "50%"),
+                line(4, "x"),
+            ]),
+            says(vec![redrawn(3, "60%")]),
+            holds(vec![line(5, "e")], &[(4, Reason::Volatile)]),
+            says(vec![redrawn(4, "y")]),
+        ])
+    };
+    assert_eq!(
+        violations(&stream, &mut reader),
+        [false_reason(3, 4, "y", Reason::Volatile)]
+    );
+}
+
+#[test]
+fn a_row_that_lost_text_as_the_full_history_rotates_is_followed_up() {
+    // "> foo" loses its marker just before a newline rotates the history,
+    // which moves it up from row 9 to row 8, where "y" was; its old text
+    // is still on the screen as often, so no line vanished.
+    let stream = rotated_after(
+        7,
+        &[
+            &[
+                (Op::Write("> foo"), false),
+                (Op::Newline, false),
+                (Op::Write("y"), false),
+                (Op::Newline, false),
+                (Op::Write("> foo"), false),
+                (Op::Newline, false),
+                (Op::Write("x"), true),
+            ],
+            &[
+                (Op::MoveRows(-1), false),
+                (Op::CarriageReturn, false),
+                (Op::EraseLine(2), false),
+                (Op::Write("  foo"), false),
+                (Op::MoveRows(1), false),
+                (Op::Newline, false),
+                (Op::Write("> foo"), true),
+            ],
+        ],
+    );
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![Spoken::Summary { rows: 0..7 }]),
+            says(vec![
+                line(7, "> foo"),
+                line(8, "y"),
+                line(9, "> foo"),
+                line(10, "x"),
+            ]),
+            holds(vec![], &[(8, Reason::LostText)]),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut reader), []);
+}
+
+#[test]
+fn lost_text_claimed_for_a_row_the_rotation_moved_up_to_where_a_longer_row_was_is_caught() {
+    // "x" below "> foo" changes to "foo" as a newline rotates the history,
+    // which moves "foo" up to the row "> foo" had: its own row did not
+    // lose text.
+    let stream = rotated_after(
+        9,
+        &[
+            &[
+                (Op::Write("> foo"), false),
+                (Op::Newline, false),
+                (Op::Write("x"), true),
+            ],
+            &[
+                (Op::CarriageReturn, false),
+                (Op::EraseLine(2), false),
+                (Op::Write("foo"), false),
+                (Op::Newline, false),
+                (Op::Write("b"), true),
+            ],
+        ],
+    );
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![Spoken::Summary { rows: 0..9 }]),
+            says(vec![line(9, "> foo"), line(10, "x")]),
+            holds(vec![line(10, "b")], &[(9, Reason::LostText)]),
+        ])
+    };
+    assert_eq!(
+        violations(&stream, &mut reader),
+        [false_reason(3, 9, "foo", Reason::LostText)]
+    );
+}
+
+#[test]
+fn a_line_carried_through_the_full_historys_rotation_grows_from_what_was_said_of_it() {
+    // "hel" grows to "hello wor", its last word held, as "hello wor" is
+    // written whole on the row above; a newline then rotates the history,
+    // moving both up a row, and the growth that completes the held line is
+    // judged against what was said of that line, not of the line that
+    // moved into its place.
+    let stream = rotated_after(
+        9,
+        &[
+            &[(Op::Newline, false), (Op::Write("hel"), true)],
+            &[
+                (Op::Write("lo wor"), false),
+                (Op::MoveRows(-1), false),
+                (Op::CarriageReturn, false),
+                (Op::Write("hello wor"), true),
+            ],
+            &[
+                (Op::MoveRows(1), false),
+                (Op::Newline, false),
+                (Op::Write("b"), true),
+            ],
+        ],
+    );
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![Spoken::Summary { rows: 0..9 }]),
+            says(vec![line(10, "hel")]),
+            holds(
+                vec![line(9, "hello wor"), growth(10, "lo ")],
+                &[(10, Reason::UnfinishedWord)],
+            ),
+            says(vec![line(10, "b"), growth(9, "wor")]),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut reader), []);
+}
+
+#[test]
+fn growth_judged_against_a_line_the_rotation_moved_into_its_place_is_caught() {
+    // "hel" grows to "hello wor", its last word held, as "hello wor" is
+    // written whole on the row below; a newline then rotates the history,
+    // moving the whole line up to the held line's place. Growth said of
+    // the whole line says nothing new, so the hold is never resolved.
+    let stream = rotated_after(
+        9,
+        &[
+            &[(Op::Write("hel"), true)],
+            &[
+                (Op::Write("lo wor"), false),
+                (Op::Newline, false),
+                (Op::Write("hello wor"), true),
+            ],
+            &[(Op::Newline, false), (Op::Write("b"), true)],
+        ],
+    );
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![Spoken::Summary { rows: 0..9 }]),
+            says(vec![line(9, "hel")]),
+            holds(
+                vec![growth(9, "lo "), line(10, "hello wor")],
+                &[(9, Reason::UnfinishedWord)],
+            ),
+            says(vec![line(10, "b"), growth(9, "wor")]),
+        ])
+    };
+    assert_eq!(
+        violations(&stream, &mut reader),
+        [false_reason(3, 9, "hello wor", Reason::UnfinishedWord)]
+    );
+}
+
 /// "50%", "60%" and "70%" written over each other, then `then`.
 fn held_then(then: Op) -> Stream {
     let rewrite = |text| {

@@ -178,6 +178,8 @@ pub struct Buffer {
     /// history rotated, oldest first: rows that left with their text, as
     /// opposed to rows deleted or erased.
     pub rotated: Vec<RowId>,
+    /// How many rows were erased from its front with the history.
+    pub erased: usize,
 }
 
 /// The cursor.
@@ -254,6 +256,7 @@ impl Grid {
                 top: 0,
                 continued: false,
                 rotated: Vec::new(),
+                erased: 0,
             },
             alternate: None,
             cursor: Cursor {
@@ -579,6 +582,7 @@ impl Grid {
             self.main.continued = self.main.rows[top - 1].wraps;
         }
         self.main.rows.drain(..top);
+        self.main.erased += top;
         self.main.top = 0;
     }
 
@@ -660,6 +664,7 @@ impl Grid {
             top: 0,
             continued: false,
             rotated: Vec::new(),
+            erased: 0,
         };
         for _ in 0..self.height {
             buffer.rows.push_back(self.scrolled_in_row());
