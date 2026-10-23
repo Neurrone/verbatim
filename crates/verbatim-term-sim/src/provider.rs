@@ -10,6 +10,7 @@
 
 use crate::Snapshot;
 use crate::grid::Grid;
+use crate::oracle::Seen;
 
 /// A position: a row's coordinate and a column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -264,8 +265,9 @@ impl Provider<'_> {
     }
 
     /// The read program's snapshot, step for step as its classic
-    /// implementation takes it.
-    pub(crate) fn snapshot(&self, query: &Query) -> Result<Snapshot, Refused> {
+    /// implementation takes it, with the coordinate of the row its text
+    /// starts on.
+    pub(crate) fn snapshot(&self, query: &Query) -> Result<(Snapshot, usize), Refused> {
         let document = self.document();
         let screen = self.visible();
         let screen_text = self.text(screen)?;
@@ -309,7 +311,7 @@ impl Provider<'_> {
         } else {
             0
         };
-        Ok(Snapshot {
+        let snapshot = Snapshot {
             text,
             screen: screen_text,
             from_start,
@@ -321,7 +323,24 @@ impl Provider<'_> {
             caret_line,
             caret_column,
             next_start: next,
-        })
+        };
+        Ok((snapshot, start.start.row))
+    }
+
+    /// The rows from coordinate `from` to the document's last row, as a
+    /// read's text gives them, with their identities.
+    pub(crate) fn seen(&self, from: usize) -> Vec<Seen> {
+        let rows = &self.grid.buffer().rows;
+        (from..=self.last_row())
+            .map(|at| Seen {
+                id: rows[at].id,
+                text: rows[at].cells[..self.cells_given(at)]
+                    .iter()
+                    .map(|cell| cell.character)
+                    .collect(),
+                wraps: rows[at].wraps,
+            })
+            .collect()
     }
 
     /// The colours of the screen's rows to the document's last row: for

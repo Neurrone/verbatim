@@ -48,6 +48,8 @@ unicode-width = "0.2"
 toml = "1"
 # The VT parser under the simulated terminal of the tests (verbatim-term-sim).
 vte = "0.15"
+# Random streams for the terminal oracle's tests (verbatim-term-sim).
+proptest = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unic-langid = "0.9"

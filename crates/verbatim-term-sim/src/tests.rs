@@ -114,3 +114,77 @@ fn reverse_video_swaps_the_colours_shown() {
         (DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, DEFAULT_FOREGROUND)
     );
 }
+
+fn line(text: &str, rows: &[RowId], finished: u64, left: Option<u64>) -> OutputLine {
+    OutputLine {
+        text: text.to_owned(),
+        rows: rows.to_vec(),
+        finished,
+        left,
+    }
+}
+
+#[test]
+fn a_line_ended_by_a_line_feed_is_output_and_one_still_written_is_not() {
+    let mut terminal = terminal(3, 5);
+    terminal.write(b"ab\r\ncd");
+    let id = terminal.grid().main.rows[0].id;
+    assert_eq!(terminal.output(), [line("ab", &[id], 1, None)]);
+}
+
+#[test]
+fn a_wrapped_line_is_one_output_line_over_its_rows() {
+    let mut terminal = terminal(3, 5);
+    terminal.write(b"0123456789abc\r\n");
+    let rows = &terminal.grid().main.rows;
+    assert_eq!(
+        terminal.output(),
+        [line("0123456789abc", &[rows[0].id, rows[1].id], 1, None)]
+    );
+}
+
+#[test]
+fn a_line_rewritten_after_a_carriage_return_is_not_output() {
+    let mut terminal = terminal(3, 5);
+    terminal.write(b"10%\r50%\r\n");
+    assert_eq!(terminal.output(), []);
+}
+
+#[test]
+fn a_row_erased_and_written_again_is_not_output() {
+    let mut terminal = terminal(3, 5);
+    terminal.write(b"ab\x1b[2K\rab\r\n");
+    assert_eq!(terminal.output(), []);
+}
+
+#[test]
+fn a_line_changed_after_its_line_feed_stops_being_output() {
+    let mut terminal = terminal(3, 5);
+    terminal.write(b"ab\r\ncd\r\n");
+    terminal.write(b"\x1b[1;1H\x1b[K");
+    let id = terminal.grid().main.rows[1].id;
+    assert_eq!(terminal.output(), [line("cd", &[id], 1, None)]);
+}
+
+#[test]
+fn an_output_line_records_the_write_it_left_a_full_history_in() {
+    let mut terminal = terminal(2, 1);
+    terminal.write(b"one\r\ntwo\r\n");
+    terminal.write(b"three\r\nfour\r\n");
+    assert_eq!(
+        terminal.output(),
+        [
+            line("one", &[0], 1, Some(2)),
+            line("two", &[1], 1, Some(2)),
+            line("three", &[2], 2, None),
+            line("four", &[3], 2, None),
+        ]
+    );
+}
+
+#[test]
+fn a_line_on_the_alternate_screen_is_not_output() {
+    let mut terminal = terminal(3, 5);
+    terminal.write(b"\x1b[?1049hab\r\n");
+    assert_eq!(terminal.output(), []);
+}

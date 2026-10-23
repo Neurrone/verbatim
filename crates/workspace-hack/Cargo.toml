@@ -20,6 +20,9 @@ foldhash = { version = "0.2", default-features = false, features = ["std"] }
 i18n-embed = { version = "0.16", features = ["filesystem-assets", "fluent-system"] }
 log = { version = "0.4", default-features = false, features = ["std"] }
 memchr = { version = "2" }
+num-traits = { version = "0.2", features = ["i128"] }
+once_cell = { version = "1" }
+regex-syntax = { version = "0.8" }
 rust-embed = { version = "8", default-features = false, features = ["debug-embed"] }
 rust-embed-utils = { version = "8", default-features = false, features = ["debug-embed"] }
 serde = { version = "1", features = ["derive"] }
@@ -56,15 +59,19 @@ zerofrom = { version = "0.1", default-features = false, features = ["alloc", "de
 zerovec = { version = "0.11", default-features = false, features = ["alloc", "derive", "yoke"] }
 
 [target.x86_64-pc-windows-msvc.dependencies]
+getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_SystemInformation"] }
 
 [target.x86_64-pc-windows-msvc.build-dependencies]
+getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_SystemInformation"] }
 
 [target.aarch64-pc-windows-msvc.dependencies]
+getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_SystemInformation"] }
 
 [target.aarch64-pc-windows-msvc.build-dependencies]
+getrandom = { version = "0.4", default-features = false, features = ["std", "sys_rng"] }
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_SystemInformation"] }
 
 ### END HAKARI SECTION

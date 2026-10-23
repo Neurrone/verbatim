@@ -9,7 +9,9 @@
 
 pub mod conformance;
 mod grid;
+pub mod oracle;
 mod provider;
+mod truth;
 mod vt;
 
 pub use grid::{
@@ -17,6 +19,7 @@ pub use grid::{
     RowId, Style,
 };
 pub use provider::{Flavor, Position, Query, Range, Refused};
+pub use truth::OutputLine;
 
 use provider::Provider;
 
@@ -87,10 +90,26 @@ impl Terminal {
 
     /// Writes `bytes` to the terminal, as a program writes to its output.
     pub fn write(&mut self, bytes: &[u8]) {
+        self.grid.record.writes += 1;
         let mut performer = vt::Performer {
             grid: &mut self.grid,
         };
         self.parser.advance(&mut performer, bytes);
+    }
+
+    /// How many times [`Terminal::write`] has been called.
+    #[must_use]
+    pub fn writes(&self) -> u64 {
+        self.grid.record.writes
+    }
+
+    /// The lines written as output so far, in the order they were finished
+    /// (see [`OutputLine`] for what counts): the oracle's ground truth.
+    /// A line counts only while nothing has changed it, so a line can drop
+    /// out of this list as later writes change it.
+    #[must_use]
+    pub fn output(&self) -> Vec<OutputLine> {
+        self.grid.record.output()
     }
 
     /// The terminal's state, row identities included.
@@ -112,7 +131,17 @@ impl Terminal {
     ///
     /// [`Refused`] when the provider would fail a call the read makes.
     pub fn snapshot(&self, query: &Query) -> Result<Snapshot, Refused> {
-        self.provider().snapshot(query)
+        self.provider()
+            .snapshot(query)
+            .map(|(snapshot, _)| snapshot)
+    }
+
+    /// One read, as [`Terminal::snapshot`] takes it, with the rows its text
+    /// covers as they truly are, identities included.
+    pub(crate) fn observe(&self, query: &Query) -> Result<(Snapshot, Vec<oracle::Seen>), Refused> {
+        let provider = self.provider();
+        let (snapshot, start) = provider.snapshot(query)?;
+        Ok((snapshot, provider.seen(start)))
     }
 
     /// The colours of the screen's rows, each row's stretches of one
