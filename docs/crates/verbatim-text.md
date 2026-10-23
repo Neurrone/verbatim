@@ -1,7 +1,9 @@
 # verbatim-text
 
 Platform-neutral text segmentation for the text model of milestone M4
-(`docs/design/phase6-design.md`, "Internationalization in the text model"). Original
+(`docs/design/phase6-design.md`, "Internationalization in the text model"),
+and the memory of a terminal's rows that reading terminals is built on
+(`docs/design/terminal-model.md`, section 4). Original
 code over ICU4X's segmenters, jieba, and `unicode-width`; it never touches a
 Windows API, and `cargo xtask ci` checks that it does not.
 
@@ -67,67 +69,161 @@ Windows API, and `cargo xtask ci` checks that it does not.
   which the outposts remove from every name, value, and description they
   read.
 
-## The terminal line diff
+## The terminal row memory
 
-`terminal_diff` is the diff of the terminal reading design
-(`docs/design/terminal-reading.md`, "The diff"; its review's sections 5
-and 6), written from that design and `docs/parity/terminals.md`, "New
-terminal output". It is not wired into the outpost yet. It depends on
-`verbatim-model` for `LineChange` and `Skipped`, the shapes the outpost's
-`TerminalOutput` carries.
+`terminal_rows` is the platform-neutral core of the terminal model's
+section 4, "Changes as alignments of rows" (`docs/design/terminal-model.md`),
+written from that design. It classifies; it does not speak: the reading
+rules of section 5 (growing lines, redrawn and volatile rows, keys,
+colours) are built on its `Outcome`. It is not wired into the outpost yet.
 
-Both entry points take a `Read`: the old screen's lines as last read, the
-same lines as last said, the snapshot's lines (padding trimmed, logical
-lines, so a wrapped line is one), the screen's height, and the caret's
-line in the snapshot. Each returns a `Found` and a `Work`.
+### Public API
 
-- `diff_read` is the normal read, whose snapshot starts at the old
-  screen's top. The common start is taken first: the lines above the old
-  last line unchanged, then the old last line as it was or grown, which
-  is the usual case and linear. Otherwise the common end is taken, and the
-  rest is aligned by the longest common subsequence of lines, ties going
-  to the alignment that keeps lines nearest their own position. Only the
-  snapshot's first lines, the old screen's length plus one screen and one
-  line more, are aligned; the extra line keeps a footer the console host
-  redraws a row lower inside the window. Old and new lines left between
-  the same two kept lines are paired as rewritten in place: one old line
-  with the new line sharing the longest start with it, or, replaced by a
-  single line, when either is blank; several first to first when at
-  least as many new lines replace them; none when fewer do.
-- What it says, in speaking order: `above`, lines inserted before the
-  last old line kept or rewritten, and what changed of lines rewritten
-  there; `changed`, the caret's line rewritten in place, or else the old
-  last line; and `appended`, every line after the last old line kept,
-  uncut, for the flood policy. A line rewritten speaks through
-  `line_change`: what it gained at its end, or the line from the start of
-  the word where it first differs, nothing for a spinner or a line that
-  only lost text or gained white space. A line's change is taken from
-  what it said, with its change since it was read beside it where they
-  differ, and `said` lists the lines that only got shorter than what they
-  said, which the memory keeps.
-- `written` gives the lines that count: a blank line only above the
-  caret's line, or, with no caret, every line but the blank ones at the
-  end.
-- When no line of the old screen that is not blank is found unchanged,
-  and its last line is not found grown in place, `old_missing` is set and
-  nothing else: the outpost then takes one whole-document read, never
-  repeated.
-- `diff_document` is that read. It scans the document from its end
-  backward for a line that is the old screen's last line that is not
-  blank, or that line grown, with every old line above it standing above
-  it unchanged; the nearest the end wins. Found, the document is diffed
-  from there as `diff_read` does. Not found in a document longer than a
-  screen, the history overflowed: the screen's lines are appended, and the
-  rest of the document is `Skipped::MoreThan` that many lines, or
-  `Skipped::Uncounted` when it is one line repeated, since identical lines
-  with a full history cannot be counted. Not found in a document no longer
-  than a screen, the screen was cleared or another buffer shown, and the
-  document is diffed from its top.
-- `Work` counts the window (`aligned_new`), the old lines aligned
-  (`aligned_old`), and every comparison of two whole lines (`compared`),
-  which the tests assert exactly: a 2,000-line flood after a 30-line
-  screen aligns 61 lines against 30 with 30 comparisons, and a 9,001-line
-  document without the old screen takes 8,973.
+- `Read`: what one read returned, as the read program's snapshot gives it
+  (the text from the read's start to the document's end, the screen's
+  text, whether the read started where the last said, whether that start
+  was refused, whether the read and the screen start at the document's
+  start, the document's first row, the caret's row and column and how many
+  rows its row and those below hold), with the text as UTF-8 and the time
+  of the read in milliseconds. The start for the next read is an opaque
+  provider range the outpost keeps.
+- `TerminalMemory::new` and `TerminalMemory::read(&Read) -> Outcome`: one
+  memory per terminal, kept while the terminal exists. `rows` gives the
+  last read's rows (`Row`: its text without padding, a 64-bit hash, whether
+  it wraps onto the next row, the hash of its whole line, whether it has
+  been redrawn, and when its text last changed); `known_history` the hashes
+  of the rows known above the last read; `review` and `set_review` the
+  review position, and `marks` and `add_mark` the command marks, each an
+  `Anchor` (a row counted from the last read's first row, negative in the
+  history above it, a column in characters, and its line's hash).
+- `Outcome`: for each row of the read a `NewRow` (`New`; `Kept`, from which
+  old row and whether it moved other than with the history; `Rewritten`,
+  from which old row and whether it moved; `Returned`, a lingering row taken
+  back, and whether elsewhere; `Reprint`; or `Earlier`, history the
+  memory never covered); for each old row an `OldRow` (`Kept` or
+  `Rewritten` and where, `Gone` and whether it lingers, or `Above`, past
+  the read's start); the read's `Line`s (rows joined while each wraps, with
+  their text and hash, and `grew_from` when a line that did not move only
+  gained at its end, so the text after that offset is what it gained);
+  the rotation; whether the first row continues a line from above the
+  read; the caret's row; the screen's width and height; a `Switch` of
+  screens; whether a whole-document read did not find the old screen
+  (`overflowed`); and `whole_document`, set alone when the memory needs
+  the whole document read and given before it changes anything.
+- `hash`: the 64-bit hash of a row's text (FNV-1a), the same in every
+  process.
+
+### How a read is aligned
+
+The read gives text, not coordinates, so a row's place is its index in
+the read that found it. A read's rows are its text split at line breaks
+and each line split into rows of the screen's width; padding is trimmed
+from a line's last row only, so a wrapped line's earlier rows keep the
+spaces where it wrapped. The width is the narrowest of the screen's lines
+but its last, every line being a whole number of rows except Windows
+Terminal's last row of the buffer, which is one cell short. When every
+line but the last wraps, that narrowest line is several rows, so the
+caret's row, which the read gives as one row, is used instead when its
+length, or that length and the cut cell, fits every screen line; when
+both fit, the one that gives the height of the last read wins.
+
+Each read starts where the last said, the screen's top as last read, so
+a row that did not move is at a known shift: its old index less the rows
+the last read held above that start. A read the outpost started anywhere
+else (the start was refused, the whole document, a restored memory) has no
+known shift, and the old rows are found wherever they are.
+
+The old screen (the last read's rows from that start) is aligned with the
+new read's first rows, as many as the old screen and a screen more, and
+its last screen of rows; rows between those windows are new. The
+alignment is a longest common subsequence of the hashes of the rows with
+text, by dynamic programming over every cell of the old screen by the
+windows: each cell keeps two running maxima, the best alignment ending on
+the same shift (which continues a block) and the best anywhere above and
+to the left (which starts one), so among alignments keeping equally many
+rows the one with the fewest blocks wins, and then the one with the fewest
+rows off the known shift. A blank row is kept only in place, where the
+kept row above it, or else below it, puts it. The rotation is how far the
+topmost kept row moved up from its known place; rows that moved with it
+are kept unmoved, and the others kept as moved.
+
+Between two kept rows, the old and new rows left over are paired as
+rewritten by likeness: alike when neither is blank and one begins the
+other, or they share in order at least half the characters of the longer,
+counted by the bit-parallel longest common subsequence of their
+characters. The pairing keeps their order and makes as many pairs as it
+can, and then the most whose shift is that of the kept row below them, so
+Pi's status row drawn a row lower with its spinner changed pairs with its
+old self.
+
+An old row left over is gone, and lingers for 2 seconds when it was a
+redrawn row, was at or below the caret's row of the last read, would be at
+or below the caret's row now, or the read shows no text at all, where a
+program cleared the screen before drawing it again. A new row with a
+lingering row's text takes that row back. New rows above the topmost kept
+row are matched, in order, against the known history and the old rows
+above the kept ones, by the histogram method (the rarest shared row first,
+nearest the old screen, then the rows before and after it the same way):
+in a normal read the matched rows are a reprint (section 4.4), and in a
+whole-document read or a restored memory they are history found again.
+
+When the old screen had text and none of it was kept, or the read's start
+was refused, and the read does not start at the document's start, the
+memory asks for the whole document and changes nothing until it comes;
+the old screen is then searched for in all of it, and when it is not
+found in a document longer than a screen and no row of the known history
+is found either, the history overflowed.
+
+A read whose screen starts at the document's start, after one whose screen
+did not, is a switch of screens or a clear that looks like one (section
+5.8): it is aligned as usual, then the memory before it is kept aside with
+its anchors, and the new screen's memory starts with the review position
+at the caret. When the screen no longer starts at the document's start,
+the memory kept aside is restored if every row with text of its old
+screen is kept in the read, and dropped otherwise.
+
+Anchors move with the alignment: a kept or rewritten row carries its
+anchor to its new place, the column clamped to the text; a row written
+over keeps it in place; a gone row with no place in the read passes it to
+the nearest surviving row above, or to the caret; above the read it moves
+with the shift and the rotation. A command mark moves to the first row of
+its line, and is dropped when its row was rewritten or is gone. The known
+history takes each old row that went above the read, up to 32,768 hashes.
+
+### Cost
+
+In a release build on Dickson's x64 machine, with 120 by 30 screens of
+ASCII text: a read of the last screen and one line more takes about 24
+microseconds, most of it splitting the text into rows and lines, the
+dynamic programming over 30 by 61 cells a small part; a screen rewritten
+whole about 117 microseconds, the likeness pairing of 30 rows by 30; a
+read of 1,000 new rows after a screen 1.2 milliseconds; a whole-document
+read of 9,030 rows 12 milliseconds, against the 9.4 to 29 milliseconds
+the read itself takes.
+
+### Tests
+
+`src/terminal_rows/tests.rs` drives the memory with `verbatim-term-sim`,
+reading as the outpost does, one case of the design each, asserted whole:
+plain output, a scroll, rotation, a footer kept at its coordinate while
+the history rotates, a footer redrawn in place, Pi's status row drawn a row
+lower with its spinner changed, Ink's region erased and drawn again in one
+write and caught erased between two, a repeated row kept in place rather
+than paired with its copy, a wrapped line split across the read's top,
+Windows Terminal's cut last row, a clear and a reprint, output repeated
+after `cls`, the alternate screen opened and closed, and the review
+position through a scroll, a rotation and a redraw elsewhere.
+
+`tests/terminal_oracle.rs` checks a reader built on the memory against
+the simulator's oracle over the conformance corpus in both terminals, the
+oracle's 512 random streams and every stream of up to four operations of
+its tiny alphabet. The reader reports every new line, every line with a
+rewritten row as redrawn, growth as growth, and withholds kept rows that
+moved, lingering rows taken back elsewhere and reprints for those
+reasons, with where each row went and its review position. Each test
+asserts the exact violations left, counted by kind; the file's comment
+lists their causes, each a judgement by row identity that a reader of
+text cannot make, awaiting a decision on the oracle or the design.
 
 ## Units
 

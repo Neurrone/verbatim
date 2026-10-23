@@ -2206,8 +2206,9 @@ dependencies = [
  "icu_properties",
  "icu_segmenter",
  "jieba-rs",
+ "proptest",
  "unicode-width",
- "verbatim-model",
+ "verbatim-term-sim",
  "workspace-hack",
 ]
 

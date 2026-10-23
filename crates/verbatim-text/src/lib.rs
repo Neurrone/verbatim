@@ -23,8 +23,9 @@
 //!   alone, or Unicode's line and paragraph separators.
 //! - [`cell_width`] is how many terminal cells text takes; [`trim_padding`]
 //!   removes a terminal line's trailing padding, whatever whitespace it is.
-//! - [`terminal_diff`] is the terminal line diff: what one read of a
-//!   terminal found new since the last, in the order it is spoken.
+//! - [`terminal_rows`] is a terminal's memory of its rows and the
+//!   alignment of each read against it: what each row of the read is, and
+//!   where each row of the last read went.
 //!
 //! Offsets are byte offsets into the UTF-8 string given. Positions in a
 //! provider's own units (UTF-16 code units, text ranges) are converted at
@@ -46,7 +47,7 @@ use icu_segmenter::options::{
 use icu_segmenter::{GraphemeClusterSegmenter, SentenceSegmenter, WordSegmenter};
 use jieba_rs::Jieba;
 
-pub mod terminal_diff;
+pub mod terminal_rows;
 
 /// The grapheme clusters of `text`, each as its byte range, in order.
 #[must_use]
