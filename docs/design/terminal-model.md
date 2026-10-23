@@ -443,7 +443,15 @@ Each part is one step in the sense of `REVIEW.md`: built with its tests and docu
 10. The read program's colours and the remote operations audit.
 11. The outpost and Core: reading moved onto the core; the review position as an anchor; following the caret only within a key's window; the key's window and the typed-character limit; the quiet-period timer; the subscription and the caret-event read restored.
 12. "Report status bar" with NVDA+End; then moving by command with Verbatim+Alt+Up and Verbatim+Alt+Down, with their scenarios in both terminals, in a shell and in Pi's regular mode.
-13. End-to-end scenarios: the ones listed in section 9, with NVDA captures where NVDA's speech is the expectation, after checking that the NVDA pin equals the installed build; the existing terminal scenarios brought back to passing.
+13. End-to-end scenarios: the ones listed in section 9, with NVDA captures where NVDA's speech is the expectation, after checking that the NVDA pin equals the installed build; the existing terminal scenarios brought back to passing. Then streaming and redrawing at a real program's rate, which no NVDA capture can give an expectation for, since NVDA reads these cases poorly (decided by Dickson, 2026-10-24): a test program of Verbatim's own, driven phase by phase through a pipe, writes each way a program streams text, at up to 60 frames a second, under a redrawn footer with a spinner and a timer, with typing at its prompt:
+    - appending to the last line, a token at a time, split anywhere, including inside a word and inside a character's bytes;
+    - rewriting the whole line for each token, after a carriage return or an erase of the line;
+    - redrawing a whole region each frame, Ink's way, with the streamed paragraph inside it growing and wrapping;
+    - wrapping by the program itself, so a partly written word moves down to the next row;
+    - writing into a scroll region above a fixed footer, or inserting lines above it;
+    - clearing and repainting the screen each frame, on the main screen and on the alternate screen;
+    - earlier lines changed as the text streams, as a Markdown renderer restyles or rewraps them.
+  Each is recorded into the conformance corpus, so the oracle checks every read point of it, and the random streams gain the same operations. The scenarios' expectations come from this document's rules: in a phase whose pace the test sets, the exact speech; in a phase at the program's own rate, the exact text of everything spoken for the stream, joined, which must be the streamed text once, in order, with no word split, whatever the reads' timing.
 14. Measurements after, against the baseline, recorded in `docs/performance.md`.
 15. This document rewritten to describe the design as built, for any reader; the decisions move to `docs/parity/terminals.md`.
 16. The whole terminal suite, `cargo xtask ci`, and the push.
