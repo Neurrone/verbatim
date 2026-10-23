@@ -71,14 +71,27 @@ impl Performer<'_> {
             match code {
                 0 => self.grid.style = crate::grid::Style::default(),
                 1 => self.grid.style.bold = true,
-                22 => self.grid.style.bold = false,
+                2 => self.grid.style.faint = true,
+                22 => {
+                    self.grid.style.bold = false;
+                    self.grid.style.faint = false;
+                }
                 7 => self.grid.style.reverse = true,
                 27 => self.grid.style.reverse = false,
-                30..=37 => self.grid.style.foreground = PALETTE[usize::from(code - 30)],
-                39 => self.grid.style.foreground = crate::grid::DEFAULT_FOREGROUND,
+                30..=37 => {
+                    self.grid.style.foreground = PALETTE[usize::from(code - 30)];
+                    self.grid.style.brightens = true;
+                }
+                39 => {
+                    self.grid.style.foreground = crate::grid::DEFAULT_FOREGROUND;
+                    self.grid.style.brightens = true;
+                }
                 40..=47 => self.grid.style.background = PALETTE[usize::from(code - 40)],
                 49 => self.grid.style.background = crate::grid::DEFAULT_BACKGROUND,
-                90..=97 => self.grid.style.foreground = PALETTE[usize::from(code - 90 + 8)],
+                90..=97 => {
+                    self.grid.style.foreground = PALETTE[usize::from(code - 90 + 8)];
+                    self.grid.style.brightens = false;
+                }
                 100..=107 => self.grid.style.background = PALETTE[usize::from(code - 100 + 8)],
                 38 | 48 => {
                     let colour = match flat.get(at + 1) {
@@ -100,6 +113,7 @@ impl Performer<'_> {
                     if let Some(colour) = colour {
                         if code == 38 {
                             self.grid.style.foreground = colour;
+                            self.grid.style.brightens = false;
                         } else {
                             self.grid.style.background = colour;
                         }
@@ -175,7 +189,11 @@ impl Perform for Performer<'_> {
         let (row, column) = (grid.cursor.row, grid.cursor.column);
         match action {
             'A' => grid.move_vertically(-signed(first)),
-            'B' | 'e' => grid.move_vertically(signed(first)),
+            'B' => grid.move_vertically(signed(first)),
+            // Vertical position relative is an absolute move from the
+            // cursor's row, so the margins do not stop it (both terminals,
+            // measured 2026-10-23).
+            'e' => grid.move_to(row + first, column),
             'C' | 'a' => grid.move_to(row, column + first),
             'D' => grid.move_to(row, column.saturating_sub(first)),
             'E' => {
@@ -226,10 +244,13 @@ impl Perform for Performer<'_> {
         match byte {
             b'7' => self.grid.save_cursor(),
             b'8' => self.grid.restore_cursor(),
-            b'D' => self.grid.line_feed(),
+            // Index and next line are line feeds the program wrote: the
+            // console host clears the row's wrap mark for them as for a line
+            // feed (measured 2026-10-23).
+            b'D' => self.grid.explicit_line_feed(),
             b'E' => {
                 self.grid.carriage_return();
-                self.grid.line_feed();
+                self.grid.explicit_line_feed();
             }
             b'M' => self.grid.reverse_index(),
             _ => {}

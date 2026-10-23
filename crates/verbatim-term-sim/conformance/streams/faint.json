@@ -1,0 +1,13 @@
+{
+  "about": "Faint text (SGR 2) as Pi writes it: the default foreground, a 256-colour index, true colour, with bold, with reverse video, and ended by SGR 22.",
+  "chunks": [
+    "\u001b[2mfaint\u001b[22mnormal\r\n",
+    "\u001b[2m\u001b[38;5;3mfaint\u001b[22myellow\u001b[m\r\n",
+    "\u001b[2m\u001b[38;2;234;182;93mfaint\u001b[m\r\n",
+    "\u001b[1;2mboth\u001b[22mnone\u001b[m\r\n",
+    "\u001b[2m\u001b[31mred\u001b[m\r\n",
+    "\u001b[2m\u001b[7mreversed\u001b[27m\u001b[22m\r\n",
+    "\u001b[2m\u001b[48;2;79;142;179mback\u001b[m\r\n",
+    "\u001b[2m\u001b[Kerased\u001b[m\r\n"
+  ]
+}

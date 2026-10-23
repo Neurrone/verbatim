@@ -122,6 +122,7 @@ impl Terminal {
         Provider {
             grid: &self.grid,
             row_includes_break: self.flavor == Flavor::WindowsTerminal,
+            wrapping_rows_count: self.flavor == Flavor::ConsoleHost,
         }
     }
 

@@ -1,0 +1,7 @@
+{
+  "about": "Index (ESC D) and next line (ESC E) on a row whose last column was written: whether the row still joins the next.",
+  "chunks": [
+    "\u001b[1;1Hxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u001bEy",
+    "\u001b[3;1Hxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u001bD\rz"
+  ]
+}

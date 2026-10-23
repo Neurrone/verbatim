@@ -1,0 +1,10 @@
+{
+  "about": "Bold with a basic colour chosen three ways: 16-colour, 256-colour index and true colour of the same value, and a bright 256-colour index.",
+  "chunks": [
+    "\u001b[1m\u001b[31mred\u001b[0m\r\n",
+    "\u001b[1m\u001b[38;5;1mred\u001b[0m\r\n",
+    "\u001b[1m\u001b[38;2;197;15;31mred\u001b[0m\r\n",
+    "\u001b[1m\u001b[38;5;9mred\u001b[0m\r\n",
+    "\u001b[1m\u001b[38;5;7mgrey\u001b[0m\r\n"
+  ]
+}

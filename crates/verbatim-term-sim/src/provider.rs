@@ -82,6 +82,11 @@ pub(crate) struct Provider<'a> {
     /// each end with one; the console host's end before it (measured
     /// 2026-10-23).
     pub(crate) row_includes_break: bool,
+    /// Whether a row marked as wrapping ends the document no higher than
+    /// itself even with no text, as the console host's does: a whole row
+    /// of spaces written without a line feed, or such a row erased, which
+    /// keeps the mark (measured 2026-10-23).
+    pub(crate) wrapping_rows_count: bool,
 }
 
 impl Provider<'_> {
@@ -102,15 +107,15 @@ impl Provider<'_> {
 
     /// The document's last row: the lower of the last row with text and the
     /// cursor's, as both providers find them when asked, so rows moved down
-    /// by an insertion stay in it and a row erased leaves it (measured
-    /// 2026-10-23).
+    /// by an insertion stay in it and a row erased leaves it, unless it
+    /// still wraps in the console host (measured 2026-10-23).
     fn last_row(&self) -> usize {
         let cursor = self.grid.cursor_coordinate();
         self.grid
             .buffer()
             .rows
             .iter()
-            .rposition(crate::grid::Row::has_text)
+            .rposition(|row| row.has_text() || (self.wrapping_rows_count && row.wraps))
             .map_or(cursor, |text| text.max(cursor))
     }
 
@@ -351,11 +356,21 @@ impl Provider<'_> {
             .map(|row| {
                 let mut runs: Vec<crate::Run> = Vec::new();
                 for (column, cell) in buffer.rows[row].cells.iter().enumerate() {
+                    // The buffer's last cell reads in the style the next
+                    // character would be written in, whatever it holds, in
+                    // both terminals: the alternate screen's last cell, and
+                    // the main screen's once the history is full (measured
+                    // 2026-10-23).
+                    let style = if row + 1 == self.rows() && column + 1 == self.grid.width {
+                        self.grid.style
+                    } else {
+                        cell.style
+                    };
                     let (foreground, background) = if self.grid.screen_reversed {
-                        let (foreground, background) = cell.style.shown();
+                        let (foreground, background) = style.shown();
                         (background, foreground)
                     } else {
-                        cell.style.shown()
+                        style.shown()
                     };
                     match runs.last_mut() {
                         Some(run)

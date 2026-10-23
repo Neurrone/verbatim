@@ -40,6 +40,10 @@ pub const DEFAULT_BACKGROUND: Colour = PALETTE[0];
 /// A cell's formatting as written: colours before reverse video is
 /// applied.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent graphic renditions, each set and reset by its own SGR code"
+)]
 pub struct Style {
     /// The foreground colour.
     pub foreground: Colour,
@@ -48,8 +52,17 @@ pub struct Style {
     /// Whether foreground and background are swapped when shown.
     pub reverse: bool,
     /// Whether the text is bold, which both terminals show as the bright
-    /// version of one of the eight basic foregrounds (measured 2026-10-23).
+    /// version of a foreground that `brightens` (measured 2026-10-23).
     pub bold: bool,
+    /// Whether the foreground is the default or one of the eight basic
+    /// colours chosen with SGR 30 to 37, the only foregrounds bold
+    /// brightens in both terminals: a 256-colour index or true colour of
+    /// the same value is shown as written (measured 2026-10-23).
+    pub brightens: bool,
+    /// Whether the text is faint (SGR 2), which both terminals show by
+    /// halving each channel of the foreground, after bold's brightening
+    /// and before reverse video (measured 2026-10-23).
+    pub faint: bool,
 }
 
 impl Default for Style {
@@ -59,22 +72,27 @@ impl Default for Style {
             background: DEFAULT_BACKGROUND,
             reverse: false,
             bold: false,
+            brightens: true,
+            faint: false,
         }
     }
 }
 
 impl Style {
     /// The foreground and background as shown: bold brightening a basic
-    /// foreground, then reverse video applied.
+    /// foreground, faint halving it, then reverse video applied.
     #[must_use]
     pub fn shown(self) -> (Colour, Colour) {
-        let foreground = match PALETTE[..8]
+        let mut foreground = match PALETTE[..8]
             .iter()
             .position(|&basic| basic == self.foreground)
         {
-            Some(index) if self.bold => PALETTE[index + 8],
+            Some(index) if self.bold && self.brightens => PALETTE[index + 8],
             _ => self.foreground,
         };
+        if self.faint {
+            foreground = (foreground >> 1) & 0x007f_7f7f;
+        }
         if self.reverse {
             (self.background, foreground)
         } else {
@@ -398,16 +416,26 @@ impl Grid {
         }
     }
 
-    /// Moves the cursor up or down `delta` rows, stopping at the scroll
-    /// region's margins while it is inside the region, and at the screen's
-    /// edges otherwise.
+    /// Moves the cursor up or down `delta` rows. Moving up from at or below
+    /// the region's top stops at the top margin, and moving down from at or
+    /// above its bottom stops at the bottom margin, so a move started
+    /// outside the region towards it stops at its far margin; any other
+    /// move stops at the screen's edge (both terminals, measured
+    /// 2026-10-23).
     pub fn move_vertically(&mut self, delta: isize) {
         let (top, bottom) = self.region;
         let row = self.cursor.row;
-        let (low, high) = if (top..=bottom).contains(&row) {
-            (top, bottom)
+        let (low, high) = if delta < 0 {
+            (if row >= top { top } else { 0 }, self.height - 1)
         } else {
-            (0, self.height - 1)
+            (
+                0,
+                if row <= bottom {
+                    bottom
+                } else {
+                    self.height - 1
+                },
+            )
         };
         let target = row.saturating_add_signed(delta).clamp(low, high);
         let column = self.cursor.column;
@@ -535,12 +563,14 @@ impl Grid {
     }
 
     /// A cell as erasing leaves it: a space in the current colours, without
-    /// reverse video.
+    /// reverse video, bold or faint (both terminals, measured 2026-10-23).
     fn erased(&self) -> Cell {
         Cell {
             character: ' ',
             style: Style {
                 reverse: false,
+                bold: false,
+                faint: false,
                 ..self.style
             },
         }
@@ -688,14 +718,17 @@ impl Grid {
         }
     }
 
-    /// Deletes `count` cells at the cursor, shifting the rest left.
+    /// Deletes `count` cells at the cursor, shifting the rest left; the
+    /// cells shifted in at the row's end are erased ones, in the current
+    /// colours (both terminals, measured 2026-10-23).
     pub fn delete_cells(&mut self, count: usize) {
         let (row, column, width) = (self.cursor.row, self.cursor.column, self.width);
+        let blank = self.erased();
         let target = self.row_mut(row);
         let before = target.text();
         for _ in 0..count.min(width - column) {
             target.cells.remove(column);
-            target.cells.push(Cell::default());
+            target.cells.push(blank);
         }
         target.writes += 1;
         let (id, changed) = (target.id, target.text() != before);
@@ -704,7 +737,8 @@ impl Grid {
         }
     }
 
-    /// Switches to the alternate screen, a blank one; `save` keeps the
+    /// Switches to the alternate screen, a blank one erased in the current
+    /// colours (both terminals, measured 2026-10-23); `save` keeps the
     /// cursor too (mode 1049).
     pub fn enter_alternate(&mut self, save: bool) {
         if self.alternate.is_some() {
@@ -723,7 +757,7 @@ impl Grid {
             top: 0,
         };
         for _ in 0..self.height {
-            buffer.rows.push_back(self.new_row());
+            buffer.rows.push_back(self.scrolled_in_row());
         }
         self.alternate = Some(buffer);
         self.region = (0, self.height - 1);

@@ -1,0 +1,9 @@
+{
+  "about": "Rows of spaces below the cursor and where the document ends: part of a row written with spaces, a whole row written with spaces and ended by a line feed, a whole row written with spaces and left wrapping, and that row erased.",
+  "chunks": [
+    "\u001b[1;1Hab\u001b[10;1H                                                  \u001b[3;1H",
+    "\u001b[12;1H                                                                                                                        \n\u001b[3;1H",
+    "\u001b[14;1H                                                                                                                        \u001b[3;1H",
+    "\u001b[14;1H\u001b[K\u001b[3;1H"
+  ]
+}

@@ -1,0 +1,321 @@
+{
+  "flavor": "ConsoleHost",
+  "width": 120,
+  "height": 30,
+  "answers": [
+    {
+      "text": "red                                                                                                                     \r\n                                                                                                                        ",
+      "screen": "red                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": false,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "red                                                                                                                     ",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 5654759,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "red                                                                                                                     \r\nred                                                                                                                     \r\n                                                                                                                        ",
+      "screen": "red                                                                                                                     \r\nred                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "red                                                                                                                     ",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 5654759,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 2035653,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "red                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\n                                                                                                                        ",
+      "screen": "red                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "red                                                                                                                     ",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 5654759,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 2035653,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 2035653,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "red                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\n                                                                                                                        ",
+      "screen": "red                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "red                                                                                                                     ",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 5654759,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 2035653,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 2035653,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 5654759,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    },
+    {
+      "text": "red                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\ngrey                                                                                                                    \r\n                                                                                                                        ",
+      "screen": "red                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\nred                                                                                                                     \r\ngrey                                                                                                                    \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        \r\n                                                                                                                        ",
+      "from_start": true,
+      "shrank": false,
+      "at_document_start": true,
+      "alternate": true,
+      "first_row": "red                                                                                                                     ",
+      "caret_rows_to_end": 1,
+      "caret_line": "                                                                                                                        ",
+      "caret_column": 0,
+      "colours": [
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 5654759,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 2035653,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 2035653,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 3,
+            "foreground": 5654759,
+            "background": 789516
+          },
+          {
+            "column": 3,
+            "length": 117,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ],
+        [
+          {
+            "column": 0,
+            "length": 120,
+            "foreground": 13421772,
+            "background": 789516
+          }
+        ]
+      ]
+    }
+  ]
+}

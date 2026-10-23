@@ -1,0 +1,12 @@
+{
+  "about": "Relative cursor moves started outside a scroll region, and the vertical position relative to the cursor (VPR) inside one.",
+  "chunks": [
+    "\u001b[5;20r\u001b[25;1H\u001b[30Ax",
+    "\u001b[2;1H\u001b[30By",
+    "\u001b[3;1H\u001b[30Au",
+    "\u001b[22;1H\u001b[30Bv",
+    "\u001b[10;1H\u001b[15ez",
+    "\u001b[2;1H\u001b[30ew",
+    "\u001b[r"
+  ]
+}

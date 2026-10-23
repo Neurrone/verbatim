@@ -1,0 +1,7 @@
+{
+  "about": "The alternate screen entered in a background colour.",
+  "chunks": [
+    "\u001b[44m\u001b[?1049h\u001b[0m",
+    "\u001b[?1049l"
+  ]
+}

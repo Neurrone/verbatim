@@ -1,0 +1,198 @@
+{
+  "about": "Pi 1.4.0 in its regular mode, on the main screen, with no model configured: typing in its editor, its editing keys (Control+B, Alt+B, Control+E, Control+W, Control+U), its slash-command list moved through and filtered, /model's selector moved through, and leaving.",
+  "command": "cmd.exe /c \"%LOCALAPPDATA%\\Programs\\node-v24.22.1-win-x64\\pi.cmd --tui-mode regular\"",
+  "steps": [
+    {
+      "quiet": 6000
+    },
+    {
+      "type": {
+        "text": "hello brave new world",
+        "each": 70
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0002\u0002\u0002",
+        "each": 200
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u001bb",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u0005",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u0017",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u0015",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "/",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1000
+    },
+    {
+      "type": {
+        "text": "\u001b[B",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u001b[B",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u001b[A",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "mo",
+        "each": 150
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u001b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0015",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "/model\r",
+        "each": 120
+      }
+    },
+    {
+      "quiet": 2000
+    },
+    {
+      "type": {
+        "text": "\u001b[B",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 700
+    },
+    {
+      "type": {
+        "text": "\u001b[B",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 700
+    },
+    {
+      "type": {
+        "text": "\u001b[A",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 700
+    },
+    {
+      "type": {
+        "text": "\u001b",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1000
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0004",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1500
+    }
+  ]
+}

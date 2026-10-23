@@ -1,0 +1,7 @@
+{
+  "about": "Characters deleted in a background colour: the cells shifted in at the row's end.",
+  "chunks": [
+    "\u001b[1;1Habcdef\u001b[1;1H\u001b[44m\u001b[2P\u001b[0m",
+    "\u001b[2;1Hghijkl\u001b[2;3H\u001b[1;31m\u001b[3P\u001b[0m"
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "about": "The colours read from the last cell of the buffer's last row (the alternate screen's last row): written in a colour, written faint, and with colours set but nothing written; and the main screen's last row, which is not its buffer's last.",
+  "chunks": [
+    "\u001b[?1049h\u001b[30;1H\u001b[41mxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\u001b[0m",
+    "\u001b[30;1H\u001b[2myyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\u001b[22m",
+    "\u001b[29;1H\u001b[2mzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz\u001b[22m",
+    "\u001b[1;1H\u001b[33;45m",
+    "\u001b[7m",
+    "\u001b[0m\u001b[?1049l",
+    "\u001b[30;1H\u001b[2mwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww\u001b[22m"
+  ]
+}
