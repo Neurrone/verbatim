@@ -8,7 +8,10 @@
 //! new, one with output written since, one whose start the text no longer
 //! reaches, one asked for fewer rows than the screen holds, a read of the
 //! whole text, and reads taking rows above their start, as many as asked
-//! and as far as the document's start.
+//! and as far as the document's start. The colours a read takes after a key
+//! are pinned as exact runs, read at the width the last read found, at an
+//! unknown width and at a stale one, from a provider that answers colours
+//! over a range without its last character, as both terminals do.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -18,7 +21,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
 use verbatim_uia_rops::{
-    Snapshot, SnapshotQuery, terminal_snapshot_classic, terminal_snapshot_remote,
+    ColourRun, Snapshot, SnapshotQuery, terminal_snapshot_classic, terminal_snapshot_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
@@ -151,6 +154,7 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
         whole: false,
         above: 0,
         caret: None,
+        colours: None,
     };
     // A first read starts at the screen's top.
     let (fields, next) = both(&uia, &first);
@@ -234,6 +238,7 @@ fn a_read_with_no_start_takes_the_rows_asked_for_or_the_whole_text_both_ways() {
         whole: false,
         above: 0,
         caret: None,
+        colours: None,
     };
     let fewer = SnapshotQuery {
         screen_rows: 2,
@@ -271,6 +276,7 @@ fn a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start
         whole: false,
         above: 0,
         caret: None,
+        colours: None,
     };
     let (_, next) = both(&uia, &first);
     let above = SnapshotQuery {
@@ -310,6 +316,63 @@ fn a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start
     );
 }
 
+/// A run of `length` cells from `column`, its foreground and background as
+/// given.
+fn run(column: usize, length: usize, foreground: u32, background: u32) -> ColourRun {
+    ColourRun {
+        column,
+        length,
+        foreground,
+        background,
+    }
+}
+
+fn colours_are_read_as_exact_runs_at_any_width_hint_both_ways() {
+    common::init_com();
+    let title = common::unique_title("mockapp-snapshot-colours");
+    let app = common::spawn("terminal-colours.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let terminal = terminal_element(&uia, hwnd);
+    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let (white, red, blue, green) = (0x00FF_FFFF, 0x0000_00FF, 0x00FF_0000, 0x0000_FF00);
+    // A plain row; two red cells first; only the last cell's background
+    // green, which the provider leaves out of the row's answer; and one
+    // blue cell at the second chunk's start.
+    let expected = vec![
+        vec![run(0, 20, 0, white)],
+        vec![run(0, 2, red, white), run(2, 18, 0, white)],
+        vec![run(0, 19, 0, white), run(19, 1, 0, green)],
+        vec![
+            run(0, 16, 0, white),
+            run(16, 1, blue, white),
+            run(17, 3, 0, white),
+        ],
+    ];
+    let mut answers = Vec::new();
+    // The width the last read found, none known, and a stale one.
+    for hint in [20, 0, 7] {
+        let query = SnapshotQuery {
+            element: &terminal,
+            pattern: &pattern,
+            start: None,
+            screen_rows: 0,
+            whole: false,
+            above: 0,
+            caret: None,
+            colours: Some(hint),
+        };
+        let remote = terminal_snapshot_remote(&uia, &query).expect("the remote program runs");
+        let classic = terminal_snapshot_classic(&uia, &query).expect("the classic reads run");
+        answers.push((hint, remote.colours, classic.colours));
+    }
+    app.quit();
+    for (hint, remote, classic) in answers {
+        assert_eq!(remote.as_ref(), Some(&expected), "remote, at {hint}");
+        assert_eq!(classic.as_ref(), Some(&expected), "classic, at {hint}");
+    }
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -325,6 +388,10 @@ fn main() {
         (
             "a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways",
             a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways,
+        ),
+        (
+            "colours_are_read_as_exact_runs_at_any_width_hint_both_ways",
+            colours_are_read_as_exact_runs_at_any_width_hint_both_ways,
         ),
     ]);
 }

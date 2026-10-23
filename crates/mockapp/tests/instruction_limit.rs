@@ -719,6 +719,7 @@ fn terminal_snapshots_execute_exactly() {
         whole: false,
         above: 4,
         caret: None,
+        colours: None,
     };
     let mut start = None;
     let first = counted(|| {
@@ -751,6 +752,61 @@ fn terminal_snapshots_execute_exactly() {
         "terminal snapshot first and started"
     );
     assert!(started < LIMIT / 2);
+}
+
+/// A terminal's colours, read with its snapshot on a 120 by 30 screen: in
+/// the worst case, every cell's colours differing from its neighbours'
+/// (`terminal-checkered.json`), each program reads rows while a worst row
+/// still fits its budget and the next goes on from there; a plain screen
+/// is read in the snapshot's own program.
+fn terminal_colours_execute_exactly() {
+    common::init_com();
+    let screen = vec!["x".repeat(120); 30].join(r"\n");
+    let read = |fixture: &str, prefix: &str| {
+        let mut fixture = Fixture::start(fixture, prefix);
+        let terminal = fixture.find("Terminal");
+        let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+        common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
+        common::apply(
+            &mut fixture.app,
+            fixture.hwnd,
+            &format!("set-text term {screen}"),
+        );
+        let query = SnapshotQuery {
+            element: &terminal,
+            pattern: &pattern,
+            start: None,
+            screen_rows: 0,
+            whole: false,
+            above: 0,
+            caret: None,
+            colours: Some(120),
+        };
+        counting::start();
+        let snapshot = terminal_snapshot_remote(&fixture.uia, &query).expect("the programs run");
+        let counts = counting::stop();
+        fixture.app.quit();
+        let colours = snapshot.colours.expect("the colours");
+        let runs: Vec<usize> = colours.iter().map(Vec::len).collect();
+        (counts, runs)
+    };
+    let (worst, worst_runs) = read(
+        "terminal-checkered.json",
+        "mockapp-instructions-colours-worst",
+    );
+    let (plain, plain_runs) = read(
+        "terminal-plain-colours.json",
+        "mockapp-instructions-colours-plain",
+    );
+    assert_eq!(worst_runs, vec![120; 30], "every cell its own run");
+    assert_eq!(plain_runs, vec![1; 30], "every row one run");
+    assert_eq!(
+        worst,
+        [4151, 4099, 4099, 4099, 4099, 4097].map(Some),
+        "the worst case's programs"
+    );
+    assert_eq!(plain, [Some(1349)], "a plain screen's program");
+    assert!(worst.iter().flatten().all(|&count| count < LIMIT / 2));
 }
 
 /// `count` numbered lines, `line 000` on, as mockapp's `set-text` takes
@@ -803,6 +859,10 @@ fn main() {
         (
             "terminal_snapshots_execute_exactly",
             terminal_snapshots_execute_exactly,
+        ),
+        (
+            "terminal_colours_execute_exactly",
+            terminal_colours_execute_exactly,
         ),
     ]);
 }

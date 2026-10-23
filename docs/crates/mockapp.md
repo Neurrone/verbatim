@@ -289,7 +289,8 @@ its crate-internal modules are the reviewable surface:
   annotation types are the spelling error type (60001) for a range
   within the spelling errors, mixed for a range holding both misspelled
   and other text, and unsupported for a range with no spelling error, as
-  Windows 11 Notepad reports them; the font is Consolas in black, 11
+  Windows 11 Notepad reports them; the font is Consolas, black outside
+  the node's `styles.foregrounds` stretches (each with a `COLORREF`), 11
   point outside the node's `styles.font_sizes` stretches, underlined only
   within its `styles.underlines` stretches (each with a UIA underline
   style), italic within the node's `italic` stretches (which the
@@ -303,7 +304,16 @@ its crate-internal modules are the reviewable surface:
   value being its own range; a node without them answers "not supported"
   for each, as Windows Terminal answers the attributes it lacks
   (`text.json`). The format unit ends wherever one of the `styles`
-  stretches starts or ends. Every other attribute is unsupported,
+  stretches starts or ends. A node whose `styles.colors_skip_last` is set
+  answers both colors over a range of two or more characters from all its
+  characters but the last, as both terminals' providers do: the first
+  character's when the rest but the last agree, mixed otherwise
+  (`tests/fixtures/terminal-colours.json`, and
+  `tests/fixtures/terminal-plain-colours.json` with no colored stretch);
+  one whose `styles.distinct_colors` is set gives every character colors
+  of its own, its foreground its offset and its background white less it,
+  so every character's differ from its neighbors', a terminal colour
+  read's worst case (`tests/fixtures/terminal-checkered.json`). Every other attribute is unsupported,
   and a node with `italic_fails` set fails its `IsItalic` read with
   `E_FAIL`, as a provider that fails an attribute read, and one with
   `find_text_fails` set fails `FindText` the same way, as Windows
@@ -566,7 +576,12 @@ to agree on every field: a first read, one from where the last said to
 start with nothing new and with output since, one whose start the text
 cleared below, one asked for fewer rows than the screen holds, the whole
 text, and reads taking rows above their start, as many as asked and as far
-as the document's start, each pinned exactly.
+as the document's start, each pinned exactly. Over `terminal-colours.json`
+(four rows of twenty cells: one plain, one with two red cells first, one
+whose last cell alone has a green background, which the provider leaves
+out of a range's answer, and one with a blue cell at the second chunk's
+start) it pins the colours as exact runs both ways, read at the width the
+last read found, at none known, and at a stale one.
 
 `remote_ops.rs` runs `verbatim-uia-rops`'s remote and
 classic focus ancestry over `ancestry.json` (a five-level chain, a list
@@ -738,7 +753,10 @@ worst against mockapp and at a typical size: over
 `tests/fixtures/deep.json` (a list sixty groups deep) for the focus
 ancestry and navigation, `tests/fixtures/mixed.json` (format stretches of
 two characters, each with one italic) and `italic.json` for the caret
-read, and `languages.json` and `terminal.json` for say-all and a
-terminal's tail. On a
+read, `languages.json` and `terminal.json` for say-all and a
+terminal's tail, and `terminal-checkered.json` and
+`terminal-plain-colours.json` for a terminal's colours on a 120 by 30
+screen, every cell its own run and every row one, each program of the
+read pinned. On a
 mismatch the test prints every measured count,
 so a deliberate change updates all the numbers that moved in one pass.

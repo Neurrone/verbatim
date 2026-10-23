@@ -1,0 +1,19 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Terminal Colours Fixture",
+  "children": [
+    {
+      "id": "term",
+      "role": "editable_text",
+      "name": "Terminal",
+      "states": ["focusable"],
+      "text": "plain row           \nab in red           \nlast cell on green  \nred at sixteen      \n",
+      "styles": {
+        "foregrounds": [[21, 23, 255], [79, 80, 16711680]],
+        "backgrounds": [[61, 62, 65280]],
+        "colors_skip_last": true
+      }
+    }
+  ]
+}

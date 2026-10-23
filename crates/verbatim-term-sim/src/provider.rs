@@ -8,9 +8,9 @@
 //! sections 2.1 and 3.3). The conformance expectations check every answer
 //! against the real terminals.
 
-use crate::Snapshot;
 use crate::grid::Grid;
 use crate::oracle::Seen;
+use crate::{Colour, Run, Snapshot};
 
 /// A position: a row's coordinate and a column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -360,46 +360,136 @@ impl Provider<'_> {
             .collect()
     }
 
+    /// A cell's foreground and background as shown. The buffer's last cell
+    /// reads in the style the next character would be written in, whatever
+    /// it holds, in both terminals: the alternate screen's last cell, and
+    /// the main screen's once the history is full (measured 2026-10-23).
+    fn cell_colours(&self, row: usize, column: usize) -> (Colour, Colour) {
+        let style = if row + 1 == self.rows() && column + 1 == self.grid.width {
+            self.grid.style
+        } else {
+            self.grid
+                .buffer()
+                .rows
+                .get(row)
+                .and_then(|cells| cells.cells.get(column))
+                .map_or(self.grid.style, |cell| cell.style)
+        };
+        let (foreground, background) = style.shown();
+        if self.grid.screen_reversed {
+            (background, foreground)
+        } else {
+            (foreground, background)
+        }
+    }
+
     /// The colours of the screen's rows to the document's last row: for
-    /// each row, its stretches of one foreground and background as shown.
-    pub(crate) fn colours(&self) -> Vec<Vec<crate::Run>> {
+    /// each row, its stretches of one foreground and background as shown,
+    /// cell by cell, as the conformance runner reads them.
+    pub(crate) fn colours(&self) -> Vec<Vec<Run>> {
         let buffer = self.grid.buffer();
         (buffer.top..=self.last_row().min(buffer.top + self.grid.height - 1))
             .map(|row| {
-                let mut runs: Vec<crate::Run> = Vec::new();
-                for (column, cell) in buffer.rows[row].cells.iter().enumerate() {
-                    // The buffer's last cell reads in the style the next
-                    // character would be written in, whatever it holds, in
-                    // both terminals: the alternate screen's last cell, and
-                    // the main screen's once the history is full (measured
-                    // 2026-10-23).
-                    let style = if row + 1 == self.rows() && column + 1 == self.grid.width {
-                        self.grid.style
-                    } else {
-                        cell.style
-                    };
-                    let (foreground, background) = if self.grid.screen_reversed {
-                        let (foreground, background) = style.shown();
-                        (background, foreground)
-                    } else {
-                        style.shown()
-                    };
-                    match runs.last_mut() {
-                        Some(run)
-                            if run.foreground == foreground && run.background == background =>
-                        {
-                            run.length += 1;
-                        }
-                        _ => runs.push(crate::Run {
-                            column,
-                            length: 1,
-                            foreground,
-                            background,
-                        }),
-                    }
+                let mut runs = Vec::new();
+                for column in 0..self.grid.width {
+                    push(&mut runs, column, 1, self.cell_colours(row, column));
                 }
                 runs
             })
             .collect()
+    }
+
+    /// A stretch's colours as the providers answer a colour attribute over
+    /// it: its first cell's when every cell but its last has them, and
+    /// "mixed", `None`, otherwise; neither provider compares a stretch's
+    /// last cell (measured in both terminals, 2026-10-24).
+    fn stretch_colours(&self, row: usize, from: usize, to: usize) -> Option<(Colour, Colour)> {
+        let first = self.cell_colours(row, from);
+        (from + 1..to.saturating_sub(1).max(from + 1))
+            .all(|column| self.cell_colours(row, column) == first)
+            .then_some(first)
+    }
+
+    /// Whether a stretch is of one foreground and background, as the read
+    /// program checks it: the stretch's answer and its last cell's agree.
+    fn check_stretch(&self, row: usize, from: usize, to: usize) -> Option<(Colour, Colour)> {
+        self.stretch_colours(row, from, to)
+            .filter(|&colours| colours == self.cell_colours(row, to - 1))
+    }
+
+    /// The colours as Verbatim's read program reads them
+    /// (`verbatim-uia-rops`'s `terminal_colours`, whose chunk this
+    /// [`COLOUR_CHUNK`] matches): rows from the screen's top to the earlier
+    /// of the document's end and the screen's, as wide as the screen's top
+    /// row; each row checked whole, a row of several colours checked in
+    /// chunks, and a chunk of several read cell by cell, every check
+    /// answered as the providers answer it, and the last cell of a check
+    /// made as the conformance runner makes a cell.
+    pub(crate) fn program_colours(&self) -> Result<Vec<Vec<Run>>, Refused> {
+        let screen = self.visible();
+        let document = self.document();
+        let top_row = self.text(self.row_of(screen.start)?)?;
+        let top_row = top_row.strip_suffix("\r\n").unwrap_or(&top_row);
+        let width = top_row.chars().count();
+        let limit = document.end.min(screen.end);
+        let mut rows = Vec::new();
+        let mut at = screen.start;
+        while width > 0 && rows.len() < self.grid.height && at < limit {
+            let row = at.row;
+            // Windows Terminal's last row of the buffer gives a cell fewer
+            // to moves by characters than the width, so a stretch to its
+            // end cannot vouch for its last cells, and the program reads
+            // the row and its last chunk cell by cell.
+            let full = self.cells_given(row) == self.grid.width;
+            let mut runs = Vec::new();
+            if let Some(colours) = self.check_stretch(row, 0, width).filter(|_| full) {
+                push(&mut runs, 0, width, colours);
+            } else {
+                for from in (0..width).step_by(COLOUR_CHUNK) {
+                    let to = (from + COLOUR_CHUNK).min(width);
+                    let checked = self.check_stretch(row, from, to);
+                    if let Some(colours) = checked.filter(|_| full || to < width) {
+                        push(&mut runs, from, to - from, colours);
+                    } else {
+                        for column in from..to {
+                            push(&mut runs, column, 1, self.cell_colours(row, column));
+                        }
+                    }
+                }
+            }
+            rows.push(runs);
+            let (next, moved) = self.move_rows(at, 1)?;
+            if moved == 0 {
+                break;
+            }
+            at = next;
+        }
+        Ok(rows)
+    }
+}
+
+/// The cells Verbatim's read program checks a row of several colours in
+/// at a time: `verbatim-uia-rops`'s `COLOUR_CHUNK`, which the conformance
+/// runner's check of the program against the real terminals relies on.
+const COLOUR_CHUNK: usize = 16;
+
+/// Adds a stretch of one colour to a row's runs, joining it to the last
+/// run when their colours agree.
+fn push(
+    runs: &mut Vec<Run>,
+    column: usize,
+    length: usize,
+    (foreground, background): (Colour, Colour),
+) {
+    match runs.last_mut() {
+        Some(run) if run.foreground == foreground && run.background == background => {
+            run.length += length;
+        }
+        _ => runs.push(Run {
+            column,
+            length,
+            foreground,
+            background,
+        }),
     }
 }

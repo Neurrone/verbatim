@@ -3,8 +3,10 @@
 //! host and the end-to-end suite's pinned Windows Terminal, reads each
 //! after every chunk with Verbatim's own read program, and saves what it
 //! answered as the expectations the simulated terminal is tested against
-//! (`docs/design/terminal-model.md`, section 9). It opens terminal windows,
-//! so it runs on demand on a desktop, never in continuous integration.
+//! (`docs/design/terminal-model.md`, section 9). Every read also takes the
+//! read program's colours, which must equal the colours read cell by cell,
+//! or the run fails. It opens terminal windows, so it runs on demand on a
+//! desktop, never in continuous integration.
 //!
 //! The terminal runs this program's `conformance-player`, which connects
 //! back over a local socket, writes each chunk it is sent, and then sets
@@ -349,6 +351,10 @@ fn read_stream(
             // As the simulator's replay reads: from the start alone.
             above: 0,
             caret: None,
+            // Every read takes the colours, at the width the last read
+            // found, so the program's colour read is checked against the
+            // cell-by-cell reading below after every chunk.
+            colours: Some(size.0),
         };
         let (snapshot, path) =
             terminal_snapshot(uia, &query, true).map_err(|error| error.to_string())?;
@@ -362,6 +368,35 @@ fn read_stream(
         screen_rows = verbatim_term_sim::screen_rows(&screen);
         start.clone_from(&snapshot.next_start);
         let (caret_line, caret_column) = caret(&pattern).map_err(|error| error.to_string())?;
+        let colours = colours(&pattern, size).map_err(|error| error.to_string())?;
+        let read: Vec<Vec<Run>> = snapshot
+            .colours
+            .unwrap_or_default()
+            .into_iter()
+            .map(|row| {
+                row.into_iter()
+                    .map(|run| Run {
+                        column: run.column,
+                        length: run.length,
+                        foreground: run.foreground,
+                        background: run.background,
+                    })
+                    .collect()
+            })
+            .collect();
+        if read != colours {
+            let row = read
+                .iter()
+                .zip(&colours)
+                .position(|(read, cells)| read != cells);
+            return Err(format!(
+                "after chunk {index}, the read program's colours differ from the cells': {} rows read, {} by cell; first differing row {row:?}: read {:?}, by cell {:?}",
+                read.len(),
+                colours.len(),
+                row.and_then(|row| read.get(row)),
+                row.and_then(|row| colours.get(row)),
+            ));
+        }
         answers.push(Answer {
             text: String::from_utf16_lossy(&snapshot.text),
             screen,
@@ -373,7 +408,7 @@ fn read_stream(
             caret_rows_to_end: snapshot.caret_rows_to_end,
             caret_line,
             caret_column,
-            colours: colours(&pattern, size).map_err(|error| error.to_string())?,
+            colours,
         });
     }
     Ok(Expectation {
@@ -456,11 +491,11 @@ fn cells(
 
 /// The stretches of one foreground and background in the `width` cells of
 /// the row starting at `start`, read cell by cell and joined where
-/// neighbours agree. Neither a range over several colours nor the
-/// providers' format unit can be trusted here: over a stretch of two
-/// colours the providers answer 0 rather than "mixed", and the format unit
-/// does not stop at every change of colour (measured 2026-10-23). A cell
-/// whose colour is not a number reads as `u32::MAX`.
+/// neighbours agree: the reference the read program's colours are checked
+/// against, which nothing about the providers' answers over stretches can
+/// disturb (a stretch answers its first cell's colour when every cell but
+/// its last has it, and the format unit stops only at rows, measured
+/// 2026-10-24). A cell whose colour is not a number reads as `u32::MAX`.
 fn stretches(
     start: &IUIAutomationTextRange,
     width: usize,

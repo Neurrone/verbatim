@@ -160,6 +160,44 @@ pub fn simulate(stream: &Stream, flavor: Flavor, width: usize, height: usize) ->
     answers
 }
 
+/// Where the colours Verbatim's read program reads in the simulated
+/// terminal differ from the colours the real terminal showed cell by cell
+/// after each chunk of `stream`: one line per differing read, empty when
+/// they agree.
+///
+/// # Panics
+///
+/// When a simulated read is refused, which a stream of the corpus never
+/// asks for.
+#[must_use]
+pub fn replay_program_colours(stream: &Stream, expected: &Expectation) -> Vec<String> {
+    let mut terminal = Terminal::new(
+        expected.flavor,
+        expected.width,
+        expected.height,
+        history(expected.flavor),
+    );
+    let mut differences = Vec::new();
+    for (index, (chunk, want)) in stream.chunks.iter().zip(&expected.answers).enumerate() {
+        terminal.write(chunk.as_bytes());
+        let read = terminal.program_colours().expect("a simulated read");
+        if read != want.colours {
+            let row = read
+                .iter()
+                .zip(&want.colours)
+                .position(|(read, want)| read != want);
+            differences.push(format!(
+                "after chunk {index}: real {} rows, read {}; first differing row {row:?}: real {:?}, read {:?}",
+                want.colours.len(),
+                read.len(),
+                row.and_then(|row| want.colours.get(row)),
+                row.and_then(|row| read.get(row)),
+            ));
+        }
+    }
+    differences
+}
+
 /// Where two texts first differ: their lengths, and each text's lines
 /// around the first difference, padding trimmed and line breaks shown.
 fn text_difference(real: &str, simulated: &str) -> String {

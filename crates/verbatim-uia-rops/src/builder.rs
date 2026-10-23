@@ -263,6 +263,12 @@ impl Builder {
         result
     }
 
+    /// How many instructions the program's main section holds so far: a
+    /// stretch of straight-line code executes as many as it emitted.
+    pub(crate) fn emitted_count(&self) -> usize {
+        self.main.len()
+    }
+
     /// The offset from instruction `from` to the next one to be emitted.
     fn offset_to_next(&self, from: usize) -> i32 {
         i32::try_from(self.main.len() - from).unwrap_or(i32::MAX)

@@ -522,7 +522,9 @@ history rows whose place shows how far a full history rotated,
 `docs/design/terminal-model.md` section 4.3 item 5; ignored with `whole`),
 and, with `caret` (a `CaretLineQuery`), the caret and its line,
 read in the same program or, classically, after the text, and back as
-`Snapshot::caret`.
+`Snapshot::caret`; and, with `colours`, the screen's colours (below),
+given the screen's width in cells as the last read found it, 0 when not
+known.
 
 The unit of reading is one `GetText`. Both terminals answer one from one
 locked state of their buffer (measured on 2026-10-23 in both, with a
@@ -559,11 +561,76 @@ and ends its text is recorded by the conformance expectations
   history rotated.
 - `caret_rows_to_end`: how many lines the caret moves to reach the
   document's end.
+- `colours`: when asked, each screen row's runs of one foreground and
+  background (`ColourRun`: its first column, its length in cells, and
+  its two colours as `0x00BBGGRR`), from the screen's top to the
+  earlier of the document's end and the screen's, the form the terminal
+  reading rules take (`verbatim-text`'s `terminal_reading::ColourRun`,
+  `docs/design/terminal-model.md` section 5.7). Read after the text, so a
+  hint like the rest.
 
-The program has no loop, so its cost does not grow with the text: 50
-instructions for a first read and 90 with a start and the caret, each with
-four rows above its start, and 5 fewer without
+Without colours the program has no loop, so its cost does not grow with
+the text: 50 instructions for a first read and 90 with a start and the
+caret, each with four rows above its start, and 5 fewer without
 (`crates/mockapp/tests/instruction_limit.rs`).
+
+### The colours
+
+What the providers answer, measured in both terminals on 2026-10-24: a
+cell's colour attribute is its own colour; a stretch of cells answers its
+first cell's colour when every cell but its last has it, and UIA's
+"mixed" otherwise, since neither provider compares a stretch's last cell
+(a stretch of two cells always answers its first cell's colour); their
+format unit stops only at rows; and Windows Terminal does not implement
+`FindAttribute` (`E_NOTIMPL` inside a program). So a stretch is of one
+colour exactly when its answer is a number and its last cell, read on its
+own, answers the same: a check of four attribute reads, whatever the
+stretch's length. A check compares only numbers, since comparing
+"mixed" fails a program.
+
+The read (`terminal_colours.rs`) takes rows as wide as the screen's top
+row as the provider expands it to a line (`row_width`): a screen whose
+every row is written to its last column reads in the console host as one
+line, every row marked as wrapping, so the narrowest line of the screen's
+text can be the whole screen. Each row is checked whole; a row of
+several colours is checked in chunks of `COLOUR_CHUNK` (16) cells; a
+chunk of several colours is read cell by cell, a cell a `Move` by one
+character and two attribute reads, but for its last cell, which its check
+read. A check's last cell is made as the conformance runner makes a cell,
+its end moved from the row's start by characters and then its start. On
+the buffer's last row (the alternate screen's, and the main screen's once
+the history is full) moving by characters stops a cell short of the
+width, so the cell made at the last column is empty and reads in the
+colours the next character would be written in, as the runner records
+it, and a stretch to the row's end leaves out its last two cells: the
+move to the row's end says so by moving a cell fewer, and that row and
+its last chunk are then read cell by cell. The rows stop at the earlier of the
+document's end and the screen's, or when a move by a line moves nowhere,
+and at most at the screen's height in rows at that width
+(`screen_height`).
+
+The snapshot's own program reads the first rows, at the width the query
+gives, after everything else, and returns the screen's top, the limit
+and the top row's text. A program reads rows while a worst-case row still
+fits in `COLOUR_BUDGET` (4,600) instructions, each part's cost measured
+from the code it emitted, so a program stays under half the platform's
+limit whatever the screen holds, and the next program, built once a
+width and kept, imports the row where the last stopped and the limit and
+goes on. A screen at another width than the query's (a first read, or
+one after a resize) is read from its top by these programs alone. A row
+wider than about 300 cells is read alone, one row a program, and one
+wider than about 1,300 cells exceeds the limit and is answered
+classically. The classic implementation makes the same checks call by
+call, both colours of a stretch in one `GetAttributeValues`.
+
+Measured on 2026-10-24 on 120 by 30 screens (`docs/performance.md`, "A
+terminal's colours"): a plain screen is one program of 1,349
+instructions, 1.6 to 2.6 milliseconds added to the read; Pi's colourful
+screen two programs, 5 to 8 milliseconds; the worst case, every cell's
+colours differing from its neighbours' with reverse video and true
+colour, six programs of about 4,100 instructions, 72 milliseconds in the
+console host and 31 in Windows Terminal, where reading every cell
+regardless costs as much and an ordinary screen would cost it too.
 
 ## Layer 3: the caret read
 
@@ -958,7 +1025,10 @@ one stays under half the limit but the caret read's walk of a span whose
 every format stretch is mixed, about 7,700 at its 64 stretches, which
 runs under it; a run that exceeded it would be answered classically for
 that call. Programs are not resumable (Dickson, 2026-10-07): their work is
-bounded by their queries.
+bounded by their queries. The terminal colour read is the one read made
+of several programs, each bounded by its budget and the next going on from
+the row the last stopped at (above, "The colours"), so no program of it
+nears the limit.
 
 A provider whose process has gone and one that times out
 (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`, both as an
@@ -1126,4 +1196,12 @@ selecting key's answer, remotely and classically;
 `crates/mockapp/tests/text.rs` checks that the two caret reads agree,
 formatting and selection changes included, and that the two
 implementations of each text read agree; `crates/mockapp/tests/terminal.rs`
-pins a terminal's reads.
+pins a terminal's reads; `crates/mockapp/tests/terminal_snapshot.rs` pins
+the snapshot's fields both ways, and its colours as exact runs at the
+width the last read found, at none and at a stale one, from a provider
+that leaves a range's last character out of its colour answer; and
+`crates/mockapp/tests/instruction_limit.rs` pins every program's
+instructions, the colour read's worst case among them. `cargo xtask
+regenerate-terminal-conformance-expectations` checks the colour read
+against both real terminals after every chunk of the corpus, failing when
+its runs differ from the cells' read one by one.

@@ -25,7 +25,9 @@
 //!   [`terminal_screen_remote`], [`terminal_screen_classic`], and
 //!   [`terminal_screen`]: the text on screen, and how far the screen's top
 //!   row as last read now lies above it, found again by its text, with the
-//!   first rows that went by unread; and, for
+//!   first rows that went by unread; [`terminal_snapshot`], the read that
+//!   replaces it, with the screen's colours ([`ColourRun`]) after a key;
+//!   and, for
 //!   caret reports, [`caret_read_remote`], [`caret_read_classic`], and
 //!   [`caret_read`]: the caret, the evidence a caret key moved it, its line
 //!   and another unit at it, the formatting of the text to be spoken, and
@@ -54,6 +56,7 @@ mod opcode;
 mod operation;
 mod path;
 mod terminal;
+mod terminal_colours;
 mod terminal_snapshot;
 mod text;
 
@@ -90,6 +93,7 @@ pub use terminal::{
     SEARCH_MATCHES, Screen, ScreenAnchor, ScreenQuery, TerminalScreenFn, terminal_screen,
     terminal_screen_classic, terminal_screen_remote,
 };
+pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun, row_width, screen_height};
 pub use terminal_snapshot::{
     Snapshot, SnapshotQuery, TerminalSnapshotFn, terminal_snapshot, terminal_snapshot_classic,
     terminal_snapshot_remote,

@@ -20,7 +20,8 @@
 //! are the spelling error type for a range within the fixture's spelling
 //! errors, mixed for a range holding both misspelled and other text, and
 //! unsupported for a range with no spelling error, as Windows 11 Notepad
-//! reports them; the font is Consolas in black, 11 point outside the fixture's
+//! reports them; the font is Consolas, black outside the fixture's
+//! `foregrounds` stretches, 11 point outside the fixture's
 //! `font_sizes` stretches, italic within the fixture's `italic` stretches
 //! (which the format unit does not end at, so a stretch of it holding
 //! italic and upright text reads as mixed), underlined as its `underlines`
@@ -29,6 +30,10 @@
 //! background color, bullets, and links are supported only by a fixture
 //! that lists their stretches (`crate::fixture::Styles`), and are
 //! otherwise unsupported, as every other text attribute is. A fixture can
+//! give every character colors of its own (`distinct_colors`), a terminal
+//! colour read's worst case, and answer colors over a range from all its
+//! characters but the last (`colors_skip_last`), as both terminals do. A
+//! fixture can
 //! make the `IsItalic` read fail (`italic_fails`), as a provider that fails
 //! an attribute read, its `FindText` fail (`find_text_fails`), as Windows
 //! Terminal's has, its expansion to a line below the last line with text
@@ -267,11 +272,16 @@ fn spans_of(tree: &SharedTree, index: usize, unit: TextUnit) -> Vec<(usize, usiz
                 .map(|&(start, end, _)| (start, end)),
         )
         .chain(
-            [&styles.strikethroughs, &styles.backgrounds, &styles.bullets]
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|&(start, end, _)| (start, end)),
+            [
+                &styles.strikethroughs,
+                &styles.backgrounds,
+                &styles.foregrounds,
+                &styles.bullets,
+            ]
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|&(start, end, _)| (start, end)),
         )
         .chain(styles.links.iter().flatten().copied());
     for (start, end) in stretches {
@@ -459,6 +469,44 @@ impl TextRange {
     }
 }
 
+/// A color attribute's value over the text from `start` to `end`, `None`
+/// for mixed: from each character's offset with
+/// [`distinct_colors`](crate::fixture::Styles::distinct_colors), from the
+/// color lists otherwise, black and white outside them; judged without
+/// the range's last character with
+/// [`colors_skip_last`](crate::fixture::Styles::colors_skip_last).
+fn color(
+    styles: &crate::fixture::Styles,
+    foreground: bool,
+    (start, end): (usize, usize),
+) -> Option<i32> {
+    let end = if styles.colors_skip_last && end > start + 1 {
+        end - 1
+    } else {
+        end
+    };
+    if styles.distinct_colors {
+        let offset = i32::try_from(start).unwrap_or(i32::MAX);
+        let value = if foreground {
+            offset
+        } else {
+            0x00FF_FFFF - offset
+        };
+        return (end <= start + 1).then_some(value);
+    }
+    let (stretches, default) = if foreground {
+        (&styles.foregrounds, 0)
+    } else {
+        (&styles.backgrounds, 0x00FF_FFFF)
+    };
+    uniform(
+        stretches.as_deref().unwrap_or_default(),
+        default,
+        start,
+        end,
+    )
+}
+
 /// The value of one of the attributes a fixture's styles give
 /// (`crate::fixture::Styles`) over the text from `start` to `end`: the
 /// font size, the underline, strikethrough, and bullet styles, the
@@ -492,7 +540,17 @@ fn styled(
         },
         UIA_UnderlineStyleAttributeId => integer(Some(&styles.underlines), 0),
         UIA_StrikethroughStyleAttributeId => integer(styles.strikethroughs.as_ref(), 0),
-        UIA_BackgroundColorAttributeId => integer(styles.backgrounds.as_ref(), 0x00FF_FFFF),
+        UIA_BackgroundColorAttributeId
+            if styles.backgrounds.is_none() && !styles.distinct_colors =>
+        {
+            not_supported()
+        }
+        UIA_ForegroundColorAttributeId | UIA_BackgroundColorAttributeId => color(
+            &styles,
+            attribute == UIA_ForegroundColorAttributeId,
+            (start, end),
+        )
+        .map_or_else(mixed, |value| Ok(int_variant(value))),
         UIA_BulletStyleAttributeId => integer(styles.bullets.as_ref(), 0),
         UIA_LinkAttributeId => match &styles.links {
             None => not_supported(),
@@ -738,7 +796,6 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
                     VARIANT::from(false)
                 }
             }
-            UIA_ForegroundColorAttributeId => int_variant(0),
             _ => not_supported()?,
         })
     }

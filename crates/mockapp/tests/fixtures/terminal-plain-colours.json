@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Terminal Plain Colours Fixture",
+  "children": [
+    {
+      "id": "term",
+      "role": "editable_text",
+      "name": "Terminal",
+      "states": ["focusable"],
+      "text": "ready>\n",
+      "styles": {
+        "backgrounds": [],
+        "colors_skip_last": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Terminal Checkered Fixture",
+  "children": [
+    {
+      "id": "term",
+      "role": "editable_text",
+      "name": "Terminal",
+      "states": ["focusable"],
+      "text": "ready>\n",
+      "styles": {
+        "distinct_colors": true,
+        "colors_skip_last": true
+      }
+    }
+  ]
+}

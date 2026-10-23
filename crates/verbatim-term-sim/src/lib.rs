@@ -162,6 +162,18 @@ impl Terminal {
         self.provider().colours()
     }
 
+    /// The colours as Verbatim's read program reads them, checking
+    /// stretches as the providers answer them and reading cell by cell only
+    /// where a stretch is of several colours: the same runs as
+    /// [`Terminal::colours`] when the program reads them right.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`] when the provider would fail a call the read makes.
+    pub fn program_colours(&self) -> Result<Vec<Vec<Run>>, Refused> {
+        self.provider().program_colours()
+    }
+
     /// The text of a range, as `GetText` gives it.
     ///
     /// # Errors

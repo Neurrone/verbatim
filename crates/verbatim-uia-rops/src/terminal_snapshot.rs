@@ -8,9 +8,11 @@
 //! the document's end moved back by the screen's height, which ignores
 //! where the user has scrolled the view; whether the start had to be
 //! refused because the text shrank or the start lay on the other screen;
-//! and the document's first row. A remote program reads it in one round
-//! trip, and a classic implementation behind the same signature reads it
-//! call by call; [`terminal_snapshot`] is the one function callers use.
+//! and the document's first row. After a key, the screen's colours are read
+//! too (`crate::terminal_colours`). A remote program reads it in one round
+//! trip, more only for a screen of many colours, and a classic
+//! implementation behind the same signature reads it call by call;
+//! [`terminal_snapshot`] is the one function callers use.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Line,
@@ -28,6 +30,10 @@ use crate::error::Error;
 use crate::focus::Path;
 use crate::opcode::Comparison;
 use crate::operation::{Import, Outcome, ProgramCache, Value};
+use crate::terminal_colours::{
+    ColourBatch, ColourRegisters, ColourRun, colours_classic_read, emit_bounds, emit_colours,
+    go_on_remote, row_width, screen_height,
+};
 
 /// More rows than any terminal holds, for moving to the end of the text.
 const FAR: i32 = 1_000_000;
@@ -119,6 +125,13 @@ pub struct SnapshotQuery<'a> {
     pub above: u32,
     /// The caret and its line to read too, in the same round trip.
     pub caret: Option<CaretLineQuery<'a>>,
+    /// Whether to read the screen's colours too, the first read after a
+    /// key (`docs/design/terminal-model.md`, section 5.7), with the
+    /// screen's width in cells as the last read found it, 0 when not
+    /// known: the first rows' colours are read in the snapshot's own
+    /// program at that width, and read again at this read's width, its top
+    /// row's, when the screen's turns out otherwise.
+    pub colours: Option<usize>,
 }
 
 /// The answer to a [`SnapshotQuery`]. Only [`Self::text`] is read in one
@@ -173,6 +186,12 @@ pub struct Snapshot {
     pub above: u32,
     /// The caret and its line, when the query asked for them.
     pub caret: Option<CaretAnswer>,
+    /// The screen's colours, when the query asked for them: each row's runs
+    /// of one foreground and background, from the screen's top to the
+    /// document's end, at most the screen's height, the form the terminal
+    /// reading rules take. Read after the text, in calls of their own, so a
+    /// hint like the rest.
+    pub colours: Option<Vec<Vec<ColourRun>>>,
 }
 
 /// The signature both snapshot implementations share.
@@ -212,6 +231,8 @@ struct SnapshotKey {
     /// Whether the caret is read, with `TextPattern2`, at most how much of
     /// its line, and the end of `since` it is compared with.
     caret: Option<(bool, i32, Option<i32>)>,
+    /// Whether colours are read, and at what width.
+    colours: Option<usize>,
 }
 
 impl SnapshotKey {
@@ -228,6 +249,7 @@ impl SnapshotKey {
                     caret.since.map(|since| endpoint_number(since.endpoint)),
                 )
             }),
+            colours: query.colours,
         }
     }
 }
@@ -248,6 +270,18 @@ struct SnapshotRegisters {
     /// when no rows above the start were asked for.
     above: Option<Reg<kind::Int>>,
     caret: Option<CaretLineRegisters>,
+    /// The colour read's start and limit, and its first rows' registers
+    /// when the width was known.
+    colours: Option<SnapshotColours>,
+}
+
+/// The snapshot program's colour registers.
+#[derive(Clone, Copy)]
+struct SnapshotColours {
+    top: Reg<kind::TextRange>,
+    top_row: Reg<kind::Str>,
+    limit: Reg<kind::TextRange>,
+    rows: Option<ColourRegisters>,
 }
 
 thread_local! {
@@ -288,9 +322,14 @@ pub fn terminal_snapshot_remote(_uia: &Uia, query: &SnapshotQuery<'_>) -> Result
         )
     });
     let outcome = operation.execute()?;
+    let screen = outcome.get_utf16(r.screen)?;
+    let colours = match (r.colours, query.colours) {
+        (Some(registers), Some(hint)) => Some(colours_remote(&outcome, registers, hint, &screen)?),
+        _ => None,
+    };
     Ok(Snapshot {
         text: outcome.get_utf16(r.text)?,
-        screen: outcome.get_utf16(r.screen)?,
+        screen,
         from_start: outcome.get(r.from_start)?,
         shrank: outcome.get(r.shrank)?,
         at_document_start: outcome.get(r.at_document_start)?,
@@ -303,7 +342,38 @@ pub fn terminal_snapshot_remote(_uia: &Uia, query: &SnapshotQuery<'_>) -> Result
             None => 0,
         },
         caret: r.caret.map(|caret| caret.read(&outcome)).transpose()?,
+        colours,
     })
+}
+
+/// The colours the snapshot's program read and those the programs after it
+/// read: at this read's width, from where the snapshot's program stopped,
+/// or from the screen's top when it read none or read them at another
+/// width.
+fn colours_remote(
+    outcome: &Outcome,
+    registers: SnapshotColours,
+    hint: usize,
+    screen: &[u16],
+) -> Result<Vec<Vec<ColourRun>>, Error> {
+    let width = row_width(&outcome.get_utf16(registers.top_row)?);
+    let size = (width, screen_height(screen, width));
+    let mut rows = Vec::new();
+    if size.0 == 0 {
+        return Ok(rows);
+    }
+    let Some(limit) = outcome.get(registers.limit)? else {
+        return Ok(rows);
+    };
+    let batch = match registers.rows {
+        Some(first) if hint == size.0 => first.read(outcome, size.0, &mut rows)?,
+        _ => ColourBatch {
+            row: outcome.get(registers.top)?,
+            done: false,
+        },
+    };
+    go_on_remote(batch, &limit, size, &mut rows)?;
+    Ok(rows)
 }
 
 /// Emits the snapshot's program into `b`: the screen and where the next
@@ -433,6 +503,16 @@ fn build_snapshot(b: &mut Builder, query: &SnapshotQuery<'_>) -> SnapshotRegiste
     let caret = query
         .caret
         .map(|caret| emit_caret_line(b, &caret, (element, pattern, since)));
+    // The colours last, after the text they describe.
+    let colours = query.colours.map(|width| {
+        let (top, limit, top_row) = emit_bounds(b, screen, document);
+        SnapshotColours {
+            top,
+            top_row,
+            limit,
+            rows: (width > 0).then(|| emit_colours(b, (top, limit), width)),
+        }
+    });
     SnapshotRegisters {
         text,
         screen: screen_text,
@@ -445,6 +525,7 @@ fn build_snapshot(b: &mut Builder, query: &SnapshotQuery<'_>) -> SnapshotRegiste
         next_start,
         above,
         caret,
+        colours,
     }
 }
 
@@ -520,6 +601,10 @@ pub fn terminal_snapshot_classic(_uia: &Uia, query: &SnapshotQuery<'_>) -> Resul
         None => 0,
     };
     let caret = query.caret.as_ref().map(caret_line_classic).transpose()?;
+    let colours = query
+        .colours
+        .map(|_| colours_classic_read(&screen, &document, &screen_text))
+        .transpose()?;
     Ok(Snapshot {
         text,
         screen: screen_text,
@@ -532,5 +617,6 @@ pub fn terminal_snapshot_classic(_uia: &Uia, query: &SnapshotQuery<'_>) -> Resul
         next_start: Some(next),
         above,
         caret,
+        colours,
     })
 }

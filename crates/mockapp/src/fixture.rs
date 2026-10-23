@@ -162,6 +162,23 @@ pub(crate) struct Styles {
     /// The background color, a `COLORREF`, white (0xFFFFFF) elsewhere.
     #[serde(default)]
     pub(crate) backgrounds: Option<Vec<(usize, usize, i32)>>,
+    /// The foreground color, a `COLORREF`, black (0) elsewhere. Unlike the
+    /// other lists, the foreground is supported without it, black
+    /// everywhere.
+    #[serde(default)]
+    pub(crate) foregrounds: Option<Vec<(usize, usize, i32)>>,
+    /// Whether every character has colors of its own, from its offset: its
+    /// foreground the offset and its background white less the offset, so
+    /// every character's differ from its neighbors', a terminal colour
+    /// read's worst case. Overrides both color lists.
+    #[serde(default)]
+    pub(crate) distinct_colors: bool,
+    /// Whether the colors over a range of two or more characters are
+    /// answered from every character but its last, as both terminals'
+    /// providers answer them (measured 2026-10-24): the first character's
+    /// when the rest but the last agree, mixed otherwise.
+    #[serde(default)]
+    pub(crate) colors_skip_last: bool,
     /// The bullet style, 0 elsewhere.
     #[serde(default)]
     pub(crate) bullets: Option<Vec<(usize, usize, i32)>>,
