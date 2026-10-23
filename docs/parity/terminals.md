@@ -16,18 +16,27 @@ probably typed; typed characters spoken on the terminal's next text
 change of any kind.
 
 Verbatim: **different** (`docs/design/phase6-design.md`, "Terminal
-reading by diffing the screen"; `docs/design/terminal-reading.md`;
+reading by diffing the screen"; `docs/design/terminal-model.md`;
 `docs/crates/verbatim-outpost.md`, "Terminals"), case by case below,
 some matched and some deliberately different. The terminal scenarios
 pin it: the `conhost_` and `windows_terminal_` scenarios named below,
-each run in both terminals.
+each run in both terminals. The terminal model, accepted by Dickson on
+2026-10-23 and being built, changed several of these cases; each such
+case gives the decision's date and the model's section, and its
+scenarios follow it as the model's order of work brings them back.
 
 #### Reading output
 
-- Each read diffs the screen with the screen last read, where NVDA
-  diffs the whole document. As NVDA's diff speaks only what was
-  inserted, lines only deleted, and a line that only lost text or gained
-  white space, say nothing.
+- Each read is aligned with the rows last read, row by row, so that
+  every row is new, kept wherever it moved, or rewritten (Dickson,
+  2026-10-23; `docs/design/terminal-model.md`, section 4), where NVDA
+  diffs the whole document by character. As NVDA's diff speaks only
+  what was inserted, lines only deleted, and a line that only lost text
+  or gained white space, say nothing.
+- A line still being written speaks what it gained, but holds back its
+  unfinished last word until the line grows past it, the caret leaves
+  the line, or the quiet period passes (Dickson, 2026-10-23; section
+  5.3), so a streamed word is not spoken in pieces.
 - In the console host, the console's own update `WinEvents` are taken
   as text changes as well as UIA's, merged per window, and a change
   observed before the last read began is covered by it, since UIA's text
@@ -47,15 +56,27 @@ each run in both terminals.
   before the key is never spoken after it, while output read after the
   key is spoken, as in NVDA (Dickson, 2026-10-10; the `*_control_flood`
   scenarios).
-- A line the terminal rewrites in place speaks from the start of the
-  word where it first differs (Unicode's word rules with ICU's
-  dictionaries, whole graphemes), where NVDA's character diff speaks the
-  inserted characters; a single symbol replaced in place (a spinner) is
-  silent until the line changes to text (Dickson, 2026-10-07); and a
+- Any row a program rewrites in place is a redrawn row, wherever it is
+  on the screen (Dickson, 2026-10-23; section 5.4). Its change speaks
+  from the start of the word where it first differs (Unicode's word
+  rules with ICU's dictionaries, whole graphemes), where NVDA's
+  character diff speaks the inserted characters; a single symbol
+  replaced in place (a spinner) is silent (Dickson, 2026-10-07); and a
   rewrite while the earlier version is still waiting replaces it
   (different). So Verbatim speaks a rewritten status line from the word
   that changed (vim's ruler, "2,1 Top"; tig's commit count), where NVDA
   drops a change of one or two characters on one line as probably typed.
+- A redrawn row that keeps changing (a volatile row: one that changed
+  twice within 2 seconds other than as a key's answer) has its first
+  change heard, so the user knows it exists, and is then silent until it
+  has been unchanged for the quiet period, 1 second or 1.5 times the
+  interval between its last two changes if that is longer, when its text
+  is spoken once (Dickson, 2026-10-23; sections 5.4 and 5.14). So a
+  timer says "Working... 1s" and then "Working... 34s" when the work
+  ends, where NVDA speaks every change it reads.
+- Colours that change with no key and no text change are not heard, and
+  panes a program draws side by side (tmux) are not told apart, since
+  they share rows (Dickson, 2026-10-23; section 6).
 - Verbatim+5 toggles "Report new output", on NVDA's key for its "report
   dynamic content changes" toggle, saying "report new output on" and
   "off".
@@ -113,6 +134,15 @@ each run in both terminals.
   not the count. At a password prompt that shows
   asterisks Verbatim speaks the asterisks the console shows, where NVDA
   echoes each typed character.
+- A typed character the terminal has not shown within 300 milliseconds
+  of reaching the program is dropped unspoken, so a late echo over a
+  slow connection is heard as output (Dickson, 2026-10-23; section 5.5);
+  NVDA speaks its queued characters at the next text change, however
+  late.
+- An input line the shell reprints at the caret, below a completion
+  list or below output that arrived while the user typed, is not spoken
+  again; characters typed since are echoed as usual (Dickson,
+  2026-10-23; section 5.3).
 - Typing the text cannot show (a space at the end of a line, which is
   padding until something follows it, or a character typed over inline
   prediction that showed it already) is echoed when the caret moves over
@@ -154,10 +184,29 @@ each run in both terminals.
 
 #### The review cursor while output is written
 
-Reviewing a line above the caret, then letting a script print two
-lines: both screen readers follow the caret to the prompt, so the
-current line is the prompt and the line before it the new output's
-last (matched; `*_review_output`).
+With "review follows caret" on, the review cursor follows the caret only
+when a key moved the caret or the focus arrived, and otherwise stays on
+its text, moving with it as output scrolls; with it off, only the user
+moves it (Dickson, 2026-10-23; `docs/design/terminal-model.md`, section
+5.6). So reviewing a line above the caret and letting a script print two
+lines leaves Verbatim's review cursor on the line reviewed, where NVDA
+follows the caret to the prompt (different; `*_review_output` takes this
+expectation when the model is built).
+
+#### Reading on demand
+
+- "Report status bar", on NVDA's gestures (NVDA+End in the desktop
+  layout, NVDA+Shift+End in the laptop layout), reads the footer of a
+  terminal as it is now, top to bottom, or with no footer the last row
+  with text, so a row that never stops changing can be heard (Dickson,
+  2026-10-23; section 5.11).
+- Verbatim+Alt+Up Arrow and Verbatim+Alt+Down Arrow move the review
+  cursor to the previous and next command the user entered and speak
+  its line, from marks Verbatim sets when Enter is pressed on a line a
+  key changed; commands entered before Verbatim watched the terminal
+  have none, and no prompt is guessed (Dickson, 2026-10-23; section
+  5.13). NVDA has no such command, and uses NVDA+Alt+Up and Down Arrow
+  to pan its magnifier.
 
 #### Windows and tabs
 
@@ -232,24 +281,30 @@ last (matched; `*_review_output`).
   them"). NVDA reads the caret's line at the first change of the
   caret's position after the key, or, finding none within its wait, at
   the end of it, without using a terminal's caret events; what the
-  program redraws elsewhere is new output to its diff. Verbatim answers
-  the key with the caret's line once the caret has moved, as in a text
-  field, and speaks what the program redrew elsewhere at once as
-  output, through the screen diff; a key whose answer said what it did
-  to the caret's line keeps that line's change from being spoken again
-  as output, and until the answer comes the change is output like any
-  other.
+  program redraws elsewhere is new output to its diff. Verbatim credits
+  a key with the changes found by reads that begin within 300
+  milliseconds after the key reached the program; later changes are
+  output (Dickson, 2026-10-23; section 5.5). It answers the key with
+  the caret's line, or with what the line gained or lost. One rule
+  covers the other rows for every key: a row away from the caret that
+  gained text or emphasis within the key's window is the key's answer,
+  spoken whole at once; every other row the keys changed is spoken
+  once, from the word that changed, when no key has been pressed for
+  the quiet period (Dickson, 2026-10-23; section 5.7). So fzf says the
+  current entry after each typed character and its count when typing
+  pauses.
+- Colours are read with the first read after each key, in the same
+  remote operation as the text, and never before a key, so a list shown
+  only by colour says the row that gained the highlight (Dickson,
+  2026-10-23; section 5.7).
 - When the caret follows a list's ">" marker, both say "> banana",
   "> cherry" and "> banana" (NVDA "greater banana") in both terminals
   (`windows_terminal_marker_list`, `conhost_marker_list`).
 - When the program redraws the list and leaves the caret below it,
-  Verbatim says the line that gained the marker as output, from the
-  word that changed, and nothing for the key, which did not move the
-  caret, where NVDA says "blank" for each key and drops the marker's
+  Verbatim says the line that gained the marker, whole, as the key's
+  answer, where NVDA says "blank" for each key and drops the marker's
   change as probably typed (`windows_terminal_redrawn_list`,
-  `conhost_redrawn_list`; different, following from the silent key in
-  `docs/parity/text.md`, "TextInfo-equivalent layer", and the rewritten
-  line above).
+  `conhost_redrawn_list`; different; Dickson, 2026-10-23, section 5.7).
 - A program that redraws a little at a time is read part-way by both,
   differently (the pagers' prompt in the console host, the prompt of
   `gh repo create`, nano's file browser).
@@ -261,10 +316,12 @@ last (matched; `*_review_output`).
   Git's `less.exe`, `vim --clean` with and without `:set
   relativenumber`, tig, Microsoft Edit's file list, PSReadLine's
   MenuComplete and nano's file browser), both say the caret's line or
-  the new line as above. The differences left: Verbatim says nothing
-  for a key that leaves the caret where it was (the pagers' ":" prompt,
-  tig's and Microsoft Edit's lists, PSReadLine's menu after its first
-  move), where NVDA says the caret's line at the end of its wait; and
-  with `relativenumber` every visible line changes on each move, which
-  NVDA speaks as a run of numbers and Verbatim as the changed lines from
-  their numbers, both within their limits.
+  the new line as above. The differences left: for a key that leaves
+  the caret where it was, Verbatim says the row that gained the marker
+  or the highlight (tig's and Microsoft Edit's lists, PSReadLine's menu
+  after its first move) and nothing when no row gained one (the pagers'
+  ":" prompt), where NVDA says the caret's line at the end of its wait;
+  and with `relativenumber` every visible line changes on each move,
+  which NVDA speaks as a run of numbers and Verbatim as the changed
+  lines from their numbers once the keys pause, within its limits
+  (Dickson, 2026-10-23; section 5.7).

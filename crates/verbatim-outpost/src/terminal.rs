@@ -564,7 +564,7 @@ impl Terminal {
 
     /// Forgets what was read of the terminal before the focus arrived, as
     /// NVDA takes a fresh snapshot of a terminal on focus
-    /// (`docs/design/terminal-reading.md`, "Monitoring starts on focus"):
+    /// (`docs/design/terminal-model.md`, section 2.2):
     /// the terminal then behaves the same whether the outpost kept it while
     /// the focus was away or released it with its node. The reading is
     /// kept, for the focus's transition to answer the request owed (which

@@ -1,6 +1,6 @@
 # A model of terminal screens, and how Verbatim reads them
 
-Status: accepted by Dickson, 2026-10-23, after one design review whose findings are folded in; being built. It replaces the rules the terminal redesign accumulated in its first build (`docs/design/terminal-reading.md`, "As built (2026-10-23)", never committed) with a model of how terminals change, derives the reading rules from it, and checks every case and every bug found against it. The parts of `docs/design/terminal-reading.md` that still hold (its requirements, its account of NVDA, and its measurements) move here, and that document is deleted, in the documents step of section 12. When the build is complete this document is rewritten to describe the design as built.
+Status: accepted by Dickson, 2026-10-23, after one design review whose findings are folded in; being built. It replaces the earlier terminal design of 2026-10-10 and its review of 2026-10-11, and the rules that design accumulated in its first build, with a model of how terminals change, derives the reading rules from it, and checks every case and every bug found against it. What still held of the earlier design (its requirements, its account of NVDA, its measurements and the rules Verbatim already follows) is here, in the sections it belongs to; the rest is in git history. When the build is complete this document is rewritten to describe the design as built.
 
 ## Decisions
 
@@ -38,7 +38,7 @@ Terms used throughout:
 - The quiet period is how long a row or the keys must be still before what was held is spoken (section 5.14).
 - An anchor is a remembered place in the history: the review position or a command mark (section 4).
 
-Sources: NVDA files are under `nvda/source/` at the pinned commit 732d1ce2f; "measured" means the measurements of 2026-10-23, in `docs/design/terminal-reading.md` and in sections 2.5 and 10 here.
+Sources: NVDA files are under `nvda/source/` at the pinned commit 732d1ce2f; "measured" means the measurements of 2026-10-06 to 2026-10-24 in sections 2.1, 2.5 and 10; Microsoft's terminal source is microsoft/terminal at the commit each statement names.
 
 ## 1. What a user needs from a terminal
 
@@ -54,11 +54,23 @@ From the decisions already made (`docs/parity/terminals.md`, `docs/design/phase6
 - Selection lists and menus say the selected item.
 - The user can review the whole history, move by command, and read the status lines on demand.
 
+The decided requirements these rest on, which every rule of section 5 keeps:
+
+- Output is spoken line by line, queued in order, one utterance per line; newer output never cancels older output still waiting (Dickson, 2026-10-06). A key, anything but Shift, cuts speech off and drops the output still waiting, as NVDA does; output read before the key is never spoken after it, and output read after it is (Dickson, 2026-10-07 and 2026-10-10). Shift pauses and resumes speech, and a paused queue does not drain (NVDA's behaviour).
+- The flood policy: the first "Lines spoken in full" lines of a burst (default 30) are spoken whole, never cut short by what arrives meanwhile; once that group has been heard, if more lines wait than that, all but the newest "Last lines to speak" (default 30) become "skipped N lines", and the decision repeats after each group (Dickson, 2026-10-06 and 2026-10-07). Every terminal line counts in N, blank lines included (confirmed 2026-10-09). When lines left a full history unread, Verbatim says "skipped more than N lines", N being the history's rows less the lines about to be spoken, and "skipped lines" when no count is possible (2026-10-07). Both limits may be raised to 10,000, above any terminal's history, which degrades to NVDA's reading of everything (2026-10-07 and 2026-10-09). A flood never hangs Verbatim, and its commands are answered during it (M4's exit criteria).
+- Blank lines are not spoken; only what was inserted is spoken, so a line only deleted, or a line that only lost text, says nothing (NVDA's rule; Dickson, 2026-10-08).
+- A line is spoken whole however long; waiting output is bounded at 10 MB, and a single line larger than that is cut on a grapheme boundary, and Verbatim says so (Dickson, 2026-10-07).
+- Lines made only of symbols are spoken as they are until symbol processing (M8) decides otherwise (Dickson, 2026-10-08). Output is spoken in one language for the terminal unless the terminal reports a language per line (Dickson, 2026-10-07).
+- Output of one or two characters ("y", "ok") is spoken, not taken for typing echo as NVDA's "probably typed" rules take it; matching typing against what the line gained makes that guess unnecessary.
+- Every UIA notification of Windows Terminal's terminal control and of the console host's text area is ignored, whatever its activity id, so nothing is spoken twice (Dickson, 2026-10-06; NVDA's overlays block them all). Output from anything but the focused terminal is not spoken, as NVDA monitors only the focus.
+- "Report new output" (Verbatim+5, NVDA's key for "report dynamic content changes") turns output speech off and on, saying "report new output on" or "off" (Dickson, 2026-10-06). While it is off the terminal is still read, since typing echo depends on those reads (Dickson, 2026-10-07).
+- No fixed waits, retries or polling: every wait is for evidence (Dickson, 2026-10-07 and 2026-10-08). UIA call sequences run as remote operations, with the classic fallback behind the same entry point (Dickson, 2026-10-07). The legacy console, which has no UIA text, is not supported (Dickson, 2026-10-08).
+
 ## 2. Evidence
 
 ### 2.1 What the terminals do (measured)
 
-- One `GetText` is atomic in both terminals; separate calls are not atomic with each other, but the calls of one remote operation run together in the terminal's process.
+- One `GetText` is atomic in both terminals; separate calls are not atomic with each other, but the calls of one remote operation run together in the terminal's process. The source agrees (microsoft/terminal at 7d06b26f, `src/types/UiaTextRangeBase.cpp`): `GetText` holds the terminal's lock for the whole copy (the console host's global console lock, which every console write holds; Windows Terminal's read-write lock, which its output processing holds), and every other range method takes the lock separately for its own call. A `GetText` is atomic with respect to the terminal's writes (one console API call, one chunk of Windows Terminal's output), not the program's: a line the program writes in two calls, or ConPTY delivers in two chunks, can end a read half written. The terminal's writer waits for the whole copy, so a large read slows the program's output while it lasts.
 - The document ends with the lower of the last row with text and the cursor's row, as each provider finds them when asked: rows an insertion moved down stay in it, and a row erased leaves it (conformance, 2026-10-23).
 - Rows keep their coordinates until the history is full; then the whole buffer rotates under fixed coordinates, so a kept range reads newer text. The history's length is the user's setting and is never needed: rotation shows in the document's first row.
 - Both terminals pad every row to the width, and give a wrapped line whole, its padding filling its last row.
@@ -69,6 +81,7 @@ From the decisions already made (`docs/parity/terminals.md`, `docs/design/phase6
 - A scroll region from the screen's top, with a footer below it, scrolls into the history in both terminals: the footer keeps its row on the screen and the new blank row comes in at the region's bottom (conformance, 2026-10-23). The console host was seen writing a line over the footer's row in the footer scenarios, whose scripts draw differently; a read can also land in the middle of a program's own redraw, which lingering rows absorb (section 4.1).
 - Reverse video covers only the cells written in it, not the row's padding, so a selected row's colours read as mixed over the whole row; telling a selected row needs the row's colour runs (section 10). Over a stretch of two colours both providers answer 0 rather than "mixed", and their format unit does not stop at every change of colour, so colours are read cell by cell, or by halving a stretch only when its two halves are known to agree (conformance, 2026-10-23).
 - Windows Terminal serves UIA calls on its UI thread. Where it renders in software (a machine with no 3D graphics, such as this development VM), a call that arrives while that thread draws the window's own controls (its title or tab, its scrollbar) during a heavy frame waits for the frame, 10 to 36 milliseconds measured, more under load; a read made on its text-changed event, which arrives once the frame is done, never waited (worst 2.6 milliseconds over a 30-frame stream). So reads follow events (section 5.1), and a read not prompted by an event, such as one before a key is passed on, can cost a key one software frame there. Windows Terminal raises no text-changed event for writes made only of blank lines (line feeds alone, or a reset scroll region and a line feed), so such a scroll is seen only through another event or the next read.
+- A `FindText` that finds nothing, measured on 2026-10-24 in the pinned Windows Terminal 1.24.12741, returns a non-null range whose `GetText`, `CompareEndpoints` and `MoveEndpointByRange` fail with `E_FAIL` or `E_INVALIDARG` and whose other calls succeed, with no access violation; the console host behaves alike. The model finds rows by their text in its own reads and does not use `FindText`.
 
 ### 2.2 What NVDA does
 
@@ -78,6 +91,16 @@ From the decisions already made (`docs/parity/terminals.md`, `docs/design/phase6
 - It speaks nothing for keys it has no script for (Control+B, Alt+F, Control+W, Control+U, Control+K).
 - Its review cursor is a live text range, never adjusted when the text changes, and it follows every caret event when following is on.
 - It has nothing for full-screen programs, footers, selection lists, completion menus or moving by command.
+
+The rest of NVDA's terminal reading is in `docs/nvda/editable-text-and-terminals.md`, "Terminals" and "Terminal details at the pinned source". What this design also relies on:
+
+- Monitoring starts on focus: the monitor thread takes a baseline read and then reads again on each text change (`NVDAObjects/behaviors.py` 468 to 488), so output written just after the focus arrives is spoken (captured: "terminal blank" and then PowerShell's start-up notice).
+- Events are coalesced before NVDA's monitor sees them: UIA's own event coalescing is on (`UIAHandler/__init__.py` 539), NVDA's C++ rate limiter merges events by element and kind (`nvdaHelper/local/UIAEventLimiter/rateLimitedEventHandler.cpp` 33 to 60), and the monitor's text-changed flag collapses any number of events between two reads into one more read (`behaviors.py` 420 to 424).
+- For Windows Terminal and the console host at the FORMATTED API level the text read is the whole document, history included, in one `GetText` (`NVDAObjects/UIA/__init__.py` 511 to 512, `diffHandler.py` 33 to 34). Measured on 2026-10-06: after 5,000 lines in a 120-column Windows Terminal the document was 610,244 characters, 86 percent of them padding, and took 6 milliseconds to read before any diff; NVDA pays that on every change.
+- When it reports new lines it also forgets the typed characters still queued (`behaviors.py` 567 to 569), so characters typed between a text change and its report are never echoed.
+- Its cancel goes on the same queue as its line reports, so lines queued before a key are cut off, but lines from a read that ends after the key are still spoken (`inputCore.py` 595 to 605 against `behaviors.py` 497 to 502).
+- After a caret key it polls the caret (three spins, then 10-millisecond sleeps) up to its wait, holding its main thread, and then speaks the unit at the caret whether or not the caret moved (`editableText.py` 70 to 192), so a pager key says ":" at the end of the wait. Backspace is the exception: it speaks the character or word before the caret only if the caret moved within the wait (`editableText.py` 313 to 315); Delete speaks the unit at the caret (329 to 342). A key with a script is swallowed and sent again by the script, and keys without a script queue behind it to keep their order (`inputCore.py` 641 to 645).
+- Its known weaknesses, captured with alpha-57645 on 2026-10-09 and replayed with alpha-58022, the pinned build, on 2026-10-12: fragments from the character diff ("eady greater dot altscreen dot ps 1" on closing the alternate screen); typed commands and recalled lines spoken twice, once as echo and again as output; queued characters of a password spoken when anything else on the line changes; no flood control, so a console flood was still being spoken after its window closed. With a full history and every line the same, the document is identical before and after a flood and its diff finds nothing.
 
 ### 2.3 What other screen readers do
 
@@ -103,6 +126,11 @@ The best Linux screen readers see the write stream. Windows offers no supported 
 - The console host on this machine reported every write exactly, in order. Its current source batches the events and reports only the span the cursor travelled, so a footer drawn with save and restore reports nothing.
 
 So neither event tells new output from a redraw, and the console host's will lose most of its detail. Each is a reliable signal that something changed, which is all the reading rules use it for. A read can land in the middle of a program's redraw (a footer overwritten and not yet drawn again, a region erased and not yet rewritten); section 4 keeps such rows for a moment so that their return is not new.
+
+The events Verbatim reads on are UIA's text-changed event in Windows Terminal and, in the console host, its console WinEvents:
+
+- The console host's four console WinEvents are its text-change evidence: UIA's text changes stopped reaching Verbatim in the middle of 12,000-line writes in 2 of 14 runs, cause unknown, and since 2026-10-13 the WinEvents are the only evidence taken (`docs/design/wake-ups.md`, item 15). Measured on 2026-10-13 on Windows 11 24H2's console host: a region update (`EVENT_CONSOLE_UPDATE_REGION`) comes for every write of a row's cells (each line of output, a prompt, a line the shell redraws, the alternate screen opened and drawn, a VT clear or scroll); a simple update (`EVENT_CONSOLE_UPDATE_SIMPLE`) for one cell written, which is every typed character's echo, and for a whole-buffer clear by the console API (`cls`, `[Console]::Clear()`); a scroll update (`EVENT_CONSOLE_UPDATE_SCROLL`) for text scrolled up by output once the cursor is on the last row, and for a block moved by `ScrollConsoleScreenBuffer`, alone; a layout event (`EVENT_CONSOLE_LAYOUT`) for the view moving, a window resized, the alternate screen opened, and, alone, the alternate screen closed. Each kind is the only evidence of some change, so all four are taken. In a flood each line raises a region, a scroll and a layout; the outpost's intake merges a window's updates while they wait, and drops a held console's updates without waking its worker while its text has changed unread and no caret key's watch is open, as NVDA's console handler skips an update while one is pending. Microsoft warns that registering for console WinEvents costs every console program on the system, and the console host checks whether any hook is installed before raising them.
+- Read in the console host's source, not measured on the installed build: it raises its accessibility events for a write only when the cursor's position differs before and after it (`src/host/_stream.cpp` 33 to 79, at microsoft/terminal 7d06b26f; rewritten and debounced in #19344, 2025-09-22). With a full history the buffer rotates under a cursor that stays on the bottom row, so a write of a whole line and its line break may raise no event at all. NVDA has the same exposure. Whether build 26100's console host does this is open.
 
 ## 3. The model of the terminal
 
@@ -134,6 +162,8 @@ Every change is a sequence of these operations:
 - A read, as one remote operation: the text from a kept start to the document's end (lines whole, padding kept), the screen's text (its height and width), the document's first row, the caret's position and line, where the next read should start, and, after a key, colours (section 5.7).
 - Keys: every key, with the time it was pressed and the time it reached the program, and, for held keys, the screen's text and caret before the key.
 
+Times compared across processes (a key's press in the hook, a read's start in the outpost) are all taken on one clock, the performance counter with an offset shared by every process of a run, in microseconds (`crates/verbatim-process/src/clock.rs`). Core takes the hook's reports and the outpost's messages in the order they arrive, on one channel; the hook reports a key before passing it on, so the report is queued before the program can receive the key. A message's arrival time is never used to judge which key a read answers, since a read taken before a key can arrive after it: the read's own start time, carried in the message, decides (section 5.5).
+
 ### 3.4 What cannot be observed
 
 Which operations happened between two reads. The model's job is to choose the explanation a terminal program could actually have produced, and to say plainly where two cannot be told apart.
@@ -154,7 +184,7 @@ For each terminal, kept while the terminal exists, across focus changes:
 
 ### 4.2 What a read covers
 
-The rows from the kept start, which is the top of the screen as last read, to the document's end: the last screen and whatever was written since. Measured: a 30-row read 0.12 milliseconds; 1,000 rows 1.3 to 3.4; a full history of 9,001 rows 9.4 to 29. The first read is the screen, which need not start at the document's start, so the next read's kept start may lie above it. The whole document is read only when no row with text of the last screen is in the read (more than a screen went by, or the history was cleared) or the kept start is refused (section 4.4; a refused read that, started a block higher, reaches the document's start is already the whole document), to find the old screen and count what went by; since reads wait while Core's speech queue is full (on-demand reading), that is at most once per group of spoken output. With "report new output" off nothing waits, but nothing is spoken or counted either, so the whole document is not read: the memory is simply taken from the read.
+The rows from the kept start, which is the top of the screen as last read, to the document's end. The top of the screen is found from the document's end, moved back by the screen's height, never from the view, so a user who scrolls the view back into the history neither moves the kept start nor makes every read as long as the distance scrolled. A read so covers the last screen and whatever was written since. Measured: a 30-row read 0.12 milliseconds; 1,000 rows 1.3 to 3.4; a full history of 9,001 rows 9.4 to 29. The first read is the screen, which need not start at the document's start, so the next read's kept start may lie above it. The whole document is read only when no row with text of the last screen is in the read (more than a screen went by, or the history was cleared) or the kept start is refused (section 4.4; a refused read that, started a block higher, reaches the document's start is already the whole document), to find the old screen and count what went by; since reads wait while Core's speech queue is full (on-demand reading), that is at most once per group of spoken output. With "report new output" off nothing waits, but nothing is spoken or counted either, so the whole document is not read: the memory is simply taken from the read.
 
 ### 4.3 The alignment
 
@@ -176,6 +206,10 @@ Programs that clear and then reprint everything (Pi's regular mode on a resize o
 ### 5.1 When to read
 
 A change event marks the terminal changed; the worker reads when it is free, so every change is followed by a read that began after it. Reads wait while Core's speech queue is full (on-demand reading). A caret event in Windows Terminal also reads, since Windows Terminal sometimes raises a caret move with no text change. A held key reads before it is sent on (text and caret only) and after the terminal answers. A timer runs only while something waits for the quiet period (section 5.14).
+
+- Change events coalesce: a terminal has a flag for "changed since the last read began", which a change event sets; when the worker is free and the flag is set it reads, and a change observed after a read began sets it again, so exactly one more read follows. There is no delay and no minimum interval between reads (Dickson, 2026-10-07). When the terminal raises no further event, nothing is read until it does.
+- On-demand reading (Dickson, 2026-10-07): while Core's speech queue is full the outpost only notes changes until Core asks, when a group's last line is handed to speech. A cut (a key that cancels speech) while Core's read is unanswered is answered after that read, whose answer is output read before the cut and is used only to echo typing, as the cut's own answer is (fixed 2026-10-14, after a key typed just as reading went live lost its echo). A cut while reading is live, or held with nothing changed, is answered empty without reading (fixed 2026-10-17), since a read then finds only what the key did, and that belongs to the text change that follows; only a cut with changes held, or with a read owed, reads.
+- The caret while output is held (Dickson, 2026-10-14): while output is held and the text has changed, a caret event is noted, the outpost keeps one noted caret, and reads it only when nothing else waits, skipping it if a read since has covered it. Core's caret is so never staler than the outpost is busy, and a console flood's separate caret reads fell from about 3,000 to about 20.
 
 ### 5.2 What each row is
 
@@ -203,6 +237,7 @@ None of these depends on where the row is or on the caret. A row's kind is learn
 - A volatile row is not spoken while it changes. When it has been unchanged for the quiet period, its text is spoken once, by the changed-word rule against what it last said, and it stops being volatile. "Working... 34s" is heard when the work ends; a clock that never stops is heard once, at its first tick.
 - Counting changes in time, and at reads only when a read waited for speech, means a row is judged the same when reads are close together and when they wait behind a long spoken flood, and a bar that steps every few seconds is heard at each step.
 - A redrawn row that moved unchanged, or lingered and came back, is silent.
+- A row's change that is still waiting in Core's queue when the row changes again is replaced by the newer change, so a waiting progress line is spoken once, as it last was.
 - Changes made as a key's answer are never held (section 5.5); other rows changed while keys are being pressed follow section 5.7.
 - The footer and header are names, not rules: the footer is the rows below the caret's row on the main screen, or the redrawn rows at the bottom of the screen, the header the redrawn rows at the top. Pi's command window in the middle of the transcript follows the same rules.
 
@@ -214,6 +249,9 @@ None of these depends on where the row is or on the caret. A row's kind is learn
   - It lost text next to the caret: what it lost is spoken, whether the program erased it in one write or over several reads (decided 2026-10-08).
   - The caret moved with no text change: the key's unit for a caret key Verbatim knows (decided 2026-10-08); for any other key, the landing rule: another line, the line; one character, that character; the start or end of the line or a word, the character or word there (decided 2026-10-08). Control+B, Control+F, Alt+B, Alt+F, Control+A and Control+E in bash, PSReadLine and Pi are this rule.
 - Typed characters: the rules of `docs/parity/terminals.md` stand unchanged (echoed when the terminal shows them; never spoken again as output; a line changed some other way, such as a password prompt's asterisks, drops the held typing and speaks what the line shows; a clock on a password prompt's line never speaks the password; typing that the terminal cannot show yet is echoed when the caret moves over it; Up Arrow followed at once by a character speaks the recalled line with the character in it once, "echo onex", without the character's own echo). Held typing is forgotten on Enter, Tab, Escape, Control+C, Control+D and Control+Break (decided 2026-10-09), and a character not shown within 300 milliseconds of reaching the program is dropped unspoken. The limit is judged at the next read, with no timer, and counts from when the character reached the program, since key holding can defer a key behind a held one.
+- Delete speaks what it leaves at the caret (Dickson, 2026-10-09).
+- A caret move the program makes with no key is not spoken (Dickson, 2026-10-08), as NVDA does not use a terminal's caret events.
+- The console host's keys are translated with the console host's own keyboard layout, as NVDA does.
 - Rows away from the caret that a key changed: section 5.7.
 
 ### 5.6 The review cursor
@@ -249,7 +287,7 @@ Resizing shows as a new width (from the padded length of rows) or height (from t
 
 ### 5.10 Focus
 
-- Taking the focus subscribes to the terminal's changes, waits for the subscription, and then takes the first read, which speaks nothing but the caret's line; output written after that read began is heard.
+- Taking the focus subscribes to the terminal's changes, waits for the subscription, and then takes the first read, which speaks nothing but the caret's line; output written after that read began is heard. The focus says "terminal" (the console host's English-only name "Text Area" dropped, as NVDA drops it) and the caret's line, "blank" for an empty one, in a new window or tab of either terminal (Dickson, 2026-10-09).
 - Output written while the terminal was in the background is not heard on return (decided).
 - The memory, the lingering rows, the known history and the anchors are kept when the focus leaves and dropped only when the terminal closes. The first read on return aligns with the kept memory, so moving by command still works and nothing written meanwhile is spoken.
 
@@ -286,7 +324,7 @@ Kept from key holding (`docs/design/key-holding.md`), unchanged: a held caret ke
 
 ## 6. What diffing cannot do
 
-- Identical lines that left a full history cannot be counted; this happens only when the history is full.
+- Identical lines that left a full history cannot be counted; this happens only when the history is full, and then whenever more than a screen of them scrolls between two reads, not only when the history overflows. No reader can count them from text, NVDA included. The console host's scroll event cannot count them either: its distance sums buffer and view scrolls over a debounce interval, a VT line feed raises no rotation count at all, and Windows Terminal raises no console events (microsoft/terminal at 7d06b26f, `src/host/AccessibilityNotifier.cpp` 246 to 289, `src/host/outputStream.cpp` 445 to 447).
 - A blank row a line feed wrote and one the cursor jumped over look the same; section 5.3 judges by where the cursor rests.
 - Output written and erased between two reads is never seen; accepted, since the final state is what matters.
 - A word split across the first two reads of a streamed line is spoken in two pieces.
@@ -395,7 +433,7 @@ The general rules cover it: streaming and growing lines (section 5.3), redrawn, 
   These are what "by construction" means in section 11. What redrawn rows, keys, lists and colours say is decided speech, not a property of the stream, so it is tested by unit tests that state a stream and the speech it must give, never by an oracle that would repeat the rules (`docs/testing.md`).
 - Expectations are guarded: an expectation is changed only from an NVDA capture or a decision recorded here, never to make a failing test pass, and a commit that changes one says which.
 - Recorded streams of real programs as fixtures: Pi in both modes (`PI_TUI_WRITE_LOG`), PSReadLine in both modes, bash with readline, an Ink program, vim, less, htop, fzf, docker-like progress.
-- End-to-end scenarios to add, with NVDA captures where NVDA's speech is the expectation: the landing rule's keys; Control+W, Control+U and Control+K; tab completion; suggestions; a completion list; menu completion; history search; output while typing; pasting; slow echo; a spinner with a message; several progress lines; resizing; a list by colour; a checkbox list; a refreshing full-screen script; fzf-like filtering; the review cursor kept through a footer redraw and moved with its text through a scroll; "report status bar"; moving by command; output just after the focus; Pi in both modes.
+- End-to-end scenarios to add, with NVDA captures where NVDA's speech is the expectation: the landing rule's keys; Control+W, Control+U and Control+K; tab completion; suggestions; a completion list; menu completion; history search; output while typing; pasting; slow echo; a spinner with a message; several progress lines; resizing; a list by colour; a checkbox list; a refreshing full-screen script; fzf-like filtering; the review cursor kept through a footer redraw and moved with its text through a scroll; "report status bar"; moving by command; output just after the focus, with an interactive shell; the console host's real password prompt; Pi in both modes.
 
 ## 10. Cost
 
@@ -408,6 +446,7 @@ Measured on 2026-10-23, 120 columns, 30 rows, both terminals:
 - The alignment: at most about 60 by 180 integer comparisons per read, microseconds; the histogram diff after a clear is linear in the rows.
 - The whole document is read at most once per group of spoken output, and never with output reporting off (section 4.2).
 - The quiet-period timer: one wake-up for each thing that waits for it, when it ends.
+- The terminal's writer waits while a read copies, so large reads are also measured by how much they slow the program's output: its lines per second with reads running against without.
 
 To measure before and after the redesign, with the `measure_` scenarios and the outposts' counters (`docs/performance.md`), against the build before the redesign and against NVDA where NVDA can be measured: the outpost's processor time and wake-ups per event and per second, and the time from a change to its speech, for typing, a 20,000-line flood, a Pi stream replayed at its recorded pace, a clock ticking once a second, and a full-screen program refreshing rows. The budget: on the typing path, no rise but the colours of the read after each key, measured; and no rise in wake-ups for output beyond the quiet-period timer.
 
@@ -435,7 +474,7 @@ Each part is one step in the sense of `REVIEW.md`: built with its tests and docu
 1. Design review: done on 2026-10-23, with one re-review; its findings are folded into this document, those that changed behaviour decided by Dickson.
 2. The working tree settled: the shared clock (899ca87c) and the console host's say-all fix (83cde1c5) committed; the line-based reading saved as a patch in the scratchpad and removed. The read program, the reads stamped with their start, the subscription in place before the first read and the caret event reading in Windows Terminal could not be separated from it and come back with the steps below.
 3. Baseline measurements, on the build before any reading changes: processor time, wake-ups and change-to-speech time for the workloads of section 10.
-4. Documents: what still holds in `docs/design/terminal-reading.md` moves here and that document is deleted; `docs/parity/terminals.md` takes the changed decisions; the roadmap's M4 entries point here.
+4. Documents: done on 2026-10-24. What still held of the earlier design and its review moved here and both were deleted; `docs/parity/terminals.md` took the changed decisions; the roadmap's M4 entries point here.
 5. The simulated terminal (`verbatim-term-sim`).
 6. Conformance: the read program brought back beside the current one in `verbatim-uia-rops`; the stream player; `cargo xtask regenerate-terminal-conformance-expectations`; the expectation files for the hand-written corpus; the unit test that checks the simulator against them; the simulator fixed until it matches both terminals.
 7. Recordings: a ConPTY recorder; streams of Pi in both modes, PSReadLine in both modes, an Ink program, and vim, htop, fzf, less and bash in WSL, with docker-like progress from a script; their conformance expectations.

@@ -95,10 +95,9 @@ NVDA says, to decide what Verbatim should say.
     connects to it or sends it a remote operation; adopted and built.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
     declared with its request; adopted and built.
-  - [terminal-reading.md](design/terminal-reading.md) — terminal
-    reading; adopted, not yet built.
-  - [terminal-reading-review.md](design/terminal-reading-review.md) —
-    the review of the terminal design; corrections pending its build.
+  - [terminal-model.md](design/terminal-model.md) — a model of how
+    terminal screens change, and the rules Verbatim reads them by;
+    accepted 2026-10-23, being built.
   - [key-holding.md](design/key-holding.md) — holding caret keys as
     NVDA does; a prototype on the branch `key-holding`, measured, its
     merge Dickson's decision.

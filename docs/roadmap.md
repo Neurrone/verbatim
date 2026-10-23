@@ -51,37 +51,59 @@ recorded as provisional.
 
 ### The terminal redesign
 
-Built from [terminal reading](design/terminal-reading.md) (approved, its
-open questions 1 to 12 answered as recommended) in its small steps, after
-its measurements, with the corrections of
-[its review](design/terminal-reading-review.md).
+Built from [the terminal model](design/terminal-model.md) (accepted by
+Dickson on 2026-10-23), in the parts its section 12 lists, each one step
+in the sense of `REVIEW.md`, with nothing pushed until the last. The
+design review, settling the working tree, and the documents step are
+done; the simulated terminal with its conformance expectations and
+recordings, the oracle, and the core's memory, alignment and reading
+rules in `verbatim-text` are committed. What remains, in section 12's
+order:
 
-- The redesign: one read per change as the unit, every other call only a
-  hint, an original line diff, and each extra beyond NVDA's model decided
-  separately. It removes ecf191c, restores a scenario with an interactive
-  shell for output written just after a terminal takes the focus (with an
-  NVDA capture), and restores the console host's real password prompt. It
-  includes a test bounding the diff's work on a 9,000-line overflow and a
-  2,000-line flood, asserting exact counts. Lists a program redraws in two
-  writes are decided here, with a scenario that controls when each piece
-  is written (Dickson, 2026-10-10).
-- The review's corrections: key attribution uses each read's own start
-  and end times, carried in the outpost's message on a monotonic clock
-  shared with the key's press time, not Core's receipt time; the
-  whole-document fallback gets its own alignment bound; and the NVDA
-  details the review lists.
-- Provisional, awaiting Dickson (2026-10-11): if measurement 5 confirms
-  the console host raises no text change while a full history scrolls
-  whole lines, follow NVDA, which has the same gap; a flood of identical
-  lines cannot be counted whenever the history is full, documented as a
-  limitation.
-- Bug fix: the caret read with a terminal's text is stamped with the
-  change event's time, not the read's, so Core can take a caret already
-  showing a key's effect as the caret before it (a likely cause of
-  `conhost_typing` step 5 failing).
-- Bug fix: Windows Terminal faults on a `FindText` that finds nothing
-  (an access violation on its UI thread, seen as `RPC_E_SERVERFAULT`); the
-  redesign drops `FindText` (the design's corrections of 2026-10-11).
+- The baseline measurements of processor time, wake-ups and
+  change-to-speech time for section 10's workloads, on the build before
+  the reading changes (the memory baseline is in
+  [performance](performance.md), "Memory use").
+- The read program's colours, read in the first read after each key, and
+  the remote operations audit.
+- The outpost and Core: reading moved onto the core; the review position
+  as an anchor; following the caret only within a key's window; the key's
+  window and the typed-character limit; the quiet-period timer; the
+  subscription in place before the first read; the caret event reading in
+  Windows Terminal; and each read stamped with its own start time, so that
+  a caret read after a key is never taken for the caret before it (the
+  likely cause of `conhost_typing` step 5 failing about one run in four).
+- "Report status bar" with NVDA+End; then moving by command with
+  Verbatim+Alt+Up Arrow and Verbatim+Alt+Down Arrow, with their scenarios
+  in both terminals, in a shell and in Pi's regular mode.
+- The end-to-end scenarios of section 9, with NVDA captures where NVDA's
+  speech is the expectation, among them output written just after a
+  terminal takes the focus with an interactive shell, and the console
+  host's real password prompt; the existing terminal scenarios brought
+  back to passing; then streaming and redrawing at a real program's rate,
+  with a test program of Verbatim's own.
+- The measurements after, against the baseline, in
+  [performance](performance.md).
+- The model rewritten to describe the design as built, its decisions
+  moved to [the terminals parity entry](parity/terminals.md).
+- The whole terminal suite, `cargo xtask ci`, and the push.
+
+Related items:
+
+- Provisional, awaiting Dickson (2026-10-11): the console host's source
+  raises no text change for a write that leaves the cursor where it was,
+  as a full history scrolling whole lines may
+  ([the model](design/terminal-model.md), section 2.5); if a measurement
+  on the installed build confirms it, follow NVDA, which has the same gap.
+  A flood of identical lines cannot be counted whenever the history is
+  full, a limitation in the model's section 6.
+- Windows Terminal and `FindText`: on 2026-10-24, in the pinned Windows
+  Terminal 1.24.12741, a `FindText` that finds nothing returned a
+  non-null range whose `GetText`, `CompareEndpoints` and
+  `MoveEndpointByRange` fail with `E_FAIL` or `E_INVALIDARG` and whose
+  other calls succeed, with no access violation; the console host behaves
+  alike. The redesign does not use `FindText`; the current reading's
+  anchor search goes when reading moves onto the core.
 - An unsettled terminal read with nothing queued behind it is never
   retried; and `conhost_leave_flood` once never heard "blank" for an empty
   new console window, its first read giving nothing within 15 seconds.
@@ -90,10 +112,11 @@ its measurements, with the corrections of
   caret moves, and Verbatim reads the screen only on a text change (NVDA
   has the same dependency and would say the character late, with the next
   change). First settle whether Windows Terminal or UIA loses the event,
-  with about 60 runs and a second, independent UIA client listening; the
-  proposed fix is that the outpost treats a caret row that differs from
-  its last screen read as a change (Dickson, 2026-10-17: part of this
-  redesign).
+  with about 60 runs and a second, independent UIA client listening. The
+  model reads on Windows Terminal's caret events as well as its text
+  changes ([the model](design/terminal-model.md), section 5.1), which
+  comes back with the outpost and Core step (Dickson, 2026-10-17: part of
+  this redesign).
 - The terminal scenario the lock-free listener's first step lets fail
   ([its design](design/listener-without-connections.md), section 10,
   step 1; Dickson, 2026-10-19): `windows_terminal_two_windows`, which in
