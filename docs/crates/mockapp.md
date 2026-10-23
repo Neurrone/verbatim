@@ -564,8 +564,9 @@ one message, ahead of a selection in its list delivered after the focus.
 `verbatim-uia-rops`'s terminal read program both ways, the two required
 to agree on every field: a first read, one from where the last said to
 start with nothing new and with output since, one whose start the text
-cleared below, one asked for fewer rows than the screen holds, and the
-whole text, each pinned exactly.
+cleared below, one asked for fewer rows than the screen holds, the whole
+text, and reads taking rows above their start, as many as asked and as far
+as the document's start, each pinned exactly.
 
 `remote_ops.rs` runs `verbatim-uia-rops`'s remote and
 classic focus ancestry over `ancestry.json` (a five-level chain, a list

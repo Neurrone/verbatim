@@ -695,8 +695,9 @@ fn terminal_screens_execute_exactly() {
 }
 
 /// A terminal's snapshot: a first read, and a read from where it said to
-/// start with the caret read in the same program, as the outpost reads a
-/// focused terminal on each change of its text. The program has no loop of
+/// start with the caret read in the same program, each taking four rows
+/// above its start (the history's block), as the outpost reads a focused
+/// terminal on each change of its text. The program has no loop of
 /// its own, so a long text costs the same instructions as a short one.
 fn terminal_snapshots_execute_exactly() {
     common::init_com();
@@ -716,6 +717,7 @@ fn terminal_snapshots_execute_exactly() {
         start: None,
         screen_rows: 0,
         whole: false,
+        above: 4,
         caret: None,
     };
     let mut start = None;
@@ -745,7 +747,7 @@ fn terminal_snapshots_execute_exactly() {
     fixture.app.quit();
     assert_eq!(
         [first, started],
-        [45, 85],
+        [50, 90],
         "terminal snapshot first and started"
     );
     assert!(started < LIMIT / 2);

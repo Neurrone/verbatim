@@ -517,7 +517,10 @@ terminals with it, and the redesigned terminal reading replaces
 text pattern, where the last read said to start (`start`, a range; none
 for a first read), the screen's height in rows as the last read found it
 (`screen_rows`, 0 when not known), whether to read the whole text instead
-(`whole`), and, with `caret` (a `CaretLineQuery`), the caret and its line,
+(`whole`), how many rows above the start to begin the read (`above`, the
+history rows whose place shows how far a full history rotated,
+`docs/design/terminal-model.md` section 4.3 item 5; ignored with `whole`),
+and, with `caret` (a `CaretLineQuery`), the caret and its line,
 read in the same program or, classically, after the text, and back as
 `Snapshot::caret`.
 
@@ -538,7 +541,11 @@ and ends its text is recorded by the conformance expectations
   that, or one the provider cannot compare (a range on the other screen,
   whose row lies beyond its height), means the text was cleared or
   switched, and the snapshot starts where the next read will. A first read
-  starts at the screen's top; a `whole` read at the document's start.
+  starts at the screen's top; a `whole` read at the document's start. The
+  snapshot then starts `above` rows higher, as far as the document's start
+  allows, moving by lines, which both terminals take as rows.
+- `above`: how many rows the snapshot holds above its start, fewer than
+  asked when the document's start came first.
 - `screen`: the first visible range's text, for the screen's height in
   rows.
 - `next_start`: the document's end moved back by `screen_rows` lines, the
@@ -553,8 +560,9 @@ and ends its text is recorded by the conformance expectations
 - `caret_rows_to_end`: how many lines the caret moves to reach the
   document's end.
 
-The program has no loop, so its cost does not grow with the text: 45
-instructions for a first read and 85 with a start and the caret
+The program has no loop, so its cost does not grow with the text: 50
+instructions for a first read and 90 with a start and the caret, each with
+four rows above its start, and 5 fewer without
 (`crates/mockapp/tests/instruction_limit.rs`).
 
 ## Layer 3: the caret read

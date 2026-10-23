@@ -6,8 +6,9 @@
 //! must agree on every field, and each case pins the fields exactly: a
 //! first read, a read from where the last one said to start with nothing
 //! new, one with output written since, one whose start the text no longer
-//! reaches, one asked for fewer rows than the screen holds, and a read of
-//! the whole text.
+//! reaches, one asked for fewer rows than the screen holds, a read of the
+//! whole text, and reads taking rows above their start, as many as asked
+//! and as far as the document's start.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -63,6 +64,7 @@ struct Fields {
     alternate: bool,
     first_row: String,
     caret_rows_to_end: u32,
+    above: u32,
 }
 
 impl From<&Snapshot> for Fields {
@@ -76,6 +78,7 @@ impl From<&Snapshot> for Fields {
             alternate: snapshot.alternate,
             first_row: snapshot.first_row.clone(),
             caret_rows_to_end: snapshot.caret_rows_to_end,
+            above: snapshot.above,
         }
     }
 }
@@ -106,6 +109,7 @@ fn eight_lines(text: &str, from_start: bool, at_document_start: bool) -> Fields 
         alternate: false,
         first_row: "line 000\n".to_owned(),
         caret_rows_to_end: 8,
+        above: 0,
     }
 }
 
@@ -145,6 +149,7 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
         start: None,
         screen_rows: 0,
         whole: false,
+        above: 0,
         caret: None,
     };
     // A first read starts at the screen's top.
@@ -189,6 +194,7 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
             alternate: false,
             first_row: "line 000\n".to_owned(),
             caret_rows_to_end: 11,
+            above: 0,
         }
     );
     common::apply(&mut app, hwnd, r"set-text term cleared\nready>");
@@ -211,6 +217,7 @@ fn a_kept_start_is_used_until_the_text_clears_below_it_both_ways() {
             alternate: true,
             first_row: "cleared\n".to_owned(),
             caret_rows_to_end: 1,
+            above: 0,
         }
     );
     app.quit();
@@ -225,6 +232,7 @@ fn a_read_with_no_start_takes_the_rows_asked_for_or_the_whole_text_both_ways() {
         start: None,
         screen_rows: 0,
         whole: false,
+        above: 0,
         caret: None,
     };
     let fewer = SnapshotQuery {
@@ -252,6 +260,56 @@ fn a_read_with_no_start_takes_the_rows_asked_for_or_the_whole_text_both_ways() {
     );
 }
 
+fn a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways() {
+    let (app, _, uia, terminal) = eight_line_terminal("mockapp-snapshot-above");
+    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let first = SnapshotQuery {
+        element: &terminal,
+        pattern: &pattern,
+        start: None,
+        screen_rows: 0,
+        whole: false,
+        above: 0,
+        caret: None,
+    };
+    let (_, next) = both(&uia, &first);
+    let above = SnapshotQuery {
+        start: Some(&next),
+        screen_rows: 4,
+        above: 2,
+        ..first
+    };
+    // Two rows above the kept start, which is still used.
+    let (fields, _) = both(&uia, &above);
+    assert_eq!(
+        fields,
+        Fields {
+            above: 2,
+            ..eight_lines(
+                "line 003\nline 004\nline 005\nline 006\nline 007\nready>",
+                true,
+                false
+            )
+        }
+    );
+    let past = SnapshotQuery { above: 20, ..above };
+    // Asked for more rows than lie above the start: the read stops at the
+    // document's start, five rows up.
+    let (fields, _) = both(&uia, &past);
+    app.quit();
+    assert_eq!(
+        fields,
+        Fields {
+            above: 5,
+            ..eight_lines(
+                "line 000\nline 001\nline 002\nline 003\nline 004\nline 005\nline 006\nline 007\nready>",
+                true,
+                true
+            )
+        }
+    );
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -263,6 +321,10 @@ fn main() {
         (
             "a_read_with_no_start_takes_the_rows_asked_for_or_the_whole_text_both_ways",
             a_read_with_no_start_takes_the_rows_asked_for_or_the_whole_text_both_ways,
+        ),
+        (
+            "a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways",
+            a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways,
         ),
     ]);
 }

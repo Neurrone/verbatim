@@ -346,6 +346,8 @@ fn read_stream(
             start: start.as_ref(),
             screen_rows,
             whole: false,
+            // As the simulator's replay reads: from the start alone.
+            above: 0,
             caret: None,
         };
         let (snapshot, path) =

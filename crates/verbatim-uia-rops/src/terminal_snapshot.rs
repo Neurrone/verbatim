@@ -112,6 +112,11 @@ pub struct SnapshotQuery<'a> {
     /// the fallback when the screen as last read is not in a snapshot
     /// (`docs/design/terminal-model.md`, section 4.2).
     pub whole: bool,
+    /// How many rows above the start to begin the read, as far as the
+    /// document's start allows: the history rows whose place shows how far
+    /// a full history rotated (`docs/design/terminal-model.md`, section 4.3,
+    /// item 5). Ignored with `whole`.
+    pub above: u32,
     /// The caret and its line to read too, in the same round trip.
     pub caret: Option<CaretLineQuery<'a>>,
 }
@@ -163,6 +168,9 @@ pub struct Snapshot {
     /// wherever the user has scrolled the view (`docs/design/terminal-model.md`,
     /// section 4.2); the screen's top when the height is not known.
     pub next_start: Option<IUIAutomationTextRange>,
+    /// How many rows the snapshot holds above its start: the query's
+    /// `above`, or fewer when the document's start came first.
+    pub above: u32,
     /// The caret and its line, when the query asked for them.
     pub caret: Option<CaretAnswer>,
 }
@@ -200,6 +208,7 @@ struct SnapshotKey {
     start: bool,
     screen_rows: u32,
     whole: bool,
+    above: u32,
     /// Whether the caret is read, with `TextPattern2`, at most how much of
     /// its line, and the end of `since` it is compared with.
     caret: Option<(bool, i32, Option<i32>)>,
@@ -211,6 +220,7 @@ impl SnapshotKey {
             start: query.start.is_some(),
             screen_rows: query.screen_rows,
             whole: query.whole,
+            above: query.above,
             caret: query.caret.map(|caret| {
                 (
                     caret.pattern2.is_some(),
@@ -234,6 +244,9 @@ struct SnapshotRegisters {
     first_row: Reg<kind::Str>,
     caret_rows_to_end: Reg<kind::Int>,
     next_start: Reg<kind::TextRange>,
+    /// How far the start moved up, a count of rows not above zero; none
+    /// when no rows above the start were asked for.
+    above: Option<Reg<kind::Int>>,
     caret: Option<CaretLineRegisters>,
 }
 
@@ -285,6 +298,10 @@ pub fn terminal_snapshot_remote(_uia: &Uia, query: &SnapshotQuery<'_>) -> Result
         first_row: string_of(&outcome, r.first_row)?,
         caret_rows_to_end: u32::try_from(outcome.get(r.caret_rows_to_end)?).unwrap_or(0),
         next_start: outcome.get(r.next_start)?,
+        above: match r.above {
+            Some(moved) => u32::try_from(-outcome.get(moved)?).unwrap_or(0),
+            None => 0,
+        },
         caret: r.caret.map(|caret| caret.read(&outcome)).transpose()?,
     })
 }
@@ -375,6 +392,19 @@ fn build_snapshot(b: &mut Builder, query: &SnapshotQuery<'_>) -> SnapshotRegiste
         );
     }
 
+    // The rows above the start, as far as the document's start.
+    let (start, above) = if query.above > 0 && !query.whole {
+        let begin = b.text_range_clone(start);
+        let back = b.int(-i32::try_from(query.above).unwrap_or(i32::MAX));
+        let moved = b.text_range_move(begin, c.line, back);
+        let above = b.new_int(0);
+        let above = b.add_to_results(above);
+        b.set(above, moved);
+        (begin, Some(above))
+    } else {
+        (start, None)
+    };
+
     // The snapshot: one call.
     let snapshot = b.text_range_clone(start);
     b.text_range_move_endpoint_by_range(snapshot, c.end, document, c.end);
@@ -413,6 +443,7 @@ fn build_snapshot(b: &mut Builder, query: &SnapshotQuery<'_>) -> SnapshotRegiste
         first_row,
         caret_rows_to_end,
         next_start,
+        above,
         caret,
     }
 }
@@ -468,6 +499,16 @@ pub fn terminal_snapshot_classic(_uia: &Uia, query: &SnapshotQuery<'_>) -> Resul
             Ok(_) | Err(_) => shrank = true,
         }
     }
+    let mut above = 0;
+    if query.above > 0 && !query.whole {
+        let begin = start.clone_range()?;
+        let moved = begin.move_by(
+            TextUnit_Line,
+            -i32::try_from(query.above).unwrap_or(i32::MAX),
+        )?;
+        start = begin;
+        above = u32::try_from(-moved).unwrap_or(0);
+    }
     let snapshot = start.clone_range()?;
     snapshot.move_endpoint_to(Endpoint::End, &document, Endpoint::End)?;
     let text = snapshot.text(-1)?;
@@ -489,6 +530,7 @@ pub fn terminal_snapshot_classic(_uia: &Uia, query: &SnapshotQuery<'_>) -> Resul
         first_row,
         caret_rows_to_end,
         next_start: Some(next),
+        above,
         caret,
     })
 }
