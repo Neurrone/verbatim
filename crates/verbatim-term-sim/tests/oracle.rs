@@ -1,21 +1,20 @@
 //! The oracle checked against readers whose faults are known
 //! (`docs/design/terminal-model.md`, section 9): two deliberately simple
-//! readers are caught on fixed streams, with exactly the violations their
-//! faults cause, and a reader that reads the ground truth passes those
-//! streams, random streams, every short stream of the tiny alphabet and the
-//! conformance corpus.
+//! readers, a silent one and one that miscounts, are caught on fixed
+//! streams, with exactly the violations their faults cause, and a reader
+//! that reads the ground truth passes those streams, random streams, every
+//! short stream of the tiny alphabet and the conformance corpus.
 
 use std::collections::{HashMap, HashSet};
 
 use proptest::prelude::*;
-use proptest::test_runner::{Config, RngSeed};
-use verbatim_term_sim::conformance::Stream;
-use verbatim_term_sim::conformance::{history, streams};
+use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
+use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::oracle::{
     Heard, Observation, Op, Reader, Reply, Size, Spoken, TINY_ALPHABET, Violation, WORDS,
     every_stream, observe, stream,
 };
-use verbatim_term_sim::{Flavor, OutputLine, Query, Refused, RowId, Snapshot, screen_rows};
+use verbatim_term_sim::{Flavor, PrintedLine, Query, Refused, RowId, Snapshot, screen_rows};
 
 /// A read's text as rows of `width`, padding left out.
 fn rows(snapshot: &Result<Snapshot, Refused>, width: usize) -> Vec<String> {
@@ -33,7 +32,8 @@ fn rows(snapshot: &Result<Snapshot, Refused>, width: usize) -> Vec<String> {
 }
 
 /// Reads the screen and speaks every row whose text differs from the row
-/// at the same place in the previous read, as if rows never moved.
+/// at the same place in the previous read, as if rows never moved; its
+/// review position is on the read's last row.
 struct SameCoordinate {
     previous: Vec<String>,
 }
@@ -55,8 +55,13 @@ impl Reader for SameCoordinate {
             })
             .collect();
         let moved = Some((0..self.previous.len()).map(Some).collect());
+        let review = rows.len().checked_sub(1);
         self.previous = rows;
-        Reply::Heard(Heard { spoken, moved })
+        Reply::Heard(Heard {
+            spoken,
+            moved,
+            review,
+        })
     }
 }
 
@@ -124,6 +129,38 @@ impl Reader for TextDiff {
         Reply::Heard(Heard {
             spoken,
             moved: Some(moved),
+            review: None,
+        })
+    }
+}
+
+/// Reads the screen and says nothing.
+struct Silent;
+
+impl Reader for Silent {
+    fn query(&self) -> Query {
+        Query::default()
+    }
+
+    fn read(&mut self, _read: &Result<Snapshot, Refused>) -> Reply {
+        Reply::Heard(Heard::default())
+    }
+}
+
+/// Reads the screen and counts every row of each read, and one row more,
+/// in a summary.
+struct CountsEveryRow;
+
+impl Reader for CountsEveryRow {
+    fn query(&self) -> Query {
+        Query::default()
+    }
+
+    fn read(&mut self, read: &Result<Snapshot, Refused>) -> Reply {
+        let rows = rows(read, Size::SMALL.width).len();
+        Reply::Heard(Heard {
+            spoken: vec![Spoken::Summary { rows: 0..rows + 1 }],
+            ..Heard::default()
         })
     }
 }
@@ -145,16 +182,19 @@ impl Reader for Whole {
     }
 }
 
-/// Reads the whole text and reports from the ground truth: each output
-/// line when a read first finds it finished, and every row where it
-/// really went. It is given the rows of the same reads taken by [`Whole`].
+/// Reads the whole text and reports from the ground truth: each printed
+/// line when a read first shows it as it was finished, every row where it
+/// really went, and a review position that stays on its row while the row
+/// is in the read and otherwise goes to the read's first row. It is given
+/// the rows of the same reads taken by [`Whole`].
 struct Truth {
-    output: Vec<OutputLine>,
-    /// Each output line's index by its first row.
-    firsts: HashMap<RowId, usize>,
+    printed: Vec<PrintedLine>,
+    /// The printed lines by their first row.
+    by_first: HashMap<RowId, Vec<usize>>,
     reads: Vec<Observation>,
     at: usize,
     reported: HashSet<usize>,
+    review: Option<RowId>,
 }
 
 impl Reader for Truth {
@@ -166,20 +206,23 @@ impl Reader for Truth {
         let read = &self.reads[self.at];
         let mut spoken = Vec::new();
         for (row, seen) in read.rows.iter().enumerate() {
-            let found = self.firsts.get(&seen.id).copied().filter(|&line| {
-                let line = &self.output[line];
-                !read.alternate
-                    && line.finished <= read.writes
-                    && line.left.is_none_or(|left| left > read.writes)
+            let shown = self.by_first.get(&seen.id).and_then(|lines| {
+                lines.iter().copied().find(|&line| {
+                    let line = &self.printed[line];
+                    !read.alternate
+                        && line.finished <= read.writes
+                        && line.changed.is_none_or(|changed| changed > read.writes)
+                        && line.left.is_none_or(|left| left > read.writes)
+                })
             });
-            if let Some(line) = found
+            if let Some(line) = shown
                 && self.reported.insert(line)
             {
                 // A line's last rows can lie past the document's end, when
                 // they are blank and below the cursor.
                 let mut text: String = read.rows[row..]
                     .iter()
-                    .take(self.output[line].rows.len())
+                    .take(self.printed[line].rows.len())
                     .map(|seen| seen.text.as_str())
                     .collect();
                 text.truncate(text.trim_end().len());
@@ -199,33 +242,63 @@ impl Reader for Truth {
                 .map(|old| now.get(&old.id).copied())
                 .collect()
         });
+        if self.review.is_none_or(|id| !now.contains_key(&id)) {
+            self.review = read.rows.first().map(|seen| seen.id);
+        }
+        let review = self.review.and_then(|id| now.get(&id).copied());
         self.at += 1;
-        Reply::Heard(Heard { spoken, moved })
+        Reply::Heard(Heard {
+            spoken,
+            moved,
+            review,
+        })
     }
+}
+
+/// The violations of a reader over `stream` in a terminal of `size`.
+fn violations_in(stream: &Stream, size: Size, reader: &mut dyn Reader) -> Vec<Violation> {
+    let mut terminal = size.terminal(Flavor::ConsoleHost);
+    observe(&mut terminal, stream, reader).violations()
 }
 
 /// The violations of a reader over `stream` in a small console host.
 fn violations(stream: &Stream, reader: &mut dyn Reader) -> Vec<Violation> {
-    let mut terminal = Size::SMALL.terminal(Flavor::ConsoleHost);
-    observe(&mut terminal, stream, reader).violations()
+    violations_in(stream, Size::SMALL, reader)
 }
 
 /// The violations of the ground-truth reader over `stream`.
 fn truth_violations(stream: &Stream, flavor: Flavor, size: Size) -> Vec<Violation> {
     let learned = observe(&mut size.terminal(flavor), stream, &mut Whole);
+    let mut by_first: HashMap<RowId, Vec<usize>> = HashMap::new();
+    for (index, line) in learned.printed.iter().enumerate() {
+        by_first.entry(line.rows[0]).or_default().push(index);
+    }
     let mut truth = Truth {
-        firsts: learned
-            .output
-            .iter()
-            .enumerate()
-            .map(|(index, line)| (line.rows[0], index))
-            .collect(),
-        output: learned.output,
+        printed: learned.printed,
+        by_first,
         reads: learned.reads,
         at: 0,
         reported: HashSet::new(),
+        review: None,
     };
     observe(&mut size.terminal(flavor), stream, &mut truth).violations()
+}
+
+/// The conformance corpus's terminal in the console host.
+fn corpus_size() -> Size {
+    Size {
+        width: 120,
+        height: 30,
+        history: history(Flavor::ConsoleHost),
+    }
+}
+
+/// The stream of the corpus named `name`.
+fn corpus_stream(name: &str) -> Stream {
+    streams()
+        .into_iter()
+        .find_map(|(found, stream)| (found == name).then_some(stream))
+        .expect("the stream is in the corpus")
 }
 
 /// Five lines on the five-row screen, then two more, which scroll the
@@ -270,6 +343,15 @@ fn flood() -> Stream {
     ])
 }
 
+/// A line, a clear that a read catches, and the line printed again.
+fn reprint() -> Stream {
+    stream(&[
+        (Op::Write("ok\r\n"), true),
+        (Op::Clear, true),
+        (Op::Write("ok\r\n"), true),
+    ])
+}
+
 fn missed(line: usize, text: &str) -> Violation {
     Violation::Missed {
         line,
@@ -278,7 +360,7 @@ fn missed(line: usize, text: &str) -> Violation {
 }
 
 #[test]
-fn the_same_coordinate_reader_repeats_and_mismaps_the_rows_a_scroll_moved() {
+fn the_same_coordinate_reader_repeats_mismaps_and_moves_its_review_with_a_scroll() {
     let repeated = |line: usize, text: &str| Violation::Repeated {
         line,
         text: text.to_owned(),
@@ -298,12 +380,21 @@ fn the_same_coordinate_reader_repeats_and_mismaps_the_rows_a_scroll_moved() {
             }
         ),
         [
+            Violation::ReviewMoved {
+                read: 1,
+                went: 0,
+                said: Some(4)
+            },
             repeated(2, "c"),
             repeated(3, "d"),
-            repeated(4, "e"),
             mismapped(2, 0),
             mismapped(3, 1),
             mismapped(4, 2),
+            Violation::ReviewMoved {
+                read: 2,
+                went: 2,
+                said: Some(4)
+            },
         ]
     );
 }
@@ -333,20 +424,6 @@ fn the_same_coordinate_reader_misses_the_lines_a_flood_pushed_into_the_history()
 }
 
 #[test]
-fn the_text_diff_reader_takes_an_output_line_for_the_footer_that_showed_its_text() {
-    assert_eq!(
-        violations(
-            &footer(),
-            &mut TextDiff {
-                query: Query::default(),
-                previous: Vec::new()
-            }
-        ),
-        [missed(1, "dog")]
-    );
-}
-
-#[test]
 fn the_text_diff_reader_misses_the_lines_a_flood_rotated_above_its_kept_start() {
     assert_eq!(
         violations(
@@ -366,27 +443,65 @@ fn the_text_diff_reader_misses_the_lines_a_flood_rotated_above_its_kept_start() 
 }
 
 #[test]
-fn the_ground_truth_reader_passes_the_scroll() {
+fn a_silent_reader_misses_new_output_but_not_a_line_the_footer_showed_before() {
+    assert_eq!(violations(&footer(), &mut Silent), [missed(0, "cat")]);
+}
+
+#[test]
+fn a_silent_reader_misses_inks_frames_and_the_line_streamed_over_them() {
+    // The first frame is new, and stays required although the next frame
+    // erases and redraws it; the frames redrawn with text the screen
+    // showed are not; the streamed line written over the frame's first
+    // row is; and the frame drawn after a read found it erased is new
+    // again.
     assert_eq!(
-        truth_violations(&scroll(), Flavor::ConsoleHost, Size::SMALL),
-        []
+        violations_in(&corpus_stream("ink"), corpus_size(), &mut Silent),
+        [
+            missed(0, "------"),
+            missed(1, "> input"),
+            missed(2, "cost $1"),
+            missed(6, "streamed line"),
+            missed(10, "------"),
+            missed(11, "> input"),
+            missed(12, "cost $2"),
+        ]
     );
 }
 
 #[test]
-fn the_ground_truth_reader_passes_the_footer() {
+fn a_silent_reader_need_not_speak_a_reprint_after_a_read_found_the_screen_cleared() {
+    assert_eq!(violations(&reprint(), &mut Silent), [missed(0, "ok")]);
+}
+
+#[test]
+fn a_summary_naming_a_wrapped_lines_second_row_or_a_row_past_the_read_is_caught() {
+    let stream = stream(&[(Op::Write("wrapping-word"), false), (Op::Newline, true)]);
+    let not_a_line = |read: usize, row: usize| Violation::NotALine { read, row };
     assert_eq!(
-        truth_violations(&footer(), Flavor::ConsoleHost, Size::SMALL),
-        []
+        violations(&stream, &mut CountsEveryRow),
+        [not_a_line(0, 1), not_a_line(1, 1), not_a_line(1, 3)]
     );
 }
 
 #[test]
-fn the_ground_truth_reader_passes_the_flood() {
-    assert_eq!(
-        truth_violations(&flood(), Flavor::ConsoleHost, Size::SMALL),
-        []
-    );
+fn the_ground_truth_reader_passes_the_fixed_streams() {
+    let fixed = [
+        ("scroll", scroll()),
+        ("footer", footer()),
+        ("flood", flood()),
+        ("reprint", reprint()),
+    ];
+    let failures: Vec<(&str, Vec<Violation>)> = fixed
+        .iter()
+        .map(|(name, stream)| {
+            (
+                *name,
+                truth_violations(stream, Flavor::ConsoleHost, Size::SMALL),
+            )
+        })
+        .filter(|(_, violations)| !violations.is_empty())
+        .collect();
+    assert_eq!(failures, []);
 }
 
 #[test]
@@ -456,15 +571,35 @@ fn op() -> impl Strategy<Value = Op> {
     ]
 }
 
-proptest! {
-    // A fixed seed, so every run checks the same streams, and no
-    // regression files: a failure prints its shrunk steps.
-    #![proptest_config(Config {
+/// The random streams' configuration, every field written out:
+/// `Config::default()` reads `PROPTEST_` environment variables, which would
+/// let the machine change what is checked. A fixed seed makes every run
+/// check the same streams, and no failure files are kept: a failure prints
+/// its shrunk steps.
+fn config() -> Config {
+    Config {
         cases: 512,
-        rng_seed: RngSeed::Fixed(20_261_023),
+        max_local_rejects: 65_536,
+        max_global_rejects: 1024,
+        max_flat_map_regens: 1_000_000,
         failure_persistence: None,
-        ..Config::default()
-    })]
+        source_file: None,
+        test_name: None,
+        fork: false,
+        timeout: 0,
+        max_shrink_time: 0,
+        max_shrink_iters: u32::MAX,
+        max_default_size_range: 100,
+        result_cache: proptest::test_runner::noop_result_cache,
+        verbose: 0,
+        rng_algorithm: RngAlgorithm::ChaCha,
+        rng_seed: RngSeed::Fixed(20_261_023),
+        _non_exhaustive: (),
+    }
+}
+
+proptest! {
+    #![proptest_config(config())]
 
     #[test]
     fn the_ground_truth_reader_passes_random_streams(

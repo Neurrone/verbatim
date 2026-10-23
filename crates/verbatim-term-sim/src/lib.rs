@@ -19,7 +19,7 @@ pub use grid::{
     RowId, Style,
 };
 pub use provider::{Flavor, Position, Query, Range, Refused};
-pub use truth::OutputLine;
+pub use truth::PrintedLine;
 
 use provider::Provider;
 
@@ -103,13 +103,13 @@ impl Terminal {
         self.grid.record.writes
     }
 
-    /// The lines written as output so far, in the order they were finished
-    /// (see [`OutputLine`] for what counts): the oracle's ground truth.
-    /// A line counts only while nothing has changed it, so a line can drop
-    /// out of this list as later writes change it.
+    /// Every line printed and ended with a line feed so far, in the order
+    /// they were finished, with when each changed and left (see
+    /// [`PrintedLine`]): the oracle's ground truth, from which it decides
+    /// which lines were new output.
     #[must_use]
-    pub fn output(&self) -> Vec<OutputLine> {
-        self.grid.record.output()
+    pub fn printed(&self) -> &[PrintedLine] {
+        self.grid.record.printed()
     }
 
     /// The terminal's state, row identities included.

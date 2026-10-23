@@ -7,34 +7,50 @@
 //! given what the read answered, and reports what it would say
 //! ([`Heard`]). [`observe`] reads a terminal with the reader once before
 //! anything is written, as a reader starts watching a terminal, then writes
-//! a stream into it and reads it after each chunk, and records each read's rows as they truly
-//! are ([`Observation`]); [`check`] holds what the reader said against the
-//! terminal's output lines ([`OutputLine`]) and lists every [`Violation`].
+//! a stream into it and reads it after each chunk, and records each read's
+//! rows as they truly are ([`Observation`]); [`check`] holds what the
+//! reader said against the lines the terminal printed ([`PrintedLine`])
+//! and lists every [`Violation`].
 //!
 //! The invariants, as checked:
 //!
-//! - Every output line some read found finished (on the main screen, at or
-//!   after the write that finished it and before one of its rows left the
-//!   buffer) is reported exactly once, as a line or in a summary, and in
-//!   order. Lines no read found finished are exempt: lines that left a
-//!   full history, or were scrolled out of a region, between two reads.
-//!   Lines written and erased between two reads are not output at all. The order is the order reads found them: a line
-//!   counts from the first read that found it finished, or from the read
-//!   that reported it if that was earlier, and among lines of the same
-//!   read from the top, since a reader sees only positions. A line
-//!   reported whole and then grown must add up to its text as first found
-//!   finished. Resizing is not modelled, so lines written in the same read
-//!   as a resize are not an exemption here.
+//! - Every line of new output is reported exactly once, as a line, a
+//!   redrawn row's speech or in a summary, and in order. A printed line is
+//!   found by the first read taken on the main screen at or after the
+//!   write that finished it, before the write that first changed it and
+//!   before the write in which one of its rows left the buffer, whether or
+//!   not that read's text covers it. It is new output when a read found it,
+//!   it is not a reprint, and its text is not the text of a line on the
+//!   screen of the read before the one that found it (the first read has
+//!   none before it); it then stays required whatever happens to it later.
+//!   So a redrawn footer, input box or status line is not required, and
+//!   output written over the rows that held one is. The lines no read
+//!   finds are exempt: those changed in the write that finished them or
+//!   before the next read (written and erased, or rewritten, between two
+//!   reads), those whose row left a full history or a scroll region in
+//!   that time, and those finished and changed while the alternate screen
+//!   was up at every read between. The order is the order reads found the
+//!   lines, top to bottom among lines one read found, since a reader sees
+//!   positions, not the order of writing; a line reported while it was
+//!   still being written counts from that report. A line reported whole and
+//!   then grown must add up to its text as found. Resizing is not modelled,
+//!   so lines written in the same read as a resize are not an exemption
+//!   here.
 //! - Everything reported is text the read shows: a line is exactly the
 //!   line starting at the row it names, padding left out; growth and a
-//!   redrawn row's speech are part of that line; and every report names
-//!   the first row of a line.
+//!   redrawn row's speech are part of that line; and every report, each
+//!   row a summary counts included, names the first row of a line of the
+//!   read.
 //! - For every row with text that is unchanged between two reads, whose
 //!   text is on no other row of either read, a reader that tracks movement
 //!   maps it to the row it really became.
 //! - Padding is never reported: a report that matches the read only with
 //!   the spaces after a line's last character is told apart from one that
 //!   does not match at all.
+//! - A reader with a review position keeps it on the same row: when the
+//!   row it was on at one read is among the rows of the next, and the two
+//!   reads are on the same screen, it is there. No key is ever pressed and
+//!   following is never on in the oracle's streams.
 //!
 //! What redrawn rows, keys, lists and colours say is decided speech, not a
 //! property of the stream, so it is tested by unit tests that state a
@@ -45,7 +61,7 @@ use std::fmt::Write as _;
 use std::ops::Range;
 
 use crate::conformance::Stream;
-use crate::{Flavor, OutputLine, Query, Refused, RowId, Snapshot, Terminal};
+use crate::{Flavor, PrintedLine, Query, Refused, RowId, Snapshot, Terminal};
 
 /// A row of a read as it truly is: its identity, its text as the read
 /// gives it (padding included), and whether its line wraps onto the next.
@@ -105,6 +121,9 @@ pub struct Heard {
     /// those rows, the row of this read it became, or `None` for a row it
     /// thinks gone. `None` when the reader tracks no movement.
     pub moved: Option<Vec<Option<usize>>>,
+    /// The row of this read its review position is on after the read;
+    /// `None` when it has none.
+    pub review: Option<usize>,
 }
 
 /// A reader's answer to a read.
@@ -129,7 +148,8 @@ pub trait Reader {
 }
 
 /// One read as the oracle sees it: when it was taken, the rows its text
-/// covered as they truly are, and what the reader said.
+/// covered as they truly are, the screen and main buffer at that moment,
+/// and what the reader said.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Observation {
     /// How many writes came before it.
@@ -139,6 +159,12 @@ pub struct Observation {
     /// The rows the read's text covered, first to last; empty when the read
     /// was refused.
     pub rows: Vec<Seen>,
+    /// The lines with text on the screen shown, top to bottom
+    /// ([`crate::Grid::screen_lines`]).
+    pub screen: Vec<String>,
+    /// The identities of the main buffer's rows, first to last, which
+    /// order the lines a read finds.
+    pub main: Vec<RowId>,
     /// What the reader said.
     pub heard: Heard,
 }
@@ -150,15 +176,15 @@ pub struct Run {
     /// first before anything was written, then one after each chunk. A read
     /// the reader asked to take again is replaced by the read taken again.
     pub reads: Vec<Observation>,
-    /// The terminal's output lines once the stream was written.
-    pub output: Vec<OutputLine>,
+    /// The lines the terminal printed once the stream was written.
+    pub printed: Vec<PrintedLine>,
 }
 
 impl Run {
     /// Every violation of the invariants in this run.
     #[must_use]
     pub fn violations(&self) -> Vec<Violation> {
-        check(&self.output, &self.reads)
+        check(&self.printed, &self.reads)
     }
 }
 
@@ -178,7 +204,7 @@ pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader
     }
     Run {
         reads,
-        output: terminal.output(),
+        printed: terminal.printed().to_vec(),
     }
 }
 
@@ -193,10 +219,13 @@ fn read(terminal: &Terminal, reader: &mut dyn Reader) -> Observation {
         };
         match reader.read(&snapshot) {
             Reply::Heard(heard) => {
+                let grid = terminal.grid();
                 return Observation {
                     writes: terminal.writes(),
-                    alternate: terminal.grid().alternate.is_some(),
+                    alternate: grid.alternate.is_some(),
                     rows,
+                    screen: grid.screen_lines(),
+                    main: grid.main.rows.iter().map(|row| row.id).collect(),
                     heard,
                 };
             }
@@ -210,17 +239,17 @@ fn read(terminal: &Terminal, reader: &mut dyn Reader) -> Observation {
 }
 
 /// A way a reader broke an invariant. Lines are numbered by their place in
-/// the output lines, reads and rows from 0.
+/// the printed lines, reads and rows from 0.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Violation {
-    /// An output line a read found finished was never reported.
+    /// A line of new output was never reported.
     Missed {
         /// The line.
         line: usize,
         /// Its text.
         text: String,
     },
-    /// An output line was reported again.
+    /// A line of new output was reported again.
     Repeated {
         /// The line.
         line: usize,
@@ -229,7 +258,7 @@ pub enum Violation {
         /// The read it was reported again at.
         read: usize,
     },
-    /// An output line was reported after a line found after it.
+    /// A line of new output was reported after a line found after it.
     OutOfOrder {
         /// The line.
         line: usize,
@@ -239,11 +268,11 @@ pub enum Violation {
         read: usize,
     },
     /// What was reported of a line, the line and its growth, does not add
-    /// up to the line as first found finished.
+    /// up to the line as found.
     Incomplete {
         /// The line.
         line: usize,
-        /// Its text as first found finished.
+        /// Its text as found.
         text: String,
         /// What was reported of it.
         heard: String,
@@ -268,8 +297,8 @@ pub enum Violation {
         /// What it said.
         said: String,
     },
-    /// A report names a row that is not the first row of a line, or no row
-    /// of the read.
+    /// A report, or a row a summary counts, names a row that is not the
+    /// first row of a line, or no row of the read.
     NotALine {
         /// The read.
         read: usize,
@@ -288,6 +317,23 @@ pub enum Violation {
         /// The row the reader said it became.
         said: Option<usize>,
     },
+    /// The review position left the row it was on, though that row is in
+    /// the read and the screen did not switch.
+    ReviewMoved {
+        /// The read.
+        read: usize,
+        /// The row the review position's row became.
+        went: usize,
+        /// Where the reader said its review position is.
+        said: Option<usize>,
+    },
+    /// The review position is on no row of the read.
+    ReviewOutside {
+        /// The read.
+        read: usize,
+        /// The row the reader named.
+        row: usize,
+    },
 }
 
 /// The line starting at `row`: its rows' text, joined while each wraps
@@ -303,46 +349,93 @@ fn line_at(rows: &[Seen], row: usize) -> String {
     text
 }
 
-/// Whether a read found `line` finished.
-fn present(line: &OutputLine, read: &Observation) -> bool {
+/// Whether `read` shows `line` as it was finished: on the main screen, at
+/// or after the write that finished it, before it changed or a row of it
+/// left the buffer.
+fn present(line: &PrintedLine, read: &Observation) -> bool {
     !read.alternate
         && line.finished <= read.writes
+        && line.changed.is_none_or(|changed| changed > read.writes)
         && line.left.is_none_or(|left| left > read.writes)
 }
 
 /// The lines reported so far, and the order they were reported in.
 struct Tally<'a> {
-    output: &'a [OutputLine],
-    /// Where each line was first found finished: the read, its row there,
-    /// and its text there, padding left out.
-    found: Vec<Option<(usize, usize, String)>>,
+    printed: &'a [PrintedLine],
+    reads: &'a [Observation],
+    /// The printed lines by their first row, in the order finished.
+    by_first: HashMap<RowId, Vec<usize>>,
+    /// Where each line was found: the read, and its first row's place in
+    /// that read's main buffer.
+    found: Vec<Option<(usize, usize)>>,
+    /// Whether each line is new output.
+    required: Vec<bool>,
     reported: Vec<bool>,
     /// What was reported of each line reported whole.
     heard: Vec<Option<String>>,
-    /// The latest place of a line reported so far: the read and row it
-    /// counts from.
+    /// The latest place of a line reported so far: the read and the place
+    /// in its main buffer it counts from.
     latest: Option<(usize, usize)>,
     violations: Vec<Violation>,
 }
 
 impl Tally<'_> {
-    /// Line `line` was reported at read `read`, on its row `row`; whether
-    /// for the first time.
-    fn report(&mut self, line: usize, read: usize, row: usize) -> bool {
-        let text = self.output[line].text.clone();
+    /// The line read `index` shows starting on row `id`.
+    fn shown(&self, index: usize, id: RowId) -> Option<usize> {
+        let read = &self.reads[index];
+        self.by_first
+            .get(&id)?
+            .iter()
+            .copied()
+            .find(|&line| present(&self.printed[line], read))
+    }
+
+    /// The line still being written that starts on row `id` at read
+    /// `index`, where the read shows `shown`: the first finished on that
+    /// row after it, when it only grows from what the read shows.
+    fn coming(&self, index: usize, id: RowId, shown: &str) -> Option<usize> {
+        let writes = self.reads[index].writes;
+        self.by_first
+            .get(&id)?
+            .iter()
+            .copied()
+            .find(|&line| self.printed[line].finished > writes)
+            .filter(|&line| !shown.is_empty() && self.printed[line].text.starts_with(shown))
+    }
+
+    /// Line `line` was reported at read `index`, on the row `id`; whether
+    /// for the first time. Lines that are not new output are not tallied.
+    fn report(&mut self, line: usize, index: usize, id: RowId) -> bool {
+        if !self.required[line] {
+            return false;
+        }
+        let text = self.printed[line].text.clone();
         if self.reported[line] {
-            self.violations
-                .push(Violation::Repeated { line, text, read });
+            self.violations.push(Violation::Repeated {
+                line,
+                text,
+                read: index,
+            });
             return false;
         }
         self.reported[line] = true;
-        let place = match &self.found[line] {
-            Some((first, at, _)) if *first <= read => (*first, *at),
-            _ => (read, row),
+        let place = match self.found[line] {
+            Some(found) if found.0 <= index => found,
+            _ => {
+                let at = self.reads[index]
+                    .main
+                    .iter()
+                    .position(|&row| row == id)
+                    .unwrap_or(usize::MAX);
+                (index, at)
+            }
         };
         if self.latest.is_some_and(|latest| latest > place) {
-            self.violations
-                .push(Violation::OutOfOrder { line, text, read });
+            self.violations.push(Violation::OutOfOrder {
+                line,
+                text,
+                read: index,
+            });
         } else {
             self.latest = Some(place);
         }
@@ -351,48 +444,62 @@ impl Tally<'_> {
 }
 
 /// Every violation of the invariants by the reads of a run, given the
-/// terminal's output lines: in the order of the reads, each read's reports
-/// in order and then its mapping, and then the lines missed or reported
-/// incompletely, in line order.
+/// lines the terminal printed: in the order of the reads, each read's
+/// reports in order, then its mapping, then its review position, and then
+/// the lines missed or reported incompletely, in line order.
 #[must_use]
-pub fn check(output: &[OutputLine], reads: &[Observation]) -> Vec<Violation> {
-    let firsts: HashMap<RowId, usize> = output
-        .iter()
-        .enumerate()
-        .map(|(index, line)| (line.rows[0], index))
-        .collect();
-    let mut found = vec![None; output.len()];
+pub fn check(printed: &[PrintedLine], reads: &[Observation]) -> Vec<Violation> {
+    let mut by_first: HashMap<RowId, Vec<usize>> = HashMap::new();
+    for (index, line) in printed.iter().enumerate() {
+        by_first.entry(line.rows[0]).or_default().push(index);
+    }
+    let mut found = vec![None; printed.len()];
     for (index, read) in reads.iter().enumerate() {
-        for (row, seen) in read.rows.iter().enumerate() {
-            if let Some(&line) = firsts.get(&seen.id)
-                && found[line].is_none()
-                && present(&output[line], read)
-            {
-                let shown = line_at(&read.rows, row).trim_end().to_owned();
-                found[line] = Some((index, row, shown));
+        for (at, id) in read.main.iter().enumerate() {
+            for &line in by_first.get(id).into_iter().flatten() {
+                if found[line].is_none() && present(&printed[line], read) {
+                    found[line] = Some((index, at));
+                }
             }
         }
     }
+    let required = printed
+        .iter()
+        .zip(&found)
+        .map(|(line, found)| {
+            found.is_some_and(|(index, _)| {
+                !line.reprint
+                    && index
+                        .checked_sub(1)
+                        .is_none_or(|before| !reads[before].screen.contains(&line.text))
+            })
+        })
+        .collect();
     let mut tally = Tally {
-        output,
+        printed,
+        reads,
+        by_first,
         found,
-        reported: vec![false; output.len()],
-        heard: vec![None; output.len()],
+        required,
+        reported: vec![false; printed.len()],
+        heard: vec![None; printed.len()],
         latest: None,
         violations: Vec::new(),
     };
     for (index, read) in reads.iter().enumerate() {
         for spoken in &read.heard.spoken {
-            check_spoken(&mut tally, &firsts, index, read, spoken);
+            check_spoken(&mut tally, index, spoken);
         }
+        let previous = index.checked_sub(1).map(|previous| &reads[previous]);
         if let Some(moved) = &read.heard.moved
-            && let Some(previous) = index.checked_sub(1).map(|previous| &reads[previous])
+            && let Some(previous) = previous
         {
             check_moved(&mut tally.violations, index, previous, read, moved);
         }
+        check_review(&mut tally.violations, index, previous, read);
     }
-    for (line, out) in output.iter().enumerate() {
-        if !reads.iter().any(|read| present(out, read)) {
+    for (line, out) in printed.iter().enumerate() {
+        if !tally.required[line] {
             continue;
         }
         if !tally.reported[line] {
@@ -400,52 +507,59 @@ pub fn check(output: &[OutputLine], reads: &[Observation]) -> Vec<Violation> {
                 line,
                 text: out.text.clone(),
             });
-        } else if let Some(heard) = &tally.heard[line] {
-            let text = tally.found[line]
-                .as_ref()
-                .map_or(&out.text, |(_, _, shown)| shown);
-            if heard != text {
-                tally.violations.push(Violation::Incomplete {
-                    line,
-                    text: text.clone(),
-                    heard: heard.clone(),
-                });
-            }
+        } else if let Some(heard) = &tally.heard[line]
+            && *heard != out.text
+        {
+            tally.violations.push(Violation::Incomplete {
+                line,
+                text: out.text.clone(),
+                heard: heard.clone(),
+            });
         }
     }
     tally.violations
 }
 
+/// Whether `row` of `rows` starts a line.
+fn starts_line(rows: &[Seen], row: usize) -> bool {
+    row < rows.len() && (row == 0 || !rows[row - 1].wraps)
+}
+
 /// Checks one report of read `index`.
-fn check_spoken(
-    tally: &mut Tally,
-    firsts: &HashMap<RowId, usize>,
-    index: usize,
-    read: &Observation,
-    spoken: &Spoken,
-) {
+fn check_spoken(tally: &mut Tally, index: usize, spoken: &Spoken) {
+    let reads = tally.reads;
+    let rows = &reads[index].rows;
     let (row, text) = match spoken {
         Spoken::Line { row, text }
         | Spoken::Growth { row, text }
         | Spoken::Redrawn { row, text } => (*row, text),
-        Spoken::Summary { rows } => {
-            for row in rows.clone() {
-                if let Some(seen) = read.rows.get(row)
-                    && let Some(&line) = firsts.get(&seen.id)
+        Spoken::Summary { rows: counted } => {
+            for row in counted.clone() {
+                if !starts_line(rows, row) {
+                    tally
+                        .violations
+                        .push(Violation::NotALine { read: index, row });
+                    continue;
+                }
+                let id = rows[row].id;
+                let shown = line_at(rows, row);
+                if let Some(line) = tally
+                    .shown(index, id)
+                    .or_else(|| tally.coming(index, id, shown.trim_end()))
                 {
-                    tally.report(line, index, row);
+                    tally.report(line, index, id);
                 }
             }
             return;
         }
     };
-    if row >= read.rows.len() || (row > 0 && read.rows[row - 1].wraps) {
+    if !starts_line(rows, row) {
         tally
             .violations
             .push(Violation::NotALine { read: index, row });
         return;
     }
-    let padded = line_at(&read.rows, row);
+    let padded = line_at(rows, row);
     let shown = padded.trim_end();
     let whole = matches!(spoken, Spoken::Line { .. });
     let quoted = if whole {
@@ -475,21 +589,35 @@ fn check_spoken(
         });
         return;
     }
-    let Some(&line) = firsts.get(&read.rows[row].id) else {
-        return;
-    };
+    let id = rows[row].id;
     match spoken {
         Spoken::Line { .. } => {
-            if tally.report(line, index, row) {
+            // A line still being written counts as the line it becomes
+            // when that line only grows from what was reported.
+            let line = tally
+                .shown(index, id)
+                .or_else(|| tally.coming(index, id, shown));
+            if let Some(line) = line
+                && tally.report(line, index, id)
+            {
                 tally.heard[line] = Some(text.clone());
             }
         }
         Spoken::Growth { .. } => {
-            if let Some(heard) = tally.heard[line].as_mut() {
+            let line = tally
+                .shown(index, id)
+                .filter(|&line| tally.heard[line].is_some())
+                .or_else(|| tally.coming(index, id, shown));
+            if let Some(heard) = line.and_then(|line| tally.heard[line].as_mut()) {
                 heard.push_str(text);
             }
         }
-        Spoken::Redrawn { .. } | Spoken::Summary { .. } => {}
+        Spoken::Redrawn { .. } => {
+            if let Some(line) = tally.shown(index, id) {
+                tally.report(line, index, id);
+            }
+        }
+        Spoken::Summary { .. } => {}
     }
 }
 
@@ -536,6 +664,43 @@ fn check_moved(
                 said,
             });
         }
+    }
+}
+
+/// Checks the review position the reader reported after read `index`
+/// against where it was after `previous`.
+fn check_review(
+    violations: &mut Vec<Violation>,
+    index: usize,
+    previous: Option<&Observation>,
+    read: &Observation,
+) {
+    let said = read.heard.review;
+    if let Some(row) = said
+        && row >= read.rows.len()
+    {
+        violations.push(Violation::ReviewOutside { read: index, row });
+        return;
+    }
+    let Some(previous) = previous.filter(|previous| previous.alternate == read.alternate) else {
+        return;
+    };
+    let Some(id) = previous
+        .heard
+        .review
+        .and_then(|row| previous.rows.get(row))
+        .map(|seen| seen.id)
+    else {
+        return;
+    };
+    if let Some(went) = read.rows.iter().position(|seen| seen.id == id)
+        && said != Some(went)
+    {
+        violations.push(Violation::ReviewMoved {
+            read: index,
+            went,
+            said,
+        });
     }
 }
 

@@ -327,16 +327,13 @@ impl Grid {
         let cell = Cell { character, style };
         let target = self.row_mut(row);
         let old = target.cells[column].character;
-        let append = target.cells[column..]
-            .iter()
-            .all(|cell| cell.character == ' ');
         if target.cells[column] != cell {
             target.cells[column] = cell;
             target.writes += 1;
         }
         let id = target.id;
         if old != character {
-            self.record.changed(id, append);
+            self.record.changed(id);
         }
         if column + 1 == self.width {
             self.cursor.pending_wrap = true;
@@ -595,7 +592,7 @@ impl Grid {
         }
         let id = target.id;
         if had_text {
-            self.record.changed(id, false);
+            self.record.changed(id);
         }
     }
 
@@ -637,6 +634,8 @@ impl Grid {
     /// the history as a screenful of blank rows follows them.
     fn clear_screen(&mut self) {
         if self.alternate.is_none() {
+            let shown = self.screen_lines();
+            self.record.cleared(shown);
             let last = (0..self.height)
                 .rev()
                 .find(|&row| self.main.rows[self.coordinate(row)].has_text());
@@ -651,6 +650,29 @@ impl Grid {
         for row in 0..self.height {
             self.erase_cells(row, 0, self.width);
         }
+    }
+
+    /// The active screen's lines with text, top to bottom: its rows joined
+    /// while each wraps onto the next, padding left out, the screen's first
+    /// row starting a line.
+    #[must_use]
+    pub fn screen_lines(&self) -> Vec<String> {
+        let buffer = self.buffer();
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for row in buffer.rows.range(buffer.top..buffer.top + self.height) {
+            line.push_str(&row.text());
+            if !row.wraps {
+                let text = std::mem::take(&mut line);
+                if !text.trim_end().is_empty() {
+                    lines.push(text.trim_end().to_owned());
+                }
+            }
+        }
+        if !line.trim_end().is_empty() {
+            lines.push(line.trim_end().to_owned());
+        }
+        lines
     }
 
     /// Erases the history above the screen: the screen's rows become the
@@ -714,7 +736,7 @@ impl Grid {
         target.writes += 1;
         let (id, changed) = (target.id, target.text() != before);
         if changed {
-            self.record.changed(id, false);
+            self.record.changed(id);
         }
     }
 
@@ -733,7 +755,7 @@ impl Grid {
         target.writes += 1;
         let (id, changed) = (target.id, target.text() != before);
         if changed {
-            self.record.changed(id, false);
+            self.record.changed(id);
         }
     }
 

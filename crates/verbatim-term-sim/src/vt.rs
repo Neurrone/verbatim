@@ -131,13 +131,8 @@ impl Performer<'_> {
             match mode {
                 5 => self.grid.screen_reversed = set,
                 25 => self.grid.cursor.visible = set,
-                47 | 1047 => {
-                    if set {
-                        self.grid.enter_alternate(false);
-                    } else {
-                        self.grid.leave_alternate(false);
-                    }
-                }
+                // Modes 47 and 1047 switch no screen in either terminal,
+                // which ignore them (measured 2026-10-23): only 1049 does.
                 1049 => {
                     if set {
                         self.grid.enter_alternate(true);

@@ -1,0 +1,14 @@
+{
+  "about": "Modes 1047 and 47 set and reset with text on the main screen before, between and after, to show whether either switches screens.",
+  "chunks": [
+    "main one\r\nmain two\r\n",
+    "\u001b[?1047h",
+    "in 1047\r\n",
+    "\u001b[?1047l",
+    "after 1047\r\n",
+    "\u001b[?47h",
+    "in 47\r\n",
+    "\u001b[?47l",
+    "after 47\r\n"
+  ]
+}
