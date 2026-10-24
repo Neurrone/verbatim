@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, Switch, TerminalMemory};
+use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, TerminalMemory};
 use crate::{Segmenter, WordRules, graphemes, is_space};
 
 pub use crate::terminal_rows::LINGERING_MS;
@@ -456,7 +456,6 @@ pub struct TerminalReader {
     settings: Settings,
     segmenter: Segmenter,
     screen: Screen,
-    aside: Option<Screen>,
     lingering: Vec<Gone>,
     keys: Option<Keys>,
     /// The last key's time and the interval before it.
@@ -479,7 +478,6 @@ impl TerminalReader {
             settings,
             segmenter: Segmenter::new(),
             screen: Screen::default(),
-            aside: None,
             lingering: Vec::new(),
             keys: None,
             last_key: None,
@@ -761,19 +759,7 @@ impl TerminalReader {
             outcome = memory.restart(read);
         }
         self.reads += 1;
-        let previous = match outcome.switch {
-            Switch::Closed => self
-                .aside
-                .take()
-                .unwrap_or_else(|| std::mem::take(&mut self.screen)),
-            _ => std::mem::take(&mut self.screen),
-        };
-        match outcome.switch {
-            // The screen set aside, unless one is aside already ("Screens").
-            Switch::Opened if self.aside.is_none() => self.aside = Some(previous.clone()),
-            Switch::New => self.aside = None,
-            _ => {}
-        }
+        let previous = std::mem::take(&mut self.screen);
         self.lingering
             .retain(|gone| now.saturating_sub(gone.since_ms) <= LINGERING_MS);
         for (from, fate) in outcome.old.iter().enumerate() {

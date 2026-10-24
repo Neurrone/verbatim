@@ -170,8 +170,8 @@ pub enum NewRow {
     },
     /// A row whose text was shown before but that carries no row of the
     /// last read: a row of the history above the last read, a row the
-    /// remembered history held, or, returning to a screen set aside, a row
-    /// the last read showed ("Screens").
+    /// remembered history held, or, on a new screen, a row above the
+    /// visible screen, which is history ("Screens").
     Shown,
 }
 
@@ -200,13 +200,10 @@ pub enum Switch {
     /// No change of screens.
     #[default]
     None,
-    /// A new screen one screen tall, as the alternate screen opening: the
-    /// last read's screen is set aside, unless a screen is aside already.
-    Opened,
-    /// The read kept rows of the screen set aside, which is restored.
-    Closed,
-    /// A new screen of another shape, as Windows Terminal's clear leaving a
-    /// prompt: what is aside is dropped.
+    /// A new screen: nothing of the last read survives, as a full-screen
+    /// program opening or closing, or Windows Terminal's clear leaving a
+    /// prompt. The visible screen's rows are new; the rows above it are
+    /// history, unspoken.
     New,
 }
 
@@ -364,6 +361,10 @@ struct Screen {
     unknown_above: Option<usize>,
     review: Option<Anchor>,
     marks: Vec<Anchor>,
+    /// Command marks whose line no read since a new screen has shown, each
+    /// with how many rows the read that lost it held: found again by their
+    /// line's hash when a later read shows it ("The review cursor").
+    lost_marks: Vec<(Anchor, usize)>,
     /// The places the caller keeps, each by its number
     /// ([`TerminalMemory::add_place`]).
     places: Vec<(u64, Anchor)>,
@@ -401,6 +402,21 @@ impl Screen {
     /// counts it: the rows above are history.
     fn screen_start(&self) -> usize {
         self.rows.len().saturating_sub(self.height)
+    }
+
+    /// Places each lost command mark whose line a row of the read starts,
+    /// nearest its old place counted from the read's end ("The review
+    /// cursor").
+    fn find_lost_marks(&mut self) {
+        let rows = &self.rows;
+        let (found, lost): (Vec<_>, Vec<_>) = self
+            .lost_marks
+            .drain(..)
+            .map(|(mark, total)| (refind(mark, total, mark.column, rows), (mark, total)))
+            .partition(|(found, _)| found.is_some());
+        self.marks
+            .extend(found.into_iter().filter_map(|(mark, _)| mark));
+        self.lost_marks = lost.into_iter().map(|(_, mark)| mark).collect();
     }
 
     /// Keeps only a screen above the next read's start and the rows below
@@ -483,8 +499,6 @@ enum Pending {
 #[derive(Clone, Debug, Default)]
 pub struct TerminalMemory {
     screen: Option<Screen>,
-    /// The screen set aside ("Screens").
-    aside: Option<Screen>,
     /// What was asked for, until it is read.
     pending: Option<Pending>,
     /// The number the next place gets ([`TerminalMemory::add_place`]).
@@ -597,7 +611,7 @@ impl TerminalMemory {
     /// Keeps a place at `anchor`, a position the caller holds in the
     /// terminal's text, such as the start of a row of text it sent on, and
     /// returns its number. A place moves with its row as the review
-    /// position does, goes aside with its screen, and is dropped when its
+    /// position does, goes to the caret's row on a new screen, and is dropped when its
     /// row cannot be followed, as when the history overflowed and its line
     /// was not found again. Before the first read it is only numbered.
     pub fn add_place(&mut self, anchor: Anchor) -> u64 {
@@ -747,12 +761,6 @@ impl TerminalMemory {
         // already, that keeps nothing the last read had at or above the
         // caret: the history overflowed ("Screens").
         let overflowed = aligned.lost() && ((whole && !refused) || moved);
-        // First, a read that keeps rows of the screen set aside where they
-        // were returns to it, whatever its caret's line did ("Screens").
-        let (rows, current) = match self.return_aside(current, rows, read, &shape) {
-            Ok(outcome) => return outcome,
-            Err(back) => back,
-        };
         // Whether this is a different screen: nothing of the last read
         // survives, rows below the caret included ("Screens").
         let had_text = current.rows.iter().any(|row| !row.is_blank());
@@ -873,56 +881,11 @@ impl TerminalMemory {
         outcome
     }
 
-    /// The whole document keeps no row with text that the last read had at
-    /// or above the caret ("Screens"): it returns to the screen set aside
-    /// when it keeps rows of it; otherwise a document one screen tall is a
-    /// new screen, setting the last read's aside unless one is aside
-    /// already; one longer than a screen and no shorter than before means
-    /// the history overflowed; and any other is a new screen, dropping what
-    /// is aside. On a new screen every row is new and the review position is
-    /// at the caret.
-    /// The return to the screen set aside ("Screens"): when `rows` keep
-    /// rows with text of it where they were, the read is aligned against
-    /// that screen and the last read, `current`, together, so only rows in
-    /// neither are new. Otherwise the rows and the last read back.
-    #[expect(
-        clippy::result_large_err,
-        reason = "the read's rows handed back when there is no return"
-    )]
-    fn return_aside(
-        &mut self,
-        current: Screen,
-        rows: Vec<Row>,
-        read: &Read,
-        shape: &Outcome,
-    ) -> Result<Outcome, (Vec<Row>, Screen)> {
-        let (width, height, caret) = (shape.width, shape.height, shape.caret);
-        let Some(aside) = self.aside.take() else {
-            return Err((rows, current));
-        };
-        let mut attempt = align_whole(&aside, (&rows, height), read, caret, false);
-        let returned = attempt.new.iter().enumerate().any(|(to, kind)| {
-            matches!(kind, NewRow::Kept { moved: false, .. }) && !rows[to].is_blank()
-        });
-        if !returned {
-            self.aside = Some(aside);
-            return Err((rows, current));
-        }
-        let last: HashSet<u64> = current
-            .rows
-            .iter()
-            .filter(|row| !row.is_blank())
-            .map(|row| row.hash)
-            .collect();
-        for (to, kind) in attempt.new.iter_mut().enumerate() {
-            if *kind == NewRow::New && last.contains(&rows[to].hash) {
-                *kind = NewRow::Shown;
-            }
-        }
-        let next = remember(&aside, rows, &attempt, read, (width, height), caret);
-        Ok(self.finish(&aside, next, &attempt, shape, Switch::Closed))
-    }
-
+    /// A read that keeps nothing of the last read and pairs nothing
+    /// ("Screens"): an overflow when the whole document was read because
+    /// the document moved; otherwise a new screen, whose visible rows are
+    /// new and whose rows above are history, unspoken. The review position
+    /// goes to the caret, and the command marks wait for their lines.
     fn screens(
         &mut self,
         current: Screen,
@@ -931,34 +894,30 @@ impl TerminalMemory {
         shape: &Outcome,
         overflowed: bool,
     ) -> Outcome {
-        let (width, height, caret) = (shape.width, shape.height, shape.caret);
-        let old = vec![OldRow::Gone { lingering: false }; current.total()];
-        if rows.len() == height {
-            // The last read's screen goes aside with its anchors, unless a
-            // screen is aside already.
-            let mut next = Screen::fresh(rows, read, (width, height), current.height);
-            next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
-            let outcome = Outcome {
-                rows: vec![NewRow::New; next.rows.len()],
-                old,
-                lines: lines(&next.rows),
-                switch: Switch::Opened,
-                ..*shape
-            };
-            if self.aside.is_none() {
-                self.aside = Some(current);
-            }
-            self.screen = Some(next);
-            return outcome;
-        }
         if overflowed {
             return self.start_again(&current, rows, read, shape, Start::Overflow);
         }
-        self.aside = None;
+        let (width, height, caret) = (shape.width, shape.height, shape.caret);
+        let old = vec![OldRow::Gone { lingering: false }; current.total()];
         let mut next = Screen::fresh(rows, read, (width, height), current.height);
         next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
+        let total = current.total();
+        next.lost_marks = current.lost_marks.clone();
+        next.lost_marks
+            .extend(current.marks.iter().map(|&mark| (mark, total)));
+        next.find_lost_marks();
+        let screen = next.screen_start();
+        let kinds = (0..next.rows.len())
+            .map(|row| {
+                if row < screen {
+                    NewRow::Shown
+                } else {
+                    NewRow::New
+                }
+            })
+            .collect();
         let outcome = Outcome {
-            rows: vec![NewRow::New; next.rows.len()],
+            rows: kinds,
             old,
             lines: lines(&next.rows),
             switch: Switch::New,
@@ -1784,6 +1743,7 @@ fn remember(
         unknown_above,
         review: None,
         marks: Vec::new(),
+        lost_marks: memory.lost_marks.clone(),
         places: Vec::new(),
         continued: false,
         unplaced: None,

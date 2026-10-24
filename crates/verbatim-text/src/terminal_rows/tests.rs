@@ -416,23 +416,22 @@ fn output_repeated_after_cls_is_not_a_reprint() {
 }
 
 #[test]
-fn the_alternate_screen_opened_and_closed_restores_the_main_memory() {
-    // A full-screen program draws every row of the alternate screen, its
-    // status on the last: the document is one screen tall, so the main
-    // screen's memory is set aside, and comes back when the main screen
-    // does ("Screens").
+fn the_alternate_screen_opened_and_closed_is_a_new_screen_each_way() {
+    // A full-screen program draws the alternate screen: nothing of the
+    // shell's screen survives, so it is a new screen. Closing it brings the
+    // main screen back, which keeps nothing of the program's screen: a new
+    // screen too, its visible rows new and the row above them history,
+    // unspoken ("Screens").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("m1\r\nm2\r\nm3\r\nm4");
     let opened = watch.write("\x1b[?1049h\x1b[Hvim\x1b[3;1H\"f\" 4L\x1b[1;1H");
-    assert_eq!(opened.switch, Switch::Opened);
+    assert_eq!(opened.switch, Switch::New);
     assert_eq!(watch.texts(), ["vim", "", "\"f\" 4L"]);
     assert_eq!(opened.rows, [NEW, NEW, NEW]);
     let closed = watch.write("\x1b[?1049l");
-    assert_eq!(closed.switch, Switch::Closed);
-    // The read starts where the alternate screen's read said, its first
-    // row, which on the main screen is the document's first.
+    assert_eq!(closed.switch, Switch::New);
     assert_eq!(watch.texts(), ["m1", "m2", "m3", "m4"]);
-    assert_eq!(closed.rows, [kept(0), kept(1), kept(2), kept(3)]);
+    assert_eq!(closed.rows, [NewRow::Shown, NEW, NEW, NEW]);
 }
 
 #[test]
@@ -514,18 +513,18 @@ fn a_history_erase_keeps_the_screens_rows() {
 }
 
 #[test]
-fn a_pagers_pages_are_new_screens_and_closing_it_returns_to_the_shell() {
+fn a_pagers_first_page_is_a_new_screen_and_closing_it_speaks_the_shell() {
     // `conhost_pager`'s shape: the pager's first page keeps no row of the
-    // shell's screen and fills the screen, so it is a new screen and the
-    // shell's is set aside; its second page pairs each row with the first
-    // page's by likeness, and leaves the caret's line, the prompt row, where
-    // it was, so it is no new screen, the shell's staying aside; and the main screen
-    // back with the shell's rows returns to it, so only what follows is new
-    // ("Screens").
+    // shell's screen, so it is a new screen; its second page pairs each row
+    // with the first page's by likeness, so it is no new screen; and the
+    // main screen back leaves the caret's line where the pager's status row
+    // was, so that row counts as rewritten and the rest of the shell's
+    // screen is new, spoken as NVDA speaks it (`nv-con-pager.txt`;
+    // "Screens").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("PS>pager\r\n");
     let opened = watch.write("\x1b[?1049h\x1b[H\x1b[2Jp1\r\np2\r\n:");
-    assert_eq!(opened.switch, Switch::Opened);
+    assert_eq!(opened.switch, Switch::New);
     assert_eq!(opened.rows, [NEW, NEW, NEW]);
     let paged = watch.write("\x1b[H\x1b[2Jq1\r\nq2\r\n(END)");
     assert_eq!(paged.switch, Switch::None);
@@ -536,9 +535,9 @@ fn a_pagers_pages_are_new_screens_and_closing_it_returns_to_the_shell() {
     };
     assert_eq!(paged.rows, [rewritten(0), rewritten(1), rewritten(2)]);
     let closed = watch.write("\x1b[?1049lclosed\r\nPS>");
-    assert_eq!(closed.switch, Switch::Closed);
+    assert_eq!(closed.switch, Switch::None);
     assert_eq!(watch.texts(), ["PS>pager", "closed", "PS>"]);
-    assert_eq!(closed.rows, [kept(0), NEW, NEW]);
+    assert_eq!(closed.rows, [NEW, NEW, rewritten(2)]);
 }
 
 #[test]
@@ -629,14 +628,15 @@ fn output_repeated_after_a_clear_that_lost_the_old_screen_is_new() {
     // Windows Terminal: `type f.txt`, then `cls` and other output within
     // one read. The clear takes the history too, so the whole document is
     // read, and it keeps no row of the last read: a new screen, every row
-    // of it new, though some repeat the remembered history ("Screens").
+    // of its visible screen new, though some repeat the remembered history,
+    // and the row above it history ("Screens").
     let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
     watch.write("alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     watch.write("1111\r\n2222\r\n3333\r\n4444");
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\nzulu\r\n");
     assert_eq!(watch.texts(), ["alpha", "bravo", "zulu", ""]);
     assert_eq!(outcome.switch, Switch::New);
-    assert_eq!(outcome.rows, [NEW, NEW, NEW, NEW]);
+    assert_eq!(outcome.rows, [NewRow::Shown, NEW, NEW, NEW]);
 }
 
 #[test]
@@ -798,22 +798,21 @@ fn a_tie_between_rotations_is_settled_by_the_documents_first_row() {
 }
 
 #[test]
-fn windows_terminals_clear_and_a_full_screen_program_return_to_the_screen_after_the_clear() {
-    // The clear leaves a document one row tall: a new screen of another
-    // shape, so nothing is aside; the full-screen program's screen, one
-    // screen tall, sets the screen after the clear aside, and leaving it
-    // returns there ("Screens").
+fn windows_terminals_clear_and_a_full_screen_program_are_each_a_new_screen() {
+    // The clear refuses the read's start and keeps nothing: a new screen,
+    // the prompt new. The full-screen program's screen and the screen after
+    // the clear coming back are new screens too ("Screens").
     let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
     watch.write("a\r\nb\r\nc\r\nd\r\ne");
     let cleared = watch.write("\x1b[H\x1b[2J\x1b[3Jp> ");
     assert_eq!(cleared.switch, Switch::New);
     assert_eq!(cleared.rows, [NEW]);
     let opened = watch.write("\x1b[?1049h\x1b[Hvim\r\n~\r\n:q");
-    assert_eq!(opened.switch, Switch::Opened);
+    assert_eq!(opened.switch, Switch::New);
     let closed = watch.write("\x1b[?1049l");
-    assert_eq!(closed.switch, Switch::Closed);
+    assert_eq!(closed.switch, Switch::New);
     assert_eq!(watch.texts(), ["p>"]);
-    assert_eq!(closed.rows, [kept(0)]);
+    assert_eq!(closed.rows, [NEW]);
 }
 
 #[test]
@@ -821,15 +820,36 @@ fn the_alternate_screen_from_a_shell_as_long_as_it_is_a_new_screen_not_an_overfl
     // A fresh shell's document fills the screen, with no history, and the
     // alternate screen is as long, its cursor homed as a full-screen
     // program's is: nothing of the shell's screen survives, so it is a new
-    // screen, one screen tall, and the document did not move, so it is no
-    // overflow ("Screens").
+    // screen, and the document did not move, so it is no overflow; the
+    // shell's screen coming back is a new screen again ("Screens").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("$ ls\r\nfile\r\n$ vim");
     let opened = watch.write("\x1b[?1049h\x1b[Hhello\r\n~\r\n:q\x1b[H");
-    assert_eq!(opened.switch, Switch::Opened);
+    assert_eq!(opened.switch, Switch::New);
     assert!(!opened.overflowed, "no overflow");
     assert_eq!(opened.rows, [NEW, NEW, NEW]);
     let closed = watch.write("\x1b[?1049l");
-    assert_eq!(closed.switch, Switch::Closed);
-    assert_eq!(closed.rows, [kept(0), kept(1), kept(2)]);
+    assert_eq!(closed.switch, Switch::New);
+    assert_eq!(closed.rows, [NEW, NEW, NEW]);
+}
+
+#[test]
+fn a_command_mark_survives_a_full_screen_program() {
+    // A mark is kept by its line's hash: lost while a full-screen program
+    // shows no row of its line, it is found again when the shell's screen
+    // comes back ("The review cursor").
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write("$ ls\r\nfile\r\n$ vim");
+    watch.memory.add_mark(0);
+    watch.write("\x1b[?1049h\x1b[Hhello\r\n~\r\n:q\x1b[H");
+    assert_eq!(watch.memory.marks(), []);
+    watch.write("\x1b[?1049l");
+    assert_eq!(
+        watch.memory.marks(),
+        [Anchor {
+            row: 0,
+            column: 0,
+            line_hash: hash("$ ls")
+        }]
+    );
 }

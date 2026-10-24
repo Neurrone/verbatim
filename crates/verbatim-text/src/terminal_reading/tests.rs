@@ -811,17 +811,21 @@ fn a_suggestion_followed_by_text_in_the_typings_colours_is_spoken() {
 // "Screens": the alternate screen.
 
 #[test]
-fn the_alternate_screen_speaks_what_it_shows_and_closing_it_speaks_nothing_kept() {
-    // A pager fills the alternate screen, its prompt on the last row: a new
-    // screen, one screen tall, so the main screen is set aside, and closing
-    // it returns to the main screen, where nothing is new ("Screens").
+fn the_alternate_screen_speaks_what_it_shows_and_closing_it_speaks_the_shells_screen() {
+    // A pager fills the alternate screen: a new screen, spoken. Closing it
+    // brings back the main screen, a new screen too: its visible rows are
+    // spoken, the row above them history, unspoken, as NVDA speaks the
+    // shell's screen when a pager closes (`nv-con-pager.txt`; "Screens").
     let mut term = Term::new(20, 3, 10);
     term.write("m1\r\nm2\r\nm3\r\n$ ", 100);
     assert_eq!(
         term.write("\x1b[?1049h\x1b[Hfile one\r\nfile two\r\n:", 200),
         says(vec![line(0, "file one"), line(1, "file two"), line(2, ":")])
     );
-    assert_eq!(term.write("\x1b[?1049l", 300), quiet(None));
+    assert_eq!(
+        term.write("\x1b[?1049l", 300),
+        says(vec![line(1, "m2"), line(2, "m3"), line(3, "$")])
+    );
 }
 
 #[test]
