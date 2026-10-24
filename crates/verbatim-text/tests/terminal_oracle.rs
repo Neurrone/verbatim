@@ -1,7 +1,6 @@
-//! The terminal reading rules (`verbatim_text::terminal_reading`, the
-//! design's section 5, on the row memory of section 4) checked by the
-//! simulated terminal's oracle (`docs/design/terminal-model.md`, section
-//! 9). The reader under test is the real rules: every read is given to a
+//! The terminal reading rules (`verbatim_text::terminal_reading`, on the
+//! row memory of `verbatim_text::terminal_rows`) checked by the simulated
+//! terminal's oracle (`docs/design/terminal-model.md`, "Testing"). The reader under test is the real rules: every read is given to a
 //! `TerminalReader` at the stream's times (a recorded stream's, or 10
 //! milliseconds apart for one written by hand, the last read 10 seconds
 //! after the last chunk), its speech reported as the oracle takes it (a
@@ -11,19 +10,19 @@
 //! conformance corpus in both terminals, the oracle's random streams, and
 //! every stream of up to four operations of the tiny alphabet.
 //!
-//! No violation remains but in the cases pinned below, each with its
-//! violations and the design question that decides it ([`Question`]),
-//! which a change of the design, not of the rules, would settle.
+//! No violation remains, and none is pinned: a failure is a consistent
+//! explanation the oracle accepts, a listed limit through its own reason,
+//! or a defect in the code.
 
 use proptest::prelude::*;
 use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::oracle::{
-    Heard, Op, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation, Withheld,
+    Heard, Limit, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation, Withheld,
     every_stream, observe, random_config, random_steps, stream,
 };
-use verbatim_term_sim::{Flavor, Query, Range, Refused, RowsRead, Snapshot};
+use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
 use verbatim_text::terminal_reading::{self as rules, Settings, Speech, Step, TerminalReader};
-use verbatim_text::terminal_rows::{Checked, OldRow, Read};
+use verbatim_text::terminal_rows::{OldRow, Read};
 
 /// How long after the last chunk the stream's last read comes: past the
 /// quiet period and the time a row lingers.
@@ -33,9 +32,8 @@ const QUIET_MS: u64 = 10_000;
 const HAND_STEP_MS: u64 = 10;
 
 /// The reading rules under test, read as the outpost reads: each read
-/// starts where the last said, as many rows above that start as the memory
-/// asks, and the whole document, or a read from further above, is read at
-/// once when the rules ask.
+/// starts where the last said, a screen above that start, and the whole
+/// document is read at once when the rules ask.
 struct Core {
     reader: TerminalReader,
     query: Query,
@@ -44,25 +42,20 @@ struct Core {
     /// The reads answered so far.
     reads: usize,
     quiet: bool,
-    /// The read waiting for the rows by their place it asked for, and
-    /// where its snapshot said the next read starts.
-    checking: Option<(Read, Range)>,
+    /// Whether the last read showed no text, so the memory did not take
+    /// it ("A read with no text").
+    blank: bool,
 }
 
 impl Core {
     fn new(stream: &Stream) -> Self {
-        let reader = TerminalReader::new(Settings::default());
-        let above = u32::try_from(reader.memory().above()).unwrap_or(u32::MAX);
         Self {
-            reader,
-            query: Query {
-                above,
-                ..Query::default()
-            },
+            reader: TerminalReader::new(Settings::default()),
+            query: Query::default(),
             at_ms: stream.at_ms.clone(),
             reads: 0,
             quiet: false,
-            checking: None,
+            blank: false,
         }
     }
 
@@ -128,6 +121,7 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
                 rules::Reason::LostText => Reason::LostText,
                 rules::Reason::HeldTyping => Reason::HeldTyping,
                 rules::Reason::KeyAnswer => Reason::KeyAnswer,
+                rules::Reason::WrittenBack => Reason::WrittenBack,
             },
         })
         .collect();
@@ -169,24 +163,8 @@ impl Reader for Core {
             caret_column: snapshot.caret_column,
             at_ms: self.now(),
             above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
-            checked: None,
         };
-        self.answer(read, snapshot.next_start)
-    }
-
-    fn rows(&mut self, rows: &Result<RowsRead, Refused>) -> Reply {
-        let rows = rows
-            .as_ref()
-            .expect("the simulated terminal answers every read");
-        let (mut read, next_start) = self
-            .checking
-            .take()
-            .expect("rows by their place come after the read that asked for them");
-        read.checked = Some(Checked {
-            runs: rows.runs.clone(),
-            first_row: rows.first_row.clone(),
-        });
-        self.answer(read, next_start)
+        self.answer(&read, snapshot.next_start)
     }
 
     fn quiet(&mut self) {
@@ -197,8 +175,8 @@ impl Reader for Core {
 impl Core {
     /// What the reader makes of `read`, whose snapshot said the next read
     /// starts at `next_start`.
-    fn answer(&mut self, read: Read, next_start: Range) -> Reply {
-        let step = self.reader.read(&read, false, None);
+    fn answer(&mut self, read: &Read, next_start: verbatim_term_sim::Range) -> Reply {
+        let step = self.reader.read(read, false, None);
         let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
         let screen_rows = u32::try_from(height).unwrap_or(u32::MAX);
         if step.whole_document {
@@ -209,29 +187,21 @@ impl Core {
                 above: 0,
             });
         }
-        if let Some(above) = step.read_above {
-            return Reply::Again(Query {
-                above: u32::try_from(above).unwrap_or(u32::MAX),
-                ..self.query
-            });
-        }
-        if !step.check_rows.is_empty() {
-            let runs = step
-                .check_rows
-                .iter()
-                .map(|run| {
-                    (
-                        u32::try_from(run.above).unwrap_or(u32::MAX),
-                        u32::try_from(run.rows).unwrap_or(u32::MAX),
-                    )
-                })
-                .collect();
-            self.checking = Some((read, next_start));
-            return Reply::Rows(runs);
-        }
         let memory = self.reader.memory();
-        let review = memory.review().map(|anchor| anchor.row);
-        let heard = heard(&step, review);
+        // A read with no text leaves the memory as it was, so where its rows
+        // went and where the review position is are said of the read before
+        // it, which the oracle cannot judge: the reader makes no claim then,
+        // nor at the read after it.
+        let blank = step.outcome.as_ref().is_some_and(|outcome| outcome.blank);
+        let mut heard = heard(&step, memory.review().map(|anchor| anchor.row));
+        if blank || self.blank {
+            heard.moved = None;
+        }
+        if blank {
+            heard.review = None;
+            heard.limits.push(Limit::BlankScreen);
+        }
+        self.blank = blank;
         self.query = Query {
             start: Some(next_start),
             screen_rows,
@@ -274,50 +244,6 @@ fn tally<'a>(violations: impl IntoIterator<Item = &'a Violation>) -> Vec<(String
     counts.into_iter().collect()
 }
 
-fn counts(expected: &[(&str, usize)]) -> Vec<(String, usize)> {
-    expected
-        .iter()
-        .map(|&(kind, count)| (kind.to_owned(), count))
-        .collect()
-}
-
-/// A question about the design that decides a pinned case: the rules
-/// cannot reach zero violations there without a change of the design or
-/// of the oracle's specification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Question {
-    /// The last read had no history, so the memory keeps no block and its
-    /// known history holds no row, and the next read finds the buffer
-    /// filled and rotated (section 4.3, item 5): with no row that was
-    /// history at the last read, every rotation agrees with the known
-    /// history, so a whole-buffer comparison cannot tell them apart, and the
-    /// kept rows decide; a row whose text a flood wrote again in its place
-    /// is taken as kept or rewritten. A line holding its unfinished word, or
-    /// a volatile row, is then carried by a line that replaced it, so the
-    /// word is never spoken, or the new line is held as volatile. The
-    /// decided rule cannot settle it: what should tell a rotation when the
-    /// last read held no history?
-    RotationWithoutBlock,
-}
-
-/// A stream pinned as the smallest that shows a question: the question,
-/// the terminal, the operations and read points, on the random streams'
-/// terminal, and its violations counted by kind.
-type SmallestPin = (
-    Question,
-    Flavor,
-    Vec<(Op, bool)>,
-    Vec<(&'static str, usize)>,
-);
-
-/// A corpus stream pinned in one terminal: its name, the question that
-/// decides it, and its violations counted by kind.
-type CorpusPin = (&'static str, Flavor, Question, Vec<(&'static str, usize)>);
-
-/// A random case pinned: its number, the question that decides it, and
-/// its violations counted by kind.
-type Pin = (u32, Question, Vec<(&'static str, usize)>);
-
 #[test]
 fn the_cores_violations_over_the_corpus() {
     let corpus = streams();
@@ -340,12 +266,7 @@ fn the_cores_violations_over_the_corpus() {
         })
         .filter(|(_, _, tally)| !tally.is_empty())
         .collect();
-    let pinned: Vec<CorpusPin> = vec![];
-    let expected: Vec<StreamTally> = pinned
-        .iter()
-        .map(|(name, flavor, _, kinds)| ((*name).to_owned(), *flavor, counts(kinds)))
-        .collect();
-    assert_eq!(found, expected);
+    assert_eq!(found, []);
 }
 
 #[test]
@@ -373,7 +294,6 @@ fn the_cores_violations_over_random_streams() {
     // The random streams of the oracle's own tests, taken in the same
     // order from the same seed, every case run rather than stopping at the
     // first failure, each case numbered in that order.
-    use Question::RotationWithoutBlock;
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let config = random_config();
@@ -396,73 +316,5 @@ fn the_cores_violations_over_random_streams() {
             found.push((case, tally(&violations)));
         }
     }
-    let pinned: Vec<Pin> = vec![
-        (
-            221,
-            RotationWithoutBlock,
-            vec![("FalseReason UnfinishedWord", 1)],
-        ),
-        (377, RotationWithoutBlock, vec![("FalseReason Volatile", 1)]),
-        (440, RotationWithoutBlock, vec![("FalseReason Volatile", 1)]),
-    ];
-    let expected: Vec<(u32, Vec<(String, usize)>)> = pinned
-        .iter()
-        .map(|(case, _, kinds)| (*case, counts(kinds)))
-        .collect();
-    assert_eq!(found, expected);
-}
-
-/// The smallest streams that show each question, as the random streams'
-/// shrinking left them.
-fn smallest_pins() -> Vec<SmallestPin> {
-    use Question::RotationWithoutBlock;
-    let word = "wrapping-word";
-    vec![
-        // A line holding its unfinished word, a flood filling the buffer
-        // from no history.
-        (
-            RotationWithoutBlock,
-            Flavor::ConsoleHost,
-            vec![
-                (Op::Write(word), false),
-                (Op::Write("ok"), true),
-                (Op::Write("dog"), true),
-                (Op::Flood { lines: 10, word }, false),
-            ],
-            vec![("FalseReason UnfinishedWord", 1)],
-        ),
-        // A header's row changed twice, a flood filling the buffer from no
-        // history.
-        (
-            RotationWithoutBlock,
-            Flavor::ConsoleHost,
-            vec![
-                (Op::Header("\u{2819} 1s"), true),
-                (Op::Write("a b"), false),
-                (Op::MoveRows(-3), true),
-                (
-                    Op::Flood {
-                        lines: 14,
-                        word: "a b",
-                    },
-                    false,
-                ),
-            ],
-            vec![("FalseReason Volatile", 1)],
-        ),
-    ]
-}
-
-#[test]
-fn the_cores_violations_over_the_smallest_streams_of_each_question() {
-    let pinned = smallest_pins();
-    let found: Vec<Vec<(String, usize)>> = pinned
-        .iter()
-        .map(|(_, flavor, steps, _)| tally(&violations(&stream(steps), *flavor, Size::SMALL)))
-        .collect();
-    let expected: Vec<Vec<(String, usize)>> = pinned
-        .iter()
-        .map(|(_, _, _, kinds)| counts(kinds))
-        .collect();
-    assert_eq!(found, expected);
+    assert_eq!(found, []);
 }

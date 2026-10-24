@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, RowsAbove, Switch, TerminalMemory};
+use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, Switch, TerminalMemory};
 use crate::{Segmenter, WordRules, graphemes, is_space};
 
 pub use crate::terminal_rows::LINGERING_MS;
@@ -159,6 +159,10 @@ pub enum Reason {
     HeldTyping,
     /// A key's answer, spoken as that answer (sections 5.5 and 5.7).
     KeyAnswer,
+    /// A row erased and written back within the time a gone row lingers:
+    /// text heard before, silent wherever it comes back ("Lingering"; a
+    /// limit, "Limits").
+    WrittenBack,
 }
 
 /// A line withheld, and why.
@@ -269,20 +273,10 @@ pub struct Step {
     /// When to call [`TerminalReader::timer`], in milliseconds on the
     /// caller's clock; `None` when nothing waits for the quiet period.
     pub timer: Option<u64>,
-    /// Read the whole document and give that read instead (section 4.2);
+    /// Read the whole document and give that read instead ("The read");
     /// nothing changed, and only the outcome's shape (the screen's width
     /// and height) is set.
     pub whole_document: bool,
-    /// Read these runs of rows by their place, to tell how far a full
-    /// history rotated, and give the same read again with them
-    /// ([`Read::checked`], section 4.3, item 5); nothing changed, and only
-    /// the outcome's shape is set. Empty otherwise.
-    pub check_rows: Vec<RowsAbove>,
-    /// Read again from the same start with this many rows above it, as the
-    /// rows between the history's block and the read went by unread, and
-    /// give that read instead (section 4.3, item 5); nothing changed, and
-    /// only the outcome's shape is set.
-    pub read_above: Option<usize>,
     /// The alignment of the read, for a read.
     pub outcome: Option<Outcome>,
     /// Whether the read moved the review position to the caret because a
@@ -767,34 +761,29 @@ impl TerminalReader {
     ) -> Step {
         let now = read.at_ms;
         let mut outcome = memory.read(read);
-        if outcome.whole_document || !outcome.check_rows.is_empty() || outcome.read_above.is_some()
-        {
+        if outcome.blank {
+            // A read whose screen shows no text changes nothing ("A read with
+            // no text").
+            return Step {
+                timer: self.next_due(),
+                outcome: Some(outcome),
+                ..Step::default()
+            };
+        }
+        if outcome.whole_document {
             if self.settings.report_new_output {
                 return Step {
-                    whole_document: outcome.whole_document,
-                    check_rows: std::mem::take(&mut outcome.check_rows),
-                    read_above: outcome.read_above,
+                    whole_document: true,
                     timer: self.next_due(),
                     outcome: Some(outcome),
                     ..Step::default()
                 };
             }
-            // With nothing reported nothing waits, so no read is taken that
-            // only tells the rotation: the memory decides it from this read,
-            // or, when the last screen is not in it, is simply taken from the
-            // read (section 4.2), its command marks kept.
-            if let Some(settled) = memory.settle(read).filter(|settled| {
-                !settled.whole_document
-                    && settled.check_rows.is_empty()
-                    && settled.read_above.is_none()
-            }) {
-                outcome = settled;
-            } else {
-                self.screen = Screen::default();
-                self.aside = None;
-                self.lingering.clear();
-                outcome = memory.restart(read);
-            }
+            // With nothing reported nothing waits, so the whole document is
+            // not read: the memory starts again from this read ("The read").
+            self.screen = Screen::default();
+            self.lingering.clear();
+            outcome = memory.restart(read);
         }
         self.reads += 1;
         let previous = match outcome.switch {
@@ -805,8 +794,9 @@ impl TerminalReader {
             _ => std::mem::take(&mut self.screen),
         };
         match outcome.switch {
-            Switch::Opened => self.aside = Some(previous.clone()),
-            Switch::None if !read.alternate => self.aside = None,
+            // The screen set aside, unless one is aside already ("Screens").
+            Switch::Opened if self.aside.is_none() => self.aside = Some(previous.clone()),
+            Switch::New => self.aside = None,
             _ => {}
         }
         self.lingering
@@ -837,7 +827,9 @@ impl TerminalReader {
                     hash: rows[to].hash,
                     text: rows[to].text.clone(),
                     colours: match kind {
-                        NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } => {
+                        NewRow::Kept { from, .. }
+                        | NewRow::Grown { from }
+                        | NewRow::Rewritten { from, .. } => {
                             previous.row(*from).and_then(|row| row.colours.clone())
                         }
                         _ => None,
@@ -999,9 +991,14 @@ impl TerminalReader {
             // full history, and either way it is a line of its own.
             let continued = outcome.continued && start == 0 && !read.at_document_start;
             let cut_text = match (continued, kinds.first()) {
-                (true, Some(NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. })) => {
-                    above_read(&previous, *from)
-                }
+                (
+                    true,
+                    Some(
+                        NewRow::Kept { from, .. }
+                        | NewRow::Grown { from }
+                        | NewRow::Rewritten { from, .. },
+                    ),
+                ) => above_read(&previous, *from),
                 _ => String::new(),
             };
             let cut = cut_text.len();
@@ -1020,7 +1017,9 @@ impl TerminalReader {
             // text started, or that the read's first row continues; a row
             // split off a line starts a line of its own.
             let base = match outcome.rows[first] {
-                NewRow::Kept { from, .. } | NewRow::Rewritten { from, .. } => previous
+                NewRow::Kept { from, .. }
+                | NewRow::Grown { from }
+                | NewRow::Rewritten { from, .. } => previous
                     .start(from)
                     .filter(|&old| old == from || (continued && first == start))
                     .and_then(|old| {
@@ -1035,19 +1034,6 @@ impl TerminalReader {
                     .map(|at| *self.lingering.remove(at).line),
                 _ => None,
             };
-            // A row rewritten alone, away from its neighbours, keeps what it
-            // last said and starts its change history afresh (section 4.3,
-            // item 6).
-            let base = match outcome.rows[first] {
-                NewRow::Rewritten { alone: true, .. } => base.map(|old| LineState {
-                    text: old.text,
-                    said: old.said,
-                    input: old.input,
-                    cut: old.cut,
-                    ..LineState::default()
-                }),
-                _ => base,
-            };
             // The text of the old line a row split off a line was in.
             let split = match outcome.rows[first] {
                 NewRow::Kept { from, .. } if base.is_none() => previous
@@ -1058,8 +1044,23 @@ impl TerminalReader {
                 _ => None,
             };
             let changed = line.rows.clone().zip(kinds).any(|(row, kind)| {
-                !rows[row].is_blank() && matches!(kind, NewRow::New | NewRow::Rewritten { .. })
+                !rows[row].is_blank()
+                    && matches!(
+                        kind,
+                        NewRow::New | NewRow::Grown { .. } | NewRow::Rewritten { .. }
+                    )
             });
+            // A line with a lingering row taken back is text heard before
+            // ("Lingering"): its silence, when nothing new is in it or it
+            // only lost text, is that of text written back.
+            let written_back = kinds
+                .iter()
+                .any(|kind| matches!(kind, NewRow::Returned { .. }));
+            let lost_reason = if written_back {
+                Reason::WrittenBack
+            } else {
+                Reason::LostText
+            };
             if answered == Some(start) {
                 put(
                     &mut screen,
@@ -1111,6 +1112,11 @@ impl TerminalReader {
                     state.input = true;
                 } else if changed {
                     fresh_lines.push((start, Some(Arc::clone(&text))));
+                } else if written_back {
+                    step.withheld.push(Withheld {
+                        row: start,
+                        reason: lost_reason,
+                    });
                 } else if let Some(old) = split.filter(|old| *old != text) {
                     // Kept rows split off a line: silent when that line held
                     // their text, spoken as a change otherwise.
@@ -1142,7 +1148,7 @@ impl TerminalReader {
                     if lost_text(&old_text, &text) {
                         step.withheld.push(Withheld {
                             row: start,
-                            reason: Reason::LostText,
+                            reason: lost_reason,
                         });
                         drop_word(&mut state);
                     } else {
@@ -1266,7 +1272,7 @@ impl TerminalReader {
                 } else if lost_text(&old_text, &text) {
                     step.withheld.push(Withheld {
                         row: start,
-                        reason: Reason::LostText,
+                        reason: lost_reason,
                     });
                     drop_word(&mut state);
                 } else {
@@ -1282,7 +1288,7 @@ impl TerminalReader {
             if lost_text(&old_text, &text) {
                 step.withheld.push(Withheld {
                     row: start,
-                    reason: Reason::LostText,
+                    reason: lost_reason,
                 });
                 drop_word(&mut state);
                 put(&mut screen, &line.rows, keep_from, state);
@@ -1569,7 +1575,10 @@ impl TerminalReader {
                     !row.is_blank()
                         && matches!(
                             kind,
-                            NewRow::New | NewRow::Rewritten { .. } | NewRow::Returned { .. }
+                            NewRow::New
+                                | NewRow::Grown { .. }
+                                | NewRow::Rewritten { .. }
+                                | NewRow::Returned { .. }
                         )
                 });
             if unit.is_none() && changed {

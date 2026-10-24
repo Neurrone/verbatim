@@ -1,5 +1,5 @@
 //! The VT sequences the simulated terminal understands, mapped onto the
-//! grid's operations (`docs/design/terminal-model.md`, section 3.2). What
+//! grid's operations (`docs/design/terminal-model.md`, "The model"). What
 //! it does not understand it ignores, as a terminal does; the conformance
 //! expectations show where that differs from the real terminals.
 

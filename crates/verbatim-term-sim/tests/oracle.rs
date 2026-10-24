@@ -1,5 +1,5 @@
 //! The oracle checked against readers whose faults are known
-//! (`docs/design/terminal-model.md`, section 9): deliberately flawed
+//! (`docs/design/terminal-model.md`, "Testing"): deliberately flawed
 //! readers, a silent one, ones that miscount or misplace, and ones that
 //! withhold lines for reasons whose premise is false, are caught on fixed
 //! streams, with exactly the violations their faults cause; readers whose
@@ -861,7 +861,10 @@ fn a_volatile_row_whose_text_had_not_changed_before_is_caught() {
 }
 
 #[test]
-fn a_held_row_that_leaves_the_buffer_is_not_resolved() {
+fn a_held_row_whose_text_leaves_the_buffer_is_resolved() {
+    // The flood fills the buffer from no history, so one consistent
+    // explanation writes it over the held row, whose text is replaced while
+    // unreported (principle 5).
     let stream = stream(&[
         (Op::Write("50%"), true),
         (Op::CarriageReturn, false),
@@ -887,10 +890,7 @@ fn a_held_row_that_leaves_the_buffer_is_not_resolved() {
             says(vec![Spoken::Summary { rows: 0..10 }]),
         ])
     };
-    assert_eq!(
-        violations(&stream, &mut reader),
-        [false_reason(3, 0, "70%", Reason::Volatile)]
-    );
+    assert_eq!(violations(&stream, &mut reader), []);
 }
 
 #[test]
@@ -957,7 +957,8 @@ fn a_volatile_row_rewritten_as_the_full_history_rotates_is_followed_up() {
 fn a_volatile_row_moved_up_by_the_rotation_to_where_another_row_changed_is_caught() {
     // "50%" above "x" changes to "60%"; then "x" changes to "y" as a
     // newline rotates the history, which moves "y" up to the row "60%"
-    // had, while "60%" moves up too: the row of "y" never changed before.
+    // had, while "60%" moves up too: the one line that vanished, "x", never
+    // changed before.
     let stream = rotated_after(
         9,
         &[
@@ -1038,7 +1039,8 @@ fn a_volatile_row_rewritten_as_the_history_grows_is_followed() {
 fn a_volatile_row_whose_place_another_row_changed_as_the_history_grows_is_caught() {
     // "50%" above "x" changes to "60%"; then "x" changes to "y" as a
     // newline grows the history, which brings "y" to the place on the
-    // screen "60%" had: the row of "y" never changed before.
+    // screen "60%" had: the one line that vanished, "x", never changed
+    // before.
     let stream = stream(&[
         (Op::Write("a\r\nb\r\nc\r\n50%\r\nx"), true),
         (Op::MoveRows(-1), false),
@@ -1075,11 +1077,12 @@ fn a_volatile_row_whose_place_another_row_changed_as_the_history_grows_is_caught
 }
 
 #[test]
-fn a_volatile_row_followed_through_a_move_with_its_neighbours_is_accepted_and_one_moved_alone_is_caught()
- {
+fn a_volatile_row_moved_with_its_neighbours_or_alone_is_accepted() {
     // "1s" between "a" and ">" changes to "2s"; then a row inserted above
     // it pushes it and ">" down a row, "b" is written in the new row and
-    // "2s" changes to "3s".
+    // "2s" changes to "3s". Any pairing of the screen's rows is a
+    // consistent explanation (principle 5), so "3s" is the row of "2s"
+    // changed again however the rows around it moved.
     let changed = [
         (Op::Write("a\r\n1s\r\n>"), true),
         (Op::MoveTo { row: 2, column: 1 }, false),
@@ -1092,8 +1095,8 @@ fn a_volatile_row_followed_through_a_move_with_its_neighbours_is_accepted_and_on
         (Op::MoveTo { row: 3, column: 1 }, false),
         (Op::Rewrite("3s"), true),
     ]);
-    // "b" written over "2s", and "3s" over ">": the row of "3s" moved
-    // alone, so by text it never changed before.
+    // "b" written over "2s", and "3s" over ">": by text, "2s" vanished,
+    // and one pairing makes "3s" its row.
     let mut alone = changed.to_vec();
     alone.extend([
         (Op::Rewrite("b"), false),
@@ -1112,10 +1115,7 @@ fn a_volatile_row_followed_through_a_move_with_its_neighbours_is_accepted_and_on
         ])
     };
     assert_eq!(violations(&stream(&moved), &mut script()), []);
-    assert_eq!(
-        violations(&stream(&alone), &mut script()),
-        [false_reason(3, 2, "3s", Reason::Volatile)]
-    );
+    assert_eq!(violations(&stream(&alone), &mut script()), []);
 }
 
 #[test]
@@ -1324,7 +1324,7 @@ fn a_held_row_the_alternate_screen_covers_is_resolved() {
 #[test]
 fn a_line_the_alternate_screen_showed_is_not_new_on_the_main_screen() {
     // With no history on the main screen no read shows the switch, so a
-    // reader cannot tell the screens apart (section 5.8).
+    // reader cannot tell the screens apart ("Screens").
     let shown_there = |main: &'static str| {
         stream(&[
             (Op::EnterAlternate, true),
@@ -1423,7 +1423,9 @@ fn a_line_printed_again_after_its_text_was_erased_with_the_history_may_be_report
 #[test]
 fn a_held_line_spoken_as_last_read_after_it_left_the_full_history_is_resolved() {
     // "abc" grows from "ab" with its word held, and the flood rotates it
-    // out of the small terminal's full buffer before the next read.
+    // out of the small terminal's full buffer before the next read, which
+    // replaces its text: what is said of it as last read must still be
+    // text a read showed.
     let stream = stream(&[
         (Op::Write("ab"), true),
         (Op::Write("c"), true),
@@ -1454,21 +1456,18 @@ fn a_held_line_spoken_as_last_read_after_it_left_the_full_history_is_resolved() 
     assert_eq!(violations(&stream, &mut script("c")), []);
     assert_eq!(
         violations(&stream, &mut script("xyz")),
-        [
-            Violation::Unheld {
-                read: 3,
-                said: "xyz".to_owned()
-            },
-            false_reason(2, 0, "abc", Reason::UnfinishedWord)
-        ]
+        [Violation::Unheld {
+            read: 3,
+            said: "xyz".to_owned()
+        }]
     );
 }
 
 #[test]
 fn a_held_line_spoken_without_its_change_does_not_resolve_its_hold() {
-    // "70%" held as volatile, its change from "60%" the "7"; the flood
-    // rotates it out of the full buffer, and the reader says only "%" of
-    // it, which does not report the held line (section 9).
+    // "70%" held as volatile, its change from "60%" the "7"; six lines push
+    // it into the history, where its text stays, and the reader says only
+    // "%" of it, which does not report the held line.
     let stream = stream(&[
         (Op::Write("50%"), true),
         (Op::CarriageReturn, false),
@@ -1478,26 +1477,27 @@ fn a_held_line_spoken_without_its_change_does_not_resolve_its_hold() {
         (Op::Newline, false),
         (
             Op::Flood {
-                lines: 12,
+                lines: 6,
                 word: "b",
             },
             true,
         ),
     ]);
-    let script = |held: &str| Scripted {
-        whole: true,
-        ..Scripted::new(vec![
-            Heard::default(),
-            says(vec![line(0, "50%")]),
-            says(vec![redrawn(0, "60%")]),
-            holds(vec![], &[(0, Reason::Volatile)]),
-            says(vec![
-                Spoken::Held {
-                    text: held.to_owned(),
-                },
-                Spoken::Summary { rows: 0..10 },
-            ]),
-        ])
+    let script = |held: &str| {
+        let mut flood = vec![Spoken::Held {
+            text: held.to_owned(),
+        }];
+        flood.extend((1..=6).map(|number| line(number, &format!("b{number}"))));
+        Scripted {
+            whole: true,
+            ..Scripted::new(vec![
+                Heard::default(),
+                says(vec![line(0, "50%")]),
+                says(vec![redrawn(0, "60%")]),
+                holds(vec![], &[(0, Reason::Volatile)]),
+                says(flood),
+            ])
+        }
     };
     assert_eq!(violations(&stream, &mut script("70%")), []);
     assert_eq!(
@@ -1844,7 +1844,7 @@ fn a_line_whose_start_left_the_history_grows_from_what_is_left() {
 #[test]
 fn a_review_position_is_not_judged_where_the_history_was_erased() {
     // Erasing the history looks like the alternate screen opening, where
-    // the review position goes to the caret (section 5.8).
+    // the review position goes to the caret ("Screens").
     let lines = "a\r\nb\r\nc\r\nd\r\ne\r\nf";
     let reviewed = |second: Op| {
         let mut reader = Scripted::new(vec![

@@ -1,5 +1,5 @@
 //! A simulated terminal for Verbatim's tests (`docs/design/terminal-model.md`,
-//! section 9): a VT emulator whose rows carry identities through scrolls,
+//! "Testing"): a VT emulator whose rows carry identities through scrolls,
 //! rotation and clears, answering the questions Verbatim's read program
 //! asks of a terminal's UI Automation provider as the console host or
 //! Windows Terminal does. Its answers are checked against the real
@@ -210,7 +210,7 @@ impl Terminal {
 /// line's padded length is a whole number of rows, so the width is the
 /// narrowest line's, leaving out the last line, which Windows Terminal cuts
 /// one cell short when it is the buffer's last row
-/// (`docs/design/terminal-model.md`, section 2.1).
+/// (`docs/design/terminal-model.md`, "The terminals").
 #[must_use]
 pub fn screen_rows(screen: &str) -> u32 {
     let lines: Vec<&str> = screen

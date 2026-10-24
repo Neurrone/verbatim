@@ -1,7 +1,8 @@
-//! The oracle (`docs/design/terminal-model.md`, section 9): invariants over
+//! The oracle (`docs/design/terminal-model.md`, "Testing"): invariants over
 //! the simulated terminal's ground truth that any reader of terminals must
 //! keep, whatever the stream did, checked over random streams, every short
-//! stream of a small alphabet, and the recorded corpus.
+//! stream of a small alphabet, and the recorded corpus. The oracle judges;
+//! it never drives a rule.
 //!
 //! A reader implements [`Reader`]: it chooses each read's [`Query`], is
 //! given what the read answered, and reports what it would say and what it
@@ -22,71 +23,54 @@
 //! since a reader chooses where its reads start. A line is new at a read
 //! on the main screen when no earlier read showed a line with its text,
 //! anywhere on the main screen or in what the read showed of the alternate
-//! screen, which a reader cannot always tell from the main one (section
-//! 5.8), leaving out the rows of only spaces at its start, which show
-//! nothing (the console host joins a row filled with spaces to the line
-//! below it). A line whose start left a full history
-//! (the buffer's first row continuing a line rotated out) is new only when
-//! its text ends no line shown before. A line whose start is above the
-//! read's first row is reported by naming the read's first row, with the
-//! text of its part in the read; it is new or not by its whole text.
+//! screen, which a reader cannot always tell from the main one ("Screens"),
+//! leaving out the rows of only spaces at its start, which show nothing
+//! (the console host joins a row filled with spaces to the line below it).
+//! A line whose start left a full history (the buffer's first row
+//! continuing a line rotated out) is new only when its text ends no line
+//! shown before. A line whose start is above the read's first row is
+//! reported by naming the read's first row, with the text of its part in
+//! the read; it is new or not by its whole text.
 //!
-//! A line's place is its first row's row on the screen, counted from the
-//! screen's top (negative in the history). The premises that speak of "the
-//! row", and what was reported of a line that is not new, compare a line
-//! with the line its row was in at the last read on the main screen: a row
-//! the buffer held then is followed to where it was, its coordinate moved
-//! down by the rows the buffer discarded from its front since, rotated out
-//! of a full history or erased with the history, as a reader follows it by
-//! the coordinates the providers report and the rotation it measures
-//! (section 4.3), so it stays with its row as the history grows, rotates or
-//! is erased; a row written since is compared with the line at its place,
-//! since a reader sees only the screen there. This is ground truth of
-//! where rows went, not a row's identity. A line is also followed through
-//! a move with its neighbours, judged by text alone, as a reader's
-//! alignment finds a block of rows moved by the same distance (section
-//! 4.3, items 3 and 6): a row with text moved when its text is on exactly
-//! one row of the main screen at the last read and at this one, at other
-//! coordinates than following by the history alone gives. A line whose
-//! first row moved is followed to where that row was; and a line whose
-//! place by the history alone had no text at the last read, or text that
-//! moved, and whose nearest row with text above it, or below its last
-//! row, over rows blank in both reads, moved by some distance, is followed
-//! by the same distance when a line with text started there at the last
-//! read and the rows between were blank then too, as a footer's status
-//! row that changed as output above it pushed the footer down a row, or a
-//! row that changed while the rows of a scroll region moved up. A line
-//! rewritten where it was is never followed by its neighbours' move, so a
-//! header stays put while the scroll region below it moves. Where a line
-//! changed from one text to another moves with the line, so a row's
-//! volatility moves with it, and only with it. A row's text is its
-//! text with the padding after a line's end left out, so a row that wraps
-//! onto the next keeps the spaces at its end (section 5.12).
-//!
-//! A line no longer shown as often as the last read on the main screen
-//! showed it has vanished: it was replaced, erased or moved away. Each
-//! vanished line justifies one change, a redrawn row's speech, a spinner or
-//! an unfinished word, matched one to one with the most claims justified.
+//! A reason is accepted when any explanation consistent with what the
+//! reads showed makes it true (principle 5). Rows of the history keep their
+//! text and move only by the rotation, while a program may write any text
+//! on any row of the screen and move the screen's rows anywhere, so an
+//! explanation is a rotation that keeps every row the last read showed
+//! above its screen where the read now shows it with its text, and any
+//! pairing of the screen's rows. The smallest such rotation, which keeps
+//! the most of the last read in the buffer, places a line at the last read
+//! on the main screen: its first row's coordinate now plus that rotation.
+//! A line of the last read that this rotation does not take out of the
+//! buffer and that is no longer shown as often has vanished: it was
+//! replaced, erased or moved away, and under some pairing it is the row a
+//! new line was written over. Each vanished line justifies one change, a
+//! redrawn row's speech, a spinner, an unfinished word or a volatile row,
+//! matched one to one with the most claims justified. A line's place is
+//! its first row's row on the screen, counted from the screen's top
+//! (negative in the history). A row's text is its text with the padding
+//! after a line's end left out, so a row that wraps onto the next keeps the
+//! spaces at its end ("Rows").
 //!
 //! The invariants, as checked:
 //!
 //! - Every silence is accounted for. Every new line is, at that read,
 //!   reported with its new text (see [`Spoken`] for what each report must
-//!   say) or withheld with a [`Reason`] whose premise is true (see
-//!   [`Reason`] for each). A hold is then resolved, before the last read is
-//!   checked, by a report at the same or a later read that says the held
-//!   text's line (a
-//!   line, a summary's count, growth that completes it, or a redrawn row's
-//!   speech covering its change from the text its place had before the
-//!   hold, or the held line spoken as last read covering that change after
-//!   it left the read), or by the held text being replaced on the main
-//!   screen, written over, erased or deleted, or by the alternate screen coming up without
-//!   it; the row leaving a full history as it rotates, or a report
-//!   merely naming the row, resolves nothing. Lines written and erased between two
-//!   reads, and lines that left a full history or a scroll region between
-//!   two reads, are never shown to a read, so nothing accounts for them.
-//!   A reason given for a line that is not new is not checked, since such a
-//!   line needs none, and nothing is checked on the alternate screen.
+//!   say) or withheld with a [`Reason`] whose premise some consistent
+//!   explanation makes true (see [`Reason`] for each). A hold is then
+//!   resolved, before the last read is checked, by a report at the same or
+//!   a later read that says the held text's line (a line, a summary's
+//!   count, growth that completes it, or a redrawn row's speech covering
+//!   its change from the vanished line it was matched to, or the held line
+//!   spoken as last read covering that change after it left the read), or
+//!   by its text being replaced while unreported: no line on the main
+//!   screen shows it any more, or the alternate screen came up without it.
+//!   A report merely naming the row resolves nothing. Lines written and
+//!   erased between two reads, and lines that left a full history or a
+//!   scroll region between two reads, are never shown to a read, so nothing
+//!   accounts for them. A reason given for a line that is not new is not
+//!   checked, since such a line needs none, and nothing is checked on the
+//!   alternate screen.
 //! - A line is reported once while its text stays on the screen: a line or
 //!   a summary's count is repeated when as many lines with its text were
 //!   reported, at reads that each showed at least that many, as the read
@@ -105,7 +89,7 @@
 //!   of two reads in a row, a reader that reports where rows went maps it
 //!   to the row with that text, unless the screen switched between them.
 //!   A switch is the alternate screen opening or closing, or what a reader
-//!   cannot tell from one (section 5.8): the history going away, so the
+//!   cannot tell from one ("Screens"): the history going away, so the
 //!   screen starts at the document's start, or coming back after that.
 //! - Padding is never reported: a report that matches the read only with
 //!   the spaces after a line's last character is told apart from one that
@@ -131,7 +115,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
 
 use crate::conformance::{Chunk, Stream};
-use crate::{Flavor, Query, Refused, RowId, RowsRead, Snapshot, Terminal};
+use crate::{Flavor, Query, Refused, RowId, Snapshot, Terminal};
 
 /// A row of a read as it truly is: its identity, its text as the read
 /// gives it (padding included), and whether its line wraps onto the next.
@@ -200,55 +184,54 @@ pub enum Spoken {
         rows: Range<usize>,
     },
     /// A line held at an earlier read that left the read before it was
-    /// spoken, as when a flood pushed it out of a full history, spoken as
-    /// it was last read (`docs/design/terminal-model.md`, section 4.3, item
-    /// 5). It names no row; it resolves a hold still unresolved whose
-    /// change from what its row had before the hold it covers, and with
-    /// none, it must be the end of a line an earlier read showed.
+    /// spoken, spoken as it was last read. It names no row; it resolves a
+    /// hold still unresolved whose change from the vanished line it was
+    /// matched to it covers, and with none, it must be the end of a line an
+    /// earlier read showed.
     Held {
         /// What is spoken.
         text: String,
     },
 }
 
-/// Why a reader withholds a new line, each the silence of a rule of
-/// `docs/design/terminal-model.md`, sections 4 and 5, with the premise the
-/// oracle checks against the ground truth. Two are holds, which the same or
-/// a later read must resolve (see the module's documentation), the last read,
-/// taken after the quiet period, included.
+/// Why a reader withholds a new line, each the silence of a reading rule
+/// of `docs/design/terminal-model.md`, with the premise the oracle checks,
+/// accepted when some explanation consistent with the reads makes it true
+/// (see the module's documentation). Two are holds, which the same or a
+/// later read must resolve, the last read, taken after the quiet period,
+/// included.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
     /// A hold: a volatile row is not spoken while it changes, and is
-    /// spoken once it settles (section 5.4). Premise: the line starting at
-    /// its row at the last read on the main screen had other text, and at
-    /// an earlier read the line there had changed from one text to another
-    /// too, the row followed to where it was, through the history's growth
-    /// and rotation and through moves with its neighbours, at each read
-    /// since (see the module's documentation).
+    /// spoken once it settles ("Volatile rows"). Premise: the row changed
+    /// at an earlier read and changes again under some consistent pairing:
+    /// a vanished line's text is one that appeared at an earlier read on
+    /// the main screen while a line vanished there, so that it could be
+    /// that line's row changed; each vanished line justifies one claim.
     Volatile,
     /// A hold: a growing line's unfinished last word waits for the line to
-    /// grow past it, the cursor to leave, or the quiet period (section
-    /// 5.3). Premise: the line grew: a line of the last read on the main
-    /// screen whose text begins this one's and is shorter is no longer
-    /// shown as often, each such line justifying one claim.
+    /// grow past it, the cursor to leave, or the quiet period ("Growing
+    /// lines"). Premise: the line grew: a vanished line's text begins this
+    /// one's and is shorter, each such line justifying one claim.
     UnfinishedWord,
     /// A hold: a row a key changed away from the caret waits while keys
-    /// keep coming, and is spoken once they pause (section 5.7). Premise: a
+    /// keep coming, and is spoken once they pause ("Held for keys"). Premise: a
     /// key was pressed; the oracle's streams press none, so this premise is
     /// never true yet.
     HeldForKeys,
-    /// A spinner's symbol replaced alone is silent (section 5.4). Premise:
-    /// a line of the last read on the main screen that is no longer shown
-    /// as often differs from this one in exactly one character, neither the
-    /// old nor the new one a letter or a digit, so a counter's tick is not
-    /// a spinner; each such line justifies one claim.
+    /// A spinner's symbol replaced alone is silent ("Changed rows").
+    /// Premise: a vanished line differs from this one in exactly one
+    /// character, neither the old nor the new one a letter or a digit, so a
+    /// counter's tick is not a spinner; each such line justifies one
+    /// claim.
     Spinner,
     /// A row that only lost text is silent, as a list entry that lost its
-    /// marker or a wrapped line whose last row was erased (section 5.7).
-    /// Premise: compared without spaces, the line covering its row at the
-    /// last read on the main screen, followed to where it was (see the
-    /// module's documentation), or a vanished line, as when a line is split
-    /// in two, contains this one's text and is longer. What was reported of
+    /// marker or a wrapped line whose last row was erased ("New text").
+    /// Premise: the row shows a part of what an earlier read showed there:
+    /// compared without spaces, the line covering its row at the last read
+    /// on the main screen, placed by the smallest consistent rotation (see
+    /// the module's documentation), or a vanished line, as when a line is
+    /// split in two, contains this one's text and is longer. What was reported of
     /// each such longer line is what was said of this one, kept while a
     /// line with its text is shown: when the line gains text again, the
     /// text it gets back is not new, so a redrawn row's speech or growth
@@ -256,15 +239,37 @@ pub enum Reason {
     /// what was said of it.
     LostText,
     /// The caret's row showing characters the user typed, which typing
-    /// echo speaks (section 5.5). Premise: a key was typed; the oracle's
+    /// echo speaks ("Typing echo"). Premise: a key was typed; the oracle's
     /// streams type none, so this premise is never true yet.
     HeldTyping,
     /// The row's change is a key's answer, spoken as that key's answer or
     /// silent by the rules for keys, such as the text Control+W erased
-    /// (sections 5.5 and 5.7). Premise: a key reached the program within
+    /// ("A key's answer"). Premise: a key reached the program within
     /// the key's window before the read; the oracle's streams press none,
     /// so this premise is never true yet.
     KeyAnswer,
+    /// A limit ("Limits"): text erased and written back within the time a
+    /// gone row lingers is silent, wherever it comes back on the screen,
+    /// as a wrapped line's last row printed again as a line of its own.
+    /// Precondition: compared without spaces, the line's text is a part of
+    /// a line an earlier read showed on the main screen that vanished at a
+    /// read since.
+    WrittenBack,
+}
+
+/// A case `docs/design/terminal-model.md` lists under "Limits", which a
+/// reader states at a read for the oracle to accept what it causes there,
+/// and only when the limit's precondition holds in the ground truth.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Limit {
+    /// A screen that shows no text is taken for a program between its
+    /// clear and its reprint, so a screen a program really left blank is not
+    /// noticed until text appears on it ("A read with no text"). The new
+    /// lines of the read, such as those a clear pushed into the history,
+    /// need not be reported at it, but are reported at the first later read
+    /// whose screen shows text, unless their text was replaced by then.
+    /// Precondition: no row of the read's main screen shows text.
+    BlankScreen,
 }
 
 /// A line a reader withholds at a read, and why.
@@ -291,6 +296,8 @@ pub struct Heard {
     /// counted from the read's first row, negative above it in the
     /// history; `None` when it has none.
     pub review: Option<isize>,
+    /// The listed limits the reader states at this read.
+    pub limits: Vec<Limit>,
 }
 
 /// A reader's answer to a read.
@@ -299,16 +306,10 @@ pub enum Reply {
     /// What it would say.
     Heard(Heard),
     /// Read again at once with this query, before anything more is
-    /// written, as a reader reads the whole text when its last screen is
-    /// not in the read (`docs/design/terminal-model.md`, section 4.2), or
-    /// when only the whole text tells how far a full history rotated
-    /// (section 4.3, item 5).
+    /// written, as a reader reads the whole document when the read keeps
+    /// no row of its last read (`docs/design/terminal-model.md`, "The
+    /// read").
     Again(Query),
-    /// Read these runs of rows by their place, each `(above, rows)` from
-    /// above the query's start ([`Terminal::rows_above`]), and give them to
-    /// [`Reader::rows`], as a reader checks a rotation whose block lies
-    /// above its read (section 4.3, item 5).
-    Rows(Vec<(u32, u32)>),
 }
 
 /// A reader of terminals under test: given each read's snapshot and its
@@ -319,17 +320,6 @@ pub trait Reader {
 
     /// One read's answer, and what the reader makes of it.
     fn read(&mut self, read: &Result<Snapshot, Refused>) -> Reply;
-
-    /// The rows a [`Reply::Rows`] asked for, and what the reader makes of
-    /// the read it asked them for.
-    ///
-    /// # Panics
-    ///
-    /// Unless the reader asks for rows by their place, which by default it
-    /// does not.
-    fn rows(&mut self, rows: &Result<RowsRead, Refused>) -> Reply {
-        panic!("this reader asks for no rows by their place, but was given {rows:?}")
-    }
 
     /// The quiet period has passed since the last write, longer than any
     /// hold waits, and nothing more will be written: the read that follows
@@ -393,7 +383,7 @@ impl Run {
 /// # Panics
 ///
 /// When the reader asks to read again more than [`AGAIN_LIMIT`] times at
-/// one point, which no reader needs.
+/// one point.
 pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader) -> Run {
     let mut gone = (0, 0);
     let mut reads = vec![read(terminal, reader, &mut gone)];
@@ -406,10 +396,10 @@ pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader
     Run { reads }
 }
 
-/// The most times a reader may ask to read again at one point, rows by
-/// their place included: Verbatim's reader asks at most twice, for rows by
-/// their place and then the whole document.
-pub const AGAIN_LIMIT: usize = 16;
+/// The most times a reader may ask to read again at one point: a change
+/// costs at most two reads, the second of the whole document
+/// (`docs/design/terminal-model.md`, "The read").
+pub const AGAIN_LIMIT: usize = 1;
 
 /// One read of `terminal` by `reader`, taken again as often as the reader asks;
 /// `gone` counts the rows the main buffer rotated out, and those it erased
@@ -422,20 +412,7 @@ fn read(terminal: &Terminal, reader: &mut dyn Reader, gone: &mut (usize, usize))
             Ok((snapshot, start, rows)) => (Ok(snapshot), start, rows),
             Err(refused) => (Err(refused), 0, Vec::new()),
         };
-        let mut reply = reader.read(&snapshot);
-        while let Reply::Rows(runs) = &reply {
-            again += 1;
-            assert!(
-                again <= AGAIN_LIMIT,
-                "the reader asked to read again more than {AGAIN_LIMIT} times at one point"
-            );
-            let start = query
-                .start
-                .expect("rows by their place are read from a start");
-            reply = reader.rows(&terminal.rows_above(start, runs));
-        }
-        match reply {
-            Reply::Rows(_) => unreachable!("rows by their place are answered above"),
+        match reader.read(&snapshot) {
             Reply::Heard(heard) => {
                 let grid = terminal.grid();
                 let left = grid.main.rotated[gone.0..].to_vec();
@@ -576,6 +553,13 @@ pub enum Violation {
         /// The row the reader named, counted from the read's first row.
         row: isize,
     },
+    /// A limit was stated at a read where its precondition is false.
+    FalseLimit {
+        /// The read.
+        read: usize,
+        /// The limit stated.
+        limit: Limit,
+    },
 }
 
 /// The line starting at `row`: its rows' text, joined while each wraps
@@ -613,8 +597,6 @@ struct Line {
 #[derive(Clone, Debug, Default)]
 struct Lines {
     list: Vec<Line>,
-    /// The line starting at each place.
-    at: HashMap<isize, usize>,
     /// The lines with each text.
     texts: HashMap<String, Vec<usize>>,
 }
@@ -666,18 +648,12 @@ impl Lines {
             }
             first = at + 1;
         }
-        let at = lines
-            .iter()
-            .enumerate()
-            .map(|(number, line)| (line.place, number))
-            .collect();
         let mut texts: HashMap<String, Vec<usize>> = HashMap::new();
         for (number, line) in lines.iter().enumerate() {
             texts.entry(line.text.clone()).or_default().push(number);
         }
         Self {
             list: lines,
-            at,
             texts,
         }
     }
@@ -692,13 +668,6 @@ impl Lines {
             .filter(|&number| self.list[number].rows.contains(&coordinate))
     }
 
-    /// The text of the line starting at `place`.
-    fn text_at(&self, place: isize) -> Option<&str> {
-        self.at
-            .get(&place)
-            .map(|&number| self.list[number].text.as_str())
-    }
-
     /// The line whose rows cover `place`.
     fn covering(&self, place: isize) -> Option<usize> {
         let number = self
@@ -708,12 +677,6 @@ impl Lines {
         let line = &self.list[number];
         let end = line.place + isize::try_from(line.rows.len()).unwrap_or(isize::MAX);
         (place < end).then_some(number)
-    }
-
-    /// Whether a line with text starts at coordinate `coordinate`.
-    fn starts_at(&self, coordinate: usize) -> bool {
-        self.holding(coordinate)
-            .is_some_and(|number| self.list[number].rows.start == coordinate)
     }
 
     /// How many lines have `text`.
@@ -731,14 +694,11 @@ impl Lines {
 struct Hold {
     read: usize,
     row: usize,
-    /// The identity of the line's first row, to know whether it left the
-    /// buffer.
-    first: RowId,
     text: String,
-    /// The text the line's row had at the last read on the main screen
-    /// before the hold, followed to where it was, which a redrawn row's
-    /// speech resolving it covers the change from.
-    before: Option<String>,
+    /// The vanished lines the hold could be a change of, under some
+    /// pairing, one of which a redrawn row's speech resolving it covers the
+    /// change from.
+    befores: Vec<String>,
     reason: Reason,
 }
 
@@ -747,14 +707,14 @@ struct Check<'a> {
     reads: &'a [Observation],
     /// Whether the main screen's history went away, as when the alternate
     /// screen opens or the history is erased, which a reader cannot tell
-    /// apart (`docs/design/terminal-model.md`, section 5.8), and has not
+    /// apart (`docs/design/terminal-model.md`, "Screens"), and has not
     /// come back.
     aside: bool,
     /// Each read's lines; `None` for a read on the alternate screen.
     lines: Vec<Option<Rc<Lines>>>,
     /// The lines the last read showed on the alternate screen, when it was
     /// up and no read showed the switch to it, since the main screen had no
-    /// history: a reader cannot tell it from the main screen (section 5.8),
+    /// history: a reader cannot tell it from the main screen ("Screens"),
     /// so the next read is judged against it.
     alternate: Option<Rc<Lines>>,
     /// Every text a line had at the reads checked so far: on the main
@@ -768,30 +728,26 @@ struct Check<'a> {
     /// For each text, how many lines with it were reported while it stayed
     /// on the main screen.
     covered: HashMap<String, usize>,
-    /// Where the line changed from one text to another at a read checked
-    /// so far: its first row's coordinate plus the rows the main buffer had
-    /// discarded from its front by that read, which stays with the row as
-    /// the history grows, rotates or is erased.
-    changed: HashSet<usize>,
-    /// The lines of the read checked that moved with their neighbours since
-    /// the last read on the main screen (see the module's documentation):
-    /// each line's first row's coordinate, and the coordinate it is
-    /// followed to at that read.
-    block: HashMap<usize, usize>,
-    /// The rows of the last read on the main screen with each text that is
-    /// on exactly one of its rows.
-    unique_last: HashMap<&'a str, usize>,
+    /// The texts that appeared at a read on the main screen checked so far
+    /// while a line vanished there: under some pairing, a row that changed
+    /// to that text (see [`Reason::Volatile`]).
+    changes: HashSet<String>,
+    /// The smallest rotation consistent with the history the last read on
+    /// the main screen showed and the read checked (see the module's
+    /// documentation); 0 when the last read is the alternate screen's.
+    rotation: usize,
     /// What was said of each text of a line withheld as having lost text,
     /// while a line with that text is shown (see [`Reason::LostText`]).
     lost: HashMap<String, Vec<String>>,
+    /// The texts of the lines that vanished at a read on the main screen
+    /// checked so far, without spaces (see [`Reason::WrittenBack`]).
+    erased: HashSet<String>,
     /// The rows the main buffer rotated out up to the read checked.
     rotated: HashSet<RowId>,
-    /// How many rows the main buffer discarded from its front, rotated out
-    /// or erased with the history, up to the read checked.
-    discarded: usize,
-    /// How many it had discarded up to the last read on the main screen.
-    discarded_at_last: usize,
     holds: Vec<Hold>,
+    /// The new lines a read left unreported under [`Limit::BlankScreen`]:
+    /// the read, the coordinate of the line's first row, and its text.
+    deferred: Vec<(usize, usize, String)>,
     violations: Vec<Violation>,
 }
 
@@ -839,89 +795,6 @@ impl Check<'_> {
         self.alternate
             .as_deref()
             .or_else(|| self.last.and_then(|last| self.lines[last].as_deref()))
-    }
-
-    /// The lines of read `index`, on the main screen, that moved with their
-    /// neighbours since the last read on the main screen, as
-    /// [`Check::block`] holds them (see the module's documentation).
-    fn block_moves(&self, index: usize, unique: &HashMap<&str, usize>) -> HashMap<usize, usize> {
-        let mut block = HashMap::new();
-        let Some(last) = self.last.filter(|_| self.alternate.is_none()) else {
-            return block;
-        };
-        let (old, new) = (&self.reads[last].main, &self.reads[index].main);
-        let (old_lines, new_lines) = (self.lines_of(last), self.lines_of(index));
-        let signed = |at: usize| isize::try_from(at).unwrap_or(isize::MAX);
-        // Following by the history alone: the coordinate at the last read is
-        // this read's moved down by the rows discarded since.
-        let history = signed(self.discarded - self.discarded_at_last);
-        // How far a row with text moved, as its coordinate at the last read
-        // less its coordinate now, when its text is on exactly one row of
-        // each read and it moved otherwise than by the history alone.
-        let moved = |row: usize| {
-            let text = row_text(new, row);
-            unique.get(text)?;
-            let &then = self.unique_last.get(text)?;
-            let by = signed(then) - signed(row);
-            (by != history).then_some(by)
-        };
-        // The row of the last read `by` from `row`, when it is one.
-        let then = |row: usize, by: isize| {
-            usize::try_from(signed(row) + by)
-                .ok()
-                .filter(|&then| then < old.len())
-        };
-        let blank_then = |rows: Range<usize>, by: isize| {
-            rows.into_iter()
-                .all(|row| then(row, by).is_some_and(|then| row_text(old, then).is_empty()))
-        };
-        // Whether the row of the last read at `row` by the history alone
-        // left that place: it had no text, or its text moved.
-        let vacated = |row: usize| {
-            then(row, history).is_none_or(|then| {
-                let text = row_text(old, then);
-                text.is_empty()
-                    || (self.unique_last.contains_key(text)
-                        && unique
-                            .get(text)
-                            .is_some_and(|&now| signed(now) + history != signed(then)))
-            })
-        };
-        for line in &new_lines.list {
-            let start = line.rows.start;
-            // The nearest row with text above the line, over blank rows.
-            let above = || {
-                let above = (0..start)
-                    .rev()
-                    .find(|&row| !row_text(new, row).is_empty())?;
-                let by = moved(above)?;
-                blank_then(above + 1..start, by).then_some(by)
-            };
-            // The nearest row with text below the line's last row, over
-            // blank rows, and the rows between it and the end of the line
-            // that started where this line's first row was.
-            let below = || {
-                let below =
-                    (line.rows.end..new.len()).find(|&row| !row_text(new, row).is_empty())?;
-                let by = moved(below)?;
-                let was = old_lines.holding(then(start, by)?)?;
-                let end = old_lines.list[was].rows.end;
-                let below_then = then(below, by)?;
-                (below_then >= end && (end..below_then).all(|row| row_text(old, row).is_empty()))
-                    .then_some(by)
-            };
-            // A line rewritten where it was is not followed by its
-            // neighbours' move.
-            let by =
-                moved(start).or_else(|| vacated(start).then(|| above().or_else(below)).flatten());
-            if let Some(by) = by
-                && let Some(then) = then(start, by)
-                && old_lines.starts_at(then)
-            {
-                block.insert(start, then);
-            }
-        }
-        block
     }
 
     /// Whether `said`, speech of a redrawn row now showing `text`, says
@@ -998,18 +871,13 @@ impl Check<'_> {
 
     /// The coordinate at the last read on the main screen of the first row
     /// of `line`, a line of the read checked, when the buffer held that row
-    /// then: its coordinate moved down by the rows the buffer discarded
-    /// from its front since, rotated out or erased with the history, which
-    /// is where the row was, as a reader follows it by the coordinates the
-    /// providers report and the rotation it measures (section 4.3), or
-    /// where it was before it moved with its neighbours. `None` for a row
-    /// written since, and when the last read is the alternate screen's.
+    /// then under the smallest consistent rotation (see the module's
+    /// documentation): its coordinate now plus that rotation. `None` when
+    /// that is past the last read's rows, and when the last read is the
+    /// alternate screen's.
     fn held_at_last(&self, line: &Line) -> Option<usize> {
         let last = self.last.filter(|_| self.alternate.is_none())?;
-        if let Some(&then) = self.block.get(&line.rows.start) {
-            return Some(then);
-        }
-        let then = line.rows.start + (self.discarded - self.discarded_at_last);
+        let then = line.rows.start + self.rotation;
         (then < self.reads[last].main.len()).then_some(then)
     }
 
@@ -1025,21 +893,6 @@ impl Check<'_> {
                     - isize::try_from(self.reads[last].screen_top).unwrap_or(isize::MAX)
             }
             _ => line.place,
-        }
-    }
-
-    /// The key in `changed` of the row `line`, a line of the read checked,
-    /// is compared with at the last read on the main screen: the row there
-    /// at its place, followed (see [`Check::followed`]), or the line
-    /// itself when the last read is the alternate screen's.
-    fn followed_key(&self, line: &Line) -> usize {
-        match self.last.filter(|_| self.alternate.is_none()) {
-            Some(last) => {
-                let top = isize::try_from(self.reads[last].screen_top).unwrap_or(isize::MAX);
-                usize::try_from(self.followed(line) + top)
-                    .map_or(usize::MAX, |then| then + self.discarded_at_last)
-            }
-            None => line.rows.start + self.discarded,
         }
     }
 
@@ -1102,13 +955,12 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
         last: None,
         heard: Vec::new(),
         covered: HashMap::new(),
-        changed: HashSet::new(),
-        block: HashMap::new(),
-        unique_last: HashMap::new(),
+        changes: HashSet::new(),
+        rotation: 0,
         lost: HashMap::new(),
+        erased: HashSet::new(),
         rotated: HashSet::new(),
-        discarded: 0,
-        discarded_at_last: 0,
+        deferred: Vec::new(),
         aside: false,
         alternate: None,
         holds: Vec::new(),
@@ -1138,7 +990,6 @@ fn check_read(check: &mut Check, index: usize) {
     let reads = check.reads;
     let read = &reads[index];
     check.rotated.extend(read.rotated.iter().copied());
-    check.discarded += read.rotated.len() + read.erased;
     let main = check.lines[index].is_some();
     let mut state = ReadState {
         new: Vec::new(),
@@ -1149,10 +1000,11 @@ fn check_read(check: &mut Check, index: usize) {
         lost: Vec::new(),
         latest: 0,
     };
-    check.block.clear();
     if main {
-        let unique = unique_rows(&read.main);
-        check.block = check.block_moves(index, &unique);
+        check.rotation = match (&check.alternate, check.last) {
+            (None, Some(last)) => smallest_rotation(&reads[last], read),
+            _ => 0,
+        };
         let lines = check.shared(index);
         for line in &lines.list {
             let new = check.is_new(line);
@@ -1196,7 +1048,6 @@ fn check_read(check: &mut Check, index: usize) {
         }
         check_changes(check, index, &mut state);
         finish_main(check, index, &state);
-        check.unique_last = unique;
     } else {
         // While the alternate screen is up the main screen's lines are not
         // on the screen, but those the alternate screen also shows.
@@ -1208,7 +1059,7 @@ fn check_read(check: &mut Check, index: usize) {
         // screen, so a hold whose text it does not show is resolved.
         check.holds.retain(|hold| shown.contains_key(&hold.text));
         // What the alternate screen shows counts as shown: a reader cannot
-        // always tell the screens apart (section 5.8), so a line it showed
+        // always tell the screens apart ("Screens"), so a line it showed
         // here that a program prints again on the main screen is not new.
         check.shown.extend(alternate_keys(&read.rows));
         // With no history on the main screen no read shows the switch, so
@@ -1319,15 +1170,14 @@ fn alternate_keys(rows: &[Seen]) -> Vec<String> {
 
 /// The holds a report at read `index` or the main screen's text resolves:
 /// a report said the held text's line (a redrawn row's speech covering its
-/// change from the text its place had before the hold), or no line has the
-/// held text and its row did not leave the buffer as the full history
-/// rotated, which takes it away with its text; a row written over, erased
-/// or deleted had its text replaced.
+/// change from the vanished line the hold was matched to), or no line has
+/// the held text any more: it was replaced while unreported, written over,
+/// erased or deleted, which some consistent explanation makes of a row that
+/// left a full history too.
 fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
     let lines = check.lines[index]
         .as_ref()
         .expect("a read on the main screen");
-    let rotated = &check.rotated;
     let said: HashSet<&str> = lines
         .list
         .iter()
@@ -1340,13 +1190,12 @@ fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
             let line = &lines.list[*number].text;
             *line == hold.text
                 && hold
-                    .before
-                    .as_ref()
-                    .is_some_and(|before| before != line && covers_change(before, line, text))
+                    .befores
+                    .iter()
+                    .any(|before| before != line && covers_change(before, line, text))
         });
-        let resolved = said.contains(hold.text.as_str())
-            || redrawn
-            || (lines.count(&hold.text) == 0 && !rotated.contains(&hold.first));
+        let resolved =
+            said.contains(hold.text.as_str()) || redrawn || lines.count(&hold.text) == 0;
         !resolved
     });
 }
@@ -1355,32 +1204,65 @@ fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
 /// screen is checked against.
 fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
     let lines = check.shared(index);
-    for (number, line) in lines.list.iter().enumerate() {
-        if state.new[number] && !state.accounted[number] {
-            check.violations.push(Violation::Missed {
-                read: index,
-                coordinate: line.rows.start,
-                text: line.text.clone(),
-            });
+    let read = &check.reads[index];
+    let blank = read.heard.limits.contains(&Limit::BlankScreen);
+    let screen_text = read.main[read.screen_top.min(read.main.len())..]
+        .iter()
+        .any(|seen| !seen.text.trim_end().is_empty());
+    if blank && screen_text {
+        check.violations.push(Violation::FalseLimit {
+            read: index,
+            limit: Limit::BlankScreen,
+        });
+    }
+    // The first read whose screen shows text after a blank screen notices
+    // what the blank screen hid: each line left unreported is reported now,
+    // or its text was replaced.
+    if screen_text {
+        for (read, coordinate, text) in std::mem::take(&mut check.deferred) {
+            let reported = lines
+                .with(&text)
+                .iter()
+                .any(|&number| state.said[number]);
+            if lines.count(&text) > 0 && !reported {
+                check.violations.push(Violation::Missed {
+                    read,
+                    coordinate,
+                    text,
+                });
+            }
         }
     }
-    // Where a line changed moves with a line that moved with its
-    // neighbours, and the row it moved to keeps only that line's.
-    let moves: Vec<(usize, usize)> = check
-        .block
-        .iter()
-        .map(|(&now, &then)| (then + check.discarded_at_last, now + check.discarded))
-        .collect();
-    let carried: Vec<usize> = moves
-        .iter()
-        .filter(|(then, _)| check.changed.contains(then))
-        .map(|&(_, now)| now)
-        .collect();
-    for (then, now) in &moves {
-        check.changed.remove(then);
-        check.changed.remove(now);
+    for (number, line) in lines.list.iter().enumerate() {
+        if state.new[number] && !state.accounted[number] {
+            if blank {
+                check
+                    .deferred
+                    .push((index, line.rows.start, line.text.clone()));
+            } else {
+                check.violations.push(Violation::Missed {
+                    read: index,
+                    coordinate: line.rows.start,
+                    text: line.text.clone(),
+                });
+            }
+        }
     }
-    check.changed.extend(carried);
+    // A blank screen is not noticed: the next read is judged against the
+    // read before it, as the reader aligns it, though what it showed counts
+    // as shown.
+    if blank && !screen_text {
+        check
+            .shown
+            .extend(lines.list.iter().map(|line| line.key.clone()));
+        return;
+    }
+    // The lines that vanished, whose text may be written back.
+    let erased: Vec<String> = vanished(check, &lines)
+        .iter()
+        .map(|text| without_spaces(text))
+        .collect();
+    check.erased.extend(erased);
     // What was said of a line that lost text is kept while a line with its
     // text is shown.
     check.lost.retain(|text, _| lines.count(text) > 0);
@@ -1391,20 +1273,18 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
             .or_default()
             .extend(said.iter().cloned());
     }
-    let changes: Vec<usize> = match check.last_lines() {
-        Some(last) => lines
-            .list
+    // The texts that appeared while a line vanished: under some pairing,
+    // each is a row that changed.
+    if !vanished(check, &lines).is_empty() {
+        let last = check.last_lines();
+        let appeared: Vec<String> = lines
+            .texts
             .iter()
-            .filter(|line| {
-                last.text_at(check.followed(line))
-                    .is_some_and(|before| before != line.text)
-            })
-            .map(|line| line.rows.start + check.discarded)
-            .collect(),
-        None => Vec::new(),
-    };
-    check.changed.extend(changes);
-    check.discarded_at_last = check.discarded;
+            .filter(|(text, numbers)| numbers.len() > last.map_or(0, |last| last.count(text)))
+            .map(|(text, _)| text.clone())
+            .collect();
+        check.changes.extend(appeared);
+    }
     check
         .shown
         .extend(lines.list.iter().map(|line| line.key.clone()));
@@ -1432,10 +1312,13 @@ fn check_spoken(check: &mut Check, index: usize, spoken: &Spoken, state: &mut Re
     let (row, text) = match spoken {
         Spoken::Held { text } => {
             // The held line itself is reported: what is said covers its
-            // change from what its row had before the hold.
+            // change from a vanished line it could be a change of.
             let held = check.holds.iter().position(|hold| {
                 !text.is_empty()
-                    && covers_change(hold.before.as_deref().unwrap_or_default(), &hold.text, text)
+                    && hold
+                        .befores
+                        .iter()
+                        .any(|before| covers_change(before, &hold.text, text))
             });
             match held {
                 Some(at) => {
@@ -1589,20 +1472,26 @@ enum Claim {
     /// A redrawn row's speech of a new line: the line, the row named, and
     /// what was said.
     Redrawn(usize, usize, String),
-    /// A spinner or an unfinished word withheld, and the line.
+    /// A spinner, an unfinished word or a volatile row withheld, and the
+    /// line.
     Withheld(Withheld, usize),
 }
 
 /// The vanished lines' texts (see the module's documentation), one for
-/// each time a text of the last read on the main screen is no longer shown
-/// in `lines`, a read's.
+/// each time a text of the last read on the main screen, on a line the
+/// smallest consistent rotation leaves in the buffer, is no longer shown
+/// as often in `lines`, a read's.
 fn vanished(check: &Check, lines: &Lines) -> Vec<String> {
     check.last_lines().map_or_else(Vec::new, |last| {
-        let mut texts: Vec<(&String, usize)> = last
-            .texts
-            .iter()
-            .map(|(text, numbers)| (text, numbers.len()))
-            .collect();
+        let mut counts: HashMap<&String, usize> = HashMap::new();
+        for line in &last.list {
+            // On the alternate screen shown in place of the last read the
+            // rows start at the read's first, and nothing rotates.
+            if check.alternate.is_some() || line.rows.start >= check.rotation {
+                *counts.entry(&line.text).or_default() += 1;
+            }
+        }
+        let mut texts: Vec<(&String, usize)> = counts.into_iter().collect();
         texts.sort();
         texts
             .into_iter()
@@ -1626,8 +1515,9 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
         .filter(|(number, _, _)| state.new[*number])
         .map(|(number, row, text)| Claim::Redrawn(*number, *row, text.clone()))
         .collect();
-    // Withholdings judged at once: the withholding, the line, the premise.
-    let mut settled: Vec<(Withheld, usize, bool)> = Vec::new();
+    // Withholdings judged: the withholding, the line, the premise, and the
+    // vanished lines a claim could be a change of.
+    let mut settled: Vec<(Withheld, usize, bool, Vec<String>)> = Vec::new();
     for withheld in &read.heard.withheld {
         let row = withheld.row;
         if !starts_line(&read.rows, row) {
@@ -1644,13 +1534,13 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
             continue;
         }
         let premise = match withheld.reason {
-            Reason::UnfinishedWord | Reason::Spinner => {
+            Reason::UnfinishedWord | Reason::Spinner | Reason::Volatile => {
                 claims.push(Claim::Withheld(*withheld, number));
                 continue;
             }
-            reason => premise(check, &lines, &lines.list[number], reason),
+            reason => premise(check, index, &lines, &lines.list[number], reason),
         };
-        settled.push((*withheld, number, premise));
+        settled.push((*withheld, number, premise, Vec::new()));
     }
     if !claims.is_empty() {
         let vanished = vanished(check, &lines);
@@ -1669,10 +1559,10 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
                         }
                         Claim::Withheld(withheld, number) => {
                             let text = &lines.list[*number].text;
-                            if withheld.reason == Reason::Spinner {
-                                spinner_step(old, text)
-                            } else {
-                                text.len() > old.len() && text.starts_with(old.as_str())
+                            match withheld.reason {
+                                Reason::Spinner => spinner_step(old, text),
+                                Reason::Volatile => check.changes.contains(*old),
+                                _ => text.len() > old.len() && text.starts_with(old.as_str()),
                             }
                         }
                     })
@@ -1681,7 +1571,7 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
             })
             .collect();
         let matched = matching(&edges, vanished.len());
-        for (claim, matched) in claims.into_iter().zip(matched) {
+        for ((claim, matched), slots) in claims.into_iter().zip(matched).zip(&edges) {
             match claim {
                 Claim::Redrawn(number, row, _) => {
                     if matched.is_some() {
@@ -1689,13 +1579,18 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
                     }
                 }
                 Claim::Withheld(withheld, number) => {
-                    settled.push((withheld, number, matched.is_some()));
+                    let befores = slots.iter().map(|&slot| vanished[slot].clone()).collect();
+                    // A line held and said with its new text at the same
+                    // read, by a redrawn row's speech matched to the line
+                    // that vanished, needs no line of its own.
+                    let said = state.said[number] && withheld.reason == Reason::Volatile;
+                    settled.push((withheld, number, matched.is_some() || said, befores));
                 }
             }
         }
     }
     resolve_holds(check, index, state);
-    for (withheld, number, premise) in settled {
+    for (withheld, number, premise, befores) in settled {
         // A line whose silence needs no later report counts as heard
         // whole, so what grows from it is its growth.
         if premise && matches!(withheld.reason, Reason::Spinner | Reason::LostText) {
@@ -1707,41 +1602,37 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
         }
         settle(
             check,
-            index,
-            withheld,
+            (index, withheld),
             &lines.list[number],
-            premise,
+            (premise, befores),
             state.said[number],
         );
     }
 }
 
-/// Whether the premise of `reason`, a reason judged at once, holds for
-/// `line`, a new line of `lines`.
-fn premise(check: &Check, lines: &Lines, line: &Line, reason: Reason) -> bool {
-    let Some(last) = check.last_lines() else {
-        return false;
-    };
+/// Whether the premise of `reason`, a reason judged without a vanished
+/// line matched to it, holds for `line`, a new line of read `index`'s
+/// `lines`: a row that lost text, or text written back; the reasons that
+/// need a key cannot, since the oracle's streams press none.
+fn premise(check: &Check, index: usize, lines: &Lines, line: &Line, reason: Reason) -> bool {
     match reason {
-        // A new line's text differs from what its row had, the row followed
-        // to where it was.
-        Reason::Volatile => {
-            last.text_at(check.followed(line)).is_some()
-                && check.changed.contains(&check.followed_key(line))
-        }
         Reason::LostText => !lost_from(check, lines, line).is_empty(),
-        Reason::UnfinishedWord
-        | Reason::Spinner
-        | Reason::HeldForKeys
-        | Reason::HeldTyping
-        | Reason::KeyAnswer => false,
+        Reason::WrittenBack => {
+            let _ = index;
+            let now = without_spaces(&line.text);
+            check
+                .erased
+                .iter()
+                .any(|erased| erased.len() >= now.len() && erased.contains(&now))
+        }
+        _ => false,
     }
 }
 
 /// What was reported of each line of the last read on the main screen that
 /// `line`, a new line of `lines`, only lost text from: compared without
-/// spaces, the line that covered its row, followed to where it was, or one
-/// no longer shown as often, as the parts of a line split in two, that
+/// spaces, the line that covered its row, placed by the smallest consistent
+/// rotation, or a vanished line, as the parts of a line split in two, that
 /// contains its text and is longer. Empty when it gained or changed text.
 fn lost_from(check: &Check, lines: &Lines, line: &Line) -> Vec<String> {
     let Some(last) = check.last_lines() else {
@@ -1755,11 +1646,16 @@ fn lost_from(check: &Check, lines: &Lines, line: &Line) -> Vec<String> {
     let covering = last
         .covering(check.followed(line))
         .filter(|&number| shorter(&last.list[number].text));
+    let in_buffer =
+        |number: &usize| check.alternate.is_some() || last.list[*number].rows.start >= check.rotation;
     let vanished = last
         .texts
         .iter()
-        .filter(|(before, numbers)| numbers.len() > lines.count(before) && shorter(before))
-        .flat_map(|(_, numbers)| numbers.iter().copied());
+        .filter(|(before, numbers)| {
+            numbers.iter().filter(|number| in_buffer(number)).count() > lines.count(before)
+                && shorter(before)
+        })
+        .flat_map(|(_, numbers)| numbers.iter().copied().filter(in_buffer));
     covering
         .into_iter()
         .chain(vanished)
@@ -1767,16 +1663,16 @@ fn lost_from(check: &Check, lines: &Lines, line: &Line) -> Vec<String> {
         .collect()
 }
 
-/// A withholding at read `index` of `line` whose premise is `premise`: a
-/// violation when false, and a hold to resolve when true, a hold, and the
-/// line not `said` with its new text at the same read, as a reader says a
-/// held row at once when it has scrolled above the screen.
+/// A withholding at read `index` of `line` whose premise is `premise`, with
+/// the vanished lines `befores` it could be a change of: a violation when false,
+/// and a hold to resolve when true, a hold, and the line not `said` with its
+/// new text at the same read, as a reader says a held row at once when it
+/// has scrolled above the screen.
 fn settle(
     check: &mut Check,
-    index: usize,
-    withheld: Withheld,
+    (index, withheld): (usize, Withheld),
     line: &Line,
-    premise: bool,
+    (premise, befores): (bool, Vec<String>),
     said: bool,
 ) {
     if !premise {
@@ -1787,16 +1683,11 @@ fn settle(
             reason: withheld.reason,
         });
     } else if !said && matches!(withheld.reason, Reason::Volatile | Reason::UnfinishedWord) {
-        let before = check
-            .last_lines()
-            .and_then(|last| last.text_at(check.followed(line)))
-            .map(str::to_owned);
         check.holds.push(Hold {
             read: index,
             row: withheld.row,
-            first: line.first,
             text: line.text.clone(),
-            before,
+            befores,
             reason: withheld.reason,
         });
     }
@@ -1838,9 +1729,58 @@ fn matching(edges: &[Vec<usize>], slots: usize) -> Vec<Option<usize>> {
     matched
 }
 
+/// The smallest rotation consistent with the history `last`, a read on the
+/// main screen, showed and `read`, a later one (see the module's
+/// documentation): the fewest rows taken from the buffer's front such that
+/// every row `last` showed above its screen that is still in the buffer is
+/// where `read` shows it now with its text. Rows of the history keep their
+/// text, so this is the longest end of `last`'s history that begins
+/// `read`'s main buffer, found by matching the one against the other once
+/// (Knuth, Morris and Pratt); taking the whole history out always fits.
+fn smallest_rotation(last: &Observation, read: &Observation) -> usize {
+    let history = last.screen_top.min(last.main.len());
+    let mut ids: HashMap<&str, usize> = HashMap::new();
+    let mut id = |text| {
+        let next = ids.len();
+        *ids.entry(text).or_insert(next)
+    };
+    let pattern: Vec<usize> = (0..history.min(read.main.len()))
+        .map(|row| id(row_text(&read.main, row)))
+        .collect();
+    let text: Vec<usize> = (0..history).map(|row| id(row_text(&last.main, row))).collect();
+    if pattern.is_empty() {
+        return history;
+    }
+    // The longest proper start of each start of the pattern that ends it.
+    let mut fail = vec![0; pattern.len()];
+    let mut length = 0;
+    for at in 1..pattern.len() {
+        while length > 0 && pattern[at] != pattern[length] {
+            length = fail[length - 1];
+        }
+        if pattern[at] == pattern[length] {
+            length += 1;
+        }
+        fail[at] = length;
+    }
+    let mut matched = 0;
+    for &row in &text {
+        if matched == pattern.len() {
+            matched = fail[matched - 1];
+        }
+        while matched > 0 && row != pattern[matched] {
+            matched = fail[matched - 1];
+        }
+        if row == pattern[matched] {
+            matched += 1;
+        }
+    }
+    history - matched
+}
+
 /// The text of row `row` of `rows`: padding left out, which only a line's
 /// last row has, so a row that wraps onto the next keeps the spaces at its
-/// end (`docs/design/terminal-model.md`, section 5.12); empty for a row
+/// end (`docs/design/terminal-model.md`, "Rows"); empty for a row
 /// that shows nothing.
 fn row_text(rows: &[Seen], row: usize) -> &str {
     let seen = &rows[row];
@@ -2001,7 +1941,7 @@ pub const STATUSES: [&str; 3] = ["\u{280b} 1s", "\u{2819} 1s", "\u{2819} 2s"];
 pub const PIECES: [&[u8]; 4] = [b"caf\xc3", b"\xa9", b"ok \xe2\x9c", b"\x93"];
 
 /// One of the operations programs do to a terminal
-/// (`docs/design/terminal-model.md`, section 3.2), as the oracle's streams
+/// (`docs/design/terminal-model.md`, "The model"), as the oracle's streams
 /// write them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Op {

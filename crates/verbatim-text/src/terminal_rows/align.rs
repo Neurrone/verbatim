@@ -1,8 +1,8 @@
-//! The alignment's computations (`docs/design/terminal-model.md`, section
-//! 4.3): the longest common subsequence of row hashes with the tie-break of
-//! fewest blocks and then fewest rows moved, the pairing of the rows left
-//! between kept rows by likeness, and the order-keeping match of a reprint
-//! against the known history (section 4.4).
+//! The alignment's computations (`docs/design/terminal-model.md`, "The
+//! alignment"): the longest common subsequence of rows with the tie-break
+//! of fewest blocks and then fewest rows moved, the histogram diff that
+//! aligns a whole document, and the pairing of the rows left between kept
+//! rows by likeness.
 
 use std::collections::HashMap;
 
@@ -21,51 +21,50 @@ struct Match {
     prev: u32,
 }
 
-/// The longest common subsequence of the rows `old` gives (each an old
-/// row's index and hash, in increasing order) and the new rows `window`
-/// names (indices into `new`, in increasing order), as pairs of an old
-/// row's index and a new row's.
+/// The longest common subsequence of the old rows `old` names and the new
+/// rows `new` names (indices, each in increasing order), two rows kept when
+/// `matches` says so, as pairs of an old row's index and a new row's.
 ///
 /// Among alignments that keep equally many rows, the one whose kept rows
 /// move in the fewest blocks wins, a block being a run of kept pairs with
 /// one shift (new index less old index), and then the one with the fewest
-/// rows whose shift is not `base`, the shift of a row that did not move.
+/// rows whose shift is not `fixed`, the shift of a row that did not move.
 ///
-/// The dynamic programming runs over every cell of `old` by `window` once:
+/// The dynamic programming runs over every cell of `old` by `new` once:
 /// the best alignment ending in a kept pair either continues the block of
 /// the best earlier pair on the same shift, which needs no new block, or
 /// follows the best pair anywhere above and to the left of it, which
 /// starts one; both are kept as running maxima, so each cell is a
 /// comparison of two integers and a few additions.
 pub(super) fn keep(
-    old: &[(usize, u64)],
-    new: &[u64],
-    window: &[usize],
-    base: isize,
+    old: &[usize],
+    new: &[usize],
+    matches: impl Fn(usize, usize) -> bool,
+    fixed: isize,
 ) -> Vec<(usize, usize)> {
-    let (n, m) = (old.len(), window.len());
+    let (n, m) = (old.len(), new.len());
     if n == 0 || m == 0 {
         return Vec::new();
     }
     // Shifts run from the first new row less the last old row to the last
     // new row less the first old row.
-    let low = isize_of(window[0]) - isize_of(old[n - 1].0);
-    let span = usize::try_from(isize_of(window[m - 1]) - isize_of(old[0].0) - low + 1).unwrap_or(0);
+    let low = isize_of(new[0]) - isize_of(old[n - 1]);
+    let span = usize::try_from(isize_of(new[m - 1]) - isize_of(old[0]) - low + 1).unwrap_or(0);
     let mut same: Vec<(i64, u32)> = vec![(0, NONE); span];
     let mut above: Vec<(i64, u32)> = vec![(0, NONE); m];
     let mut here: Vec<(i64, u32)> = vec![(0, NONE); m];
-    let mut matches: Vec<Match> = Vec::new();
-    for &(old_index, old_hash) in old {
+    let mut found: Vec<Match> = Vec::new();
+    for &old_index in old {
         let mut left = (0, NONE);
         for j in 0..m {
-            let new_index = window[j];
+            let new_index = new[j];
             let mut best = above[j];
             if left.0 > best.0 {
                 best = left;
             }
-            if old_hash == new[new_index] {
+            if matches(old_index, new_index) {
                 let shift = isize_of(new_index) - isize_of(old_index);
-                let moved = i64::from(shift != base);
+                let moved = i64::from(shift != fixed);
                 let diagonal = if j > 0 { above[j - 1] } else { (0, NONE) };
                 let mut score = diagonal.0 + KEPT - BLOCK - moved;
                 let mut prev = diagonal.1;
@@ -75,8 +74,8 @@ pub(super) fn keep(
                     score = run.0 + KEPT - moved;
                     prev = run.1;
                 }
-                let id = u32::try_from(matches.len()).unwrap_or(NONE);
-                matches.push(Match {
+                let id = u32::try_from(found.len()).unwrap_or(NONE);
+                found.push(Match {
                     old: old_index,
                     new: new_index,
                     prev,
@@ -96,16 +95,99 @@ pub(super) fn keep(
     let mut pairs = Vec::new();
     let mut at = above[m - 1].1;
     while at != NONE {
-        let found = &matches[at as usize];
-        pairs.push((found.old, found.new));
-        at = found.prev;
+        let pair = &found[at as usize];
+        pairs.push((pair.old, pair.new));
+        at = pair.prev;
     }
     pairs.reverse();
     pairs
 }
 
+/// An alignment's worth, as [`keep`] weighs it: more kept rows first, then
+/// fewer blocks, then fewer rows moved from `fixed`.
+pub(super) fn score(pairs: &[(usize, usize)], fixed: isize) -> (usize, isize, isize) {
+    let shift = |&(old, new): &(usize, usize)| isize_of(new) - isize_of(old);
+    let mut blocks = 0;
+    let mut last = None;
+    for pair in pairs {
+        if last != Some(shift(pair)) {
+            blocks += 1;
+        }
+        last = Some(shift(pair));
+    }
+    let moved = pairs.iter().filter(|pair| shift(pair) != fixed).count();
+    (pairs.len(), -isize_of(blocks), -isize_of(moved))
+}
+
 fn isize_of(value: usize) -> isize {
     isize::try_from(value).unwrap_or(isize::MAX)
+}
+
+/// An order-keeping match of `new` against `old`, two documents' row
+/// hashes, by the histogram method: the row of `new` whose hash is rarest
+/// in `old` is matched at its last place in `old`, the match is extended
+/// above and below it while the rows agree, and the rows before and after
+/// that run are matched the same way. Each part costs its rows once, and
+/// the parts at one depth are apart, so a document that repeats the old
+/// rows but for a few costs about its rows once for each of those. A hash
+/// `none` never matches. Gives the pairs, an old row's index and a new
+/// row's, in order.
+pub(super) fn histogram(old: &[u64], new: &[u64], none: u64) -> Vec<(usize, usize)> {
+    let mut pairs = Vec::new();
+    let mut pending = vec![(0..new.len(), 0..old.len())];
+    while let Some((a, b)) = pending.pop() {
+        if a.is_empty() || b.is_empty() {
+            continue;
+        }
+        let mut counts: HashMap<u64, (usize, usize)> = HashMap::with_capacity(b.len());
+        for at in b.clone() {
+            if old[at] == none {
+                continue;
+            }
+            let entry = counts.entry(old[at]).or_insert((0, at));
+            entry.0 += 1;
+            entry.1 = at;
+        }
+        // A row is as rare as its text is on both sides: one that is on
+        // each side once anchors the part best.
+        let mut in_new: HashMap<u64, usize> = HashMap::with_capacity(a.len());
+        for at in a.clone() {
+            if counts.contains_key(&new[at]) {
+                *in_new.entry(new[at]).or_default() += 1;
+            }
+        }
+        let middle = a.start + a.len() / 2;
+        let rarest = a
+            .clone()
+            .filter_map(|at| {
+                counts
+                    .get(&new[at])
+                    .map(|&(count, last)| (count + in_new[&new[at]], at, last))
+            })
+            .min_by_key(|&(count, at, _)| (count, at.abs_diff(middle)));
+        let Some((_, at, last)) = rarest else {
+            continue;
+        };
+        let (mut first, mut first_old) = (at, last);
+        while first > a.start
+            && first_old > b.start
+            && new[first - 1] == old[first_old - 1]
+            && new[first - 1] != none
+        {
+            first -= 1;
+            first_old -= 1;
+        }
+        let (mut end, mut end_old) = (at + 1, last + 1);
+        while end < a.end && end_old < b.end && new[end] == old[end_old] && new[end] != none {
+            end += 1;
+            end_old += 1;
+        }
+        pairs.extend((first..end).map(|to| (first_old + to - first, to)));
+        pending.push((a.start..first, b.start..first_old));
+        pending.push((end..a.end, end_old..b.end));
+    }
+    pairs.sort_unstable_by_key(|&(_, to)| to);
+    pairs
 }
 
 /// One row's characters, prepared for comparing by likeness.
@@ -198,16 +280,12 @@ impl Likeness {
         usize::try_from(zeros).unwrap_or(0)
     }
 
-    /// Whether two rows are alike (section 4.3, item 4): neither blank,
-    /// and one a start of the other (a row that grew or lost its end), or
+    /// Whether two rows are alike ("The alignment"): neither blank, and
     /// sharing in order at least half the characters of the longer.
     pub(super) fn alike(&self, other: &Self) -> bool {
         let (a, b) = (&self.chars, &other.chars);
         if a.is_empty() || b.is_empty() {
             return false;
-        }
-        if a.starts_with(b) || b.starts_with(a) {
-            return true;
         }
         let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
         if short.len() * 2 < long.len() {
@@ -220,8 +298,8 @@ impl Likeness {
 /// The pairing of the rows left between two kept rows as rewrites: an
 /// order-keeping matching of alike rows, as many pairs as there can be,
 /// and among those the most whose shift (new index less old index) is
-/// `prefer`, the shift of the kept row below. `old` and `new` give each
-/// row's index and its likeness.
+/// `prefer`, the shift of the kept row beside them. `old` and `new` give
+/// each row's index and its likeness.
 pub(super) fn pair(
     old: &[(usize, &Likeness)],
     new: &[(usize, &Likeness)],
@@ -272,53 +350,4 @@ pub(super) fn pair(
         }
     }
     pairs
-}
-
-/// An order-keeping match of `new` (a reprint's candidate rows, top to
-/// bottom) against `known` (the rows the known history held above the old
-/// screen, oldest first), by the histogram method: the row rarest in
-/// `known` among those both hold is matched at its last place in `known`,
-/// nearest the old screen, the match is extended above and below it while
-/// the rows agree, and the rows before and after that run are matched the
-/// same way. Each part costs its rows once, and the parts at one depth are
-/// apart, so a reprint that repeats the known history but for a few rows
-/// costs about its rows once for each of those. Gives the indices of `new`
-/// matched.
-pub(super) fn reprinted(new: &[u64], known: &[u64]) -> Vec<usize> {
-    let mut matched = Vec::new();
-    let mut pending = vec![(0..new.len(), 0..known.len())];
-    while let Some((a, b)) = pending.pop() {
-        if a.is_empty() || b.is_empty() {
-            continue;
-        }
-        let mut counts: HashMap<u64, (usize, usize)> = HashMap::with_capacity(b.len());
-        for at in b.clone() {
-            let entry = counts.entry(known[at]).or_insert((0, at));
-            entry.0 += 1;
-            entry.1 = at;
-        }
-        let middle = a.start + a.len() / 2;
-        let rarest = a
-            .clone()
-            .filter_map(|at| counts.get(&new[at]).map(|&(count, last)| (count, at, last)))
-            .min_by_key(|&(count, at, _)| (count, at.abs_diff(middle)));
-        let Some((_, at, last)) = rarest else {
-            continue;
-        };
-        let (mut first, mut first_known) = (at, last);
-        while first > a.start && first_known > b.start && new[first - 1] == known[first_known - 1] {
-            first -= 1;
-            first_known -= 1;
-        }
-        let (mut end, mut end_known) = (at + 1, last + 1);
-        while end < a.end && end_known < b.end && new[end] == known[end_known] {
-            end += 1;
-            end_known += 1;
-        }
-        matched.extend(first..end);
-        pending.push((a.start..first, b.start..first_known));
-        pending.push((end..a.end, end_known..b.end));
-    }
-    matched.sort_unstable();
-    matched
 }

@@ -2,7 +2,7 @@
 //! the corpus replayed and read as the real console host and Windows
 //! Terminal were, their answers compared field by field with the
 //! expectations `cargo xtask regenerate-terminal-conformance-expectations`
-//! recorded (`docs/design/terminal-model.md`, section 9).
+//! recorded (`docs/design/terminal-model.md`, "Testing").
 
 use verbatim_term_sim::Flavor;
 use verbatim_term_sim::conformance::{

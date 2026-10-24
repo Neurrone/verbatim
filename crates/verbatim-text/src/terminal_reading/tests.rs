@@ -10,11 +10,11 @@ use super::{
     ColourRun, Counted, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit,
     Withheld,
 };
-use crate::terminal_rows::{Anchor, Checked, Read, hash};
+use crate::terminal_rows::{Anchor, Read, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
-/// said, as many rows above it as the memory asks, and the whole document,
-/// or a read from further above, is read when the reader asks.
+/// said, a screen above it, and the whole document is read when the reader
+/// asks.
 struct Term {
     terminal: Terminal,
     reader: TerminalReader,
@@ -42,7 +42,6 @@ impl Term {
             query: Query::default(),
             followed: false,
         };
-        term.query.above = u32::try_from(term.reader.memory().above()).expect("a few rows");
         let first = term.read(0);
         assert_eq!(first, quiet(None), "the first read speaks nothing");
         term
@@ -87,9 +86,11 @@ impl Term {
     /// One read at `at_ms`, the whole document read again when asked.
     fn take(&mut self, at_ms: u64, waited: bool, colours: Option<&[Vec<ColourRun>]>) -> Step {
         let mut query = self.query;
+        let mut taken = 0;
         loop {
             let snapshot = self.terminal.snapshot(&query).expect("a simulated read");
-            let mut read = Read {
+            taken += 1;
+            let read = Read {
                 text: snapshot.text,
                 screen: snapshot.screen,
                 from_start: snapshot.from_start,
@@ -102,30 +103,8 @@ impl Term {
                 caret_column: snapshot.caret_column,
                 at_ms,
                 above: usize::try_from(snapshot.above).expect("a few rows"),
-                checked: None,
             };
-            let mut step = self.reader.read(&read, waited, colours);
-            while !step.check_rows.is_empty() {
-                let runs: Vec<(u32, u32)> = step
-                    .check_rows
-                    .iter()
-                    .map(|run| {
-                        (
-                            u32::try_from(run.above).expect("a small buffer"),
-                            u32::try_from(run.rows).expect("a small buffer"),
-                        )
-                    })
-                    .collect();
-                let rows = self
-                    .terminal
-                    .rows_above(query.start.expect("rows are read from a start"), &runs)
-                    .expect("a simulated read");
-                read.checked = Some(Checked {
-                    runs: rows.runs,
-                    first_row: rows.first_row,
-                });
-                step = self.reader.read(&read, waited, colours);
-            }
+            let step = self.reader.read(&read, waited, colours);
             let screen_rows = u32::try_from(
                 step.outcome
                     .as_ref()
@@ -133,11 +112,8 @@ impl Term {
                     .height,
             )
             .expect("a small screen");
-            if let Some(above) = step.read_above {
-                query.above = u32::try_from(above).expect("a small buffer");
-                continue;
-            }
             if step.whole_document {
+                assert_eq!(taken, 1, "the whole document is read at most once");
                 query = Query {
                     start: None,
                     screen_rows,
@@ -184,8 +160,6 @@ fn step(speech: Vec<Speech>, withheld: Vec<Withheld>, timer: Option<u64>) -> Ste
         withheld,
         timer,
         whole_document: false,
-        check_rows: Vec::new(),
-        read_above: None,
         outcome: None,
         followed: false,
     }
@@ -983,7 +957,6 @@ fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms:
         caret_column: column,
         at_ms,
         above: 0,
-        checked: None,
     }
 }
 
