@@ -999,7 +999,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   come with their properties cached, one call per container, each read as
   a `verbatim_uia::DialogText`, with its description whatever the theme,
   as NVDA's dialog text includes it (decision 5 of
-  `docs/design/uia-shapes.md`).
+  `docs/design/uia-shapes.md`), and without whether it is off the screen,
+  which the rules never use and which a top-level dialog's title bar
+  answers only by asking the window's thread (`WM_GETTITLEBARINFOEX`).
   `is_dialog(role)` says which nodes have such text: a dialog, an alert,
   or a property page. A gathering looks at no more than `MAX_OBJECTS`
   objects; a dialog with more says nothing rather than part of its text.

@@ -96,8 +96,8 @@ pub use provider::{
 };
 pub use registry::{NodeIdRegistry, Released};
 pub use shape::{
-    Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogText, Direction,
-    ElementValue, Fill, FocusInput, HelpTextRefresh, Kept, LEFT_OUT_WHEN_UNSUPPORTED,
+    Absent, Agile, Ancestor, AncestorGates, Cached, Covers, Description, DialogStates, DialogText,
+    Direction, ElementValue, Fill, FocusInput, HelpTextRefresh, Kept, LEFT_OUT_WHEN_UNSUPPORTED,
     ListenerEvent, Live, Node, NodeGates, Position, PropertyEvent, Request, RoleCore, SelectedItem,
     SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
     TextEvent, TreeDump, Ungated, ValueSet, WindowLookup,

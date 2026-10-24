@@ -50,8 +50,8 @@ mod shapes;
 mod tests;
 
 pub use shapes::{
-    Ancestor, AncestorGates, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
-    ListenerEvent, Node, NodeGates, Position, PropertyEvent, ProviderOrigin, RoleCore,
+    Ancestor, AncestorGates, Description, DialogStates, DialogText, FocusInput, HelpTextRefresh,
+    Kept, ListenerEvent, Node, NodeGates, Position, PropertyEvent, ProviderOrigin, RoleCore,
     SelectedItem, SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh,
     TextAreaPattern, TextEvent, TreeDump, ValueSet, WindowLookup,
 };

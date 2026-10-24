@@ -169,6 +169,77 @@ impl States {
 }
 
 uia_shape! {
+    /// What a dialog's child's states are mapped from: [`States`] but
+    /// whether it is off the screen, which a dialog's text is never gathered
+    /// by, and which costs a top-level dialog's title bar a request to the
+    /// window's thread (`WM_GETTITLEBARINFOEX`) that Windows answers for one
+    /// window at a time across the desktop.
+    #[allow(clippy::struct_excessive_bools, reason = "one field per cached UIA flag")]
+    pub struct DialogStates {
+        gates: none;
+        groups {}
+        properties {
+            /// Whether it has the keyboard focus.
+            has_focus: UIA_HasKeyboardFocusPropertyId => bool,
+            /// Whether it can take the keyboard focus.
+            focusable: UIA_IsKeyboardFocusablePropertyId => bool,
+            /// Whether it is enabled.
+            enabled: UIA_IsEnabledPropertyId => bool,
+            /// Whether it has the Toggle pattern.
+            toggle_available: UIA_IsTogglePatternAvailablePropertyId => bool,
+            /// The toggle state, meaningful only with the pattern.
+            toggle_state: UIA_ToggleToggleStatePropertyId => i32,
+            /// Whether it has the `ExpandCollapse` pattern.
+            expand_available: UIA_IsExpandCollapsePatternAvailablePropertyId => bool,
+            /// The expand state, meaningful only with the pattern.
+            expand_state: UIA_ExpandCollapseExpandCollapseStatePropertyId => i32,
+            /// Whether it has the `SelectionItem` pattern.
+            selection_available: UIA_IsSelectionItemPatternAvailablePropertyId => bool,
+            /// Whether it is selected.
+            selected: UIA_SelectionItemIsSelectedPropertyId => bool,
+            /// Whether it holds a password.
+            password: UIA_IsPasswordPropertyId => bool,
+            /// Whether a form requires it.
+            required: UIA_IsRequiredForFormPropertyId => bool,
+            /// Whether its entry is valid, `None` when not supported.
+            data_valid: UIA_IsDataValidForFormPropertyId => optional_bool,
+            /// Whether it has the `Value` pattern.
+            value_available: UIA_IsValuePatternAvailablePropertyId => bool,
+            /// Whether its value is read-only, meaningful only with the
+            /// pattern.
+            value_read_only: UIA_ValueIsReadOnlyPropertyId => optional_bool,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+impl DialogStates {
+    /// The states, for an element whose role is `role`, never off the
+    /// screen.
+    #[must_use]
+    pub fn states(&self, role: Role) -> StateSet {
+        let raw = RawUiaStates {
+            has_focus: self.has_focus,
+            focusable: self.focusable,
+            enabled: self.enabled,
+            offscreen: false,
+            toggle_available: self.toggle_available,
+            toggle_state: self.toggle_state,
+            expand_available: self.expand_available,
+            expand_state: self.expand_state,
+            selection_available: self.selection_available,
+            selected: self.selected,
+            password: self.password,
+            required: self.required,
+            data_valid: self.data_valid,
+            value_read_only: self.value_available && self.value_read_only == Some(true),
+        };
+        states_from_uia(&raw, role)
+    }
+}
+
+uia_shape! {
     /// What every reader of an element the node registry keeps reads of it:
     /// every shape whose elements are kept covers it.
     pub struct Kept {
@@ -598,9 +669,10 @@ impl Cached<Ancestor> {
 
 uia_shape! {
     /// A child of a dialog, or of a container in it, whose text the dialog's
-    /// own text is gathered from: its role, value, states and name, and its
-    /// description whatever the theme, as NVDA's `basicText` includes it
-    /// (decision 5 of `docs/design/uia-shapes.md`).
+    /// own text is gathered from: its role, value, states but whether it is
+    /// off the screen ([`DialogStates`]) and name, and its description
+    /// whatever the theme, as NVDA's `basicText` includes it (decision 5 of
+    /// `docs/design/uia-shapes.md`).
     pub struct DialogText {
         gates: none;
         groups {
@@ -609,7 +681,7 @@ uia_shape! {
             /// What its value is read from.
             value: ValueSet,
             /// What its states are mapped from.
-            states: States,
+            states: DialogStates,
             /// Its description.
             description: Description,
         }

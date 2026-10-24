@@ -850,11 +850,62 @@ fn uia_dialog_text_costs_exactly() {
         &[
             ("ProviderOptions", 26),
             ("GetPatternProvider", 33),
-            ("GetPropertyValue", 46),
+            ("GetPropertyValue", 43),
             ("HostRawElementProvider", 11),
             ("Navigate", 9),
             ("GetRuntimeId", 6),
             ("FragmentRoot", 7),
+        ],
+    );
+    ratchet.finish();
+    app.quit();
+}
+
+/// A UIA message box that is its own top-level window, its text gathered
+/// as for [`uia_dialog_text_costs_exactly`]: the window's first child is the
+/// title bar UIA adds for the window's frame, which the gathering reads
+/// with the other children and gives no text, and whose location or
+/// off-screen state would have UIA ask the window's thread
+/// (`WM_GETTITLEBARINFOEX`), which Windows answers for one window at a time
+/// across the desktop. Each child is read with its states but whether it is
+/// off the screen, so mockapp takes no such request.
+fn uia_dialog_window_text_reads_nothing_of_its_title_bar() {
+    let title = common::unique_title("mockapp-counts-uia-dialog-window");
+    let app = common::spawn("dialog_window.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let under_test = UiaUnderTest::new(hwnd);
+    let mut ratchet = Ratchet::default();
+    let dialog = under_test
+        .uia
+        .window_live(hwnd.0 as isize)
+        .expect("the dialog's window element");
+    let bounded = BoundedClient::default();
+    let dialog = AgileReference::new(dialog.element()).expect("the dialog, agile");
+    let (text, cost) = under_test.measure(hwnd, |_| {
+        bounded
+            .run(common::WAIT_TIMEOUT, move |uia| {
+                let dialog = Live::new(dialog.resolve().ok()?);
+                let children = uia.request_fixed::<DialogText>().ok()?;
+                dialog_text(&UiaDialog::new(uia, &children, dialog))
+            })
+            .expect("the bounded client answers")
+    });
+    bounded.close();
+    assert_eq!(text.as_deref(), Some(QUESTION));
+    ratchet.check(
+        "UIA message box window text",
+        &cost,
+        calls(1, 0, 0),
+        0,
+        &[
+            ("WM_GETOBJECT", 8),
+            ("ProviderOptions", 37),
+            ("GetPatternProvider", 33),
+            ("GetPropertyValue", 42),
+            ("HostRawElementProvider", 13),
+            ("Navigate", 12),
+            ("GetRuntimeId", 6),
+            ("FragmentRoot", 6),
         ],
     );
     ratchet.finish();
@@ -4592,6 +4643,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
 
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
+#[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
         ("caret_moves_cost_exactly", caret_moves_cost_exactly),
@@ -4632,6 +4684,10 @@ fn main() {
         (
             "uia_dialog_text_costs_exactly",
             uia_dialog_text_costs_exactly,
+        ),
+        (
+            "uia_dialog_window_text_reads_nothing_of_its_title_bar",
+            uia_dialog_window_text_reads_nothing_of_its_title_bar,
         ),
         (
             "uia_focus_changes_cost_exactly_remote",

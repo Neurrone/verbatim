@@ -1012,8 +1012,10 @@ Fetch shapes:
   `IsContentElement`, `IsControlElement`: 28 to 33 (decision 4). It covers
   `Kept`.
 - `TreeDump`: `Node`.
-- `DialogText`: `RoleCore`, `Name`, `ValueSet`, `States`, an ungated
-  `Description` group: 25 (decision 5). The dialog's own element is not a
+- `DialogText`: `RoleCore`, `Name`, `ValueSet`, `DialogStates` (`States`
+  without `IsOffscreen`, which the dialog's text never uses and which a
+  top-level dialog's title bar answers only by asking the window's
+  thread), an ungated `Description` group: 24 (decision 5). The dialog's own element is not a
   shape: it is a `Live`, in a root type of its own (section 5.5).
 - `WindowLookup`: `NativeWindowHandle`.
 - The empty shape: no request; the fetch returns `Live`.
@@ -1188,7 +1190,7 @@ property in a provider is not measured):
   from up to 7 to none.
 - Ancestors: 27 to 34 today, 28 to 33 as `Ancestor`, whose description is
   always fetched (decision 4, decided); failed reads from up to 7 to none.
-- Dialog text children: 27 to 34 today, 25 as `DialogText`.
+- Dialog text children: 27 to 34 today, 24 as `DialogText`.
 - Console process check: 27 to 34 today, 1. Shell list: 34, 5. Console
   provider check: 34, none.
 

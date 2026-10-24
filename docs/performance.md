@@ -977,14 +977,23 @@ no cached read fails (`docs/design/uia-shapes.md`, step 4).
 - Minimum: 1 UIA call per container read: the dialog's children, with
   every property the rules look at cached, in one `BuildUpdatedCache` whose
   scope is the children alone, as NVDA's is.
-- Today: 1 UIA call. mockapp answered 138 provider calls: 26
-  `ProviderOptions`, 33 `GetPatternProvider`, 46 `GetPropertyValue`, 11
+- Today: 1 UIA call. mockapp answered 135 provider calls: 26
+  `ProviderOptions`, 33 `GetPatternProvider`, 43 `GetPropertyValue`, 11
   `HostRawElementProvider`, 9 `Navigate`, 6 `GetRuntimeId`, and 7
   `FragmentRoot`. It answered 172 while the scope took in the dialog's
   own element too, filled with the children's properties though nothing
   read them, and 208 before each child was read as the `DialogText`
   shape, which leaves out the properties the rules never read, the
-  bounding rectangle among them (`docs/design/uia-shapes.md`, step 3).
+  bounding rectangle and whether it is off the screen among them
+  (`docs/design/uia-shapes.md`, step 3).
+- A message box that is its own top-level window has the title bar UIA
+  adds for the frame as its first child, which gives no text. Reading
+  whether it is off the screen had UIA ask the window's thread for the
+  title bar's information (`WM_GETTITLEBARINFOEX`), which Windows answers
+  for one window at a time across the desktop, about 6 ms alone and
+  seconds under load, so the child is read without it, and mockapp's
+  window takes no such request (`call_counts.rs`,
+  `uia_dialog_window_text_reads_nothing_of_its_title_bar`, 2026-10-24).
 - Target: 1, met.
 
 ### An object navigation step, MSAA

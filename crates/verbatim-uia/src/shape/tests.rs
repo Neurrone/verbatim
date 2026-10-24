@@ -11,10 +11,10 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::IUnknown;
 
 use super::{
-    Absent, Ancestor, CachedReads, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
-    ListenerEvent, Node, Position, PropertyEvent, ProviderOrigin, Reader, RoleCore,
-    SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
-    TextEvent, ValueSet, WindowLookup, request_properties,
+    Absent, Ancestor, CachedReads, Description, DialogStates, DialogText, FocusInput,
+    HelpTextRefresh, Kept, ListenerEvent, Node, Position, PropertyEvent, ProviderOrigin, Reader,
+    RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh,
+    TextAreaPattern, TextEvent, ValueSet, WindowLookup, request_properties,
 };
 
 /// A cache that answers every read, and records what was read.
@@ -107,6 +107,7 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         RoleCore,
         ValueSet,
         States,
+        DialogStates,
         Kept,
         TextEvent,
         PropertyEvent,
@@ -143,7 +144,7 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         ("Node, ungated", Node::UNGATED, 24),
         ("Ancestor", Ancestor::PROPERTIES, 33),
         ("Ancestor, ungated", Ancestor::UNGATED, 28),
-        ("DialogText", DialogText::PROPERTIES, 25),
+        ("DialogText", DialogText::PROPERTIES, 24),
     ] {
         assert_eq!(properties.len(), expected, "{shape}");
         assert_eq!(ids(properties).len(), expected, "{shape} has no repeats");

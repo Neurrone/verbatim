@@ -711,8 +711,12 @@ Public API:
     `Node`; `Ancestor` (a `Node`, its own ungated `Description`, and the
     content and control flags: 28 to 33; `is_control_and_content()`,
     `layout_description()`, and `snapshot` on `Cached<Ancestor>`),
-    covering `Kept`; `DialogText` (role, value, states, name and an
-    ungated description: 25; `parts(runtime_id)`), a dialog's child;
+    covering `Kept`; `DialogText` (role, value, states but whether it is
+    off the screen, the `DialogStates` group, name and an ungated
+    description: 24; `parts(runtime_id)`), a dialog's child, which leaves
+    out the off-screen state because a top-level dialog's first child is
+    its title bar, whose off-screen state and location UIA asks of the
+    window's thread (`WM_GETTITLEBARINFOEX`);
     `SelectionContainer` (`SelectionPattern2`'s first selected item, read
     as an `ElementValue`, and the `Selection` pattern, read as its
     interface); `SelectedItem` (name and keyboard focus, covering
