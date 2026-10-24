@@ -21,6 +21,10 @@ use verbatim_model::{
 };
 use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity};
 
+use crate::focus_rules::{
+    ChangeKind, ChangeTarget, ForegroundRelation, RepeatEvidence, SelectionTarget, already_entered,
+    change_target, repeats_focus, selection_target,
+};
 use crate::state::{
     Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation, SrState,
     TextFollowUp,
@@ -269,12 +273,13 @@ fn classify(
         // the attention record: a focus can reach Core before the
         // foreground change that moved the foreground away from its window
         // (D14, amended 2026-10-05). With no window facts, the application
-        // decides. This is a second test, after the read, which NVDA does
-        // not make; it tests once, before reading (`docs/parity/focus-events.md`, "Event
-        // acceptance").
+        // decides. The rule is the acceptance test's own
+        // ([`ForegroundRelation::related`]), made again on the facts the
+        // outpost read as it reported the focus; NVDA makes it once, before
+        // reading (`docs/parity/focus-events.md`, "Event acceptance").
         NormalizedEvent::FocusChanged { .. } => {
             let attended = match window {
-                Some(event) => event_window_is_foreground(event),
+                Some(event) => ForegroundRelation::of_facts(event).related(),
                 None => window_is_attended(attention, source, None),
             };
             if attended {
@@ -377,10 +382,13 @@ fn is_stale_focus(
 /// the event's own element (section 4.2's outpost half), that mark
 /// replaces the node id here.
 fn is_duplicate_focus(state: &SrState, node: &NodeSnapshot) -> bool {
-    state
-        .focus
-        .as_ref()
-        .is_some_and(|focus| focus.alive && focus.snapshot.id == node.id)
+    state.focus.as_ref().is_some_and(|focus| {
+        repeats_focus(RepeatEvidence {
+            settled: true,
+            same_element: focus.snapshot.id == node.id,
+            still_focused: focus.alive,
+        })
+    })
 }
 
 /// Keeps a duplicate focus's newer reading, unspoken: its states and name,
@@ -416,14 +424,6 @@ fn observed_before_foreground_change(state: &SrState, observed_at_ms: u64) -> bo
             .is_some_and(|changed_at| observed_at_ms < changed_at)
 }
 
-/// Whether an event's window was in the system's foreground when its outpost
-/// read it, by NVDA's test for accepting an event: inside the foreground
-/// window or sharing its root owner, a topmost window, or a
-/// `Windows.UI.Core` window under the input thread's active window.
-fn event_window_is_foreground(event: &WindowFacts) -> bool {
-    event.in_foreground || event.topmost || event.under_active_window == Some(true)
-}
-
 /// Whether an event's window is one the attention record covers: the same
 /// top-level window, the same root owner, a topmost window, or a
 /// `Windows.UI.Core` window under the input thread's active window — NVDA's
@@ -431,7 +431,7 @@ fn event_window_is_foreground(event: &WindowFacts) -> bool {
 /// outpost found in the system's foreground window when it read the event.
 /// When either side has no window facts there is nothing to compare, so the
 /// application decides. Focus events with window facts are judged by
-/// [`event_window_is_foreground`] instead.
+/// [`ForegroundRelation::related`] instead.
 fn window_is_attended(attention: &Attention, source: Pid, window: Option<&WindowFacts>) -> bool {
     match (attention.window.as_ref(), window) {
         (Some(attended), Some(event)) => {
@@ -661,6 +661,7 @@ fn reduce_event(
             &FocusReport {
                 node,
                 observed_at_ms,
+                observed_at_us: observed.1,
                 foreground: *foreground,
                 ancestors,
                 ancestors_unknown: *ancestors_unknown,
@@ -701,11 +702,7 @@ fn reduce_event(
                 reduce_value_changed(state, trace_id, *node_id, value.clone())
             }
             PropertyChange::States(new_states) => {
-                if state.focus_matches(*node_id) {
-                    reduce_states_changed(state, trace_id, *node_id, *new_states, *child_count)
-                } else {
-                    reduce_ancestor_states_changed(state, trace_id, *node_id, *new_states)
-                }
+                states_event(state, trace_id, *node_id, *new_states, *child_count)
             }
             PropertyChange::Description(description) => {
                 reduce_description_changed(state, trace_id, *node_id, description.as_ref())
@@ -784,6 +781,8 @@ struct FocusReport<'a> {
     node: &'a NodeSnapshot,
     /// When its outpost observed it; 0 when not known.
     observed_at_ms: u64,
+    /// The same time in microseconds; 0 when not known.
+    observed_at_us: u64,
     foreground: bool,
     ancestors: &'a [NodeSnapshot],
     /// The outpost could not read the ancestors in time.
@@ -877,6 +876,8 @@ fn reduce_focus_changed(
         last_selection: report.selected_child.map(|selected| selected.id),
         alive: true,
         reported_focused: report.node.states.contains(State::Focused),
+        trace_id: Some(trace_id),
+        observed: (report.observed_at_ms, report.observed_at_us),
     };
 
     if let Some(focus) = state.focus.as_ref()
@@ -1225,6 +1226,40 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     effects
 }
 
+/// A state change of `node_id`, spoken on the focus or an ancestor
+/// ([`change_on`]), and on nothing else.
+fn states_event(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node_id: NodeId,
+    new_states: StateSet,
+    child_count: Option<u32>,
+) -> Vec<Effect> {
+    match change_on(state, ChangeKind::States, node_id) {
+        Some(ChangeTarget::Focus) => {
+            reduce_states_changed(state, trace_id, node_id, new_states, child_count)
+        }
+        Some(ChangeTarget::Ancestor) => {
+            reduce_ancestor_states_changed(state, trace_id, node_id, new_states)
+        }
+        None => Vec::new(),
+    }
+}
+
+/// What a change of `kind` on `node_id` concerns, when it is spoken, judged
+/// against the live focus Core holds by the rule the outposts judge it by
+/// before they read it ([`change_target`]).
+fn change_on(state: &SrState, kind: ChangeKind, node_id: NodeId) -> Option<ChangeTarget> {
+    let focus = state.focus.as_ref().filter(|focus| focus.alive)?;
+    change_target(
+        kind,
+        node_id,
+        focus.snapshot.id,
+        focus.ancestors.iter().map(|ancestor| ancestor.id),
+        |_| true,
+    )
+}
+
 /// Handles a name change: when the focused node's name changes, the new name
 /// alone is spoken, queued behind current speech, as NVDA does. A name
 /// change on any other node, including an ancestor of the focus, is silent.
@@ -1234,7 +1269,7 @@ fn reduce_name_changed(
     node_id: NodeId,
     name: Option<&String>,
 ) -> Vec<Effect> {
-    if !state.focus_matches(node_id) {
+    if change_on(state, ChangeKind::Name, node_id) != Some(ChangeTarget::Focus) {
         return Vec::new();
     }
     let Some(focus) = state.focus.as_mut() else {
@@ -1782,19 +1817,6 @@ pub(crate) fn flat_review_command(
     })]
 }
 
-/// Whether a focused role is a selection container whose interior selection
-/// changes are announced — the reducer-side twin of the outpost's
-/// enrichment filter, kept to the same roles: lists (a list box, a category
-/// list) and tab controls (an Explorer or Settings tab strip). Combo boxes
-/// are deliberately excluded: their selection reaches the reducer as a
-/// value change already, and announcing both would double-speak every
-/// pick. The outposts call it too, to read a selection in full only when
-/// it can be spoken.
-#[must_use]
-pub fn is_selection_container(role: Role) -> bool {
-    matches!(role, Role::List | Role::TabControl)
-}
-
 /// Handles a `SelectionChanged` event: a node was selected within its
 /// container. Announced only when the selection happened under the focused
 /// container — the event's outpost is the focused node's, focus
@@ -1812,26 +1834,26 @@ fn reduce_selection_changed(
     let Some(focus) = state.focus.as_mut().filter(|focus| focus.alive) else {
         return Vec::new();
     };
-    // Selecting the focused item itself is a change of its state, as NVDA
-    // handles a selection on the focus: "selected" is spoken.
-    if node.id == focus.snapshot.id {
-        let states = node.states;
-        return reduce_states_changed(state, trace_id, node.id, states, None);
-    }
-    // So is selecting one of the focus's ancestors, as NVDA's base state
-    // change handler speaks it.
-    if focus
-        .ancestors
-        .iter()
-        .any(|ancestor| ancestor.id == node.id)
-    {
-        return reduce_ancestor_states_changed(state, trace_id, node.id, node.states);
-    }
-    if focus.snapshot.id.outpost() != node.id.outpost()
-        || !is_selection_container(focus.snapshot.role)
-        || focus.last_selection == Some(node.id)
-    {
-        return Vec::new();
+    let target = selection_target(
+        node.id,
+        (focus.snapshot.id, focus.snapshot.role),
+        focus.ancestors.iter().map(|ancestor| ancestor.id),
+        |_| true,
+    );
+    match target {
+        // Selecting the focused item itself is a change of its state, as
+        // NVDA handles a selection on the focus: "selected" is spoken.
+        Some(SelectionTarget::FocusStates) => {
+            let states = node.states;
+            return reduce_states_changed(state, trace_id, node.id, states, None);
+        }
+        // So is selecting one of the focus's ancestors, as NVDA's base
+        // state change handler speaks it.
+        Some(SelectionTarget::AncestorStates) => {
+            return reduce_ancestor_states_changed(state, trace_id, node.id, node.states);
+        }
+        Some(SelectionTarget::Item) if focus.last_selection != Some(node.id) => {}
+        _ => return Vec::new(),
     }
     focus.last_selection = Some(node.id);
     vec![Effect::Speak(Utterance {
@@ -1882,7 +1904,7 @@ fn reduce_value_changed(
     node_id: NodeId,
     value: Option<String>,
 ) -> Vec<Effect> {
-    if !state.focus_matches(node_id) {
+    if change_on(state, ChangeKind::Value, node_id) != Some(ChangeTarget::Focus) {
         return Vec::new();
     }
     let Some(focus) = state.focus.as_mut() else {
@@ -1937,7 +1959,7 @@ fn reduce_progress_changed(
     let Some(percentage) = percentage else {
         return reduce_value_changed(state, trace_id, progress.id, progress.value.clone());
     };
-    if state.focus_matches(progress.id)
+    if change_on(state, ChangeKind::Value, progress.id) == Some(ChangeTarget::Focus)
         && let Some(focus) = state.focus.as_mut()
     {
         focus.snapshot.value.clone_from(&progress.value);
@@ -1993,7 +2015,7 @@ fn reduce_states_changed(
     new_states: StateSet,
     child_count: Option<u32>,
 ) -> Vec<Effect> {
-    if !state.focus_matches(node_id) {
+    if change_on(state, ChangeKind::States, node_id) != Some(ChangeTarget::Focus) {
         return Vec::new();
     }
     let Some(focus) = state.focus.as_mut() else {
@@ -2147,7 +2169,7 @@ fn reduce_description_changed(
     node_id: NodeId,
     description: Option<&String>,
 ) -> Vec<Effect> {
-    if !state.focus_matches(node_id) {
+    if change_on(state, ChangeKind::Description, node_id) != Some(ChangeTarget::Focus) {
         return Vec::new();
     }
     let Some(focus) = state.focus.as_mut() else {
@@ -2307,29 +2329,21 @@ fn entered_ancestors<'a>(
     let same_window = previous.is_some_and(|previous| {
         matches!((previous.window.as_ref(), window), (Some(old), Some(new)) if old.top_level == new.top_level)
     });
-    let already_entered = |ancestor: &NodeSnapshot| {
-        let Some(previous) = previous else {
-            return false;
-        };
-        previous
-            .ancestors
-            .iter()
-            .chain(std::iter::once(&previous.snapshot))
-            .any(|old| {
-                let one_identity = old.id.outpost() == ancestor.id.outpost()
-                    && old.backend == Backend::Uia
-                    && ancestor.backend == Backend::Uia;
-                old.id == ancestor.id
-                    || (same_window
-                        && !one_identity
-                        && old.role == ancestor.role
-                        && old.name == ancestor.name)
-            })
-    };
     report
         .ancestors
         .iter()
-        .filter(|ancestor| !already_entered(ancestor))
+        .filter(|ancestor| {
+            !previous.is_some_and(|previous| {
+                already_entered(
+                    previous
+                        .ancestors
+                        .iter()
+                        .chain(std::iter::once(&previous.snapshot)),
+                    same_window,
+                    *ancestor,
+                )
+            })
+        })
         .collect()
 }
 

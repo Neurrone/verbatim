@@ -55,6 +55,16 @@ pub(crate) struct FocusContext {
     /// "State changes after the focus has left").
     #[serde(default)]
     pub(crate) reported_focused: bool,
+    /// The trace of the event Core took this focus from, which names, for
+    /// the focus listener, the element it read for a UIA focus
+    /// ([`crate::focus_rules::HeldFocus`]); `None` in a recording made
+    /// before it was kept.
+    #[serde(default)]
+    pub(crate) trace_id: Option<TraceId>,
+    /// When that event was observed, its milliseconds and microseconds on
+    /// the run's shared clock (0 when not known).
+    #[serde(default)]
+    pub(crate) observed: (u64, u64),
 }
 
 /// The application and window of the most recent foreground change (decision
@@ -771,6 +781,30 @@ impl SrState {
             .as_ref()
             .filter(|focus| focus.alive)
             .map(|focus| (focus.source, &focus.snapshot))
+    }
+
+    /// The focus Core holds, as the focus listener and the outposts judge
+    /// events against it before they read them (decision D14, "Where the
+    /// rules run"), alive or not; `None` before any focus, or for a focus
+    /// taken from a recording made before its trace was kept.
+    #[must_use]
+    pub fn held_focus(&self) -> Option<crate::focus_rules::HeldFocus> {
+        let focus = self.focus.as_ref()?;
+        let held = |node: &NodeSnapshot| crate::focus_rules::HeldNode {
+            id: node.id,
+            backend: node.backend,
+            role: node.role,
+            name: node.name.clone(),
+            states: node.states,
+        };
+        Some(crate::focus_rules::HeldFocus {
+            trace_id: focus.trace_id?,
+            observed: focus.observed,
+            focus: held(&focus.snapshot),
+            ancestors: focus.ancestors.iter().map(held).collect(),
+            top_level: focus.window.as_ref().map(|window| window.top_level),
+            alive: focus.alive,
+        })
     }
 
     /// The focused node as last announced, its ancestors outermost first,

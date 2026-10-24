@@ -17,6 +17,7 @@ mod applications;
 pub mod dump;
 mod editing;
 pub mod flight_recorder;
+pub mod focus_rules;
 mod recorder;
 mod reduce;
 mod review;
@@ -31,7 +32,8 @@ pub use dump::{
     DUMP_FORMAT_VERSION, DumpContents, DumpHeader, DumpReadError, read_dump, write_dump,
 };
 pub use flight_recorder::FlightRecorder;
+pub use focus_rules::is_selection_container;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
-pub use reduce::{SNAP_RESULTS_ACTIVITY, is_selection_container, reduce};
+pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};
 pub use state::SrState;
 pub use terminal::{caret_key_kind, typed_kind};
