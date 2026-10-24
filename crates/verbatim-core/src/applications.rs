@@ -3,7 +3,7 @@
 //! from its entry in the parity ledger, and none lives in the focus
 //! listener or an outpost.
 
-use verbatim_model::WindowFacts;
+use verbatim_model::{Backend, NodeSnapshot, Role, WindowFacts};
 
 /// The classes of the shell's windows that take the focus or the foreground
 /// only while a switch is staged: the Alt+Tab switcher's and Task View's
@@ -25,4 +25,19 @@ const SHELL_STAGING_CLASSES: [&str; 3] = [
 /// to.
 pub(crate) fn is_shell_staging_window(window: Option<&WindowFacts>) -> bool {
     window.is_some_and(|window| SHELL_STAGING_CLASSES.contains(&window.class.as_str()))
+}
+
+/// The class of the window in which Windows 11's Alt+Tab switcher raises
+/// the focus of its pane when switching tasks.
+const SWITCHER_PANE_WINDOW_CLASS: &str = "Windows.UI.Input.InputSite.WindowClass";
+
+/// Whether a UI Automation focus on `node` in `window` is the Windows 11
+/// Alt+Tab switcher's pane, whose focus is refused whole: it is dropped
+/// before it moves the focus or the navigator or cuts speech
+/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
+/// The switcher's list items, in the same window, are taken as any focus.
+pub(crate) fn refuses_focus(window: Option<&WindowFacts>, node: &NodeSnapshot) -> bool {
+    node.backend == Backend::Uia
+        && node.role == Role::Pane
+        && window.is_some_and(|window| window.class == SWITCHER_PANE_WINDOW_CLASS)
 }

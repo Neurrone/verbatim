@@ -908,7 +908,6 @@ Not ported, each recorded for the audit:
 - NVDA's exceptions to the native check, a NetUI container inside a Word document and Internet Explorer 9's downloads list: Office's and Internet Explorer's, for the app-module porting track.
 - A focus Core asked for, such as the focus-now answer an outpost reads through UIA after an outpost is replaced, or the focus an outpost reads itself when no UIA focus follows a `WinEvent` focus in a UIA window, is a UIA object in NVDA, which its duplicate rule and a menu opening's comparison would use; the listener holds no element for it, so a focus or menu opening on that element is not compared with it, and a later UIA focus on it is dropped by Core's duplicate rule instead.
 - NVDA's focus object changes when its focus event runs, and a focus queued and not yet run drops a menu opening as pending. The listener counts a focus as pending only while it waits for or is in its read, and takes a focus it has accepted as the current focus from then on, before Core has queued it.
-- File Explorer's app module refuses the focus of Windows 11's task switching pane (`MultitaskingViewFrameWindow`, a `Windows.UI.Input.InputSite.WindowClass` pane); not ported, and to be checked with an NVDA capture of Alt+Tab first.
 
 ## 19. Spare outposts under option (b) (decided 2026-10-16)
 

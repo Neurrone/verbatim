@@ -5686,3 +5686,34 @@ fn a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing(
         ]
     );
 }
+
+/// A UI Automation focus on a pane in a `Windows.UI.Input.InputSite.WindowClass`
+/// window, the Windows 11 Alt+Tab switcher's pane, is refused whole, as
+/// NVDA's File Explorer module refuses it: no speech is cut, nothing is
+/// said, and the focus and the navigator stay where they were
+/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
+/// pane"). The switcher's list item in the same window is announced.
+#[test]
+fn a_uia_focus_on_the_task_switching_pane_is_refused_whole() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let facts = WindowFacts {
+        class: "Windows.UI.Input.InputSite.WindowClass".to_owned(),
+        topmost: true,
+        ..window(50)
+    };
+    let pane = node(3, Role::Pane, None, None, StateSet::new());
+    let (after, effects) = reduce(&state, &focus_in(Pid(2), facts.clone(), pane, vec![]));
+    assert_eq!(heard(&effects), vec![]);
+    assert_eq!(after, state);
+
+    let item = node(4, Role::ListItem, Some("Notes"), None, StateSet::new());
+    let (_, effects) = reduce(&state, &focus_in(Pid(2), facts, item, vec![]));
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 4, &[], Some((OutpostId(1), 1000)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Notes")]),
+        ]
+    );
+}

@@ -232,7 +232,11 @@ Implementation notes, `reduce`:
   speech is cut when the foreground window changed, as for any focus, but
   nothing is said for it
   (`docs/parity/windows-and-processes.md`, "The shell's staging
-  windows"). `tests/reduce.rs` checks it.
+  windows"). A UI Automation focus on a pane whose window class is
+  `Windows.UI.Input.InputSite.WindowClass`, the Alt+Tab switcher's pane,
+  is refused whole before anything else judges it, moving nothing and
+  cutting no speech (`docs/parity/windows-and-processes.md`, "The
+  Alt+Tab switcher's pane"). `tests/reduce.rs` checks both.
 - Event acceptance (decision D14 as amended by the outpost redesign;
   `docs/parity/focus-events.md`, "Event acceptance"): the state keeps an attention
   record, the application and window facts of the most recent foreground

@@ -1467,9 +1467,9 @@ the milliseconds and, for a focus, the microseconds of one clock read.
   switcher's UI Automation focus after the console's, and the switcher
   was still announced over the console: that focus did happen later, so
   no ordering drops it. NVDA never announces it, by its File Explorer
-  module's refusal of the Windows 11 switcher pane's focus
-  (`docs/design/focus-pipeline.md`, section 18), which Verbatim
-  has not ported.
+  module's refusal of the Windows 11 switcher pane's focus, which Core
+  now applies (`docs/parity/windows-and-processes.md`, "The Alt+Tab
+  switcher's pane").
 - Target: the minimum.
 
 ### The system caret's events

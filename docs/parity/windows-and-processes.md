@@ -1,6 +1,6 @@
 # Windows and processes
 
-Windows whose parts live in different processes or behave unlike ordinary controls: a window in two processes, content hosted in another process's window, console windows, a control's own focus, and the shell's staging windows.
+Windows whose parts live in different processes or behave unlike ordinary controls: a window in two processes, content hosted in another process's window, console windows, a control's own focus, the shell's staging windows, and the Alt+Tab switcher's pane.
 
 ### A window and its content in two processes
 
@@ -135,9 +135,47 @@ Windows+X menu's host took neither the focus nor the foreground in the
 `quick_link_menu` scenario's runs, so Core's unit test pins the rule
 (`a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing`),
 and a hand-run Alt+Tab check of 2026-10-24 found every switch completing
-and nothing said for the staging window, but in one switch with Alt held
-the switcher's late focus replaced the focus of the window switched to,
-which is a fault in Core's ordering of focuses (`docs/performance.md`,
-"The shell's staging windows").
+and nothing said for the staging window.
 Dickson decided on 2026-10-24 that speech is cut there as NVDA cuts it,
 replacing the earlier rule that dropped the change whole.
+
+### The Alt+Tab switcher's pane
+
+On Alt+Tab in Windows 11, File Explorer gives the UI Automation focus to
+the switcher's pane, the element of its
+`Windows.UI.Input.InputSite.WindowClass` window, with no name, before
+its list items, and in some switches 11 to 15 ms after the window
+switched to has taken the focus. NVDA's File Explorer app module gives
+every UI Automation object in File Explorer's process whose UI
+Automation class is `Windows.UI.Input.InputSite.WindowClass` and whose
+role is pane (on Windows 10, the `MultitaskingViewFrame` window) a class
+that refuses its UI Automation focus events: the event is dropped as it
+arrives, before it becomes NVDA's focus, so the focus, the navigator and
+the foreground stay where they were, speech is not cut, and nothing is
+said ([App modules, global plugins, and add-ons: the
+mechanism](../nvda/app-modules-mechanism.md), "App modules"). The
+switcher's list items are not refused: with Alt held, NVDA says the item
+reached, by its window's title, row, column and position ("row 1 column
+2 2 of 10"), and then the window switched to. NVDA's capture of Alt+Tab between two console windows,
+three quick switches and two with Alt held, said nothing for the
+switcher's pane in any switch.
+Verbatim: Core refuses a UI Automation focus, not a foreground change,
+whose node is a pane and whose window facts carry the class
+`Windows.UI.Input.InputSite.WindowClass`, before anything else judges it
+(decision D6), so it moves nothing and cuts nothing. Core matches the
+class of the focus's window and does not know the focus's application,
+where NVDA matches the element's own class in File Explorer's process;
+for the switcher's pane, its window's own element, the two agree.
+**matched (verified)** for what is said, by NVDA's capture and a
+hand-run Alt+Tab check of 2026-10-24 with Verbatim before and after
+(`target/e2e-evidence/switcher-pane-2026-10-24/`): before, Verbatim
+queued "Task Switching window, pane" in five of six switches; after, it
+queued nothing for the pane in any. No scenario can use Alt+Tab
+(`docs/testing.md`), so Core's unit test pins the rule
+(`a_uia_focus_on_the_task_switching_pane_is_refused_whole`).
+A case that differs: with Alt held, Verbatim says the switcher's window
+and list ("Task Switching window", "Running applications list") before
+the item, and the item without its row and column, where NVDA says the
+item alone with them. The same app module's rule that drops a task
+switching list item's ancestry while Alt is held is not ported; whether
+it is what silences the ancestry on Windows 11 is not established.

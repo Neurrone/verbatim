@@ -545,7 +545,8 @@ fn reduce_activation_completed(
 
 /// Whether `event` is a focus dropped before anything else judges it: a
 /// duplicate of the last focus Core queued, whose newer reading is kept
-/// unspoken, or a stale focus from another outpost.
+/// unspoken, a stale focus from another outpost, or a focus an
+/// application's rule refuses whole ([`crate::applications::refuses_focus`]).
 fn focus_dropped_first(
     state: &mut SrState,
     observed: (u64, u64),
@@ -554,6 +555,7 @@ fn focus_dropped_first(
 ) -> bool {
     let NormalizedEvent::FocusChanged {
         node,
+        foreground,
         ancestors,
         ancestors_unknown,
         text,
@@ -562,6 +564,9 @@ fn focus_dropped_first(
     else {
         return false;
     };
+    if !foreground && crate::applications::refuses_focus(window, node) {
+        return true;
+    }
     if is_duplicate_focus(state, node) {
         keep_newer_reading(state, node, ancestors, *ancestors_unknown);
         sync_navigator_with_focus(state);
