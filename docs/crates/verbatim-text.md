@@ -3,8 +3,8 @@
 Platform-neutral text segmentation for the text model of milestone M4
 (`docs/design/phase6-design.md`, "Internationalization in the text model"),
 and the reading of terminals: the memory of a terminal's rows and the
-rules that decide what is spoken (`docs/design/terminal-model.md`,
-sections 4 and 5). Original
+rules that decide what is spoken (`docs/design/terminal-model.md`).
+Original
 code over ICU4X's segmenters, jieba, and `unicode-width`; it never touches a
 Windows API, and `cargo xtask ci` checks that it does not.
 
@@ -73,9 +73,10 @@ Windows API, and `cargo xtask ci` checks that it does not.
 ## The terminal row memory
 
 `terminal_rows` is the platform-neutral core of the terminal model's
-section 4, "Changes as alignments of rows" (`docs/design/terminal-model.md`),
-written from that design. It classifies; it does not speak: the reading
-rules of section 5 (`terminal_reading`, below) are built on its
+memory and alignment (`docs/design/terminal-model.md`, "The model", "The
+read", "The alignment", "Lingering", "A read with no text", "Screens" and
+"Starting again"), written from that design. It classifies; it does not
+speak: the reading rules (`terminal_reading`, below) are built on its
 `Outcome`. The outpost reads every focused terminal through both
 (`docs/crates/verbatim-outpost.md`, "Terminals").
 
@@ -88,69 +89,61 @@ rules of section 5 (`terminal_reading`, below) are built on its
   start, the document's first row, the caret's row and column and how many
   rows its row and those below hold, and how many rows it holds above the
   start it was asked for), with the text as UTF-8 and the time of the read
-  in milliseconds, and `checked`, the rows `Outcome::check_rows` asked for
-  (`Checked`: each run's text and the document's first row read after
-  them), when the same read is given again with them. The start for the
-  next read is an opaque provider range the outpost keeps.
+  in milliseconds. The start for the next read is an opaque provider range
+  the outpost keeps.
 - `TerminalMemory::new` and `TerminalMemory::read(&Read) -> Outcome`: one
-  memory per terminal, kept while the terminal exists. `rows` gives the
-  last read's rows as `Rows`, counted from the read's first row: `len` is
-  how many the read held, `first_kept` the first the memory keeps, `kept`
+  memory per terminal, kept while the terminal exists. `above` gives how
+  many rows the next read takes above its start: a screen, as the last
+  read found it, and none before the first read. `rows` gives the last
+  read's rows as `Rows`, counted from the read's first row: `len` is how
+  many the read held, `first_kept` the first the memory keeps, `kept`
   those rows and `get` one of them (`Row`: its text without padding,
   shared as an `Arc<str>`, a 64-bit hash, whether it wraps onto the next
-  row, the hash of its whole line, whether it has been redrawn, and when
-  its text last changed). `trim` keeps only the block and the rows below
-  it (below), and `first_kept` says before it from which row it will keep.
-  `known_history` gives the hashes of the rows known above the rows kept;
-  `review` and `set_review` the review position, and `marks` and
-  `add_mark` the command marks, each an `Anchor` (a row counted from the
-  last read's first row, negative in the history above it, a column in
-  characters, and its line's hash), set only on a row the memory keeps;
-  `set_review_anchor` puts the review position at any anchor, a history
-  row above the rows kept among them, whose line's hash the caller read,
-  and `anchor` makes one on a row the memory keeps. `add_place`, `place`
-  and `drop_place` keep places, numbered anchors the caller holds in the
-  text (the outpost's review answers' rows), which move with their rows as
-  the review position does, are kept aside with the memory while the
-  alternate screen is up, and are dropped when their row cannot be
-  followed: when the history overflowed and their row was not kept, or,
-  for a read the memory takes as a first, when their line is not where it
-  should be.
-  `above` gives how many rows the next read takes above its start, which
-  the read program is asked for. `settle(&Read)` takes a read for which
-  the memory asked for another only to tell the rotation without that read,
-  deciding from what the read shows, for a caller that does not take reads
-  it does not need ("report new output" off); it gives `None` when the read
-  was asked for for another reason. `restart(&Read)` takes a read as a
-  first read, keeping the command marks it cannot refute and the review
-  position on its row when the read shows its line there, for a caller
-  that will not take a read the memory asked for.
-- `Outcome`: for each row of the read a `NewRow` (`New`; `Kept`, from which
-  old row and whether it moved other than with the history; `Rewritten`,
-  from which old row, whether it moved, and whether it moved alone, with no
-  neighbour kept in the same move, so that its change history starts
-  afresh; `Returned`, a lingering row taken
-  back, and whether elsewhere; `Reprint`; or `Earlier`, history the
-  memory never covered); for each old row an `OldRow` (`Kept` or
-  `Rewritten` and where, `Gone` and whether it lingers, `Above`, past
-  the read's start, or `Left`, out of the buffer past the document's
-  start); the read's `Line`s (rows joined while each wraps, with
-  their text, a one-row line's shared with its row, and hash, and `grew_from` when a line that did not move only
-  gained at its end, so the text after that offset is what it gained);
-  the rotation; whether the first row continues a line from above the
-  read; the caret's row; the screen's width and height; a `Switch` of
-  screens; whether more went by than the history holds (`overflowed`);
-  and, each set alone when the memory needs another read and given before
-  it changes anything, `whole_document`; `check_rows`, runs of rows to read
-  by their place (`RowsAbove`: how many rows above the read's asked start
-  each begins, and how many it holds; at most `MOST_CHECKED` runs) and give
-  with the same read; and `read_above`, a read from the same start with
-  that many rows above it.
+  row, the hash of its whole line, and whether a program has rewritten
+  it). `trim` keeps only the screen above the screen and the rows below
+  it, and `first_kept` says before it from which row it will keep.
+  `known_history` gives the hashes of the rows known above the rows kept,
+  the remembered history; `review` and `set_review` the review position,
+  and `marks` and `add_mark` the command marks, each an `Anchor` (a row
+  counted from the last read's first row, negative in the history above
+  it, a column in characters, and its line's hash), set only on a row the
+  memory keeps; `set_review_anchor` puts the review position at any
+  anchor, a history row above the rows kept among them, whose line's hash
+  the caller read, and `anchor` makes one on a row the memory keeps.
+  `add_place`, `place` and `drop_place` keep places, numbered anchors the
+  caller holds in the text (the outpost's review answers' rows), which
+  move with their rows as the review position does, are kept aside with
+  the memory while another screen is up, and are dropped when their row
+  cannot be followed. `restart(&Read)` takes a read for which the memory
+  asked for the whole document without that read, for a caller that does
+  not take it ("report new output" off): the memory starts again from it.
+- `Outcome`: for each row of the read a `NewRow` (`New`; `Kept`, from
+  which old row and whether it moved other than with the history;
+  `Grown`, an old row whose text grew where it was, which counts as kept;
+  `Rewritten`, from which old row and whether it moved; `Returned`, a
+  lingering row taken back, and whether elsewhere; or `Shown`, a row whose
+  text was shown before but that carries no row of the last read: history
+  above the last read, a row the remembered history held, or, returning to
+  a screen set aside, a row the last read showed); for each old row an
+  `OldRow` (`Kept` or `Rewritten` and where, `Gone` and whether it
+  lingers, `Above`, past the read's start, or `Left`, out of the buffer
+  past the document's start); the read's `Line`s (rows joined while each
+  wraps, with their text, a one-row line's shared with its row, and hash,
+  and `grew_from` when a line that did not move only gained at its end, so
+  the text after that offset is what it gained); the rotation; whether the
+  first row continues a line from above the read; the caret's row; the
+  screen's width and height; a `Switch` of screens (`Opened`, `Closed` or
+  `New`); whether the history overflowed (`overflowed`), every row then
+  new; `first`, the memory's first read; and, each set alone with the
+  memory unchanged, `whole_document`, when the caller is to read the whole
+  document and give that read instead, and `blank`, when the read's screen
+  shows no text where the last read's had text.
 - `hash`: the 64-bit hash of a row's text (FNV-1a), the same in every
   process.
 - `rows_of`: a read's text split into rows as the memory splits a read,
   for a caller that reads rows the memory does not keep, the history above
   them, at the width a read found.
+- `LINGERING_MS`: how long a gone row lingers, 2 seconds.
 
 ### How a read is aligned
 
@@ -164,235 +157,141 @@ Terminal's last row of the buffer, which is one cell short. When every
 line but the last wraps, that narrowest line is several rows, so the
 caret's row, which the read gives as one row, is used instead when its
 length, or that length and the cut cell, fits every screen line; when
-both fit, the one that gives the height of the last read wins.
+both fit, the one that gives the height of the last read wins. A changed
+width or height starts the memory again.
 
-Each read starts where the last said, the screen's top as last read, so
-a row that did not move is at a known shift: its old index less the rows
-the last read held above that start. A read the outpost started anywhere
-else (the start was refused, the whole document, a restored memory) has no
-known shift, and the old rows are found wherever they are. Rows above
-where the old rows began, in a read with a known shift, are history the
-memory never read (`Earlier`), since no program writes into the history.
+Each read starts one screen above the top of the last read's screen, at
+the provider range the last read kept. The rows above the last read's
+screen are history, which keeps its text and moves only by the rotation:
+once the history is full the buffer rotates under fixed coordinates by a
+number of rows no provider reports. The rotations allowed are those that
+put every history row the read holds where the rotation carries it, with
+its text; a read of the alternate screen, which has no history, allows
+only none. The document's first row is checked against the row the
+remembered history held that many rows below the document's start, which
+rules a rotation out only where the history held that row.
 
-Once the history is full the buffer rotates under fixed coordinates, so
-the rows at the kept start move up by a number of rows no provider reports
-(section 4.3, item 5). It is decided as comparing the whole buffer with
-the known history would decide it, since no program writes into the
-history and a rotation of r rows so predicts every history row: the row
-now at a coordinate is the one the history held r rows lower. Every read
-starts some rows above the kept start, the block: the rows directly above
-the screen's top at the last read, at least four, extended upward past
-blank rows to take in two with text, at most a screen's height, and while
-the read holds fewer than that, four more are asked for at the next read;
-and every read takes the document's first row. The candidates are the
-rotations, up to the block's last row, for which the row the history held
-there has the first row's text (as a line's last row or as a wrapped
-row, which the provider's row does not tell). Each candidate is checked,
-at no cost, against every history row the read holds; a candidate whose
-block lies above the read is checked by reading the rows it predicts
-there by their place (`check_rows`), all candidates' runs in one remote
-operation, after which the read is given again with them, and refuted
-when the document's first row read with them is not the read's, since the
-buffer moved between the two. One candidate holding is the rotation; one
-that puts the old screen's first row above the read too takes the read
-again from the block's place (`read_above`), so the output between is
-read. Several holding, a known history that does not reach the document's
-start (the first read was only the screen), a candidate on a row that
-went by unread, or more than `MOST_CHECKED` runs to read read the whole
-document, where the whole known history is compared with the document for
-each candidate, from the rows nearest the old screen, and the smallest
-that agrees is taken. A block of blank rows tells no rotation from
-another, nor from one that takes it out of the buffer, as a screen
-cleared into the history leaves it, so the old screen's rows with text,
-aligned in order as well as by text (section 4.4), then give it when the
-history allows it. No candidate holding means the history rotated past
-the block: the topmost kept row tells how far when its text is unique and
-it moved at least that far; otherwise the whole document is read, the old
-screen is searched for anywhere, and the rows above a row kept from it
-that is now in the history and whose text is unique, and that moved up at
-least past the block, are history; with no such row, as when only a
-footer was kept, every row above is output that went by and the history
-overflowed. With the rotation known, a row now above the screen is an old
-screen row only where that rotation puts it. A refused start whose read,
-moved up by the block, reached the document's start is taken as a
-whole-document read at once. With no row that was history at the last
-read, as after a first read of a screen with no history, every rotation
-agrees with the known history, and the kept rows decide.
+Over the rotations allowed, the last read's rows are aligned with the
+read's by a longest common subsequence of the hashes of the rows with
+text, by dynamic programming in which each cell keeps the best alignment
+ending on the same shift (which continues a block) and the best anywhere
+above and to the left (which starts one), so among alignments keeping
+equally many rows the one with the fewest blocks wins, and then the one
+moving the fewest rows. The candidates are the smallest rotation allowed,
+the rotations that keep a block of the screen's rows where they were, and
+those the document's first row confirms; the one keeping the most rows
+wins, and on a tie the one the document's first row confirms, then one it
+does not refute, then the smallest. History rows the rotation carries
+above the read count as kept, unless the read starts at the document's
+start, where they left the buffer. A row whose text is once among the old
+rows and once in the read is kept where that text went, whatever else
+moved, and a row whose text grew where it was, its new text starting with
+its old, is kept as grown, unless its text is unique in both reads. A
+blank row is kept only where a kept row beside it puts it.
 
-The old screen (the last read's rows from that start) is aligned with the
-new read's first rows, as many as the old screen and a screen more, and
-its last screen of rows; rows between those windows are new. The
-alignment is a longest common subsequence of the hashes of the rows with
-text, by dynamic programming over every cell of the old screen by the
-windows: each cell keeps two running maxima, the best alignment ending on
-the same shift (which continues a block) and the best anywhere above and
-to the left (which starts one), so among alignments keeping equally many
-rows the one with the fewest blocks wins, and then the one with the fewest
-rows off the known shift. A blank row is kept only in place, where the
-kept row above it, or else below it, puts it. The rotation is how far the
-topmost kept row moved up from its known place; rows that moved with it
-are kept unmoved, and the others kept as moved. A screen with no history
-above it, as the alternate screen, never rotates: rows a scroll moved up
-are kept as moved, and those it moved off the top are gone. A longest common
-subsequence keeps rows in order, so a row moved past others, as a list
-entry drawn again elsewhere in the list, is kept afterwards where its
-text went when that text is on no other row of the old rows or of the
-read, so every such row is mapped where it went.
+Between two kept rows, or a kept row and the read's edge, the old and new
+rows left over are paired as rewritten when neither is blank and they
+share in order at least half the characters of the longer, counted by the
+bit-parallel longest common subsequence of their characters. The pairing
+keeps their order and makes as many pairs as it can, and then the most
+whose shift is that of the kept row below them, so Pi's status row drawn
+a row lower with its spinner changed pairs with its old self. A read with
+no kept row pairs nothing. Rows above the topmost kept row and the screen
+that the remembered history or the last read showed are `Shown`.
 
-Between two kept rows, the old and new rows left over are paired as
-rewritten by likeness: alike when neither is blank and one begins the
-other, or they share in order at least half the characters of the longer,
-counted by the bit-parallel longest common subsequence of their
-characters. The pairing keeps their order and makes as many pairs as it
-can, and then the most whose shift is that of the kept row below them, so
-Pi's status row drawn a row lower with its spinner changed pairs with its
-old self.
+An old row left over is gone, and lingers for 2 seconds when a program
+had rewritten it or it was at or below the caret. A new row with a
+lingering row's text is that row back (`Returned`), wherever it comes back.
 
-An old row left over is gone, and lingers for 2 seconds when it was a
-redrawn row, was at or below the caret's row of the last read, would be at
-or below the caret's row now, or the read shows no text at all, where a
-program cleared the screen before drawing it again. A new row takes a
-lingering row back only as a row of the same line, with the row's text,
-the line's hash and the same place in it (section 4.1): the same text in
-another line, such as a wrapped line's last row printed again as a line
-of its own, is new. New rows above the topmost kept
-row are matched, in order, against the known history and the old rows
-above the kept ones, by the histogram method (the rarest shared row
-first, the one nearest the middle among equally rare, at its place
-nearest the old screen, the match extended above and below it while the
-rows agree, then the rows before and after that run the same way), when
-a row with text of the old screen was kept, or the old screen had none:
-in a normal read the matched rows are a reprint (section 4.4), and in a
-whole-document read or a restored memory they are history found again.
-A whole-document read that lost the old screen matches them too, as
-history found again, to tell how much went by. Output that only repeats
-the known history, after a clear that took the old screen with it, is
-new. A whole-document read after the document shrank, whose block is
-still at its place counted from the document's start, kept the history:
-only rows of the screen were erased, and the rows above are where they
-were.
+When the read keeps no row with text that the last read had at or above
+the caret, or the read's start was refused, and the read does not start
+at the document's start, the memory asks for the whole document and
+changes nothing until it comes. The whole document is aligned with the
+last read's rows by the same longest common subsequence, and the rows
+above the topmost row kept with the remembered history by a histogram
+diff over the hashes (the rarest shared row first, the match extended
+above and below it while the rows agree, then the rows before and after
+that run the same way), a row found again being `Shown`; the shift most
+kept rows share is the one that did not move. Rows above the topmost row
+kept are history the rotation carried, unless the document's start was
+refused, as after a clear, when only those the remembered history held
+are not new.
 
-When the old screen had text and none of it was kept, or the read's start
-was refused, and the read does not start at the document's start, the
-memory asks for the whole document and changes nothing until it comes;
-the old screen is then searched for in all of it, anchored by the block
-where it is lowest when the read lost the old screen (no lower than it
-was, when the memory's rows began at the document's start, since no row
-of the history moves down), and when the old screen is not found in a
-document longer than a screen and no row of the known history is found
-either, the history overflowed. So did a read from the kept start that
-reached the document's start, longer than a screen, when no candidate
-told the rotation and no row of the old screen was kept but rows that
-moved down with the end of the text; a rotation a candidate told places
-the history exactly, so a footer moved down below a cleared screen is no
-overflow. With
-the history overflowed, the review position stays on its row when that
-row was kept, and goes to the caret otherwise; a command mark stays only
-on a kept row whose line is its line.
+A read whose screen shows no text where the last read's had text, as
+between a program's clear and its reprint, changes nothing but where the
+next read starts (`blank`).
 
-A read whose screen starts at the document's start, after one whose screen
-did not, is a switch of screens or a clear that looks like one (section
-5.8): it is aligned as usual, then the memory before it is kept aside with
-its anchors, and the new screen's memory starts with the review position
-at the caret. When the screen no longer starts at the document's start,
-the memory kept aside is restored if every row with text of its old
-screen is kept in the read, unless the read shows, where they were, rows
-with text read since the switch: then the screen never changed, as when a
-program erased the history, and restoring would speak those rows again.
-Otherwise it is dropped, and the rows of the alternate screen's memory are
-not taken as rewritten into the main screen's rows.
-
-With no history on the main screen no read shows a switch by the
-document's shape, so a read after one with no history, itself with none,
-that has text and in which no row with text of the old screen is kept or
-rewritten, every one replaced by rows unlike it, is taken as a switch too,
-unless a memory is already kept aside (a full-screen program drawing a new
-page keeps it there). That memory was read from the document's start, so it
-is restored only by a read from the document's start that keeps every row
-with text of its old screen in place, counted from that start, whether or
-not the document has a history by then, under the same exception for rows
-read since the switch; it is dropped as the other is.
+When even the whole document keeps no row with text the last read had at
+or above the caret, the screen changed or the history overflowed
+("Screens", "Starting again"). A read that keeps rows of the screen set
+aside returns to it: the memory set aside is restored, aligned with the
+read (`Closed`). Otherwise a new screen one screen tall, as the alternate
+screen opening, sets the last read's memory aside with its anchors,
+unless one is aside already (`Opened`); a document longer than a screen
+that is at least as long as the last read's is an overflow, and the
+memory starts again from the read, every row new; any other is a new
+screen of another shape, as Windows Terminal's clear leaving a prompt,
+and drops what is aside (`New`). Starting again finds each anchor by its
+line's hash nearest its old place, from the read's end; the review
+position not found goes to the caret, and a mark or a place not found is
+dropped.
 
 Anchors move with the alignment: a kept or rewritten row carries its
-anchor to its new place, the column clamped to the text, and so does a
-blank row written over in place, which the alignment, pairing no blank
-row, finds gone; a gone row passes the review position to the nearest
-surviving row above, or to the caret; above the read it moves with the
-shift and the rotation while the buffer still holds its row, and goes to
-the caret once its row left the buffer. A command mark moves to the first
-row of its line, and is dropped when its row was rewritten or is gone.
+anchor to its new place, the column clamped to the text; a gone row passes
+the review position to the nearest surviving row above, or to the caret;
+above the read it moves with the shift and the rotation while the buffer
+still holds its row, and goes to the caret once its row left the buffer.
+A command mark moves to the first row of its line, and is dropped when its
+row was rewritten or is gone.
 
 ### What the memory keeps
 
-Section 4.1 needs of the last read only the screen, the rows written below
-it, and the block above it; the rows above the block matter only as hashes
-in the known history, and the review commands read history rows from the
-provider (section 5.6). So once a read is handled, `trim` drops the rows
-above the block, putting their hashes in the known history, and the
-reading rules drop their state of those rows with it. The reader trims
-after every read, and every read first trims what the last left, so the
-alignment always works on the trimmed memory. Nothing counted from the
-last read's first row moves: the memory keeps how many rows it dropped,
-and anchors, lingering rows, the caret and what the next `Outcome` says
-of old rows are still counted from that row. The first row kept carries
-whether the row above it wrapped onto it.
+The memory needs of the last read only the screen, the rows written below
+it, and the screen above it; the rows above that matter only as hashes in
+the remembered history, and the review commands read history rows from the
+provider. So once a read is handled, `trim` drops the rows above the
+screen above the screen, putting their hashes in the remembered history,
+and the reading rules drop their state of those rows with it. Every read
+first trims what the last left, so the alignment always works on the
+trimmed memory. Nothing counted from the last read's first row moves: the
+memory keeps how many rows it dropped, and anchors, lingering rows, the
+caret and what the next `Outcome` says of old rows are still counted from
+that row.
 
-The next read finds a dropped row only by its hash. A read that reaches
-it, the whole document or a read that restores a memory, keeps it where
-the shift puts it when the read's row there has its hash, and its
-history starts anew; otherwise it went above the read, left the buffer,
-or is gone, as a row above the old screen does. The known history is kept
-by coordinate (section 4.1): after each read it holds, for every row the
-buffer holds above the read, the hash the last read showed there when that
-row went above the read with the history, and an unread mark (hash 0,
-which `hash` never gives) for a row that went by unread or a coordinate
-whose row the last read showed but that now holds another, as where a
-footer was before it moved down. A rotation takes the oldest hashes with
-the rows that left, after any rows above the known history that a read
-from the document's start counted, and a read from the document's start,
-the whole document's among them, holds no row above it, so the known
-history becomes that read's rows above the block. It is so bounded by
-the terminal's history: 8,997 hashes, measured after 100,000 lines
-through a 120 by 30 screen with 9,001 rows of history; a limit of 32,768
-hashes bounds a terminal set to keep more, whose oldest rows are then
-counted as unknown above the known history. A whole document of 9,000 rows
-therefore leaves the same memory as an ordinary read: about 34 rows of a
-120 by 30 screen and its block.
+The remembered history is kept by coordinate: after each read it holds,
+for every row the buffer holds above the rows kept, the hash the last read
+showed there. A rotation takes the oldest hashes with the rows that left,
+and a read from the document's start, the whole document's among them,
+gives it afresh. It is so bounded by the terminal's history: 8,997 hashes,
+measured after 100,000 lines through a 120 by 30 screen with 9,001 rows of
+history; a limit of 32,768 hashes bounds a terminal set to keep more,
+whose oldest rows are then counted as unknown above the remembered
+history. A whole document of 9,000 rows therefore leaves the same memory
+as an ordinary read: about 60 rows of a 120 by 30 screen.
 
 ### Cost
 
-In a release build on Dickson's x64 machine, with 120 by 30 screens of
-ASCII text: a read of the last screen and one line more takes about 24
-microseconds, most of it splitting the text into rows and lines, the
-dynamic programming over 30 by 61 cells a small part; the block adds its
-four rows to every read, which measured beside the memory without it
-(9,000 rows of history, 2,000 reads each way) cost nothing measurable,
-29.5 against 29.8 microseconds a read, and about 2.6 microseconds, 30.8
-against 28.2, to a footer over five streamed lines whose rotation the
-kept rows tell. The rotation's own cost is in `docs/performance.md`, "A
-terminal's rotation": a rotation within the block is told by one read of
-rows by their place, and one past it by a read again from the block's
-place, each tenths of a millisecond of the memory's time; a history of
-one repeated text reads the whole document, about 4.5 milliseconds of the
-memory's time beside the read's own; a screen rewritten
-whole about 117 microseconds, the likeness pairing of 30 rows by 30; a
-read of 1,000 new rows after a screen 1.2 milliseconds; a whole-document
-read of 9,030 rows 12 milliseconds, against the 9.4 to 29 milliseconds
-the read itself takes. A reprint as Pi makes one, the whole transcript of
-9,029 rows printed again after a clear with one row above the screen
-taken out, read whole against a known history of 8,996 rows, takes 5.6
-milliseconds, measured on 2026-10-24; with one row in ten changed as well,
-11 milliseconds. The read program's added instructions for the rows
-above the start are five (`docs/performance.md`).
+Measured on 2026-10-24 on Dickson's x64 machine in a release build, 120 by
+30 with a full history of 9,001 rows of numbered lines, the memory's and
+the rules' time together, in either terminal: an ordinary read 60 to 270
+microseconds, whatever the rotation up to two screens less a row (59
+rows); a rotation past that, which keeps no row of the last read, reads
+the whole document, 4.2 to 5.2 milliseconds of the memory's and rules'
+time beside the read's own; a history of one repeated line costs an
+ordinary read, 85 to 115 microseconds; a clear and a reprint of 8,905
+rows of the 9,005, read whole, 5.3 to 8.3 milliseconds. Live in the
+console host, the read program's snapshot takes 0.45 to 1.06
+milliseconds with the screen above, against 0.37 to 0.75 without it, 7,318
+UTF-16 units against 3,658; a whole document 25 to 29 milliseconds, 1.1
+million units. The read program is unchanged by the screen above: its
+rows above the start cost the same five instructions however many there
+are (`docs/performance.md`).
 
 With the reading rules on top, measured on 2026-10-24 with a counting
 allocator in a release build, 120 by 30 with a full history of 9,001 rows:
-an ordinary read of one line more takes about 35 microseconds and a
-whole-document read about 9 milliseconds. Held between reads, a
-terminal's memory and rules take 122 to 127 KB after either kind of read,
-measured on 2026-10-24 after 100,000 lines, most of it the known
-history's 8,997 hashes (72 KB) and its queue's spare capacity; the rows
-kept take about 400 bytes each with the rules' state.
+held between reads, a terminal's memory and rules take about 125 KB, most
+of it the remembered history's 8,997 hashes (72 KB) and its queue's spare
+capacity; the rows kept take about 400 bytes each with the rules' state.
 Handling a whole-document read raises the peak by 4.5 MB: the read's rows
 and lines, the outcome, and a small state for each row, with no line state
 for the lines above the rows the memory will keep.
@@ -400,25 +299,25 @@ for the lines above the rows the memory will keep.
 ### Tests
 
 `src/terminal_rows/tests.rs` drives the memory with `verbatim-term-sim`,
-reading as the outpost does, one case of the design each, asserted whole:
-plain output, a scroll, rotation, a footer kept at its coordinate while
-the history rotates, a footer redrawn in place, Pi's status row drawn a row
-lower with its spinner changed, Ink's region erased and drawn again in one
-write and caught erased between two, a repeated row kept in place rather
-than paired with its copy, a row moved past others kept where its text
-went, a wrapped line split across the read's top, Windows Terminal's cut
-last row, a clear and a reprint, output repeated after `cls`, output
-repeated after a clear that took the old screen, the alternate screen
-opened and closed, a scroll on the alternate screen, the review position
-through a scroll, a rotation and a redraw elsewhere, and on a row gone, a
-rotation whose block left the read checked by its rows read by their
-place, a footer over more output than the history holds, a footer below a
-cleared screen pushed into the history that is no overflow, the known
-history moving up with the rotation and taken from a whole-document read,
-a history erase not restored once rows read since it are shown, a row
-paired alone by likeness elsewhere starting its change history afresh, a
-lingering row taken back only as a row of its own line, and a screen
-cleared into the history over repeated text keeping its rows in order.
+reading as the outpost does, one read and the whole document when the
+memory asks for it, one case of the design each, asserted whole: plain
+output, a scroll, rotation within one and two screens, a footer kept at
+its coordinate while the history rotates, a footer redrawn in place, Pi's
+status row drawn a row lower with its spinner changed, Ink's region erased
+and drawn again in one write and caught erased between two, a repeated row
+kept in place rather than paired with its copy, a row moved past others
+kept where its text went, a wrapped line split across the read's top,
+Windows Terminal's cut last row, a clear and a reprint, output repeated
+after `cls` and after a clear that took the screen with it, the alternate
+screen opened and closed, from a fresh shell as a new screen and not an
+overflow, a pager's pages, a scroll on the alternate screen, Windows
+Terminal's clear and a full-screen program returning to the screen after
+the clear, the review position through a scroll, a rotation and a redraw
+elsewhere, and on a row gone, a footer over more output than the history
+holds, the remembered history moving with the rotation and taken from a
+whole-document read, a history erase keeping its rows, blank screens
+between a clear and a reprint, a tie between rotations settled by the
+document's first row, and a lingering row taken back.
 
 The memory is also checked by the oracle, through the reading rules built
 on it (below).
@@ -426,19 +325,20 @@ on it (below).
 ## The terminal reading rules
 
 `terminal_reading` is the platform-neutral core of the terminal model's
-section 5, "The reading rules", written from that design on top of the row
-memory. It is a state machine with no clock and no thread of its own:
-every input carries its time, and every input answers with what to say,
-what it withholds and why, and when the quiet-period timer should next
-fire. Reading on demand and moving by command (sections 5.11 and 5.13)
-are not built here; they act on the memory, which the reader lends out.
+reading rules (`docs/design/terminal-model.md`, "Reading rules" and "The
+rules in detail"), written from that design on top of the row memory. It
+is a state machine with no clock and no thread of its own: every input
+carries its time, and every input answers with what to say, what it
+withholds and why, and when the quiet-period timer should next fire.
+Reading on demand and moving by command are not built here; they act on
+the memory, which the reader lends out. Floods are Core's to split
+("Core's flood policy"): every new line goes to Core.
 
 ### Public API
 
 - `TerminalReader::new(Settings)`: one reader per terminal, owning its
   `TerminalMemory` (`memory`, and `memory_mut` for the review commands).
-  `Settings` holds "report new output", "review follows caret", and the
-  flood policy's "lines spoken in full" and "last lines to speak".
+  `Settings` holds "report new output" and "review follows caret".
 - The inputs, each returning a `Step`:
   - `read(&Read, waited, colours)`: a read of the terminal, with whether
     it waited for Core's speech queue and, for the first read after a key,
@@ -454,31 +354,25 @@ are not built here; they act on the memory, which the reader lends out.
   - `set_settings(Settings)`.
 - `Step`: the `Speech` in order, the lines `Withheld` with a `Reason`, the
   `timer` due time, `whole_document` when the read is to be taken again
-  over the whole document, `check_rows` when rows are to be read by their
-  place and the same read given again with them, `read_above` when it is
-  to be taken again from the same start with that many rows above it, the
-  read's
-  `Outcome`, and `followed`, whether a key moved the caret within its
-  window and the review position followed it. `Speech` is a new
-  line (`Line`), what a growing line gained (`Growth`), a redrawn row from
-  the word that changed (`Changed`), a held line that left the read before
-  it was spoken, as it was last read (`Held`, naming no row), a flood's
-  count (`Skipped`, with the
-  first rows of its lines and how many, `Counted`: exactly, more than when
-  the history overflowed, or not known when it overflowed and every line
-  it holds is spoken),
-  typing shown (`Echo`), a key's answer on the caret's line in a unit
-  (`Caret`), text the caret's line gained or lost (`Gained`, `Lost`), a row
-  away from the caret that is a key's answer (`Answer`), and a suggestion
-  after the caret (`Suggestion`). Each names the first row of its line in
-  the memory's last read. A `Reason` is one of the design's silences:
-  `Volatile`, `UnfinishedWord`, `HeldForKeys`, `Spinner`, `LostText`,
-  `HeldTyping` and `KeyAnswer`.
-- The time limits of section 5.14 as constants: `KEY_WINDOW_MS` and
+  over the whole document, the read's `Outcome`, and `followed`, whether a
+  key moved the caret within its window and the review position followed
+  it. `Speech` is a new line (`Line`, a blank one with empty text, which
+  Core counts and does not speak), what a growing line gained (`Growth`), a
+  redrawn row from the word that changed (`Changed`), a held line that
+  left the read before it was spoken, as it was last read (`Held`, naming
+  no row), an overflow (`Overflowed`, before the lines the history holds,
+  all new), typing shown (`Echo`), a key's answer on the caret's line in a
+  unit (`Caret`), text the caret's line gained or lost (`Gained`, `Lost`),
+  a row away from the caret that is a key's answer (`Answer`), and a
+  suggestion after the caret (`Suggestion`). Each names the first row of
+  its line in the memory's last read. A `Reason` is one of the design's
+  silences: `Volatile`, `UnfinishedWord`, `HeldForKeys`, `Spinner`,
+  `LostText`, and `WrittenBack`, a listed limit: text erased and written
+  back within the time a gone row lingers.
+- The time limits ("Every time limit") as constants: `KEY_WINDOW_MS` and
   `TYPED_LIMIT_MS` (300), `VOLATILE_MS` and `UNPROMPTED_MS` (2,000),
-  `LINGERING_MS` (2,000, the memory's), `QUIET_MS` (1,000), and
-  `quiet_period`, 1 second or 1.5 times the interval between the last two
-  changes when that is longer.
+  `QUIET_MS` (1,000), and `quiet_period`, 1 second or 1.5 times the
+  interval between the last two changes when that is longer.
 
 ### How the rules are built
 
@@ -488,164 +382,123 @@ read, what the user was last told of it, whether it was redrawn and is
 volatile, when it last changed and the interval before, when it last
 changed outside a key's window, when it last grew, what it waits for, and
 whether a key changed it since it appeared. That history moves with the
-alignment as the memory's does: from the old line a kept or rewritten
-first row started, or that the read's first row continues; a lingering
-line taken back brings its history with it; a row split off a line starts
-a line of its own, with the old line's text kept only to tell whether it
-lost text. A line the read's first row continues keeps the part above the
-read in its text, and speech quotes only the part the read shows. The
-history kept aside when the alternate screen opens is restored with the
-memory.
+alignment as the memory's does: from the old line a kept, grown or
+rewritten first row started, or that the read's first row continues; a
+lingering line taken back brings its history with it. A line the read's
+first row continues keeps the part above the read in its text, and speech
+quotes only the part the read shows. The history kept aside with a screen
+is restored with it.
 
 The reader keeps state for the rows the memory keeps, and trims it with
-the memory once a read is handled: a line that starts above the first row
-kept moves its history to that row, the text above it counted as above
-the read. A line's text, what was said of it, and its row's text are one
-shared string while they are the same, so a row read whole costs one copy
-of its text. While a read is handled the reader reads the memory's rows in
-place, and keeps no history for a line above the rows the memory will
-keep that holds nothing, so a whole-document read does not build a line
-state for each of its thousands of rows.
+the memory once a read is handled. A line's text, what was said of it, and
+its row's text are one shared string while they are the same. While a read
+is handled the reader reads the memory's rows in place, and keeps no
+history for a line above the rows the memory will keep that holds nothing,
+so a whole-document read does not build a line state for each of its
+thousands of rows.
 
 Each read, line by line, top to bottom:
 
 - The first read, the first after the focus arrives, a read while the
   focus is away, and a read of a new size speak nothing; each line's text
   becomes what the user knows of it. A new size speaks the caret's line
-  when it changed, and finds the review position again by its line's hash
-  nearest its old row.
+  when it changed. A blank read is idle: nothing is said or withheld.
 - A line with no history whose rows with text are new is new output,
   spoken whole, unless it is the input the shell reprinted: the caret's
   new line, equal to the caret's line at the last read with any typing
   since, that line holding input and still above with new rows between.
-  New lines go through the flood policy: with more than "lines spoken in
-  full" and "last lines to speak" together, the first and last are spoken
-  and the lines between counted in one `Skipped`, blank lines counted but
-  not those after the last line with text; a whole-document read that did
-  not find the last screen counts them as more than, or, when it speaks
-  every line it holds, says lines went by without a count, after the last
-  line spoken.
+  After an overflow every line is new, and `Overflowed` comes first.
 - A line that grew, and whose last read was all heard or held back only
   by its unfinished word, speaks what it gained since what was said. When
   the caret is at its end after a character that is not a space, the last
   word is held (`UnfinishedWord`) and spoken when the line grows past it,
-  when the caret leaves the line, or after the quiet period. Spaces alone
-  wait with the word after them.
+  when the caret leaves the line, or after the quiet period.
 - A line rewritten in place is a redrawn row. Within a key's window, away
   from the caret, and with no change of its own in the 2 seconds before
-  the key, it is the key's: one that gained text other than at its end
-  (compared without spaces, the old text in order within the new) is the
-  answer, spoken whole; one that only lost text is silent; any other is
+  the key, it is the key's: one that gained text other than at its end is
+  the answer, spoken whole; one that only lost text is silent; any other is
   held until the keys pause (`HeldForKeys`). Otherwise a row that only
   lost text is silent (`LostText`), a spinner's symbol replaced alone is
   silent (`Spinner`), and a row that changed within 2 seconds of its last
   spoken change, or at two reads in a row when the second waited for
   speech, is volatile: withheld (`Volatile`) and spoken once it has not
   changed for the quiet period. Any other change is spoken by the
-  changed-word rule: from the start of the word, by Unicode's word rules,
-  where the line first differs, by whole graphemes, from what was last
-  said or from its last read, whichever is earlier, to its end.
-- Kept, returned, reprinted and earlier lines are silent; such a line that
-  now holds less of its old line's text is withheld as `LostText`, and one
-  whose rows were joined into a line no read held is spoken as a change.
-- A held line that has scrolled above the screen, where no program redraws
-  it and the next read does not reach, is spoken at once, as when its time
-  has come.
+  changed-word rule: from the start of the word where the line first
+  differs from what was last said or from its last read, whichever is
+  earlier, to its end.
+- Kept, grown with nothing to say, and shown lines are silent; such a line
+  that now holds less of its old line's text is withheld as `LostText`. A
+  line whose rows are lingering rows taken back is withheld as
+  `WrittenBack`.
 - A held line that left the read with no line of the read carrying it,
   above the read's start, out of the buffer, or gone when the history
-  overflowed, is spoken as it was last read (`Held`: the unfinished word,
-  or a volatile row from the word that changed), before the read's output
-  and its count of lines skipped (section 4.3, item 5).
+  overflowed, is spoken as it was last read (`Held`), before the read's
+  other output.
 
 Keys open a window of 300 milliseconds after the last of them reached the
 program; a key arriving while a window is open joins it. The caret's line
 before the window's first key, without any suggestion, is what its first
-read compares with, and each read in the window leaves the line as it
-found it for the next, so an erase over several reads is spoken as it
-goes. At a read in the window, the caret's line
-is the keys' answer and is not output: typing shown at the caret, inserted
-or over text that showed it already, is echoed, and typing not shown
-within 300 milliseconds of reaching the program is dropped unspoken; a
-caret moved with no text change says a caret key's unit, or for any other
-key the landing rule (one character, that character; the line's start or
-end, the character there; a word's start or end, the word); a line key
-says the line; a line that gained text says the gain, one that lost text
-next to the caret says the loss, and one changed otherwise drops held
-typing and speaks from the changed word. A new line at the caret, as after
+read compares with. At a read in the window, the caret's line is the keys'
+answer and is not output: typing shown at the caret is echoed, and typing
+not shown within 300 milliseconds of reaching the program is dropped
+unspoken; a caret moved with no text change says a caret key's unit, or
+for any other key the landing rule; a caret that ended on another line
+says that line, whatever changed on it; a line that gained text says the
+gain, one that lost text next to the caret says the loss, and one changed
+otherwise speaks from the changed word. A new line at the caret, as after
 Enter, is output. With "review follows caret" on, a key that moved the
 caret moves the review position to it; the focus arriving does so too.
 
 Colours are compared only in the first read after a key: among rows whose
-text did not change, one whose colours changed is the answer; of two, the
-one whose colours now differ from both its neighbours'; with no colours
-read before, the one row that differs from both its neighbours. Text
-after the caret in other colours than the cell before the caret is a
-suggestion, spoken when it appears and not again while typing follows it.
+text did not change, the one row whose colours changed, or with no colours
+read before the one row that differs from both its neighbours, is the
+answer, when exactly one stands out. Text after the caret in other colours
+than the cell before the caret is a suggestion, spoken when it appears and
+not again while typing follows it.
 
 "Report new output" off speaks no output and holds nothing, and takes no
-read the memory asks for: a read that asks for another only to tell the
-rotation is settled from what it shows (`TerminalMemory::settle`), and
-the memory is taken from any other that asks for the whole document,
-rather than taking that read (`TerminalMemory::restart`):
-the command marks and the review position are kept, each moved as the
-read's start moved, or kept when it is above the read, where it cannot be
-checked; a mark whose line is not where it should be is dropped, and the
-review position then goes to the caret. When where the memory's rows are in
-the read is not known, as when Windows Terminal refused the read's start,
-the marks are dropped and the review position goes to the caret. Keys are
-still answered.
+whole-document read: a read that asks for one starts the memory again
+from itself (`TerminalMemory::restart`), each anchor found again by its
+line. Keys are still answered.
 
 ### Cost
 
-In a release build on Dickson's x64 machine, with 120 by 30 screens of
-ASCII text, the rules add to each read on top of the alignment: about 7
-microseconds to a read of the last screen and one line more (the
-alignment about 40); about 210 microseconds when every row of the screen
-is rewritten, the changed-word rule's word segmentation about 7
-microseconds a row; and about 170 microseconds to a read of 1,000 new
-rows. Nothing is done between inputs, and the only wake-up the rules ask
-for is the quiet-period timer, while something waits for it.
+The rules' time is in the memory's figures above. Nothing is done between
+inputs, and the only wake-up the rules ask for is the quiet-period timer,
+while something waits for it.
 
 ### Tests
 
 `src/terminal_reading/tests.rs` drives the rules with `verbatim-term-sim`,
 reading as the outpost does at given times, with keys as they reach the
-program, one rule of section 5 or one case of sections 7 and 8 each,
-asserting the whole step: new output line by line, a line seen first
-spoken whole, growth with its unfinished word held and spoken when the
-line grows past it or after the quiet period, kept rows silent, a flood's
-first and last lines with the rest counted, counted as more than past
-the history, and not counted when every line the history holds is
-spoken, the input reprinted below a completion list, padding; a
-redrawn row's changed word, a spinner, a volatile row heard at its first
-change and once settled, a row volatile at two reads after waiting, a row
-that only lost text, a held row scrolled above the screen; typing echoed,
-shown late, never shown and changed otherwise, the landing rule at a word,
-a character and the line's start, a known caret key, text gained and lost
-at the caret, Up Arrow and a character at once, a change after the
-window; the review cursor following a key, not following with the setting
-off, and moved by the focus; a marker list, a meter that is not the key's
-answer, a ruler held until the keys pause, a filtered list with its echo,
-current entry and count, a highlight moved by colour, a suggestion; the
-alternate screen; a resize; output in the background; "report new output"
-off, and its marks and review position through a flood; an unfinished
-word and a volatile row
-pushed out of a full history, spoken as last read before the flood's
-count; Pi streaming above its status row, Ink's region drawn again with a
+program, one rule or one case of the design's "Evidence" each, asserting
+the whole step: new output line by line, blank lines given to Core, a line
+seen first spoken whole, growth with its unfinished word held and spoken
+when the line grows past it or after the quiet period, kept rows silent, a
+whole-document read after an overflow, the input reprinted below a
+completion list, padding; a redrawn row's changed word, a spinner, a
+volatile row heard at its first change and once settled, a row volatile at
+two reads after waiting, a row that only lost text, a held row scrolled
+above the screen; typing echoed, shown late, never shown and changed
+otherwise, the landing rule, a known caret key, text gained and lost at
+the caret, Up Arrow and a character at once, a change after the window,
+the caret moved by a key to another line that also gained text, and a read
+inside a program's redraw; the review cursor following a key, not
+following with the setting off, and moved by the focus; a marker list, a
+meter that is not the key's answer, a ruler held until the keys pause, a
+filtered list, a highlight moved by colour, a suggestion; the alternate
+screen; Windows Terminal's clear; a resize; output in the background;
+"report new output" off, and its marks and review position through a
+flood; Pi streaming above its status row, Ink's region drawn again with a
 changed cost, and several progress lines settling.
 
 `tests/terminal_oracle.rs` checks the rules against the simulator's
 oracle, which judges by text, over the conformance corpus in both
 terminals, the oracle's 512 random streams and every stream of up to four
-operations of its tiny alphabet, reading at the streams' times. Every
-tiny stream passes. The cases that do not pass are pinned, each with its
-violations and the open design question that decides it (`Question`):
-corpus streams by name and terminal, random streams by number, and, for
-each question, the smallest streams that show it, written out as
-operations. The one question left: the last read had no history, so
-every rotation agrees with the known history, and a flood filled and
-rotated the buffer, a row whose text was written again in its place taken
-as kept or rewritten.
+operations of its tiny alphabet, reading at the streams' times, with
+nothing pinned: a failure is a consistent explanation the oracle accepts,
+a listed limit through its own reason, or a defect. Each listed limit the
+rules state has its smallest stream as a fixed test.
 
 ## Units
 

@@ -10,7 +10,7 @@
 
 use crate::grid::Grid;
 use crate::oracle::Seen;
-use crate::{Colour, RowsRead, Run, Snapshot};
+use crate::{Colour, Run, Snapshot};
 
 /// A position: a row's coordinate and a column.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -342,45 +342,6 @@ impl Provider<'_> {
             above,
         };
         Ok((snapshot, start.start.row))
-    }
-
-    /// Runs of rows read by their place, as Verbatim's read program reads
-    /// them (`verbatim-uia-rops`'s `terminal_rows`): for each run, an empty
-    /// range at `start` moved up by its `above` rows and its end moved down
-    /// by its rows, and that range's text, or none when the document's
-    /// start came first; then the document's first row.
-    pub(crate) fn rows_above(
-        &self,
-        start: Position,
-        runs: &[(u32, u32)],
-    ) -> Result<RowsRead, Refused> {
-        let mut texts = Vec::with_capacity(runs.len());
-        for &(above, rows) in runs {
-            let above = isize::try_from(above).unwrap_or(isize::MAX);
-            let (from, moved) = self.move_rows(start, -above)?;
-            if moved != -above {
-                texts.push(String::new());
-                continue;
-            }
-            let (to, _) = self.move_rows(from, isize::try_from(rows).unwrap_or(isize::MAX))?;
-            let text = self.text(Range {
-                start: from,
-                end: to,
-            })?;
-            // The console host's text of rows ending at the next row's start
-            // leaves out the last row's line break (measured 2026-10-24).
-            texts.push(if self.row_includes_break {
-                text
-            } else {
-                text.strip_suffix("\r\n")
-                    .map_or(text.clone(), str::to_owned)
-            });
-        }
-        let first_row = self.text(self.row_of(self.document().start)?)?;
-        Ok(RowsRead {
-            runs: texts,
-            first_row,
-        })
     }
 
     /// The rows from coordinate `from` to the document's last row, as a

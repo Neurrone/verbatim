@@ -1,10 +1,10 @@
 //! The review cursor's text requests in a focused terminal
-//! (`docs/design/terminal-model.md`, section 5.6), answered from the
+//! (`docs/design/terminal-model.md`, "The review anchor and following"), answered from the
 //! terminal's memory of its rows, never from a live provider range, which
 //! could point at other text once output rotates a full history: the worker
 //! first takes a read, so the memory's alignment has moved every place onto
 //! its text as it is now, and the request is then answered within that
-//! read. A line is a row, its padding left out (section 5.12), so moving
+//! read. A line is a row, its padding left out ("Review line ends"), so moving
 //! along a row ends at its text.
 //!
 //! Each row a request reads is given a text anchor whose place the memory

@@ -834,17 +834,15 @@ impl SrState {
     }
 
     /// The terminal reading rules' settings, which the outposts apply
-    /// (`docs/design/terminal-model.md`, section 5): "report new output",
-    /// "review follows caret", and the flood policy's limits, clamped by
-    /// the outpost. Like [`fetches`](Self::fetches), a view the shell
+    /// (`docs/design/terminal-model.md`, "Reading rules"): "report new
+    /// output" and "review follows caret"; the flood policy is Core's
+    /// own. Like [`fetches`](Self::fetches), a view the shell
     /// gives every outpost.
     #[must_use]
     pub fn terminal_settings(&self) -> verbatim_model::TerminalSettings {
         verbatim_model::TerminalSettings {
             report_new_output: self.settings.report_terminal_output,
             review_follows_caret: self.settings.follow_caret,
-            lines_in_full: u16::try_from(self.settings.full_lines()).unwrap_or(u16::MAX),
-            last_lines: u16::try_from(self.settings.last_lines()).unwrap_or(u16::MAX),
         }
     }
 

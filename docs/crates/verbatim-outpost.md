@@ -2609,13 +2609,13 @@ it.
   on-demand reading state (`terminal::reading`), when the quiet-period
   timer is due, the places its review answers minted, and the caret last
   sent to Core. It is kept while the node is, across focus changes
-  (section 5.10): the focus arriving tells the rules (`Terminal::focus`),
+  ("The focus"): the focus arriving tells the rules (`Terminal::focus`),
   whose next read speaks nothing, and the focus leaving does too
   (`Terminal::blur`, from `Worker::blur_terminal_elsewhere`), which drops
   what waited for the quiet period.
 - Every read is one snapshot (`verbatim_uia_rops::terminal_snapshot`, with
   the classic fallback behind the same entry point): the text from where
-  the last read said to start, as many rows above it as the memory asks
+  the last read said to start, a screen above it as the memory asks
   (`TerminalMemory::above`), to the document's end, in one `GetText`, with
   the screen, the caret and its line, and, in the first read after a key,
   the screen's colours, all in one remote operation (`terminal::read`). It
@@ -2623,18 +2623,13 @@ it.
   caret's row and its column in characters from the caret read with it,
   stamped with when the read began on the run's shared clock), the
   colours converted at the boundary from `verbatim_uia_rops::ColourRun` to
-  the rules' own. When the rules ask for the whole document or for a read
-  from further above, that read is taken at once, up to `MAX_SNAPSHOTS`
-  (12) snapshots for one read; when they ask for rows by their place, to
-  check how far a full history rotated, those rows are read in one remote
-  operation from the read's asked start (`verbatim_uia_rops::terminal_rows`)
-  and the same read is given again with them. What
+  the rules' own. When the rules ask for the whole document, that read is
+  taken at once, so a read costs at most two snapshots. What
   the rules say becomes Core's `TerminalSpeech` (`terminal::speech_of`):
   output (`TerminalItem::Output` for a new line, a redrawn row's change
   and a held line as last read; `TerminalItem::Growth` for what a growing
-  line gained; `TerminalItem::HistoryLine` for a line a read past a full
-  history speaks before its "more than" summary; and
-  `TerminalItem::Skipped` for a read's own flood summary) and the answers
+  line gained; and `TerminalItem::Skipped`, a "more than" count of none,
+  for an overflow, ahead of the lines the history holds) and the answers
   to keys (`Echo`, `Caret` in its unit, `Gained`, `Lost`, `Answer`,
   `Suggestion`), and whether the review cursor followed the caret. It is
   sent as `NormalizedEvent::TerminalSpeech` when it says anything, after
@@ -2656,7 +2651,7 @@ it.
   (`TextOp::TerminalKey`, answered `Done`). A read about to begin first takes every key still waiting in the
   intake (`Intake::take_terminal_keys`). The rules open the
   key's window, 300 milliseconds in which reads can carry its effects
-  (section 5.5), and the next read takes the colours. A typed character
+  ("Keys and their window"), and the next read takes the colours. A typed character
   the terminal does not show within 300 milliseconds is dropped at the next
   read. A held caret key's read before it is passed on (`TextOp::ReadCaret`)
   is, in a focused terminal, a snapshot given to the rules
@@ -2671,7 +2666,7 @@ it.
   the program showed the key but was handled before the report arrived
   would take the echo for the line's growth, the same text spoken as
   output once the quiet period passes.
-- The quiet-period timer (section 5.14): the rules say when what waits for
+- The quiet-period timer ("Every time limit"): the rules say when what waits for
   the quiet period is due (a volatile row to settle, a growing line's
   unfinished word, rows a key changed waiting for the keys to pause); the
   worker keeps the focused terminal's due time apart from the terminals'
@@ -2750,8 +2745,8 @@ it.
   above its start, its text's length, and its flags), as does the
   worker's handling of each read (`terminal read timing`, with its wait in
   the queue and what the rules said).
-- The rules' settings ("report new output", "review follows caret", and
-  the flood policy's limits) come from Core,
+- The rules' settings ("report new output" and "review follows caret")
+  come from Core,
   `SupervisorToOutpost::TerminalSettings`, sent when an outpost starts and
   whenever they change, and given to each terminal's rules at its next
   input.

@@ -1,4 +1,4 @@
-//! On-demand reading (`docs/design/terminal-model.md`, section 5.1,
+//! On-demand reading (`docs/design/terminal-model.md`, "When to read",
 //! Dickson 2026-10-07): the outpost reads a focused terminal at once while
 //! Core has room for what it says, and only notes that it changed while
 //! Core's output queue is full; Core asks for a read when it hands the last

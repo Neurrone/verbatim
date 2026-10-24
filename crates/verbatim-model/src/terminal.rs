@@ -1,4 +1,4 @@
-//! What a terminal says (`docs/design/terminal-model.md`, section 5): the
+//! What a terminal says (`docs/design/terminal-model.md`, "Reading rules"): the
 //! outpost reads a focused terminal's text, aligns each read with its memory
 //! of the terminal's rows, and applies the reading rules
 //! (`verbatim_text::terminal_reading`); what they say is sent to Core as
@@ -17,7 +17,7 @@
 //!
 //! The outpost is told of every key that reaches a focused terminal
 //! ([`TerminalKey`]), with when it reached the program, since the rules
-//! judge which read a key's effects can be in by that time (section 5.5):
+//! judge which read a key's effects can be in by that time ("Keys and their window"):
 //! by the keyboard hook's thread for a key it passes itself, by the reducer
 //! thread for a key deferred behind a held one as it sends it on, and by
 //! Core, in [`crate::TextOp::TerminalKey`], for a key it held.
@@ -30,7 +30,7 @@ pub struct TerminalSpeech {
     /// What to say, in the order it is spoken.
     pub items: Vec<TerminalItem>,
     /// Whether the review cursor followed the caret: a key moved the caret
-    /// within its window with "review follows caret" on (section 5.6), so
+    /// within its window with "review follows caret" on ("The review anchor and following"), so
     /// the next review command reads at the caret.
     #[serde(default)]
     pub followed: bool,
@@ -45,7 +45,7 @@ impl TerminalSpeech {
     }
 }
 
-/// The unit a key's answer at the caret is spoken in (section 5.5).
+/// The unit a key's answer at the caret is spoken in ("Keys and their window").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerminalUnit {
     /// The character at the caret.
@@ -75,10 +75,10 @@ pub enum TerminalItem {
     /// each of which adds to it when the flood policy skips it.
     Skipped(Skipped),
     /// Typing the terminal showed at the caret, echoed by the typing echo
-    /// settings (section 5.5).
+    /// settings ("Keys and their window").
     Echo(String),
     /// A key's answer at the caret: the key's unit for a caret key, or the
-    /// landing rule's for any other (section 5.5); empty text past the
+    /// landing rule's for any other ("The caret's line"); empty text past the
     /// line's end.
     Caret {
         /// The unit.
@@ -86,15 +86,15 @@ pub enum TerminalItem {
         /// The text at the caret in that unit.
         text: String,
     },
-    /// Text the caret's line gained that the user did not type (5.5).
+    /// Text the caret's line gained that the user did not type ("Keys and their window").
     Gained(String),
-    /// Text the caret's line lost next to the caret (section 5.5).
+    /// Text the caret's line lost next to the caret ("Keys and their window").
     Lost(String),
     /// A row away from the caret that gained text or emphasis within a
-    /// key's window: the key's answer, whole (section 5.7).
+    /// key's window: the key's answer, whole ("A key's answer").
     Answer(String),
     /// A suggestion after the caret, in other colours than the typing
-    /// (section 5.7).
+    /// ("A key's answer").
     Suggestion(String),
 }
 
@@ -124,7 +124,7 @@ impl TerminalItem {
     }
 }
 
-/// A key that reached a focused terminal (section 5.5), as the reading
+/// A key that reached a focused terminal ("Keys and their window"), as the reading
 /// rules take it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalKey {
@@ -146,6 +146,8 @@ pub enum TerminalKeyKind {
     /// A key that forgets typing not yet shown: Enter, Tab, Escape,
     /// Control+C, Control+D and Control+Break.
     Forget,
+    /// Delete, answered by what it leaves at the caret.
+    Delete,
     /// Any other key, answered by what it did.
     Other,
 }
@@ -159,10 +161,6 @@ pub struct TerminalSettings {
     pub report_new_output: bool,
     /// "Review follows caret".
     pub review_follows_caret: bool,
-    /// "Lines spoken in full".
-    pub lines_in_full: u16,
-    /// "Last lines to speak".
-    pub last_lines: u16,
 }
 
 impl Default for TerminalSettings {
@@ -170,8 +168,6 @@ impl Default for TerminalSettings {
         Self {
             report_new_output: true,
             review_follows_caret: true,
-            lines_in_full: crate::DEFAULT_TERMINAL_LINES,
-            last_lines: crate::DEFAULT_TERMINAL_LINES,
         }
     }
 }

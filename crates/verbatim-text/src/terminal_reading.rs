@@ -1,5 +1,5 @@
 //! The reading rules of a terminal (`docs/design/terminal-model.md`,
-//! section 5), on top of the row memory and its alignment
+//! "Reading rules"), on top of the row memory and its alignment
 //! ([`crate::terminal_rows`]): what each row is, new output with growing
 //! lines, redrawn and volatile rows, spinners, keys and their window, typed
 //! characters, the review cursor following the caret, rows away from the
@@ -20,27 +20,27 @@ use crate::{Segmenter, WordRules, graphemes, is_space};
 
 pub use crate::terminal_rows::LINGERING_MS;
 
-/// A key's window (section 5.5): the reads that begin within this many
+/// A key's window ("Keys and their window"): the reads that begin within this many
 /// milliseconds after a key reached the program can carry its effects;
 /// a change found later is output.
 pub const KEY_WINDOW_MS: u64 = 300;
 
 /// A typed character not shown within this many milliseconds of reaching
-/// the program is dropped unspoken (section 5.5), judged at the next read.
+/// the program is dropped unspoken ("Keys and their window"), judged at the next read.
 pub const TYPED_LIMIT_MS: u64 = 300;
 
 /// A redrawn row that changed twice within this many milliseconds, other
-/// than as a key's answer, is volatile (section 5.2), judged at each read.
+/// than as a key's answer, is volatile ("Volatile rows"), judged at each read.
 pub const VOLATILE_MS: u64 = 2000;
 
 /// A row that changed with no key within this many milliseconds before a
-/// key is not that key's answer, whatever it gained (section 5.7).
+/// key is not that key's answer, whatever it gained ("A key's answer").
 pub const UNPROMPTED_MS: u64 = 2000;
 
-/// The shortest quiet period (section 5.14).
+/// The shortest quiet period ("Every time limit").
 pub const QUIET_MS: u64 = 1000;
 
-/// The quiet period after changes `interval_ms` apart (section 5.14): 1
+/// The quiet period after changes `interval_ms` apart ("Every time limit"): 1
 /// second, or 1.5 times the interval between the last two changes when that
 /// is longer.
 #[must_use]
@@ -91,6 +91,9 @@ pub enum KeyKind {
     /// A key that forgets held typing: Enter, Tab, Escape, Control+C,
     /// Control+D and Control+Break.
     Forget,
+    /// Delete, which speaks what it leaves at the caret rather than what
+    /// it removed ("The caret's line").
+    Delete,
     /// Any other key, answered by what it did (the landing rule, text
     /// gained or lost).
     Other,
@@ -106,7 +109,7 @@ pub struct Key {
 }
 
 /// A stretch of one row's cells in one foreground and background, as the
-/// read program's colours give it (section 5.7).
+/// read program's colours give it ("Colours").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ColourRun {
     /// Its first column, in cells.
@@ -119,20 +122,20 @@ pub struct ColourRun {
     pub background: u32,
 }
 
-/// Why a line is not spoken now, each the silence of a rule of section 5.
+/// Why a line is not spoken now, each the silence of a rule ("Reading rules").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reason {
-    /// A volatile row, held until it settles (section 5.4).
+    /// A volatile row, held until it settles ("Volatile rows").
     Volatile,
     /// A growing line's unfinished last word, held until the line grows
-    /// past it, the cursor leaves it, or the quiet period passes (5.3).
+    /// past it, the cursor leaves it, or the quiet period passes ("Growing lines").
     UnfinishedWord,
     /// A row a key changed away from the caret, held until the keys pause
-    /// (section 5.7).
+    /// ("A key's answer").
     HeldForKeys,
-    /// A spinner's symbol replaced alone (section 5.4).
+    /// A spinner's symbol replaced alone ("Changed rows").
     Spinner,
-    /// A row that only lost text (sections 5.4 and 5.7).
+    /// A row that only lost text ("Changed rows").
     LostText,
     /// A row erased and written back within the time a gone row lingers:
     /// text heard before, silent wherever it comes back ("Lingering"; a
@@ -154,21 +157,21 @@ pub struct Withheld {
 /// row of the line spoken of.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Speech {
-    /// A line of new output, whole (section 5.3).
+    /// A line of new output, whole ("New text").
     Line {
         /// The line's first row.
         row: usize,
         /// Its text.
         text: String,
     },
-    /// What a growing line gained (section 5.3).
+    /// What a growing line gained ("Growing lines").
     Growth {
         /// The line's first row.
         row: usize,
         /// The text gained.
         text: String,
     },
-    /// A redrawn row's change, by the changed-word rule (section 5.4).
+    /// A redrawn row's change, by the changed-word rule ("Changed rows").
     Changed {
         /// The line's first row.
         row: usize,
@@ -187,7 +190,7 @@ pub enum Speech {
     /// that follow are the lines the history holds, all of them new, and
     /// Core counts those it skips as more than the history holds.
     Overflowed,
-    /// Typed characters the terminal showed (section 5.5).
+    /// Typed characters the terminal showed ("Typing echo").
     Echo {
         /// The caret's line's first row.
         row: usize,
@@ -195,7 +198,7 @@ pub enum Speech {
         text: String,
     },
     /// A key's answer on the caret's line: the key's unit for a caret key
-    /// Verbatim knows, or the landing rule's for any other (section 5.5).
+    /// Verbatim knows, or the landing rule's for any other ("The caret's line").
     Caret {
         /// The caret's line's first row.
         row: usize,
@@ -204,14 +207,14 @@ pub enum Speech {
         /// The text at the caret in that unit; empty past the line's end.
         text: String,
     },
-    /// Text the caret's line gained that the user did not type (5.5).
+    /// Text the caret's line gained that the user did not type ("Keys and their window").
     Gained {
         /// The caret's line's first row.
         row: usize,
         /// The text gained.
         text: String,
     },
-    /// Text the caret's line lost next to the caret (section 5.5).
+    /// Text the caret's line lost next to the caret ("Keys and their window").
     Lost {
         /// The caret's line's first row.
         row: usize,
@@ -219,14 +222,14 @@ pub enum Speech {
         text: String,
     },
     /// A row away from the caret that gained text or emphasis within a
-    /// key's window: the key's answer, whole (section 5.7).
+    /// key's window: the key's answer, whole ("A key's answer").
     Answer {
         /// The line's first row.
         row: usize,
         /// Its text.
         text: String,
     },
-    /// A suggestion after the caret in other colours (section 5.7).
+    /// A suggestion after the caret in other colours ("Suggestions").
     Suggestion {
         /// The caret's line's first row.
         row: usize,
@@ -253,7 +256,7 @@ pub struct Step {
     pub outcome: Option<Outcome>,
     /// Whether the read moved the review position to the caret because a
     /// key moved the caret within its window with "review follows caret"
-    /// on (section 5.6). The first read after the focus arrived moves it
+    /// on ("The review anchor and following"). The first read after the focus arrived moves it
     /// there too, which the caller's focus does as well, so it is not
     /// told.
     pub followed: bool,
@@ -270,7 +273,7 @@ enum Hold {
     Keys,
 }
 
-/// A line's history (section 5.2), kept on its first row, or on the
+/// A line's history ("The memory"), kept on its first row, or on the
 /// first row kept of it once the rows above are trimmed.
 #[derive(Clone, Debug, Default)]
 struct LineState {
@@ -426,7 +429,7 @@ struct Keys {
     before: Option<Caret>,
     /// The caret's line before them, mapped through each read: a caret back
     /// there, on its line unchanged, is where the keys left it, whatever
-    /// the program did with its cursor as it drew in between (section 5.5).
+    /// the program did with its cursor as it drew in between ("Keys and their window").
     origin: Option<Caret>,
     /// Whether a read in their window moved the review position to the
     /// caret.
@@ -446,7 +449,7 @@ struct Gone {
     since_ms: u64,
 }
 
-/// The reading rules for one terminal (section 5).
+/// The reading rules for one terminal ("Reading rules").
 #[derive(Debug)]
 pub struct TerminalReader {
     memory: TerminalMemory,
@@ -515,7 +518,7 @@ impl TerminalReader {
         self.idle()
     }
 
-    /// The focus arrived at the terminal at `at_ms` (section 5.10): the
+    /// The focus arrived at the terminal at `at_ms` ("The focus"): the
     /// next read speaks nothing and puts the review cursor at the caret.
     pub fn focus(&mut self, at_ms: u64) -> Step {
         let _ = at_ms;
@@ -527,7 +530,7 @@ impl TerminalReader {
     }
 
     /// The focus left the terminal: output written meanwhile is not heard
-    /// on return (section 5.10).
+    /// on return ("The focus").
     pub fn blur(&mut self) -> Step {
         self.focused = false;
         self.keys = None;
@@ -545,7 +548,7 @@ impl TerminalReader {
             .is_some_and(|keys| key.at_ms <= keys.last_ms + KEY_WINDOW_MS);
         if !open {
             // The caret's line before the keys, without a suggestion after
-            // the caret, which is not the line's text (section 5.7).
+            // the caret, which is not the line's text ("A key's answer").
             let before = self.screen.caret.clone().map(|mut caret| {
                 if let Some(suggested) = &self.suggestion
                     && let Some(shown) = caret.text.strip_suffix(suggested.as_str())
@@ -570,7 +573,7 @@ impl TerminalReader {
             match &key.kind {
                 KeyKind::Typed(text) => keys.typed.push((text.clone(), key.at_ms)),
                 KeyKind::Forget => keys.typed.clear(),
-                KeyKind::Caret(_) | KeyKind::Other => {}
+                KeyKind::Caret(_) | KeyKind::Delete | KeyKind::Other => {}
             }
             keys.kinds.push(key.kind);
         }
@@ -684,7 +687,7 @@ impl TerminalReader {
         Some(text[start.max(line.cut)..].to_owned())
     }
 
-    /// Where the changed-word rule speaks `new` from (section 5.4): the
+    /// Where the changed-word rule speaks `new` from ("Changed rows"): the
     /// start of the word where it first differs, by whole graphemes, from
     /// the earliest of `before`; `None` when it differs from none of them
     /// or only lost text at its end.
@@ -873,7 +876,7 @@ impl TerminalReader {
         // The caret back where the keys found it, on its line unchanged,
         // from another line the last read left it on: the keys moved
         // nothing, and the program's cursor moves while it drew are not
-        // spoken (section 5.5). A line the last read showed with other text
+        // spoken ("Keys and their window"). A line the last read showed with other text
         // under the caret changed, and is answered against that read.
         let at_origin = match (
             &caret,
@@ -938,7 +941,7 @@ impl TerminalReader {
         if self.fresh
             && let Some(caret) = &caret
         {
-            // The focus moves the review cursor to the caret (section 5.6).
+            // The focus moves the review cursor to the caret ("The review anchor and following").
             reviews.push((caret.row, read.caret_column));
         }
         // The lines, top to bottom.
@@ -1076,7 +1079,7 @@ impl TerminalReader {
                 base
             }) else {
                 // New output, unless it is the input the shell reprinted
-                // (section 5.3).
+                // ("New text").
                 let reprint = caret.as_ref().is_some_and(|caret| caret.line == start)
                     && self.reprinted(&text, old_caret.as_ref(), &previous, &outcome, start);
                 let mut state = LineState::read(&text);
@@ -1172,7 +1175,7 @@ impl TerminalReader {
             let heard = state.said == old_text || state.hold == Some(Hold::Word);
             if line.grew_from.is_some() && heard && text.starts_with(&*state.said) {
                 // A growing line speaks what it gained, holding back an
-                // unfinished last word (section 5.3).
+                // unfinished last word ("Growing lines").
                 state.grew_interval_ms = state.grew_ms.map(|at| now.saturating_sub(at));
                 state.grew_ms = Some(now);
                 if state.hold == Some(Hold::Volatile) || state.hold == Some(Hold::Keys) {
@@ -1223,8 +1226,8 @@ impl TerminalReader {
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
-            // A redrawn row (section 5.4), or a row a key changed away from
-            // the caret (section 5.7).
+            // A redrawn row ("Changed rows"), or a row a key changed away from
+            // the caret ("A key's answer").
             state.redrawn = true;
             let caret_line = caret.as_ref().is_some_and(|caret| caret.line == start);
             let prompted = window
@@ -1346,7 +1349,7 @@ impl TerminalReader {
         items.sort_by_key(|(row, _)| *row);
         if resized && !outcome.first {
             // Resizing speaks nothing but the caret's line if it changed,
-            // and finds the review position again by its line (section 5.9).
+            // and finds the review position again by its line ("Starting again").
             if let Some(caret) = &caret
                 && old_caret.as_ref().is_none_or(|old| old.text != caret.text)
                 && self.focused
@@ -1403,7 +1406,7 @@ impl TerminalReader {
         {
             memory.set_review(row, column);
         }
-        // Of the read, only what section 4.1 needs is kept.
+        // Of the read, only what "The memory" needs is kept.
         let dropped = memory.trim();
         self.screen.trim(dropped);
         step.timer = self.next_due();
@@ -1413,9 +1416,9 @@ impl TerminalReader {
 
     #[expect(
         clippy::too_many_lines,
-        reason = "the cases of section 5.5 in order, each short"
+        reason = "the cases of the caret's line rule in order, each short"
     )]
-    /// The caret's line as a key's answer (section 5.5): typing echoed, the
+    /// The caret's line as a key's answer ("Keys and their window"): typing echoed, the
     /// key's unit or the landing rule, text gained or lost, or the line
     /// changed some other way. Returns the line answered, whose change is
     /// then not output.
@@ -1447,9 +1450,10 @@ impl TerminalReader {
             _ => None,
         });
         let line_key = keys.kinds.contains(&KeyKind::Caret(Unit::Line));
+        let deleted = keys.kinds.last() == Some(&KeyKind::Delete);
         // A line key with a character typed at once after it: the recalled
         // line's change is spoken once with the character in it, "echo
-        // onex", not the whole line (section 5.5).
+        // onex", not the whole line ("Keys and their window").
         let typed_after = keys
             .kinds
             .iter()
@@ -1464,13 +1468,17 @@ impl TerminalReader {
             .is_some_and(|before| before.line == caret.line);
         // A suggestion after the caret in other colours than the typing.
         let suggestion = colours.and_then(|colours| suggestion(caret, rows, colours));
+        // The line as the typing shows it: the suggestion blanked where it
+        // is, from the caret, whatever follows it.
         let shown = match &suggestion {
-            Some(suggested) => caret
-                .text
-                .strip_suffix(suggested.as_str())
-                .unwrap_or(&caret.text)
-                .trim_end()
-                .to_owned(),
+            Some(suggested) => {
+                let chars: Vec<char> = caret.text.chars().collect();
+                let end = (caret.column + suggested.chars().count()).min(chars.len());
+                let mut shown: String = chars[..caret.column.min(chars.len())].iter().collect();
+                shown.extend(std::iter::repeat_n(' ', end.saturating_sub(caret.column)));
+                shown.extend(&chars[end..]);
+                shown.trim_end().to_owned()
+            }
             None => caret.text.clone(),
         };
         let mut answer = None;
@@ -1497,7 +1505,7 @@ impl TerminalReader {
             let typed: String = keys.typed.iter().map(|(text, _)| text.as_str()).collect();
             // At the right margin the terminal writes the character at the
             // caret and keeps the caret there, its wrap pending: the typing
-            // went in at the caret (section 5.5, typing past the margin).
+            // went in at the caret ("Typing echo", typing past the margin).
             if caret.column == before.column
                 && !typed.is_empty()
                 && shown.chars().count() == caret.column + 1
@@ -1557,10 +1565,15 @@ impl TerminalReader {
                     && prefix == caret.column
                     && !removed.trim().is_empty()
                 {
-                    speech.push(Speech::Lost {
-                        row: caret.line,
-                        text: removed.trim().to_owned(),
-                    });
+                    // Delete speaks what it leaves at the caret.
+                    if deleted {
+                        speech.push(self.unit_at(caret, Unit::Character));
+                    } else {
+                        speech.push(Speech::Lost {
+                            row: caret.line,
+                            text: removed.trim().to_owned(),
+                        });
+                    }
                 } else if let Some(start) = self.changed_start(&[&before.text], &shown) {
                     speech.push(Speech::Changed {
                         row: caret.line,
@@ -1638,7 +1651,7 @@ impl TerminalReader {
             .unwrap_or_default()
     }
 
-    /// The landing rule (section 5.5): one character moved, that
+    /// The landing rule ("The caret's line"): one character moved, that
     /// character; the start or end of the line, the character there; the
     /// start or end of a word, the word there; otherwise the character.
     fn landing(&self, caret: &Caret, before: &Caret) -> Speech {
@@ -1677,7 +1690,7 @@ impl TerminalReader {
     }
 
     /// Whether the new line at the caret, `text` starting at row `start`,
-    /// is the shell reprinting the input below new rows (section 5.3): it
+    /// is the shell reprinting the input below new rows ("Reprinted input"): it
     /// equals the caret's line as last read, with any typing since, that
     /// line held input and is still above, and new rows lie between.
     fn reprinted(
@@ -1748,7 +1761,7 @@ impl TerminalReader {
 }
 
 /// After a resize, the review position found again by its line's hash near
-/// its old place, counted from the read's end (section 5.9), in `memory`
+/// its old place, counted from the read's end ("Starting again"), in `memory`
 /// before it is trimmed: its row and column.
 fn refound_review(memory: &TerminalMemory) -> Option<(usize, usize)> {
     let review = memory.review()?;
@@ -1821,7 +1834,7 @@ fn squeezed(text: &str) -> String {
 }
 
 /// Whether `new` only lost text from `old`: compared without spaces, `old`
-/// contains it and is longer (section 5.7).
+/// contains it and is longer ("A key's answer").
 fn lost_text(old: &str, new: &str) -> bool {
     let (old, new) = (squeezed(old), squeezed(new));
     old.len() > new.len() && old.contains(&new)
@@ -1829,7 +1842,7 @@ fn lost_text(old: &str, new: &str) -> bool {
 
 /// Whether `new` gained text over `old` other than at its end: compared
 /// without spaces, `old` is a part of it in order and it adds more, not
-/// only after `old` (section 5.7: "[x]" for "[ ]", a marker before an
+/// only after `old` ("A key's answer": "[x]" for "[ ]", a marker before an
 /// entry).
 fn gained_text(old: &str, new: &str) -> bool {
     let (old, new) = (squeezed(old), squeezed(new));
@@ -1841,7 +1854,7 @@ fn gained_text(old: &str, new: &str) -> bool {
 }
 
 /// Whether `old` and `new` differ in exactly one character, neither a
-/// letter nor a digit: a spinner's step (section 5.4).
+/// letter nor a digit: a spinner's step ("Changed rows").
 fn spinner_step(old: &str, new: &str) -> bool {
     let (old, new): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
     if old.len() != new.len() {
@@ -1898,7 +1911,7 @@ fn difference(old: &str, new: &str) -> (usize, String, String) {
     )
 }
 
-/// The typing shown on the caret's line (section 5.5): `new` is `old`
+/// The typing shown on the caret's line ("Typing echo"): `new` is `old`
 /// with the start of `typed` written at `from`, inserted or over text that
 /// showed it already, and the caret moved past it. Returns the typing
 /// shown and any text gained after it.
@@ -1941,7 +1954,7 @@ fn echo(old: &str, new: &str, from: usize, to: usize, typed: &str) -> Option<(St
 }
 
 /// The suggestion on the caret's row: its text after the caret in colours
-/// other than the cell before the caret's, the typing's (section 5.7).
+/// other than the cell before the caret's, the typing's ("Suggestions").
 fn suggestion(caret: &Caret, rows: &[Row], colours: &[Option<&Vec<ColourRun>>]) -> Option<String> {
     let runs = colours.get(caret.row).copied().flatten()?;
     let row = &rows[caret.row];

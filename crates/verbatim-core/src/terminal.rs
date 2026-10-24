@@ -33,7 +33,7 @@
 //!   utterance) drops the output still waiting, as a key press does in
 //!   NVDA, and output read before the cut is never spoken after it. "Report
 //!   new output" off (Verbatim+5) speaks no output at all.
-//! - On-demand reading (`docs/design/terminal-model.md`, section 5.1): once
+//! - On-demand reading (`docs/design/terminal-model.md`, "When to read"): once
 //!   as many lines wait as a group speaks, the outpost is told to hold
 //!   ([`TextOp::TerminalHold`]), and only notes that the terminal changed.
 //!   When the group's last line is handed to speech, Core asks for what is
@@ -45,7 +45,7 @@
 //!   its way, only the answers to keys are spoken.
 //! - Every key that reaches a focused terminal is told to its outpost, with
 //!   when it reached the program, since the reading rules judge by that
-//!   time which reads a key's effects can be in (section 5.5): the keyboard
+//!   time which reads a key's effects can be in ("Keys and their window"): the keyboard
 //!   hook's thread tells it of each key it passes itself, before passing
 //!   it on, and Core of a key it held, as it passes it on
 //!   ([`TextOp::TerminalKey`]).
@@ -201,7 +201,7 @@ pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64) -> Vec
 }
 
 /// What a caret key is to the reading rules: one Verbatim knows, by the
-/// unit it moves by, or any other (section 5.5).
+/// unit it moves by, or any other ("Keys and their window").
 #[must_use]
 pub fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
     match key.motion {
@@ -220,6 +220,7 @@ pub fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
         | CaretMotion::NextParagraph
         | CaretMotion::Top
         | CaretMotion::Bottom => TerminalKeyKind::Caret(TerminalUnit::Line),
+        CaretMotion::Delete => TerminalKeyKind::Delete,
         _ => TerminalKeyKind::Other,
     }
 }

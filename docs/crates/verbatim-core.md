@@ -795,7 +795,7 @@ for `SrState::hook_foreground`. `tests/shell.rs` checks each rule.
 ## Terminals
 
 The reducer's side of what a terminal says (`terminal.rs`;
-`docs/design/terminal-model.md`, section 5). The focused terminal's
+`docs/design/terminal-model.md`, "Reading rules"). The focused terminal's
 outpost reads it, applies the reading rules, and sends what they say as
 `NormalizedEvent::TerminalSpeech` ([verbatim-model](verbatim-model.md)),
 or as the answer to Core's request (`TextReply::Terminal`); speech from
@@ -828,7 +828,7 @@ anything but the focus is ignored.
   (`TerminalSpeech::followed`): the next review command then reads at the
   caret. A caret report alone, or a caret key's press, never moves it
   there, since a program moves its cursor as it draws
-  (`docs/design/terminal-model.md`, section 5.6).
+  (`docs/design/terminal-model.md`, "The review anchor and following").
 - Output is spoken queued, in order, one line per utterance, each starting
   and ending with an index mark. Every line counts, blank ones included
   (Dickson, 2026-10-07, and the coherence review of 2026-10-09): a blank
@@ -848,8 +848,9 @@ anything but the focus is ignored.
   outpost could not make (`Skipped::Uncounted`) makes it "skipped lines"
   (`Phrase::SkippedUncountedLines`), and lines that went by past the
   terminal's history (`Skipped::MoreThan`) make it "skipped more than N
-  lines" (`Phrase::SkippedMoreThanLines`), N being the history's rows left
-  unspoken, which already stands for everything older. What waits is then
+  lines" (`Phrase::SkippedMoreThanLines`), N being the lines left
+  unspoken after it; an overflow's own marker, a "more than" count of
+  none, says "skipped lines" when nothing after it is skipped. What waits is then
   the next group, and the decision repeats after it, until the output
   stops and everything waiting has been heard; the next output starts a
   burst of its own. A burst ends only once its last line has been heard,
@@ -864,12 +865,13 @@ anything but the focus is ignored.
   waiting lines folded into the skipped count beyond it; a single line
   larger than that is cut on a grapheme boundary and followed by "line
   cut" (`Message::TerminalLineCut`). So the state stays bounded and every
-  count stays exact: a skipped count counts each terminal line once, so
-  a line's growth (`TerminalItem::Growth`) adds nothing to it, and a line
-  the history still holds that came before a "more than" count in its
-  read (`TerminalItem::HistoryLine`) adds to that count, since N is the
-  history's lines left unspoken. The outpost's reading rules apply the policy within
-  each read as well, so a read of a flood arrives with its own count.
+  count stays exact: a line and its growth (`TerminalItem::Growth`) are
+  one unit, counted once and dropped together, so a group never ends
+  between them and a growth is never spoken without its line; a line after
+  a "more than" count adds to it. Core alone applies the policy: the
+  outpost sends every new line, and after an overflow marks it with a
+  "more than" count of none (`Skipped::MoreThan(0)`) ahead of the lines
+  the history still holds ("Core's flood policy").
 - On-demand reading. Once a group's worth of lines waits or is queued for
   speech, Core tells the outpost to hold (`TextOp::TerminalHold`): it only
   notes that the terminal changed. When the group's last line is handed

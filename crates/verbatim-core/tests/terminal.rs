@@ -1,5 +1,5 @@
 //! Scripted-input tests for what a terminal says in the reducer
-//! (`docs/design/terminal-model.md`, section 5): the flood policy over the
+//! (`docs/design/terminal-model.md`, "Reading rules"): the flood policy over the
 //! backlog of output not yet spoken (a burst's first 30 lines in full, then
 //! the last 30 of what waits), output arriving in several batches, the
 //! answers to keys spoken at once and typing echoed by its settings, the

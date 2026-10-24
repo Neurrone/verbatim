@@ -210,7 +210,8 @@ Public API:
   `DEFAULT_TERMINAL_LINES`), read through `full_lines` and `last_lines`,
   which keep them between 1 and `MAX_TERMINAL_LINES`.
   `TerminalSettings` is what an outpost's terminal reading rules take of
-  them: "report new output", "review follows caret", and the two limits.
+  them: "report new output" and "review follows caret"; the two limits
+  are Core's flood policy's alone.
   `TypingEcho::next` is the toggle key's cycle. `verbatim-config` stores
   them; the shell hands them to the reducer as `Input::Settings`.
 - The theme model, described under "Themes" below: `Indication`,
@@ -345,17 +346,15 @@ the contract the Windows side implements.
   focused terminal in place of `TextChanged`, and only when there is
   something to say: what the outpost's reading rules said of a read, of a
   key, or once the quiet period passed (`docs/design/terminal-model.md`,
-  section 5). A `TerminalSpeech` (`terminal.rs`) holds its `items` in the
+  "Reading rules"). A `TerminalSpeech` (`terminal.rs`) holds its `items` in the
   order they are spoken, each a `TerminalItem`: output, which Core queues
   by the flood policy (`Output`, a new line whole, a redrawn row from the
   word that changed, or a held line as it was last read, an empty one a
-  blank line; `Growth`, what a growing line gained, spoken like a line but
-  counted as none when skipped; `HistoryLine`, a line a read past a full
-  history speaks before its `Skipped::MoreThan`, which adds to that count
-  when skipped; `Skipped`, a read's own flood
-  summary: `Skipped::Count`, `Skipped::Uncounted` when the count is not
-  known, or `Skipped::MoreThan` when the terminal's history overflowed, its
-  count the history's lines left unspoken; `plus` adds an older and a
+  blank line; `Growth`, what a growing line gained, spoken like a line and
+  counted and dropped with its line; `Skipped`, a count of lines:
+  `Skipped::Count`, `Skipped::Uncounted` when the count is not known, or
+  `Skipped::MoreThan` when the terminal's history overflowed, which the
+  outpost sends with a count of none ahead of the lines the history holds; `plus` adds an older and a
   newer count, a newer `MoreThan` standing for everything before it); and
   the answers to keys, which Core speaks at once (`Echo`, typing the
   terminal showed; `Caret`, a key's answer at the caret in a

@@ -52,7 +52,7 @@ pub fn rules_settings(settings: TerminalSettings) -> Settings {
 
 /// A focused terminal's reading rules and what the reads need between
 /// them, kept by the worker while the terminal exists, across focus
-/// changes (`docs/design/terminal-model.md`, section 5.10).
+/// changes (`docs/design/terminal-model.md`, "The focus").
 pub struct Terminal {
     reader: TerminalReader,
     /// The settings the reading rules were last given.
@@ -64,7 +64,7 @@ pub struct Terminal {
     /// The screen's width as the last read found it, in cells.
     width: usize,
     /// Whether the next read takes the colours: a key reached the terminal
-    /// since the last read (section 5.7).
+    /// since the last read ("A key's answer").
     colours_due: bool,
     /// On-demand reading.
     pub reading: Reading,
@@ -79,7 +79,7 @@ pub struct Terminal {
     /// releases its node.
     pub sent_caret: Option<verbatim_model::CaretReport>,
     /// When the reading rules' quiet-period timer is due, in milliseconds
-    /// on the shared clock (section 5.14).
+    /// on the shared clock ("Every time limit").
     due_ms: Option<u64>,
     /// The places the review cursor's answers minted, each a text anchor's
     /// number and the memory's place for it, oldest first ([`review`]).
@@ -155,7 +155,7 @@ impl Terminal {
     }
 
     /// The focus arrived at the terminal at `at_ms`: the next read speaks
-    /// nothing but puts the review cursor at the caret (section 5.10).
+    /// nothing but puts the review cursor at the caret ("The focus").
     pub fn focus(&mut self, at_ms: u64) {
         let step = self.reader.focus(at_ms);
         self.due_ms = step.timer;
@@ -168,7 +168,7 @@ impl Terminal {
         self.due_ms = step.timer;
     }
 
-    /// A key reached the terminal (section 5.5): its window opens, and the
+    /// A key reached the terminal ("Keys and their window"): its window opens, and the
     /// next read takes the colours.
     pub fn key(&mut self, key: &TerminalKey) -> TerminalSpeech {
         self.colours_due = true;
@@ -460,6 +460,7 @@ pub fn rules_key(key: &TerminalKey) -> Key {
                 TerminalUnit::Line => Unit::Line,
             }),
             TerminalKeyKind::Forget => KeyKind::Forget,
+            TerminalKeyKind::Delete => KeyKind::Delete,
             TerminalKeyKind::Other => KeyKind::Other,
         },
         at_ms: key.at_ms,

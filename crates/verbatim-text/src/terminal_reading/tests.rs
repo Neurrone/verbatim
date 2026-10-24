@@ -1,5 +1,5 @@
-//! The reading rules, one rule of `docs/design/terminal-model.md`, section
-//! 5, or one case of sections 7 and 8, each: a stream written into the
+//! The reading rules, one rule of `docs/design/terminal-model.md`, "Reading
+//! rules", or one case of "Evidence", each: a stream written into the
 //! simulated terminal, read as the outpost reads it at the times given,
 //! with keys as they reach the program, and the speech, the lines withheld
 //! and the timer asserted whole.
@@ -219,7 +219,7 @@ fn withheld(row: usize, reason: Reason) -> Withheld {
     Withheld { row, reason }
 }
 
-// Section 5.3, new output.
+// "New text": new output.
 
 #[test]
 fn new_output_is_spoken_line_by_line() {
@@ -324,7 +324,7 @@ fn trailing_spaces_are_padding_and_never_spoken() {
     assert_eq!(term.write("a b   \r\n", 100), says(vec![line(0, "a b")]));
 }
 
-// Section 5.4, redrawn rows.
+// "Changed rows": redrawn rows.
 
 #[test]
 fn a_redrawn_row_speaks_the_word_that_changed() {
@@ -422,7 +422,7 @@ fn a_held_row_scrolled_above_the_screen_is_spoken_before_the_next_read_loses_it(
     );
 }
 
-// Section 5.5, keys.
+// "Keys and their window": keys.
 
 #[test]
 fn typing_the_terminal_shows_is_echoed() {
@@ -545,12 +545,25 @@ fn text_the_caret_line_lost_next_to_the_caret_is_spoken() {
 }
 
 #[test]
+fn delete_speaks_what_it_leaves_at_the_caret() {
+    // Delete removes the character at the caret: what is said is the
+    // character it leaves there, not what it removed ("The caret's line").
+    let mut term = Term::new(20, 3, 10);
+    term.write("ok\r\n$ echo hello\x1b[2;8H", 100);
+    term.key(KeyKind::Delete, 200);
+    assert_eq!(
+        term.write("\x1b[P", 250),
+        says(vec![caret(1, Unit::Character, "e")])
+    );
+}
+
+#[test]
 fn up_arrow_and_a_character_at_once_speak_the_recalled_line_with_it_once() {
     let mut term = Term::new(20, 3, 10);
     term.write("$ ", 100);
     term.key(KeyKind::Caret(Unit::Line), 200);
     term.typed("x", 210);
-    // Section 5.5: the recalled line's change, with the character in it,
+    // "Keys and their window": the recalled line's change, with the character in it,
     // once, and no echo of the character.
     assert_eq!(
         term.write("echo onex", 250),
@@ -587,7 +600,7 @@ fn a_change_found_after_the_keys_window_is_output() {
     );
 }
 
-// Section 5.6, the review cursor.
+// "The review anchor and following": the review cursor.
 
 #[test]
 fn the_review_cursor_follows_the_caret_a_key_moved() {
@@ -628,7 +641,7 @@ fn the_focus_arriving_moves_the_review_cursor_to_the_caret() {
     assert_eq!(term.review(), Some(2));
 }
 
-// Section 5.7, rows away from the caret that keys change.
+// "A key's answer": rows away from the caret that keys change.
 
 #[test]
 fn the_row_that_gained_the_marker_is_the_keys_answer() {
@@ -696,7 +709,7 @@ fn other_rows_a_key_changed_are_spoken_once_the_keys_pause() {
 fn filtering_a_list_says_the_echo_then_the_current_entry_and_the_count_when_typing_pauses() {
     let mut term = Term::new(20, 6, 10);
     // "e" keeps apple and cherry: cherry moves up into banana's row, a
-    // kept row that moved, silent (section 5.7), with no history above the
+    // kept row that moved, silent ("A key's answer"), with no history above the
     // screen to rotate.
     term.write("  apple\r\n> banana\r\n  cherry\r\n  3/3\r\n> ", 100);
     term.typed("e", 1000);
@@ -776,7 +789,26 @@ fn a_suggestion_is_spoken_when_it_appears_and_not_again_as_typing_follows_it() {
     assert_eq!(term.write_coloured("h", 2050), says(vec![echo(0, "h")]));
 }
 
-// Section 5.8, the alternate screen.
+#[test]
+fn a_suggestion_followed_by_text_in_the_typings_colours_is_spoken() {
+    // A suggestion need not reach the row's end: a clock in the typing's
+    // colours after it ends the suggestion ("Suggestions").
+    let mut term = Term::new(30, 3, 10);
+    term.write("ok\r\n$ e\x1b[2;20H12:00\x1b[2;4H", 100);
+    term.typed("c", 1000);
+    assert_eq!(
+        term.write_coloured("c\x1b[90mho hi\x1b[0m\x1b[2;5H", 1050),
+        says(vec![
+            echo(1, "c"),
+            Speech::Suggestion {
+                row: 1,
+                text: "ho hi".to_owned()
+            }
+        ])
+    );
+}
+
+// "Screens": the alternate screen.
 
 #[test]
 fn the_alternate_screen_speaks_what_it_shows_and_closing_it_speaks_nothing_kept() {
@@ -806,7 +838,7 @@ fn windows_terminals_clear_leaving_a_shortened_copy_of_the_line_before_says_the_
     );
 }
 
-// Section 5.9, resizing.
+// "Starting again": resizing.
 
 /// A read of a screen of `lines`, `width` cells wide, with nothing above
 /// it, the caret on `caret` at `column`.
@@ -841,7 +873,7 @@ fn a_resize_speaks_nothing_but_the_caret_line_when_it_changed() {
     assert_eq!(spoken, says(vec![caret(1, Unit::Line, "$ y")]));
 }
 
-// Section 5.10, focus.
+// "The focus": focus.
 
 #[test]
 fn output_written_in_the_background_is_not_heard_on_return() {
@@ -869,8 +901,7 @@ fn with_report_new_output_off_output_is_silent_and_keys_are_answered() {
 }
 
 #[test]
-fn with_report_new_output_off_a_flood_through_a_full_history_drops_marks_whose_lines_it_does_not_find()
- {
+fn with_output_off_a_flood_through_a_full_history_drops_marks_whose_lines_are_not_found() {
     // Ten lines rotate a full history of twenty past the last screen, which
     // would have the whole document read; with nothing reported the memory
     // starts again from the read, and each command mark is looked for by its
@@ -913,7 +944,7 @@ fn with_report_new_output_off_a_flood_through_a_full_history_drops_marks_whose_l
     assert_eq!(term.reader.memory().marks(), []);
 }
 
-// Sections 7 and 8: programs.
+// "Evidence": programs.
 
 #[test]
 fn pi_streaming_above_its_status_row_speaks_the_streamed_line_only() {
@@ -1027,7 +1058,7 @@ fn with_output_unreported_the_review_position_is_found_by_its_line_when_a_clear_
 
 #[test]
 fn a_volatile_rows_last_value_is_heard_once_it_settles_after_the_line_ends() {
-    // Section 5.4 and 5.14: steps under 2 seconds apart make the row
+    // "Volatile rows" and "Every time limit": steps under 2 seconds apart make the row
     // volatile; its last step, written with the line's end and the prompt
     // in one read, still waits for the quiet period and is then heard.
     let mut term = Term::new(30, 5, 10);
@@ -1057,7 +1088,7 @@ fn a_volatile_rows_last_value_is_heard_once_it_settles_after_the_line_ends() {
 
 #[test]
 fn a_cursor_the_program_moves_while_it_draws_and_parks_back_says_nothing() {
-    // Section 5.5: a key the program reads unshown scrolls rows down a
+    // "Keys and their window": a key the program reads unshown scrolls rows down a
     // line; the program's cursor goes to the top as it resets the scroll
     // region, to the end of the row it writes, and back to where the key
     // found it. Read at each of those, only the new row is spoken. No read
@@ -1078,7 +1109,7 @@ fn a_cursor_the_program_moves_while_it_draws_and_parks_back_says_nothing() {
 
 #[test]
 fn typing_onto_a_second_row_and_escape_on_it() {
-    // Section 5.5: typing that wraps past the right margin is echoed as
+    // "Keys and their window": typing that wraps past the right margin is echoed as
     // typed, and Escape erasing the whole input says all it removed.
     let mut term = Term::new(20, 5, 10);
     term.write("$ ", 100);
@@ -1126,7 +1157,7 @@ fn a_read_inside_a_programs_redraw_speaks_the_line_its_cursor_passes() {
 
 #[test]
 fn a_scroll_up_in_a_region_with_the_cursor_parked_back_says_only_the_new_row() {
-    // Section 5.5: as the cursor parked back on the status row after the
+    // "Keys and their window": as the cursor parked back on the status row after the
     // program scrolled the rows above it up a line and wrote the new last
     // one, as conhost_full_screen's last key does.
     let mut term = Term::new(20, 5, 10);

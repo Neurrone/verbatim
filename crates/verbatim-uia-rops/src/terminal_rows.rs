@@ -21,9 +21,7 @@ use crate::error::Error;
 use crate::focus::Path;
 use crate::operation::{Import, ProgramCache};
 
-/// The most runs one read takes: the terminal reading rules ask for at
-/// most `verbatim_text::terminal_rows::MOST_CHECKED`, and read the whole
-/// document instead of more. Each run is ten instructions of the
+/// The most runs one read takes. Each run is ten instructions of the
 /// remote program, beside the twelve it takes once.
 pub const MOST_RUNS: usize = 16;
 

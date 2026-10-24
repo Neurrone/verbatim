@@ -496,10 +496,10 @@ caret, each with four rows above its start, and 5 fewer without
 
 `terminal_rows(uia, query, remote)`, with `terminal_rows_remote` and
 `terminal_rows_classic` sharing one signature (`TerminalRowsFn`), reads
-runs of a terminal's history rows by their place, which the terminal
-reading rules ask for to check the candidate rotations whose block lies
-above the snapshot just read (`docs/design/terminal-model.md`, section
-4.3, item 5). A `RowsQuery` gives the element and its text pattern, the
+runs of a terminal's history rows by their place. The terminal reading
+rules no longer ask for it, since a read a screen above the last screen
+settles the rotation (`docs/design/terminal-model.md`, "The read"); it is
+kept for reading history rows by their place. A `RowsQuery` gives the element and its text pattern, the
 start the snapshot was asked for (the last read's `next_start`), and the
 runs, each how many rows above that start it begins and how many rows it
 holds, at most `MOST_RUNS` (16). For each run the program collapses a copy
@@ -1125,8 +1125,8 @@ The terminal reading, audited call by call on 2026-10-24:
   inside it. Only a screen of many colours takes more, each further
   program reading as many rows as stay under its budget. Classic only as
   the per-call fallback.
-- Rows by their place (`terminal_rows`): one program for every run the
-  rotation's candidates ask for, and the document's first row. Classic
+- Rows by their place (`terminal_rows`): one program for every run, and
+  the document's first row. Classic
   only as the per-call fallback.
 - The caret event's read in a terminal, and the caret read before a held
   key: the caret read's program (`caret_read`), one program each.

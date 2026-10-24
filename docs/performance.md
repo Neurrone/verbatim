@@ -2063,13 +2063,12 @@ anchors.
 A focused terminal's text changed, and the outpost reads it and gives the
 read to its reading rules (`docs/crates/verbatim-outpost.md`,
 "Terminals"): one snapshot (`verbatim_uia_rops::terminal_snapshot`), the
-text from the screen's top as last read, a few history rows above it, to
-the document's end in one `GetText`, with the screen, where the next read
+text from a screen above the screen's top as last read to the
+document's end in one `GetText`, with the screen, where the next read
 starts, the document's first row, the caret's distance to the end, and the
-caret and its line, all in one program. A read the rules ask for again, of
-the whole document or from further above, is a snapshot more, and rows
-they ask for by their place, to check how far a full history rotated, a
-program more ("A terminal's rotation" below). Measured against mockapp's text provider
+caret and its line, all in one program. A read of the whole document,
+when the rules ask for it, is a snapshot more ("A terminal's rotation"
+below). Measured against mockapp's text provider
 (`tests/fixtures/terminal.json` with a three-row screen,
 `tests/terminal.rs`), whose `set-text` command rewrites the text as a
 terminal's buffer changes and whose `screen` command puts only its last
@@ -2191,49 +2190,32 @@ passed in Windows Terminal):
 
 ### A terminal's rotation
 
-How far a full history rotated between two reads is decided as comparing
-the whole buffer with the known history would decide it
-(`docs/design/terminal-model.md`, section 4.3, item 5): each candidate
-rotation is checked against the history rows the read holds, and one
-whose block lies above the read by reading the rows it predicts there by
-their place (`verbatim_uia_rops::terminal_rows`), or, when the old
-screen's top went above the read too, by reading again from the block's
-place; several candidates, or a known history that does not reach the
-document's start, read the whole document.
+How far a full history rotated between two reads is settled by the read
+itself (`docs/design/terminal-model.md`, "The read" and "The alignment"):
+every read starts a screen above the top of the last read's screen, so the
+last read's screen stays inside it for a rotation of up to two screens less
+a row, and the history rows it holds allow only the rotations that put each
+where the rotation carries it. A rotation past that keeps no row of the
+last read, and the whole document is read once.
 
 Measured on 2026-10-24 on this machine (x64, release build), 120 by 30,
 a full history of 9,001 rows, numbered lines, each rotation written
 between two reads:
 
-- Live in the console host, through the outpost's `terminal::read`, the
-  time of the whole read and its UIA calls: a first read 0.5 to 1.0
-  milliseconds, 1 call; the second read, which completes the known
-  history by reading the whole document once, 31 to 38 milliseconds, 2
-  calls (the whole document's snapshot alone 25 to 26 milliseconds, 1.1
-  million UTF-16 units); nothing new, 0.9 to 1.1 milliseconds, 1 call; a
-  rotation of 1 or 3 rows, 1.0 to 1.3 milliseconds, 2 calls (the rows by
-  their place 0.19 to 0.23 milliseconds of it); 10 to 100 rows, 1.4 to
-  2.0 milliseconds, 2 calls, the read taken again from the block's place;
-  1,000 rows, 5.1 to 5.7 milliseconds, 2 calls, the read again holding
-  1,004 rows above its start (3.5 milliseconds).
-- The same in the simulated terminal, the memory's own time and its
-  reads, in both terminals alike: nothing new 0.4 milliseconds, 1
-  snapshot; a rotation of 1 or 3 rows 0.09 to 0.14 milliseconds, 1
-  snapshot and 1 read of rows by their place; 10 or 100 rows 0.08 to
-  0.12 milliseconds and 1,000 rows 0.46 to 0.61, 2 snapshots each.
-- The ambiguous case, a full history of one repeated line: every read
-  is a whole-document read, nothing new included, since every row of the
-  history is a candidate that holds. Live in the console host 31 to 51
-  milliseconds a read, 2 calls; in the simulated terminal the memory's
-  own time 4.1 to 4.7 milliseconds a read, the whole known history
-  compared for the smallest candidate, which holds. The same comes of a
-  history whose first row is blank and that holds more than 16 other
-  blank rows: each such read, until a rotation moves another row to the
-  top, reads the whole document, 33 milliseconds live, since more
-  candidates than one read of rows by their place takes need checking.
-- A clear and a reprint of 9,000 rows with the first 100 left out, read
-  whole after the document shrank: 4.3 to 4.8 milliseconds of the
-  memory's time, every row found again by the alignment.
+- Live in the console host, the read program's snapshot: 0.45 to 1.06
+  milliseconds for a rotation of 0 to 1,000 rows, 7,318 UTF-16 units,
+  against 0.37 to 0.75 milliseconds and 3,658 units for the same snapshot
+  without the screen above; a rotation of 61 rows or more adds the whole
+  document's snapshot, 25 to 29 milliseconds, 1.1 million units.
+- The same in the simulated terminal, the memory's and the rules' time,
+  in both terminals alike: 60 to 270 microseconds for a rotation of 0 to
+  59 rows, 1 snapshot; 61, 100 or 1,000 rows 4.2 to 5.2 milliseconds, 2
+  snapshots, the second of the whole document.
+- A full history of one repeated line costs an ordinary read, 85 to 115
+  microseconds in the simulated terminal: the read's history rows allow
+  every rotation, and the last read's screen inside the read settles it.
+- A clear and a reprint of 8,905 rows of the 9,005, read whole: 5.3 to
+  8.3 milliseconds of the memory's and rules' time.
 
 ### A terminal's upward search
 
@@ -2794,8 +2776,7 @@ share of the limit in brackets:
   above the start, 5 fewer. Without colours the program has no loop, so
   the count does not grow with the history, the rows above or the lines
   read.
-- A terminal's rows by their place (`terminal_rows`, "A terminal's
-  rotation" below): 172 (2 percent) at its largest input, 16 runs each
+- A terminal's rows by their place (`terminal_rows`): 172 (2 percent) at its largest input, 16 runs each
   reaching its rows, and 22 for one run: ten a run and twelve besides. The
   program has no loop, so the count does not grow with how far up a run
   reads or how many rows it holds.
@@ -2938,17 +2919,17 @@ For a 120 by 30 screen with a full history of 9,001 rows:
   for a screen's worth.
 - The known history: one 8-byte hash for every row the buffer holds
   above the rows kept, since a rotation takes the hashes of the rows that
-  left and a read from the document's start replaces them (section 4.1):
+  left and a read from the document's start replaces them:
   at most about 9,000 hashes, 72 KB, up to as much again with the queue's
   unused capacity. Measured after 100,000 lines, 8,997 hashes.
 - Anchors: the review position and the command marks, 24 bytes each.
 
 Once a read is handled, the memory and the reading rules keep of it only
-the screen, the rows written below it and the block above it, the rows
-above the block as hashes in the known history (`TerminalMemory::trim`),
-so a read of the whole document (section 4.2: more than a screen went by
-between reads, as in every flood and in filling the history) leaves the
-same memory as an ordinary read. Measured on 2026-10-24 with a counting
+the screen, the rows written below it and the screen above it, the rows
+above that as hashes in the remembered history (`TerminalMemory::trim`),
+so a read of the whole document (more than two screens went by between
+reads on a full history, after a clear, or on switching screens) leaves
+the same memory as an ordinary read. Measured on 2026-10-24 with a counting
 allocator in a release build, 120 by 30 with a full history of 9,001
 rows, after 100,000 lines read 20 at a time and then a flood read whole,
 a terminal's memory and reading rules hold 125 KB after the ordinary
