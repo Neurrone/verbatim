@@ -8,24 +8,24 @@ Public API:
 - `reduce(&mut state, &input)` — deterministic, no I/O, no clocks;
   advances the state in place, without copying it, and returns the
   effects to execute.
-- `focus_rules` — the focus rules, each defined once (decision D14,
-  "Where the rules run"), which the reducer applies after an event is
-  read and the focus listener and the outposts apply where a judgment
-  must come before an element is read, against the focus Core holds:
-  - acceptance: `EventName`, `WindowQueries` (the window queries, local
-    calls in the Windows crates), `RequestedEvents` (the events
-    application support asked for, empty), and `accepts_event(event,
-    window, queries, requested)`, the test against the foreground window
-    (`docs/parity/focus-events.md`, "Event acceptance"); its last part,
-    `ForegroundRelation` (in the foreground window, topmost, or a
-    `Windows.UI.Core` window under the active window), is what an outpost
-    reports in an event's window facts, `of(window, class, queries)`, and
-    what the reducer judges a focus by, `of_facts(facts).related()`;
+- `focus_rules` — the focus rules the reducer shares with the focus
+  listener and the outposts, each defined once (decision D14, "Where the
+  rules run"), written from `docs/parity`; the reducer applies them after
+  an event is read and the listener and the outposts where a judgment
+  must come before an element is read, against the focus Core holds. The
+  rules ported from NVDA that only the listener and the outposts make, the
+  acceptance test and NVDA's foreground tests, are defined once in
+  `verbatim-outpost` instead, as ported code stays in the Windows-specific
+  crates:
+  - `ForegroundRelation`: how a window stands to the foreground window
+    (in it, topmost, or a `Windows.UI.Core` window under the active
+    window), which an outpost reports in an event's window facts, read by
+    its acceptance test's own rule, and which the reducer judges a focus
+    by, `of_facts(facts).related()`;
   - repeats: `RepeatEvidence` (Core has judged every focus the judge sent,
     the event names the element of the focus Core holds, and that element
     still has the focus) and `repeats_focus(evidence)`, which Core, the
-    listener and the outposts gather each by their own means; and
-    `foreground_repeats_focus`, NVDA's two foreground tests;
+    listener and the outposts gather each by their own means;
   - changes and selections: `ChangeKind`, `ChangeTarget`,
     `change_target` and `change_candidates` (a name, description, or value
     change spoken on the focus, a state change on the focus or an
@@ -37,7 +37,7 @@ Public API:
   - entered containers: `already_entered(previous, same_window, node)`,
     whether the focus was already inside a container of a new focus, which
     the reducer speaks newly entered and an outpost gathers a newly
-    entered dialog's own text by, with `EnteredKey`, and `is_dialog(role)`;
+    entered dialog's own text by, with `EnteredKey`;
   - `HeldFocus` and `HeldNode`: the focus Core holds as it sends it, the
     trace of the event it came from, its observation time, the focus and
     its ancestors (id, backend, role, name, states), its top-level window,

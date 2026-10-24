@@ -91,24 +91,6 @@ impl Held {
         self.unjudged.push_back(focus);
     }
 
-    /// Records the MSAA event address `event` of the focus `node` just
-    /// reported, and whether it was acquired as a simple child.
-    pub(super) fn note_event(
-        &mut self,
-        node: NodeId,
-        event: (isize, i32, i32),
-        simple_child: bool,
-    ) {
-        if let Some(focus) = self
-            .unjudged
-            .back_mut()
-            .filter(|focus| focus.node.id == node)
-        {
-            focus.event = Some(event);
-            focus.simple_child = simple_child;
-        }
-    }
-
     /// Core judged this outpost's focus event traced `judged`, if any, and
     /// every one reported before it, and holds `focus`, this outpost's,
     /// or another outpost's observed at `observed`
@@ -127,7 +109,15 @@ impl Held {
         }
         let Some(held) = focus else {
             self.core = None;
-            if observed.0 != 0 && observed_no_earlier(observed, self.elsewhere) {
+            // A focus with no observation time is taken as now, as it is
+            // newer than any the outpost waits on.
+            let observed = if observed.0 == 0 {
+                let now = crate::protocol::now_us();
+                (now / 1_000, now)
+            } else {
+                observed
+            };
+            if observed_no_earlier(observed, self.elsewhere) {
                 self.elsewhere = observed;
             }
             return;

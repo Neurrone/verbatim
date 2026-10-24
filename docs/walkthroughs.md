@@ -239,7 +239,8 @@ releases Alt. Notepad has no outpost yet.
       other focus is attended only if its window facts say it was in the
       system's foreground window when its outpost read it, is topmost, or
       is a `Windows.UI.Core` window under the active window
-      (`event_window_is_foreground`); a focus with no window facts is
+      (`ForegroundRelation::related`, the relation the outpost read by the
+      acceptance test's own rule); a focus with no window facts is
       judged by its application against the attention record. Other
       events are judged against the attention record (same top-level
       window, same root owner, topmost, UWP rule, or in the foreground),

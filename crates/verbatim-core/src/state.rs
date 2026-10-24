@@ -783,6 +783,18 @@ impl SrState {
             .map(|focus| (focus.source, &focus.snapshot))
     }
 
+    /// The outpost whose node the focus Core holds is, and whether that
+    /// focus is alive: what the host compares across an input to tell
+    /// whether its focus changed, without copying the focus
+    /// ([`held_focus`](Self::held_focus)).
+    #[must_use]
+    pub fn held_focus_owner(&self) -> Option<(OutpostId, bool)> {
+        self.focus
+            .as_ref()
+            .filter(|focus| focus.trace_id.is_some())
+            .map(|focus| (focus.snapshot.id.outpost(), focus.alive))
+    }
+
     /// The focus Core holds, as the focus listener and the outposts judge
     /// events against it before they read them (decision D14, "Where the
     /// rules run"), alive or not; `None` before any focus, or for a focus

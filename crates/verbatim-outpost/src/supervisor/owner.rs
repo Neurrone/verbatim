@@ -790,8 +790,12 @@ impl Owner {
         // it. It judges by the focus's trace and liveness alone, so the
         // ancestors are left out of its notice.
         let to_listener = focus.map(|focus| crate::protocol::HeldFocus {
+            trace_id: focus.trace_id,
+            observed: focus.observed,
+            focus: focus.focus.clone(),
             ancestors: Vec::new(),
-            ..focus.clone()
+            top_level: focus.top_level,
+            alive: focus.alive,
         });
         if let Some(child) = self.listener.as_ref().and_then(|l| l.child.as_ref())
             && let Err(error) = child.writer.push(notice(to_listener))

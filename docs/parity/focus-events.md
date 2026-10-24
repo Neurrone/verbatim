@@ -69,7 +69,8 @@ of its focus (`SupervisorToOutpost::CoreFocus`).
   repeat of a focus it read moments before (mockapp's
   `a_focus_waiting_for_core_s_judgement_is_no_repeat`), and an outpost
   reports an MSAA focus repeated at the address it reported moments
-  before, unless every focus it judges against is that object. Core's own
+  before, unless Core holds a focus of its and every focus it judges
+  against is that object. Core's own
   rule then drops the repeat, its newer reading kept unspoken, so nothing
   heard changes; the read is the cost.
 - Different, deliberately (Dickson, 2026-10-20): once the listener's
@@ -224,12 +225,12 @@ cases listed last are not implemented.
   alerts (`docs/design/phase6-design.md`, "Event filtering in the
   outposts"). Show facts pass by their class, which the focus listener's
   hook already tested, as NVDA's show rule depends on the class alone.
-  The test is defined once (`verbatim_core::focus_rules::accepts_event`;
-  decision D14, "Where the rules run"), for the outposts and the focus
-  listener, and the window facts an outpost reports with an event carry
-  its last part, the window's relation to the foreground window
-  (`ForegroundRelation`), read by the same definition, which the reducer
-  judges a focus by after the read. Outside the test, as in NVDA's callback: an
+  The test is defined once (`outpost::acceptance`; decision D14, "Where
+  the rules run"), for the outposts and the focus listener, and the window
+  facts an outpost reports with an event carry its last part, the window's
+  relation to the foreground window (`foreground_relation`), read by the
+  same definition, which the reducer judges a focus by after the read
+  (`verbatim_core::focus_rules::ForegroundRelation::related`). Outside the test, as in NVDA's callback: an
   object destroyed, and Verbatim's own events, the text selection of edit
   controls, and the console host's updates and caret.
 - MSAA, after acceptance and in NVDA's order: an event is dropped when

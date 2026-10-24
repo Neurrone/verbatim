@@ -21,7 +21,9 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
-use verbatim_core::focus_rules::{already_entered, is_dialog};
+use verbatim_core::focus_rules::already_entered;
+
+use crate::dialog_text::is_dialog;
 
 use crate::arbitration::{WindowClasses, time_limit, window_class_name};
 use crate::gates;
@@ -790,17 +792,17 @@ pub(super) fn describe_dialogs<'a>(
     if !context.fetches().description {
         return;
     }
-    // The focus Core holds, when it is this outpost's: the focus enters a
-    // dialog from it.
-    let held = context.held().core().cloned();
-    let same_window = held.as_ref().is_some_and(|held| {
-        held.top_level != 0 && Some(held.top_level) == window.map(super::window::top_level_of)
-    });
+    // The focuses the focus enters a dialog from: the focus Core holds,
+    // when it is this outpost's, and those this outpost reported that Core
+    // has not judged yet, one of which Core's focus may yet be. A dialog
+    // inside any of them is not read again.
+    let focuses: Vec<super::held::Focus> = context.held().focuses().cloned().collect();
+    let top_level = window.map_or(0, super::window::top_level_of);
     let entered_before = |node: &NodeSnapshot| {
-        held.as_ref().is_some_and(|held| {
+        focuses.iter().any(|focus| {
             already_entered(
-                held.ancestors.iter().chain(std::iter::once(&held.node)),
-                same_window,
+                focus.ancestors.iter().chain(std::iter::once(&focus.node)),
+                top_level != 0 && focus.top_level == top_level,
                 node,
             )
         })

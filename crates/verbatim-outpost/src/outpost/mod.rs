@@ -229,7 +229,7 @@ pub(crate) struct Context {
     focus_window: Mutex<FocusWindowReader>,
     /// The events application support asked for from any window of the
     /// application, whatever the foreground ([`acceptance`]).
-    requested_events: verbatim_core::focus_rules::RequestedEvents,
+    requested_events: acceptance::RequestedEvents,
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
@@ -970,7 +970,7 @@ impl Outpost {
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             focus_window: Mutex::new(Arc::new(window::focus_window)),
-            requested_events: verbatim_core::focus_rules::RequestedEvents::default(),
+            requested_events: acceptance::RequestedEvents::default(),
             heard: OnceLock::new(),
             // Read again as the hook is installed ([`Outpost::assign`]).
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),

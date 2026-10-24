@@ -18,7 +18,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
-use verbatim_core::focus_rules::ForegroundRelation;
 use verbatim_model::{HIDDEN_FRAME_WINDOW_PROP, Pid, WindowFacts, WindowHandle};
 use verbatim_uia::provider_process;
 
@@ -102,7 +101,7 @@ fn parent_pid() -> Option<u32> {
 /// window inside the frame is caught through its top-level window. Core's
 /// hidden frame must never be announced: it transits real focus while
 /// Verbatim's menu and settings dialog open.
-pub(super) fn window_belongs_to_hidden_frame(handle: isize) -> bool {
+pub(crate) fn window_belongs_to_hidden_frame(handle: isize) -> bool {
     if window_is_hidden_frame(handle) {
         return true;
     }
@@ -187,9 +186,9 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
     };
     let class = window_class_name(handle);
     // How the window stands to the foreground window, by the acceptance
-    // test's own rule (`verbatim_core::focus_rules`), against the system's
+    // test's own rule (`acceptance::foreground_relation`), against the system's
     // foreground window now.
-    let relation = ForegroundRelation::of(
+    let relation = super::acceptance::foreground_relation(
         handle,
         &class,
         &super::acceptance::SystemWindows {

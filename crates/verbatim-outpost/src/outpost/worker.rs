@@ -57,7 +57,7 @@ use crate::protocol::{
 };
 
 use super::Context;
-use super::acceptance::{SystemWindows, event_name_of};
+use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
 use super::focus_path::{self, FocusPath};
 use super::gap::{self, FocusGap};
@@ -73,7 +73,7 @@ use super::window::{
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::Watched;
-use verbatim_core::focus_rules::{self, ChangeKind, EventName, HeldNode};
+use verbatim_core::focus_rules::{self, ChangeKind, HeldNode};
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
 /// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
@@ -387,14 +387,39 @@ fn foreground_event(hwnd: isize) -> (isize, i32, i32) {
     (hwnd, OBJID_CLIENT.0, CHILDID_SELF)
 }
 
+/// Why NVDA's `processForegroundWinEvent` drops a foreground change of
+/// window `hwnd` that is in front, given `focus`, a focus it is judged
+/// against, by its top-level window and the MSAA event address it came
+/// from (`IAccessibleHandler/__init__.py` 842 to 867): the focus's window is
+/// `hwnd` or a child window of it (`is_descendant`, NVDA's
+/// `winUser.isDescendantWindow`), or the focus came from an MSAA event with
+/// the foreground event's own window, object id and child id. The second
+/// test can be met only where the first is not, by a focus whose window is
+/// not its event's; an outpost records an MSAA focus's event window as its
+/// window, so the first decides here.
+fn foreground_repeats_focus(
+    focus: &held::Focus,
+    hwnd: isize,
+    is_descendant: impl Fn(isize, isize) -> bool,
+) -> Option<&'static str> {
+    if focus.top_level != 0 && is_descendant(hwnd, focus.top_level) {
+        Some("the focus is already in the window")
+    } else if focus.event == Some(foreground_event(hwnd)) {
+        Some("it repeats the focus's own event")
+    } else {
+        None
+    }
+}
+
 /// Why a foreground change of window `hwnd`, which is in front, repeats the
 /// focus Core holds, by NVDA's two foreground tests
-/// (`focus_rules::foreground_repeats_focus`; `IAccessibleHandler/__init__.py`
-/// 842 to 867): when Core holds a focus of this outpost's, and it and every
-/// focus this outpost reported that Core has not judged yet repeat it, so
-/// Core's focus will repeat it whatever Core judges. `None` when Core holds
-/// another application's focus, or none: the reducer ignores a foreground
-/// change of the window its focus is already in, whoever reported it.
+/// ([`foreground_repeats_focus`]), judged against the focus Core holds
+/// (decision D14, "Where the rules run"): when Core holds a focus of this
+/// outpost's, and it and every focus this outpost reported that Core has
+/// not judged yet repeat it, so Core's focus will repeat it whatever Core
+/// judges. `None` when Core holds another application's focus, or none:
+/// the reducer ignores a foreground change of the window its focus is
+/// already in, whoever reported it.
 fn foreground_repeats(
     held: &held::Held,
     hwnd: isize,
@@ -403,12 +428,7 @@ fn foreground_repeats(
     held.core()?;
     let mut reason = None;
     for focus in held.focuses() {
-        reason = Some(focus_rules::foreground_repeats_focus(
-            Some(focus.top_level).filter(|&top| top != 0),
-            focus.event,
-            (hwnd, foreground_event(hwnd)),
-            &is_descendant,
-        )?);
+        reason = Some(foreground_repeats_focus(focus, hwnd, &is_descendant)?);
     }
     reason
 }
@@ -792,6 +812,7 @@ fn run_entry(
             generation,
             batch,
             timing,
+            msaa_event: None,
         };
         if menu {
             worker.menu_opened(&entry);
@@ -1066,6 +1087,10 @@ struct Worker<'a> {
     /// When the entry was raised, observed, relayed, and dequeued, for the
     /// latency log.
     timing: EventTiming,
+    /// The MSAA event address of the focus about to be reported, and
+    /// whether its object was acquired as a simple child, which the focus
+    /// is recorded with for Core's judgement ([`Worker::focus_to_judge`]).
+    msaa_event: Option<((isize, i32, i32), bool)>,
 }
 
 impl Worker<'_> {
@@ -2301,6 +2326,10 @@ impl Worker<'_> {
         let role = node.role;
         let node_id = node.id;
         let reported = self.focus_to_judge(trace, &node, ancestors.as_deref(), window, foreground);
+        // Recorded before it is sent, so Core's judgement of it, which the
+        // outpost's pipe thread takes in, always finds it; a report that is
+        // never sent is drained by Core's judgement of a later one.
+        self.context.held().reported(reported);
         let text_node = (!foreground).then(|| node.clone());
         let text = text_node
             .as_ref()
@@ -2330,9 +2359,6 @@ impl Worker<'_> {
         };
         let observed_at_ms = stamp.0;
         if self.emit_stamped(trace, stamp, backend, window, event) {
-            // Core judges it next: until it has, events are judged against
-            // it as well as against the focus Core holds.
-            self.context.held().reported(reported);
             if foreground {
                 self.end_watch_elsewhere(node_id);
                 self.context.tracking().role = Some(role);
@@ -2366,7 +2392,7 @@ impl Worker<'_> {
     /// had then while the focus moves within it
     /// ([`is_foreground_window`](Self::is_foreground_window)).
     fn focus_to_judge(
-        &self,
+        &mut self,
         trace: TraceId,
         node: &NodeSnapshot,
         ancestors: Option<&[NodeSnapshot]>,
@@ -2400,14 +2426,18 @@ impl Worker<'_> {
             Some(ancestors) => ancestors.iter().map(held_node).collect(),
             None => ancestors_before.unwrap_or_default(),
         };
+        let (event, simple_child) = match self.msaa_event.take() {
+            Some((event, simple_child)) => (Some(event), simple_child),
+            None => (window.filter(|_| foreground).map(foreground_event), false),
+        };
         held::Focus {
             trace,
             node: held_node(node),
             ancestors,
             top_level,
             entered_in_front,
-            event: window.filter(|_| foreground).map(foreground_event),
-            simple_child: false,
+            event,
+            simple_child,
         }
     }
 
@@ -2517,7 +2547,7 @@ impl Worker<'_> {
             foreground: self.context.foreground_window(),
         };
         let accepted =
-            focus_rules::accepts_event(event, hwnd, &windows, &self.context.requested_events);
+            acceptance::accepts_event(event, hwnd, &windows, &self.context.requested_events);
         if !accepted {
             tracing::debug!(
                 hwnd,
@@ -2595,7 +2625,7 @@ impl Worker<'_> {
         }
         // NVDA's order of checks: acceptance, the window's state, the
         // window's UIA test, and only then the object.
-        if let Some(event) = event_name_of(kind)
+        if let Some(event) = EventName::of_win_event(kind)
             && !self.accepts(event, hwnd)
         {
             return;
@@ -3736,7 +3766,6 @@ impl Worker<'_> {
             return;
         }
         let node = candidate.read(&self.context.msaa_registry);
-        let node_id = Some(node.id);
         let previous = self.focus_chain();
         let enrichment = read::msaa_enrichment(self.context, self.client, &node, &previous);
         let object = self
@@ -3747,6 +3776,7 @@ impl Worker<'_> {
         let redirected = object
             .as_ref()
             .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
+        self.msaa_event = Some(((hwnd, id_object, id_child), resolved_child > 0));
         self.emit_focus(
             trace,
             self.entry_stamp(observed_at_ms),
@@ -3757,17 +3787,8 @@ impl Worker<'_> {
             object.clone(),
             enrichment,
         );
-        if self.context.intake.focused() == object {
-            if let Some(node) = node_id {
-                self.context.held().note_event(
-                    node,
-                    (hwnd, id_object, id_child),
-                    resolved_child > 0,
-                );
-            }
-            if redirected {
-                self.context.intake.set_focus_redirected();
-            }
+        if self.context.intake.focused() == object && redirected {
+            self.context.intake.set_focus_redirected();
         }
     }
 
@@ -3862,9 +3883,10 @@ impl Worker<'_> {
         );
         // A focus on the element this outpost already found under its
         // runtime id keeps it: the listener read that it still has the
-        // keyboard focus. A plain repeat never comes this far, as the
-        // listener drops it (section 16.3); this is the focus coming back
-        // to the element after one in another application.
+        // keyboard focus. A repeat comes this far only when the focus
+        // before it waited for Core's judgement as it was read, which Core's
+        // own rule then drops (section 16.3); otherwise this is the focus
+        // coming back to the element after one in another application.
         let found =
             read.same_as_last == Some(true) && context.uia_registry.element_of(node.id).is_some();
         // A focus that may have text needs its own element before it is

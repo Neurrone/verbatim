@@ -556,7 +556,8 @@ impl OutpostUnderTest {
     /// run"): a focus the outpost reported, or a focus-now answer's
     /// control, becomes the focus Core holds, but for a foreground change
     /// of the window its focus is already in, which Core ignores; a focus
-    /// whose ancestors are unknown keeps those of the focus before it, as
+    /// whose ancestors are unknown keeps those of the focus before it, and a
+    /// repeat of the focus Core holds the trace that focus came from, as
     /// Core keeps them. The outpost and the listener's reader are told,
     /// as verbatim.exe tells them.
     fn core_judges(&self, message: &OutpostToSupervisor) {
@@ -626,8 +627,14 @@ impl OutpostUnderTest {
                     .map(|focus| focus.ancestors.clone())
                     .unwrap_or_default(),
             };
+            // A repeat of the focus it holds keeps the trace it was taken
+            // from, as Core keeps its newer reading under the old one.
+            let (trace_id, observed) = core
+                .as_ref()
+                .filter(|focus| focus.alive && focus.focus.id == node.id)
+                .map_or((trace, observed), |focus| (focus.trace_id, focus.observed));
             *core = Some(HeldFocus {
-                trace_id: trace,
+                trace_id,
                 observed,
                 focus: held(node),
                 ancestors,

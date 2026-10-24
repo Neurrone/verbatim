@@ -298,8 +298,9 @@ screen reader in both rendered and source form.
 
   Where the rules run: each rule (acceptance, a repeated focus, which
   property changes, selections and dialog texts are spoken) is defined
-  once, in a platform-neutral crate, and every place that applies it calls
-  that one definition. A judgment is made outside Core only when it must
+  once, in a platform-neutral crate unless it is ported from NVDA, in
+  which case once in the Windows-specific crate the judges before a read
+  share, and every place that applies it calls that one definition. A judgment is made outside Core only when it must
   come before an element is read, because a UIA element cannot pass to
   another process: the focus listener judges a UIA focus before reading
   it, and an outpost judges an event against the foreground before calling
@@ -318,7 +319,10 @@ screen reader in both rendered and source form.
   2026-10-01 (the outpost redesign: the attention model), 2026-10-05
   (acceptance against the real foreground) and 2026-10-24 (Dickson: each
   rule defined once, judged against Core's focus, only pre-read judgments
-  outside Core, focuses ordered by when they happened).
+  outside Core, focuses ordered by when they happened), and 2026-10-25 (a
+  rule ported from NVDA defined once in the Windows-specific crate, as
+  ported code never moves into a platform-neutral one; Claude, 2026-10-25,
+  pending Dickson's acceptance).
 - **D15 — The latency budget is split in two and measured per stage.**
   From observation of the OS event to the utterance being queued: 10 ms
   or under on every backend. From queued to the first audio sample: 10 ms

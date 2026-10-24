@@ -205,9 +205,9 @@ pub struct UiaFocusRead {
     /// `Some(false)`, the earlier element without the focus or gone, means
     /// the application gave the id to a new element after the one it named
     /// died, and the outpost gives the id a new node; `Some(true)` lets the
-    /// outpost keep the element it found for the node. A plain repeat of the
-    /// focus never carries it, as the listener drops a repeat first
-    /// (`focus_read::LastAccepted`).
+    /// outpost keep the element it found for the node, as it does for a repeat
+    /// read while the focus before it waited for Core's judgement
+    /// (`focus_read::HeldElements`).
     pub same_as_last: Option<bool>,
 }
 

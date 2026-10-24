@@ -175,9 +175,9 @@ event's own element:
   of the listener's gave it, as an MSAA focus or a foreground change,
   nothing is compared. A menu opening is compared with the element of the
   focus Core holds, as NVDA compares it with its focus object. Then the
-  acceptance test against the foreground window, defined once in
-  `verbatim_core::focus_rules` and made through the outpost's local window
-  queries (`outpost::acceptance`), on the element's own window or, one
+  acceptance test against the foreground window, the outpost's port of
+  it, defined once for both (`outpost::acceptance`), on the element's own
+  window or, one
   call (`verbatim_uia::nearest_window_handle`), its nearest ancestor's: a
   focus that fails is dropped before it is read and is never kept for
   Core's judgement, which only a focus that passed and was read is. The
@@ -842,16 +842,17 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     check compares runtime ids the read carries and makes no call.
   - The worker (`outpost::worker`): one thread takes entries in order and
     finishes each before the next. Before any call into the application
-    for an entry, it tests the event by the acceptance test against the
-    foreground window (`docs/parity/focus-events.md`, "Event
-    acceptance"): `verbatim_core::focus_rules::accepts_event`, defined
-    once for the outposts, the listener and, through the window facts an
-    outpost reports (`ForegroundRelation`), the reducer, a pure function
-    of the event's name (`acceptance::event_name_of` for a `WinEvent`),
-    its window, the window queries (`WindowQueries`, local calls in
-    `acceptance::SystemWindows`), and the events application support
-    asked for (`RequestedEvents`, empty), and drops an event from a
-    window unrelated to the foreground window. A caret key's evidence is watched for
+    for an entry, it tests the event by NVDA's acceptance test against the
+    foreground window (`outpost::acceptance`;
+    `docs/parity/focus-events.md`, "Event acceptance"): `accepts_event`,
+    defined once for the outposts and the listener, a pure function of
+    the event's name, its window, the window queries (`WindowQueries`,
+    local calls in `SystemWindows`), and the events application support
+    asked for (`RequestedEvents`, empty), and drops an event from a window
+    unrelated to the foreground window. Its last part,
+    `foreground_relation`, is what an outpost reports in an event's window
+    facts (`verbatim_core::focus_rules::ForegroundRelation`), which the
+    reducer judges a focus by after the read. A caret key's evidence is watched for
     between entries (under "Text" below), not waited on. It is the only
     thread that calls into the application, so events and replies leave in
     the order their entries were planned: the order they joined the queue,
@@ -1037,8 +1038,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `docs/design/uia-shapes.md`), and without whether it is off the screen,
   which the rules never use and which a top-level dialog's title bar
   answers only by asking the window's thread (`WM_GETTITLEBARINFOEX`).
-  `is_dialog(role)`, defined with the focus rules in `verbatim-core`, says
-  which nodes have such text: a dialog, an alert, or a property page. A gathering looks at no more than `MAX_OBJECTS`
+  `is_dialog(role)` says which nodes have such text: a dialog, an alert, or a property page. A gathering looks at no more than `MAX_OBJECTS`
   objects; a dialog with more says nothing rather than part of its text.
 
 ### Ignored processes
@@ -1747,7 +1747,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   Object navigation's ancestor query reads the whole chain.
 - A dialog's own text (`read::describe_dialogs`). Before a focus is
   published, every dialog among its ancestors, and the focus itself, that
-  the focus Core holds had not already entered, by the rule the reducer
+  none of the focuses events are judged against (the focus Core holds and
+  those reported that Core has not judged yet) had already entered, by
+  the rule the reducer
   speaks entered containers by (`focus_rules::already_entered`; decision
   D14, "Where the rules run"), and that has no description of its own, is
   given its text as its description, while descriptions are read at all
@@ -2261,7 +2263,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   change as `TextChanged` without reading the control's whole text as its
   MSAA value. For a UIA focus, the hooks' caret event from any window
   NVDA's acceptance test takes a location change from
-  (`focus_rules::EventName::LocationChange`) is the focus's caret event,
+  (`acceptance::EventName::LocationChange`) is the focus's caret event,
   handled as its UIA caret event is (`Worker::system_caret_of_uia_focus`),
   as NVDA handles the system caret's events on its last queued focus,
   since some UIA documents, such as Visual Studio's, raise no UIA caret

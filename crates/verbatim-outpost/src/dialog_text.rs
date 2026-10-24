@@ -76,10 +76,12 @@ impl DialogObject for verbatim_ia2::dialog::DialogObject {
     }
 }
 
-/// Whether a node of a role is a dialog, whose description is its own text
-/// when it has none of its own: a dialog, an alert, or a property page,
-/// defined once with the focus rules.
-pub use verbatim_core::focus_rules::is_dialog;
+/// Whether a node of `role` is a dialog, whose description is its own text
+/// when it has none of its own: a dialog, an alert, or a property page.
+#[must_use]
+pub fn is_dialog(role: Role) -> bool {
+    matches!(role, Role::Dialog | Role::Alert | Role::PropertyPage)
+}
 
 /// Whether a child of `role` is a container the gathering goes into.
 fn is_container(role: Role) -> bool {

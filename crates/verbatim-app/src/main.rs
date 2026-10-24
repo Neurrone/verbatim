@@ -1457,6 +1457,11 @@ impl ReducerThread<'_> {
                     None => source,
                 };
                 if self.in_ignored_window(&event, window.as_ref()) {
+                    // Core has judged the focus, refused: the outpost and the
+                    // listener hear so, and judge nothing more against it.
+                    let owner = self.held_focus_owner();
+                    let queued = self.state.focuses_queued();
+                    self.tell_core_focus(Some((trace_id, outpost)), queued, owner);
                     return;
                 }
                 let first_observed_ms = match timing.observed_at_us {
@@ -1786,9 +1791,7 @@ impl ReducerThread<'_> {
     /// The outpost whose node the focus Core holds is, and whether that
     /// focus is alive.
     fn held_focus_owner(&self) -> Option<(OutpostId, bool)> {
-        self.state
-            .held_focus()
-            .map(|focus| (focus.focus.id.outpost(), focus.alive))
+        self.state.held_focus_owner()
     }
 
     /// Tells the focus listener and the outposts concerned the focus Core
@@ -1808,24 +1811,11 @@ impl ReducerThread<'_> {
     ) {
         let now = self.held_focus_owner();
         let changed = self.state.focuses_queued() != queued || now != before;
-        if judged.is_none() && !changed {
+        let Some(outposts) =
+            notice_recipients(judged.map(|(_, outpost)| outpost), changed, (before, now))
+        else {
             return;
-        }
-        let mut outposts: Vec<OutpostId> = Vec::new();
-        let concerned = if changed {
-            [
-                judged.map(|(_, outpost)| outpost),
-                before.map(|(outpost, _)| outpost),
-                now.map(|(outpost, _)| outpost),
-            ]
-        } else {
-            [judged.map(|(_, outpost)| outpost), None, None]
         };
-        for outpost in concerned.into_iter().flatten() {
-            if !outposts.contains(&outpost) {
-                outposts.push(outpost);
-            }
-        }
         self.context.supervisor.core_focus(
             judged.map(|(trace, _)| trace),
             self.state.held_focus(),
@@ -2728,8 +2718,68 @@ fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
         })
 }
 
+/// The outpost whose node the focus Core holds is, and whether it is alive.
+type FocusOwner = Option<(OutpostId, bool)>;
+
+/// The outposts told of the focus Core holds after an input
+/// (`SupervisorToOutpost::CoreFocus`), or `None` when none is to be told:
+/// the outpost whose focus event the input judged, `judged`, and, when
+/// Core's focus `changed`, the outposts whose focus it was and now is, by
+/// their owners `before` and `now`, each once. The listener is told
+/// whenever any outpost is.
+fn notice_recipients(
+    judged: Option<OutpostId>,
+    changed: bool,
+    (before, now): (FocusOwner, FocusOwner),
+) -> Option<Vec<OutpostId>> {
+    if judged.is_none() && !changed {
+        return None;
+    }
+    let concerned = if changed {
+        [
+            judged,
+            before.map(|(outpost, _)| outpost),
+            now.map(|(outpost, _)| outpost),
+        ]
+    } else {
+        [judged, None, None]
+    };
+    let mut outposts: Vec<OutpostId> = Vec::new();
+    for outpost in concerned.into_iter().flatten() {
+        if !outposts.contains(&outpost) {
+            outposts.push(outpost);
+        }
+    }
+    Some(outposts)
+}
+
 #[cfg(test)]
 mod tests {
+    /// The outposts told of Core's focus: the one whose focus event was
+    /// judged; when the focus moved, the ones it moved from and to, once
+    /// each; and none when nothing was judged and nothing moved.
+    #[test]
+    fn core_s_focus_is_told_to_the_judged_outpost_and_those_it_moved_between() {
+        use verbatim_model::OutpostId;
+        let (a, b) = (OutpostId(3), OutpostId(4));
+        assert_eq!(
+            super::notice_recipients(Some(a), false, (Some((b, true)), Some((b, true)))),
+            Some(vec![a]),
+            "a refused focus: the judged outpost alone"
+        );
+        assert_eq!(
+            super::notice_recipients(Some(a), true, (Some((b, true)), Some((a, true)))),
+            Some(vec![a, b]),
+            "a focus taken from another outpost's"
+        );
+        assert_eq!(
+            super::notice_recipients(None, true, (Some((a, true)), Some((a, false)))),
+            Some(vec![a]),
+            "the focus's outpost ended"
+        );
+        assert_eq!(super::notice_recipients(None, false, (None, None)), None);
+    }
+
     use super::*;
 
     /// The Verbatim+F11 press the router receives, with its repeat count.

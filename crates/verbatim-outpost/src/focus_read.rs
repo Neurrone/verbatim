@@ -119,16 +119,16 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_clas
 
 use crate::ForegroundReader;
 use crate::arbitration::{Arbitrator, Clock, known_verdict, uses_uia, window_class_name};
-use crate::outpost::acceptance::SystemWindows;
+use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{front_is_another_thread_of_its_application, window_is_hung};
+use crate::outpost::window::{
+    front_is_another_thread_of_its_application, window_belongs_to_hidden_frame, window_is_hung,
+};
 use crate::protocol::{
     DeliveredFact, DropEvidence, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
     now_us,
 };
-use verbatim_core::focus_rules::{
-    EventName, RepeatEvidence, RequestedEvents, accepts_event, repeats_focus,
-};
+use verbatim_core::focus_rules::{RepeatEvidence, repeats_focus};
 
 /// The most ancestors read for a focus, as many as the outpost walks.
 const MAX_ANCESTORS: u32 = 64;
@@ -442,6 +442,10 @@ const REPEAT: &str = "a repeat of the last focus, which still has the keyboard f
 /// The reason a focus is dropped that fails NVDA's acceptance test.
 const NOT_RELATED: &str = "its window is not related to the foreground window";
 
+/// The reason a focus in Core's hidden frame is dropped, as its outpost
+/// would drop it once read.
+const HIDDEN_FRAME: &str = "Core's hidden frame";
+
 /// The reason the console window's own element's focus is dropped.
 const CONSOLE_OWN: &str = "the console window's own focus";
 
@@ -456,7 +460,14 @@ const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for
 /// items view, or a disagreement of the listener's and the outpost's
 /// verdicts, and establishes nothing of the copy's focus (Dickson,
 /// 2026-10-21).
-const VERDICTS: [&str; 5] = [HUNG, COMPARISON_FAILED, REPEAT, NOT_RELATED, CONSOLE_OWN];
+const VERDICTS: [&str; 6] = [
+    HUNG,
+    COMPARISON_FAILED,
+    REPEAT,
+    NOT_RELATED,
+    CONSOLE_OWN,
+    HIDDEN_FRAME,
+];
 
 /// The drops of a focus because the listener gave up on its read, the
 /// application not answering in time ([`DropEvidence::Focus`]): a read
@@ -1329,6 +1340,13 @@ impl FocusReader {
         // text area has none.
         if hwnd != 0 && window_class_name(hwnd) == CONSOLE_WINDOW_CLASS {
             return Err(CONSOLE_OWN);
+        }
+        // A focus in Core's hidden frame, which its outpost drops whatever
+        // it is: dropped before it is read, so it never waits for a
+        // judgement of Core's that cannot come ([`HeldElements`]). A local
+        // read of the window's property.
+        if window_belongs_to_hidden_frame(if hwnd != 0 { hwnd } else { window }) {
+            return Err(HIDDEN_FRAME);
         }
         // 6. NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
