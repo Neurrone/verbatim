@@ -196,6 +196,7 @@ fn query<'a>(
         previous: None,
         depth_limit: 50,
         fill,
+        element_fill: fill,
         out_of_time: None,
         require_focus: true,
         refresh: false,
@@ -390,7 +391,7 @@ fn a_remotely_read_element_without_validity_reads_valid_with_no_failed_read() {
         assert!(
             !node
                 .states
-                .states(node.role.role())
+                .states(node.role.role(), false)
                 .contains(State::InvalidEntry),
             "{:?}",
             node.name

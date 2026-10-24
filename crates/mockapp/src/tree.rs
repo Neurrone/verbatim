@@ -15,6 +15,10 @@ use crate::fixture::FixtureNode;
 
 /// One node's live data.
 #[derive(Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent switches the fixture's commands set one by one"
+)]
 pub(crate) struct NodeData {
     pub(crate) role: Role,
     pub(crate) name: Option<String>,
@@ -66,6 +70,10 @@ pub(crate) struct NodeData {
     /// that is gone, and it has left the tree, unless `disconnect` killed
     /// it where it stands.
     pub(crate) dead: bool,
+    /// Whether the node dies where it stands the first time its UIA
+    /// provider is asked for its first child, that call failing as on an
+    /// element that is gone (`disconnect-at-first-child`).
+    pub(crate) dies_at_first_child: bool,
     /// How the node's UIA provider answers `Navigate(Parent)`, once it has
     /// answered as many calls as usual as the count says (`answer-parent`).
     pub(crate) parent_answer: (crate::stdin::ParentAnswer, u32),
@@ -195,6 +203,20 @@ impl Tree {
         Ok(())
     }
 
+    /// Node `id` dies where it stands the first time its UIA provider is
+    /// asked for its first child (`disconnect-at-first-child`). The root
+    /// cannot die.
+    pub(crate) fn disconnect_at_first_child(&mut self, id: &str) -> Result<(), String> {
+        let index = self
+            .index_of(id)
+            .ok_or_else(|| format!("no node has the id {id}"))?;
+        if index == 0 || self.nodes[index].dead {
+            return Err(format!("{id} cannot be disconnected"));
+        }
+        self.nodes[index].dies_at_first_child = true;
+        Ok(())
+    }
+
     /// Every child of node `id`, with everything under it, dies, and a copy
     /// of each, with a runtime id of its own, takes its place under the
     /// same fixture id (`replace-items`): the copies keep their states, so
@@ -306,6 +328,7 @@ fn insert(
         children: Vec::new(),
         runtime_id: index,
         dead: false,
+        dies_at_first_child: false,
         parent_answer: (crate::stdin::ParentAnswer::Usual, 0),
         reports_window: None,
         content: node.content,

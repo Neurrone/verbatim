@@ -520,7 +520,8 @@ every query follows.
 2. **Recorded.** On the reducer thread, `ReducerThread::dump_tree` finds
    the attention application's newest live incarnation, records the
    request in the request table with `Asker::DumpTree`, and queues
-   `Query::DumpTree` on that outpost's writer. Request ids are never
+   `Query::DumpTree`, with whether locations are read, on that outpost's
+   writer. Request ids are never
    reused, so an old reply can never satisfy a newer request.
 3. **Queued in the outpost.** The query waits in the intake queue like
    any entry; queries are exempt from the batch limits and never expire

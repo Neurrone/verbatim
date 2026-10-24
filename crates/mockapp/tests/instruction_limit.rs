@@ -17,15 +17,18 @@ mod common;
 mod harness;
 
 use verbatim_uia::text::{Endpoint, TextPatternExt};
-use verbatim_uia::{Ancestor, Cached, Fill, FocusInput, Kept, Live, Node, Shape, Uia, runtime_id};
+use verbatim_uia::{
+    Ancestor, Cached, Fill, FocusInput, Kept, Live, Node, NodeGates, NodeIdRegistry, Shape, Uia,
+    runtime_id,
+};
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, MOST_RUNS, Movement, NavigationDirection, PathQuery,
     Position, RangeAction, RangeEnd, RangeQuery, RowsQuery, SnapshotQuery, Status, StepQuery,
-    TextAttribute, TextFrom, TextTarget, UnitsQuery, caret_read_remote,
+    TextAttribute, TextFrom, TextTarget, TreeQuery, UnitsQuery, caret_read_remote,
     controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
     navigation_step_remote, terminal_rows_remote, terminal_snapshot_remote, text_range_remote,
-    text_units_remote,
+    text_units_remote, tree_dump_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -105,7 +108,31 @@ impl Fixture {
         Fill::new(
             &self
                 .uia
+                .request::<Ancestor>(common::ancestor_gates())
+                .expect("a cache request"),
+        )
+    }
+
+    /// The fill of the focused element itself, read with its place.
+    fn focus(&self) -> Fill<Ancestor> {
+        Fill::new(
+            &self
+                .uia
                 .request::<Ancestor>(Ancestor::all_on())
+                .expect("a cache request"),
+        )
+    }
+
+    /// The fill of a node read among many, as the tree dump reads one
+    /// without its locations: every detail but its place.
+    fn many_nodes(&self) -> Fill<Node> {
+        Fill::new(
+            &self
+                .uia
+                .request::<Node>(NodeGates {
+                    place: None,
+                    ..Node::all_on()
+                })
                 .expect("a cache request"),
         )
     }
@@ -227,12 +254,14 @@ fn focus_and_navigation_execute_exactly() {
     let previous = fixture.find("Banana");
     let known: Vec<Vec<i32>> = (0..64).map(|index| vec![42, 7, index]).collect();
     let fill = fixture.ancestors();
+    let focus = fixture.focus();
     let query = FocusQuery {
         element: &list,
         known: &known,
         previous: Some(&previous),
         depth_limit: 64,
         fill: &fill,
+        element_fill: &focus,
         out_of_time: None,
         require_focus: true,
         refresh: false,
@@ -284,7 +313,7 @@ fn focus_and_navigation_execute_exactly() {
 
     assert_eq!(
         [worst, limited, typical, far, near_step],
-        [2366, 1779, 1044, 870, 139],
+        [2429, 1842, 1107, 870, 139],
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
@@ -306,12 +335,14 @@ fn reads_and_paths_execute_exactly() {
     let previous = fixture.find("Banana");
     let known: Vec<Vec<i32>> = (0..64).map(|index| vec![42, 7, index]).collect();
     let fill = fixture.ancestors();
+    let focus = fixture.focus();
     let query = FocusQuery {
         element: &list,
         known: &known,
         previous: Some(&previous),
         depth_limit: 64,
         fill: &fill,
+        element_fill: &focus,
         out_of_time: None,
         require_focus: true,
         refresh: true,
@@ -355,7 +386,7 @@ fn reads_and_paths_execute_exactly() {
 
     assert_eq!(
         [read, deepest, near, missing],
-        [2379, 1134, 148, 141],
+        [2442, 1134, 148, 141],
         "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
     );
     assert!(read < LIMIT / 2 && deepest < LIMIT / 2);
@@ -801,6 +832,68 @@ fn terminal_colours_execute_exactly() {
     assert!(worst.iter().flatten().all(|&count| count < LIMIT / 2));
 }
 
+/// The tree dump's runs, each reading the children of the elements it
+/// starts from and those it finds, breadth first, up to
+/// `verbatim_uia_rops::CHILDREN_PER_RUN` (60) children: from `deep.json`'s
+/// window, the worst case, a run that reads sixty elements' children, one
+/// each, down the sixty-two nested groups, and a second run for the rest;
+/// and from `wide.json`'s window, whose list of a hundred items is more
+/// than a run holds, a first run that stops inside the list, which is then
+/// read classically, and runs that read the items' children, none, sixteen
+/// elements at a time. A run starting from sixteen such elements that each
+/// lead down such a chain would add their sixteen reads, about 590
+/// instructions, to the worst case, still under half the limit.
+fn tree_dumps_execute_exactly() {
+    common::init_com();
+    let runs = |name: &str, prefix: &str| {
+        let fixture = Fixture::start(name, prefix);
+        let nodes = fixture.many_nodes();
+        let registry =
+            NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+        let root = Live::new(fixture.root.clone())
+            .refresh(nodes.request())
+            .expect("the window, read as a node");
+        let query = TreeQuery {
+            root: &root,
+            fill: &nodes,
+            registry: &registry,
+            max_depth: 64,
+            max_nodes: 4096,
+        };
+        counting::start();
+        let (_, truncated) = tree_dump_remote(&fixture.uia, &query).expect("the dump");
+        let counts = counting::stop();
+        assert!(!truncated, "{name}: the whole tree");
+        fixture.app.quit();
+        counts
+    };
+    let deep = runs("deep.json", "mockapp-instructions-deep-dump");
+    let wide = runs("wide.json", "mockapp-instructions-wide-dump");
+    assert_eq!(
+        (deep.clone(), wide.clone()),
+        (
+            vec![Some(4097), Some(746)],
+            vec![
+                Some(2545),
+                Some(654),
+                Some(588),
+                Some(588),
+                Some(588),
+                Some(588),
+                Some(588),
+                Some(356)
+            ]
+        ),
+        "the deep window's runs; the wide window's"
+    );
+    assert!(
+        deep.iter()
+            .chain(&wide)
+            .flatten()
+            .all(|&count| count < LIMIT / 2)
+    );
+}
+
 /// `count` numbered lines, `line 000` on, as mockapp's `set-text` takes
 /// them, each line feed escaped.
 fn numbered(count: u32) -> String {
@@ -856,5 +949,6 @@ fn main() {
             "terminal_colours_execute_exactly",
             terminal_colours_execute_exactly,
         ),
+        ("tree_dumps_execute_exactly", tree_dumps_execute_exactly),
     ]);
 }

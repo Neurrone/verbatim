@@ -41,10 +41,15 @@ Public API:
   when speech is paused where it is, which Shift does, or resumed, by
   Shift again or by a cancel ending the pause: whether it paused, and
   when, sent once the change is applied, once per change.
-  `ReplyPayload::DumpTree` answers `Request::DumpTree` with the walked
-  tree (`verbatim_model::TreeNode`) and whether it is incomplete: the
-  outpost's depth or node-count cap cut it short, or an element gone
-  during the walk left the part of the tree under it unread; a walk that
+  `ReplyPayload::DumpTree` answers `Request::DumpTree { locations }` with
+  the walked tree (`verbatim_model::TreeNode`), whether it is incomplete
+  (the outpost's depth or node-count cap cut it short, or an element gone
+  during the walk left the part of the tree under it unread), and whether
+  each node's location and off-screen state were read (`locations`, as
+  asked; without them every node has no rectangle and no `Offscreen`
+  state, which then say nothing, since for some elements, a window's
+  title bar among them, the application's UI thread is asked for them;
+  both fields default to false, so older messages read unchanged); a walk that
   could not complete at all comes
   back as `Frame::Error`, the same convention `SendGesture` uses.
   `ReplyPayload::DumpRecorder` answers `Request::DumpRecorder` (milestone

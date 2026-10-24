@@ -481,7 +481,8 @@ knowing for review:
   (`ReducerThread`, described below), the gesture router (bound gestures to
   `GuiCommand`s or reducer inputs), the control server with its
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
-  `DumpTicket` and a one-answer reply channel to the reducer thread and
+  `DumpTicket`, whether locations are read, and a one-answer reply
+  channel to the reducer thread and
   waits five seconds for the answer, then sends
   `ShellCommand::DumpTreeGivenUp` with the ticket, and the reducer thread
   sends the outpost a `Cancel`, which withdraws the dump if it has not

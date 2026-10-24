@@ -8,9 +8,10 @@
 //! and details, and every node's children in order, equals the fixture's. This is
 //! the "provider-level fake" promised by architecture section 13: COM
 //! marshaling, cache requests, and role/state mapping are all exercised for
-//! real, with no actual application. A tree dump (`Uia::tree`) that meets
-//! an element gone during it ends that element's children there and marks
-//! the dump incomplete.
+//! real, with no actual application. The tree dump
+//! (`verbatim_uia_rops::tree_dump`) reads each element's children in one
+//! call, by either path: an element gone during it keeps its later
+//! siblings, and no element's location or off-screen state is read.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -21,7 +22,9 @@ use verbatim_uia::{
     Cached, DialogText, Fill, Live, NodeIdRegistry, PropertyEvent, Request, RoleCore, Shape,
     TextEvent, Uia, map,
 };
-use verbatim_uia_rops::{NavigationDirection, Path, StepQuery, navigation_step};
+use verbatim_uia_rops::{
+    NavigationDirection, Path, StepQuery, TreeQuery, navigation_step, tree_dump,
+};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
     TreeScope_Descendants, TreeScope_Subtree, UIA_NamePropertyId,
@@ -264,8 +267,10 @@ fn uia_client_reads_the_scripted_tree() {
 /// request, reads as the shape the same role, name, value, states, and
 /// window handle that the full read of the element gives, as a
 /// `verbatim_uia::Node` with every detail, for the fields the shape
-/// carries: a property event's parts, which have no details, and its window
-/// handle; a text event's window handle. The frame's title bar and its
+/// carries: a property event's parts, which have no details and are never
+/// off the screen, since no event registration's cache holds where its
+/// element is (`verbatim_uia::Place`), and its window handle; a text
+/// event's window handle. The frame's title bar and its
 /// buttons, Windows' and not the fixture's, are left out: reading their
 /// location or whether they are off the screen has UIA ask the window's
 /// thread (`WM_GETTITLEBARINFOEX`), whose answer waits on the Desktop
@@ -322,8 +327,11 @@ fn event_shapes_read_what_the_full_read_gives() {
             .refresh(&property_request)
             .expect("the element filled as a property event");
         let fields = property.read();
+        let mut states = full.states;
+        states.remove(State::Offscreen);
         let expected = map::CachedUiaParts {
             details: verbatim_model::NodeDetails::default(),
+            states,
             ..full.clone()
         };
         assert_eq!(fields.parts(property.runtime_id()), expected);
@@ -404,60 +412,216 @@ fn named(node: &verbatim_model::TreeNode) -> Named {
     }
 }
 
-/// A tree dump from mockapp's list, whose second item is gone where it
-/// stands (`disconnect`), so the step to it fails with
-/// `UIA_E_ELEMENTNOTAVAILABLE`, ends the list's children at its first
-/// item, which keeps its place, and marks the dump incomplete, rather than
-/// failing the whole dump.
-fn a_tree_dump_ends_an_elements_children_at_a_gone_element() {
+/// A leaf of a [`Named`] tree.
+fn item(name: &str) -> Named {
+    Named {
+        name: Some(name.to_owned()),
+        children: Vec::new(),
+    }
+}
+
+/// A node read among many, as the outposts' tree dump reads one when
+/// locations are not asked for: every detail but its place
+/// (`verbatim_uia::Place`).
+fn many_nodes(uia: &Uia) -> Request<verbatim_uia::Node> {
+    uia.request::<verbatim_uia::Node>(verbatim_uia::NodeGates {
+        place: None,
+        ..verbatim_uia::Node::all_on()
+    })
+    .expect("the node's request")
+}
+
+/// Every node of `node`'s subtree that has a rectangle or is off the
+/// screen.
+fn placed(node: &verbatim_model::TreeNode) -> usize {
+    usize::from(
+        node.snapshot.details.rect.is_some() || node.snapshot.states.contains(State::Offscreen),
+    ) + node.children.iter().map(placed).sum::<usize>()
+}
+
+/// A tree dump of mockapp's list (`small.json`) whose first item dies where
+/// it stands when the dump asks it for its first child, as an element of a
+/// menu that closes during a dump does (`disconnect-at-first-child`), after
+/// the one read of the list's children has listed it and its later
+/// sibling, `remote` naming the path. The walk this replaced stepped to the
+/// next sibling from the item that had gone, failed, and lost the sibling.
+fn dump_with_an_element_gone_during_it(remote: bool) -> (Named, bool, &'static str) {
     let title = common::unique_title("mockapp-uia-gone-tree");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
-    let nodes = uia
-        .request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
-        .expect("a cache request");
+    let nodes = many_nodes(&uia);
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    // The list, a child of the window, found by its name before its item
-    // goes (`common::named_element`), which passes the window's title bar
-    // by; the dump starts from the list for the same reason, and since the
-    // title bar is Windows' and named in the machine's language.
+    // The list, a child of the window, found by its name
+    // (`common::named_element`), which passes the window's title bar by;
+    // the dump starts from the list, since the title bar is Windows' and
+    // named in the machine's language.
     let list = Live::new(common::named_element(&uia, hwnd, "Options"))
         .refresh(&nodes)
         .expect("the list, read as a node");
-    let item = |name: &str| Named {
-        name: Some(name.to_owned()),
-        children: Vec::new(),
+    app.send("disconnect-at-first-child item1");
+    let fill = Fill::new(&nodes);
+    let query = TreeQuery {
+        root: &list,
+        fill: &fill,
+        registry: &registry,
+        max_depth: 8,
+        max_nodes: 64,
     };
-    let (whole, truncated) = uia
-        .tree(&list, &nodes, &registry, 8, 64)
-        .expect("the list's tree");
+    let ((dumped, truncated), path) = tree_dump(&uia, &query, remote).expect("the dump");
+    app.quit();
+    (named(&dumped), truncated, path.name())
+}
+
+/// [`dump_with_an_element_gone_during_it`] by remote programs: the read of
+/// the gone item's children fails inside the run, which marks the dump
+/// incomplete and leaves the item out, and the sibling is kept.
+fn a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it() {
     assert_eq!(
-        (named(&whole), truncated),
+        dump_with_an_element_gone_during_it(true),
+        (
+            Named {
+                name: Some("Options".to_owned()),
+                children: vec![item("Second")],
+            },
+            true,
+            "remote",
+        )
+    );
+}
+
+/// [`dump_with_an_element_gone_during_it`] classically: UIA answers the
+/// read of the gone item's children as none, so the item is listed as it
+/// was read with the list, with no children, and the sibling is kept.
+fn a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it() {
+    assert_eq!(
+        dump_with_an_element_gone_during_it(false),
         (
             Named {
                 name: Some("Options".to_owned()),
                 children: vec![item("First"), item("Second")],
             },
-            false
-        ),
-        "the list's tree before its second item goes"
+            false,
+            "classic",
+        )
     );
+}
 
-    app.send("disconnect item2");
-    let (dumped, truncated) = uia
-        .tree(&list, &nodes, &registry, 8, 64)
-        .expect("the dump with a gone item");
+/// The dump of mockapp's whole window (`small.json`) as the outposts make
+/// it, by remote programs, with locations not asked for: no element's
+/// location or off-screen state is read, so the title bar UIA adds for the
+/// window's frame and its buttons cost mockapp's window thread no
+/// `WM_GETTITLEBARINFOEX`, of which a dump reading them made 8, and no node,
+/// the title bar first among them, has a rectangle or is off the screen.
+fn a_dump_reads_nothing_the_title_bar_asks_the_window_for() {
+    let title = common::unique_title("mockapp-uia-dump-title-bar");
+    let app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let nodes = many_nodes(&uia);
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let root = uia
+        .window_element(hwnd.0 as isize, &nodes)
+        .expect("mockapp's window element");
+    let fill = Fill::new(&nodes);
+    let query = TreeQuery {
+        root: &root,
+        fill: &fill,
+        registry: &registry,
+        max_depth: 64,
+        max_nodes: 4096,
+    };
+    common::reset_hits(hwnd);
+    let ((dumped, truncated), path) = tree_dump(&uia, &query, true).expect("the dump");
+    let title_bar_requests = common::read_hits(hwnd)
+        .into_iter()
+        .find(|(method, _)| *method == "WM_GETTITLEBARINFOEX");
     assert_eq!(
-        (named(&dumped), truncated),
+        (
+            title_bar_requests,
+            dumped.children[0].snapshot.role,
+            placed(&dumped),
+            truncated,
+            path.name(),
+        ),
+        (None, Role::TitleBar, 0, false, "remote")
+    );
+    app.quit();
+}
+
+/// The classic dump of mockapp's list (`tree.json`'s "Items") reads each
+/// listed element's children in one call: the list's, and each of its two
+/// items', 3 UIA calls.
+fn a_classic_dump_reads_each_elements_children_in_one_call() {
+    let title = common::unique_title("mockapp-uia-dump-calls");
+    let app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let nodes = many_nodes(&uia);
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let list = Live::new(common::named_element(&uia, hwnd, "Items"))
+        .refresh(&nodes)
+        .expect("the list, read as a node");
+    let fill = Fill::new(&nodes);
+    let query = TreeQuery {
+        root: &list,
+        fill: &fill,
+        registry: &registry,
+        max_depth: 8,
+        max_nodes: 64,
+    };
+    let _ = verbatim_uia::calls::take();
+    let ((dumped, truncated), path) = tree_dump(&uia, &query, false).expect("the dump");
+    let calls = verbatim_uia::calls::take().uia;
+    assert_eq!(
+        (named(&dumped), truncated, path.name(), calls),
         (
             Named {
-                name: Some("Options".to_owned()),
-                children: vec![item("First")],
+                name: Some("Items".to_owned()),
+                children: vec![item("First"), item("Second")],
             },
-            true
-        ),
-        "the list's tree after its second item went"
+            false,
+            "classic",
+            3,
+        )
+    );
+    app.quit();
+}
+
+/// The remote dump of the same list reads all three elements' children in
+/// one round trip.
+fn a_remote_dump_reads_a_small_tree_in_one_call() {
+    let title = common::unique_title("mockapp-uia-dump-remote-calls");
+    let app = common::spawn("tree.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    let nodes = many_nodes(&uia);
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    let list = Live::new(common::named_element(&uia, hwnd, "Items"))
+        .refresh(&nodes)
+        .expect("the list, read as a node");
+    let fill = Fill::new(&nodes);
+    let query = TreeQuery {
+        root: &list,
+        fill: &fill,
+        registry: &registry,
+        max_depth: 8,
+        max_nodes: 64,
+    };
+    let _ = verbatim_uia::calls::take();
+    let ((dumped, truncated), path) = tree_dump(&uia, &query, true).expect("the dump");
+    let calls = verbatim_uia::calls::take().uia;
+    assert_eq!(
+        (named(&dumped), truncated, path.name(), calls),
+        (
+            Named {
+                name: Some("Items".to_owned()),
+                children: vec![item("First"), item("Second")],
+            },
+            false,
+            "remote",
+            1,
+        )
     );
     app.quit();
 }
@@ -479,8 +643,24 @@ fn main() {
             a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read,
         ),
         (
-            "a_tree_dump_ends_an_elements_children_at_a_gone_element",
-            a_tree_dump_ends_an_elements_children_at_a_gone_element,
+            "a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it",
+            a_remote_dump_keeps_the_sibling_after_an_element_gone_during_it,
+        ),
+        (
+            "a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it",
+            a_classic_dump_keeps_the_sibling_after_an_element_gone_during_it,
+        ),
+        (
+            "a_dump_reads_nothing_the_title_bar_asks_the_window_for",
+            a_dump_reads_nothing_the_title_bar_asks_the_window_for,
+        ),
+        (
+            "a_classic_dump_reads_each_elements_children_in_one_call",
+            a_classic_dump_reads_each_elements_children_in_one_call,
+        ),
+        (
+            "a_remote_dump_reads_a_small_tree_in_one_call",
+            a_remote_dump_reads_a_small_tree_in_one_call,
         ),
     ]);
 }

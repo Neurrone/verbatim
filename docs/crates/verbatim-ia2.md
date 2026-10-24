@@ -173,7 +173,10 @@ Public API:
   NVDA counts them; read by the outpost only with a state change that
   leaves the item expanded),
   `walk_tree` (the control plane's tree dump, from a window's client
-  object, bounded by a depth and a node-count cap; a failed
+  object, bounded by a depth and a node-count cap, each object's location
+  and off-screen state read only when asked for, and otherwise left out
+  of every node, the state word's bit too, so the dump shows them as not
+  read; a failed
   `accChildCount` or `AccessibleChildren` fails the dump with its error,
   except on an object that is gone, answering `RPC_E_DISCONNECTED` or
   `CO_E_OBJNOTCONNECTED`, which ends that object's children there and
@@ -217,7 +220,9 @@ Public API:
   `snapshot_from_event` and `EventObject::read`: an object read for
   context, such as an ancestor or the object of a change, has no list view
   or tree view position counted, as NVDA counts it only when it speaks the
-  object; ancestor walks read for context too),
+  object, and no location read, since a read of many objects, an ancestor
+  chain, never reads one (`docs/design/uia-shapes.md`, decision 9) and a
+  change reports none; ancestor walks read for context too),
   `focused_snapshot` ("what is focused right now" via `GetGUIThreadInfo`,
   for the synthetic focus event an outpost emits after a foreground
   change), and the node-relative operations, which take a `NodeId` and

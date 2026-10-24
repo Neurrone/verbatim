@@ -1807,9 +1807,14 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   off is not read: UIA reads in the worker build their requests, and the
   remote programs their fills, from the gates of the `Node` and
   `Ancestor` shapes (`docs/design/uia-shapes.md`), which the outpost maps
-  from `Fetches`, one function per gated shape (`gates.rs`, a unit test
-  per gated field), so a request leaves out the description's,
-  shortcut's, position's, and level's properties when those are off. An
+  from `Fetches`, one function per gated shape and use (`gates.rs`, a
+  unit test per gated field), so a request leaves out the description's,
+  shortcut's, position's, and level's properties when those are off.
+  The node's place, its rectangle and whether it is off the screen, is
+  fetched for an element read alone (`node_gates`, and `focus_gates` for
+  the focus and its selected child in the focus's read) and never for one
+  read among many (`many_node_gates`, and `ancestor_gates` for
+  ancestors), `docs/design/uia-shapes.md`, decision 9. An
   ancestor's own description is fetched whatever the theme, since the
   layout judgment of whether an unnamed grouping is focus context reads
   it whatever NVDA's setting (decision 4), though the description it is
@@ -2285,13 +2290,21 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   naming its error; all within the worker's deadline for the query
   (`protocol::WALK_DEADLINE`, 5 seconds, public so that Core's deadline
   for the shell items can outlast it).
-  `DumpTree` walks the target's foreground window (or
+  `DumpTree { locations }` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
-  `Uia::tree`, every node read as the `TreeDump` shape, MSAA via
+  `verbatim_uia_rops::tree_dump`, each element's children read in one
+  call, by remote programs where the window allows them, every element
+  read as a `Node` read among many, MSAA via
   `verbatim_ia2::acquire::walk_tree` from `OBJID_CLIENT` — capped at depth 64
   and 4096 nodes, reporting whether it is incomplete: a cap cut it short,
   or an element or object gone during the walk left the part of the tree
-  under it unread; any other failed step fails the dump with its error.
+  under it unread; any other failed read fails the dump with its error.
+  Each element's location and whether it is off the screen are read only
+  with `locations`, since for some elements, a top-level window's title
+  bar and its buttons among them, UIA asks the application's UI thread
+  for them (`WM_GETTITLEBARINFOEX`); the answer, `DumpedTree`, says
+  whether they were read (`locations`), and without them every node has
+  no rectangle and no `Offscreen` state.
   `Ancestors`, `Navigate`, and `Activate` dispatch to whichever registry issued the node:
   UIA hops through the raw-view tree walker with the base cache request, MSAA
   through `accParent`, `accNavigate`, and `accDoDefaultAction` on the object

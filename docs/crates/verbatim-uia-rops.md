@@ -173,9 +173,14 @@ element as a `verbatim_uia::Cached<FocusInput>` (its control type and
 window, read from its cache; the focus listener narrows the focus event's
 own element to it, and the outpost the focused element a focus-now query
 read), the runtime ids the caller already knows, a depth limit, the
-`verbatim_uia::Fill<Ancestor>` every returned element is filled by (the
+`verbatim_uia::Fill<Ancestor>` every ancestor is filled by (`fill`, the
 shape's properties for the gates its request was built with: every gate
-on for the listener, the theme's for the outpost), an out-of-time check
+on for the listener, the theme's for the outpost, but the node's place,
+its rectangle and whether it is off the screen, which a read of many
+elements never holds, decision 9 of `docs/design/uia-shapes.md`), the
+fill of the element itself and its selected child (`element_fill`, the
+same with the place, since each is read alone; the program builds its
+requests only when it reads one of them), an out-of-time check
 (`out_of_time`), which only the classic walk makes, before each of its
 calls after the first, what a skipped call would have read then unknown,
 and `nearest_window`, the element's nearest window when the caller has
@@ -867,6 +872,50 @@ count grows with the children looked at on the way: 1,134 down mockapp's
 deepest path, sixty-two levels, 148 one level down, and 141 for a path
 that ends at once (`crates/mockapp/tests/instruction_limit.rs`).
 
+## Layer 3: the tree dump
+
+`tree_dump(uia, query, remote)`, with `tree_dump_remote` and
+`tree_dump_classic` behind it (`TreeDumpFn`), answers the control plane's
+tree dump: the raw-view subtree under `TreeQuery::root`, a
+`verbatim_uia::Cached<Node>`, every other element filled by
+`TreeQuery::fill`, which leaves out the place unless the dump is asked
+for locations, each node's id minted by `TreeQuery::registry`, capped at
+`max_depth` levels and `max_nodes` nodes; it returns the tree and whether
+it is incomplete, and, from `tree_dump`, which path answered. Each
+element's children are read in one call, as NVDA reads an object's
+children (`_get_UIAChildren`: a cache request scoped to the children,
+then `GetCachedChildren`), breadth first, so a child gone before its
+parent's read is absent and one gone after it keeps its later siblings.
+
+The classic implementation makes one call per listed element above the
+deepest level (`verbatim_uia::Uia::children`), and for an element at the
+deepest level one uncached step to its first child (`Live::step`), which
+marks the dump incomplete when there is one. A read that fails because
+its element is gone (`UIA_E_ELEMENTNOTAVAILABLE`) leaves that element
+childless and marks the dump incomplete; any other failure, UIA's
+transaction timeout among them, fails the dump. UIA itself answers a
+read whose element dies when asked for its first child as no children,
+not as a failure.
+
+The program starts from up to sixteen waiting elements and reads, for
+each in turn and then each child it finds, the children, filling each
+inside the provider, until it has read `CHILDREN_PER_RUN` (60) children
+or the node cap's room. An element's read is in a try block: one that
+fails is reported with its status, gone or otherwise, as the classic
+read's would be, and, when the run found that element, it is given back
+as none. At the run's end every element it found is read live for its
+name inside a try block, and one gone since is given back as none and
+marks the dump incomplete: a gone element among a run's results fails
+the whole run (`ExecutionFailure` with `UIA_E_ELEMENTNOTAVAILABLE`,
+verified against mockapp). An element whose children are more than the
+run has room for ends the run, and is read classically, one call. A run
+that fails as a whole puts back what it took, and `tree_dump` reads the
+rest of the dump classically (`Path::Fallback`), failing instead on UIA's
+transaction timeout. A remote program walks the same raw view as the
+classic read, a top-level window's title bar included (verified). The
+worst case, sixty children read one each down a chain, executes 4,097
+instructions (`crates/mockapp/tests/instruction_limit.rs`).
+
 ## Layer 3: a selection the focus controls
 
 `controlled_selection(uia, query, remote)`, with
@@ -1063,7 +1112,6 @@ runs as a named operation above, except these:
   (`BuildUpdatedCache` over the children).
 - The ancestors query (`Query::Ancestors`), a full classic walk: nothing
   sends it today.
-- The tree dump (`Query::DumpTree`), a diagnostic.
 - The arbitration probe and the checks of a console's and a Windows Forms
   window's provider: window messages and one-time checks made before the
   window's backend is known.
@@ -1173,7 +1221,12 @@ and its colours as exact runs at the
 width the last read found, at none and at a stale one, from a provider
 that leaves a range's last character out of its colour answer; and
 `crates/mockapp/tests/instruction_limit.rs` pins every program's
-instructions, the colour read's worst case among them. `cargo xtask
+instructions, the colour read's worst case among them;
+`crates/mockapp/tests/uia_tree.rs` pins the tree dump's calls by both
+paths, an element gone during it keeping its later sibling by both, and
+a dump of mockapp's window reading nothing that has UIA ask the window's
+thread (`WM_GETTITLEBARINFOEX`), and `time_limits.rs` its failure at the
+transaction timeout. `cargo xtask
 regenerate-terminal-conformance-expectations` checks the colour read
 against both real terminals after every chunk of the corpus, failing when
 its runs differ from the cells' read one by one.

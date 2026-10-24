@@ -13,7 +13,8 @@ use verbatim_model::{
 };
 use verbatim_uia::map::with_legacy_checked_state;
 use verbatim_uia::{
-    Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Live, Node, Request, Shape, Uia,
+    Ancestor, AncestorWalk, Cached, DialogText, Fill, FocusInput, Live, Node, NodeGates, Request,
+    Shape, Uia,
 };
 use verbatim_uia_rops::{
     FocusAncestry, FocusQuery, NavigationDirection, Path, StepQuery, focus_ancestry,
@@ -21,6 +22,7 @@ use verbatim_uia_rops::{
 };
 
 use crate::arbitration::{WindowClasses, time_limit, window_class_name};
+use crate::gates;
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
 
 use super::Context;
@@ -517,12 +519,15 @@ pub(super) fn uia_remote_enrichment(
     // its node.
     let input = element.narrow::<FocusInput>();
     let fill = Fill::new(request);
+    // The selected child is read alone, with its place (`verbatim_uia::Place`).
+    let element_fill = Fill::new(&uia.request(gates::focus_gates(&context.fetches())).ok()?);
     let query = FocusQuery {
         element: &input,
         known: &known,
         previous: None,
         depth_limit: MAX_ANCESTOR_HOPS,
         fill: &fill,
+        element_fill: &element_fill,
         out_of_time: Some(&out_of_time),
         require_focus: true,
         refresh: false,
@@ -1352,36 +1357,72 @@ fn activate_one(
     verbatim_ia2::acquire::activate(node_id, &context.msaa_registry).map_err(ReadError::from)
 }
 
-/// The application's tree from its top-level window.
-pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<DumpedTree, ReadError> {
+/// The application's tree from its top-level window, each element's
+/// location and whether it is off the screen read only with `locations`:
+/// a read of many elements leaves both out, since for some elements, a
+/// top-level window's title bar and its buttons among them, UIA asks the
+/// application's UI thread for them (`verbatim_uia::Place`), and the dump
+/// says it did not read them ([`DumpedTree::locations`]). Over UIA each
+/// element's children are read in one call, by remote programs where the
+/// window allows them ([`verbatim_uia_rops::tree_dump`]).
+pub(super) fn dump_tree(
+    context: &Context,
+    client: &mut Client,
+    locations: bool,
+) -> Result<DumpedTree, ReadError> {
     let hwnd = main_window_of(context.target_pid()).ok_or_else(|| {
         ReadError::Failed("the target application has no top-level window".to_owned())
     })?;
     if window_uses_uia(context, hwnd) {
-        let (uia, nodes) = client.uia_with(context, Context::node_request)?;
+        let uia = client
+            .uia()
+            .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
+        let gates = NodeGates {
+            place: locations.then_some(()),
+            ..gates::many_node_gates(&context.fetches())
+        };
+        let nodes = uia
+            .request::<Node>(gates)
+            .map_err(|error| ReadError::Failed(format!("UIA cache request failed: {error}")))?;
         let element = uia.window_element(hwnd, &nodes).map_err(|error| {
             ReadError::Failed(format!(
                 "could not fetch the top-level UIA element: {error}"
             ))
         })?;
-        let (root, truncated) = uia
-            .tree(
-                &element,
-                &nodes,
-                &context.uia_registry,
-                MAX_DUMP_DEPTH,
-                MAX_DUMP_NODES,
-            )
+        let fill = Fill::new(&nodes);
+        let query = verbatim_uia_rops::TreeQuery {
+            root: &element,
+            fill: &fill,
+            registry: &context.uia_registry,
+            max_depth: MAX_DUMP_DEPTH,
+            max_nodes: MAX_DUMP_NODES,
+        };
+        let remote = context.tries_remote(Some(hwnd));
+        let ((root, truncated), path) = verbatim_uia_rops::tree_dump(uia, &query, remote)
             .map_err(|error| ReadError::Failed(format!("UIA tree walk failed: {error}")))?;
-        Ok(DumpedTree { root, truncated })
+        if let Path::Fallback(error) = &path {
+            tracing::warn!(hwnd, %error, "a remote operation failed; read the classic way");
+            if let verbatim_uia_rops::Error::Import(_) = error {
+                context.read_classically(hwnd);
+            }
+        }
+        Ok(DumpedTree {
+            root,
+            truncated,
+            locations,
+        })
     } else {
         let (root, truncated) = verbatim_ia2::acquire::walk_tree(
             hwnd,
             &context.msaa_registry,
-            MAX_DUMP_DEPTH,
-            MAX_DUMP_NODES,
+            (MAX_DUMP_DEPTH, MAX_DUMP_NODES),
+            locations,
         )?;
-        Ok(DumpedTree { root, truncated })
+        Ok(DumpedTree {
+            root,
+            truncated,
+            locations,
+        })
     }
 }
 

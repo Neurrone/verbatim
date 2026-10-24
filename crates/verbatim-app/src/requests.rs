@@ -774,6 +774,7 @@ mod tests {
                 children: Vec::new(),
             },
             truncated: false,
+            locations: false,
         };
         table.finish(
             new,

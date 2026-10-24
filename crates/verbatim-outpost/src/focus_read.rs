@@ -112,7 +112,8 @@ use windows::core::AgileReference;
 use verbatim_model::{Pid, State, TraceId};
 use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
-    Ancestor, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Shape, Uia,
+    Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Node,
+    NodeGates, Shape, Uia,
 };
 use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_classic};
 
@@ -849,13 +850,24 @@ impl FocusReader {
         // Every detail: the listener reads for every application, whatever
         // theme decides which details are spoken. A request that cannot be
         // built is a read that failed.
+        // The ancestors are read without their place, as every read of
+        // many elements is, and the focus with it (`verbatim_uia::Place`).
         let input = sender.narrow::<FocusInput>();
+        let ancestors = AncestorGates {
+            node: NodeGates {
+                place: None,
+                ..Node::all_on()
+            },
+            ..Ancestor::all_on()
+        };
         let read = self
             .uia
-            .request::<Ancestor>(Ancestor::all_on())
+            .request::<Ancestor>(ancestors)
+            .and_then(|request| Ok((request, self.uia.request::<Ancestor>(Ancestor::all_on())?)))
             .map_err(verbatim_uia_rops::Error::Uia)
-            .and_then(|request| {
+            .and_then(|(request, element_request)| {
                 let fill = Fill::new(&request);
+                let element_fill = Fill::new(&element_request);
                 // The sender's keyboard focus was read plainly just now, as
                 // NVDA's last check, and its nearest window found for NVDA's
                 // native check, so the read asks neither again
@@ -867,6 +879,7 @@ impl FocusReader {
                     previous: previous.as_ref(),
                     depth_limit: MAX_ANCESTORS,
                     fill: &fill,
+                    element_fill: &element_fill,
                     out_of_time: Some(&out_of_time),
                     require_focus: false,
                     refresh: true,

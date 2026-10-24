@@ -226,17 +226,9 @@ Public API:
   variant is now built by `InitVariantFromInt32Array`, so no raw array is
   ever handled, and reading a runtime id goes through one helper that owns
   the returned array. A search that finds nothing is `Ok(None)`; a search
-  that fails is an error. `Uia::tree(root, request, registry, max_depth,
-  max_nodes)` walks a subtree the same way, every node read as a
-  `TreeDump`, for the control plane's tree dump. Unlike `neighbor`, it
-  reads only a step that reaches no element (the null element, an error
-  with no failure code) as the end of an element's children, and a step
-  that fails because its element is gone (`UIA_E_ELEMENTNOTAVAILABLE`)
-  as the end of them too, marking the walk incomplete, as the depth and
-  node-count caps do, so a menu that closes during the walk costs only
-  its own items; any other failed step, UIA's transaction timeout
-  included, fails the whole walk with that step's error, so an element
-  whose children could not be read is never shown as having none.
+  that fails is an error. The control plane's tree dump is
+  `verbatim_uia_rops::tree_dump`, which reads each element's children
+  with `Uia::children`.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then `SelectionItem`'s select, answering `ActionName::Invoke` for an
   Invoke and no name otherwise, as NVDA names them; each fetched live since
@@ -249,8 +241,10 @@ Public API:
   the `NodeDetails` properties, each fetched only when the active theme
   reports it: `FullDescription` and `HelpText`, `AccessKey` and
   `AcceleratorKey` (both spoken, joined by two spaces, as NVDA joins
-  them), `PositionInSet`, `SizeOfSet`, and `Level`; and always
-  `BoundingRectangle`, `ClassName` and `IsDialog` (a dialog by NVDA's
+  them), `PositionInSet`, `SizeOfSet`, and `Level`; for an element read
+  alone, never for one read among many, `BoundingRectangle` and
+  `IsOffscreen` (the `Place` group, below); and always `ClassName` and
+  `IsDialog` (a dialog by NVDA's
   rule), `IsPassword`, `IsRequiredForForm`, `IsDataValidForForm`, and
   `ValueIsReadOnly` (the protected, required, invalid entry, and
   read-only states; the last two read ignoring their defaults),
@@ -698,25 +692,32 @@ Public API:
     fails leave the same UIA default, `false`, in the cache, which mockapp's
     events test `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`
     shows), `PropertyEvent` (`RoleCore`, name, `ValueSet`, `States` and the
-    process id, 24 properties; `parts(runtime_id)` gives everything but
-    details), and `TextEvent` (process id, native window handle and class
+    process id, 23 properties, never whether it is off the screen;
+    `parts(runtime_id)` gives everything but details), and `TextEvent` (process id, native window handle and class
     name). All three cover `Kept`, and `ListenerEvent` covers
     `FocusInput` (control type and native window handle, what the remote
-    focus query reads of its input). The fetch shapes: `Node` (`RoleCore`,
-    `ValueSet`, `States`, name and bounding rectangle, and four gated
-    details, the `Description`, `Shortcut` and `Position` groups and the
-    level: 24 to 31 properties; `parts(runtime_id)`, and on
-    `Cached<Node>` `snapshot(registry)`, which keeps the element), covering
-    `Kept` and `FocusInput`; `TreeDump`, a tree dump's node, which is
-    `Node`; `Ancestor` (a `Node`, its own ungated `Description`, and the
-    content and control flags: 28 to 33; `is_control_and_content()`,
+    focus query reads of its input). The groups: `States` holds every
+    state property but `IsOffscreen` (`states(role, offscreen)` maps them,
+    off the screen as the caller says); `Place` holds `BoundingRectangle`
+    and `IsOffscreen`, which a read of many elements, a walk, a list of
+    children, an ancestor chain, never holds, as NVDA's base cache holds
+    neither: for some elements, a top-level window's title bar and its
+    buttons among them, UIA answers either only by sending the
+    application's UI thread `WM_GETTITLEBARINFOEX`, which Windows answers
+    for one window at a time across the desktop, about 6 ms alone and
+    seconds under load (`docs/design/uia-shapes.md`, decision 9). The
+    fetch shapes: `Node` (`RoleCore`, `ValueSet`, `States`, name, four
+    gated details, the `Description`, `Shortcut` and `Position` groups and
+    the level, and the gated `Place` group: 22 to 31 properties;
+    `parts(runtime_id)`, with no rectangle and not off the screen when the
+    place was not fetched, and on `Cached<Node>` `snapshot(registry)`,
+    which keeps the element), covering `Kept` and `FocusInput`;
+    `Ancestor` (a `Node`, its own ungated `Description`, and the content
+    and control flags: 26 to 33; `is_control_and_content()`,
     `layout_description()`, and `snapshot` on `Cached<Ancestor>`),
-    covering `Kept`; `DialogText` (role, value, states but whether it is
-    off the screen, the `DialogStates` group, name and an ungated
-    description: 24; `parts(runtime_id)`), a dialog's child, which leaves
-    out the off-screen state because a top-level dialog's first child is
-    its title bar, whose off-screen state and location UIA asks of the
-    window's thread (`WM_GETTITLEBARINFOEX`);
+    covering `Kept`, read with its node's place for the focused element
+    alone; `DialogText` (role, value, states, name and an ungated
+    description: 24; `parts(runtime_id)`), a dialog's child;
     `SelectionContainer` (`SelectionPattern2`'s first selected item, read
     as an `ElementValue`, and the `Selection` pattern, read as its
     interface); `SelectedItem` (name and keyboard focus, covering

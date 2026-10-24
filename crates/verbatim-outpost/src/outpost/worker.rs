@@ -915,7 +915,7 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         Item::Query { request_id, query } => {
             let deadline = match query {
                 Query::FocusNow => HANDLING_DEADLINE,
-                Query::Ancestors { .. } | Query::DumpTree | Query::ShellItems { .. } => {
+                Query::Ancestors { .. } | Query::DumpTree { .. } | Query::ShellItems { .. } => {
                     WALK_DEADLINE
                 }
                 Query::Text { .. } => TEXT_DEADLINE,
@@ -4135,7 +4135,9 @@ impl Worker<'_> {
             Query::Ancestors { node_id } => {
                 read::ancestors(context, client, *node_id).map(QueryResult::Ancestors)
             }
-            Query::DumpTree => read::dump_tree(context, client).map(QueryResult::Tree),
+            Query::DumpTree { locations } => {
+                read::dump_tree(context, client, *locations).map(QueryResult::Tree)
+            }
             Query::Text { node_id, op } => {
                 Ok(QueryResult::Text(text_reads::answer(context, *node_id, op)))
             }

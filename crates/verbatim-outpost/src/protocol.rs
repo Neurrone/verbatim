@@ -888,7 +888,14 @@ pub enum Query {
     },
     /// The application's tree from its top-level window, capped at a depth
     /// of 64 and 4096 nodes.
-    DumpTree,
+    DumpTree {
+        /// Whether each element's location and whether it is off the
+        /// screen are read. A read of many elements leaves both out
+        /// otherwise, since for some elements, a window's title bar among
+        /// them, the application's UI thread is asked for them, so each
+        /// node shows them as not read ([`DumpedTree::locations`]).
+        locations: bool,
+    },
     /// A text request (milestone M4's text protocol, `TextOp` in
     /// `verbatim-model`): read, wait for the caret, select, or move the
     /// caret in a node's text. Answered [`QueryResult::Text`].
@@ -1288,6 +1295,10 @@ pub struct DumpedTree {
     pub root: TreeNode,
     /// Whether the tree is incomplete, against a cap or at a gone element.
     pub truncated: bool,
+    /// Whether each node's location and whether it is off the screen were
+    /// read. When not, every node's rectangle is `None` and its states
+    /// never hold `Offscreen`, which then says nothing of where it is.
+    pub locations: bool,
 }
 
 /// The most bytes one message may take, its frame's header aside, in either
@@ -1893,7 +1904,7 @@ mod tests {
             Query::Ancestors {
                 node_id: NodeId::new(9),
             },
-            Query::DumpTree,
+            Query::DumpTree { locations: false },
         ];
         let commands: Vec<SupervisorToOutpost> = queries
             .into_iter()
@@ -1927,6 +1938,7 @@ mod tests {
                     children: Vec::new(),
                 },
                 truncated: true,
+                locations: false,
             })),
             QueryOutcome::Gone,
             QueryOutcome::Failed("no activation pattern".to_owned()),

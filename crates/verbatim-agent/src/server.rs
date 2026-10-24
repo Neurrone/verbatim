@@ -1109,7 +1109,7 @@ mod tests {
             }),
             send_gesture: Box::new(|_| Ok(())),
             latency: Box::new(|_| Vec::new()),
-            dump_tree: Box::new(|| Err("not exercised".to_owned())),
+            dump_tree: Box::new(|_| Err("not exercised".to_owned())),
             dump_recorder: Box::new(|| Err("not exercised".to_owned())),
             quit: Box::new(|| {}),
             await_idle: Box::new(|_, _| Ok(())),

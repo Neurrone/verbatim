@@ -29,12 +29,13 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use verbatim_uia::{
-    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, Node, NodeIdRegistry, Part, PropertyEvent,
-    Registration, Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
+    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, Fill, Node, NodeIdRegistry, Part,
+    PropertyEvent, Registration, Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
 };
+use verbatim_uia_rops::{TreeQuery, tree_dump_classic};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    TreeScope_Children, UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId,
+    TreeScope_Children, UIA_AutomationPropertyChangedEventId, UIA_E_TIMEOUT, UIA_NamePropertyId,
 };
 use windows::core::BSTR;
 
@@ -255,11 +256,11 @@ fn a_second_registrations_commands_wait_behind_the_firsts_held_move() {
     next_app.quit();
 }
 
-/// A tree walk from mockapp's list, whose step to the list's first child
-/// is held at its first provider call, the list's `FragmentRoot`, which UIA
-/// asks before it navigates, fails with that step's `UIA_E_TIMEOUT` once
-/// UIA's transaction timeout has passed, rather than reading the list as
-/// having no items.
+/// A classic tree dump from mockapp's list, whose read of the list's
+/// children is held at its first provider call, the list's `FragmentRoot`,
+/// which UIA asks before it navigates, fails with that read's
+/// `UIA_E_TIMEOUT` once UIA's transaction timeout has passed, rather than
+/// reading the list as having no items.
 fn a_tree_walk_held_at_a_child_step_fails_with_the_timeout() {
     common::init_com();
     let title = common::unique_title("mockapp-held-tree");
@@ -285,20 +286,30 @@ fn a_tree_walk_held_at_a_child_step_fails_with_the_timeout() {
         .find_first(TreeScope_Children, &condition, &nodes)
         .expect("the search")
         .expect("the window's list");
-    let (unheld, _) = uia
-        .tree(&list, &nodes, &registry, 8, 64)
-        .expect("the list's tree");
+    let fill = Fill::new(&nodes);
+    let query = TreeQuery {
+        root: &list,
+        fill: &fill,
+        registry: &registry,
+        max_depth: 8,
+        max_nodes: 64,
+    };
+    let (unheld, _) = tree_dump_classic(&uia, &query).expect("the list's tree");
     assert_eq!(unheld.children.len(), 2, "the list's two items, unheld");
 
     app.hold();
-    let walked = uia.tree(&list, &nodes, &registry, 8, 64);
+    let walked = tree_dump_classic(&uia, &query);
     let held = app.held();
     app.release();
-    assert_eq!(held, "FragmentRoot", "the walk's step to a child was held");
-    let error = walked.expect_err("the held walk failed");
-    assert!(
-        verbatim_uia::timed_out(&error),
-        "the walk ended by UIA's timeout: {error}"
+    assert_eq!(
+        held, "FragmentRoot",
+        "the read of the list's children was held"
+    );
+    let error = walked.expect_err("the held dump failed");
+    assert_eq!(
+        error.hresult(),
+        Some(windows::core::HRESULT(UIA_E_TIMEOUT.cast_signed())),
+        "the dump ended by UIA's timeout: {error}"
     );
     app.quit();
 }

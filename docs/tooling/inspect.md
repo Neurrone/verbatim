@@ -196,7 +196,17 @@ pipe, each in microseconds.
 - `dump-tree` asks the outpost for the foreground application's
   accessibility tree, walked from its top-level window, and prints one node
   per line indented two spaces per depth level, reusing the same
-  role-and-name summary the event stream uses. A trailing line notes when
+  role-and-name summary the event stream uses. Each element's children
+  are read in one call. Where each node is and whether it is off the
+  screen are not read unless asked for with `--locations`, since for some
+  elements, a top-level window's title bar and its buttons among them, UIA
+  asks the application's UI thread for them (`WM_GETTITLEBARINFOEX`),
+  which Windows answers for one window at a time across the desktop,
+  about 6 ms alone and seconds under load, while the application waits.
+  Without the option a first line says they were not read, and no line
+  shows a location; with it each line ends with `, at LEFT,TOP
+  WIDTHxHEIGHT`, or `, no location` for a node that reports none, and
+  `, off screen` for one that is. A trailing line notes when
   the tree is incomplete: the outpost's depth or node-count cap cut the
   walk short, or an element went away during it, leaving the part of the
   tree under it unread.

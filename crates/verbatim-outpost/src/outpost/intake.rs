@@ -2777,7 +2777,7 @@ mod tests {
         intake.push(Entry {
             item: Item::Query {
                 request_id: 5,
-                query: Query::DumpTree,
+                query: Query::DumpTree { locations: false },
             },
             trace: TraceId::mint(),
             observed_at_ms: 0,

@@ -925,7 +925,8 @@ is `cache_request_for(fetches)` unless said otherwise.
 - 1061, `corrected_backend`: `NativeWindowHandle` of a kept element.
   Covered.
 - 1091, a window's element from its handle. Bug 2. Shape: `Node`.
-- 1154, `dump_tree`. Bug 2. Shape: `TreeDump`, which is `Node`.
+- 1154, `dump_tree`. Bug 2. Shape: `Node`, without its place unless the
+  dump is asked for locations (decision 9).
 
 The outpost's text reads (`verbatim-outpost/src/outpost/text_reads.rs`).
 
@@ -955,7 +956,8 @@ Dialog text (`verbatim-outpost/src/dialog_text.rs`).
 - `client.rs:710`, `navigate`. Bug 2. Shape: `Node`.
 - `client.rs:802` to 807, `take_ancestor`. Bug 2. Shape: `Ancestor`.
 - `client.rs:1065`, `walk_recursive`. Bug 2 through `read.rs:1154`; the
-  mockapp tests call it with the full request. Shape: `TreeDump`.
+  mockapp tests call it with the full request. Shape: `Node`, now read by
+  `verbatim_uia_rops::tree_dump`, each element's children in one call.
 - `checks.rs:66`, base request, no reads. Over-fetch. No shape: `Live`.
 - `nearest.rs:107`, `NativeWindowHandle` after a normalize with that
   property alone. Covered. Shape: `WindowLookup`.
@@ -992,8 +994,8 @@ Event shapes, declared `gates: none`:
   prefetch, as now. Its role is read through `RoleCore`, refined for
   dialogs and toggle buttons as every other read is. It covers `Kept` and
   `FocusInput`.
-- `PropertyEvent`: today's 24 (`RoleCore`, `Name`, `ValueSet`, `States`,
-  `ProcessId`). It covers `Kept`.
+- `PropertyEvent`: 23 (`RoleCore`, `Name`, `ValueSet`, `States`,
+  `ProcessId`; no `IsOffscreen`, decision 9). It covers `Kept`.
 - `TextEvent`: today's 3. It covers `Kept`.
 
 Fetch shapes:
@@ -1005,17 +1007,18 @@ Fetch shapes:
 - `FocusInput`: `ControlType` and `NativeWindowHandle`, what the remote
   focus query reads of its input element (section 7). Never requested;
   covered by `ListenerEvent` and `Node`.
+- `States`: the state properties but `IsOffscreen` (decision 9).
+- `Place`: `BoundingRectangle` and `IsOffscreen`, read only for an element
+  read alone (decision 9).
 - `Node`: `RoleCore`, `Name`, `ValueSet`, `States`, the four gated detail
-  groups, `BoundingRectangle`: 24 to 31 properties. It covers `Kept` and
-  `FocusInput`.
+  groups and the gated `Place` group: 22 to 31 properties. It covers
+  `Kept` and `FocusInput`.
 - `Ancestor`: `Node`, an ungated `Description` group, and
-  `IsContentElement`, `IsControlElement`: 28 to 33 (decision 4). It covers
-  `Kept`.
-- `TreeDump`: `Node`.
-- `DialogText`: `RoleCore`, `Name`, `ValueSet`, `DialogStates` (`States`
-  without `IsOffscreen`, which the dialog's text never uses and which a
-  top-level dialog's title bar answers only by asking the window's
-  thread), an ungated `Description` group: 24 (decision 5). The dialog's own element is not a
+  `IsContentElement`, `IsControlElement`: 26 to 33 (decision 4), read
+  with its node's place for the focused element alone, and without it for
+  an ancestor. It covers `Kept`.
+- `DialogText`: `RoleCore`, `Name`, `ValueSet`, `States`, an ungated
+  `Description` group: 24 (decision 5). The dialog's own element is not a
   shape: it is a `Live`, in a root type of its own (section 5.5).
 - `WindowLookup`: `NativeWindowHandle`.
 - The empty shape: no request; the fetch returns `Live`.
@@ -1031,8 +1034,9 @@ Fetch shapes:
 - `TextAreaPattern`: the Text pattern, which `ListenerEvent` prefetches
   and covers, for the focus listener's console check of a text area.
 
-Every shape but `Node`, `Ancestor` and `TreeDump` is declared
-`gates: none`.
+Every shape but `Node` and `Ancestor` is declared `gates: none`. The
+tree dump reads every element as a `Node`, its place gated on only when
+the dump is asked for locations.
 
 ## 6. The kept-element registry
 
@@ -1318,7 +1322,7 @@ declare a shape of its own.
 ### Step 3. Fetch shapes, remote operations, and the decided fixes
 
 - `verbatim-uia`'s fetches take `&Request<S>`, beside the old ones;
-  `Node`, `Ancestor`, `TreeDump`, `DialogText`, `SelectionContainer`, the
+  `Node`, `Ancestor`, `DialogText`, `SelectionContainer`, the
   refresh shapes, `WindowLookup`,
   `FocusInput`, `ShellButton` and the empty shape replace the lists at
   every site in section 5.5 but the registry's readers.
@@ -1422,6 +1426,22 @@ Every decision was settled by Dickson on 2026-10-13.
 - Decision 8. `wants_selected_child`'s live fallback in
   `verbatim-uia-rops` (section 5.2). Decided: removed, together with the
   typed `Cached<FocusInput>` input that makes it safe, in step 3.
+- Decision 9 (Dickson, 2026-10-24). A read of many elements, a tree walk,
+  a list of children, an ancestor chain, never holds `BoundingRectangle`
+  or `IsOffscreen`; the two are read only for the one element that needs
+  them, as NVDA's base cache, on every element it walks to or is sent with
+  an event, holds neither (`UIAHandler/__init__.py`,
+  `baseCachePropertyIDs`), and NVDA reads them per object. For some
+  elements UIA answers either only by asking the application's UI thread,
+  a top-level window's title bar and its buttons among them, for which it
+  sends `WM_GETTITLEBARINFOEX`; Windows answers that for one window at a
+  time across the desktop, about 6 ms alone and seconds under load. The
+  two are the `Place` group, gated in `Node`: on for a focus, a
+  navigation step's neighbour, a selected item, a window; off for
+  ancestors and the tree dump unless it is asked for locations. No event
+  registration's cache holds either, `PropertyEvent`'s among them, so a
+  state change's set, which replaces the focus's, is never off the
+  screen.
 
 
 - Decision 4. The description of ancestors, and `is_layout` (section 5.4).

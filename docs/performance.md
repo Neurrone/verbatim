@@ -405,9 +405,11 @@ verdict for the focus's window rather than asking the window again.
   only the application's outpost may send one into it (section 2 of the
   same design).
 - Today: 5 UIA calls, all the listener's, whichever way the outpost walks
-  to its own copy of the element. 303 provider calls in all with the
-  outpost's remote walk, 297 with its classic walk, the subscriptions'
-  moves included; one of them is the `GetPropertyValue` that the
+  to its own copy of the element. 301 provider calls in all with the
+  outpost's remote walk, 295 with its classic walk, the subscriptions'
+  moves included (303 and 297 while each ancestor was read with its
+  location and whether it is off the screen, which a read of many
+  elements no longer asks for, `docs/design/uia-shapes.md`, decision 9); one of them is the `GetPropertyValue` that the
   provider description cached with the outpost's lookup of the route's
   window costs, for the proxy rule (`docs/design/listener-without-connections.md`,
   section 5), in the same call. The listener's one remote operation made 4 calls and
@@ -568,8 +570,9 @@ focus waits behind the events queued before it as NVDA's does.
 - Today: 6 UIA calls and 1 window message, all the listener's: the
   sender's nearest window, its plain keyboard focus read, its refreshed
   cache, and three steps, to the group, to the window, and to the
-  desktop's root, where the walk stops; and the raw probe. 346 provider
-  calls in all with the outpost's remote walk, 337 with its classic walk.
+  desktop's root, where the walk stops; and the raw probe. 342 provider
+  calls in all with the outpost's remote walk, 333 with its classic walk
+  (346 and 337 with each ancestor's location read).
   The raw probe costs mockapp one `WM_GETOBJECT`, with wParam 0, where
   `UiaHasServerSideProvider` cost it two, first with a nonzero wParam and
   then with wParam 0, and seven more provider calls as UIA connected (five
@@ -594,11 +597,13 @@ child of the other's MSAA window (`call_counts.rs`,
 - Today: the listener's 5 UIA calls and 1 window message, as for a cold
   focus but for the step to the desktop's root: the walk's two steps end
   at the child's window, which costs only local window calls. The outpost
-  then makes 9 MSAA calls, its client area and the chain above it, and no
+  then makes 8 MSAA calls, its client area and the chain above it, no
+  location among them (9 with the client area's location), and no
   probe of the parent, the other process's window
   (`docs/design/listener-without-connections.md`, section 4.3); with the
   probe it made 1 window message more. Above a parent with
-  a UIA provider it makes 23 MSAA calls, which MSAA's standard proxy
+  a UIA provider it makes 21 MSAA calls (23 with the ancestors'
+  locations), which MSAA's standard proxy
   answers in mockapp, and no UIA call of its own
   (`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`);
   UIA's client side still connects to that parent as the outpost's read
@@ -627,8 +632,9 @@ The focus lands on the list itself, and its selected item is read with it.
   windowless element, and the selected item's two (`SelectionPattern2`'s
   `FirstSelectedItem`, fetched with the `Selection` pattern, and
   `BuildUpdatedCache` on it).
-- Today: 7 UIA calls, all the listener's. 339 provider calls in all with
-  the outpost's remote walk, 334 with its classic walk. The listener's
+- Today: 7 UIA calls, all the listener's. 337 provider calls in all with
+  the outpost's remote walk, 332 with its classic walk (339 and 334 with
+  each ancestor's location read). The listener's
   one remote operation made 4 calls, 343 provider calls.
 - Target: the minimum.
 
@@ -675,8 +681,9 @@ The focus moves from one list item to the next.
 - Minimum: 5 UIA calls, as for any steady-state focus change on a
   windowless element.
 - Today: 5 UIA calls, the same as a steady-state focus change; the walk
-  stops at the list, which the previous chain holds. 318 provider calls
-  in all with the outpost's remote walk, 315 with its classic walk. The
+  stops at the list, which the previous chain holds. 316 provider calls
+  in all with the outpost's remote walk, 313 with its classic walk (318
+  and 315 with each ancestor's location read). The
   listener's one remote operation made 4 calls, 346 provider calls.
 - Target: the minimum.
 
@@ -706,63 +713,68 @@ Next sibling and parent, from a node the outpost holds.
 
 MSAA has no cache requests and no remote operations, so every property is
 its own call: reading one object is 7 calls (name, value, role, state,
-description, keyboard shortcut, and location), and reaching a parent is 3
-more (`accParent`, the `QueryInterface` for its `IAccessible`, and its
-window, `WindowFromAccessibleObject`).
+description, keyboard shortcut, and location), 6 for an ancestor, whose
+location is not read, since a read of many objects never reads one
+(`docs/design/uia-shapes.md`, decision 9), and reaching a parent is 3 more
+(`accParent`, the `QueryInterface` for its `IAccessible`, and its window,
+`WindowFromAccessibleObject`).
 
-- Minimum: 19 MSAA calls. Acquiring the focused object from the event's
+- Minimum: 18 MSAA calls. Acquiring the focused object from the event's
   address (1), asking its `accFocus` whether a focused child of it should
   be reported instead (1, `docs/parity/windows-and-processes.md`, "A control's own focus with a
-  focused child"), and reading it (7), then one ancestor hop (10) that
+  focused child"), and reading it (7), then one ancestor hop (9) that
   reads the first ancestor and recognizes it as the previous focus's
   container.
 - Before the MSAA work package (2026-10-07): 30 MSAA calls, the focus's
   role read twice, once for NVDA's check whether a focus event names a
   list and once with the rest of its properties.
-- Today: 30 MSAA calls. The focus costs 9 (its role and state, read
+- Today: 28 MSAA calls. The focus costs 9 (its role and state, read
   first for NVDA's checks, are kept for the read, and its `accFocus` is
   asked once), and the walk goes to the root: two ancestors at
-  10 each and an `accParent` that finds none. The walk does not stop at the
+  9 each and an `accParent` that finds none (30 while each ancestor's
+  location was read). The walk does not stop at the
   group, because oleacc hands the outpost a new wrapper for every object
   it reaches through `accParent`, whose COM identity therefore matches no
-  kept node, and such an object has no address of its own. mockapp answered 38 provider calls, 14 of them `accParent`,
+  kept node, and such an object has no address of its own. mockapp answered 32 provider calls, 10 of them `accParent`,
   most from `WindowFromAccessibleObject`'s own walk.
-- Target: 19. Recognizing an ancestor by its address and identity string,
+- Target: 18. Recognizing an ancestor by its address and identity string,
   as the registry already does for objects acquired at an address.
 
 ### A focus change, MSAA, cold
 
-- Minimum: 1 window message and 30 MSAA calls: the probe, the focus (9),
-  each of the two ancestors (10 each), and the `accParent` that ends the
+- Minimum: 1 window message and 28 MSAA calls: the probe, the focus (9),
+  each of the two ancestors (9 each), and the `accParent` that ends the
   walk at the root.
-- Today: 30 MSAA calls and 1 window message (30 before the MSAA work
-  package, the role read twice, and 29 after it, before the `accFocus`
-  probe): the steady-state count
+- Today: 28 MSAA calls and 1 window message (30 before the MSAA work
+  package, the role read twice, 29 after it, before the `accFocus`
+  probe, and 30 while each ancestor's location was read): the
+  steady-state count
   (nothing is recognized either way) plus the probe of mockapp's window.
   `WindowFromAccessibleObject` answers no window for mockapp's ancestors,
   whose root object has no parent; until 2026-10-07 their addresses carried
   window 0 and the walk probed it as a second window, which it no longer
   does, since no window is now read as none and the walk keeps the window
-  it is in. mockapp answered 39 provider calls.
-- Target: 30 MSAA calls and 1 window message, met.
+  it is in. mockapp answered 33 provider calls.
+- Target: 28 MSAA calls and 1 window message, met.
 
 ### A focus change into a list, MSAA
 
-- Minimum: 29 MSAA calls: the focus (8), `accFocus` on the list (1, NVDA's
+- Minimum: 28 MSAA calls: the focus (8), `accFocus` on the list (1, NVDA's
   check whether a list's own focus event should move to its focused item),
-  the first ancestor, recognized (10), and the selected item: `accSelection`,
+  the first ancestor, recognized (9), and the selected item: `accSelection`,
   its `IAccessible`, its window, and its seven properties (10).
-- Today: 30 MSAA calls (31 before the MSAA work package, the role read
-  twice): the walk asks the window for its parent because the window is
-  not recognized. mockapp answered 32 provider calls.
-- Target: 29.
+- Today: 29 MSAA calls (31 before the MSAA work package, the role read
+  twice, and 30 while the ancestor's location was read): the walk asks
+  the window for its parent because the window is not recognized.
+  mockapp answered 30 provider calls.
+- Target: 28.
 
 ### Arrowing through a list, MSAA
 
-- Minimum: 19 MSAA calls, as for any steady-state focus change.
-- Today: 30 MSAA calls, the same as a steady-state focus change and for
-  the same reasons; mockapp answered 38 provider calls.
-- Target: 19.
+- Minimum: 18 MSAA calls, as for any steady-state focus change.
+- Today: 28 MSAA calls, the same as a steady-state focus change and for
+  the same reasons; mockapp answered 32 provider calls.
+- Target: 18.
 
 ### A focus on a tree view item, MSAA
 
@@ -784,9 +796,10 @@ events, at times of their own.
 - With the check state read from each item's state image, as NVDA reads
   it: 28 MSAA calls and 16 window messages, one `TVM_GETITEMSTATE` for the
   item and one for its parent.
-- Today: 35 MSAA calls and 12 window messages. The parent is read as an
+- Today: 33 MSAA calls and 12 window messages. The parent is read as an
   ancestor, which is not spoken in full, so its siblings are no longer
-  counted (4 window messages fewer). The focused-state check comes first,
+  counted (4 window messages fewer), and nor is its location or the tree
+  view's (2 MSAA calls fewer). The focused-state check comes first,
   as in NVDA, reading the states live: the item has the focused state only
   while the control has the keyboard focus, which the test does not give
   it, so the check reads the tree view's, its window's, and mockapp's root
@@ -802,7 +815,8 @@ names it.
 
 - Before the MSAA work package (2026-10-07) the item kept MSAA's name, and
   no column was read.
-- Today: 29 MSAA calls and 14 window messages: the view, the header and
+- Today: 28 MSAA calls and 14 window messages, the view's location no
+  longer read as an ancestor's: the view, the header and
   its item count, the column order, each column's rectangle (4), the text
   of each column shown (3), the header of each but the first (2), and the
   item count for the position. The structures the messages take are
@@ -870,7 +884,7 @@ it pins a renewal, so no count depends on how long the test took. A
 steady-state focus whose window's verdict has run out costs the probe
 again, 1 window message and 1 `WM_GETOBJECT` more than the next focus,
 which finds the verdict renewed. (Both are arrows between list items whose
-previous focus was itself reached by an arrow, 33 MSAA calls each, the
+previous focus was itself reached by an arrow, 31 MSAA calls each, the
 `accFocus` probe included: one `accRole` more than the arrow above, whose previous focus was reached from
 the list. Why is not yet known.)
 
@@ -953,14 +967,14 @@ text and two buttons, from outside it, so the dialog's own text is gathered
 and reported as its description (`docs/nvda/object-model.md`, "A dialog's
 own text"). mockapp's `tests/fixtures/dialog.json` is that message box.
 
-- Minimum: a cold focus's 30 MSAA calls and 1 window message, and 14 for
+- Minimum: a cold focus's 28 MSAA calls and 1 window message, and 14 for
   the text: the dialog's child count and children (2), each of the three
   children's `IAccessible` and role (6) and states (3), and the question's
   name, value, and description (3). The buttons give no text, so nothing
   else of them is read, and the question's neighbor is a button, which is
   never labelled, so its name is not read either.
-- Today: 44 MSAA calls and 1 window message, the cold focus's 30 and the
-  text's 14. mockapp answered 56 provider calls. A focus moving within the
+- Today: 42 MSAA calls and 1 window message, the cold focus's 28 and the
+  text's 14. mockapp answered 50 provider calls. A focus moving within the
   dialog does not read it again, since the dialog is then in the previous
   focus's chain when the dialog has its own window; mockapp's dialog has
   none, and oleacc hands out a new wrapper for every `accParent`, so the
@@ -995,6 +1009,27 @@ no cached read fails (`docs/design/uia-shapes.md`, step 4).
   window takes no such request (`call_counts.rs`,
   `uia_dialog_window_text_reads_nothing_of_its_title_bar`, 2026-10-24).
 - Target: 1, met.
+
+### A tree dump, UIA
+
+The control plane's tree dump (`verbatim-inspect dump-tree`), a
+diagnostic, through `verbatim_uia_rops::tree_dump`
+(`crates/mockapp/tests/uia_tree.rs`).
+
+- Minimum: one call for each listed element above the deepest level, its
+  children read in one `BuildUpdatedCache` scoped to them, as NVDA reads
+  an object's children; fewer in remote programs, each reading up to 60
+  children across the elements it reaches.
+- Today: classically, one call per listed element, 3 for mockapp's list
+  of two items, where the walk it replaced took a step per child and one
+  more to find none; remotely, 1 call for that list and for any tree of
+  up to 60 children read. No element's location or whether it is off the
+  screen is read unless the dump is asked for locations
+  (`docs/design/uia-shapes.md`, decision 9), so a dump of mockapp's
+  window costs its thread no `WM_GETTITLEBARINFOEX`, where reading them
+  for the title bar and its buttons cost 8, each one waiting on the
+  Desktop Window Manager, about 6 ms alone and seconds under load.
+- Target: the minimum, met.
 
 ### An object navigation step, MSAA
 
@@ -1410,7 +1445,8 @@ queues. The parts of a UIA focus's count are:
   and 51 before where it starts was read, 2026-10-22). A UIA terminal
   (`terminal_reading.json`) costs 9 remotely and 27 classically, each
   with 1 window message and 1 connection. A classic edit control through
-  MSAA costs 39 MSAA calls and 6 window messages. With nothing
+  MSAA costs 37 MSAA calls and 6 window messages (39 while each ancestor's
+  location was read). With nothing
   selected, these are the calls the focus and its caret report made when
   the caret report was a message of its own after the focus. The search, then made after the
   focus's message and counted in neither, now comes before the focus is
@@ -2209,16 +2245,18 @@ The outpost's two focus-following registrations asked the provider for
 the base cache request's 34 properties with every event, a text focus's
 caret moves and text changes included, from which nothing is spoken: the
 worker reads the text itself. The text registration now asks for 3
-(the `TextEvent` shape) and the property registration for 24
-(`PropertyEvent`), leaving out only what feeds a node's details
-or its standing as focus context, since a change of states carries the
-whole state set. This saves work in the application on every keystroke
+(the `TextEvent` shape) and the property registration for 23
+(`PropertyEvent`), leaving out what feeds a node's details or its
+standing as focus context, since a change of states carries the whole
+state set, and whether the element is off the screen, which no event
+registration's cache holds (`docs/design/uia-shapes.md`, decision 9). This saves work in the application on every keystroke
 and caret move, not round trips in Verbatim. Measured on demand, as UIA
 fills each request (`uia_event_caches_cost_exactly`, which measured the
 base request too until the request was removed in step 5 of
 `docs/design/uia-shapes.md`): the base request cost mockapp 22 `GetPropertyValue`, 11 `GetPatternProvider`, and 1
 `BoundingRectangle`; the text events' 3 `GetPropertyValue`, and the
-property changes' 13 `GetPropertyValue` and the 11 `GetPatternProvider`;
+property changes' 12 `GetPropertyValue` (13 with the off-screen state)
+and the 11 `GetPatternProvider`;
 and the listener's desktop-wide events (`ListenerEvent`), measured in
 the same test, 15 `GetPropertyValue` and 3 `GetPatternProvider`;
 each also costs the same 5 `ProviderOptions`, 3
@@ -2462,21 +2500,34 @@ counting form executes twice as many, so it can count only programs under
 half the limit. Pinned exactly, worst case against mockapp first, the
 share of the limit in brackets:
 
-- The focus ancestry: 2,366 (24 percent) for a list sixty groups deep,
+- The focus ancestry: 2,429 (24 percent) for a list sixty groups deep,
   every ancestor up to the window returned under the outpost's depth limit
   of 64, against 64 known ancestors none of which it meets, with the
-  list's selected item and a held element's focus read; 1,779 for the same
+  list's selected item and a held element's focus read; 1,842 for the same
   stopped at a depth limit of 30, walking on to the window without
-  returning the rest; 1,044 for the list whose group is known, its window
+  returning the rest; 1,107 for the list whose group is known, its window
   still sixty-one levels up. It was 2,180, 1,686 and 1,038 before each
   ancestor's record of the properties left out of its cache was returned
   with it, three instructions an ancestor (`docs/design/uia-shapes.md`,
-  step 3). The focus listener's read, which also fills the focus's own
-  cache afresh, executes 2,379 at the worst case. A deeper tree adds a level of the window walk
+  step 3), and 2,366, 1,779 and 1,044 before the focus and its selected
+  item were filled by requests of their own, with their place, and the
+  ancestors by requests without it (decision 9 there), 63 instructions
+  more to build them. The focus listener's read, which also fills the
+  focus's own cache afresh, executes 2,442 at the worst case (2,379
+  before). A deeper tree adds a level of the window walk
   for each level beyond the depth limit, a dozen or so instructions (the
   navigation step's walk, much the same, takes 12): about two hundred more
   levels before half the limit. mockapp's fixtures cannot nest
   deeper than about sixty levels (its JSON parser's recursion limit).
+- The tree dump (`tree_dump`): 4,097 (41 percent) at the worst case, a
+  run that reads its sixty children (`CHILDREN_PER_RUN`) one each down
+  `deep.json`'s sixty-two nested groups, every element it reaches read
+  for its children; then 746 for the rest. A wide list, `wide.json`'s
+  hundred items, costs a first run 2,545, which stops inside the list,
+  read then classically in one call, and then 654, 588 for each sixteen
+  items whose children, none, a run reads, and 356 for the last four. A
+  run that started from sixteen elements each leading down such a chain
+  would add their sixteen reads, about 590, still under half the limit.
 - The navigation step: 870 (9 percent) from an item sixty-two levels
   below its window, 139 from right under it, about 12 for each level
   walked.

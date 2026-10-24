@@ -44,9 +44,14 @@ pub struct FocusQuery<'a> {
     pub previous: Option<&'a IUIAutomationElement>,
     /// The most ancestors to return.
     pub depth_limit: u32,
-    /// How every returned element's cache is filled: as an [`Ancestor`],
-    /// with the gates its request was built with.
+    /// How each ancestor's cache is filled: as an [`Ancestor`], with the
+    /// gates its request was built with, which leave out the element's
+    /// place, as every read of many elements does (`verbatim_uia::Place`).
     pub fill: &'a Fill<Ancestor>,
+    /// How the element's own cache ([`FocusQuery::refresh`]) and its
+    /// selected child's are filled: as [`FocusQuery::fill`] fills an
+    /// ancestor's, and, since each is read alone, with its place.
+    pub element_fill: &'a Fill<Ancestor>,
     /// Whether the classic walk's time is up, checked before each of its
     /// calls after the first: it then makes no more, reporting what the
     /// calls skipped would have read as unknown and the ancestry as cut
@@ -131,7 +136,7 @@ pub struct Ancestry {
     /// complete.
     pub failed_hop: Option<FailedHop>,
     /// For a list or tab control, the first selected child, filled by the
-    /// query's fill: what `verbatim_uia::Uia::selected_node` reports; for a
+    /// query's element fill: what `verbatim_uia::Uia::selected_node` reports; for a
     /// combo box without the `Value` pattern, its first selected item, its
     /// value (`verbatim_uia::map::value_from_selection`).
     pub selected_child: Option<Cached<Ancestor>>,
@@ -458,13 +463,17 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     }
 
     let cache = RemoteCache::new(&mut b, query.fill);
+    // The element's own requests, with its place, made only when the
+    // element or its selected child is read, so no other program grows.
+    let reads_alone = query.refresh || wants_selected_child(&input);
+    let element_cache = reads_alone.then(|| RemoteCache::new(&mut b, query.element_fill));
 
     // The element's own cache, filled afresh: its register is the element
     // read back, with its absent record.
     let element_absent = b.new_int(0);
     let element_absent = b.add_to_results(element_absent);
-    if query.refresh {
-        let absent = cache.populate(&mut b, element);
+    if let (true, Some(element_cache)) = (query.refresh, &element_cache) {
+        let absent = element_cache.populate(&mut b, element);
         b.set(element_absent, absent);
         b.add_to_results(element);
     }
@@ -494,7 +503,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     let selected = b.add_to_results(selected);
     let selected_absent = b.new_int(0);
     let selected_absent = b.add_to_results(selected_absent);
-    if wants_selected_child(&input) {
+    if let (true, Some(cache)) = (wants_selected_child(&input), &element_cache) {
         let read_selected = |b: &mut Builder| {
             // `SelectionPattern2`'s first selected item, ignoring its default,
             // so a provider without the pattern answers "not supported".
@@ -672,7 +681,7 @@ pub fn focus_ancestry_remote(_uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         ))
     .then_some(FailedHop::NoParent);
     let claimed = |element: Option<IUIAutomationElement>, absent: i32| {
-        element.map(|element| query.fill.claim(element, absent_record(absent)))
+        element.map(|element| query.element_fill.claim(element, absent_record(absent)))
     };
     Ok(FocusAncestry::Focused(Ancestry {
         ancestors,
@@ -808,8 +817,9 @@ fn tell(before_call: Option<&dyn Fn(&'static str)>, call: &'static str) {
 /// (`BuildUpdatedCache`), the selected child through the `Selection`
 /// pattern ([`Uia::selected`], as `Uia::selected_node` reads it), then one
 /// `GetParentElementBuildCache` round trip per ancestor over the raw view,
-/// the walk `Uia::ancestors` makes, every element filled by the query's
-/// fill's request. Stops at a known ancestor, at the
+/// the walk `Uia::ancestors` makes, every ancestor filled by the query's
+/// fill's request and the element and its selected child by its element
+/// fill's. Stops at a known ancestor, at the
 /// depth limit, below the desktop root, below the process boundary
 /// (`docs/design/listener-without-connections.md`, terms), and when the
 /// query's time is up, which is asked before every call but the first
@@ -871,9 +881,10 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
         Some(Err(_)) => Some(false),
     };
     let request = query.fill.request();
+    let element_request = query.element_fill.request();
     let element = if query.refresh && !out_of_time() {
         before_call("the focus's fresh cache");
-        Some(live.refresh(request)?)
+        Some(live.refresh(element_request)?)
     } else {
         None
     };
@@ -886,7 +897,7 @@ pub fn focus_ancestry_classic(uia: &Uia, query: &FocusQuery<'_>) -> Result<Focus
     )? && !out_of_time()
     {
         before_call("the selected child");
-        uia.selected_within(live, request, &out_of_time)?
+        uia.selected_within(live, element_request, &out_of_time)?
     } else {
         None
     };

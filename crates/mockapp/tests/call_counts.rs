@@ -219,11 +219,11 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, cold",
         &cost,
-        calls(0, 30, 1),
+        calls(0, 28, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
-            ("accParent", 14),
+            ("accParent", 10),
             ("get_accChild", 1),
             ("get_accName", 3),
             ("get_accValue", 3),
@@ -232,7 +232,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
-            ("accLocation", 3),
+            ("accLocation", 1),
         ],
     );
 
@@ -243,11 +243,11 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus, steady state",
         &cost,
-        calls(0, 30, 0),
+        calls(0, 28, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
-            ("accParent", 14),
+            ("accParent", 10),
             ("get_accChild", 1),
             ("get_accName", 3),
             ("get_accValue", 3),
@@ -256,7 +256,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
-            ("accLocation", 3),
+            ("accLocation", 1),
         ],
     );
 
@@ -275,11 +275,11 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA focus into a list",
         &cost,
-        calls(0, 30, 0),
+        calls(0, 29, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
-            ("accParent", 7),
+            ("accParent", 6),
             ("get_accChild", 1),
             ("get_accName", 3),
             ("get_accValue", 3),
@@ -289,7 +289,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
             ("accSelection", 1),
-            ("accLocation", 3),
+            ("accLocation", 2),
         ],
     );
 
@@ -302,11 +302,11 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the next list item",
         &cost,
-        calls(0, 30, 0),
+        calls(0, 28, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
-            ("accParent", 14),
+            ("accParent", 10),
             ("get_accChild", 1),
             ("get_accName", 3),
             ("get_accValue", 3),
@@ -315,7 +315,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
-            ("accLocation", 3),
+            ("accLocation", 1),
         ],
     );
 
@@ -332,11 +332,11 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the previous list item, the probe renewed",
         &cost,
-        calls(0, 33, 1),
+        calls(0, 31, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
-            ("accParent", 14),
+            ("accParent", 10),
             ("get_accChild", 1),
             ("get_accName", 3),
             ("get_accValue", 3),
@@ -345,7 +345,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
-            ("accLocation", 3),
+            ("accLocation", 1),
         ],
     );
     let (reported, cost) = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
@@ -353,11 +353,11 @@ fn msaa_focus_changes_cost_exactly() {
     ratchet.check(
         "MSAA arrow to the next list item, the probe kept",
         &cost,
-        calls(0, 33, 0),
+        calls(0, 31, 0),
         0,
         &[
             ("WM_GETOBJECT", 1),
-            ("accParent", 14),
+            ("accParent", 10),
             ("get_accChild", 1),
             ("get_accName", 3),
             ("get_accValue", 3),
@@ -366,7 +366,7 @@ fn msaa_focus_changes_cost_exactly() {
             ("get_accState", 3),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
-            ("accLocation", 3),
+            ("accLocation", 1),
         ],
     );
 
@@ -659,11 +659,11 @@ fn msaa_dialog_text_costs_exactly() {
     ratchet.check(
         "MSAA focus into a message box",
         &cost,
-        calls(0, 44, 1),
+        calls(0, 42, 1),
         0,
         &[
             ("WM_GETOBJECT", 2),
-            ("accParent", 17),
+            ("accParent", 13),
             ("accChildCount", 2),
             ("get_accChild", 4),
             ("get_accName", 4),
@@ -673,7 +673,7 @@ fn msaa_dialog_text_costs_exactly() {
             ("get_accState", 6),
             ("get_accKeyboardShortcut", 3),
             ("accFocus", 1),
-            ("accLocation", 3),
+            ("accLocation", 1),
         ],
     );
 
@@ -712,7 +712,7 @@ fn msaa_tree_view_costs_exactly() {
     ratchet.check_calls(
         "MSAA focus on a tree view item",
         reported.calls,
-        calls(0, 35, 12),
+        calls(0, 33, 12),
     );
 
     // The focus expands, and its children are counted with the change, for
@@ -793,7 +793,7 @@ fn msaa_list_view_costs_exactly() {
     ratchet.check_calls(
         "MSAA focus on a report view item",
         reported.calls,
-        calls(0, 29, 14),
+        calls(0, 28, 14),
     );
     ratchet.finish();
     app.quit();
@@ -1281,11 +1281,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 12),
                     ("ProviderOptions", 76),
                     ("GetPatternProvider", 55),
-                    ("GetPropertyValue", 113),
+                    ("GetPropertyValue", 111),
                     ("HostRawElementProvider", 33),
                     ("Navigate", 22),
                     ("GetRuntimeId", 11),
-                    ("BoundingRectangle", 5),
+                    ("BoundingRectangle", 3),
                     ("FragmentRoot", 19),
                 ],
             ),
@@ -1296,11 +1296,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 70),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 93),
+                    ("GetPropertyValue", 92),
                     ("HostRawElementProvider", 31),
                     ("Navigate", 20),
                     ("GetRuntimeId", 12),
-                    ("BoundingRectangle", 4),
+                    ("BoundingRectangle", 3),
                     ("FragmentRoot", 19),
                 ],
             ),
@@ -1312,11 +1312,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 71),
                     ("GetPatternProvider", 57),
-                    ("GetPropertyValue", 111),
+                    ("GetPropertyValue", 110),
                     ("HostRawElementProvider", 32),
                     ("Navigate", 18),
                     ("GetRuntimeId", 12),
-                    ("BoundingRectangle", 5),
+                    ("BoundingRectangle", 4),
                     ("FragmentRoot", 20),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
@@ -1329,11 +1329,11 @@ fn uia_focus_changes_cost_exactly_remote() {
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 76),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 94),
+                    ("GetPropertyValue", 93),
                     ("HostRawElementProvider", 33),
                     ("Navigate", 22),
                     ("GetRuntimeId", 13),
-                    ("BoundingRectangle", 4),
+                    ("BoundingRectangle", 3),
                     ("FragmentRoot", 20),
                     ("IsSelected", 2),
                 ],
@@ -1353,11 +1353,11 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 12),
                     ("ProviderOptions", 75),
                     ("GetPatternProvider", 55),
-                    ("GetPropertyValue", 112),
+                    ("GetPropertyValue", 110),
                     ("HostRawElementProvider", 31),
                     ("Navigate", 19),
                     ("GetRuntimeId", 9),
-                    ("BoundingRectangle", 5),
+                    ("BoundingRectangle", 3),
                     ("FragmentRoot", 19),
                 ],
             ),
@@ -1368,11 +1368,11 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 70),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 92),
+                    ("GetPropertyValue", 91),
                     ("HostRawElementProvider", 30),
                     ("Navigate", 17),
                     ("GetRuntimeId", 10),
-                    ("BoundingRectangle", 4),
+                    ("BoundingRectangle", 3),
                     ("FragmentRoot", 20),
                 ],
             ),
@@ -1386,11 +1386,11 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 71),
                     ("GetPatternProvider", 57),
-                    ("GetPropertyValue", 110),
+                    ("GetPropertyValue", 109),
                     ("HostRawElementProvider", 31),
                     ("Navigate", 15),
                     ("GetRuntimeId", 11),
-                    ("BoundingRectangle", 5),
+                    ("BoundingRectangle", 4),
                     ("FragmentRoot", 21),
                     ("IsSelected", 1),
                     ("FirstSelectedItem", 1),
@@ -1403,11 +1403,11 @@ fn uia_focus_changes_cost_exactly_classic() {
                     ("WM_GETOBJECT", 10),
                     ("ProviderOptions", 77),
                     ("GetPatternProvider", 44),
-                    ("GetPropertyValue", 93),
+                    ("GetPropertyValue", 92),
                     ("HostRawElementProvider", 33),
                     ("Navigate", 19),
                     ("GetRuntimeId", 11),
-                    ("BoundingRectangle", 4),
+                    ("BoundingRectangle", 3),
                     ("FragmentRoot", 22),
                     ("IsSelected", 2),
                 ],
@@ -1651,7 +1651,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         );
         assert_eq!(
             reported.calls,
-            calls(0, 9, 0),
+            calls(0, 8, 0),
             "the outpost's calls ({path})"
         );
         assert_eq!(
@@ -1742,9 +1742,15 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
     );
     let ancestors = under_test
         .uia
-        .request::<Ancestor>(Ancestor::all_on())
+        .request::<Ancestor>(common::ancestor_gates())
         .expect("the ancestors' cache request");
     let fill = Fill::new(&ancestors);
+    let element_fill = Fill::new(
+        &under_test
+            .uia
+            .request::<Ancestor>(Ancestor::all_on())
+            .expect("the focus's cache request"),
+    );
     common::reset_hits(parent);
     let _ = verbatim_uia::calls::take();
     let ancestry = focus_ancestry_classic(
@@ -1755,6 +1761,7 @@ fn uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_bounda
             previous: None,
             depth_limit: 64,
             fill: &fill,
+            element_fill: &element_fill,
             out_of_time: None,
             require_focus: false,
             refresh: false,
@@ -1804,7 +1811,6 @@ const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 2] = [
         ("get_accRole", 2),
         ("get_accState", 1),
         ("get_accKeyboardShortcut", 1),
-        ("accLocation", 1),
     ],
     &[
         ("WM_GETOBJECT", 1),
@@ -1816,7 +1822,6 @@ const FOCUS_NOW_PARENT_HITS: [&[(&str, u32)]; 2] = [
         ("get_accRole", 2),
         ("get_accState", 1),
         ("get_accKeyboardShortcut", 1),
-        ("accLocation", 1),
     ],
 ];
 
@@ -1864,7 +1869,7 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
         ];
         assert_eq!(
             reported.calls,
-            calls(0, 23, 0),
+            calls(0, 21, 0),
             "the outpost's calls ({path})"
         );
         assert_eq!(
@@ -2222,11 +2227,11 @@ fn uia_ancestors_with_descriptions_off_cost_exactly() {
             ("WM_GETOBJECT", 1),
             ("ProviderOptions", 28),
             ("GetPatternProvider", 33),
-            ("GetPropertyValue", 60),
+            ("GetPropertyValue", 58),
             ("HostRawElementProvider", 12),
             ("Navigate", 5),
             ("GetRuntimeId", 5),
-            ("BoundingRectangle", 3),
+            ("BoundingRectangle", 1),
             ("FragmentRoot", 9),
         ],
     );
@@ -2341,6 +2346,12 @@ fn uia_selected_children_cost_exactly() {
     let ancestors = Fill::new(
         &under_test
             .uia
+            .request::<Ancestor>(common::ancestor_gates())
+            .expect("a cache request"),
+    );
+    let element_fill = Fill::new(
+        &under_test
+            .uia
             .request::<Ancestor>(Ancestor::all_on())
             .expect("a cache request"),
     );
@@ -2352,11 +2363,11 @@ fn uia_selected_children_cost_exactly() {
             ("WM_GETOBJECT", 2),
             ("ProviderOptions", 24),
             ("GetPatternProvider", 23 + extra_pattern),
-            ("GetPropertyValue", 47),
+            ("GetPropertyValue", 46),
             ("HostRawElementProvider", 10),
             ("Navigate", 8),
             ("GetRuntimeId", 3),
-            ("BoundingRectangle", 2),
+            ("BoundingRectangle", 1),
             ("FragmentRoot", 3),
             ("IsSelected", 1),
             selection,
@@ -2442,6 +2453,7 @@ fn uia_selected_children_cost_exactly() {
                     previous: None,
                     depth_limit: 64,
                     fill: &ancestors,
+                    element_fill: &element_fill,
                     out_of_time: None,
                     require_focus: true,
                     refresh: false,
@@ -2539,7 +2551,7 @@ fn uia_event_caches_cost_exactly() {
         &[
             ("ProviderOptions", 5),
             ("GetPatternProvider", 11),
-            ("GetPropertyValue", 13),
+            ("GetPropertyValue", 12),
             ("HostRawElementProvider", 3),
             ("GetRuntimeId", 2),
             ("FragmentRoot", 3),
@@ -4334,11 +4346,11 @@ fn uia_combo_box_costs_exactly() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 65),
                     ("GetPatternProvider", 58),
-                    ("GetPropertyValue", 110),
+                    ("GetPropertyValue", 109),
                     ("HostRawElementProvider", 31),
                     ("Navigate", 16),
                     ("GetRuntimeId", 11),
-                    ("BoundingRectangle", 5),
+                    ("BoundingRectangle", 4),
                     ("FragmentRoot", 20),
                     ("ExpandCollapseState", 2),
                     ("IsSelected", 1),
@@ -4367,11 +4379,11 @@ fn uia_combo_box_costs_exactly() {
                     ("WM_GETOBJECT", 11),
                     ("ProviderOptions", 64),
                     ("GetPatternProvider", 58),
-                    ("GetPropertyValue", 109),
+                    ("GetPropertyValue", 108),
                     ("HostRawElementProvider", 29),
                     ("Navigate", 13),
                     ("GetRuntimeId", 10),
-                    ("BoundingRectangle", 5),
+                    ("BoundingRectangle", 4),
                     ("FragmentRoot", 20),
                     ("ExpandCollapseState", 2),
                     ("IsSelected", 1),
@@ -4574,7 +4586,7 @@ fn text_field_focuses_cost_exactly() {
     ratchet.check_calls(
         "edit control focus with its caret",
         reported.calls,
-        calls(0, 39, 6),
+        calls(0, 37, 6),
     );
     drop(outpost);
     app.quit();

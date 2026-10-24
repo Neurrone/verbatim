@@ -289,6 +289,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .disconnect(&id)?,
+        Command::DisconnectAtFirstChild(id) => tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .disconnect_at_first_child(&id)?,
         Command::AnswerParent(id, answer, after) => {
             let mut guard = tree
                 .lock()
@@ -980,6 +984,12 @@ mod props {
                     crate::stdin::ParentAnswer::Usual => guard.nodes[index].parent,
                 }
             } else if direction == NavigateDirection_FirstChild {
+                if guard.nodes[index].dies_at_first_child {
+                    guard.nodes[index].dead = true;
+                    return Err(Error::from(windows::core::HRESULT(
+                        UIA_E_ELEMENTNOTAVAILABLE.cast_signed(),
+                    )));
+                }
                 guard.nodes[index].children.first().copied()
             } else if direction == NavigateDirection_LastChild {
                 guard.nodes[index].children.last().copied()

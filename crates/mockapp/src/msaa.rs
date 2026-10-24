@@ -291,6 +291,9 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .disconnect(&id)?,
+        Command::DisconnectAtFirstChild(_) => {
+            return Err("disconnect-at-first-child is not supported on the msaa backend".into());
+        }
         Command::AnswerParent(..) => {
             return Err("answer-parent is not supported on the msaa backend".into());
         }

@@ -58,10 +58,11 @@ const FOREGROUND_REPORT_CALLS: CallCounts = CallCounts {
 
 /// What reporting a list item costs at the outpost's first look at its
 /// window, a foreground change of the window dropped before it: the item
-/// and its ancestors, 30 MSAA calls, and the window's probe.
+/// and its ancestors, whose locations are not read, 28 MSAA calls, and the
+/// window's probe.
 const DROPPED_FOREGROUND_FOCUS_CALLS: CallCounts = CallCounts {
     uia: 0,
-    msaa: 30,
+    msaa: 28,
     window_messages: 1,
     connections: 0,
 };
@@ -70,7 +71,7 @@ const DROPPED_FOREGROUND_FOCUS_CALLS: CallCounts = CallCounts {
 /// foreground change of the window dropped before it with no call.
 const FOCUS_BESIDE_DROPPED_FOREGROUND_CALLS: CallCounts = CallCounts {
     uia: 0,
-    msaa: 30,
+    msaa: 28,
     window_messages: 0,
     connections: 0,
 };

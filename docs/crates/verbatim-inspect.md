@@ -16,10 +16,13 @@ interleaved in arrival order so an event reads directly above the speech
 it caused); `send-gesture`; `send-keys`; `latency --last N`; `dump-tree`
 (prints the foreground application's accessibility tree from its
 top-level window, one node per line, indented two spaces per depth level
-and reusing the same role-and-name summary the event stream uses; a
-trailing line notes when the tree is incomplete, because the outpost's
-depth or node-count cap cut it short or an element went away during the
-walk); `dump-recorder` (milestone M2: asks Core to write its flight
+and reusing the same role-and-name summary the event stream uses; with
+`--locations`, each line ends with where the node is, `, at LEFT,TOP
+WIDTHxHEIGHT` or `, no location`, and `, off screen` when it is, and
+without it a first line says locations and off-screen states were not
+read; a trailing line notes when the tree is incomplete, because the
+outpost's depth or node-count cap cut it short or an element went away
+during the walk); `dump-recorder` (milestone M2: asks Core to write its flight
 recorder's current contents to disk and prints the path it wrote to);
 `quit`. Each speech line shows the queue-time delta since the triggering
 event and is labelled with the utterance id; a follow-up line appears

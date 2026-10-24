@@ -85,6 +85,12 @@ const OUTBOUND_QUEUE_DEPTH: usize = 256;
 /// reported to the client as [`Frame::Error`].
 type SendGestureHandler = Box<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 
+/// Answers [`Request::DumpTree`], given whether locations are read: the
+/// tree, and whether it is incomplete; `Err` carries a human-readable
+/// reason reported to the client as [`Frame::Error`].
+type DumpTreeHandler =
+    Box<dyn Fn(bool) -> Result<(verbatim_model::TreeNode, bool), String> + Send + Sync>;
+
 /// Callbacks injected by the application so this crate never depends on it.
 ///
 /// Each field answers one family of [`Request`]s; `ControlServer` calls
@@ -98,7 +104,7 @@ pub struct ServerHandlers {
     /// Answers [`Request::Latency`], given `last_n`.
     pub latency: Box<dyn Fn(u32) -> Vec<LatencyRecord> + Send + Sync>,
     /// Answers [`Request::DumpTree`].
-    pub dump_tree: Box<dyn Fn() -> Result<(verbatim_model::TreeNode, bool), String> + Send + Sync>,
+    pub dump_tree: DumpTreeHandler,
     /// Answers [`Request::DumpRecorder`] with the path the dump was written
     /// to.
     pub dump_recorder: Box<dyn Fn() -> Result<String, String> + Send + Sync>,
@@ -330,10 +336,14 @@ fn dispatch_request(
             to: id,
             payload: ReplyPayload::Latency((handlers.latency)(last_n)),
         },
-        Request::DumpTree => match (handlers.dump_tree)() {
+        Request::DumpTree { locations } => match (handlers.dump_tree)(locations) {
             Ok((root, truncated)) => Frame::Reply {
                 to: id,
-                payload: ReplyPayload::DumpTree { root, truncated },
+                payload: ReplyPayload::DumpTree {
+                    root,
+                    truncated,
+                    locations,
+                },
             },
             Err(message) => Frame::Error { to: id, message },
         },
@@ -1217,7 +1227,7 @@ mod tests {
                 }
             }),
             latency: Box::new(|_last_n| Vec::new()),
-            dump_tree: Box::new(|| Err("dump_tree not exercised by this test".to_owned())),
+            dump_tree: Box::new(|_| Err("dump_tree not exercised by this test".to_owned())),
             dump_recorder: Box::new(|| Err("dump_recorder not exercised by this test".to_owned())),
             quit: Box::new(|| {}),
             await_idle: Box::new(|_, _| Ok(())),

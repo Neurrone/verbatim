@@ -11,10 +11,10 @@ use windows::Win32::UI::Accessibility::{
 use windows::core::IUnknown;
 
 use super::{
-    Absent, Ancestor, CachedReads, Description, DialogStates, DialogText, FocusInput,
-    HelpTextRefresh, Kept, ListenerEvent, Node, Position, PropertyEvent, ProviderOrigin, Reader,
-    RoleCore, SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh,
-    TextAreaPattern, TextEvent, ValueSet, WindowLookup, request_properties,
+    Absent, Ancestor, CachedReads, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
+    ListenerEvent, Node, Place, Position, PropertyEvent, ProviderOrigin, Reader, RoleCore,
+    SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
+    TextEvent, ValueSet, WindowLookup, request_properties,
 };
 
 /// A cache that answers every read, and records what was read.
@@ -107,7 +107,7 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         RoleCore,
         ValueSet,
         States,
-        DialogStates,
+        Place,
         Kept,
         TextEvent,
         PropertyEvent,
@@ -127,10 +127,10 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         TextAreaPattern,
         ProviderOrigin,
     );
-    // Four gates each: the description, shortcut and position groups and
-    // the level.
-    assert_eq!(Node::combinations().len(), 16);
-    assert_eq!(Ancestor::combinations().len(), 16);
+    // Five gates each: the description, shortcut, position and place
+    // groups and the level.
+    assert_eq!(Node::combinations().len(), 32);
+    assert_eq!(Ancestor::combinations().len(), 32);
 }
 
 #[test]
@@ -138,12 +138,14 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
     for (shape, properties, expected) in [
         ("Kept", Kept::PROPERTIES, 2),
         ("TextEvent", TextEvent::PROPERTIES, 3),
-        ("PropertyEvent", PropertyEvent::PROPERTIES, 24),
+        ("PropertyEvent", PropertyEvent::PROPERTIES, 23),
         ("ListenerEvent", ListenerEvent::PROPERTIES, 15),
         ("Node", Node::PROPERTIES, 31),
-        ("Node, ungated", Node::UNGATED, 24),
+        // Neither the rectangle nor whether it is off the screen is read
+        // unless the place's gate asks for them.
+        ("Node, ungated", Node::UNGATED, 22),
         ("Ancestor", Ancestor::PROPERTIES, 33),
-        ("Ancestor, ungated", Ancestor::UNGATED, 28),
+        ("Ancestor, ungated", Ancestor::UNGATED, 26),
         ("DialogText", DialogText::PROPERTIES, 24),
     ] {
         assert_eq!(properties.len(), expected, "{shape}");

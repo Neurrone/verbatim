@@ -280,7 +280,7 @@ fn msaa_activation_answers_the_default_actions_name() {
     let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
         std::sync::atomic::AtomicU64::new(1),
     ));
-    let (root, _) = verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096)
+    let (root, _) = verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, (64, 4096), false)
         .expect("walk the tree");
     let ok = find(&root, "OK").expect("the OK button is in the tree");
     let cancel = find(&root, "Cancel").expect("the Cancel button is in the tree");
@@ -315,7 +315,7 @@ fn msaa_client_reads_a_lists_selected_child() {
     let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
         std::sync::atomic::AtomicU64::new(1),
     ));
-    let (root, _) = verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096)
+    let (root, _) = verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, (64, 4096), false)
         .expect("walk the tree");
     let list = find(&root, "Items").expect("the list is in the tree");
     assert_eq!(
@@ -420,7 +420,8 @@ fn msaa_tree_dump_ends_an_objects_children_where_it_is_gone() {
         )
     };
     let (whole, truncated) =
-        verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096).expect("the dump");
+        verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, (64, 4096), false)
+            .expect("the dump");
     assert_eq!(
         (named(&whole), truncated),
         (tree(Some("First")), false),
@@ -429,7 +430,7 @@ fn msaa_tree_dump_ends_an_objects_children_where_it_is_gone() {
 
     app.send("disconnect item1");
     let (dumped, truncated) =
-        verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096)
+        verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, (64, 4096), false)
             .expect("the dump with a gone item");
     assert_eq!(
         (named(&dumped), truncated),

@@ -36,7 +36,9 @@
 //!   selection inside an element the focus controls,
 //!   [`controlled_selection`]; and, for the outpost finding its own copy
 //!   of an element the focus listener read, [`element_by_path`]: the
-//!   element reached from one the caller has by the runtime ids below it.
+//!   element reached from one the caller has by the runtime ids below it;
+//!   and, for the control plane's tree dump, [`tree_dump`]: an element's
+//!   subtree, each element's children read in one call.
 //!
 //! The crate is Windows-specific and GPL like NVDA, from which the
 //! instruction table and builder design are ported.
@@ -56,6 +58,7 @@ mod terminal_colours;
 mod terminal_rows;
 mod terminal_snapshot;
 mod text;
+mod tree;
 
 pub use builder::{Builder, Index, Numeric, Ordered, Reg, kind};
 pub use caret::{
@@ -101,4 +104,7 @@ pub use text::{
     TextUnitsFn, UnitText, UnitsAnswer, UnitsQuery, text_location, text_location_classic,
     text_location_remote, text_range, text_range_classic, text_range_remote, text_units,
     text_units_classic, text_units_remote,
+};
+pub use tree::{
+    CHILDREN_PER_RUN, TreeDumpFn, TreeQuery, tree_dump, tree_dump_classic, tree_dump_remote,
 };

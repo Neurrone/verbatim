@@ -412,7 +412,7 @@ mod tests {
             SupervisorToOutpost::Query {
                 trace_id: TraceId::mint(),
                 request_id: 1,
-                query: crate::protocol::Query::DumpTree,
+                query: crate::protocol::Query::DumpTree { locations: false },
                 timing: EventTiming::default(),
             },
             Received::now(),
@@ -569,7 +569,7 @@ mod tests {
                 SupervisorToOutpost::Query {
                     trace_id: TraceId::mint(),
                     request_id: id,
-                    query: crate::protocol::Query::DumpTree,
+                    query: crate::protocol::Query::DumpTree { locations: false },
                     timing: EventTiming::default(),
                 },
                 Received::now(),

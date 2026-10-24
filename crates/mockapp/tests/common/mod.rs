@@ -664,3 +664,19 @@ pub fn named_element(
     .element()
     .clone()
 }
+
+/// The gates of an ancestor as the outposts and the focus listener read
+/// one, every detail on: a read of many elements, so without the place,
+/// the rectangle and whether it is off the screen (`verbatim_uia::Place`).
+/// The focused element itself is read with `Ancestor::all_on()`.
+#[must_use]
+pub fn ancestor_gates() -> verbatim_uia::AncestorGates {
+    use verbatim_uia::Shape;
+    verbatim_uia::AncestorGates {
+        node: verbatim_uia::NodeGates {
+            place: None,
+            ..verbatim_uia::Node::all_on()
+        },
+        ..verbatim_uia::Ancestor::all_on()
+    }
+}

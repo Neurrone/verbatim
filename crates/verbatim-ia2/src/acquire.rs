@@ -105,7 +105,9 @@ pub enum Purpose {
     /// ancestor of the focus, or the object of a name, value, or state
     /// change. A list view or tree view item's position, which costs a
     /// window message per sibling, is not counted, as NVDA counts it only
-    /// when it speaks the object.
+    /// when it speaks the object, and its location is not read: an
+    /// ancestor is read among many, which never read a location, and a
+    /// change reports none.
     Context,
 }
 
@@ -118,6 +120,11 @@ struct Reading {
     purpose: Purpose,
     role: Prefetched,
     state: Prefetched,
+    /// Whether its location (`accLocation`, a cross-process call) is left
+    /// unread, as it is for an object read among many, an ancestor or a
+    /// tree dump's node, and for one read for [`Purpose::Context`], which
+    /// never uses it.
+    without_location: bool,
 }
 
 /// A role or state word that may have been read already.
@@ -338,6 +345,7 @@ impl EventObject {
                 purpose,
                 role: self.role,
                 state: Prefetched::Unread,
+                without_location: false,
             },
             registry,
         )
@@ -486,6 +494,7 @@ impl FocusCandidate {
                 purpose: Purpose::Announce,
                 role: self.role,
                 state: self.state,
+                without_location: false,
             },
             registry,
         )
@@ -1222,6 +1231,12 @@ pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<No
 /// there and lets the rest of the walk go on, as when a menu closes during
 /// the walk.
 ///
+/// Each object's location (`accLocation`) and whether it is off the screen
+/// are read only with `locations`, as a read of many objects never reads a
+/// location; without it every node has no rectangle and no `Offscreen`
+/// state, though the state word holds the bit, so a dump shows both as not
+/// read, never as a value.
+///
 /// # Errors
 ///
 /// [`AcquireError::Failed`] when the window has no accessible client
@@ -1232,8 +1247,8 @@ pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<No
 pub fn walk_tree(
     hwnd: isize,
     registry: &NodeIdRegistry,
-    max_depth: u32,
-    max_nodes: usize,
+    (max_depth, max_nodes): (u32, usize),
+    locations: bool,
 ) -> Result<(TreeNode, bool), AcquireError> {
     let acc = Accessible::client_of_window(hwnd).ok_or_else(|| {
         AcquireError::Failed("could not acquire the top-level MSAA object".to_owned())
@@ -1242,6 +1257,7 @@ pub fn walk_tree(
         registry,
         max_depth,
         max_nodes,
+        locations,
     };
     let mut state = WalkState {
         visited: 1, // the root counts as one node.
@@ -1259,6 +1275,8 @@ struct WalkLimits<'a> {
     registry: &'a NodeIdRegistry,
     max_depth: u32,
     max_nodes: usize,
+    /// Whether each object's location and off-screen state are read.
+    locations: bool,
 }
 
 /// Mutable state accumulated across the whole walk, shared by every level
@@ -1272,10 +1290,10 @@ struct WalkState {
 /// Whether a failed call says the object it was made on is gone: its
 /// server disconnected it (`CoDisconnectObject`), so COM answers
 /// `RPC_E_DISCONNECTED`, or its stub no longer exists
-/// (`CO_E_OBJNOTCONNECTED`). These are the two COM errors NVDA's log
-/// handler counts as a dead object's rather than as errors. A process that
-/// has died answers other errors, and `E_FAIL`, which a server may answer
-/// for any failure, says nothing about the object.
+/// (`CO_E_OBJNOTCONNECTED`). These are COM's object-disconnected errors,
+/// chosen by Verbatim as the ones that say the object is gone. A process
+/// that has died answers other errors, and `E_FAIL`, which a server may
+/// answer for any failure, says nothing about the object.
 fn object_gone(error: &windows::core::Error) -> bool {
     [RPC_E_DISCONNECTED, CO_E_OBJNOTCONNECTED].contains(&error.code())
 }
@@ -1312,7 +1330,19 @@ fn walk_recursive(
     depth: u32,
     state: &mut WalkState,
 ) -> windows::core::Result<TreeNode> {
-    let snapshot = read_snapshot(acc, key, at_address, limits.registry);
+    let mut snapshot = read_snapshot_with(
+        acc,
+        key,
+        Reading {
+            at_address,
+            without_location: !limits.locations,
+            ..Reading::default()
+        },
+        limits.registry,
+    );
+    if !limits.locations {
+        snapshot.states.remove(State::Offscreen);
+    }
     let leaf = |snapshot| {
         Ok(TreeNode {
             snapshot,
@@ -1512,8 +1542,9 @@ fn window_sibling(
 }
 
 /// Reads name, role, value, state, and the [`NodeDetails`] properties plain
-/// MSAA offers (`accDescription`, `accKeyboardShortcut`, `accLocation`) from
-/// an accessible and its child id. Position-in-set is computed for list-view
+/// MSAA offers (`accDescription`, `accKeyboardShortcut`, and, for an object
+/// read alone to be announced, `accLocation`) from an accessible and its
+/// child id. Position-in-set is computed for list-view
 /// and tree-view items (`position_of`) and is otherwise `None` until IA2's
 /// group position (roadmap M7).
 ///
@@ -1573,7 +1604,9 @@ fn read_snapshot_with(
         .shortcut
         .then(|| non_empty(acc.keyboard_shortcut()))
         .flatten();
-    let rect = acc.location();
+    let rect = (reading.purpose == Purpose::Announce && !reading.without_location)
+        .then(|| acc.location())
+        .flatten();
     // See this function's doc comment: a tree item's accValue is really
     // its 0-based level, not a value.
     // The edit field of a combo box takes the combo box's label, so it

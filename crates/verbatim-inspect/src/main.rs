@@ -74,7 +74,13 @@ enum Command {
     /// Dump the foreground application's accessibility tree from its
     /// top-level window, one node per line, indented two spaces per depth
     /// level.
-    DumpTree,
+    DumpTree {
+        /// Also read and print each node's location and whether it is off
+        /// the screen, which costs the application a request to its UI
+        /// thread for some elements, a window's title bar among them.
+        #[arg(long)]
+        locations: bool,
+    },
     /// Ask Verbatim to write its flight recorder's current contents to
     /// disk and print the path it wrote to.
     DumpRecorder,
@@ -116,7 +122,7 @@ fn run(command: Command, connect: Option<&str>) -> io::Result<()> {
         Command::SendGesture { identifier } => send_gesture(&mut client, identifier),
         Command::SendKeys { keys } => send_keys(&mut client, keys),
         Command::Latency { last } => latency(&mut client, last),
-        Command::DumpTree => dump_tree(&mut client),
+        Command::DumpTree { locations } => dump_tree(&mut client, locations),
         Command::DumpRecorder => dump_recorder(&mut client),
         Command::Quit => quit(&mut client),
     }
@@ -384,10 +390,15 @@ fn describe_calls(calls: CallCounts) -> String {
     line
 }
 
-fn dump_tree(client: &mut Client) -> io::Result<()> {
-    let frame = ok_or_error(client.request(Request::DumpTree)?)?;
+fn dump_tree(client: &mut Client, locations: bool) -> io::Result<()> {
+    let frame = ok_or_error(client.request(Request::DumpTree { locations })?)?;
     let Frame::Reply {
-        payload: ReplyPayload::DumpTree { root, truncated },
+        payload:
+            ReplyPayload::DumpTree {
+                root,
+                truncated,
+                locations,
+            },
         ..
     } = frame
     else {
@@ -395,7 +406,10 @@ fn dump_tree(client: &mut Client) -> io::Result<()> {
             "unexpected reply to DumpTree: {frame:?}"
         )));
     };
-    print_tree_node(&root, 0);
+    if !locations {
+        println!("(locations and off-screen states not read; --locations reads them)");
+    }
+    print_tree_node(&root, 0, locations);
     if truncated {
         println!("(tree incomplete: a cap was reached, or an element went away during the walk)");
     }
@@ -403,12 +417,42 @@ fn dump_tree(client: &mut Client) -> io::Result<()> {
 }
 
 /// Prints one tree node per line, indented two spaces per depth level,
-/// reusing [`summarize_node`]'s role-and-name formatting.
-fn print_tree_node(node: &TreeNode, depth: usize) {
-    println!("{}{}", "  ".repeat(depth), summarize_node(&node.snapshot));
+/// reusing [`summarize_node`]'s role-and-name formatting, and, when
+/// `locations` were read, where the node is: its rectangle, or that it
+/// reports none, and whether it is off the screen.
+fn print_tree_node(node: &TreeNode, depth: usize, locations: bool) {
+    let place = if locations {
+        location_of(&node.snapshot)
+    } else {
+        String::new()
+    };
+    println!(
+        "{}{}{place}",
+        "  ".repeat(depth),
+        summarize_node(&node.snapshot)
+    );
     for child in &node.children {
-        print_tree_node(child, depth + 1);
+        print_tree_node(child, depth + 1, locations);
     }
+}
+
+/// Where a node read with its location is, as a dump line's ending: `, at
+/// LEFT,TOP WIDTHxHEIGHT` or `, no location`, then `, off screen` when it
+/// is.
+fn location_of(node: &NodeSnapshot) -> String {
+    let mut place = node.details.rect.map_or_else(
+        || ", no location".to_owned(),
+        |rect| {
+            format!(
+                ", at {},{} {}x{}",
+                rect.left, rect.top, rect.width, rect.height
+            )
+        },
+    );
+    if node.states.contains(verbatim_model::State::Offscreen) {
+        place.push_str(", off screen");
+    }
+    place
 }
 
 fn dump_recorder(client: &mut Client) -> io::Result<()> {

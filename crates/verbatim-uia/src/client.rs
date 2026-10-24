@@ -15,14 +15,14 @@ use windows::Win32::UI::Accessibility::{
     IUIAutomation, IUIAutomation2, IUIAutomation6, IUIAutomationCacheRequest,
     IUIAutomationCondition, IUIAutomationElement, IUIAutomationInvokePattern,
     IUIAutomationSelectionItemPattern, IUIAutomationSelectionPattern, IUIAutomationTogglePattern,
-    IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Subtree,
-    UIA_E_ELEMENTNOTAVAILABLE, UIA_InvokePatternId, UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId,
-    UIA_SelectionItemPatternId, UIA_SelectionPatternId, UIA_TogglePatternId,
+    IUIAutomationTreeWalker, TreeScope, TreeScope_Children, TreeScope_Subtree, UIA_InvokePatternId,
+    UIA_PROPERTY_ID, UIA_RuntimeIdPropertyId, UIA_SelectionItemPatternId, UIA_SelectionPatternId,
+    UIA_TogglePatternId,
 };
 
-use windows::core::{HRESULT, Interface};
+use windows::core::Interface;
 
-use verbatim_model::{CallKind, NodeSnapshot, QueryKind, TreeNode};
+use verbatim_model::{CallKind, NodeSnapshot, QueryKind};
 
 use crate::calls::count;
 use crate::com::init_mta;
@@ -30,7 +30,7 @@ use crate::element::{ElementExt, current_selection, invoke, select, toggle};
 use crate::registry::NodeIdRegistry;
 use crate::shape::{
     Ancestor, Cached, Direction, ElementValue, Live, Node, ProviderOrigin, Request,
-    SelectionContainer, Shape, TreeDump,
+    SelectionContainer, Shape,
 };
 
 /// A UIA client bound to the current thread's multithreaded apartment.
@@ -643,48 +643,6 @@ impl Uia {
             }
         }
         (None, controlled)
-    }
-
-    /// Walks the raw-view subtree rooted at `root`, every node read as a
-    /// [`TreeDump`] filled by `request`, bounded by `max_depth` (the root is
-    /// depth 0) and `max_nodes` (the total number of nodes across the whole
-    /// walk, the root included). Returns the walked tree and whether it is
-    /// incomplete: either cap was hit before the walk reached every node, or
-    /// a step failed because its element was gone
-    /// (`UIA_E_ELEMENTNOTAVAILABLE`), which ends that element's children
-    /// there and lets the rest of the walk go on, as when a menu closes
-    /// during the walk. Cross-process; the outpost's worker only, guarded
-    /// by the caller's deadline, since a hung provider can stall any step.
-    ///
-    /// # Errors
-    ///
-    /// Returns the COM error if the tree walker cannot be created, or the
-    /// error of any step that fails, other than for a gone element, rather
-    /// than reaching no element: a step the provider did not answer within
-    /// UIA's transaction timeout fails the walk with `UIA_E_TIMEOUT`
-    /// ([`timed_out`](crate::timed_out)), so an element whose children could
-    /// not be read is never reported as having none.
-    pub fn tree(
-        &self,
-        root: &Cached<TreeDump>,
-        request: &Request<TreeDump>,
-        registry: &NodeIdRegistry,
-        max_depth: u32,
-        max_nodes: usize,
-    ) -> windows::core::Result<(TreeNode, bool)> {
-        let walker = self.raw_view_walker()?;
-        let limits = ShapedWalk {
-            request,
-            registry,
-            max_depth,
-            max_nodes,
-        };
-        let mut state = WalkState {
-            visited: 1, // the root counts as one node.
-            truncated: false,
-        };
-        let root = walk_shaped(&walker, root, &limits, 0, &mut state)?;
-        Ok((root, state.truncated))
     }
 
     /// Walks the chain of ancestors of `element`, each read as an
@@ -1381,97 +1339,6 @@ fn set_process_timeouts(client: &IUIAutomation2) -> windows::core::Result<()> {
     unsafe { client.SetConnectionTimeout(milliseconds(CONNECTION_TIMEOUT)) }?;
     // SAFETY: as above.
     unsafe { client.SetTransactionTimeout(milliseconds(TRANSACTION_TIMEOUT)) }
-}
-
-/// Mutable state accumulated across the whole walk, shared by every level
-/// of recursion: the nodes accepted so far, and whether the walk is
-/// incomplete, against a cap or at a gone element ([`Uia::tree`]).
-struct WalkState {
-    visited: usize,
-    truncated: bool,
-}
-
-/// The per-walk parameters threaded through every level of
-/// [`walk_shaped`]: every node read as a [`TreeDump`] filled by the
-/// request, the registry that keeps each, and the walk's caps.
-struct ShapedWalk<'a> {
-    request: &'a Request<TreeDump>,
-    registry: &'a NodeIdRegistry,
-    max_depth: u32,
-    max_nodes: usize,
-}
-
-/// The recursive worker for [`Uia::tree`]. `state.visited` already counts
-/// `element` itself; children are counted as they are accepted into the
-/// walk, before recursing into them. A step that fails, rather than
-/// reaching no element, fails the walk with its error, unless its element
-/// is gone ([`reached`]).
-fn walk_shaped(
-    walker: &IUIAutomationTreeWalker,
-    element: &Cached<TreeDump>,
-    limits: &ShapedWalk<'_>,
-    depth: u32,
-    state: &mut WalkState,
-) -> windows::core::Result<TreeNode> {
-    let snapshot = element.snapshot(limits.registry);
-    let live = element.live();
-    if depth >= limits.max_depth {
-        // Peek only: is there a child we are declining to descend into?
-        if reached(
-            live.walk(walker, Direction::FirstChild, limits.request),
-            state,
-        )?
-        .is_some()
-        {
-            state.truncated = true;
-        }
-        return Ok(TreeNode {
-            snapshot,
-            children: Vec::new(),
-        });
-    }
-    let mut children = Vec::new();
-    let mut next_child = reached(
-        live.walk(walker, Direction::FirstChild, limits.request),
-        state,
-    )?;
-    while let Some(current) = next_child {
-        if state.visited >= limits.max_nodes {
-            state.truncated = true;
-            break;
-        }
-        state.visited += 1;
-        children.push(walk_shaped(walker, &current, limits, depth + 1, state)?);
-        next_child = reached(
-            current
-                .live()
-                .walk(walker, Direction::NextSibling, limits.request),
-            state,
-        )?;
-    }
-    Ok(TreeNode { snapshot, children })
-}
-
-/// A tree walker step's result, with the error carrying no failure code,
-/// which `windows` reports for a null element, read as reaching no element
-/// (`Ok(None)`). A step that failed because its element is gone
-/// (`UIA_E_ELEMENTNOTAVAILABLE`) reaches no element too, and marks the
-/// walk incomplete (`state.truncated`), since the children it would have
-/// led to are unknown. Any other error, such as UIA's transaction timeout
-/// ([`timed_out`](crate::timed_out)), stays an error.
-fn reached<T>(
-    found: windows::core::Result<T>,
-    state: &mut WalkState,
-) -> windows::core::Result<Option<T>> {
-    match found {
-        Ok(element) => Ok(Some(element)),
-        Err(error) if error.code().is_ok() => Ok(None),
-        Err(error) if error.code() == HRESULT(UIA_E_ELEMENTNOTAVAILABLE.cast_signed()) => {
-            state.truncated = true;
-            Ok(None)
-        }
-        Err(error) => Err(error),
-    }
 }
 
 /// NVDA's layout judgment (`presentationType`), ported from

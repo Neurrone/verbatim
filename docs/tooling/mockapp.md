@@ -143,6 +143,11 @@ nothing. `crates/mockapp/src/stdin.rs` documents each command in full.
   with `UIA_E_ELEMENTNOTAVAILABLE` on UIA and `RPC_E_DISCONNECTED` on
   MSAA, as an item of a menu that closed after its parent named it does.
   It raises no event.
+- `disconnect-at-first-child <id>` (UIA only) arms that node to die where
+  it stands the first time its provider is asked for its first child,
+  that call failing with `UIA_E_ELEMENTNOTAVAILABLE`, as an item of a
+  menu that closed while a reader went down into it does: a read of its
+  parent's children made before then has it. It raises no event.
 - `focus-child <container> <child>` (MSAA only) addresses the container's
   children as numbered simple children, moves the focused state to
   `child`, and raises `EVENT_OBJECT_FOCUS` on the container and then on

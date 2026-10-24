@@ -82,7 +82,15 @@ pub enum Request {
     },
     /// Asks for a dump of the target application's accessibility tree from
     /// its top-level window.
-    DumpTree,
+    DumpTree {
+        /// Whether each element's location and whether it is off the
+        /// screen are read too. They are left out otherwise, since for
+        /// some elements, a window's title bar among them, the
+        /// application's UI thread is asked for them; the reply then shows
+        /// them as not read. Absent from older requests, read as false.
+        #[serde(default)]
+        locations: bool,
+    },
     /// Asks Verbatim to write its flight recorder's current contents to
     /// disk (architecture section 9): the same snapshot a panic writes
     /// automatically, taken on demand.
@@ -244,6 +252,12 @@ pub enum ReplyPayload {
         /// the outpost's depth or node-count cap, or an element gone during
         /// the walk left the part of the tree under it unread.
         truncated: bool,
+        /// Whether each node's location and whether it is off the screen
+        /// were read, as the request asked. When not, every node's
+        /// rectangle is absent and its states never hold `Offscreen`,
+        /// which then say nothing of where it is.
+        #[serde(default)]
+        locations: bool,
     },
     /// Answer to [`Request::DumpRecorder`]: the path the dump was written
     /// to, in the `dumps` folder next to the executable.
@@ -729,7 +743,7 @@ mod tests {
     fn dump_tree_request_and_reply_round_trip() {
         let request = RequestEnvelope {
             id: 42,
-            request: Request::DumpTree,
+            request: Request::DumpTree { locations: true },
         };
         let tree_root = TreeNode {
             snapshot: NodeSnapshot {
@@ -759,6 +773,7 @@ mod tests {
             payload: ReplyPayload::DumpTree {
                 root: tree_root,
                 truncated: false,
+                locations: true,
             },
         };
 

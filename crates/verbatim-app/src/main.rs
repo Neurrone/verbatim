@@ -1127,7 +1127,8 @@ pub(crate) enum ShellCommand {
         pressed: bool,
         told: Vec<verbatim_model::TerminalKeyKind>,
     },
-    DumpTree(DumpTicket, Sender<DumpTreeResult>),
+    /// A control-plane tree dump, reading locations when the flag says.
+    DumpTree(DumpTicket, bool, Sender<DumpTreeResult>),
     /// The control-plane caller waiting for this tree dump stopped waiting:
     /// withdraw the dump if its outpost has not started it.
     DumpTreeGivenUp(DumpTicket),
@@ -1588,7 +1589,9 @@ impl ReducerThread<'_> {
                     tell_terminal_key(supervisor, outpost, kind, latency::now_ms());
                 });
             }
-            ShellCommand::DumpTree(ticket, reply) => self.dump_tree(ticket, reply),
+            ShellCommand::DumpTree(ticket, locations, reply) => {
+                self.dump_tree(ticket, locations, reply);
+            }
             ShellCommand::ShellItems(kind, deliver) => self.shell_items(kind, deliver),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
@@ -1989,10 +1992,11 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// Starts a control-plane tree dump of the application holding attention.
-    /// The answer goes to `reply`; the requester waits on it with its own
-    /// timeout, and a late answer to a request it gave up on is dropped.
-    fn dump_tree(&mut self, ticket: DumpTicket, reply: Sender<DumpTreeResult>) {
+    /// Starts a control-plane tree dump of the application holding attention,
+    /// each element's location read only with `locations`. The answer goes
+    /// to `reply`; the requester waits on it with its own timeout, and a
+    /// late answer to a request it gave up on is dropped.
+    fn dump_tree(&mut self, ticket: DumpTicket, locations: bool, reply: Sender<DumpTreeResult>) {
         let Some(pid) = self.state.attention() else {
             let _ = reply.try_send(Err("no application holds attention yet".to_owned()));
             return;
@@ -2007,7 +2011,7 @@ impl ReducerThread<'_> {
         let command = SupervisorToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
-            query: Query::DumpTree,
+            query: Query::DumpTree { locations },
             timing: EventTiming::default(),
         };
         self.send(outpost, id, command);
@@ -2628,7 +2632,7 @@ fn control_handlers(config: ControlHandlersConfig) -> ServerHandlers {
                 .map_err(|_| "the gesture router is gone".to_owned())
         }),
         latency: Box::new(move |last_n| ledger.recent(last_n)),
-        dump_tree: Box::new(move || request_dump_tree(&command_tx)),
+        dump_tree: Box::new(move |locations| request_dump_tree(&command_tx, locations)),
         dump_recorder: Box::new(move || {
             flight_dump::dump_now(&recorder, &dumps_dir)
                 .map(|path| path.display().to_string())
@@ -2660,11 +2664,11 @@ const DUMP_FOCUS_TIMEOUT: Duration = Duration::from_secs(5);
 /// request table, then waits for the answer with a timeout, withdrawing the
 /// dump when it expires. Every request has its own id, so a late answer to
 /// one that timed out can never satisfy a newer one.
-fn request_dump_tree(command_tx: &Commands) -> DumpTreeResult {
+fn request_dump_tree(command_tx: &Commands, locations: bool) -> DumpTreeResult {
     let ticket = DumpTicket::mint();
     let (reply_tx, reply_rx) = bounded(1);
     command_tx
-        .send(ShellCommand::DumpTree(ticket, reply_tx))
+        .send(ShellCommand::DumpTree(ticket, locations, reply_tx))
         .map_err(|_| "the reducer thread is gone".to_owned())?;
     reply_rx
         .recv_timeout(DUMP_TREE_TIMEOUT)

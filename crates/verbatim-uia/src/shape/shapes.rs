@@ -101,7 +101,10 @@ impl ValueSet {
 }
 
 uia_shape! {
-    /// What an element's states are mapped from.
+    /// What an element's states are mapped from, but whether it is off the
+    /// screen, which is its [`Place`]'s: a read of many elements, such as
+    /// a walk's or a container's children's, never asks for that
+    /// (`docs/design/uia-shapes.md`, decision 9).
     #[allow(clippy::struct_excessive_bools, reason = "one field per cached UIA flag")]
     pub struct States {
         gates: none;
@@ -113,8 +116,6 @@ uia_shape! {
             focusable: UIA_IsKeyboardFocusablePropertyId => bool,
             /// Whether it is enabled.
             enabled: UIA_IsEnabledPropertyId => bool,
-            /// Whether it is off the screen.
-            offscreen: UIA_IsOffscreenPropertyId => bool,
             /// Whether it has the Toggle pattern.
             toggle_available: UIA_IsTogglePatternAvailablePropertyId => bool,
             /// The toggle state, meaningful only with the pattern.
@@ -145,14 +146,16 @@ uia_shape! {
 }
 
 impl States {
-    /// The states, for an element whose role is `role`.
+    /// The states, for an element whose role is `role`, off the screen
+    /// when `offscreen` says so: the element's [`Place`] read it, or
+    /// `false` when nothing did.
     #[must_use]
-    pub fn states(&self, role: Role) -> StateSet {
+    pub fn states(&self, role: Role, offscreen: bool) -> StateSet {
         let raw = RawUiaStates {
             has_focus: self.has_focus,
             focusable: self.focusable,
             enabled: self.enabled,
-            offscreen: self.offscreen,
+            offscreen,
             toggle_available: self.toggle_available,
             toggle_state: self.toggle_state,
             expand_available: self.expand_available,
@@ -169,73 +172,28 @@ impl States {
 }
 
 uia_shape! {
-    /// What a dialog's child's states are mapped from: [`States`] but
-    /// whether it is off the screen, which a dialog's text is never gathered
-    /// by, and which costs a top-level dialog's title bar a request to the
-    /// window's thread (`WM_GETTITLEBARINFOEX`) that Windows answers for one
-    /// window at a time across the desktop.
-    #[allow(clippy::struct_excessive_bools, reason = "one field per cached UIA flag")]
-    pub struct DialogStates {
+    /// Where an element is: its bounding rectangle and whether it is off
+    /// the screen. Read only for the one element that needs them, never by
+    /// a read of many: for some elements UIA answers either only by asking
+    /// the application's UI thread, a top-level window's title bar and its
+    /// buttons among them, for which it sends `WM_GETTITLEBARINFOEX`, which
+    /// Windows answers for one window at a time across the desktop, about
+    /// 6 ms alone and seconds under load, while that thread waits. NVDA's
+    /// base cache, on every element it walks to or is sent with an event,
+    /// holds neither, and it reads both per object when it needs them
+    /// (`UIAHandler/__init__.py`, `baseCachePropertyIDs`;
+    /// `docs/design/uia-shapes.md`, decision 9).
+    pub struct Place {
         gates: none;
         groups {}
         properties {
-            /// Whether it has the keyboard focus.
-            has_focus: UIA_HasKeyboardFocusPropertyId => bool,
-            /// Whether it can take the keyboard focus.
-            focusable: UIA_IsKeyboardFocusablePropertyId => bool,
-            /// Whether it is enabled.
-            enabled: UIA_IsEnabledPropertyId => bool,
-            /// Whether it has the Toggle pattern.
-            toggle_available: UIA_IsTogglePatternAvailablePropertyId => bool,
-            /// The toggle state, meaningful only with the pattern.
-            toggle_state: UIA_ToggleToggleStatePropertyId => i32,
-            /// Whether it has the `ExpandCollapse` pattern.
-            expand_available: UIA_IsExpandCollapsePatternAvailablePropertyId => bool,
-            /// The expand state, meaningful only with the pattern.
-            expand_state: UIA_ExpandCollapseExpandCollapseStatePropertyId => i32,
-            /// Whether it has the `SelectionItem` pattern.
-            selection_available: UIA_IsSelectionItemPatternAvailablePropertyId => bool,
-            /// Whether it is selected.
-            selected: UIA_SelectionItemIsSelectedPropertyId => bool,
-            /// Whether it holds a password.
-            password: UIA_IsPasswordPropertyId => bool,
-            /// Whether a form requires it.
-            required: UIA_IsRequiredForFormPropertyId => bool,
-            /// Whether its entry is valid, `None` when not supported.
-            data_valid: UIA_IsDataValidForFormPropertyId => optional_bool,
-            /// Whether it has the `Value` pattern.
-            value_available: UIA_IsValuePatternAvailablePropertyId => bool,
-            /// Whether its value is read-only, meaningful only with the
-            /// pattern.
-            value_read_only: UIA_ValueIsReadOnlyPropertyId => optional_bool,
+            /// Where it is on the screen.
+            rect: UIA_BoundingRectanglePropertyId => rect,
+            /// Whether it is off the screen.
+            offscreen: UIA_IsOffscreenPropertyId => bool,
         }
         prefetch {}
         covers {}
-    }
-}
-
-impl DialogStates {
-    /// The states, for an element whose role is `role`, never off the
-    /// screen.
-    #[must_use]
-    pub fn states(&self, role: Role) -> StateSet {
-        let raw = RawUiaStates {
-            has_focus: self.has_focus,
-            focusable: self.focusable,
-            enabled: self.enabled,
-            offscreen: false,
-            toggle_available: self.toggle_available,
-            toggle_state: self.toggle_state,
-            expand_available: self.expand_available,
-            expand_state: self.expand_state,
-            selection_available: self.selection_available,
-            selected: self.selected,
-            password: self.password,
-            required: self.required,
-            data_valid: self.data_valid,
-            value_read_only: self.value_available && self.value_read_only == Some(true),
-        };
-        states_from_uia(&raw, role)
     }
 }
 
@@ -356,6 +314,8 @@ uia_shape! {
     /// registration delivers it: everything a role, name, value, or state
     /// set is mapped from, and no detail, since a change of states carries
     /// the node's whole state set and no property change reports a detail.
+    /// An event registration's cache never holds the element's [`Place`],
+    /// so a state set it carries is never off the screen.
     pub struct PropertyEvent {
         gates: none;
         groups {
@@ -391,7 +351,7 @@ impl PropertyEvent {
             role,
             name,
             value,
-            states: self.states.states(role),
+            states: self.states.states(role, false),
             details: NodeDetails::default(),
         }
     }
@@ -508,7 +468,9 @@ uia_shape! {
 uia_shape! {
     /// A node as Core is told of it: a focus, a selection, a neighbour, a
     /// window, a tree dump's node. Its four details are fetched only when
-    /// the active theme reports them ([`NodeGates`]).
+    /// the active theme reports them, and its [`Place`] only for a read of
+    /// the one element that needs it, never for a read of many, such as an
+    /// ancestor walk or a tree dump ([`NodeGates`]).
     pub struct Node {
         gates: NodeGates;
         groups {
@@ -526,12 +488,12 @@ uia_shape! {
             shortcut: Shortcut,
             /// Its position in its set.
             position: Position,
+            /// Where it is: its rectangle and whether it is off the screen.
+            place: Place,
         }
         properties {
             /// The name.
             name: UIA_NamePropertyId => string,
-            /// Where it is on the screen.
-            rect: UIA_BoundingRectanglePropertyId => rect,
         }
         gated_properties {
             /// Its one-based level, in a tree or among headings.
@@ -543,7 +505,9 @@ uia_shape! {
 
 impl Node {
     /// The node's parts, with runtime id `runtime_id`: a detail its gate
-    /// left unfetched is `None`, as one the element does not report.
+    /// left unfetched is `None`, as one the element does not report, and a
+    /// node whose place was not fetched has no rectangle and is not off
+    /// the screen.
     #[must_use]
     pub fn parts(&self, runtime_id: Vec<i32>) -> CachedUiaParts {
         let role = self.role.role();
@@ -561,16 +525,17 @@ impl Node {
                 .as_ref()
                 .and_then(|position| position.size_of_set),
             level: self.level.flatten(),
-            rect: self.rect,
+            rect: self.place.as_ref().and_then(|place| place.rect),
             top_level_client: false,
         };
         strip_bidi_controls([&mut name, &mut value, &mut details.description]);
+        let offscreen = self.place.as_ref().is_some_and(|place| place.offscreen);
         CachedUiaParts {
             runtime_id,
             role,
             name,
             value,
-            states: self.states.states(role),
+            states: self.states.states(role, offscreen),
             details,
         }
     }
@@ -611,9 +576,6 @@ impl Cached<Node> {
         snapshot_of(&self.read(), &self.narrow(), registry)
     }
 }
-
-/// A tree dump's node: a [`Node`], as every node reported to Core is.
-pub type TreeDump = Node;
 
 uia_shape! {
     /// An ancestor of a focus, or a window an MSAA walk crosses into: a
@@ -669,8 +631,8 @@ impl Cached<Ancestor> {
 
 uia_shape! {
     /// A child of a dialog, or of a container in it, whose text the dialog's
-    /// own text is gathered from: its role, value, states but whether it is
-    /// off the screen ([`DialogStates`]) and name, and its description
+    /// own text is gathered from: its role, value, states, which never hold
+    /// whether it is off the screen ([`Place`]), and name, and its description
     /// whatever the theme, as NVDA's `basicText` includes it (decision 5 of
     /// `docs/design/uia-shapes.md`).
     pub struct DialogText {
@@ -681,7 +643,7 @@ uia_shape! {
             /// What its value is read from.
             value: ValueSet,
             /// What its states are mapped from.
-            states: DialogStates,
+            states: States,
             /// Its description.
             description: Description,
         }
@@ -709,7 +671,7 @@ impl DialogText {
             role,
             name,
             value,
-            states: self.states.states(role),
+            states: self.states.states(role, false),
             details: NodeDetails {
                 description,
                 ..NodeDetails::default()

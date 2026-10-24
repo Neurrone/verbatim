@@ -13,6 +13,7 @@
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `answer-parent <id> <fail|none|usual> [<after>]`, `report-window <id>`,
 //! `take-runtime-id <id> <from>`, `replace-items <id>`, `disconnect <id>`,
+//! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `hold`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
@@ -223,6 +224,13 @@ pub(crate) enum Command {
     /// on MSAA, as an element of a menu that closed after its parent named
     /// it does. Raises no event.
     Disconnect(String),
+    /// `disconnect-at-first-child <id>`: node `id` dies where it stands
+    /// the first time its provider is asked for its first child, and that
+    /// call fails with `UIA_E_ELEMENTNOTAVAILABLE`, as an element of a menu
+    /// that closed while a reader went down into it. Its parent still lists
+    /// it, and a read of the parent's children made before then has it.
+    /// Raises no event. UIA-only.
+    DisconnectAtFirstChild(String),
     /// `focus-child <container> <child>`: addresses `container`'s children
     /// as numbered simple children from then on, moves the focused state to
     /// `child`, and raises `EVENT_OBJECT_FOCUS` on `container` itself and
@@ -396,6 +404,9 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "take-runtime-id" => take_runtime_id(rest),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),
         "disconnect" if !rest.is_empty() => Some(Command::Disconnect(rest.to_owned())),
+        "disconnect-at-first-child" if !rest.is_empty() => {
+            Some(Command::DisconnectAtFirstChild(rest.to_owned()))
+        }
         "active-text-position" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;
