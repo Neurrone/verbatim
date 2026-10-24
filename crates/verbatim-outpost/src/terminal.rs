@@ -227,10 +227,12 @@ pub fn speech_of(step: &Step) -> TerminalSpeech {
         .speech
         .iter()
         .map(|speech| match speech {
-            Speech::Line { text, .. }
-            | Speech::Growth { text, .. }
-            | Speech::Changed { text, .. }
-            | Speech::Held { text } => TerminalItem::Output(text.clone()),
+            Speech::Line { text, .. } | Speech::Changed { text, .. } | Speech::Held { text } => {
+                TerminalItem::Output(text.clone())
+            }
+            // What a line gained, without the space that parts it from the
+            // text it follows, which says nothing.
+            Speech::Growth { text, .. } => TerminalItem::Output(text.trim_start().to_owned()),
             Speech::Skipped { count, .. } => TerminalItem::Skipped(match *count {
                 Counted::Lines(lines) => Skipped::Count(u32::try_from(lines).unwrap_or(u32::MAX)),
                 Counted::MoreThan(lines) => {

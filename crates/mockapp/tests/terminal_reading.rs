@@ -720,10 +720,10 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
         ("ready> echo onex    \r\n", 16)
     );
     // The prompt's line grew with no key told to the reading rules: what
-    // it gained, its last word, unfinished with the caret after it, held
-    // until the quiet period has passed (`docs/design/terminal-model.md`,
-    // section 5.3).
-    assert_eq!(reported(&outpost, term), lines(&[" echo "]));
+    // it gained, without the space before it, its last word, unfinished
+    // with the caret after it, held until the quiet period has passed
+    // (`docs/design/terminal-model.md`, section 5.3).
+    assert_eq!(reported(&outpost, term), lines(&["echo "]));
     assert_eq!(reported(&outpost, term), lines(&["onex"]));
     outpost.settled();
     drop(outpost);

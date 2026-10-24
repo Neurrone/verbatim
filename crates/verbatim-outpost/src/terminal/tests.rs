@@ -193,7 +193,7 @@ fn what_the_rules_say_is_cores_speech_in_order() {
             },
             Speech::Growth {
                 row: 6,
-                text: "grown".to_owned(),
+                text: " grown".to_owned(),
             },
             Speech::Echo {
                 row: 2,
