@@ -73,7 +73,9 @@
 //! - A line is reported once while its text stays on the screen: a line or
 //!   a summary's count is repeated when as many lines with its text were
 //!   reported, at reads that each showed at least that many, as the read
-//!   shows. While the alternate screen is up, the main screen's lines are
+//!   shows; a line of the last read that the full history rotated out since,
+//!   or that was erased with the history, no longer counts. While the
+//!   alternate screen is up, the main screen's lines are
 //!   on the screen only as often as the alternate screen shows their text.
 //!   Among the new lines of one read, those reported as lines or in
 //!   summaries are reported top to bottom.
@@ -111,7 +113,7 @@ use std::rc::Rc;
 use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
 
-use crate::conformance::Stream;
+use crate::conformance::{Chunk, Stream};
 use crate::{Flavor, Query, Refused, RowId, Snapshot, Terminal};
 
 /// A row of a read as it truly is: its identity, its text as the read
@@ -971,14 +973,20 @@ fn check_read(check: &mut Check, index: usize) {
         state.accounted = vec![false; lines.list.len()];
         state.said = vec![false; lines.list.len()];
         // A line of the last read on the main screen that the full history
-        // rotated out since took its text off the screen, so its report no
-        // longer covers a line with that text printed again.
+        // rotated out since, or that was erased with the history, took its
+        // text off the screen, so its report no longer covers a line with
+        // that text printed again. The history is erased from the buffer's
+        // front, so the rows erased since are the last read's first rows.
+        let erased: usize = match (&check.alternate, check.last) {
+            (None, Some(last)) => reads[last + 1..=index].iter().map(|read| read.erased).sum(),
+            _ => 0,
+        };
         let left: Vec<String> = check
             .last_lines()
             .map(|last| {
                 last.list
                     .iter()
-                    .filter(|line| check.rotated.contains(&line.first))
+                    .filter(|line| check.rotated.contains(&line.first) || line.rows.end <= erased)
                     .map(|line| line.text.clone())
                     .collect()
             })
@@ -1730,6 +1738,15 @@ impl Size {
 /// line, and a word longer than the small terminal's width.
 pub const WORDS: [&str; 6] = ["ok", "cat", "dog", "hello", "a b", "wrapping-word"];
 
+/// The status rows the random streams draw as a footer or a header: a
+/// spinner whose symbol alone changes, and a timer that ticks.
+pub const STATUSES: [&str; 3] = ["\u{280b} 1s", "\u{2819} 1s", "\u{2819} 2s"];
+
+/// Pieces of text split inside a character's encoding, as a program
+/// streaming bytes writes them: "café" split inside its "é", and a check
+/// mark split after its second byte.
+pub const PIECES: [&[u8]; 4] = [b"caf\xc3", b"\xa9", b"ok \xe2\x9c", b"\x93"];
+
 /// One of the operations programs do to a terminal
 /// (`docs/design/terminal-model.md`, section 3.2), as the oracle's streams
 /// write them.
@@ -1737,6 +1754,12 @@ pub const WORDS: [&str; 6] = ["ok", "cat", "dog", "hello", "a b", "wrapping-word
 pub enum Op {
     /// Text written at the cursor.
     Write(&'static str),
+    /// Bytes written at the cursor, which may end or start inside a
+    /// character's encoding.
+    Bytes(&'static [u8]),
+    /// The row erased and the cursor returned to its start, then text
+    /// written, as a program rewrites its last line for each token.
+    Rewrite(&'static str),
     /// A line feed alone.
     LineFeed,
     /// A carriage return alone.
@@ -1764,6 +1787,37 @@ pub enum Op {
     /// The screen's bottom two rows erased and drawn again, as Ink redraws
     /// its region, leaving the cursor at their end.
     Redraw(&'static str),
+    /// A header drawn on the screen's first row with the cursor saved and
+    /// restored around it.
+    Header(&'static str),
+    /// Rows erased upward from the cursor's, the cursor left at the start
+    /// of the highest, as Ink erases its region before drawing it again.
+    EraseLines(u8),
+    /// The end of the row from a column erased and a word written on the
+    /// next row, as a program that wraps its own text moves a partly
+    /// written word down.
+    WordDown {
+        /// The column the moved word started at, counted from 1.
+        column: u8,
+        /// The word, written again on the next row.
+        word: &'static str,
+    },
+    /// A row inserted above a footer on the screen's last row: the
+    /// screen's first row deleted, and a row inserted above the footer,
+    /// the cursor left at its start.
+    InsertAboveFooter,
+    /// The screen erased and text written from its top, as a program
+    /// repaints its screen each frame.
+    Repaint(&'static str),
+    /// A row above the cursor's rewritten in bold with the cursor saved and
+    /// restored around it, as a Markdown renderer restyles a line once its
+    /// markup closes.
+    Restyle {
+        /// How many rows above the cursor's.
+        rows: u8,
+        /// The row's new text.
+        text: &'static str,
+    },
     /// A scroll region from row `top` to row `bottom`, counted from 1.
     Region {
         /// Its first row.
@@ -1797,9 +1851,19 @@ pub enum Op {
 impl Op {
     /// What a program writes for this operation.
     #[must_use]
-    pub fn bytes(self) -> String {
+    pub fn bytes(self) -> Vec<u8> {
+        match self {
+            Self::Bytes(bytes) => bytes.to_vec(),
+            other => other.text().into_bytes(),
+        }
+    }
+
+    /// What a program writes for an operation that writes text.
+    fn text(self) -> String {
         match self {
             Self::Write(text) => text.to_owned(),
+            Self::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            Self::Rewrite(text) => format!("\r\x1b[2K{text}"),
             Self::LineFeed => "\n".to_owned(),
             Self::CarriageReturn => "\r".to_owned(),
             Self::Newline => "\r\n".to_owned(),
@@ -1818,6 +1882,16 @@ impl Op {
             Self::EraseBelow => "\x1b[J".to_owned(),
             Self::Footer(text) => format!("\x1b7\x1b[99;1H\x1b[2K{text}\x1b8"),
             Self::Redraw(text) => format!("\x1b[99;1H\x1b[A\r\x1b[J{text}\r\n~{text}"),
+            Self::Header(text) => format!("\x1b7\x1b[1;1H\x1b[2K{text}\x1b8"),
+            Self::EraseLines(rows) => {
+                "\x1b[2K\x1b[1A".repeat(usize::from(rows.saturating_sub(1))) + "\x1b[2K\x1b[G"
+            }
+            Self::WordDown { column, word } => format!("\x1b[{column}G\x1b[K\r\n{word}"),
+            Self::InsertAboveFooter => "\x1b[H\x1b[M\x1b[99;1H\x1b[A\x1b[L".to_owned(),
+            Self::Repaint(text) => format!("\x1b[H\x1b[2J{text}"),
+            Self::Restyle { rows, text } => {
+                format!("\x1b7\x1b[{rows}A\r\x1b[2K\x1b[1m{text}\x1b[m\x1b8")
+            }
             Self::Region { top, bottom } => format!("\x1b[{top};{bottom}r"),
             Self::ResetRegion => "\x1b[r".to_owned(),
             Self::InsertRows(rows) => format!("\x1b[{rows}L"),
@@ -1839,16 +1913,16 @@ impl Op {
 /// the corpus's shape, and its `about` lists the steps.
 #[must_use]
 pub fn stream(steps: &[(Op, bool)]) -> Stream {
-    let mut chunks = Vec::new();
-    let mut chunk = String::new();
+    let mut chunks: Vec<Chunk> = Vec::new();
+    let mut chunk: Vec<u8> = Vec::new();
     for (op, read) in steps {
-        chunk.push_str(&op.bytes());
+        chunk.extend_from_slice(&op.bytes());
         if *read {
-            chunks.push(std::mem::take(&mut chunk));
+            chunks.push(std::mem::take(&mut chunk).into());
         }
     }
     if !chunk.is_empty() {
-        chunks.push(chunk);
+        chunks.push(chunk.into());
     }
     Stream {
         about: format!("{steps:?}"),
@@ -1900,11 +1974,15 @@ pub fn every_stream(alphabet: &[Op], longest: usize) -> Vec<Stream> {
 
 /// One operation of the random streams, with their weights: words written
 /// and lines ended most often, and every other operation of [`Op`] with
-/// arguments on [`Size::SMALL`].
+/// arguments on [`Size::SMALL`]; footers and headers draw words or
+/// [`STATUSES`].
 pub fn random_op() -> impl Strategy<Value = Op> {
     let word = || prop::sample::select(&WORDS[..]);
+    let status = || prop::sample::select([&WORDS[..], &STATUSES[..]].concat());
     prop_oneof![
         4 => word().prop_map(Op::Write),
+        1 => prop::sample::select(&PIECES[..]).prop_map(Op::Bytes),
+        1 => word().prop_map(Op::Rewrite),
         4 => Just(Op::Newline),
         1 => Just(Op::LineFeed),
         1 => Just(Op::CarriageReturn),
@@ -1913,8 +1991,14 @@ pub fn random_op() -> impl Strategy<Value = Op> {
         1 => (-6..=6_i8).prop_map(Op::MoveColumns),
         1 => (0..=2_u8).prop_map(Op::EraseLine),
         1 => Just(Op::EraseBelow),
-        1 => word().prop_map(Op::Footer),
+        1 => status().prop_map(Op::Footer),
         1 => word().prop_map(Op::Redraw),
+        1 => status().prop_map(Op::Header),
+        1 => (1..=3_u8).prop_map(Op::EraseLines),
+        1 => (1..=12_u8, word()).prop_map(|(column, word)| Op::WordDown { column, word }),
+        1 => Just(Op::InsertAboveFooter),
+        1 => word().prop_map(Op::Repaint),
+        1 => (1..=3_u8, word()).prop_map(|(rows, text)| Op::Restyle { rows, text }),
         1 => (1..=5_u8, 1..=5_u8).prop_map(|(top, bottom)| Op::Region { top, bottom }),
         1 => Just(Op::ResetRegion),
         1 => (1..=2_u8).prop_map(Op::InsertRows),

@@ -580,16 +580,22 @@ changed cost, and several progress lines settling.
 oracle, which judges by text, over the conformance corpus in both
 terminals, the oracle's 512 random streams and every stream of up to four
 operations of its tiny alphabet, reading at the streams' times. Every
-case passes but four random streams the file pins, each with its
-violations and one of three open design questions: output repeating
-earlier output rotated a full history past the smallest rotation the
-block shows, so lines above the read are missed (one stream); the last
-read had no history, so no block, and a flood filled and rotated the
-buffer, a row whose text was written again in its place taken as kept or
-rewritten (two streams); and a row rewritten and rotated into the
-history, held as volatile by the reader, which follows the rotation,
-while the oracle's premise compares lines at one place counted from the
-screen's top (one stream). The corpus and every tiny stream pass.
+tiny stream passes. The cases that do not pass are pinned, each with its
+violations and the open design question that decides it (`Question`):
+corpus streams by name and terminal, random streams by number, and, for
+each question, the smallest streams that show it, written out as
+operations. The questions: output repeating earlier output rotated a full
+history past the smallest rotation the block shows, so lines above the
+read are missed; the last read had no history, so no block, and a flood
+filled and rotated the buffer, a row whose text was written again in its
+place taken as kept or rewritten; a row's volatility carried to a row
+paired with it by likeness elsewhere, as Pi's model selector and every
+status row drawn a row lower as the output above it grows, in
+`verbatim-stream-test`'s recordings; a lingering row taken back when its
+text comes back as a row of another line; a row silent for lost text
+whose regrowth is spoken from what it last said, while the oracle judges
+it from what the last read showed; and a clear over rows of repeated
+text paired with the wrong copies.
 
 ## Units
 

@@ -17,11 +17,125 @@ pub struct Stream {
     /// What the stream exercises.
     pub about: String,
     /// The chunks, each written whole before the terminal is read.
-    pub chunks: Vec<String>,
+    pub chunks: Vec<Chunk>,
     /// For a recorded stream, when each chunk came, in milliseconds from
     /// the program's start; empty for a stream written by hand.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub at_ms: Vec<u64>,
+}
+
+/// One chunk of a stream: the bytes a program wrote at once. A chunk is
+/// kept as its text, or, when it is not text on its own, as when it ends
+/// or starts inside a character's encoding, as its bytes in hexadecimal
+/// (`{"hex": "c3"}`).
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(from = "ChunkForm", into = "ChunkForm")]
+pub struct Chunk(Vec<u8>);
+
+impl Chunk {
+    /// The chunk's bytes.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<Vec<u8>> for Chunk {
+    fn from(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<String> for Chunk {
+    fn from(text: String) -> Self {
+        Self(text.into_bytes())
+    }
+}
+
+impl From<&str> for Chunk {
+    fn from(text: &str) -> Self {
+        Self(text.as_bytes().to_vec())
+    }
+}
+
+/// How a chunk is kept in a stream's file.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+enum ChunkForm {
+    /// Text.
+    Text(String),
+    /// Bytes that are not text on their own, in hexadecimal.
+    Bytes {
+        /// Two hexadecimal digits a byte.
+        hex: String,
+    },
+}
+
+impl From<ChunkForm> for Chunk {
+    fn from(form: ChunkForm) -> Self {
+        match form {
+            ChunkForm::Text(text) => Self(text.into_bytes()),
+            ChunkForm::Bytes { hex } => Self(
+                (0..hex.len() / 2)
+                    .filter_map(|at| u8::from_str_radix(hex.get(at * 2..at * 2 + 2)?, 16).ok())
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl From<Chunk> for ChunkForm {
+    fn from(chunk: Chunk) -> Self {
+        match String::from_utf8(chunk.0) {
+            Ok(text) => Self::Text(text),
+            Err(error) => Self::Bytes {
+                hex: error
+                    .as_bytes()
+                    .iter()
+                    .fold(String::new(), |mut hex, byte| {
+                        let _ = write!(hex, "{byte:02x}");
+                        hex
+                    }),
+            },
+        }
+    }
+}
+
+/// For each chunk of `stream`, whether the stream's bytes up to its end
+/// end inside a character's encoding, so that a terminal holds the
+/// character's first bytes until the rest come.
+#[must_use]
+pub fn inside_character(stream: &Stream) -> Vec<bool> {
+    let mut tail: Vec<u8> = Vec::new();
+    stream
+        .chunks
+        .iter()
+        .map(|chunk| {
+            tail.extend_from_slice(chunk.as_bytes());
+            // The last byte that is not a continuation byte, and how many
+            // bytes its character takes.
+            let lead = tail
+                .iter()
+                .rposition(|byte| byte & 0xc0 != 0x80)
+                .filter(|&at| tail.len() - at <= 4);
+            let inside = lead.is_some_and(|at| {
+                let needs = match tail[at] {
+                    0xc0..=0xdf => 2,
+                    0xe0..=0xef => 3,
+                    0xf0..=0xf7 => 4,
+                    _ => 1,
+                };
+                tail.len() - at < needs
+            });
+            if inside {
+                let at = lead.unwrap_or(0);
+                tail.drain(..at);
+            } else {
+                tail.clear();
+            }
+            inside
+        })
+        .collect()
 }
 
 /// What one read of a real terminal answered after a chunk.

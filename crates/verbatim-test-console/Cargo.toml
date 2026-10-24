@@ -1,6 +1,6 @@
 [package]
 name = "verbatim-test-console"
-description = "A console the tests start, conhost.exe running PowerShell in a hidden window, for tests of a console window's provider process"
+description = "A console the tests start, conhost.exe running PowerShell in a hidden window, for tests of a console window's provider process, and verbatim-stream-test, a program that streams text into a terminal each way programs do"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true

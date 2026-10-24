@@ -446,12 +446,16 @@ impl Grid {
     pub fn scroll_region_up(&mut self, count: usize) {
         let (top, bottom) = self.region;
         for _ in 0..count {
+            let kept = self.edge_mark(bottom);
             let row = self.scrolled_in_row();
             let first = self.coordinate(top);
             let last = self.coordinate(bottom);
             let buffer = self.buffer_mut();
             buffer.rows.remove(first);
             buffer.rows.insert(last, row);
+            if let Some(wraps) = kept {
+                self.set_wraps(bottom, wraps);
+            }
         }
     }
 
@@ -459,13 +463,31 @@ impl Grid {
     pub fn scroll_region_down(&mut self, count: usize) {
         let (top, bottom) = self.region;
         for _ in 0..count {
+            let kept = self.edge_mark(top);
             let row = self.scrolled_in_row();
             let first = self.coordinate(top);
             let last = self.coordinate(bottom);
             let buffer = self.buffer_mut();
             buffer.rows.remove(last);
             buffer.rows.insert(first, row);
+            if let Some(wraps) = kept {
+                self.set_wraps(top, wraps);
+            }
         }
+    }
+
+    /// For a scroll region smaller than the screen, whether the row at its
+    /// edge `row`, where a blank row comes in as it scrolls, wraps: both
+    /// terminals move the region's rows with their marks that they wrap,
+    /// but the blank row that comes in keeps the mark its place had, so a
+    /// row filled to its end at the region's bottom, which scrolls the
+    /// region as the next character wraps, leaves the row that comes in
+    /// marked too (measured 2026-10-24, by the conformance corpus's
+    /// `stream-append-header`). `None` for a region of the whole screen.
+    fn edge_mark(&self, row: usize) -> Option<bool> {
+        let (top, bottom) = self.region;
+        (top != 0 || bottom != self.height - 1)
+            .then(|| self.buffer().rows[self.coordinate(row)].wraps)
     }
 
     /// Reverse index: up a row, or the region scrolls down.

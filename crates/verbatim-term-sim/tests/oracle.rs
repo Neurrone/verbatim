@@ -1356,6 +1356,27 @@ fn a_line_printed_again_after_its_text_left_the_full_history_may_be_reported() {
 }
 
 #[test]
+fn a_line_printed_again_after_its_text_was_erased_with_the_history_may_be_reported() {
+    // Clearing the screen pushes "ok" into the history, which is then
+    // erased, and "ok" is printed again on the cleared screen.
+    let stream = stream(&[
+        (Op::Write("ok"), false),
+        (Op::Clear, true),
+        (Op::ClearHistory, false),
+        (Op::Write("ok"), true),
+    ]);
+    let mut reader = Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![line(0, "ok")]),
+            says(vec![line(0, "ok")]),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut reader), []);
+}
+
+#[test]
 fn a_held_line_spoken_as_last_read_after_it_left_the_full_history_is_resolved() {
     // "abc" grows from "ab" with its word held, and the flood rotates it
     // out of the small terminal's full buffer before the next read.
@@ -1626,7 +1647,7 @@ fn a_line_starting_above_the_read_is_reported_from_the_reads_first_row() {
     let long = "x".repeat(70);
     let stream = Stream {
         about: "a line of 70 characters, longer than the screen".to_owned(),
-        chunks: vec![long.clone()],
+        chunks: vec![long.clone().into()],
         at_ms: Vec::new(),
     };
     // The screen holds the line's last 58 characters.
@@ -1696,7 +1717,7 @@ fn a_line_joined_to_a_row_of_spaces_above_it_is_not_new() {
     // spaces included, so the row of spaces joins the line below it.
     let stream = Stream {
         about: "a line, then a row of spaces written above it".to_owned(),
-        chunks: vec!["\r\nab".to_owned(), format!("\x1b[H{}", " ".repeat(12))],
+        chunks: vec!["\r\nab".into(), format!("\x1b[H{}", " ".repeat(12)).into()],
         at_ms: Vec::new(),
     };
     let mut reader = Scripted::new(vec![Heard::default(), says(vec![line(1, "ab")])]);
@@ -1708,7 +1729,7 @@ fn a_line_joined_to_a_row_of_spaces_above_it_is_not_new() {
 fn rotated(more: &str) -> Stream {
     Stream {
         about: format!("a line filling the tiny buffer, then {more:?}"),
-        chunks: vec!["cdefgcdefgcdef".to_owned(), more.to_owned()],
+        chunks: vec!["cdefgcdefgcdef".into(), more.into()],
         at_ms: Vec::new(),
     }
 }

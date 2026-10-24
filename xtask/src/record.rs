@@ -14,6 +14,14 @@
 //! pseudoconsole's own requests to its terminal (win32 input mode, focus
 //! events) are left out of the saved stream, since they are not the
 //! program's and would change how the conformance player's console answers.
+//!
+//! A recipe whose program logs its own writes (`write_log`) is saved from
+//! that log instead, one chunk a write: the pseudoconsole's rendering
+//! merges and redraws what the program wrote, so a program's own ways of
+//! writing, such as rewriting a line or a character split between two
+//! writes, survive only in its log. Its command names the log as
+//! `{write_log}`, and `{bin}` names the folder this program was built
+//! into, where the workspace's other programs are built too.
 
 use std::ffi::c_void;
 use std::fs::File;
@@ -24,7 +32,7 @@ use std::process::ExitCode;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use verbatim_term_sim::conformance::{Stream, folder};
+use verbatim_term_sim::conformance::{Chunk, Stream, folder};
 use windows::Win32::Foundation::{CloseHandle, HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Console::{COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON};
 use windows::Win32::System::Pipes::CreatePipe;
@@ -45,6 +53,10 @@ struct Recipe {
     command: String,
     /// The input, in order.
     steps: Vec<Step>,
+    /// Whether the stream is the program's log of its own writes rather
+    /// than what the pseudoconsole wrote.
+    #[serde(default)]
+    write_log: bool,
 }
 
 /// One step of a recipe's input.
@@ -189,7 +201,20 @@ fn record(path: &Path) -> Result<Stream, String> {
     let recipe: Recipe =
         serde_json::from_str(&std::fs::read_to_string(path).map_err(|error| error.to_string())?)
             .map_err(|error| error.to_string())?;
-    let console = Pseudoconsole::start(&recipe.command)?;
+    let log = std::env::temp_dir().join(format!("verbatim-write-log-{}.txt", std::process::id()));
+    let bin = std::env::current_exe()
+        .map_err(|error| error.to_string())?
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or("this program's folder is unknown")?;
+    let command = recipe
+        .command
+        .replace("{write_log}", &log.to_string_lossy())
+        .replace("{bin}", &bin.to_string_lossy());
+    if recipe.write_log {
+        let _ = std::fs::remove_file(&log);
+    }
+    let console = Pseudoconsole::start(&command)?;
     let started = Instant::now();
     let (sender, receiver) = mpsc::channel::<Output>();
     let mut output = console
@@ -259,14 +284,47 @@ fn record(path: &Path) -> Result<Stream, String> {
         reads.push(read);
     }
     let _ = reader.join();
+    if recipe.write_log {
+        let text = std::fs::read_to_string(&log)
+            .map_err(|error| format!("no write log at {}: {error}", log.display()))?;
+        let _ = std::fs::remove_file(&log);
+        return logged(recipe.about, &text);
+    }
     Ok(chunks(recipe.about, &reads, &typed_at, started))
+}
+
+/// A program's log of its own writes as a stream: each line is one write,
+/// the milliseconds from the program's start and the bytes in hexadecimal,
+/// and each write is a chunk.
+fn logged(about: String, log: &str) -> Result<Stream, String> {
+    let mut chunks = Vec::new();
+    let mut at_ms = Vec::new();
+    for line in log.lines() {
+        let (at, hex) = line
+            .split_once(' ')
+            .ok_or_else(|| format!("a write log line without its bytes: {line:?}"))?;
+        at_ms.push(
+            at.parse::<u64>()
+                .map_err(|error| format!("a write's time {at:?}: {error}"))?,
+        );
+        let bytes = (0..hex.len() / 2)
+            .map(|at| u8::from_str_radix(&hex[at * 2..at * 2 + 2], 16))
+            .collect::<Result<Vec<u8>, _>>()
+            .map_err(|error| format!("a write's bytes: {error}"))?;
+        chunks.push(bytes.into());
+    }
+    Ok(Stream {
+        about,
+        chunks,
+        at_ms,
+    })
 }
 
 /// The reads joined into chunks: a chunk ends where the output paused for
 /// 30 milliseconds or more, or input was typed.
 fn chunks(about: String, reads: &[Output], typed_at: &[usize], started: Instant) -> Stream {
     const PAUSE: Duration = Duration::from_millis(30);
-    let mut chunks: Vec<String> = Vec::new();
+    let mut chunks: Vec<Chunk> = Vec::new();
     let mut at_ms: Vec<u64> = Vec::new();
     let mut bytes: Vec<u8> = Vec::new();
     let mut first: Option<Instant> = None;
@@ -281,7 +339,7 @@ fn chunks(about: String, reads: &[Output], typed_at: &[usize], started: Instant)
         }
         text = without_titles(&text);
         if !text.is_empty() {
-            chunks.push(text);
+            chunks.push(text.into());
             at_ms.push(
                 first
                     .map_or(0, |first| first.duration_since(started).as_millis())

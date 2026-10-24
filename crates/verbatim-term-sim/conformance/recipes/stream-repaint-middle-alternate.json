@@ -1,0 +1,37 @@
+{
+  "about": "verbatim-stream-test's repaint:middle:alternate phase at 60 frames a second, on a cleared screen of 26 earlier lines: the screen erased and painted whole each frame, with the status row between the output and the prompt, as Pi draws it, on the alternate screen; the status row's spinner turns and its timer ticks, \"hi\" is typed at the prompt while it streams and \"!\" after.",
+  "command": "{bin}\\verbatim-stream-test.exe --write-log {write_log} --run repaint:middle:alternate",
+  "write_log": true,
+  "steps": [
+    {
+      "wait": 250
+    },
+    {
+      "type": {
+        "text": "hi",
+        "each": 80
+      }
+    },
+    {
+      "wait": 700
+    },
+    {
+      "type": {
+        "text": "!",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 300
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 500
+    }
+  ]
+}

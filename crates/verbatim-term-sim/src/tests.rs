@@ -115,3 +115,25 @@ fn reverse_video_swaps_the_colours_shown() {
         (DEFAULT_BACKGROUND, DEFAULT_FOREGROUND, DEFAULT_FOREGROUND)
     );
 }
+
+#[test]
+fn the_row_a_wrap_scrolls_into_a_region_keeps_the_mark_of_its_place() {
+    // A region of rows 2 and 3 of a screen of 4: "0123456789" fills the
+    // region's bottom row, and "ab" wraps, scrolling the region.
+    let mut terminal = terminal(4, 0);
+    terminal.write(b"\x1b[2;3r\x1b[3;1H0123456789ab\x1b[4;1Hcd");
+    let rows = &terminal.grid().main.rows;
+    assert_eq!(
+        [
+            (rows[1].text().trim_end(), rows[1].wraps),
+            (rows[2].text().trim_end(), rows[2].wraps),
+        ],
+        [("0123456789", true), ("ab", true)]
+    );
+    // So the row below the region continues the line.
+    let read = first_read(&terminal);
+    assert_eq!(
+        read.text.split("\r\n").last(),
+        Some("0123456789ab        cd        ")
+    );
+}

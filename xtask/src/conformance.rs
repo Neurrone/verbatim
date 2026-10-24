@@ -13,7 +13,10 @@
 //! the window's title to a token naming the chunk: the terminal changes its
 //! title only once it has parsed everything written before, so the new
 //! title is the evidence that the chunk is in the buffer the terminal's
-//! provider reads, and the runner reads it only then.
+//! provider reads, and the runner reads it only then. After a chunk that
+//! ends inside a character's encoding, the title is set with the console's
+//! title call rather than a sequence, which would end the character; the
+//! terminal shows nothing for the character's first bytes.
 
 use std::fmt::Write as _;
 use std::io::{BufRead as _, BufReader, Write as IoWrite};
@@ -23,7 +26,9 @@ use std::process::{Command, ExitCode, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use verbatim_term_sim::conformance::{Answer, Expectation, expectation_path, streams};
+use verbatim_term_sim::conformance::{
+    Answer, Expectation, Stream, expectation_path, inside_character, streams,
+};
 use verbatim_term_sim::{Flavor, Run};
 use verbatim_uia::Uia;
 use verbatim_uia::text::{Endpoint, TextPatternExt as _, TextRangeExt as _};
@@ -103,7 +108,7 @@ pub fn regenerate(args: &[String]) -> ExitCode {
             continue;
         }
         for &flavor in &flavors {
-            match run(&uia, &terminal, &name, &stream.chunks, flavor) {
+            match run(&uia, &terminal, &name, &stream, flavor) {
                 Ok(expectation) => {
                     let path = expectation_path(&name, flavor);
                     let text = serde_json::to_string_pretty(&expectation)
@@ -142,7 +147,7 @@ fn run(
     uia: &Uia,
     windows_terminal: &std::path::Path,
     name: &str,
-    chunks: &[String],
+    stream: &Stream,
     flavor: Flavor,
 ) -> Result<Expectation, String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
@@ -196,7 +201,7 @@ fn run(
     // Found once, by the title the player set before writing anything: a
     // stream may set the title itself.
     let window = find_window(&title).ok_or("the terminal's window did not appear")?;
-    let result = read_stream(uia, &connection, window, &title, chunks, flavor);
+    let result = read_stream(uia, &connection, window, &title, stream, flavor);
     let mut writer = &connection;
     let _ = writer.write_all(b"quit\n");
     // SAFETY: posting a message to a window handle is sound whatever the
@@ -316,7 +321,7 @@ fn read_stream(
     connection: &TcpStream,
     window: HWND,
     title: &str,
-    chunks: &[String],
+    stream: &Stream,
     flavor: Flavor,
 ) -> Result<Expectation, String> {
     let (element, pattern) = text_element(uia, window, flavor)?;
@@ -326,13 +331,22 @@ fn read_stream(
     let mut screen_rows = 0;
     let mut answers = Vec::new();
     let mut size = (0, 0);
-    for (index, chunk) in chunks.iter().enumerate() {
-        let hex = chunk.bytes().fold(String::new(), |mut hex, byte| {
-            let _ = write!(hex, "{byte:02x}");
-            hex
-        });
+    let inside = inside_character(stream);
+    for (index, (chunk, inside)) in stream.chunks.iter().zip(inside).enumerate() {
+        let hex = chunk
+            .as_bytes()
+            .iter()
+            .fold(String::new(), |mut hex, byte| {
+                let _ = write!(hex, "{byte:02x}");
+                hex
+            });
+        // A chunk that ends inside a character is marked by the console's
+        // title call, since a title sequence written after it would end the
+        // character; the terminal holds the character's first bytes and
+        // shows nothing new for them.
+        let mark = if inside { "call" } else { "sequence" };
         writer
-            .write_all(format!("chunk {index} {hex}\n").as_bytes())
+            .write_all(format!("chunk {index} {mark} {hex}\n").as_bytes())
             .map_err(|error| error.to_string())?;
         let mut reply = String::new();
         lines
@@ -598,9 +612,13 @@ pub fn player(args: &[String]) -> ExitCode {
         if command == "quit" {
             return ExitCode::SUCCESS;
         }
-        let Some((index, hex)) = command
+        let Some((index, mark, hex)) = command
             .strip_prefix("chunk ")
             .and_then(|rest| rest.split_once(' '))
+            .and_then(|(index, rest)| {
+                let (mark, hex) = rest.split_once(' ')?;
+                Some((index, mark, hex))
+            })
         else {
             return ExitCode::FAILURE;
         };
@@ -608,14 +626,21 @@ pub fn player(args: &[String]) -> ExitCode {
             .step_by(2)
             .filter_map(|at| u8::from_str_radix(&hex[at..at + 2], 16).ok())
             .collect();
-        let marker = format!("\x1b]2;{title}#{index}\x07");
-        if output
-            .write_all(&bytes)
-            .and_then(|()| output.write_all(marker.as_bytes()))
-            .and_then(|()| output.flush())
-            .is_err()
-            || writer.write_all(b"written\n").is_err()
-        {
+        let token = format!("{title}#{index}");
+        let written = match mark {
+            "sequence" => output
+                .write_all(&bytes)
+                .and_then(|()| output.write_all(format!("\x1b]2;{token}\x07").as_bytes()))
+                .and_then(|()| output.flush())
+                .is_ok(),
+            "call" => {
+                output.write_all(&bytes).and_then(|()| output.flush()).is_ok()
+                    // SAFETY: the title outlives the call.
+                    && unsafe { SetConsoleTitleW(&HSTRING::from(token.as_str())) }.is_ok()
+            }
+            _ => false,
+        };
+        if !written || writer.write_all(b"written\n").is_err() {
             return ExitCode::FAILURE;
         }
     }
