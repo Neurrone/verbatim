@@ -353,9 +353,11 @@ the contract the Windows side implements.
   blank line; `Growth`, what a growing line gained, spoken like a line and
   counted and dropped with its line; `Skipped`, a count of lines:
   `Skipped::Count`, `Skipped::Uncounted` when the count is not known, or
-  `Skipped::MoreThan` when the terminal's history overflowed, which the
-  outpost sends with a count of none ahead of the lines the history holds; `plus` adds an older and a
-  newer count, a newer `MoreThan` standing for everything before it); and
+  `Skipped::MoreThan` when lines went by past the terminal's history, or
+  `Skipped::About` when a lost read counted them from text, which the
+  outpost sends with a count of none ahead of the lost read's lines;
+  `plus` adds an older and a newer count, a newer `MoreThan` standing for
+  everything before it, and an `About` making the sum about); and
   the answers to keys, which Core speaks at once (`Echo`, typing the
   terminal showed; `Caret`, a key's answer at the caret in a
   `TerminalUnit`, character, word or line; `Gained` and `Lost`, text the

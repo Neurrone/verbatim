@@ -1064,6 +1064,16 @@ fn align_read(
     let old = &memory.rows;
     let next = isize_of(memory.next.saturating_sub(memory.skipped));
     let base = isize_of(read.above) - next;
+    // Where a row of the history block was, as the shift to its place: by
+    // the read's start, or, with the start refused, by the document's
+    // start when both reads began there; otherwise it is not known.
+    let place = if !read.shrank && read.from_start {
+        base
+    } else if read.at_document_start && memory.at_document_start {
+        isize_of(memory.skipped)
+    } else {
+        isize::MAX
+    };
     let history = memory.screen_start();
     let old_text: Vec<usize> = (0..old.len())
         .filter(|&from| !old[from].is_blank())
@@ -1099,6 +1109,11 @@ fn align_read(
         let shift = isize_of(to) - isize_of(from);
         if trusted && from < history {
             shift == base && rows[to].hash == old[from].hash
+        } else if from < history && shift > place {
+            // Found by text, a row of the history block is at its place or
+            // higher, never lower: no program writes into the history, and
+            // its rows only move up ("The alignment").
+            false
         } else {
             rows[to].hash == old[from].hash || (shift == base && grows(from, to))
         }

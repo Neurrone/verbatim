@@ -13,9 +13,9 @@
 //! scrolls it, into the history included, and a redraw elsewhere never
 //! moves it. Rows above those the memory keeps, in the history, are read
 //! from the provider by how far above the next read's start they lie, in a
-//! snapshot of their own ([`History`]); a place there is checked against
-//! the hash of its line, and found again by it nearby when the history
-//! moved between the two reads.
+//! snapshot of their own ([`History`]); a place there is the nearest row
+//! of its line's hash from the place up to a screen above it, or else the
+//! place itself ("The review anchor").
 
 use std::collections::HashSet;
 

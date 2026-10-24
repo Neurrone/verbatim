@@ -786,3 +786,65 @@ fn a_command_mark_survives_a_full_screen_program() {
         }]
     );
 }
+
+#[test]
+fn blank_rows_above_the_screen_that_read_the_same_leave_the_rows_found_by_text() {
+    // A full history whose rows above the last read's screen are blank:
+    // after the buffer moved a row they read the same, but with no text
+    // among them positions are not trusted, and the rows are found by
+    // their text, moved up a row ("Positions").
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("1\r\n2\r\n3\r\n4\r\n\r\n\r\n\r\n\r\np\r\nq\r\nr");
+    let outcome = watch.write("\r\ns");
+    assert_eq!(watch.taken, 1, "one read");
+    assert!(outcome.by_text, "found by text");
+    assert_eq!(outcome.rotation, 1);
+    assert_eq!(outcome.lost, None);
+    assert_eq!(watch.texts(), ["", "", "p", "q", "r", "s"]);
+    assert_eq!(
+        outcome.rows,
+        [kept(4), kept(5), kept(6), kept(7), kept(8), NEW]
+    );
+}
+
+#[test]
+fn a_lost_read_whose_rows_are_found_once_counts_about() {
+    // Ten lines into a full history move it further than the read covers,
+    // so the read is lost and the whole document read; the last read's
+    // rows are found in it at one place, the rows above them history and
+    // the rows below them new, counted as about ("A lost read").
+    let mut watch = Watch::console(10, 3, 20);
+    let lines = (1..=30)
+        .map(|line| format!("{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    watch.write(&lines);
+    let more = (31..=40)
+        .map(|line| format!("{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let outcome = watch.write(&more);
+    assert_eq!(watch.taken, 2, "the whole document read");
+    assert_eq!(outcome.lost, Some(Lost::About));
+    let mut rows = vec![NewRow::Shown; 7];
+    rows.extend([kept(17), kept(18), kept(19), kept(20), kept(21)]);
+    rows.extend([NEW; 11]);
+    assert_eq!(outcome.rows, rows);
+}
+
+#[test]
+fn a_lost_read_whose_rows_fit_twice_is_uncounted() {
+    // Alternating lines moved by an odd number of rows: the rows above the
+    // last read's screen no longer read the same, and the last read's rows
+    // fit at more than one place, so the read is lost; in the whole
+    // document they fit at more than one place too, so only the visible
+    // screen is aligned and what went by has no count ("A lost read").
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("a\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\na\r\nb\r\n");
+    let outcome = watch.write("a\r\nb\r\na\r\n");
+    assert_eq!(watch.taken, 2, "the whole document read");
+    assert_eq!(outcome.lost, Some(Lost::Uncounted));
+    let mut rows = vec![NewRow::Shown; 6];
+    rows.extend([kept(3), kept(4), NEW]);
+    assert_eq!(outcome.rows, rows);
+}

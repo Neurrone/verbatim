@@ -333,10 +333,12 @@ fn the_cores_violations_over_random_streams() {
 
 #[test]
 fn the_cores_reader_meets_each_listed_limit_it_states_on_its_smallest_stream() {
-    // A screen left blank by a clear the console host pushed into the
-    // history ("A read with no text"), and a wrapped line's last row erased
-    // and printed again as a line of its own ("Lingering"): each a case the
-    // design lists under "Limits", accepted only through its own reason.
+    // Each a case the design lists under "Limits", accepted only through
+    // its own reason, and each failing without it:
+    // - a screen left blank by a clear the console host pushed into the
+    //   history ("A read with no text");
+    // - a wrapped line's last row erased and printed again as a line of its
+    //   own ("Lingering").
     let blank = stream(&[
         (Op::Write("ok"), true),
         (Op::Write("\r\nhello"), false),
@@ -349,11 +351,150 @@ fn the_cores_reader_meets_each_listed_limit_it_states_on_its_smallest_stream() {
         (Op::Write("\r\nd"), true),
     ]);
     for stream in [blank, written_back] {
-        assert_eq!(
-            violations(&stream, Flavor::ConsoleHost, Size::SMALL),
-            [],
-            "{}",
-            stream.about
-        );
+        for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+            assert_eq!(
+                violations(&stream, flavor, Size::SMALL),
+                [],
+                "{} {flavor:?}",
+                stream.about
+            );
+        }
+    }
+}
+
+#[test]
+fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() {
+    // Each a case the design lists under "Limits" for the random streams,
+    // accepted only through its own reason, and each failing without it:
+    // - a flood after two identical rows, which fit the read at two places,
+    //   so the lost read says "skipped lines" (repeated text);
+    // - a flood larger than the read covers, after a full history, whose
+    //   lines above the screen a lost read counts (a lost read);
+    // - a flood after a screen at the document's start, taken for a new
+    //   screen (a flood taken for a new screen);
+    // - a volatile row held when only reads with no text follow, which the
+    //   reader's timer speaks (a read with no text).
+    let repeated = stream(&[
+        (Op::MoveTo { row: 4, column: 3 }, false),
+        (
+            Op::WordDown {
+                column: 4,
+                word: "ok",
+            },
+            false,
+        ),
+        (Op::Newline, false),
+        (Op::Write("ok"), true),
+        (
+            Op::Flood {
+                lines: 8,
+                word: "a b",
+            },
+            false,
+        ),
+    ]);
+    let lost = stream(&[
+        (
+            Op::Restyle {
+                rows: 1,
+                text: "dog",
+            },
+            false,
+        ),
+        (Op::Newline, false),
+        (Op::Newline, false),
+        (Op::Newline, false),
+        (
+            Op::WordDown {
+                column: 1,
+                word: "ok",
+            },
+            false,
+        ),
+        (Op::Newline, true),
+        (
+            Op::Flood {
+                lines: 9,
+                word: "ok",
+            },
+            false,
+        ),
+        (
+            Op::WordDown {
+                column: 1,
+                word: "dog",
+            },
+            false,
+        ),
+    ]);
+    let new_screen = stream(&[
+        (Op::Write("ok"), true),
+        (
+            Op::Flood {
+                lines: 8,
+                word: "wrapping-word",
+            },
+            false,
+        ),
+    ]);
+    let held = stream(&[
+        (Op::Write("ok"), true),
+        (Op::InsertAboveFooter, false),
+        (Op::Repaint("cat"), true),
+        (
+            Op::Restyle {
+                rows: 1,
+                text: "dog",
+            },
+            true,
+        ),
+        (
+            Op::WordDown {
+                column: 4,
+                word: "ok",
+            },
+            false,
+        ),
+        (Op::Clear, false),
+    ]);
+    for stream in [repeated, lost, new_screen, held] {
+        for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+            assert_eq!(
+                violations(&stream, flavor, Size::SMALL),
+                [],
+                "{} {flavor:?}",
+                stream.about
+            );
+        }
+    }
+}
+
+#[test]
+fn a_flood_repeating_the_last_reads_text_lower_down_is_not_taken_for_its_rows() {
+    // Between two reads every row of the first left the buffer, and a
+    // second flood printed "ok4" to "ok8" again four rows lower than the
+    // first read had them. Found by text, rows of the history block are
+    // never found lower than their place ("The alignment"), so the new
+    // lines above them are not taken for history.
+    let flood = stream(&[
+        (
+            Op::Flood {
+                lines: 8,
+                word: "ok",
+            },
+            false,
+        ),
+        (Op::Write("dog\r\nhello\r\n\r\nwrapping-word\r\n"), true),
+        (
+            Op::Flood {
+                lines: 9,
+                word: "ok",
+            },
+            false,
+        ),
+        (Op::EraseLines(2), true),
+    ]);
+    for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+        assert_eq!(violations(&flood, flavor, Size::SMALL), [], "{flavor:?}");
     }
 }

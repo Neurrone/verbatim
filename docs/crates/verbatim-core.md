@@ -849,8 +849,11 @@ anything but the focus is ignored.
   (`Phrase::SkippedUncountedLines`), and lines that went by past the
   terminal's history (`Skipped::MoreThan`) make it "skipped more than N
   lines" (`Phrase::SkippedMoreThanLines`), N being the lines left
-  unspoken after it; an overflow's own marker, a "more than" count of
-  none, says "skipped lines" when nothing after it is skipped. What waits is then
+  unspoken after it; lines a lost read counted from text
+  (`Skipped::About`) make it "skipped about N lines"
+  (`Phrase::SkippedAboutLines`); a lost read's own marker, a count of
+  none, says "skipped lines" when nothing after it is skipped, and an
+  "about" count of none says nothing. What waits is then
   the next group, and the decision repeats after it, until the output
   stops and everything waiting has been heard; the next output starts a
   burst of its own. A burst ends only once its last line has been heard,
@@ -868,10 +871,11 @@ anything but the focus is ignored.
   count stays exact: a line and its growth (`TerminalItem::Growth`) are
   one unit, counted once and dropped together, so a group never ends
   between them and a growth is never spoken without its line; a line after
-  a "more than" count adds to it. Core alone applies the policy: the
-  outpost sends every new line, and after an overflow marks it with a
-  "more than" count of none (`Skipped::MoreThan(0)`) ahead of the lines
-  the history still holds ("Core's flood policy").
+  a "more than" or "about" count adds to it. Core alone applies the
+  policy: the outpost sends every new line, and after a lost read marks
+  it with a count of none of the lost read's kind (`Skipped::About(0)`,
+  `Skipped::MoreThan(0)` or `Skipped::Uncounted`) ahead of its lines
+  ("Core's flood policy").
 - On-demand reading. Once a group's worth of lines waits or is queued for
   speech, Core tells the outpost to hold (`TextOp::TerminalHold`): it only
   notes that the terminal changed. When the group's last line is handed

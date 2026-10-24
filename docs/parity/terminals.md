@@ -93,9 +93,10 @@ scenarios follow it as the model's order of work brings them back.
   "The flood policy, reconsidered"; different): with more than "Lines
   spoken in full" (30) lines waiting once a group's last line has been
   heard, the older ones become "skipped N lines" ("skipped lines" when
-  the count is lost, "skipped more than N lines" when the terminal's
-  history overflowed past the screen last read, N the history's rows
-  left unspoken) and the newest "Last lines to speak" (30) are kept;
+  the count is lost, "skipped more than N lines" when the lines went by
+  past the terminal's history, N the history's rows left unspoken, and
+  "skipped about N lines" when a lost read counted them from text) and
+  the newest "Last lines to speak" (30) are kept;
   NVDA speaks them all. Nothing is lost for good: every line is still
   there for the review cursor (the `*_flood` and `*_scrollback_overflow`
   scenarios).

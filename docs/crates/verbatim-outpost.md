@@ -2628,8 +2628,9 @@ it.
   the rules say becomes Core's `TerminalSpeech` (`terminal::speech_of`):
   output (`TerminalItem::Output` for a new line, a redrawn row's change
   and a held line as last read; `TerminalItem::Growth` for what a growing
-  line gained; and `TerminalItem::Skipped`, a "more than" count of none,
-  for an overflow, ahead of the lines the history holds) and the answers
+  line gained; and `TerminalItem::Skipped`, a count of none of the lost
+  read's kind, "about", "more than" or uncounted, ahead of a lost read's
+  lines) and the answers
   to keys (`Echo`, `Caret` in its unit, `Gained`, `Lost`, `Answer`,
   `Suggestion`), and whether the review cursor followed the caret. It is
   sent as `NormalizedEvent::TerminalSpeech` when it says anything, after
@@ -2723,16 +2724,17 @@ it.
   Each row it answers with gets a text anchor, from the counter the anchor
   stores share, whose place the memory keeps
   (`TerminalMemory::add_place`): it moves with its row as output scrolls
-  it, into the history included, is kept aside with the memory while the
-  alternate screen is up, and is dropped when its row cannot be followed;
+  it, into the history included, and is dropped when its row cannot be
+  followed;
   the oldest places beyond 64 whose anchors Core does not hold are
   forgotten. A read lands the memory's review position where it lands.
   Rows above those the memory keeps are read from the provider in a
   snapshot of their own, from as many rows above where the next read
   starts, or the whole document for its start (`review::History`), split
   into rows as the memory splits a read (`verbatim_text::terminal_rows::rows_of`);
-  a place there is checked against its line's hash, and found again by it
-  within 64 rows when the history moved between the two reads. A request
+  a place there is found again as the nearest row of its line's hash from
+  the place up to a screen above it, since rows above the screen only move
+  up, and otherwise keeps its place and reads the row there now. A request
   naming an anchor the terminal did not mint, such as a caret report's, is
   answered as any text's; a terminal's text is not selected, nor its caret
   moved, by Verbatim, and a place's screen position is not read

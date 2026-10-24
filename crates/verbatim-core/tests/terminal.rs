@@ -127,6 +127,9 @@ fn words(segments: &[verbatim_model::UtteranceSegment]) -> String {
             SegmentContent::Phrase(Phrase::SkippedMoreThanLines(count)) => {
                 format!("skipped more than {count}")
             }
+            SegmentContent::Phrase(Phrase::SkippedAboutLines(count)) => {
+                format!("skipped about {count}")
+            }
             SegmentContent::Message(Message::ReportNewOutputOn) => "on".to_owned(),
             SegmentContent::Message(Message::ReportNewOutputOff) => "off".to_owned(),
             SegmentContent::Message(Message::TerminalLineCut) => "line cut".to_owned(),
@@ -433,6 +436,29 @@ fn history_lines_skipped_add_to_the_more_than_count_they_follow() {
     );
     let mut expected = lines(1..=30);
     expected.push("skipped more than 70".to_owned());
+    expected.extend(lines(9071..=9100));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn lines_after_a_lost_read_found_by_text_are_counted_as_about() {
+    // A lost read whose last rows were found in the whole document by
+    // their text gives its lines after an "about" count of none. Once the
+    // group of lines 1 to 30 is heard, line 31 and the read's oldest 70
+    // lines are skipped: about 71, the count taken from text.
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=31)));
+    playback.feed(
+        &mut state,
+        &said(
+            TERMINAL,
+            0,
+            speech_of(Some(Skipped::About(0)), lines(9001..=9100)),
+        ),
+    );
+    let mut expected = lines(1..=30);
+    expected.push("skipped about 71".to_owned());
     expected.extend(lines(9071..=9100));
     assert_eq!(playback.play_all(&mut state), expected);
 }
