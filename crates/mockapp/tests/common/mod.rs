@@ -321,19 +321,13 @@ impl MockApp {
     }
 }
 
-/// Microseconds since the Unix epoch on the system's clock, the clock
-/// mockapp's `stall ended` acknowledgement uses, so a time read here orders
-/// against it. The outpost's timings use the run's shared clock
-/// (`verbatim_process::clock`) instead.
+/// Microseconds since the Unix epoch on the run's shared clock
+/// (`verbatim_process::clock`), which mockapp's `stall ended`
+/// acknowledgement and the outpost's timings use too, so a time read here
+/// orders against both: [`spawn`] hands mockapp this process's offset.
 #[must_use]
 pub fn now_us() -> u64 {
-    u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros(),
-    )
-    .unwrap_or(u64::MAX)
+    verbatim_process::clock::now_us()
 }
 
 /// Spawns `mockapp --fixture <fixture> --backend <backend> --title <title>`,
@@ -375,6 +369,10 @@ fn spawn_with(fixture: &str, backend: &str, title: &str, extra: &[&str]) -> Mock
         .arg("--title")
         .arg(title)
         .args(extra)
+        .env(
+            verbatim_process::clock::OFFSET_VARIABLE,
+            verbatim_process::clock::offset().to_string(),
+        )
         .creation_flags(DETACHED_PROCESS.0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

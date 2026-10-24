@@ -462,7 +462,10 @@ fn apply(hwnd: HWND, context: &WindowContext, command: Command) -> bool {
             open = apply(hwnd, context, *inner);
         }
         std::thread::sleep(length.saturating_sub(started.elapsed()));
-        acknowledge(&format!("stall ended {}", unix_micros()));
+        acknowledge(&format!(
+            "stall ended {}",
+            verbatim_process::clock::now_us()
+        ));
         return open;
     }
     if let Command::OnActivate(armed) = command {
@@ -519,16 +522,6 @@ pub(crate) fn acknowledge(line: &str) {
     let mut stdout = std::io::stdout().lock();
     let _ = writeln!(stdout, "{line}");
     let _ = stdout.flush();
-}
-
-/// Microseconds since the Unix epoch on the system's clock, which a test
-/// reads too (`tests/common/mod.rs`, `now_us`) to compare with it across
-/// processes.
-fn unix_micros() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_micros()
 }
 
 fn to_wide(text: &str) -> Vec<u16> {

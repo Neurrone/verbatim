@@ -155,7 +155,8 @@ pub(crate) enum Command {
     /// milliseconds, so every cross-process call into the window waits, as
     /// with an application that is starting up or busy. The window thread
     /// prints `stall started` on stdout as it begins, and `stall ended <us>`,
-    /// with the time in microseconds since the Unix epoch, as it ends. With
+    /// with the time in microseconds since the Unix epoch on the run's clock
+    /// (`verbatim_process::clock`), as it ends. With
     /// `<at> <command>`, the window thread applies the command `at`
     /// milliseconds into the stall, still taking no message, as a busy
     /// application raises an event from the middle of its work, and

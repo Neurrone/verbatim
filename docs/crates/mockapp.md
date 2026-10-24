@@ -197,8 +197,9 @@ suggestions' items; raises no event; UIA only), `stall <ms>`
 (blocks the window thread for that long, so every cross-process call into
 the window waits, as with an application that is starting up or busy;
 the window thread prints `stall started` on stdout as it begins and
-`stall ended <us>`, the time in microseconds since the Unix epoch, as it
-ends, so a test waits for the stall itself rather than for a guessed
+`stall ended <us>`, the time in microseconds since the Unix epoch on the
+run's clock (`verbatim_process::clock`, whose offset the tests hand
+mockapp), as it ends, so a test waits for the stall itself rather than for a guessed
 time; `stall <ms> <at> <command>` also applies the command `at`
 milliseconds into the stall, from the window thread and still taking no
 message, as a busy application raises an event from the middle of its
