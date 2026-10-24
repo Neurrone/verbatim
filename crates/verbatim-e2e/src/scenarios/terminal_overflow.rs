@@ -10,7 +10,13 @@
 //! scenarios are part of the suite.
 //!
 //! The written script `phased.ps1` prints "before line 1" to "before line
-//! 30", then waits, on its folder's change notifications, for a go file,
+//! 30" in one write, so that one read takes all 30 and Core, with a
+//! group's worth of lines waiting, tells the outpost to hold before the
+//! first of them is heard; printed line by line, a read could take some of
+//! them, speech start, and the rest arrive with fewer than a group's worth
+//! waiting, so that the outpost read live through the second part's write
+//! and a read landing in the middle of it changed what was said. It then
+//! waits, on its folder's change notifications, for a go file,
 //! and then writes its whole second part, "after line 1" onwards, in one
 //! write. The prompt follows, and counts as a line like any other: the
 //! last 30 lines are 29 after lines and the prompt.
@@ -37,9 +43,13 @@
 //! by the last lines. NVDA, on the same single write, spoke lines 10,758 to
 //! 10,772 and 11,902 to 12,000 and the prompt, whatever its diff found
 //! current, with nothing for the rest (captured live, 2026-10-08). The
-//! whole write landing before any read is tested deterministically by
+//! whole write landing before any read is tested by
 //! `windows_terminal_scrollback_overflow_during_group`, whose write lands
-//! while Core holds the terminal.
+//! while Core holds the terminal: the outpost reads nothing until Core asks
+//! as the group's last line is handed to speech, 28 lines after the go
+//! file, and Windows Terminal takes a write of 10,000 lines in 1.5 to 1.7
+//! seconds (`docs/performance.md`, "A terminal flood"), long before those
+//! lines are heard.
 //!
 //! Within the history, 5,000 lines; past it, 12,000. Past it, the anchor is
 //! known to be gone, and Verbatim says "skipped more than N lines", N being
@@ -88,7 +98,8 @@ function Write-After($from, $to) {\r\n\
 \x20   $lines = foreach ($line in $from..$to) { \"after line $line\" }\r\n\
 \x20   [Console]::Out.Write(($lines -join \"`r`n\") + \"`r`n\")\r\n\
 }\r\n\
-foreach ($line in 1..30) { \"before line $line\" }\r\n\
+$before = foreach ($line in 1..30) { \"before line $line\" }\r\n\
+[Console]::Out.Write(($before -join \"`r`n\") + \"`r`n\")\r\n\
 Wait-Go 'phased-go'\r\n\
 if ($First -gt 0) {\r\n\
 \x20   Write-After 1 $First\r\n\
