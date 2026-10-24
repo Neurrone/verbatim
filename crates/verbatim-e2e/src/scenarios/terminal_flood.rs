@@ -169,10 +169,7 @@ pub(crate) fn body_full_history_windows_terminal(
 }
 
 /// `conhost_full_history_flood`.
-pub(crate) fn body_full_history_console_host(
-    scenario: &mut Scenario,
-    state: &mut ScenarioState,
-) {
+pub(crate) fn body_full_history_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
     let title = terminal::title(state).to_owned();
     // The console host's text area has no name.
     terminal::expect_prompt_read(
