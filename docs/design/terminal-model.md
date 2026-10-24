@@ -2,6 +2,17 @@
 
 Status: accepted by Dickson on 2026-10-24, replacing the design of 2026-10-23, under five principles he agreed: one model of rows and one alignment; one read rule; a real reason for every rule; one flood policy, Core's; and an oracle that only judges. Decisions keep their dates. The code still follows the earlier design until the order of work below is done; until then, code comments that cite this document by section number refer to the earlier design, in git history.
 
+## Decided on 2026-10-25, ahead of the next rewrite
+
+After the remembered-history rule failed on repeated text, Dickson agreed to revisit the model, and decided:
+
+- The reading may relax its requirements where that noticeably simplifies it: the memory may hold only what the last read showed, with no inferred history and no inferred rotation.
+- Floods must still respect the configured groups (the first "Lines spoken in full" spoken whole, then a skip, then the newest "Last lines to speak"), but the count in "skipped N lines" need not be exact.
+- Once the history is full, a flood faster than a single read may speak "skipped about N lines" and then its newest lines, its first lines lost.
+- The review cursor must still reliably move up through the whole buffer: exactly while the program is not writing, and by its line's text near its place while output arrives with a full history.
+
+The rules below are the design before this revision; they are rewritten to these decisions next.
+
 ## The rules
 
 Terms used in the rules:
