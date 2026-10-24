@@ -21,6 +21,8 @@ use verbatim_uia_rops::{
     navigation_step,
 };
 
+use verbatim_core::focus_rules::{already_entered, is_dialog};
+
 use crate::arbitration::{WindowClasses, time_limit, window_class_name};
 use crate::gates;
 use crate::protocol::{DumpedTree, FocusNow, FocusedControl, now_us};
@@ -762,11 +764,15 @@ const DIALOG_TEXT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
 /// than reading the dialog again.
 pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 
-/// Gives every dialog among `nodes` that is not among `previous`, the last
-/// focus's chain, and has no description of its own, its own text as its
-/// description (`docs/nvda/object-model.md`, "A dialog's own text"), while
-/// descriptions are read at all. A dialog the focus stays inside is not read
-/// again: the chain the focus is reported with keeps the text it was given.
+/// Gives every dialog among `nodes`, the chain of a focus reported in
+/// `window`, that the focus Core holds is not already inside and that has
+/// no description of its own, its own text as its description
+/// (`docs/nvda/object-model.md`, "A dialog's own text"), while descriptions
+/// are read at all: a dialog the focus newly enters, by the rule the
+/// reducer speaks entered containers by
+/// (`verbatim_core::focus_rules::already_entered`; decision D14, "Where the
+/// rules run"). A dialog the focus stays inside is not read again: the
+/// chain the focus is reported with keeps the text it was given.
 ///
 /// `memo` is taken: a dialog it names is given its text without reading it
 /// again. With `remember`, the last text read is kept in it for the next
@@ -774,21 +780,39 @@ pub(super) type DialogMemo = Option<(NodeId, Option<String>)>;
 /// inside it.
 pub(super) fn describe_dialogs<'a>(
     context: &Context,
-    nodes: impl IntoIterator<Item = &'a mut NodeSnapshot>,
-    (previous, memo, remember): (&[NodeSnapshot], &mut DialogMemo, bool),
+    (nodes, window): (
+        impl IntoIterator<Item = &'a mut NodeSnapshot>,
+        Option<isize>,
+    ),
+    (memo, remember): (&mut DialogMemo, bool),
 ) {
     let mut remembered = memo.take();
     if !context.fetches().description {
         return;
     }
+    // The focus Core holds, when it is this outpost's: the focus enters a
+    // dialog from it.
+    let held = context.held().core().cloned();
+    let same_window = held.as_ref().is_some_and(|held| {
+        held.top_level != 0 && Some(held.top_level) == window.map(super::window::top_level_of)
+    });
+    let entered_before = |node: &NodeSnapshot| {
+        held.as_ref().is_some_and(|held| {
+            already_entered(
+                held.ancestors.iter().chain(std::iter::once(&held.node)),
+                same_window,
+                node,
+            )
+        })
+    };
     for node in nodes {
-        if !crate::dialog_text::is_dialog(node.role)
+        if !is_dialog(node.role)
             || node
                 .details
                 .description
                 .as_deref()
                 .is_some_and(|description| !description.trim().is_empty())
-            || previous.iter().any(|known| known.id == node.id)
+            || entered_before(node)
         {
             continue;
         }

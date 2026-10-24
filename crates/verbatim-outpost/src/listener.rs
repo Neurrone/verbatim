@@ -135,7 +135,7 @@ use verbatim_uia::{Agile, Cached, ListenerEvent, Part, Registration, Scope, Subs
 use crate::arbitration::window_class_name;
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::focus_read::{
-    Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
+    Arrival, FocusEvent, FocusReader, HeldElements, Judged, Meta, READ_DEADLINE, Readers, Reading,
     WatchedRead,
 };
 use crate::foreground::{ForegroundWatch, Front, Step};
@@ -767,9 +767,9 @@ impl Outgoing {
 struct Listener {
     outgoing: Arc<Outgoing>,
     readers: Arc<Readers<UiaFocusReading>>,
-    /// The last focus any reading thread accepted, which Core's queued
-    /// focuses supersede ([`SupervisorToOutpost::FocusQueued`]).
-    last_accepted: LastAccepted,
+    /// The elements of the focuses the reading threads accepted, by how
+    /// Core judged them ([`SupervisorToOutpost::CoreFocus`]).
+    held_elements: HeldElements,
     _registration: Option<Registration>,
     /// What nudges the `WinEvent` thread: the idle barrier's query goes
     /// through it, behind every event delivered to it before.
@@ -782,8 +782,9 @@ struct Listener {
 /// sent to its application's outpost behind its marker.
 struct UiaFocusReading {
     outgoing: Arc<Outgoing>,
-    /// The last focus any reading thread accepted, which they share.
-    last_accepted: LastAccepted,
+    /// The elements of the focuses the reading threads accepted, by how
+    /// Core judged them, which they share.
+    held_elements: HeldElements,
 }
 
 impl Reading for UiaFocusReading {
@@ -801,7 +802,7 @@ impl Reading for UiaFocusReading {
     type Reader = FocusReader;
 
     fn reader(&self, _pid: Pid) -> Option<FocusReader> {
-        match FocusReader::new(self.last_accepted.clone()) {
+        match FocusReader::new(self.held_elements.clone()) {
             Ok(reader) => Some(reader),
             Err(error) => {
                 tracing::warn!(%error, "a reading thread could not create a UIA client");
@@ -852,7 +853,7 @@ impl Reading for UiaFocusReading {
     }
 
     fn abandoned(&self, meta: &Meta) {
-        self.last_accepted.abandoned(meta.trace);
+        self.held_elements.abandoned(meta.trace);
     }
 
     fn kind(&self, (_, _, _, kind, _): &Self::Job) -> FocusEvent {
@@ -917,11 +918,11 @@ impl Listener {
         for &(pid, outpost) in hooks_in {
             outgoing.hook_installed(pid, outpost, before_the_hook);
         }
-        let last_accepted = LastAccepted::default();
+        let held_elements = HeldElements::default();
         let readers = Arc::new(Readers::new(
             UiaFocusReading {
                 outgoing: Arc::clone(&outgoing),
-                last_accepted: last_accepted.clone(),
+                held_elements: held_elements.clone(),
             },
             READ_DEADLINE,
             MOVED_ON_GRACE,
@@ -1019,7 +1020,7 @@ impl Listener {
         Ok(Self {
             outgoing,
             readers,
-            last_accepted,
+            held_elements,
             _registration: registration,
             nudger,
             _event_thread: event_thread,
@@ -1041,7 +1042,7 @@ impl Listener {
         let Self {
             outgoing,
             readers,
-            last_accepted: _,
+            held_elements: _,
             _registration: registration,
             nudger: _,
             _event_thread: event_thread,
@@ -1090,14 +1091,10 @@ impl Listener {
                 self.outgoing.hook_removed(*pid);
                 self.readers.outpost_ended(*pid);
             }
-            SupervisorToOutpost::FocusQueued {
-                trace_id,
-                observed_at_ms,
-                observed_at_us,
-                ..
-            } => self
-                .last_accepted
-                .queued(*trace_id, (*observed_at_ms, *observed_at_us)),
+            SupervisorToOutpost::CoreFocus { judged, focus, .. } => self.held_elements.core_focus(
+                *judged,
+                focus.as_ref().map(|focus| (focus.trace_id, focus.alive)),
+            ),
             SupervisorToOutpost::IdleQuery { round } => self.idle_query(*round),
             _ => {}
         }

@@ -20,7 +20,7 @@
 //!   sender UI Automation counts as the last focus any of the listener's
 //!   readers accepted (`CompareElements`), while that element still has
 //!   the keyboard focus, read live, is a repeat and is dropped
-//!   ([`LastAccepted`]); one whose nearest window fails NVDA's acceptance
+//!   ([`HeldElements`]); one whose nearest window fails NVDA's acceptance
 //!   test is dropped; the console window's own element, which NVDA's
 //!   `consoleUIAWindow` refuses, and a shell window that only stages a
 //!   switch, whose focus NVDA's File Explorer app module leaves unsaid,
@@ -119,12 +119,15 @@ use verbatim_uia_rops::{Ancestry, FocusAncestry, FocusQuery, focus_ancestry_clas
 
 use crate::ForegroundReader;
 use crate::arbitration::{Arbitrator, Clock, known_verdict, uses_uia, window_class_name};
-use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
+use crate::outpost::acceptance::SystemWindows;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{front_is_another_thread_of_its_application, window_is_hung};
 use crate::protocol::{
     DeliveredFact, DropEvidence, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
-    now_us, observed_no_earlier,
+    now_us,
+};
+use verbatim_core::focus_rules::{
+    EventName, RepeatEvidence, RequestedEvents, accepts_event, repeats_focus,
 };
 
 /// The most ancestors read for a focus, as many as the outpost walks.
@@ -330,7 +333,7 @@ type OnLearn = Box<dyn Fn(&WatchedRead) + Send + Sync>;
 ///
 /// And whether the watchdog has abandoned it ([`abandon`](Self::abandon)):
 /// a read that returns after that makes no focus the last one accepted
-/// ([`LastAccepted`]), so it cannot overwrite a newer focus accepted while
+/// ([`HeldElements`]), so it cannot overwrite a newer focus accepted while
 /// it was held.
 #[derive(Clone, Default)]
 pub(crate) struct WatchedRead(Arc<Watched>);
@@ -534,35 +537,53 @@ struct LastFocus {
     ancestors: Option<Vec<UiaAncestorFact>>,
 }
 
-/// The last focus any of the listener's reading threads accepted, shared
-/// by them all, as NVDA keeps one last focused UIA element for the whole
-/// program (`docs/design/focus-pipeline.md`, section 16.3), with the reader
-/// that accepted it: a focus event whose sender UI Automation counts as
-/// this element, while it still has the keyboard focus, is a repeat and is
-/// dropped before it is read ([`FocusReader::read`]). Each thread's own
-/// focus before still serves the ancestor read's stop and the evidence
-/// that a runtime id now names another element (`same_as_last`).
+/// The elements of the UIA focuses the listener's readers accepted, by
+/// how Core has judged them (decision D14, "Where the rules run"): the one
+/// behind the focus Core holds, when Core took it from one of these reads,
+/// and those Core has not judged yet. Shared by every reading thread, as
+/// NVDA keeps one last focus for the whole program
+/// (`docs/design/focus-pipeline.md`, section 16.3). A focus event whose
+/// sender UI Automation counts as the element of the focus Core holds,
+/// while that element still has the keyboard focus, is a repeat and is
+/// dropped before it is read ([`FocusReader::read`]), but only while Core
+/// has judged every focus the listener has accepted
+/// ([`verbatim_core::focus_rules::repeats_focus`]): until then the focus
+/// Core holds can yet become another, as NVDA's last queued focus is
+/// replaced by each focus it queues. A menu opening is compared with the
+/// focus Core holds, as NVDA compares it with its focus object. Each
+/// thread's own focus before still serves the ancestor read's stop and the
+/// evidence that a runtime id now names another element (`same_as_last`).
 ///
-/// NVDA compares with the last focus it queued, whatever reported it, and
-/// only while that is a UIA object (`lastQueuedFocusObject`), so once Core
-/// queues a newer focus that is not this one, from an outpost's MSAA
-/// events, a foreground change, or a focus it asked for, the element no
-/// longer counts ([`queued`](Self::queued)).
+/// Core tells the listener of every focus event it judges and every change
+/// of its focus (`SupervisorToOutpost::CoreFocus`), so an element whose
+/// focus Core refused, such as a shell window that only stages a switch,
+/// never stands for the focus Core holds. An element is released by a
+/// reading thread, in COM's apartment, once Core no longer holds it and has
+/// judged it: the notice only marks it.
 #[derive(Clone, Default)]
-pub struct LastAccepted(Arc<Mutex<Option<Accepted>>>);
+pub struct HeldElements(Arc<Mutex<Vec<Accepted>>>);
 
-/// The last focus accepted: the number of the reader that accepted it, the
-/// element, the window it was judged with (NVDA's object's `windowHandle`),
-/// the event it came in, and whether a newer focus has been queued since,
-/// after which it is no repeat's evidence and not the current focus. It is
-/// kept until its reader replaces or releases it, so it is released on a
-/// thread in COM's apartment.
+/// One focus a reader accepted: the number of the reader, the element, the
+/// window it was judged with (NVDA's object's `windowHandle`), the event it
+/// came in, and how Core has judged it.
 struct Accepted {
     reader: u64,
     element: AgileReference<IUIAutomationElement>,
     window: isize,
     arrival: Arrival,
-    superseded: bool,
+    judged: Judgement,
+}
+
+/// How Core has judged an accepted focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Judgement {
+    /// Not yet.
+    Waiting,
+    /// It is the focus Core holds.
+    Held,
+    /// Judged, and not the focus Core holds: released by the next reading
+    /// thread that takes the lock.
+    Done,
 }
 
 /// The UIA event a focus came in: its trace, and when the listener
@@ -577,37 +598,40 @@ pub struct Arrival {
     pub observed_at_us: u64,
 }
 
-impl LastAccepted {
-    fn lock(&self) -> MutexGuard<'_, Option<Accepted>> {
+impl HeldElements {
+    fn lock(&self) -> MutexGuard<'_, Vec<Accepted>> {
         self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The last focus accepted, with the window it was judged with, if
-    /// there is one, no newer focus has been queued since, and it can be had
-    /// on this thread: the current focus, as far as the listener can hold
-    /// it, which NVDA's automation event handler compares a menu opening's
-    /// sender with.
-    fn current(&self) -> Option<(IUIAutomationElement, isize)> {
-        self.lock()
-            .as_ref()
-            .filter(|accepted| !accepted.superseded)
+    /// The element of the focus Core holds, with the window it was judged
+    /// with, when Core took that focus from one of these reads and it can
+    /// be had on this thread; and whether Core has judged every focus the
+    /// listener accepted.
+    fn held(&self) -> (Option<(IUIAutomationElement, isize)>, bool) {
+        let entries = self.lock();
+        let settled = entries
+            .iter()
+            .all(|accepted| accepted.judged != Judgement::Waiting);
+        let held = entries
+            .iter()
+            .find(|accepted| accepted.judged == Judgement::Held)
             .and_then(|accepted| {
                 accepted
                     .element
                     .resolve()
                     .ok()
                     .map(|element| (element, accepted.window))
-            })
+            });
+        (held, settled)
     }
 
-    /// Makes `element`, which reader `reader` accepted from the event
-    /// `arrival` and judged with window `window` in the read `read`, the
-    /// last focus accepted, unless the watchdog has abandoned that read: a
-    /// focus accepted since, by the thread that took the application's
-    /// later events, is the newer. The read's abandonment is asked under
-    /// the lock, and the watchdog marks a read abandoned before a newer
-    /// read can begin, so a read abandoned after it is asked accepts its
-    /// focus before any newer one does.
+    /// Records `element`, which reader `reader` accepted from the event
+    /// `arrival` and judged with window `window` in the read `read`, as a
+    /// focus Core has not judged yet, unless the watchdog has abandoned that
+    /// read: Core is told of its drop instead and never judges it. The
+    /// read's abandonment is asked under the lock, and the watchdog marks a
+    /// read abandoned before a newer read can begin. Releases, on this
+    /// reading thread, the elements Core has judged and does not hold.
     fn accept(
         &self,
         reader: u64,
@@ -617,94 +641,88 @@ impl LastAccepted {
     ) {
         match AgileReference::new(element) {
             Ok(element) => {
-                let mut slot = self.lock();
+                let mut entries = self.lock();
+                entries.retain(|accepted| accepted.judged != Judgement::Done);
                 if read.abandoned() {
-                    tracing::debug!(
-                        "an abandoned read's focus is not made the last focus accepted"
-                    );
+                    tracing::debug!("an abandoned read's focus is not kept for Core's judgement");
                     return;
                 }
-                *slot = Some(Accepted {
+                entries.push(Accepted {
                     reader,
                     element,
                     window,
                     arrival,
-                    superseded: false,
+                    judged: Judgement::Waiting,
                 });
             }
             Err(error) => {
-                tracing::debug!(%error, "the last focus accepted could not be kept");
+                tracing::debug!(%error, "an accepted focus could not be kept");
             }
         }
     }
 
-    /// Core took the event traced `trace`, observed at `observed`, its
-    /// milliseconds and microseconds (0 when not known; both 0 for a focus
-    /// it asked for), as the focus. Unless that is the last focus accepted,
-    /// or was observed before it, ordered as Core orders them
-    /// ([`observed_no_earlier`]), so that the accepted one is the newer and
-    /// Core takes it next, the last focus accepted is no longer the last
-    /// focus queued, and is no repeat's evidence.
-    pub fn queued(&self, trace: TraceId, observed: (u64, u64)) {
-        let mut slot = self.lock();
-        if let Some(accepted) = slot.as_mut()
-            && !accepted.superseded
-            && accepted.arrival.trace != trace
-            && (observed.0 == 0
-                || observed_no_earlier(
-                    observed,
-                    (
-                        accepted.arrival.observed_at_ms,
-                        accepted.arrival.observed_at_us,
-                    ),
-                ))
+    /// Core judged the focus event traced `judged`, if any, and holds the
+    /// focus `held`, the trace of the event it took it from and whether it
+    /// is alive (`SupervisorToOutpost::CoreFocus`). A judged read and every
+    /// earlier read of the same reader, whose reads reach Core in the order
+    /// they were accepted, are judged; the read whose trace the focus Core
+    /// holds carries is that focus's element, and no other is.
+    pub fn core_focus(&self, judged: Option<TraceId>, held: Option<(TraceId, bool)>) {
+        let mut entries = self.lock();
+        if let Some(judged) = judged
+            && let Some(at) = entries.iter().position(|accepted| {
+                accepted.judged == Judgement::Waiting && accepted.arrival.trace == judged
+            })
         {
-            tracing::debug!(
-                ?trace,
-                observed_at_ms = observed.0,
-                observed_at_us = observed.1,
-                "another focus was queued; the last focus accepted is no repeat's evidence"
-            );
-            accepted.superseded = true;
+            let reader = entries[at].reader;
+            for accepted in &mut entries[..=at] {
+                if accepted.reader == reader && accepted.judged == Judgement::Waiting {
+                    accepted.judged = Judgement::Done;
+                }
+            }
+        }
+        let held = held.filter(|&(_, alive)| alive).map(|(trace, _)| trace);
+        for accepted in entries.iter_mut() {
+            if Some(accepted.arrival.trace) == held {
+                accepted.judged = Judgement::Held;
+            } else if accepted.judged == Judgement::Held {
+                accepted.judged = Judgement::Done;
+            }
         }
     }
 
     /// The watchdog has abandoned the read of the event traced `trace`,
     /// whose drop Core is told of: a focus that read accepted just before
-    /// is no current focus and no repeat's evidence, since Core never
-    /// received it. Called under the readers' lock after the read is marked
-    /// abandoned, so this covers an accept made before the mark, and the
-    /// mark one made after ([`accept`](Self::accept)). The element is kept
-    /// for its reader to release, on its own thread in COM's apartment.
+    /// is one Core never judges. Called under the readers' lock after the
+    /// read is marked abandoned, so this covers an accept made before the
+    /// mark, and the mark one made after ([`accept`](Self::accept)). The
+    /// element is kept for a reading thread to release, in COM's apartment.
     pub(crate) fn abandoned(&self, trace: TraceId) {
-        let mut slot = self.lock();
-        if let Some(accepted) = slot.as_mut()
-            && accepted.arrival.trace == trace
-        {
-            tracing::debug!(
-                ?trace,
-                "an abandoned read's focus was accepted; it is no repeat's evidence"
-            );
-            accepted.superseded = true;
+        let mut entries = self.lock();
+        for accepted in entries.iter_mut() {
+            if accepted.arrival.trace == trace && accepted.judged == Judgement::Waiting {
+                tracing::debug!(
+                    ?trace,
+                    "an abandoned read's focus was accepted; Core never judges it"
+                );
+                accepted.judged = Judgement::Done;
+            }
         }
     }
 
-    /// Forgets the last focus accepted if reader `reader` accepted it, so
-    /// it is released on the thread that ends with that reader, while the
-    /// thread is still in COM's apartment.
+    /// Forgets every focus reader `reader` accepted, and every element Core
+    /// has judged and does not hold, releasing them on the thread that ends
+    /// with that reader, while it is still in COM's apartment. Core judges
+    /// none of the reader's focuses it has not judged yet once its
+    /// application's outpost has ended, which ends the reader.
     fn release(&self, reader: u64) {
-        let mut slot = self.lock();
-        if slot
-            .as_ref()
-            .is_some_and(|accepted| accepted.reader == reader)
-        {
-            *slot = None;
-        }
+        self.lock()
+            .retain(|accepted| accepted.reader != reader && accepted.judged != Judgement::Done);
     }
 }
 
 /// The next [`FocusReader`]'s number, which names the reader that accepted
-/// the [`LastAccepted`] focus.
+/// the [`HeldElements`] focus.
 static NEXT_READER: AtomicU64 = AtomicU64::new(1);
 
 /// One application's focus reader: a UIA client of its own and the focus
@@ -715,7 +733,7 @@ pub struct FocusReader {
     /// This reader's number among the listener's readers.
     number: u64,
     /// The last focus any reader accepted.
-    last_accepted: LastAccepted,
+    held_elements: HeldElements,
     /// Reads the foreground window for NVDA's acceptance test: the
     /// system's, unless a test supplies its own
     /// ([`set_foreground_reader`](Self::set_foreground_reader)).
@@ -733,7 +751,7 @@ pub struct FocusReader {
 
 impl Drop for FocusReader {
     fn drop(&mut self) {
-        self.last_accepted.release(self.number);
+        self.held_elements.release(self.number);
     }
 }
 
@@ -742,18 +760,18 @@ impl FocusReader {
     /// which joins COM's multithreaded apartment. Every read is the classic
     /// walk, which makes no remote operation
     /// (`docs/design/listener-without-connections.md`, section 2).
-    /// `last_accepted` is the last focus any of the listener's readers
+    /// `held_elements` is the last focus any of the listener's readers
     /// accepted, which this one shares.
     ///
     /// # Errors
     ///
     /// The COM error when the client cannot be made.
-    pub fn new(last_accepted: LastAccepted) -> windows::core::Result<Self> {
+    pub fn new(held_elements: HeldElements) -> windows::core::Result<Self> {
         Ok(Self {
             uia: Uia::new()?,
             last: None,
             number: NEXT_READER.fetch_add(1, Ordering::Relaxed),
-            last_accepted,
+            held_elements,
             foreground: Arc::new(crate::outpost::window::foreground_window_handle),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             window: WatchedRead::default(),
@@ -930,7 +948,7 @@ impl FocusReader {
                     element: element.clone(),
                     ancestors: None,
                 });
-                self.last_accepted
+                self.held_elements
                     .accept(self.number, element, (nearest, arrival), &self.window);
                 // Reported as the focus, as `focused` reports one, whatever
                 // the event's cache says of its keyboard focus.
@@ -1115,7 +1133,7 @@ impl FocusReader {
             element: element.clone(),
             ancestors: ancestors.clone(),
         });
-        self.last_accepted
+        self.held_elements
             .accept(self.number, element, (nearest, arrival), &self.window);
         let mut selected_child = ancestry
             .selected_child
@@ -1193,14 +1211,15 @@ impl FocusReader {
         if hwnd != 0 && window_is_hung(hwnd) {
             return Err(HUNG);
         }
-        // The current focus, as far as the listener holds it: the last
-        // focus accepted, while no newer focus has been queued (section
-        // 16.3). Core's current focus is the last focus it queued, and the
-        // listener holds an element only for a UIA focus it accepted
-        // itself. An MSAA focus, a foreground change, or a focus Core asked
-        // for supersedes it, and NVDA's last focus or focus object is then
-        // no UIA object either, so nothing is compared with it.
-        let current = self.last_accepted.current();
+        // The focus Core holds, as far as the listener holds its element:
+        // Core took it from a UIA focus this listener read (decision D14,
+        // "Where the rules run"; section 16.3). An MSAA focus, a foreground
+        // change, or a focus Core asked for holds no element of the
+        // listener's, and NVDA's last focus or focus object is then no UIA
+        // object either, so nothing is compared with it. While a focus the
+        // listener read waits for Core's judgement, Core's focus can yet
+        // become it, so nothing is a repeat ([`HeldElements`]).
+        let (current, settled) = self.held_elements.held();
         let compare = || {
             let same = current
                 .as_ref()
@@ -1242,23 +1261,40 @@ impl FocusReader {
             // notification is checked ([`Self::check_fact`]).
             FocusEvent::Focus | FocusEvent::Selection | FocusEvent::Notification => {
                 let nearest = self.native_window(held, sender, budget, false)?;
-                // 3. NVDA's duplicate rule (`UIAHandler/__init__.py` 902 to
-                // 923; section 16.3): the sender is the last focus accepted,
-                // by any of the listener's readers, as UIA compares them,
-                // and that element still has the keyboard focus, read live.
-                // A comparison that fails is no duplicate, as NVDA lets the
-                // event through on a COM error, and so is a keyboard focus
-                // read that fails: the earlier element is gone. Two calls,
-                // the second only for an element UIA equates. Out of time,
-                // neither is made, and the focus is no repeat.
-                if let (Some(Ok(true)), Some((last, _))) = (compare(), current.as_ref())
-                    && kind == FocusEvent::Focus
-                    && !out_of_time()
-                    && {
+                // 3. The repeat rule (`focus_rules::repeats_focus`; NVDA's
+                // duplicate rule, `UIAHandler/__init__.py` 902 to 923;
+                // section 16.3): Core has judged every focus the listener
+                // read, the sender is the element of the focus Core holds,
+                // as UIA compares them, and that element still has the
+                // keyboard focus, read live. A comparison that fails is no
+                // duplicate, as NVDA lets the event through on a COM error,
+                // and so is a keyboard focus read that fails: the earlier
+                // element is gone. Two calls, the second only for an element
+                // UIA equates, and neither while a focus waits for Core's
+                // judgement. Out of time, neither is made, and the focus is
+                // no repeat.
+                let same = if settled {
+                    compare()
+                } else {
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        Self::log_sender(sender, runtime_id, None);
+                    }
+                    None
+                };
+                let held = current
+                    .as_ref()
+                    .filter(|_| matches!(same, Some(Ok(true))) && kind == FocusEvent::Focus);
+                let still_focused = held.is_some_and(|(last, _)| {
+                    !out_of_time() && {
                         budget.call("the last focus's keyboard focus");
                         last.has_keyboard_focus().unwrap_or(false)
                     }
-                {
+                });
+                if repeats_focus(RepeatEvidence {
+                    settled,
+                    same_element: held.is_some(),
+                    still_focused,
+                }) {
                     return Err(REPEAT);
                 }
                 (nearest, element)
@@ -2277,7 +2313,7 @@ fn drop_waiting<R: Reading>(
 /// Abandons the thread reading `pid`'s event, of `window`, for `reason`:
 /// it has run past the deadline, or the user has moved on from its window.
 /// The read is marked abandoned before anything else, so that it accepts
-/// no focus once a newer read can begin ([`LastAccepted::accept`]). The
+/// no focus once a newer read can begin ([`HeldElements::accept`]). The
 /// application's waiting events go to a new thread, or, once
 /// [`ABANDONED_LIMIT`] of its threads are abandoned, wait for the first of
 /// them to return.
@@ -2355,7 +2391,7 @@ mod tests {
     /// window to be `nearest` before it is held, 0 for none. Whether the
     /// user has moved on from a window is what `moved_on` says, each
     /// judgement sent to the test. A read the watchdog abandons is told to
-    /// `last_accepted`, as the listener's reading tells its own.
+    /// `held_elements`, as the listener's reading tells its own.
     struct Script {
         outcomes: Mutex<Sender<(Pid, u64, &'static str)>>,
         read_on: Mutex<Sender<(u64, ThreadId)>>,
@@ -2367,7 +2403,7 @@ mod tests {
         asked: Mutex<Sender<isize>>,
         hwnd: isize,
         nearest: isize,
-        last_accepted: LastAccepted,
+        held_elements: HeldElements,
     }
 
     impl Reading for Script {
@@ -2426,7 +2462,7 @@ mod tests {
         }
 
         fn abandoned(&self, meta: &Meta) {
-            self.last_accepted.abandoned(meta.trace);
+            self.held_elements.abandoned(meta.trace);
         }
 
         fn moved_on(&self, window: isize) -> bool {
@@ -2518,7 +2554,7 @@ mod tests {
                     asked: Mutex::new(asked_tx),
                     hwnd,
                     nearest,
-                    last_accepted: LastAccepted::default(),
+                    held_elements: HeldElements::default(),
                 },
                 deadline,
                 grace,
@@ -3204,41 +3240,65 @@ mod tests {
         assert_eq!(read, [1, 2], "events 3, 4 and 5 were never read");
     }
 
-    /// A focus Core queued in the same millisecond as the last focus
-    /// accepted ends it as the current focus only when it was observed no
-    /// earlier, to the microsecond, as Core orders the two.
-    #[test]
-    fn a_focus_queued_in_the_same_millisecond_is_ordered_by_microseconds() {
-        let uia = Uia::new().expect("a UIA client");
-        let element = uia.root_element().expect("the desktop's root element");
-        let last_accepted = LastAccepted::default();
-        let arrival = Arrival {
-            trace: TraceId::mint(),
-            observed_at_ms: 6_543,
-            observed_at_us: 6_543_500,
-        };
-        last_accepted.accept(1, &element, (WINDOW, arrival), &WatchedRead::default());
-        last_accepted.queued(TraceId::mint(), (6_543, 6_543_200));
-        assert_eq!(
-            last_accepted.current().map(|(_, window)| window),
-            Some(WINDOW)
-        );
-        last_accepted.queued(TraceId::mint(), (6_543, 6_543_800));
-        assert!(last_accepted.current().is_none());
+    /// The window of the element held for the focus Core holds, and
+    /// whether Core has judged every focus accepted.
+    fn held_window(held_elements: &HeldElements) -> (Option<isize>, bool) {
+        let (held, settled) = held_elements.held();
+        (held.map(|(_, window)| window), settled)
     }
 
-    /// A focus a read accepted just before the watchdog abandoned it is no
-    /// current focus once the watchdog has, since Core was told the event
-    /// was dropped; and a read that returns after it was abandoned does not
-    /// make its focus the last one accepted, so a newer focus accepted
-    /// while it was held stays the last.
+    /// The element compared with is the one behind the focus Core holds: a
+    /// focus accepted waits for Core's judgement, and nothing is a repeat
+    /// meanwhile; one Core took is held; one Core refused, as it refuses a
+    /// shell window that only stages a switch, is not, and the focus Core
+    /// still holds stays; and once Core holds a focus no read of the
+    /// listener's gave it, none is held.
+    #[test]
+    fn the_element_compared_with_is_the_one_behind_the_focus_core_holds() {
+        const STAGING: isize = 0x8180;
+        let uia = Uia::new().expect("a UIA client");
+        let element = uia.root_element().expect("the desktop's root element");
+        let held_elements = HeldElements::default();
+        let arrival = |trace| Arrival {
+            trace,
+            observed_at_ms: 0,
+            observed_at_us: 0,
+        };
+        let (taken, refused) = (TraceId::mint(), TraceId::mint());
+        held_elements.accept(
+            1,
+            &element,
+            (WINDOW, arrival(taken)),
+            &WatchedRead::default(),
+        );
+        assert_eq!(held_window(&held_elements), (None, false));
+        held_elements.core_focus(Some(taken), Some((taken, true)));
+        assert_eq!(held_window(&held_elements), (Some(WINDOW), true));
+        held_elements.accept(
+            1,
+            &element,
+            (STAGING, arrival(refused)),
+            &WatchedRead::default(),
+        );
+        assert_eq!(held_window(&held_elements), (Some(WINDOW), false));
+        held_elements.core_focus(Some(refused), Some((taken, true)));
+        assert_eq!(held_window(&held_elements), (Some(WINDOW), true));
+        held_elements.core_focus(None, Some((TraceId::mint(), true)));
+        assert_eq!(held_window(&held_elements), (None, true));
+    }
+
+    /// A focus a read accepted just before the watchdog abandoned it waits
+    /// for no judgement once the watchdog has, since Core was told the event
+    /// was dropped; and a read that returns after it was abandoned keeps no
+    /// focus, so only the newer focus accepted while it was held is Core's
+    /// to judge.
     #[test]
     fn a_read_returning_after_it_was_abandoned_accepts_no_focus() {
         const NEWER_WINDOW: isize = 0x8180;
         let uia = Uia::new().expect("a UIA client");
         let element = uia.root_element().expect("the desktop's root element");
         let fixture = fixture_with_grace(Duration::from_secs(60), Duration::from_millis(50));
-        let last_accepted = fixture.readers.shared.reading.last_accepted.clone();
+        let held_elements = fixture.readers.shared.reading.held_elements.clone();
         let first = meta(1);
         let arrival = Arrival {
             trace: first.trace,
@@ -3258,20 +3318,18 @@ mod tests {
             WINDOW
         );
         // The read accepts its focus while it is not yet abandoned.
-        last_accepted.accept(1, &element, (WINDOW, arrival), &WatchedRead::default());
-        assert_eq!(
-            last_accepted.current().map(|(_, window)| window),
-            Some(WINDOW)
-        );
+        held_elements.accept(1, &element, (WINDOW, arrival), &WatchedRead::default());
+        assert_eq!(held_window(&held_elements), (None, false));
         fixture.set_moved_on(true);
         fixture.readers.foreground_changed();
         assert_eq!(
             fixture.outcomes.recv_timeout(WAIT).expect("an outcome"),
             (Pid(5), 1, "the user moved on from a slow window")
         );
-        assert!(
-            last_accepted.current().is_none(),
-            "the abandoned read's focus is no current focus"
+        assert_eq!(
+            held_window(&held_elements),
+            (None, true),
+            "Core never judges the abandoned read's focus"
         );
         open.send(()).expect("the held read waits");
         let (marker, abandoned) = fixture
@@ -3284,16 +3342,18 @@ mod tests {
             observed_at_ms: 0,
             observed_at_us: 0,
         };
-        last_accepted.accept(
+        held_elements.accept(
             2,
             &element,
             (NEWER_WINDOW, newer),
             &WatchedRead::new(NEWER_WINDOW, None),
         );
-        last_accepted.accept(1, &element, (WINDOW, arrival), &abandoned);
+        held_elements.accept(1, &element, (WINDOW, arrival), &abandoned);
+        held_elements.core_focus(Some(newer.trace), Some((newer.trace, true)));
         assert_eq!(
-            last_accepted.current().map(|(_, window)| window),
-            Some(NEWER_WINDOW)
+            held_window(&held_elements),
+            (Some(NEWER_WINDOW), true),
+            "the returning read's focus was never kept"
         );
         assert_eq!(fixture.readers.stop(), 1);
     }

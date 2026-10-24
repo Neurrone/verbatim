@@ -1745,25 +1745,18 @@ impl ReducerThread<'_> {
             _ => TraceId::mint(),
         };
         let queued = self.state.focuses_queued();
-        let focus_outpost = self.state.focused().map(|(_, node)| node.id.outpost());
+        let held_before = self.held_focus_owner();
+        // A focus event is judged, taken or refused, by the reducer.
+        let judged = match &input {
+            Input::Event {
+                trace_id,
+                event: verbatim_model::NormalizedEvent::FocusChanged { node, .. },
+                ..
+            } => Some((*trace_id, node.id.outpost())),
+            _ => None,
+        };
         let effects = reduce(&mut self.state, &input);
-        if self.state.focuses_queued() != queued {
-            let observed = match &input {
-                Input::Event {
-                    observed_at_ms,
-                    observed_at_us,
-                    ..
-                } => (*observed_at_ms, *observed_at_us),
-                _ => (0, 0),
-            };
-            // The outpost that reported the focus before hears of a focus
-            // from another application, once per change of application.
-            let now = self.state.focused().map(|(_, node)| node.id.outpost());
-            let superseded = focus_outpost.filter(|&before| Some(before) != now);
-            self.context
-                .supervisor
-                .focus_queued(trace_id, observed, superseded);
-        }
+        self.tell_core_focus(judged, queued, held_before);
         if self.state.focused().is_some() && !self.context.focus_known.swap(true, Ordering::AcqRel)
         {
             self.context.readiness.notify();
@@ -1788,6 +1781,56 @@ impl ReducerThread<'_> {
         for effect in effects {
             self.execute(trace_id, effect);
         }
+    }
+
+    /// The outpost whose node the focus Core holds is, and whether that
+    /// focus is alive.
+    fn held_focus_owner(&self) -> Option<(OutpostId, bool)> {
+        self.state
+            .held_focus()
+            .map(|focus| (focus.focus.id.outpost(), focus.alive))
+    }
+
+    /// Tells the focus listener and the outposts concerned the focus Core
+    /// holds (decision D14, "Where the rules run";
+    /// `SupervisorToOutpost::CoreFocus`), after an input that judged the
+    /// focus event `judged`, its trace and outpost, or changed Core's
+    /// focus: one Core took (`queued`, the count of focuses taken before
+    /// the input, has moved), or one whose outpost ended (`before`, the
+    /// focus's outpost and liveness before the input, differs). The
+    /// outpost whose event was judged hears of it; when the focus changed,
+    /// so do the outposts whose focus it was and now is.
+    fn tell_core_focus(
+        &self,
+        judged: Option<(TraceId, OutpostId)>,
+        queued: u64,
+        before: Option<(OutpostId, bool)>,
+    ) {
+        let now = self.held_focus_owner();
+        let changed = self.state.focuses_queued() != queued || now != before;
+        if judged.is_none() && !changed {
+            return;
+        }
+        let mut outposts: Vec<OutpostId> = Vec::new();
+        let concerned = if changed {
+            [
+                judged.map(|(_, outpost)| outpost),
+                before.map(|(outpost, _)| outpost),
+                now.map(|(outpost, _)| outpost),
+            ]
+        } else {
+            [judged.map(|(_, outpost)| outpost), None, None]
+        };
+        for outpost in concerned.into_iter().flatten() {
+            if !outposts.contains(&outpost) {
+                outposts.push(outpost);
+            }
+        }
+        self.context.supervisor.core_focus(
+            judged.map(|(trace, _)| trace),
+            self.state.held_focus(),
+            outposts,
+        );
     }
 
     /// Sends the views derived from the reducer state, when they change: to

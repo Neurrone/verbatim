@@ -756,6 +756,13 @@ mod tests {
     }
 
     #[test]
+    fn the_system_carets_location_change_is_judged_by_its_window() {
+        let desk = Desk::new();
+        assert!(desk.accepts(EventName::LocationChange, FOREGROUND_CHILD));
+        assert!(!desk.accepts(EventName::LocationChange, BACKGROUND_CHILD));
+    }
+
+    #[test]
     fn any_other_window_is_dropped() {
         let desk = Desk::new();
         assert!(!desk.accepts(EventName::GainFocus, BACKGROUND));

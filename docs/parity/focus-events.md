@@ -14,8 +14,18 @@ has no test for a foreground or menu focus
 ([Event handling](../nvda/events.md),
 [The UIA client](../nvda/uia.md)).
 
-Verbatim: **matched (verified)**, with one rule of its own and one
-difference when a read's time is up.
+Verbatim: **matched (verified)**, with one rule of its own and two
+differences: when a read's time is up, and while a focus waits for
+Core's judgement.
+
+The rule is defined once (`verbatim_core::focus_rules::repeats_focus`;
+decision D14, "Where the rules run"): a focus repeats when its event
+names the element of the focus Core holds, which still has the focus,
+and Core has judged every focus the judge sent it. Core applies it, and
+the focus listener and the outposts apply it before they read, each
+gathering the evidence by its own means, against the focus Core holds,
+which Core tells them after every focus event it judges and every change
+of its focus (`SupervisorToOutpost::CoreFocus`).
 
 - Core drops a focus on the node of the live focus it holds, which is
   the last focus it queued, before the stale and foreground checks, so it
@@ -35,21 +45,33 @@ difference when a read's time is up.
   `the_same_focus_after_another_applications_focus_is_announced` pin it.
 - The focus listener makes NVDA's UIA test itself, in NVDA's order,
   before it reads anything of the event's sender
-  (`docs/design/focus-pipeline.md`, section 16.3): one last accepted
-  focus is shared by all its reading threads, as NVDA keeps one for the
-  whole program, and an event whose sender `CompareElements` equates with
-  it, while that element's `HasKeyboardFocus` reads true, is dropped; a
-  comparison or read that fails lets the event through. A repeat costs
-  those two calls. The last focus is recorded only once a focus has
-  passed the acceptance test against the foreground window and has been
-  read, as NVDA records only a focus it queues, and it stops counting
-  once Core has queued a newer, other focus, which Core tells the
-  listener by the event's trace and observation time
-  (`SupervisorToOutpost::FocusQueued`). Mockapp's
+  (`docs/design/focus-pipeline.md`, section 16.3), against the focus Core
+  holds: the elements of the focuses its reading threads read are shared
+  by all of them (`focus_read::HeldElements`), by how Core judged them,
+  and an event whose sender `CompareElements` equates with the element of
+  the focus Core holds, while that element's `HasKeyboardFocus` reads
+  true, is dropped; a comparison or read that fails lets the event
+  through. A repeat costs those two calls. An element is kept only once
+  its focus has passed the acceptance test against the foreground window
+  and has been read; it stands for the focus Core holds only once Core
+  has taken that focus, and no longer once Core holds another, so a focus
+  Core refused, as a shell window that only stages a switch, is never
+  compared with. Mockapp's
   `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`,
-  `a_focus_is_no_repeat_once_another_focus_was_queued`, and
+  `a_focus_is_no_repeat_once_core_holds_another`, and
   `a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus` pin
   it.
+- Different, deliberately (decision D14, "Where the rules run"): NVDA
+  compares with the last focus it queued, which becomes the focus it
+  holds when it handles the event; Verbatim's judges compare with the
+  focus Core holds, which a focus they sent becomes only once Core has
+  judged it. While one waits, nothing is a repeat: the listener reads a
+  repeat of a focus it read moments before (mockapp's
+  `a_focus_waiting_for_core_s_judgement_is_no_repeat`), and an outpost
+  reports an MSAA focus repeated at the address it reported moments
+  before, unless every focus it judges against is that object. Core's own
+  rule then drops the repeat, its newer reading kept unspoken, so nothing
+  heard changes; the read is the cost.
 - Different, deliberately (Dickson, 2026-10-20): once the listener's
   read of a focus has used its time budget, 2 seconds, it makes no more
   calls into the application, and the repeat test is skipped, since it
@@ -78,14 +100,13 @@ difference when a read's time is up.
   event's cache judges the focus only when the budget is out before the
   live read is made. Mockapp's
   `a_focus_whose_keyboard_focus_read_times_out_is_reported` pins it.
-- Each outpost makes NVDA's MSAA test, by the address of the last focus
-  it reported, a whole object rather than a child by id. That focus
-  stops counting after a foreground change the outpost reports, and once
-  Core has queued a newer focus from another application, which Core
-  tells the outpost that reported the focus before
-  (`SupervisorToOutpost::FocusQueued`, once per change of application);
-  a UIA focus in the same application replaces it as the outpost's last
-  focus (`docs/design/focus-pipeline.md`, section 16.3). Mockapp's
+- Each outpost makes NVDA's MSAA test against the focus Core holds, by
+  its address, a whole object rather than a child by id: a focus event at
+  that address is a repeat when Core holds a focus of this outpost's and
+  it, and every focus this outpost reported that Core has not judged yet,
+  is that object. A foreground change Core takes, and a focus Core takes
+  from another application or from a UIA focus of the same one, replace
+  it (`docs/design/focus-pipeline.md`, section 16.3). Mockapp's
   `a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object` and
   `a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus`
   pin it.
@@ -136,12 +157,13 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
   window was confirmed (below); a focus read on request, when the read
   began; and the end of a menu or of the switcher, when the listener's
   callback observed it.
-- The focus listener and the outposts, told of each focus Core queued
-  with its milliseconds and microseconds
-  (`SupervisorToOutpost::FocusQueued`), order it against their own last
-  focus as Core orders two focuses (`protocol::observed_no_earlier`), so
-  a focus Core queued in the same millisecond replaces their last focus
-  exactly when Core took it as the newer.
+- The focus listener and the outposts judge against the focus Core holds,
+  which Core tells them after it has judged each focus event
+  (`SupervisorToOutpost::CoreFocus`), so the order Core gave two focuses
+  is the order they judge by; an outpost keeps the observation time of
+  another application's focus Core holds, ordered as Core orders two
+  focuses (`protocol::observed_no_earlier`), for its wait for a UIA
+  focus.
 - A UIA focus fact whose element is not the focused element is dropped
   when the focus is in another application by then, and otherwise
   reported from the fact with its window: its own, or for a windowless
@@ -202,7 +224,12 @@ cases listed last are not implemented.
   alerts (`docs/design/phase6-design.md`, "Event filtering in the
   outposts"). Show facts pass by their class, which the focus listener's
   hook already tested, as NVDA's show rule depends on the class alone.
-  Core's own test stays. Outside the test, as in NVDA's callback: an
+  The test is defined once (`verbatim_core::focus_rules::accepts_event`;
+  decision D14, "Where the rules run"), for the outposts and the focus
+  listener, and the window facts an outpost reports with an event carry
+  its last part, the window's relation to the foreground window
+  (`ForegroundRelation`), read by the same definition, which the reducer
+  judges a focus by after the read. Outside the test, as in NVDA's callback: an
   object destroyed, and Verbatim's own events, the text selection of edit
   controls, and the console host's updates and caret.
 - MSAA, after acceptance and in NVDA's order: an event is dropped when

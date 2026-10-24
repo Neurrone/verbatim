@@ -124,6 +124,8 @@ use verbatim_model::{
     TextReply, TraceId, TreeNode, WindowFacts,
 };
 
+pub use verbatim_core::focus_rules::{HeldFocus, HeldNode};
+
 /// The identity-free contents of a UIA focus element, as the focus listener
 /// captures them (decision D13): the runtime id plus role, name, value,
 /// states, and details — everything a [`NodeSnapshot`](verbatim_model::NodeSnapshot)
@@ -710,27 +712,31 @@ pub enum SupervisorToOutpost {
         #[serde(default)]
         sent_at_us: u64,
     },
-    /// To the focus listener, after every focus Core queues, and to the
-    /// outpost that reported the focus Core queued before, when the new
-    /// one is another application's: Core has taken as the focus the event
-    /// traced `trace_id`, observed at `observed_at_ms` (0 for a focus Core
-    /// asked for). NVDA's duplicate rules compare a focus event with the
-    /// last focus queued, whatever reported it, so the listener forgets the
-    /// last focus it accepted when a newer, other focus was queued
-    /// (`focus_read::LastAccepted`), and the outpost's MSAA duplicate test
-    /// stops comparing with its last focus when that was observed no later
-    /// than this one. Both order the two as Core does
-    /// ([`observed_no_earlier`]).
-    FocusQueued {
-        /// The trace of the event Core took.
-        trace_id: TraceId,
-        /// When that event was observed, in milliseconds on the run's
-        /// shared clock.
-        observed_at_ms: u64,
-        /// The same stamp in microseconds, from the same clock read; 0
-        /// when its source gave milliseconds only, and from an older peer.
+    /// The focus Core holds (decision D14, "Where the rules run"), for the
+    /// judgments the focus listener and the outposts make before they read
+    /// an element: sent to the listener, to the outpost whose focus event
+    /// Core has just judged, and to the outposts whose focus Core's focus
+    /// was or now is, whenever Core judges a focus event, taken or
+    /// refused, or its focus changes. A judge holds back the drops that
+    /// depend on Core's focus while a focus it sent has not been judged.
+    CoreFocus {
+        /// The focus event Core has just judged, by its trace, when this
+        /// notice follows one; every focus event the receiver sent before it
+        /// has been judged too.
         #[serde(default)]
-        observed_at_us: u64,
+        judged: Option<TraceId>,
+        /// The focus Core holds, to the listener whole, and to an outpost
+        /// only when it is that outpost's, its node ids as the outpost
+        /// issued them (`HeldFocus::for_outpost`); `None` when Core holds
+        /// none, or another outpost's.
+        #[serde(default)]
+        focus: Option<HeldFocus>,
+        /// When the focus Core holds was observed, in milliseconds and
+        /// microseconds on the run's shared clock, whoever's it is; 0 when
+        /// not known. An outpost whose focus Core no longer holds stops
+        /// waiting for a UIA focus observed before it.
+        #[serde(default)]
+        observed: (u64, u64),
         /// When verbatim.exe began writing this command to the listener's
         /// pipe, in microseconds since the Unix epoch; 0 from an older peer
         /// ([`SupervisorToOutpost::stamp_sent`]).
@@ -853,14 +859,14 @@ pub enum SupervisorToOutpost {
 
 impl SupervisorToOutpost {
     /// Stamps a command to the focus listener (a ping, a hand-over notice,
-    /// or a focus queued) with `now`, read just before the command's write
+    /// or the focus Core holds) with `now`, read just before the command's write
     /// begins. Reads no clock for any other command.
     pub fn stamp_sent(&mut self, now: impl FnOnce() -> u64) {
         match self {
             SupervisorToOutpost::Ping { sent_at_us, .. }
             | SupervisorToOutpost::HookInstalled { sent_at_us, .. }
             | SupervisorToOutpost::HookRemoved { sent_at_us, .. }
-            | SupervisorToOutpost::FocusQueued { sent_at_us, .. } => *sent_at_us = now(),
+            | SupervisorToOutpost::CoreFocus { sent_at_us, .. } => *sent_at_us = now(),
             _ => {}
         }
     }
@@ -873,7 +879,7 @@ impl SupervisorToOutpost {
             SupervisorToOutpost::Ping { sent_at_us, .. }
             | SupervisorToOutpost::HookInstalled { sent_at_us, .. }
             | SupervisorToOutpost::HookRemoved { sent_at_us, .. }
-            | SupervisorToOutpost::FocusQueued { sent_at_us, .. } => *sent_at_us,
+            | SupervisorToOutpost::CoreFocus { sent_at_us, .. } => *sent_at_us,
             _ => 0,
         }
     }

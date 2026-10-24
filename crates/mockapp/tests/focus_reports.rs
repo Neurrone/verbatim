@@ -525,14 +525,16 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
     app.quit();
 }
 
-/// NVDA compares a UIA focus event with the last focus it queued, whatever
-/// reported it (`lastQueuedFocusObject`): a focus Core queued that was
-/// observed before the one the listener last accepted changes nothing, and
-/// a repeat on that element is dropped; once Core has queued a newer focus
-/// the listener did not accept, as an MSAA menu's or a foreground change's,
-/// a focus event on the element, which never lost the keyboard focus, is
-/// read in full.
-fn a_focus_is_no_repeat_once_another_focus_was_queued() {
+/// The listener compares a UIA focus event with the focus Core holds, as
+/// NVDA compares it with the last focus it queued, whatever reported it
+/// (`lastQueuedFocusObject`; decision D14, "Where the rules run"): a repeat
+/// on the element of the focus Core took from the listener's read is
+/// dropped; a focus the listener read and Core refused, as Core refuses a
+/// shell window that only stages a switch, changes nothing, and the repeat
+/// is still dropped; once Core holds a focus the listener did not read, as
+/// an MSAA menu's or a foreground change's, a focus event on the element,
+/// which never lost the keyboard focus, is read in full.
+fn a_focus_is_no_repeat_once_core_holds_another() {
     let title = common::unique_title("mockapp-focus-queued");
     let mut app = common::spawn("small.json", "uia", &title);
     let client = Client::new(common::find_window(&title));
@@ -540,18 +542,27 @@ fn a_focus_is_no_repeat_once_another_focus_was_queued() {
 
     app.send("set-focus btn1");
     let button = client.focused();
-    let _ = outpost.listener_fact(&button);
-    outpost.listener_focus_queued(1);
+    let _ = outpost.uia_focus(&button);
     let (judged, _) = outpost.listener_read(&button);
     assert!(
         matches!(judged, Judged::Dropped(_)),
-        "after an older focus, a repeat is dropped, not {judged:?}"
+        "a repeat of the focus Core holds is dropped, not {judged:?}"
     );
-    outpost.listener_focus_queued(u64::MAX);
+    app.send("set-focus slider1");
+    let slider = client.focused();
+    let _ = outpost.listener_fact(&slider);
+    outpost.listener_core_refuses_last_read();
+    app.send("set-focus btn1");
+    let (judged, _) = outpost.listener_read(&button);
+    assert!(
+        matches!(judged, Judged::Dropped(_)),
+        "after a focus Core refused, a repeat is dropped, not {judged:?}"
+    );
+    outpost.listener_core_focus_elsewhere();
     let (judged, _) = outpost.listener_read(&button);
     assert!(
         matches!(judged, Judged::Read(_)),
-        "after a newer focus, the focus is read, not {judged:?}"
+        "once Core holds another focus, the focus is read, not {judged:?}"
     );
 
     drop(outpost);
@@ -577,7 +588,7 @@ fn a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus() {
 
     uia_app.send("set-focus btn1");
     let button = client.focused();
-    let _ = uia_outpost.listener_fact(&button);
+    let _ = uia_outpost.uia_focus(&button);
     let (judged, _) = uia_outpost.listener_read(&button);
     assert!(
         matches!(judged, Judged::Dropped(_)),
@@ -586,7 +597,7 @@ fn a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus() {
 
     let reported = msaa_outpost.msaa_focus(msaa_hwnd, 1);
     assert_eq!(reported.node.role, Role::Button);
-    uia_outpost.listener_focus_queued(common::outpost::now_ms());
+    uia_outpost.listener_core_focus_elsewhere();
     let (judged, _) = uia_outpost.listener_read(&button);
     assert!(
         matches!(judged, Judged::Read(_)),
@@ -630,7 +641,7 @@ fn a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus() {
     uia_app.send("set-focus btn1");
     let reported = uia_outpost.uia_focus(&client.focused());
     assert_eq!(reported.node.role, Role::Button);
-    msaa_outpost.focus_queued_elsewhere(common::outpost::now_ms());
+    msaa_outpost.core_focus_elsewhere(common::outpost::now_ms());
     let reported = msaa_outpost.focus(button);
     assert_eq!(
         (reported.node.role, reported.node.name.as_deref()),
@@ -1453,7 +1464,7 @@ fn a_focus_queued_from_another_application_after_the_copy_answers_the_wait() {
     let observed_at_ms = common::outpost::now_ms();
     winevent_focus_observed(&outpost, hwnd, observed_at_ms);
     outpost.settled();
-    outpost.focus_queued_elsewhere(observed_at_ms + 1);
+    outpost.core_focus_elsewhere(observed_at_ms + 1);
     outpost.pass_time(Duration::from_secs(1));
     outpost.settled();
 
@@ -1534,6 +1545,28 @@ fn a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read() {
     assert_eq!(
         (again.node.id, again.node.name.as_deref()),
         (button.node.id, Some("Original Name"))
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A focus the listener read that Core has not judged yet is no repeat's
+/// evidence (decision D14, "Where the rules run"): Core may yet refuse it,
+/// so a second event on the same element, still focused, is read again,
+/// with no comparison made, and Core's own duplicate rule then drops it.
+fn a_focus_waiting_for_core_s_judgement_is_no_repeat() {
+    let title = common::unique_title("mockapp-repeat-unjudged");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let _ = outpost.listener_fact(&client.focused());
+    let (judged, _) = outpost.listener_read(&client.focused());
+    assert!(
+        matches!(judged, Judged::Read(_)),
+        "a focus waiting for Core's judgement is read again, not {judged:?}"
     );
 
     drop(outpost);
@@ -1640,7 +1673,7 @@ fn a_menu_opening_on_another_element_is_judged_by_its_own_window() {
         "the comparison, the nearest window, the keyboard focus, and the read"
     );
 
-    outpost.listener_focus_queued(u64::MAX);
+    outpost.listener_core_focus_elsewhere();
     let (judged, calls) = outpost.listener_read_as(&slider, FocusEvent::MenuOpened);
     let Judged::Read(read) = judged else {
         panic!("the listener did not read the menu opening: {judged:?}");
@@ -2433,8 +2466,8 @@ fn main() {
             an_unnamed_grouping_with_a_description_is_focus_context_with_descriptions_off,
         ),
         (
-            "a_focus_is_no_repeat_once_another_focus_was_queued",
-            a_focus_is_no_repeat_once_another_focus_was_queued,
+            "a_focus_is_no_repeat_once_core_holds_another",
+            a_focus_is_no_repeat_once_core_holds_another,
         ),
         (
             "a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus",
@@ -2563,6 +2596,10 @@ fn main() {
         (
             "a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read",
             a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read,
+        ),
+        (
+            "a_focus_waiting_for_core_s_judgement_is_no_repeat",
+            a_focus_waiting_for_core_s_judgement_is_no_repeat,
         ),
         (
             "a_foreground_event_for_a_window_read_through_uia_is_dropped",

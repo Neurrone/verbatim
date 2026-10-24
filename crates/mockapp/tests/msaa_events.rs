@@ -584,6 +584,85 @@ fn a_selection_is_read_in_full_only_inside_a_focused_list() {
     app.quit();
 }
 
+/// A change is judged against the focus Core holds (decision D14, "Where
+/// the rules run"): once Core holds another application's focus, a
+/// description change on the list item this outpost reported last is not
+/// read, as Core would not speak it, and costs its acquisition alone; once
+/// Core holds the item again, its description change is reported.
+fn a_change_of_a_focus_core_no_longer_holds_is_not_read() {
+    use verbatim_outpost::Heard;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-change-elsewhere");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus item2");
+    let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
+    assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
+    outpost.core_focus_elsewhere(common::outpost::now_ms());
+    common::reset_hits(hwnd);
+    app.send("set-description item2 Second choice");
+    outpost.heard(&[Heard::Msaa(WinEventKind::DescriptionChange)]);
+    outpost.settled();
+    assert_eq!(
+        common::read_hits(hwnd),
+        [("WM_GETOBJECT", 1), ("get_accChild", 1)],
+        "the change was acquired and nothing of it read"
+    );
+
+    let again = outpost.msaa_focus(hwnd, ITEM_TWO);
+    assert_eq!(again.node.id, reported.node.id);
+    app.send("set-description item2 Third choice");
+    assert_eq!(
+        next_event(&outpost),
+        NormalizedEvent::PropertyChanged {
+            node_id: reported.node.id,
+            change: verbatim_model::PropertyChange::Description(Some("Third choice".to_owned())),
+            child_count: None,
+        }
+    );
+    outpost.settled();
+    app.quit();
+}
+
+/// A change raised after a focus this outpost reported, and handled before
+/// Core has judged that focus, is judged against it as well as against the
+/// focus Core holds: Core may yet take it, and speaks the change if it does
+/// (decision D14, "Where the rules run").
+fn a_change_of_a_focus_core_has_not_judged_yet_is_reported() {
+    use verbatim_outpost::Heard;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-change-unjudged");
+    let mut app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus item2");
+    outpost.deliver(DeliveredFact::MsaaFocus {
+        hwnd: hwnd.0 as isize,
+        id_object: i32::try_from(ITEM_TWO + 1).expect("a small index"),
+        id_child: 0,
+    });
+    outpost.settle();
+    app.send("set-description item2 Second choice");
+    outpost.heard(&[Heard::Msaa(WinEventKind::DescriptionChange)]);
+    outpost.settle();
+    let NormalizedEvent::FocusChanged { node, .. } = next_event(&outpost) else {
+        panic!("the outpost did not report the focus first");
+    };
+    assert_eq!(
+        next_event(&outpost),
+        NormalizedEvent::PropertyChanged {
+            node_id: node.id,
+            change: verbatim_model::PropertyChange::Description(Some("Second choice".to_owned())),
+            child_count: None,
+        }
+    );
+    outpost.settled();
+    app.quit();
+}
+
 /// A tooltip window's show event (which the outpost's own hook and the
 /// listener take only from `tooltips_class32` windows) is spoken as NVDA's notification behavior
 /// speaks a help balloon, which NVDA reports by default; an ordinary
@@ -937,10 +1016,10 @@ fn a_second_foreground_change_of_a_reported_window_is_dropped() {
     app.quit();
 }
 
-/// A focus Core queued from another application replaces the outpost's
-/// last focus as the last focus queued, as NVDA's `lastQueuedFocusObject`
-/// is replaced by any application's focus: a foreground change of the
-/// window that focus was in is then reported.
+/// A focus Core took from another application replaces the focus the
+/// outpost judges against, as NVDA's `lastQueuedFocusObject` is replaced by
+/// any application's focus: a foreground change of the window the
+/// outpost's focus was in is then reported.
 fn a_foreground_change_after_another_application_s_focus_is_reported() {
     common::init_com();
     let title = common::unique_title("mockapp-msaa-foreground-after-elsewhere");
@@ -952,7 +1031,7 @@ fn a_foreground_change_after_another_application_s_focus_is_reported() {
     let reported = outpost.msaa_focus(hwnd, ITEM_TWO);
     assert_eq!(reported.chain(), [Some("Options"), Some("Two")]);
     // Observed now, after the outpost's focus.
-    outpost.focus_queued_elsewhere(0);
+    outpost.core_focus_elsewhere(common::outpost::now_ms());
     outpost.deliver(DeliveredFact::Foreground {
         hwnd: hwnd.0 as isize,
     });
@@ -1024,6 +1103,14 @@ fn a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond() {
 
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_change_of_a_focus_core_no_longer_holds_is_not_read",
+            a_change_of_a_focus_core_no_longer_holds_is_not_read,
+        ),
+        (
+            "a_change_of_a_focus_core_has_not_judged_yet_is_reported",
+            a_change_of_a_focus_core_has_not_judged_yet_is_reported,
+        ),
         (
             "a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond",
             a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond,

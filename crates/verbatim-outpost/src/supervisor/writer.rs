@@ -75,9 +75,9 @@ pub(super) enum Outgoing {
     /// listener.
     Fact(Option<FactKey>, SupervisorToOutpost, Received),
     /// A message of the MSAA hand-over: `ForwardingEnded` to an outpost,
-    /// `HookInstalled` or `HookRemoved` to the listener; and `FocusQueued`
-    /// to the listener and to the outpost whose focus it supersedes, which
-    /// their duplicate rules depend on.
+    /// `HookInstalled` or `HookRemoved` to the listener; and `CoreFocus`
+    /// to the listener and the outposts concerned, which their judgments
+    /// before a read depend on.
     HandOver(SupervisorToOutpost),
     /// A part of a UIA focus's read routed to an outpost, which waits on
     /// its marker, so it gets through as a hand-over message does, with

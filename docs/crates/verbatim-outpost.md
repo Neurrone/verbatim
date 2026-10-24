@@ -154,18 +154,33 @@ event's own element:
   event's cache says of its keyboard focus, which the checks before the
   read have already judged, as NVDA lets a focus through whose read
   fails.
-- The readers share the last focus any of them accepted
-  (`focus_read::LastAccepted`), as NVDA keeps one last focus for the whole
-  program, and judge a repeat by it before any read, as NVDA does
-  (section 16.3 of the focus-pipeline design): an event whose sender
-  `CompareElements` equates with that focus, while that element's
-  `HasKeyboardFocus` reads true, is dropped, its marker resolved as a drop;
-  a comparison or a read that fails lets it through. Then NVDA's
-  acceptance test against the foreground window, with the outpost's port
-  of it (`outpost::acceptance`), on the element's own window or, one call
-  (`verbatim_uia::nearest_window_handle`), its nearest ancestor's: a focus
-  that fails is dropped before it is read and is never recorded as the
-  last accepted, which only a focus that passed and was read becomes. The
+- The readers judge a repeat against the focus Core holds, as NVDA
+  judges one against its one last queued focus (decision D14, "Where the
+  rules run"; section 16.3 of the focus-pipeline design), by the rule
+  `verbatim_core::focus_rules::repeats_focus` defines. They share the
+  elements of the focuses they accepted (`focus_read::HeldElements`), by
+  how Core has judged them: Core tells the listener of every focus event it
+  judges, taken or refused, and every change of its focus
+  (`SupervisorToOutpost::CoreFocus`), by the trace of the event the focus
+  came from, which for a UIA focus is the listener's own. An event whose
+  sender `CompareElements` equates with the element of the focus Core
+  holds, while that element's `HasKeyboardFocus` reads true, is dropped,
+  its marker resolved as a drop; a comparison or a read that fails lets it
+  through. While a focus the listener accepted waits for Core's
+  judgement, Core's focus can yet become it, so nothing is a repeat and no
+  comparison is made; the extra read that costs, of a repeat that comes
+  before Core's judgement, is dropped by Core's own duplicate rule. A
+  focus Core refused, as it refuses a shell window that only stages a
+  switch, never stands for its focus, and once Core holds a focus no read
+  of the listener's gave it, as an MSAA focus or a foreground change,
+  nothing is compared. A menu opening is compared with the element of the
+  focus Core holds, as NVDA compares it with its focus object. Then the
+  acceptance test against the foreground window, defined once in
+  `verbatim_core::focus_rules` and made through the outpost's local window
+  queries (`outpost::acceptance`), on the element's own window or, one
+  call (`verbatim_uia::nearest_window_handle`), its nearest ancestor's: a
+  focus that fails is dropped before it is read and is never kept for
+  Core's judgement, which only a focus that passed and was read is. The
   outpost does not test a UIA focus itself. Each read is also
   logged at debug level: the sender's runtime id, class name, framework,
   and own window handle, and the comparison's result; the framework is a
@@ -214,11 +229,12 @@ event's own element:
   than 100 ms before the copy, which a focus's UIA read from the listener
   closes, as do a focus marker's drop that ends the wait (`Focus`), the
   end of the listener's reads, a focus (not a foreground change) the
-  outpost reports observed after the copy, and another application's
-  focus Core queued after it. That last one reaches an outpost only when
-  it reported the focus Core had queued just before: `FocusQueued` goes
-  to the listener and to that outpost alone, and the worker reads it only
-  when it wakes for the gap, so it saves a read, never a wake-up. A
+  outpost reports observed after the copy, and a focus of another
+  application's that Core holds, observed after it. That last one reaches
+  an outpost in Core's notice of its focus (`CoreFocus`), which an
+  outpost receives when Core judges one of its focus events or its focus
+  moves to or from the outpost's application, and the worker reads it
+  only when it wakes for the gap, so it saves a read, never a wake-up. A
   selection's, a notification's, or a menu opening's marker neither
   closes a gap nor reads it, and nor does an `Inconclusive` drop, which
   leaves the gap to its bound; one that is resolved after the bound has
@@ -342,10 +358,10 @@ event's own element:
   start's. The event is dropped with the reason "the user moved on from
   a slow window" and the abandonment logged at warn. When the watchdog
   abandons a read, either way, it marks the read abandoned, so that a
-  read that returns later makes no focus the last one accepted, and a
-  focus the read accepted just before is no longer the current focus or
-  a repeat's evidence (`Reading::abandoned`,
-  `LastAccepted::abandoned`); the event is reported dropped, a new
+  read that returns later keeps no focus for Core's judgement, and a
+  focus the read accepted just before waits for no judgement of Core's,
+  which is told the event was dropped (`Reading::abandoned`,
+  `HeldElements::abandoned`); the event is reported dropped, a new
   thread takes the application's later events, and the abandoned
   thread, once its call returns, lowers the application's count of
   abandoned threads, says nothing and ends. With two of an
@@ -564,7 +580,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   pipe's. `MenuOrSwitchEnded` carries an `EventTiming` with the same
   listener stamps, and `Pong` a `written_at_us` stamped the same way. The
   commands to the listener (`Ping`, `HookInstalled`, `HookRemoved`,
-  `FocusQueued`, which an outpost also receives) carry `sent_at_us`, which verbatim.exe's writer stamps
+  `CoreFocus`, which an outpost also receives) carry `sent_at_us`, which verbatim.exe's writer stamps
   as the write begins (`SupervisorToOutpost::stamp_sent`); the listener
   stamps its read of each and logs the hop at trace level under
   `verbatim::stage`, and verbatim.exe logs each pong's trip back and a
@@ -578,15 +594,20 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   timestamp so the latency timeline starts at the OS event, its
   `EventTiming`, and for a `WinEvent`'s fact its `WinEventStamp`),
   `HookInstalled` and `HookRemoved` (to the listener, the hand-over above),
-  `FocusQueued` (to the listener: the trace and observation time of each
-  focus Core queued, in milliseconds and microseconds, after which the
-  last focus the listener accepted is no repeat's evidence unless it is
-  that focus or newer, ordered as Core orders focuses
-  (`observed_no_earlier`), as NVDA's last
-  queued focus is replaced by every focus it queues; and, when the focus
-  is another application's, to the outpost that reported the focus
-  before, whose MSAA duplicate test then no longer compares with its last
-  focus unless that was observed later),
+  `CoreFocus` (the focus Core holds, decision D14, "Where the rules
+  run": to the listener, to the outpost whose focus event Core has just
+  judged, and to the outposts whose focus Core's focus was or now is,
+  whenever Core judges a focus event, taken or refused, or its focus
+  changes; `judged`, the trace of the focus event judged, every one the
+  receiver sent before it judged too; `focus`, a
+  `verbatim_core::focus_rules::HeldFocus`, the trace of the event Core took
+  its focus from, the focus and its ancestors with their ids, backends,
+  roles, names and states, its top-level window, and whether it is alive,
+  whole to the listener and to an outpost only when the focus is that
+  outpost's, its node ids as the outpost issued them
+  (`HeldFocus::for_outpost`); and `observed`, when that focus was
+  observed, which an outpost whose focus Core no longer holds takes for
+  its gap above),
   `ForwardingEnded` (to an outpost, the hand-over's end), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, `DumpTree`, `Text`, a node and a model
@@ -820,13 +841,16 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     check compares runtime ids the read carries and makes no call.
   - The worker (`outpost::worker`): one thread takes entries in order and
     finishes each before the next. Before any call into the application
-    for an entry, it tests the event by NVDA's acceptance test against the
-    foreground window (`outpost::acceptance`;
-    `docs/parity/focus-events.md`, "Event acceptance"): `accepts_event`,
-    a pure function of the event's name, its window, the window queries
-    (`WindowQueries`, local calls in `SystemWindows`), and the events
-    application support asked for (`RequestedEvents`, empty), and drops
-    an event from a window unrelated to the foreground window. A caret key's evidence is watched for
+    for an entry, it tests the event by the acceptance test against the
+    foreground window (`docs/parity/focus-events.md`, "Event
+    acceptance"): `verbatim_core::focus_rules::accepts_event`, defined
+    once for the outposts, the listener and, through the window facts an
+    outpost reports (`ForegroundRelation`), the reducer, a pure function
+    of the event's name (`acceptance::event_name_of` for a `WinEvent`),
+    its window, the window queries (`WindowQueries`, local calls in
+    `acceptance::SystemWindows`), and the events application support
+    asked for (`RequestedEvents`, empty), and drops an event from a
+    window unrelated to the foreground window. A caret key's evidence is watched for
     between entries (under "Text" below), not waited on. It is the only
     thread that calls into the application, so events and replies leave in
     the order their entries were planned: the order they joined the queue,
@@ -1012,8 +1036,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `docs/design/uia-shapes.md`), and without whether it is off the screen,
   which the rules never use and which a top-level dialog's title bar
   answers only by asking the window's thread (`WM_GETTITLEBARINFOEX`).
-  `is_dialog(role)` says which nodes have such text: a dialog, an alert,
-  or a property page. A gathering looks at no more than `MAX_OBJECTS`
+  `is_dialog(role)`, defined with the focus rules in `verbatim-core`, says
+  which nodes have such text: a dialog, an alert, or a property page. A gathering looks at no more than `MAX_OBJECTS`
   objects; a dialog with more says nothing rather than part of its text.
 
 ### Ignored processes
@@ -1156,11 +1180,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   incarnation without waiting, failing at once with a `QueueError` when that
   incarnation has ended or its queue is full; `note_views(attention,
   holding)` passes the views the app derives from the reducer state;
-  `focus_queued(trace_id, observed, superseded)`, `observed` the focus's
-  milliseconds and microseconds, sends
-  `FocusQueued` to the listener, and to the outpost `superseded` when the
-  app names one, the outpost that reported the focus Core queued before,
-  when that was another application's; and
+  `core_focus(judged, focus, outposts)` sends `CoreFocus` to the
+  listener whole and to each of `outposts` as its own focus or none; and
   `query_idle(round)` runs the idle barrier's round through the children
   (under "The idle barrier" below), the app hearing which outposts it
   asked through `OutpostMessage::IdleQueried`. The
@@ -1644,33 +1665,53 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   acquired with NVDA's child-0-on-a-list redirect, and the redirect of any
   control's own focus to a focused child its `accFocus` names
   (`focus_candidate`), and checked as NVDA checks it before anything else
-  is read: it is dropped as a duplicate when it names the address of the
-  focus last reported, a whole object rather than a child by id, with no
-  foreground change reported since (the focus may have been in another
-  application then), counting as reported so no older focus of the batch
-  is tried; and it is accepted only when the object or an ancestor has the
-  focused state, read live. Only then is it read and its ancestors walked.
+  is read: it is dropped as a repeat (`focus_rules::repeats_focus`) when
+  Core holds a focus of this outpost's and that focus, and every focus
+  this outpost reported that Core has not judged yet, is the object it
+  names, a whole object rather than a child by id, so Core's focus will be
+  that object whatever Core judges, counting as reported so no older focus
+  of the batch is tried; and it is accepted only when the object or an
+  ancestor has the focused state, read live. Only then is it read and its ancestors walked.
   When a control's focus was reported as its child, the child's own focus
   event, which the control raised in the same `SetFocus` call, is dropped
   while the child is still the focus (`Intake::take_redirected_focus`), so
   the child is reported once, as NVDA reports it.
-- MSAA name, value, and state changes are spoken only for the focus, so
-  the event's object is told from the focus by its identity
-  (`EventObject::which_of`) before any property is read, and an object
-  that is not the focus is not read. For the focus or an ancestor only
-  the property the event names is read, as NVDA reads it, with the rules
-  that depend on the object's role taken from the role the outpost last
-  read it with (the tracking state's `focus_role` and `chain`). A state
-  change that newly expands the focus, by the states the outpost last
-  read for it, carries a `SysTreeView32` item's child count. A progress
-  bar's value change reads its role, states, value, and location alone
-  (`EventObject::progress`). A selection event on the focus or an
-  ancestor is a change of its state, as NVDA handles it: its states alone
-  are read and reported as one. Any other selection is spoken only inside
-  a focused selection container of this outpost, so it is read in full
-  only while the focus the outpost last reported is one
-  (`verbatim_core::is_selection_container`, Core's own rule), and is
-  otherwise dropped after its acquisition.
+- The focus events are judged against (`outpost::held`, decision D14,
+  "Where the rules run"): the focus Core holds, as Core last told it
+  (`CoreFocus`), when it is this outpost's, and every focus this outpost
+  reported that Core has not judged yet, since Core may yet take it. A
+  change is read when it can be spoken for any of them, since the reducer
+  decides after the read with the focus it holds then; a focus or
+  foreground change is dropped as a repeat only when it repeats every one
+  of them. Once Core holds another application's focus and has judged
+  this outpost's reports, there is none, and no change is read. With
+  each focus the outpost keeps what it recorded as it reported it: the
+  MSAA event address it came from, whether it was a simple child, and the
+  top-level window that was the foreground window as a focus entered it.
+  The tracking state's own focus (`Tracking::focus`, `focus_role`,
+  `window`, `chain`) is the focus the outpost follows, whose caret, text,
+  and terminal output it reads and whose events its subscription hears,
+  and the chain its ancestor walks reuse; no rule judges by it.
+- MSAA name, value, and state changes are spoken by the reducer's rule
+  (`focus_rules::change_target`): a name, description, or value change
+  only for a focus, and a state change for a focus or one of its
+  ancestors, so the event's object is told from those by its identity
+  (`EventObject::which_of`, against `focus_rules::change_candidates`)
+  before any property is read, and any other object is not read. For a
+  focus or an ancestor only the property the event names is read, as NVDA
+  reads it, with the rules that depend on the object's role taken from
+  the role it was reported with. A state change that newly expands a
+  focus, by the states the outpost last read or reported for it, carries
+  a `SysTreeView32` item's child count. A progress bar's value change
+  reads its role, states, value, and location alone
+  (`EventObject::progress`). A selection event on a focus or an ancestor
+  is a change of its state, as NVDA handles it, by the reducer's rule
+  (`focus_rules::selection_target`): its states alone are read and
+  reported as one. Any other selection is spoken only inside a focused
+  selection container of this outpost, so it is read in full only while
+  one of the focuses events are judged against is one
+  (`focus_rules::is_selection_container`), and is otherwise dropped after
+  its acquisition.
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
   `read::msaa_enrichment`): the walk stops at the first ancestor in the
   previous focus's chain (the tracking state's `chain`) and splices the
@@ -1704,8 +1745,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   Object navigation's ancestor query reads the whole chain.
 - A dialog's own text (`read::describe_dialogs`). Before a focus is
   published, every dialog among its ancestors, and the focus itself, that
-  is not in the previous focus's chain and has no description of its own
-  is given its text as its description, while descriptions are read at all
+  the focus Core holds had not already entered, by the rule the reducer
+  speaks entered containers by (`focus_rules::already_entered`; decision
+  D14, "Where the rules run"), and that has no description of its own, is
+  given its text as its description, while descriptions are read at all
   (the theme's description indication), so Core speaks it where NVDA does,
   after the dialog's name, role, and states and before the focused
   control. A dialog the focus stays inside is therefore read once: the
@@ -2216,7 +2259,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   change as `TextChanged` without reading the control's whole text as its
   MSAA value. For a UIA focus, the hooks' caret event from any window
   NVDA's acceptance test takes a location change from
-  (`acceptance::EventName::LocationChange`) is the focus's caret event,
+  (`focus_rules::EventName::LocationChange`) is the focus's caret event,
   handled as its UIA caret event is (`Worker::system_caret_of_uia_focus`),
   as NVDA handles the system caret's events on its last queued focus,
   since some UIA documents, such as Visual Studio's, raise no UIA caret
@@ -2249,39 +2292,35 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   change, and a text selection change of the node a caret key's watch is
   open on check the watch first. A focus-now answer's control has its
   caret read with the answer, by the reported focus's own read, since
-  Core takes it as its focus. Once the answer is sent it becomes the
-  outpost's focus as a reported focus does, by the same function
-  (`adopt_focus`, which `emit_focus` calls too): a caret key's watch on
-  another node ends, the intake is told (`note_focused`), and the
-  tracking takes its node, role, states, window and chain; a control that
-  is already the focus this outpost last reported, under the same node,
-  is not adopted again, and one whose element it has under another node,
-  as File Explorer's reused runtime ids give (`docs/uia-bugs.md`), is.
+  Core takes it as its focus. Before the answer is sent it is recorded as
+  a focus Core has not judged yet (`outpost::held`), as NVDA's fake
+  focus, queued as a focus event, becomes its last queued focus
+  (`eventHandler.py`, `_trackFocusObject`), so a late foreground change of
+  its window is dropped once Core holds it (Dickson, 2026-10-22); an
+  answer for the focus already judged against keeps the MSAA event address
+  and the simple-child mark its report recorded, which the second
+  foreground test and the MSAA repeat rule compare with. Once the answer
+  is sent it becomes the focus the outpost follows, as a reported focus
+  does, by the same function (`adopt_focus`, which `emit_focus` calls
+  too): a caret key's watch on another node ends, the intake is told
+  (`note_focused`), and the tracking takes its node, role, window and
+  chain; a control that is already the focus this outpost follows, under
+  the same node, is not adopted again, and one whose element it has under
+  another node, as File Explorer's reused runtime ids give
+  (`docs/uia-bugs.md`), is.
   It is then followed as a reported focus is (`follow_text`): the
   focus-following subscription moves to it, so its caret events no key
   caused are reported and a caret key's watch on it is answered by them,
   and a terminal has its first read, so what its text changes say is
   reported and Core's on-demand reads of it are answered. It
-  gets no property subscription. Adopted or not, it becomes the last
-  focus the foreground tests compare with (`Tracking::queued`, by
-  `queue_answer`), as NVDA's fake focus, queued as a focus event, becomes
-  its last queued focus (`eventHandler.py`, `_trackFocusObject`), so a
-  late foreground change of its window is dropped (Dickson,
-  2026-10-22): an answer for the node already queued refreshes only its
-  observation time, keeping the window and the MSAA event address its
-  report recorded, which the second foreground test compares with;
-  another node replaces it with no event address; and an answer with no
-  window leaves it as it was. It is not counted among the focuses
-  reported (`Tracking::reported`), and leaves the MSAA duplicate rule's
-  qualifiers (`Tracking::foreground_since_focus`,
-  `Tracking::focus_was_simple_child`) as the last reported focus left
-  them, since they describe that focus's event. Whether the focus is a
+  gets no property subscription. It is not counted among the focuses
+  reported (`Tracking::reported`). Whether the focus is a
   terminal is decided by the focus's own role (`Tracking::focus_role`),
   which a foreground report, naming a window, leaves as it was, so a
   terminal stays followed through a foreground report that no focus
   event follows. The watch is
   checked before a system caret event is taken as the caret event of a
-  UIA focus this outpost last reported, at the cost of the watch's lock
+  UIA focus this outpost follows, at the cost of the watch's lock
   for each such event, and the registry's while a watch is open; while
   that UIA focus has the intake dropping the system caret's events
   (`Intake::drop_system_caret`), the edit control's are dropped with

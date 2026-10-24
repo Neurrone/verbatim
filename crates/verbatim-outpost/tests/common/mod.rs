@@ -6,7 +6,34 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{Receiver, RecvTimeoutError};
+use verbatim_model::{Backend, NodeId, OutpostId, Role, StateSet, TraceId};
+use verbatim_outpost::protocol::{HeldFocus, HeldNode};
 use verbatim_outpost::supervisor::{Frames, OutpostMessage, Supervisor};
+
+/// A focus Core holds, of a node of outpost `outpost`, observed at
+/// `observed_at_ms`: what a test has the supervisor tell the listener and
+/// the outposts (`Supervisor::core_focus`), whose fakes read the
+/// observation as the test's message.
+#[allow(
+    dead_code,
+    reason = "not every test of the supervisor tells Core's focus"
+)]
+pub fn held_focus(outpost: OutpostId, observed_at_ms: u64) -> HeldFocus {
+    HeldFocus {
+        trace_id: TraceId::mint(),
+        observed: (observed_at_ms, 0),
+        focus: HeldNode {
+            id: NodeId::new(1).with_outpost(outpost),
+            backend: Backend::Uia,
+            role: Role::Button,
+            name: None,
+            states: StateSet::new(),
+        },
+        ancestors: Vec::new(),
+        top_level: None,
+        alive: true,
+    }
+}
 
 /// The supervisor's messages as the app handles them: every one passed
 /// through the supervisor's [`Frames`], so each outpost's frame comes out

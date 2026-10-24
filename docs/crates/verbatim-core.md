@@ -8,10 +8,45 @@ Public API:
 - `reduce(&mut state, &input)` — deterministic, no I/O, no clocks;
   advances the state in place, without copying it, and returns the
   effects to execute.
-- `is_selection_container(role)` — whether a focused role is a list or a
-  tab control, whose interior selections the reducer speaks; the outposts
-  call it too, so that a selection is read in full only when it can be
-  spoken, and the rule has one definition.
+- `focus_rules` — the focus rules, each defined once (decision D14,
+  "Where the rules run"), which the reducer applies after an event is
+  read and the focus listener and the outposts apply where a judgment
+  must come before an element is read, against the focus Core holds:
+  - acceptance: `EventName`, `WindowQueries` (the window queries, local
+    calls in the Windows crates), `RequestedEvents` (the events
+    application support asked for, empty), and `accepts_event(event,
+    window, queries, requested)`, the test against the foreground window
+    (`docs/parity/focus-events.md`, "Event acceptance"); its last part,
+    `ForegroundRelation` (in the foreground window, topmost, or a
+    `Windows.UI.Core` window under the active window), is what an outpost
+    reports in an event's window facts, `of(window, class, queries)`, and
+    what the reducer judges a focus by, `of_facts(facts).related()`;
+  - repeats: `RepeatEvidence` (Core has judged every focus the judge sent,
+    the event names the element of the focus Core holds, and that element
+    still has the focus) and `repeats_focus(evidence)`, which Core, the
+    listener and the outposts gather each by their own means; and
+    `foreground_repeats_focus`, NVDA's two foreground tests;
+  - changes and selections: `ChangeKind`, `ChangeTarget`,
+    `change_target` and `change_candidates` (a name, description, or value
+    change spoken on the focus, a state change on the focus or an
+    ancestor whose state changes are spoken), and `SelectionTarget`,
+    `selection_target` and `is_selection_container(role)` (a selection of
+    the focus or an ancestor is a change of its states; any other is an
+    item spoken only inside a focused list or tab control of the same
+    outpost);
+  - entered containers: `already_entered(previous, same_window, node)`,
+    whether the focus was already inside a container of a new focus, which
+    the reducer speaks newly entered and an outpost gathers a newly
+    entered dialog's own text by, with `EnteredKey`, and `is_dialog(role)`;
+  - `HeldFocus` and `HeldNode`: the focus Core holds as it sends it, the
+    trace of the event it came from, its observation time, the focus and
+    its ancestors (id, backend, role, name, states), its top-level window,
+    and whether it is alive; `for_outpost(outpost)` keeps an outpost's own
+    nodes, their ids unstamped, or gives `None` for another outpost's
+    focus.
+- `is_selection_container(role)` — `focus_rules`' own, re-exported: whether
+  a focused role is a list or a tab control, whose interior selections
+  the reducer speaks.
 - `SNAP_RESULTS_ACTIVITY` — the activity id of the shell's window-snap
   results notification, the one UIA notification spoken from an
   application without the focus; the supervisor starts an outpost for no
@@ -20,9 +55,12 @@ Public API:
   `focus_report()`, the focus's snapshot, its ancestors, and the navigator
   object, which the control plane's `DumpFocus` answers with for a test's
   artifacts; `focuses_queued()`, how many focuses the reducer has taken as
-  the focus, which the host compares across an input to tell the focus
-  listener a focus was queued, and the outpost of the focus before when
-  the new focus is from another outpost; `attention()`, the application holding
+  the focus, which the host compares across an input to tell whether its
+  focus changed; `held_focus()`, the focus Core holds as the host tells it
+  to the focus listener and the outposts concerned after every focus event
+  the reducer judges and every change of its focus
+  (`SupervisorToOutpost::CoreFocus`), with the trace and observation time
+  of the event it was taken from, which the state keeps with the focus; `attention()`, the application holding
   attention; `held_nodes()`,
   every node id the state refers to grouped by the outpost that issued it;
   and `held_anchors()` (milestone M4), every text anchor the state refers
@@ -248,11 +286,13 @@ Implementation notes, `reduce`:
   foreground change (a `FocusChanged` with `foreground` set) is always
   accepted, because its outpost has already checked that the window is
   still the system's foreground window. Any other focus is attended only
-  when its window facts say the window was in the system's foreground
-  window when its outpost read it, or is topmost, or is a
-  `Windows.UI.Core` window under the input thread's active window, NVDA's
-  test against the real foreground (D14 as amended on 2026-10-05); a focus
-  with no window facts is judged by its application. Any other event is attended when
+  when its window facts say the window was related to the system's
+  foreground window when its outpost read it, by the acceptance test's own
+  relation (`focus_rules::ForegroundRelation::related`: in the foreground
+  window, topmost, or a `Windows.UI.Core` window under the input thread's
+  active window), NVDA's test against the real foreground (D14 as amended
+  on 2026-10-05); a focus with no window facts is judged by its
+  application. Any other event is attended when
   its window facts share the attention window's top-level window or root
   owner, are topmost, report a `Windows.UI.Core` window under the input
   thread's active window, or say the window is in the system's foreground
@@ -343,10 +383,10 @@ Implementation notes, `reduce`:
   `Notification` event speaks its display string when it carries one,
   interrupting for `MostRecent`/`ImportantMostRecent` processing and
   queuing otherwise (NVDA's `event_UIA_notification`; snap-layout hints are
-  the motivating case), from the focus's application only. NVDA's
-  duplicate-focus rule (`docs/design/focus-pipeline.md`, section 4.2): a
-  focus on the same node as the last focus Core queued, which is the live
-  focus it holds, is dropped before anything else judges it, so it
+  the motivating case), from the focus's application only. The repeat
+  rule (`focus_rules::repeats_focus`; `docs/design/focus-pipeline.md`,
+  section 4.2): a focus on the same node as the live focus Core holds is
+  dropped before anything else judges it, so it
   neither moves attention nor counts as the newest focus for the stale
   rule; its newer reading (states, name, ancestors read in time) is kept
   unspoken. The node id is the evidence of "same element, still focused",
@@ -354,8 +394,7 @@ Implementation notes, `reduce`:
   that its element still has the keyboard focus, and reports an MSAA focus
   only once the focused state is read live; a UIA focus whose element the
   outpost could not find keeps its runtime id's node without that read.
-  Step 6 of stage A replaces the node id with the outpost's own mark. The
-  rule never suppresses a genuine return to a control after visiting
+  The rule never suppresses a genuine return to a control after visiting
   another application, since that application's focus comes between.
 - Background speech across a foreground change
   (`docs/design/focus-pipeline.md`, section 7): Core keeps the observation

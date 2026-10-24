@@ -12,12 +12,13 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_EXSTYLE, GetAncestor,
-    GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongW, GetWindowThreadProcessId,
-    InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_EX_TOPMOST,
+    EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GetAncestor, GetForegroundWindow,
+    GetGUIThreadInfo, GetPropW, GetWindowThreadProcessId, InternalGetWindowText, IsChild,
+    IsHungAppWindow, IsWindow, IsWindowVisible,
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
+use verbatim_core::focus_rules::ForegroundRelation;
 use verbatim_model::{HIDDEN_FRAME_WINDOW_PROP, Pid, WindowFacts, WindowHandle};
 use verbatim_uia::provider_process;
 
@@ -164,14 +165,6 @@ fn window_handle(handle: isize) -> WindowHandle {
     WindowHandle(u64::from_ne_bytes(handle.to_ne_bytes()))
 }
 
-/// Whether `window` has the topmost extended style.
-fn window_is_topmost(window: HWND) -> bool {
-    // SAFETY: GetWindowLongW reads a window's style word; an invalid handle
-    // yields 0.
-    let style = unsafe { GetWindowLongW(window, GWL_EXSTYLE) };
-    style.cast_unsigned() & WS_EX_TOPMOST.0 != 0
-}
-
 /// Facts about `handle`'s window for the reducer's attention classification
 /// (`docs/parity/focus-events.md`, "Event acceptance"): its top-level window, the top of
 /// its owner chain, whether it or its top-level window is topmost, and, for a
@@ -193,31 +186,22 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
         root_owner
     };
     let class = window_class_name(handle);
-    let under_active_window = class.starts_with("Windows.UI.Core").then(|| {
-        let mut info = GUITHREADINFO {
-            cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
-            ..Default::default()
-        };
-        // SAFETY: `info` has cbSize set before the call.
-        unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok()
-            && !info.hwndActive.0.is_null()
-            && (info.hwndActive == window
-                    // SAFETY: IsChild tolerates any pair of handles.
-                    || unsafe { IsChild(info.hwndActive, window) }.as_bool())
-    });
-    // SAFETY: GetForegroundWindow has no preconditions.
-    let foreground = unsafe { GetForegroundWindow() };
-    let in_foreground = !foreground.0.is_null()
-        && (root == foreground
-            || root_owner == foreground
-            // SAFETY: GetAncestor tolerates any handle.
-            || root_owner == unsafe { GetAncestor(foreground, GA_ROOTOWNER) });
+    // How the window stands to the foreground window, by the acceptance
+    // test's own rule (`verbatim_core::focus_rules`), against the system's
+    // foreground window now.
+    let relation = ForegroundRelation::of(
+        handle,
+        &class,
+        &super::acceptance::SystemWindows {
+            foreground: foreground_window_handle(),
+        },
+    );
     WindowFacts {
         top_level: window_handle(root.0 as isize),
         root_owner: window_handle(root_owner.0 as isize),
-        topmost: window_is_topmost(window) || window_is_topmost(root),
-        under_active_window,
-        in_foreground,
+        topmost: relation.topmost,
+        under_active_window: relation.under_active_window,
+        in_foreground: relation.in_foreground,
         class,
         application: String::new(),
     }

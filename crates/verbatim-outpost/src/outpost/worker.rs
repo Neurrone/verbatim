@@ -53,14 +53,15 @@ use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us, observed_no_earlier,
+    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
 };
 
 use super::Context;
-use super::acceptance::{self, EventName, SystemWindows};
+use super::acceptance::{SystemWindows, event_name_of};
 use super::alarm::Alarm;
 use super::focus_path::{self, FocusPath};
 use super::gap::{self, FocusGap};
+use super::held;
 use super::intake::{Entry, Handling, Item, Object, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
@@ -72,6 +73,7 @@ use super::window::{
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
 use crate::text::Watched;
+use verbatim_core::focus_rules::{self, ChangeKind, EventName, HeldNode};
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
 /// `NORMAL_CORE_ALIVE_TIMEOUT` (`watchdog.py`), the time NVDA waits for an
@@ -285,7 +287,7 @@ pub(super) struct Tracking {
     batch: Option<u64>,
     /// The last focus this outpost reported and its ancestors, outermost
     /// first: where the next focus's ancestor walk can stop and reuse the
-    /// rest, as NVDA's does.
+    /// rest, as NVDA's does. A cache of reads, which judges nothing.
     chain: Vec<NodeSnapshot>,
     /// The window of the last focus this outpost reported, for events on
     /// that focus, which then need no call to find their window.
@@ -294,42 +296,18 @@ pub(super) struct Tracking {
     /// or focuses it recognized as the focus already, so the worker can tell
     /// when an entry of a focus group was settled.
     reported: u64,
-    /// The node of the last focus this outpost reported.
+    /// The node of the last focus this outpost reported, which it follows:
+    /// its caret, text and terminal output are read, and the
+    /// focus-following subscription is on it. The rules that judge events
+    /// before they are read judge them against the focus Core holds
+    /// instead ([`super::held`]).
     focus: Option<NodeId>,
-    /// That focus's states, as last read, so a state change tells whether
-    /// it newly expanded the focus.
-    focus_states: Option<StateSet>,
-    /// That focus's role, as last read, which decides how a change of one
-    /// of its properties is read.
+    /// That focus's role, as last read, which decides how its text is
+    /// read.
     focus_role: Option<Role>,
-    /// Whether a foreground change was reported after the last focus: the
-    /// focus may then have been elsewhere meanwhile, so a focus event that
-    /// repeats it is not a duplicate.
-    foreground_since_focus: bool,
-    /// When the last focus this outpost reported was observed, in
-    /// milliseconds and microseconds on the run's shared clock
-    /// (microseconds 0 when not known), or when it was reported, for a
-    /// focus with no observation time.
-    focus_observed: (u64, u64),
-    /// The newest observation time of the focuses Core queued from another
-    /// application after this outpost's, in milliseconds and microseconds
-    /// ([`Tracking::focus_queued_elsewhere`]).
-    queued_elsewhere: (u64, u64),
-    /// Whether the last MSAA focus reported was a simple child, by the
-    /// child id its object was acquired with: a child id can be reused, so
-    /// a focus event at its address is never a duplicate of it.
-    focus_was_simple_child: bool,
     /// The dialog the last foreground report gathered text for, which the
     /// focus that follows it reuses.
     dialog: read::DialogMemo,
-    /// The last focus's top-level window, when it was the foreground
-    /// window as the focus entered it: the window NVDA holds the
-    /// foreground object for ([`Worker::is_foreground_window`]).
-    foreground_window: Option<isize>,
-    /// The last focus or foreground change this outpost reported, which
-    /// NVDA's foreground tests compare a foreground change with
-    /// ([`foreground_repeats_focus`]).
-    queued: Option<QueuedFocus>,
     /// The UIA focus whose value is its first selected item's name, as
     /// the listener read it (`UiaFocusRead::value_from_selection`): the
     /// selection of one of its items is a change of its value
@@ -353,6 +331,34 @@ struct AnsweredFocus {
     window: Option<isize>,
 }
 
+/// A focus-now answer's control, `answered`, as events are judged against
+/// it until Core has judged it, given `before`, the focus they were judged
+/// against before: an answer for the same node keeps the MSAA event address
+/// and the simple-child mark its report recorded, which NVDA's second
+/// foreground test and its duplicate test compare with, as NVDA's fake
+/// focus leaves its last queued focus's event as it was.
+fn answer_to_judge(before: Option<&held::Focus>, answered: held::Focus) -> held::Focus {
+    match before.filter(|before| before.node.id == answered.node.id) {
+        Some(before) => held::Focus {
+            event: before.event,
+            simple_child: before.simple_child,
+            ..answered
+        },
+        None => answered,
+    }
+}
+
+/// `node` as the focus rules compare it.
+fn held_node(node: &NodeSnapshot) -> HeldNode {
+    HeldNode {
+        id: node.id,
+        backend: node.backend,
+        role: node.role,
+        name: node.name.clone(),
+        states: node.states,
+    }
+}
+
 /// The object the focus `node` is, by its backend's registry: its runtime id
 /// or its MSAA event address, as the intake records the focus.
 fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
@@ -365,18 +371,11 @@ fn object_of(context: &Context, node: &NodeSnapshot) -> Option<Object> {
     }
 }
 
-/// A focus or foreground change an outpost reported, as NVDA's
-/// `lastQueuedFocusObject` holds it for `processForegroundWinEvent`: its
-/// node; its own window, which may be a child window; for an MSAA focus or a
-/// foreground change, the window, object id and child id of the event it
-/// came from; and when it was observed, so that a focus Core queued from
-/// another application since replaces it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct QueuedFocus {
-    node: NodeId,
-    window: isize,
-    event: Option<(isize, i32, i32)>,
-    observed: (u64, u64),
+impl Tracking {
+    /// The window of the last focus this outpost reported.
+    pub(super) fn window(&self) -> Option<isize> {
+        self.window
+    }
 }
 
 /// The event address a foreground change has: the system raises its
@@ -388,86 +387,30 @@ fn foreground_event(hwnd: isize) -> (isize, i32, i32) {
     (hwnd, OBJID_CLIENT.0, CHILDID_SELF)
 }
 
-/// Why NVDA's `processForegroundWinEvent` drops a foreground change of
-/// window `hwnd` that is in front, given `last`, the last focus or
-/// foreground change this outpost reported, when no focus Core queued
-/// from another application has replaced it (`superseded`), if it does
-/// (`IAccessibleHandler/__init__.py` 842 to 867): the last focus's own
-/// window is `hwnd` or a child window of it (`is_descendant`, NVDA's
-/// `winUser.isDescendantWindow`), or the last focus came from an MSAA
-/// event with the foreground event's own window, object id and child id.
-/// The second test can be met only where the first is not, by a last focus
-/// whose window is not its event's; an outpost records an MSAA focus's
-/// event window as its window, so the first decides here.
-fn foreground_repeats_focus(
-    last: Option<QueuedFocus>,
-    superseded: bool,
+/// Why a foreground change of window `hwnd`, which is in front, repeats the
+/// focus Core holds, by NVDA's two foreground tests
+/// (`focus_rules::foreground_repeats_focus`; `IAccessibleHandler/__init__.py`
+/// 842 to 867): when Core holds a focus of this outpost's, and it and every
+/// focus this outpost reported that Core has not judged yet repeat it, so
+/// Core's focus will repeat it whatever Core judges. `None` when Core holds
+/// another application's focus, or none: the reducer ignores a foreground
+/// change of the window its focus is already in, whoever reported it.
+fn foreground_repeats(
+    held: &held::Held,
     hwnd: isize,
     is_descendant: impl Fn(isize, isize) -> bool,
 ) -> Option<&'static str> {
-    let last = last.filter(|_| !superseded)?;
-    if is_descendant(hwnd, last.window) {
-        Some("the focus is already in the window")
-    } else if last.event == Some(foreground_event(hwnd)) {
-        Some("it repeats the focus's own event")
-    } else {
-        None
+    held.core()?;
+    let mut reason = None;
+    for focus in held.focuses() {
+        reason = Some(focus_rules::foreground_repeats_focus(
+            Some(focus.top_level).filter(|&top| top != 0),
+            focus.event,
+            (hwnd, foreground_event(hwnd)),
+            &is_descendant,
+        )?);
     }
-}
-
-/// The last focus queued once a focus-now answer for `node`, read in
-/// window `window` and observed at `observed`, is sent, given
-/// `last`, the last focus queued before it: NVDA queues its fake focus as
-/// a focus event, which makes it the last focus queued. An answer for the
-/// node already queued refreshes only its observation time, keeping the
-/// window and the MSAA event address its report recorded, which NVDA's
-/// second foreground test compares with; an answer with no window leaves
-/// the last focus as it was.
-fn queue_answer(
-    last: Option<QueuedFocus>,
-    node: NodeId,
-    window: Option<isize>,
-    observed: (u64, u64),
-) -> Option<QueuedFocus> {
-    match (last, window) {
-        (Some(last), _) if last.node == node => Some(QueuedFocus { observed, ..last }),
-        (_, Some(window)) => Some(QueuedFocus {
-            node,
-            window,
-            event: None,
-            observed,
-        }),
-        (last, None) => last,
-    }
-}
-
-impl Tracking {
-    /// The window of the last focus this outpost reported.
-    pub(super) fn window(&self) -> Option<isize> {
-        self.window
-    }
-
-    /// Core queued a focus from another application, observed at
-    /// `observed`, its milliseconds and microseconds (0 for a focus Core
-    /// asked for, taken as now), after the last focus this outpost reported
-    /// ([`SupervisorToOutpost::FocusQueued`]).
-    pub(super) fn focus_queued_elsewhere(&mut self, observed: (u64, u64)) {
-        let observed = stamp_or_now(observed);
-        if observed_no_earlier(observed, self.queued_elsewhere) {
-            self.queued_elsewhere = observed;
-        }
-    }
-
-    /// Whether a focus Core queued from another application was observed
-    /// no earlier than the last focus this outpost reported, ordered as
-    /// Core orders them ([`observed_no_earlier`]), so that focus is no
-    /// longer the last focus queued, as NVDA's `lastQueuedFocusObject` is
-    /// replaced by a focus from any application. A focus from elsewhere
-    /// observed before it is one Core took before this outpost's, or
-    /// dropped as stale.
-    fn focus_superseded(&self) -> bool {
-        observed_no_earlier(self.queued_elsewhere, self.focus_observed)
-    }
+    reason
 }
 
 /// Publishes `message`, an entry's one result, if `generation` is still the
@@ -1374,7 +1317,7 @@ impl Worker<'_> {
         if !self.gap.is_open() {
             return;
         }
-        let elsewhere = self.context.tracking().queued_elsewhere.0;
+        let elsewhere = self.context.held().elsewhere_observed();
         if elsewhere > 0 {
             self.gap.focus_after(elsewhere);
         }
@@ -2342,20 +2285,22 @@ impl Worker<'_> {
         }
         // A dialog the focus has newly entered, or one in front, says its
         // own text as its description.
-        let previous = self.focus_chain();
         let mut memo = self.context.tracking().dialog.take();
         read::describe_dialogs(
             self.context,
-            ancestors
-                .iter_mut()
-                .flatten()
-                .chain(std::iter::once(&mut node)),
-            (&previous, &mut memo, foreground),
+            (
+                ancestors
+                    .iter_mut()
+                    .flatten()
+                    .chain(std::iter::once(&mut node)),
+                window,
+            ),
+            (&mut memo, foreground),
         );
         self.context.tracking().dialog = memo;
         let role = node.role;
         let node_id = node.id;
-        let states = node.states;
+        let reported = self.focus_to_judge(trace, &node, ancestors.as_deref(), window, foreground);
         let text_node = (!foreground).then(|| node.clone());
         let text = text_node
             .as_ref()
@@ -2385,6 +2330,9 @@ impl Worker<'_> {
         };
         let observed_at_ms = stamp.0;
         if self.emit_stamped(trace, stamp, backend, window, event) {
+            // Core judges it next: until it has, events are judged against
+            // it as well as against the focus Core holds.
+            self.context.held().reported(reported);
             if foreground {
                 self.end_watch_elsewhere(node_id);
                 self.context.tracking().role = Some(role);
@@ -2393,21 +2341,11 @@ impl Worker<'_> {
                 // has answered yet answers it; a foreground change says
                 // nothing of the focus inside its window, and does not.
                 self.gap.focus_after(observed_at_ms);
-                self.adopt_focus((node_id, role, states), object, window, chain, stamp);
+                self.adopt_focus((node_id, role), object, window, chain);
             }
             let mut tracking = self.context.tracking();
             tracking.batch = Some(self.batch);
-            tracking.foreground_since_focus = foreground;
             tracking.reported += 1;
-            // NVDA's last queued focus, which every focus and foreground
-            // change it queues replaces; an MSAA focus adds its event's
-            // address once reported ([`Worker::msaa_focus`]).
-            tracking.queued = window.map(|window| QueuedFocus {
-                node: node_id,
-                window,
-                event: foreground.then(|| foreground_event(window)),
-                observed: stamp_or_now(stamp),
-            });
             drop(tracking);
             // Move the focus-following subscription to the new focus,
             // without waiting. A foreground report is a window, not the
@@ -2418,52 +2356,76 @@ impl Worker<'_> {
         }
     }
 
-    /// Makes `node_id`, of `role` with `states`, the outpost's focus: the
+    /// The focus `node`, with `ancestors` (`None` when unknown), reported in
+    /// `window` from the event traced `trace`, as the rules judge events
+    /// against it until Core has judged it ([`super::held`]): with unknown
+    /// ancestors it keeps those of the focus before it, as Core keeps them;
+    /// a foreground change carries its event address, which NVDA's second
+    /// foreground test compares. NVDA makes its foreground object when the
+    /// focus enters a top-level window, so the window keeps the verdict it
+    /// had then while the focus moves within it
+    /// ([`is_foreground_window`](Self::is_foreground_window)).
+    fn focus_to_judge(
+        &self,
+        trace: TraceId,
+        node: &NodeSnapshot,
+        ancestors: Option<&[NodeSnapshot]>,
+        window: Option<isize>,
+        foreground: bool,
+    ) -> held::Focus {
+        let top_level = window.map_or(0, top_level_of);
+        let held = self.context.held();
+        let before = held.expected();
+        let entered_in_front = match before {
+            Some(before) if top_level != 0 && before.top_level == top_level => {
+                before.entered_in_front
+            }
+            _ => (top_level != 0 && top_level == self.context.foreground_window())
+                .then_some(top_level),
+        };
+        let ancestors = match ancestors {
+            Some(ancestors) => ancestors.iter().map(held_node).collect(),
+            None => before
+                .map(|before| before.ancestors.clone())
+                .unwrap_or_default(),
+        };
+        held::Focus {
+            trace,
+            node: held_node(node),
+            ancestors,
+            top_level,
+            entered_in_front,
+            event: window.filter(|_| foreground).map(foreground_event),
+            simple_child: false,
+        }
+    }
+
+    /// Makes `node_id`, of `role`, the focus this outpost follows: the
     /// object `object` in `window`, with `chain`, its ancestors and itself,
-    /// or `None` when its ancestors are unknown, observed at `observed`,
-    /// its milliseconds and microseconds (0 for now). A caret key's watch on
+    /// or `None` when its ancestors are unknown. A caret key's watch on
     /// another node ends, the intake is told
     /// ([`note_focused`](Self::note_focused)), and the tracking takes it, so
     /// its caret events, a terminal's output and the menu rules follow it.
-    /// A reported focus becomes the focus this
-    /// way ([`emit_focus`](Self::emit_focus)), and so does a focus-now
-    /// answer's control, which Core takes as its focus
-    /// ([`follow_answer`](Self::follow_answer)). What a focus event's report
-    /// adds is left to the caller: the last focus queued
-    /// (`Tracking::queued`), which the answer sets too, and the batch and
-    /// count of reports (`Tracking::batch`, `Tracking::reported`), which it
-    /// does not, being no event. Nor does the answer replace
-    /// `Tracking::foreground_since_focus` or
-    /// `Tracking::focus_was_simple_child`: both qualify the MSAA duplicate
-    /// rule by the focus event it compares with, whether a foreground
-    /// change was reported after it and whether its child id can be
-    /// reused, and the answer has no event of its own, so they stay as the
-    /// last reported focus left them.
+    /// A reported focus becomes the focus this way
+    /// ([`emit_focus`](Self::emit_focus)), and so does a focus-now answer's
+    /// control, which Core takes as its focus
+    /// ([`follow_answer`](Self::follow_answer)). What the rules judge
+    /// events against is the focus Core holds and those reported that Core
+    /// has not judged yet, which the callers record ([`super::held`]).
     fn adopt_focus(
         &mut self,
-        (node_id, role, states): (NodeId, Role, StateSet),
+        (node_id, role): (NodeId, Role),
         object: Option<Object>,
         window: Option<isize>,
         chain: Option<Vec<NodeSnapshot>>,
-        observed: (u64, u64),
     ) {
         self.end_watch_elsewhere(node_id);
         self.blur_terminal_elsewhere(node_id);
         self.note_focused(object, role, window);
         let mut tracking = self.context.tracking();
         tracking.role = Some(role);
-        tracking.focus_observed = stamp_or_now(observed);
         tracking.focus = Some(node_id);
-        tracking.focus_states = Some(states);
         tracking.focus_role = Some(role);
-        // NVDA makes its foreground object when the focus enters a
-        // top-level window, so the window keeps the verdict it had then
-        // while the focus moves within it.
-        let top = window.map(top_level_of).filter(|&top| top != 0);
-        if top != tracking.window.map(top_level_of) {
-            let foreground = self.context.foreground_window();
-            tracking.foreground_window = top.filter(|&top| top == foreground);
-        }
         tracking.window = window;
         // Unknown ancestors leave the previous chain, as the reducer keeps
         // it.
@@ -2544,7 +2506,7 @@ impl Worker<'_> {
             foreground: self.context.foreground_window(),
         };
         let accepted =
-            acceptance::accepts_event(event, hwnd, &windows, &self.context.requested_events);
+            focus_rules::accepts_event(event, hwnd, &windows, &self.context.requested_events);
         if !accepted {
             tracing::debug!(
                 hwnd,
@@ -2622,7 +2584,7 @@ impl Worker<'_> {
         }
         // NVDA's order of checks: acceptance, the window's state, the
         // window's UIA test, and only then the object.
-        if let Some(event) = EventName::of_win_event(kind)
+        if let Some(event) = event_name_of(kind)
             && !self.accepts(event, hwnd)
         {
             return;
@@ -2732,12 +2694,15 @@ impl Worker<'_> {
     }
 
     /// An MSAA selection of `object`, from `hwnd`'s hooks, read only as far
-    /// as it can be spoken. Selecting the focus or one of its ancestors is a
+    /// as it can be spoken, by the rule the reducer speaks it by
+    /// (`focus_rules::selection_target`), judged against the focus Core
+    /// holds and those reported that Core has not judged yet
+    /// ([`super::held`]). Selecting the focus or one of its ancestors is a
     /// change of its state, as NVDA handles it, so only its states are
     /// read. Any other selection is spoken only inside a focused selection
-    /// container of this outpost (Core's `is_selection_container`), so it is
-    /// read in full only while the focus this outpost last reported is
-    /// one, and dropped otherwise, having cost its acquisition alone.
+    /// container of this outpost, so it is read in full only while one of
+    /// those focuses is one, and dropped otherwise, having cost its
+    /// acquisition alone.
     fn msaa_selection(
         &mut self,
         object: verbatim_ia2::acquire::EventObject,
@@ -2760,19 +2725,15 @@ impl Worker<'_> {
             return;
         }
         let (chain, container) = {
-            let tracking = self.context.tracking();
-            let chain: Vec<NodeId> = tracking
-                .chain
-                .iter()
-                .map(|node| node.id)
-                .chain(tracking.focus)
-                .collect();
-            let container = tracking
-                .focus_role
-                .is_some_and(verbatim_core::is_selection_container);
+            let held = self.context.held();
+            let chain: Vec<NodeId> = held.focuses().flat_map(held::Focus::chain_ids).collect();
+            let container = held
+                .focuses()
+                .any(|focus| focus_rules::is_selection_container(focus.node.role));
             (chain, container)
         };
         let event = if let Some(node_id) = object.which_of(&chain, registry)
+            && self.selection_states_spoken(node_id)
             && let Some(role) = self.known_role(node_id)
         {
             NormalizedEvent::PropertyChanged {
@@ -2863,16 +2824,7 @@ impl Worker<'_> {
         (node, role, states): (NodeId, Role, StateSet),
         (hwnd, id_child): (isize, i32),
     ) -> Option<u32> {
-        let was_expanded = {
-            let mut tracking = self.context.tracking();
-            if tracking.focus != Some(node) {
-                return None;
-            }
-            tracking
-                .focus_states
-                .replace(states)
-                .is_some_and(|states| states.contains(State::Expanded))
-        };
+        let was_expanded = self.context.held().replace_states(node, states)?;
         (role == Role::TreeItem && states.contains(State::Expanded) && !was_expanded)
             .then(|| verbatim_ia2::acquire::tree_view_child_count(hwnd, id_child))
             .flatten()
@@ -2912,55 +2864,78 @@ impl Worker<'_> {
         self.emit(trace, observed_at_ms, Backend::Msaa, Some(hwnd), event);
     }
 
-    /// The role a node of the focus's chain was last read with: the focus,
-    /// or one of its ancestors as last reported.
+    /// The role a node of a focus's chain was last read with: one of the
+    /// focuses events are judged against, or one of its ancestors
+    /// ([`super::held`]).
     fn known_role(&self, node: NodeId) -> Option<Role> {
-        let tracking = self.context.tracking();
-        if tracking.focus == Some(node) {
-            return tracking.focus_role;
-        }
-        tracking
-            .chain
-            .iter()
-            .find(|known| known.id == node)
-            .map(|known| known.role)
+        self.context.held().role_of(node)
+    }
+
+    /// Whether a selection of `node`, the focus or an ancestor of one of
+    /// the focuses events are judged against, is spoken as a change of its
+    /// states (`focus_rules::selection_target`): not for a logical ancestor
+    /// ([`Self::is_logical_ancestor`]).
+    fn selection_states_spoken(&self, node: NodeId) -> bool {
+        let held = self.context.held();
+        held.focuses().any(|focus| {
+            focus_rules::selection_target(
+                node,
+                (focus.node.id, focus.node.role),
+                focus.ancestors.iter().map(|ancestor| ancestor.id),
+                |ancestor| !self.is_logical_ancestor(ancestor),
+            )
+            .is_some()
+        })
     }
 
     /// The node `object` is, with the role it was last read with, when a
-    /// change of `kind` on it is spoken: a name, description, or value
-    /// change only for the focus, and a state change for the focus or one
-    /// of its ancestors, as NVDA speaks them. Any other object is not read:
-    /// it is told from those by its identity first, without reading any of
-    /// its properties.
+    /// change of `kind` on it is spoken, by the rule the reducer speaks it
+    /// by (`focus_rules::change_target`), judged against the focus Core
+    /// holds and those reported that Core has not judged yet
+    /// ([`super::held`]): a name, description, or value change only for a
+    /// focus, and a state change for a focus or one of its ancestors, as
+    /// NVDA speaks them. Any other object is not read: it is told from
+    /// those by its identity first, without reading any of its properties.
     fn spoken_node(
         &self,
         kind: WinEventKind,
         object: &verbatim_ia2::acquire::EventObject,
     ) -> Option<(NodeId, Role)> {
-        let (focus, mut candidates) = {
-            let tracking = self.context.tracking();
+        let change = match kind {
+            WinEventKind::NameChange => ChangeKind::Name,
+            WinEventKind::DescriptionChange => ChangeKind::Description,
+            WinEventKind::StateChange => ChangeKind::States,
+            _ => ChangeKind::Value,
+        };
+        let candidates: Vec<NodeId> = {
+            let held = self.context.held();
             // The ancestors NVDA has are those reached through `accParent`,
             // not the focus's logical ones ([`Self::logical_ancestors`]):
             // their state changes are not spoken, as selecting a tree item's
             // parent on its way to the focus would otherwise say "selected".
             // Nor is the foreground window an ancestor here
-            // ([`Self::is_foreground_window`]).
-            let ancestors: Vec<NodeId> = if kind == WinEventKind::StateChange {
-                tracking
-                    .chain
-                    .iter()
-                    .map(|node| node.id)
-                    .filter(|&id| {
+            // ([`Self::is_foreground_window`]). Ancestors first, then the
+            // focus, of each focus judged against.
+            let mut candidates: Vec<NodeId> = Vec::new();
+            for focus in held.focuses() {
+                let ancestors: Vec<NodeId> =
+                    focus.ancestors.iter().map(|ancestor| ancestor.id).collect();
+                for node in
+                    focus_rules::change_candidates(change, focus.node.id, &ancestors, |id| {
                         !self.is_logical_ancestor(id)
-                            && !self.is_foreground_window(id, tracking.foreground_window)
+                            && !self.is_foreground_window(id, focus.entered_in_front)
                     })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-            (tracking.focus?, ancestors)
+                {
+                    if !candidates.contains(&node) {
+                        candidates.push(node);
+                    }
+                }
+            }
+            candidates
         };
-        candidates.push(focus);
+        if candidates.is_empty() {
+            return None;
+        }
         let node = object.which_of(&candidates, &self.context.msaa_registry)?;
         Some((node, self.known_role(node)?))
     }
@@ -3007,14 +2982,14 @@ impl Worker<'_> {
         })
     }
 
-    /// The focus's logical ancestors ([`Self::is_logical_ancestor`]).
+    /// The logical ancestors ([`Self::is_logical_ancestor`]) of the
+    /// focuses events are judged against ([`super::held`]).
     fn logical_ancestors(&self) -> Vec<NodeId> {
         let chain: Vec<NodeId> = self
             .context
-            .tracking()
-            .chain
-            .iter()
-            .map(|node| node.id)
+            .held()
+            .focuses()
+            .flat_map(held::Focus::chain_ids)
             .collect();
         chain
             .into_iter()
@@ -3204,11 +3179,10 @@ impl Worker<'_> {
     /// focus in none of the elements it controls and falls through to its
     /// state change handler (`NVDAObjects/__init__.py` 1314 to 1339).
     fn controlled_selection(&mut self, runtime_id: &[i32]) -> Option<NormalizedEvent> {
-        // The focus this outpost last reported, as NVDA uses its focus
-        // object; found by its path when its element is not known.
-        let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
-            return None;
-        };
+        // The focus Core holds, or will once it has judged this outpost's
+        // reports, as NVDA uses its focus object; found by its path when its
+        // element is not known.
+        let focus_id = self.expected_uia_focus()?;
         let current_instead = runtime_id != focus_id.as_slice();
         let registry = &self.context.uia_registry;
         let known = registry
@@ -3290,12 +3264,10 @@ impl Worker<'_> {
     /// event's cache can hold no name for an item an application names
     /// late.
     fn selection_as_value(&mut self, parts: &UiaSnapshotFact) -> Option<NormalizedEvent> {
-        let focus = {
-            let tracking = self.context.tracking();
-            tracking
-                .focus
-                .filter(|&focus| tracking.value_from_selection == Some(focus))?
-        };
+        let focus = self.context.held().expected().map(|focus| focus.node.id)?;
+        if self.context.tracking().value_from_selection != Some(focus) {
+            return None;
+        }
         let registry = &self.context.uia_registry;
         let focused = registry
             .element_of(focus)
@@ -3321,6 +3293,15 @@ impl Worker<'_> {
             node_id: focus,
             value: item.name(),
         })
+    }
+
+    /// The runtime id of the focus Core holds, or will hold once it has
+    /// judged what this outpost reported ([`held::Held::expected`]), when it
+    /// is a UIA focus of this outpost's: the focus a selection is read
+    /// against, as NVDA reads it against its focus object.
+    fn expected_uia_focus(&self) -> Option<Vec<i32>> {
+        let node = self.context.held().expected()?.node.id;
+        self.context.uia_registry.runtime_id_of(node)
     }
 
     /// The parts and element an event is reported with: its own, but for a
@@ -3363,9 +3344,7 @@ impl Worker<'_> {
     /// details call for: one search, made inside the application. `None`
     /// when the focus's element is not held or the item is not under it.
     fn selected_element(&mut self, runtime_id: &[i32]) -> Option<Cached<Node>> {
-        let Some(Object::Uia(focus_id)) = self.context.intake.focused() else {
-            return None;
-        };
+        let focus_id = self.expected_uia_focus()?;
         let registry = &self.context.uia_registry;
         let focused = registry
             .existing_id(&focus_id)
@@ -3584,14 +3563,14 @@ impl Worker<'_> {
     /// is read through UI Automation besides, so its title is the console
     /// window element's, the text area's parent.
     ///
-    /// A change in front is dropped too when the last focus or foreground
-    /// change this outpost reported is in its window or a child window of
-    /// it, or came from the change's own event address, and no focus Core
-    /// queued from another application has replaced it, as NVDA's two
-    /// tests against its last queued focus drop it
-    /// ([`foreground_repeats_focus`]); a focus Core took from another
-    /// outpost inside the window is left to the reducer, which ignores a
-    /// foreground change of the window the focus is already in.
+    /// A change in front is dropped too when the focus Core holds is this
+    /// outpost's and is in its window or a child window of it, or came from
+    /// the change's own event address, and so is every focus this outpost
+    /// reported that Core has not judged yet, as NVDA's two tests against
+    /// its last queued focus drop it ([`foreground_repeats`]); a focus Core
+    /// took from another outpost inside the window is left to the reducer,
+    /// which ignores a foreground change of the window the focus is already
+    /// in.
     ///
     /// Within a focus group, a change reported ends the group's tries, and
     /// one dropped lets the next older entry be tried
@@ -3606,16 +3585,11 @@ impl Worker<'_> {
             tracing::debug!(hwnd, "foreground dropped: not the foreground window");
             return;
         }
-        // NVDA's two tests against the last focus it queued, before it makes
-        // the event's object: local calls only, and the change is not
-        // counted as reported, so the group's next older entry is tried.
-        let repeats = {
-            let tracking = self.context.tracking();
-            let superseded = tracking
-                .queued
-                .is_some_and(|last| observed_no_earlier(tracking.queued_elsewhere, last.observed));
-            foreground_repeats_focus(tracking.queued, superseded, hwnd, is_descendant_window)
-        };
+        // NVDA's two tests against the last focus it queued, made against
+        // the focus Core holds, before it makes the event's object: local
+        // calls only, and the change is not counted as reported, so the
+        // group's next older entry is tried.
+        let repeats = foreground_repeats(&self.context.held(), hwnd, is_descendant_window);
         if let Some(reason) = repeats {
             tracing::debug!(hwnd, reason, "foreground dropped: the focus already");
             return;
@@ -3715,28 +3689,19 @@ impl Worker<'_> {
             tracing::debug!(hwnd, id_object, id_child, "MSAA focus dropped: unreadable");
             return;
         };
-        // NVDA drops a focus event naming the address of the focus it last
-        // queued, after acquiring the object and making the list redirect,
-        // unless that last focus was a simple child, by the child id its
-        // object was acquired with, whose id can be reused
-        // (`isDuplicateIAccessibleEvent`, `IAccessibleChildID > 0`). NVDA
-        // compares with the last focus it queued from any application
-        // (`lastQueuedFocusObject`), so the last focus this outpost reported
-        // stops counting after its own foreground change, and once Core has
-        // queued a newer focus from another application, which Core tells
-        // this outpost (`SupervisorToOutpost::FocusQueued`).
-        let (address_hwnd, address_object, address_child) = candidate.key();
+        // The repeat rule (`focus_rules::repeats_focus`; NVDA's
+        // `isDuplicateIAccessibleEvent`), after acquiring the object and
+        // making the list redirect: a focus event naming the address of the
+        // focus Core holds, unless that focus was a simple child, by the
+        // child id its object was acquired with, whose id can be reused
+        // (`IAccessibleChildID > 0`). NVDA compares with the last focus it
+        // queued from any application (`lastQueuedFocusObject`); Verbatim
+        // compares with the focus Core holds, which Core tells this outpost
+        // (`SupervisorToOutpost::CoreFocus`), and drops nothing as a repeat
+        // while a focus this outpost reported waits for Core's judgement,
+        // unless every one of them is the same object.
         let resolved_child = candidate.resolved_child();
-        let still_last = {
-            let tracking = self.context.tracking();
-            !tracking.focus_was_simple_child
-                && !tracking.foreground_since_focus
-                && !tracking.focus_superseded()
-        };
-        let repeated = still_last
-            && self.context.intake.focused()
-                == Some(Object::Msaa(address_hwnd, address_object, address_child));
-        if repeated {
+        if self.msaa_focus_repeats(candidate.key()) {
             tracing::debug!(
                 hwnd,
                 id_object,
@@ -3760,6 +3725,7 @@ impl Worker<'_> {
             return;
         }
         let node = candidate.read(&self.context.msaa_registry);
+        let node_id = Some(node.id);
         let previous = self.focus_chain();
         let enrichment = read::msaa_enrichment(self.context, self.client, &node, &previous);
         let object = self
@@ -3781,16 +3747,37 @@ impl Worker<'_> {
             enrichment,
         );
         if self.context.intake.focused() == object {
-            let mut tracking = self.context.tracking();
-            tracking.focus_was_simple_child = resolved_child > 0;
-            if let Some(queued) = tracking.queued.as_mut() {
-                queued.event = Some((hwnd, id_object, id_child));
+            if let Some(node) = node_id {
+                self.context.held().note_event(
+                    node,
+                    (hwnd, id_object, id_child),
+                    resolved_child > 0,
+                );
             }
-            drop(tracking);
             if redirected {
                 self.context.intake.set_focus_redirected();
             }
         }
+    }
+
+    /// Whether an MSAA focus event naming the object at `address` repeats
+    /// the focus Core holds (`focus_rules::repeats_focus`): Core holds a
+    /// focus of this outpost's, and it and every focus this outpost
+    /// reported that Core has not judged yet are that object, none of them
+    /// a simple child, so Core's focus will be it whatever Core judges.
+    fn msaa_focus_repeats(&self, address: (isize, i32, i32)) -> bool {
+        let held = self.context.held();
+        let registry = &self.context.msaa_registry;
+        let same_element = held.core().is_some()
+            && held
+                .focuses()
+                .all(|focus| registry.key_of(focus.node.id) == Some(address));
+        let still_focused = held.focuses().all(|focus| !focus.simple_child);
+        focus_rules::repeats_focus(focus_rules::RepeatEvidence {
+            settled: true,
+            same_element,
+            still_focused,
+        })
     }
 
     /// A UIA focus as the focus listener judged and read it from the
@@ -4143,7 +4130,7 @@ impl Worker<'_> {
         let mut follow = None;
         let result = match query {
             Query::FocusNow => {
-                let (answer, answered) = self.focus_now();
+                let (answer, answered) = self.focus_now(trace);
                 follow = answered;
                 Ok(QueryResult::Focus(answer))
             }
@@ -4188,10 +4175,9 @@ impl Worker<'_> {
     /// ([`follow_answer`](Self::follow_answer)). Core takes the control as
     /// its focus, so its text is read as a reported focus's is: a text
     /// field's line is spoken and Core has its caret.
-    fn focus_now(&mut self) -> (FocusNow, Option<AnsweredFocus>) {
+    fn focus_now(&mut self, trace: TraceId) -> (FocusNow, Option<AnsweredFocus>) {
         let context = self.context;
         let (mut answer, window) = read::focus_now(context, self.client);
-        let previous = context.tracking().chain.clone();
         let windows = answer.window.iter_mut().map(|(window, _)| window);
         let focus = answer.focus.iter_mut().flat_map(|focus| {
             let FocusedControl {
@@ -4199,7 +4185,7 @@ impl Worker<'_> {
             } = focus;
             ancestors.iter_mut().flatten().chain(std::iter::once(node))
         });
-        read::describe_dialogs(context, windows.chain(focus), (&previous, &mut None, false));
+        read::describe_dialogs(context, (windows.chain(focus), window), (&mut None, false));
         let answered = answer.focus.as_mut().map(|control| {
             let node = &control.node;
             let text = self.read_focus_text(node.id, node.role);
@@ -4212,6 +4198,23 @@ impl Worker<'_> {
                 window,
             }
         });
+        // Core takes the answer's control as its focus, as NVDA queues its
+        // fake focus: until Core has judged it, events are judged against it
+        // too. An answer for the focus already judged against keeps the
+        // MSAA event address its report recorded, which NVDA's second
+        // foreground test compares with.
+        if let Some(answered) = &answered {
+            let reported = self.focus_to_judge(
+                trace,
+                &answered.node,
+                answered.ancestors.as_deref(),
+                window,
+                false,
+            );
+            let mut held = context.held();
+            let reported = answer_to_judge(held.expected(), reported);
+            held.reported(reported);
+        }
         (answer, answered)
     }
 
@@ -4242,19 +4245,8 @@ impl Worker<'_> {
                     .chain(std::iter::once(node.clone()))
                     .collect()
             });
-            self.adopt_focus(
-                (node.id, node.role, node.states),
-                object,
-                window,
-                chain,
-                observed,
-            );
+            self.adopt_focus((node.id, node.role), object, window, chain);
         }
-        // The answer becomes the last focus queued, so a later foreground
-        // change of its window is dropped by the foreground tests.
-        let mut tracking = self.context.tracking();
-        tracking.queued = queue_answer(tracking.queued, node.id, window, stamp_or_now(observed));
-        drop(tracking);
         self.follow_text((node.id, node.role), text.as_ref(), (trace, observed.0));
     }
 
@@ -4295,17 +4287,6 @@ fn event_window_facts(
     facts
 }
 
-/// `stamp`, an observation's milliseconds and microseconds, or now from
-/// one clock read when it has no observation time (0).
-fn stamp_or_now(stamp: (u64, u64)) -> (u64, u64) {
-    if stamp.0 == 0 {
-        let now = now_us();
-        (now / 1_000, now)
-    } else {
-        stamp
-    }
-}
-
 /// A stamp of `ms` milliseconds with the microseconds of the observation
 /// `micros` when that is the same observation, read with the same clock
 /// read, and with none (0) otherwise.
@@ -4319,6 +4300,8 @@ fn stamp_with_micros(ms: u64, micros: u64) -> (u64, u64) {
 
 #[cfg(test)]
 mod tests {
+    use verbatim_core::focus_rules::HeldFocus;
+
     use super::*;
 
     /// A focus carries the microseconds of its observation only when they
@@ -4329,21 +4312,6 @@ mod tests {
         assert_eq!(stamp_with_micros(6_543, 6_543_210), (6_543, 6_543_210));
         assert_eq!(stamp_with_micros(6_544, 6_543_210), (6_544, 0));
         assert_eq!(stamp_with_micros(6_543, 0), (6_543, 0));
-    }
-
-    /// Another application's focus Core queued in the same millisecond as
-    /// this outpost's last focus supersedes it only when it was observed no
-    /// earlier, to the microsecond, as Core orders the two.
-    #[test]
-    fn a_focus_queued_elsewhere_in_the_same_millisecond_is_ordered_by_microseconds() {
-        let mut tracking = Tracking {
-            focus_observed: (6_543, 6_543_500),
-            ..Tracking::default()
-        };
-        tracking.focus_queued_elsewhere((6_543, 6_543_200));
-        assert!(!tracking.focus_superseded());
-        tracking.focus_queued_elsewhere((6_543, 6_543_800));
-        assert!(tracking.focus_superseded());
     }
 
     /// A focus change's window facts keep the window's class, which Core's
@@ -4398,101 +4366,143 @@ mod tests {
         );
     }
 
-    /// A last focus in window `window`, from the MSAA event `event`.
-    fn last_focus(window: isize, event: Option<(isize, i32, i32)>) -> QueuedFocus {
-        QueuedFocus {
-            node: NodeId::new(1),
-            window,
+    /// A focus in window `window`, from the MSAA event `event`, reported
+    /// from the event traced `trace`.
+    fn focus_in(trace: TraceId, window: isize, event: Option<(isize, i32, i32)>) -> held::Focus {
+        held::Focus {
+            trace,
+            node: HeldNode {
+                id: NodeId::new(1),
+                backend: Backend::Msaa,
+                role: Role::Button,
+                name: None,
+                states: StateSet::new(),
+            },
+            ancestors: Vec::new(),
+            top_level: window,
+            entered_in_front: None,
             event,
-            observed: (1, 0),
+            simple_child: false,
         }
     }
 
-    /// NVDA's first foreground test: a change of the last focus's own
-    /// window, or of a window it is a child window of, is dropped; one of
-    /// another window is not, and nor is any once a focus from another
-    /// application replaced the last focus, or with no last focus.
+    /// Core holding `focus`, which this outpost reported.
+    fn core_holds(focus: held::Focus) -> held::Held {
+        let mut held = held::Held::default();
+        let trace = focus.trace;
+        let node = focus.node.clone();
+        let top_level = focus.top_level;
+        held.reported(focus);
+        held.core_focus(
+            Some(trace),
+            Some(HeldFocus {
+                trace_id: trace,
+                observed: (1, 0),
+                focus: node,
+                ancestors: Vec::new(),
+                top_level: Some(verbatim_model::WindowHandle(u64::from_ne_bytes(
+                    top_level.to_ne_bytes(),
+                ))),
+                alive: true,
+            }),
+            (1, 0),
+        );
+        held
+    }
+
+    /// NVDA's first foreground test, against the focus Core holds: a change
+    /// of its own window, or of a window it is a child window of, is
+    /// dropped; one of another window is not, and nor is any once Core
+    /// holds another application's focus, or none.
     #[test]
-    fn a_foreground_change_of_the_last_focus_s_window_or_its_parent_is_dropped() {
+    fn a_foreground_change_of_the_focus_s_window_or_its_parent_is_dropped() {
         // Window 7 is a child window of 5; 6 is not related to either.
         let is_descendant =
             |parent: isize, child: isize| parent == child || (parent, child) == (5, 7);
-        let last = Some(last_focus(7, None));
+        let held = core_holds(focus_in(TraceId::mint(), 7, None));
         assert_eq!(
-            foreground_repeats_focus(last, false, 7, is_descendant),
+            foreground_repeats(&held, 7, is_descendant),
             Some("the focus is already in the window")
         );
         assert_eq!(
-            foreground_repeats_focus(last, false, 5, is_descendant),
+            foreground_repeats(&held, 5, is_descendant),
             Some("the focus is already in the window")
         );
+        assert_eq!(foreground_repeats(&held, 6, is_descendant), None);
+        let mut elsewhere = core_holds(focus_in(TraceId::mint(), 7, None));
+        elsewhere.core_focus(None, None, (2, 0));
+        assert_eq!(foreground_repeats(&elsewhere, 7, is_descendant), None);
         assert_eq!(
-            foreground_repeats_focus(last, false, 6, is_descendant),
-            None
-        );
-        assert_eq!(foreground_repeats_focus(last, true, 7, is_descendant), None);
-        assert_eq!(
-            foreground_repeats_focus(None, false, 7, is_descendant),
+            foreground_repeats(&held::Held::default(), 7, is_descendant),
             None
         );
     }
 
     /// NVDA's second foreground test: a change whose event address, the
-    /// window with `OBJID_CLIENT` and `CHILDID_SELF`, is the last focus's
-    /// own event's is dropped, though the last focus's window is not the
-    /// change's; another address is not.
+    /// window with `OBJID_CLIENT` and `CHILDID_SELF`, is the focus's own
+    /// event's is dropped, though the focus's window is not the change's;
+    /// another address is not.
     #[test]
-    fn a_foreground_change_with_the_last_focus_s_own_event_address_is_dropped() {
+    fn a_foreground_change_with_the_focus_s_own_event_address_is_dropped() {
         let unrelated = |parent: isize, child: isize| parent == child;
+        let held = core_holds(focus_in(
+            TraceId::mint(),
+            8,
+            Some((5, OBJID_CLIENT.0, CHILDID_SELF)),
+        ));
         assert_eq!(
-            foreground_repeats_focus(
-                Some(last_focus(8, Some((5, OBJID_CLIENT.0, CHILDID_SELF)))),
-                false,
-                5,
-                unrelated
-            ),
+            foreground_repeats(&held, 5, unrelated),
             Some("it repeats the focus's own event")
         );
-        assert_eq!(
-            foreground_repeats_focus(
-                Some(last_focus(8, Some((5, OBJID_WINDOW.0, CHILDID_SELF)))),
-                false,
-                5,
-                unrelated
-            ),
-            None
-        );
+        let held = core_holds(focus_in(
+            TraceId::mint(),
+            8,
+            Some((5, OBJID_WINDOW.0, CHILDID_SELF)),
+        ));
+        assert_eq!(foreground_repeats(&held, 5, unrelated), None);
     }
 
-    /// A focus-now answer becomes the last focus queued: for the node
-    /// already queued it refreshes only the observation time, so the MSAA
-    /// event address NVDA's second foreground test compares with is kept;
-    /// for another node it replaces the last focus with no event address;
-    /// with no window it leaves the last focus as it was.
+    /// While a focus this outpost reported waits for Core's judgement, a
+    /// foreground change is dropped only when it repeats that focus too:
+    /// Core's focus will be one of them whatever Core judges.
     #[test]
-    fn a_focus_now_answer_becomes_the_last_focus_queued() {
+    fn a_foreground_change_is_dropped_only_when_it_repeats_every_focus_judged_against() {
+        let is_descendant = |parent: isize, child: isize| parent == child;
+        let mut held = core_holds(focus_in(TraceId::mint(), 7, None));
+        held.reported(focus_in(TraceId::mint(), 7, None));
+        assert_eq!(
+            foreground_repeats(&held, 7, is_descendant),
+            Some("the focus is already in the window")
+        );
+        held.reported(focus_in(TraceId::mint(), 9, None));
+        assert_eq!(foreground_repeats(&held, 7, is_descendant), None);
+    }
+
+    /// A focus-now answer for the focus already judged against keeps the
+    /// MSAA event address and the simple-child mark its report recorded;
+    /// one for another node has neither.
+    #[test]
+    fn a_focus_now_answer_keeps_the_event_of_the_same_focus() {
         let event = Some((5, OBJID_CLIENT.0, CHILDID_SELF));
-        let last = Some(last_focus(8, event));
+        let before = held::Focus {
+            simple_child: true,
+            ..focus_in(TraceId::mint(), 8, event)
+        };
+        let answered = focus_in(TraceId::mint(), 9, None);
+        let kept = answer_to_judge(Some(&before), answered.clone());
         assert_eq!(
-            queue_answer(last, NodeId::new(1), Some(9), (20, 0)),
-            Some(QueuedFocus {
-                node: NodeId::new(1),
-                window: 8,
-                event,
-                observed: (20, 0),
-            })
+            (kept.trace, kept.top_level, kept.event, kept.simple_child),
+            (answered.trace, 9, event, true)
         );
-        assert_eq!(
-            queue_answer(last, NodeId::new(2), Some(9), (20, 0)),
-            Some(QueuedFocus {
-                node: NodeId::new(2),
-                window: 9,
-                event: None,
-                observed: (20, 0),
-            })
-        );
-        assert_eq!(queue_answer(last, NodeId::new(2), None, (20, 0)), last);
-        assert_eq!(queue_answer(None, NodeId::new(2), None, (20, 0)), None);
+        let other = held::Focus {
+            node: HeldNode {
+                id: NodeId::new(2),
+                ..answered.node.clone()
+            },
+            ..answered
+        };
+        let replaced = answer_to_judge(Some(&before), other);
+        assert_eq!((replaced.event, replaced.simple_child), (None, false));
     }
 
     /// The idle barrier's answer never waits on the terminals' lock, which

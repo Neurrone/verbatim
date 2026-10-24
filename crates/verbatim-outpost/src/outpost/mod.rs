@@ -38,6 +38,7 @@ mod alarm;
 mod focus_path;
 mod gap;
 mod handover;
+mod held;
 mod intake;
 mod narrowing;
 mod outbound;
@@ -145,6 +146,10 @@ pub(crate) struct Context {
     msaa_registry: MsaaRegistry,
     arbitrator: Mutex<Arbitrator>,
     tracking: Mutex<Tracking>,
+    /// The focus Core holds, and the focuses this outpost reported that
+    /// Core has not judged, which events are judged against before they are
+    /// read (decision D14, "Where the rules run"; [`held`]).
+    held: Mutex<held::Held>,
     /// The client on a thread of its own for the worker's operations with a
     /// deadline of their own: a dialog's text.
     bounded: verbatim_uia::BoundedClient,
@@ -224,7 +229,7 @@ pub(crate) struct Context {
     focus_window: Mutex<FocusWindowReader>,
     /// The events application support asked for from any window of the
     /// application, whatever the foreground ([`acceptance`]).
-    requested_events: acceptance::RequestedEvents,
+    requested_events: verbatim_core::focus_rules::RequestedEvents,
     /// Who is told of each event the outpost's own handlers take in
     /// ([`Outpost::observe_heard`]), if anyone.
     heard: OnceLock<HeardObserver>,
@@ -379,6 +384,10 @@ impl Context {
 
     fn tracking(&self) -> MutexGuard<'_, Tracking> {
         self.tracking.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn held(&self) -> MutexGuard<'_, held::Held> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     fn classic_windows(&self) -> MutexGuard<'_, HashMap<isize, u32>> {
@@ -936,6 +945,7 @@ impl Outpost {
             msaa_registry: MsaaRegistry::new(id_counter),
             arbitrator: Mutex::new(Arbitrator::new(&[])),
             tracking: Mutex::new(Tracking::default()),
+            held: Mutex::new(held::Held::default()),
             bounded: verbatim_uia::BoundedClient::default(),
             focus_events: OnceLock::new(),
             followed: Mutex::new(None),
@@ -960,7 +970,7 @@ impl Outpost {
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             focus_window: Mutex::new(Arc::new(window::focus_window)),
-            requested_events: acceptance::RequestedEvents::default(),
+            requested_events: verbatim_core::focus_rules::RequestedEvents::default(),
             heard: OnceLock::new(),
             // Read again as the hook is installed ([`Outpost::assign`]).
             handover: Mutex::new(handover::Handover::new(verbatim_ia2::event_clock())),
@@ -1362,15 +1372,17 @@ impl Outpost {
             | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
             | SupervisorToOutpost::HookRemoved { .. } => {}
-            // Core queued a focus from another application after this one's.
-            SupervisorToOutpost::FocusQueued {
-                observed_at_ms,
-                observed_at_us,
+            // The focus Core holds, after it judged a focus event of this
+            // outpost's or its focus moved to or from this application:
+            // taken in at once, without the worker, which reads it as it
+            // judges its next event.
+            SupervisorToOutpost::CoreFocus {
+                judged,
+                focus,
+                observed,
                 ..
             } => {
-                context
-                    .tracking()
-                    .focus_queued_elsewhere((*observed_at_ms, *observed_at_us));
+                context.held().core_focus(*judged, focus.clone(), *observed);
             }
             SupervisorToOutpost::NodesHeld {
                 nodes,

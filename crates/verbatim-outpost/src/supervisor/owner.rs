@@ -70,14 +70,13 @@ pub(super) enum OwnerEvent {
         attention: Option<Pid>,
         holding: BTreeSet<OutpostId>,
     },
-    /// From the app: Core took the event traced `trace_id` as the focus,
-    /// after a focus `superseded` reported, when that was another
-    /// outpost's.
-    FocusQueued {
-        trace_id: TraceId,
-        /// When it was observed, in milliseconds and microseconds.
-        observed: (u64, u64),
-        superseded: Option<OutpostId>,
+    /// From the app: the focus Core holds, after it judged the focus event
+    /// traced `judged` or its focus changed, for the listener and
+    /// `outposts`.
+    CoreFocus {
+        judged: Option<TraceId>,
+        focus: Option<crate::protocol::HeldFocus>,
+        outposts: Vec<OutpostId>,
     },
     /// Read from the listener's pipe: a focus fact to route.
     Fact {
@@ -768,6 +767,46 @@ impl Owner {
         self.handle(event);
     }
 
+    /// Tells the listener and `outposts` the focus Core holds, `focus`,
+    /// after Core judged the focus event traced `judged` or its focus
+    /// changed ([`SupervisorToOutpost::CoreFocus`]): the listener whole,
+    /// and each outpost only when the focus is its own.
+    fn tell_core_focus(
+        &mut self,
+        judged: Option<TraceId>,
+        focus: Option<&crate::protocol::HeldFocus>,
+        outposts: Vec<OutpostId>,
+    ) {
+        let observed = focus.map_or((0, 0), |focus| focus.observed);
+        let notice = |focus| {
+            Outgoing::HandOver(SupervisorToOutpost::CoreFocus {
+                judged,
+                focus,
+                observed,
+                sent_at_us: 0,
+            })
+        };
+        // A listener still launching has read no focus to judge against
+        // it.
+        if let Some(child) = self.listener.as_ref().and_then(|l| l.child.as_ref())
+            && let Err(error) = child.writer.push(notice(focus.cloned()))
+        {
+            tracing::warn!(%error, "Core's focus could not be told to the listener");
+        }
+        // An outpost that has ended, or been replaced, judges nothing more.
+        for outpost in outposts {
+            if let Some(child) = self
+                .record_of(outpost)
+                .and_then(|record| record.child.as_ref())
+            {
+                let own = focus.and_then(|focus| focus.for_outpost(outpost));
+                if let Err(error) = child.writer.push(notice(own)) {
+                    tracing::warn!(%error, %outpost, "Core's focus could not be told to an outpost");
+                }
+            }
+        }
+    }
+
     fn handle(&mut self, event: OwnerEvent) {
         match event {
             OwnerEvent::Shutdown(reply) => self.shut_down_all(reply),
@@ -776,37 +815,11 @@ impl Owner {
                     let _ = self.start_outpost(pid, None);
                 }
             }
-            OwnerEvent::FocusQueued {
-                trace_id,
-                observed,
-                superseded,
-            } => {
-                let notice = || {
-                    Outgoing::HandOver(SupervisorToOutpost::FocusQueued {
-                        trace_id,
-                        observed_at_ms: observed.0,
-                        observed_at_us: observed.1,
-                        sent_at_us: 0,
-                    })
-                };
-                // A listener still launching has accepted no focus to
-                // forget.
-                if let Some(child) = self.listener.as_ref().and_then(|l| l.child.as_ref())
-                    && let Err(error) = child.writer.push(notice())
-                {
-                    tracing::warn!(%error, "a queued focus could not be told to the listener");
-                }
-                // An outpost that has ended, or been replaced, holds no
-                // focus to forget.
-                if let Some(outpost) = superseded
-                    && let Some(child) = self
-                        .record_of(outpost)
-                        .and_then(|record| record.child.as_ref())
-                    && let Err(error) = child.writer.push(notice())
-                {
-                    tracing::warn!(%error, %outpost, "a queued focus could not be told to an outpost");
-                }
-            }
+            OwnerEvent::CoreFocus {
+                judged,
+                focus,
+                outposts,
+            } => self.tell_core_focus(judged, focus.as_ref(), outposts),
             OwnerEvent::Views { attention, holding } => {
                 if attention != self.attention {
                     let now = Instant::now();

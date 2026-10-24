@@ -12,20 +12,20 @@
 //! missing its pings, the application's later facts go to the next, whether
 //! or not it holds attention. Repeated failures for one application are
 //! never given up, and are spaced by the backoff, whose count a foreground
-//! change to the application starts again. A queued focus is told to the
-//! outpost it supersedes as well as to the listener, and to no other
-//! outpost, and never to a superseded incarnation that has ended.
+//! change to the application starts again. The focus Core holds is told to
+//! the outposts concerned as well as to the listener, and to no other
+//! outpost, and never to an incarnation that has ended.
 //!
 //! This test binary runs itself four ways: as an application, a process with
 //! no windows that runs until its standard input closes; as a stand-in for
 //! the focus listener, which says it is ready, answers idle queries, and,
-//! the first time the supervisor tells it a focus was queued, sends the
+//! the first time the supervisor tells it the focus Core holds, sends the
 //! facts the test names in [`FACTS`]; and as a stand-in for the outpost
 //! binary, started for an application or as a spare (`--spare`). The
 //! stand-in outpost says it is ready or a spare, answers pings, says `Ready`
 //! for `Assign`, reports with a fault the test reads that it was started
-//! for its application ([`DIRECT`]), each fact delivered to it, each queued
-//! focus it is told of, and each idle query, answers each idle query, and fails as [`MUTE_SPARE`] and
+//! for its application ([`DIRECT`]), each fact delivered to it, each focus
+//! of Core's it is told of, and each idle query, answers each idle query, and fails as [`MUTE_SPARE`] and
 //! [`Failing`] say. Nothing makes a UI Automation or `WinEvent` call, so
 //! the test touches nothing on the desktop. Its own `main` recognizes each
 //! command line.
@@ -62,7 +62,7 @@ use common::Delivered;
 const APPLICATION: &str = "--stand-in-application";
 
 /// Names the facts the stand-in listener sends, the first time it is told
-/// a focus was queued: `focus:<pid>:<ms>` for an MSAA focus, which may
+/// the focus Core holds: `focus:<pid>:<ms>` for an MSAA focus, which may
 /// start an outpost, `drop:<pid>:<ms>` for a UIA focus's drop, which may
 /// not, and `foreground:<pid>:<ms>` for a foreground change, separated by
 /// commas, each observed at `<ms>`.
@@ -342,15 +342,21 @@ fn stand_in(args: &[String]) -> ! {
                 parked_count: 0,
                 written_at_us: 0,
             }),
-            Ok(Some(SupervisorToOutpost::FocusQueued { .. })) if listener && !facts_sent => {
+            Ok(Some(SupervisorToOutpost::CoreFocus { .. })) if listener && !facts_sent => {
                 facts_sent = true;
                 for fact in scripted_facts() {
                     send(&fact);
                 }
             }
-            Ok(Some(SupervisorToOutpost::FocusQueued { observed_at_ms, .. })) if !listener => {
+            Ok(Some(SupervisorToOutpost::CoreFocus {
+                focus, observed, ..
+            })) if !listener => {
                 send(&OutpostToSupervisor::Fault {
-                    detail: format!("focus queued {observed_at_ms}"),
+                    detail: format!(
+                        "Core's focus at {} {}",
+                        observed.0,
+                        if focus.is_some() { "here" } else { "elsewhere" }
+                    ),
                 });
             }
             Ok(Some(SupervisorToOutpost::Assign { target_pid })) => {
@@ -787,7 +793,7 @@ fn a_fact_that_may_not_start_an_outpost_or_an_ignored_processs_takes_no_spare() 
     let run = Run::start(&[ignored_pid]);
     run.keep_spares();
 
-    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
+    run.supervisor.core_focus(None, None, Vec::new());
     // Neither the ignored process's focus nor the other's drop took the
     // oldest spare.
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
@@ -871,7 +877,7 @@ fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
     let run = Run::start(&[]);
     run.keep_spares();
 
-    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
+    run.supervisor.core_focus(None, None, Vec::new());
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_spare(5, 2);
     failing.fail(1);
@@ -963,7 +969,7 @@ fn an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once() {
     );
     run.expect_ready(OutpostId(4), first_pid);
     run.expect_spare(6, 2);
-    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
+    run.supervisor.core_focus(None, None, Vec::new());
     run.expect_report(OutpostId(4), "fact 7");
 
     run.finish(ShutdownSummary {
@@ -1090,12 +1096,13 @@ fn reports(run: &Run, count: usize) -> Vec<(OutpostId, Vec<String>)> {
     reports
 }
 
-/// A focus Core queued after another outpost's is told to the listener
-/// and to that outpost, whose last focus it supersedes, and to no other
-/// outpost (`docs/design/focus-pipeline.md`, section 16.3). The listener,
-/// told, sends a fact to each application's outpost, which reaches each
-/// behind anything told to it before.
-fn a_queued_focus_is_told_to_the_outpost_it_supersedes_and_no_other() {
+/// The focus Core holds, after Core's focus moved from an outpost's to
+/// another's, is told to the listener and to the outpost whose focus it
+/// held, which hears that its focus is elsewhere, and to no other outpost
+/// (decision D14, "Where the rules run"). The listener, told,
+/// sends a fact to each application's outpost, which reaches each behind
+/// anything told to it before.
+fn core_s_focus_is_told_to_the_outposts_concerned_and_no_other() {
     let (first, first_pid) = application_and_pid();
     let (second, second_pid) = application_and_pid();
     set_env(FACTS, format!("focus:{first_pid}:9,focus:{second_pid}:10"));
@@ -1110,14 +1117,20 @@ fn a_queued_focus_is_told_to_the_outpost_it_supersedes_and_no_other() {
     run.expect_ready(OutpostId(4), second_pid);
     run.expect_spare(6, 2);
 
-    run.supervisor
-        .focus_queued(TraceId::mint(), (42, 0), Some(OutpostId(3)));
+    run.supervisor.core_focus(
+        None,
+        Some(common::held_focus(OutpostId(4), 42)),
+        vec![OutpostId(3)],
+    );
     assert_eq!(
         reports(&run, 3),
         [
             (
                 OutpostId(3),
-                vec!["focus queued 42".to_owned(), "fact 9".to_owned()]
+                vec![
+                    "Core's focus at 42 elsewhere".to_owned(),
+                    "fact 9".to_owned()
+                ]
             ),
             (OutpostId(4), vec!["fact 10".to_owned()]),
         ]
@@ -1135,10 +1148,10 @@ fn a_queued_focus_is_told_to_the_outpost_it_supersedes_and_no_other() {
     }
 }
 
-/// A queued focus that supersedes an outpost that has since ended is told
-/// to the listener alone: the incarnation that replaced it for its
-/// application reported no focus, and hears nothing of it.
-fn a_queued_focus_is_not_told_to_a_superseded_outpost_that_ended() {
+/// Core's focus, for an outpost that has since ended, is told to the
+/// listener alone: the incarnation that replaced it for its application
+/// reported no focus, and hears nothing of it.
+fn core_s_focus_is_not_told_to_an_outpost_that_ended() {
     let (first, first_pid) = application_and_pid();
     set_env(FACTS, format!("focus:{first_pid}:9"));
     let run = Run::start(&[]);
@@ -1153,8 +1166,11 @@ fn a_queued_focus_is_not_told_to_a_superseded_outpost_that_ended() {
     run.expect_ready(OutpostId(4), first_pid);
     run.expect_spare(6, 2);
 
-    run.supervisor
-        .focus_queued(TraceId::mint(), (42, 0), Some(OutpostId(3)));
+    run.supervisor.core_focus(
+        None,
+        Some(common::held_focus(OutpostId(9), 42)),
+        vec![OutpostId(3)],
+    );
     assert_eq!(
         reports(&run, 1),
         [(OutpostId(4), vec!["fact 9".to_owned()])]
@@ -1207,7 +1223,7 @@ fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
     // change, held meanwhile, reaches the next outpost.
     kill(process);
     run.expect_ended(outpost, first_pid, EndReason::Exited);
-    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
+    run.supervisor.core_focus(None, None, Vec::new());
     [(outpost, process)] = served(&run, [first_pid]);
     run.expect_report(outpost, "fact 7");
 
@@ -1375,12 +1391,12 @@ fn main() {
             a_given_spare_that_misses_its_pings_is_ended_as_killed,
         ),
         (
-            "a_queued_focus_is_told_to_the_outpost_it_supersedes_and_no_other",
-            a_queued_focus_is_told_to_the_outpost_it_supersedes_and_no_other,
+            "core_s_focus_is_told_to_the_outposts_concerned_and_no_other",
+            core_s_focus_is_told_to_the_outposts_concerned_and_no_other,
         ),
         (
-            "a_queued_focus_is_not_told_to_a_superseded_outpost_that_ended",
-            a_queued_focus_is_not_told_to_a_superseded_outpost_that_ended,
+            "core_s_focus_is_not_told_to_an_outpost_that_ended",
+            core_s_focus_is_not_told_to_an_outpost_that_ended,
         ),
     ];
     let filter = args.iter().skip(1).find(|arg| !arg.starts_with('-'));

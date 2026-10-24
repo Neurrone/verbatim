@@ -608,23 +608,20 @@ impl Supervisor {
         let _ = self.owner.send(owner::OwnerEvent::IdleRound(round));
     }
 
-    /// Tells the focus listener that Core took the event traced
-    /// `trace_id`, observed at `observed`, its milliseconds and
-    /// microseconds (0 when not known), as the focus
-    /// ([`SupervisorToOutpost::FocusQueued`]), and tells `superseded`, the
-    /// outpost that reported the focus Core queued before it, when that
-    /// was another application's, so its MSAA duplicate test no longer
-    /// compares with its last focus.
-    pub fn focus_queued(
+    /// Tells the focus listener and `outposts` the focus Core holds,
+    /// `focus`, once Core has judged the focus event traced `judged` or
+    /// its focus has changed ([`SupervisorToOutpost::CoreFocus`]): the
+    /// listener whole, and each outpost only when the focus is its own.
+    pub fn core_focus(
         &self,
-        trace_id: TraceId,
-        observed: (u64, u64),
-        superseded: Option<OutpostId>,
+        judged: Option<TraceId>,
+        focus: Option<crate::protocol::HeldFocus>,
+        outposts: Vec<OutpostId>,
     ) {
-        let _ = self.owner.send(owner::OwnerEvent::FocusQueued {
-            trace_id,
-            observed,
-            superseded,
+        let _ = self.owner.send(owner::OwnerEvent::CoreFocus {
+            judged,
+            focus,
+            outposts,
         });
     }
 }
