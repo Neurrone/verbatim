@@ -124,7 +124,10 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   to its reducer command with `ScriptAction::review_command`.
 - Held caret keys (`docs/design/key-holding.md`): the hook holds the
   caret table's keys while a `KeyHolding` switch is on, which the reducer
-  thread sets after every input from `SrState::holds_caret_keys`. A held
+  thread sets after every input from `SrState::holds_caret_keys`, and
+  only where the hook's `ForegroundView`, which the reducer thread sets
+  after every input from `SrState::hook_foreground`, says the window in
+  front lets keys be held (not an elevated window's). A held
   key's report becomes `Input::HeldKey`, and its stroke joins one line
   (`held_keys`) with the transitions the hook deferred behind held keys
   (`KeyReport::Deferred`), in the order reported. A held key waits at the
@@ -468,9 +471,13 @@ knowing for review:
   config store, the supervisor with its focus listener (decision D13;
   asking the current foreground application for its focus once at
   startup with a focus-now query (`ShellCommand::FocusNow`), since the
-  listener thereafter reports foreground changes as facts — Core no longer
-  runs its own foreground hook; a foreground change reaches the reducer as a
-  focus on the window, which moves its attention), the reducer thread
+  listener thereafter reports foreground changes as facts — no thread of
+  Core's hooks the foreground, the keyboard hook's included; a foreground
+  change reaches the reducer as a focus on the window, which moves its
+  attention, and the listener's report of the window in front
+  (`OutpostMessage::ForegroundWindow`) as `Input::ForegroundWindow`, with
+  Verbatim's own integrity level read once, from which Core decides the
+  keyboard hook's view of the foreground), the reducer thread
   (`ReducerThread`, described below), the gesture router (bound gestures to
   `GuiCommand`s or reducer inputs), the control server with its
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a

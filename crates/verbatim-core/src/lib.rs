@@ -13,6 +13,7 @@
 
 #![forbid(unsafe_code)]
 
+mod applications;
 pub mod dump;
 mod editing;
 pub mod flight_recorder;

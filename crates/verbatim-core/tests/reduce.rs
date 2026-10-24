@@ -73,6 +73,7 @@ fn window(handle: u64) -> WindowFacts {
         topmost: false,
         under_active_window: None,
         in_foreground: false,
+        class: String::new(),
     }
 }
 
@@ -2551,7 +2552,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Msaa,
-        window: Some(facts),
+        window: Some(facts.clone()),
         event: NormalizedEvent::FocusChanged {
             node: node(
                 2,
@@ -2577,7 +2578,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     );
     let (state, effects) = reduce_from(
         &state,
-        &observed_at(focus_in(source, facts, edit, vec![]), 1_000),
+        &observed_at(focus_in(source, facts.clone(), edit, vec![]), 1_000),
         OutpostId(2),
     );
     assert_eq!(
@@ -2623,7 +2624,7 @@ fn a_focus_in_the_foreground_window_from_another_application_is_not_stale() {
         trace_id: TraceId::mint(),
         source: Pid(10),
         backend: Backend::Uia,
-        window: Some(facts),
+        window: Some(facts.clone()),
         event: NormalizedEvent::FocusChanged {
             node: node(1, Role::Window, Some("Settings"), None, StateSet::new()),
             foreground: true,
@@ -3467,7 +3468,7 @@ fn topmost_shared_owner_and_active_uwp_windows_are_attended() {
     for facts in attended {
         let state = switch_to(&SrState::new(), Pid(1));
         let button = node(2, Role::Button, Some("OK"), None, StateSet::new());
-        let (_, effects) = reduce(&state, &focus_in(Pid(2), facts, button, vec![]));
+        let (_, effects) = reduce(&state, &focus_in(Pid(2), facts.clone(), button, vec![]));
         assert_eq!(
             heard(&effects),
             vec![
@@ -5452,4 +5453,52 @@ fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection()
 
     let (_, effects) = reduce(&state, &focus_in(app, window(7000), inner, vec![list(29)]));
     assert_eq!(heard(&effects), vec![], "the repeated focus is silent");
+}
+
+/// A focus or a foreground change on one of the shell's staging windows,
+/// which File Explorer gives the focus or the foreground to on Alt+Tab,
+/// Task View and Windows+X, is dropped whole: nothing is said, speech is
+/// not cut, and the focus and attention stay as they were
+/// (`docs/parity/windows-and-processes.md`, "The shell's staging
+/// windows"). A window of another class is announced as any is.
+#[test]
+fn a_focus_or_foreground_on_a_shell_staging_window_is_dropped_whole() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let pane = node(3, Role::Pane, None, None, StateSet::new());
+    for class in [
+        "ForegroundStaging",
+        "LauncherTipWnd",
+        "ApplicationManager_DesktopShellWindow",
+    ] {
+        let facts = WindowFacts {
+            class: class.to_owned(),
+            ..foreground_window(50)
+        };
+        let (after, effects) = reduce(
+            &state,
+            &focus_in(Pid(2), facts.clone(), pane.clone(), vec![]),
+        );
+        assert_eq!((effects, &after), (vec![], &state), "a focus in {class}");
+        let (after, effects) = reduce(&state, &foreground_in(Pid(2), facts, pane.clone()));
+        assert_eq!(
+            (effects, &after),
+            (vec![], &state),
+            "the foreground at {class}"
+        );
+    }
+    let named = node(3, Role::Button, Some("OK"), None, StateSet::new());
+    let facts = WindowFacts {
+        class: "Button".to_owned(),
+        topmost: true,
+        ..window(50)
+    };
+    let (_, effects) = reduce(&state, &focus_in(Pid(2), facts, named, vec![]));
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 3, &[], Some((OutpostId(1), 1000)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("OK"), role(Role::Button)]),
+        ]
+    );
 }

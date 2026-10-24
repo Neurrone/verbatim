@@ -60,7 +60,14 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             window,
             event,
             ..
-        } => reduce_event(state, *trace_id, *observed_at_ms, *source, *window, event),
+        } => reduce_event(
+            state,
+            *trace_id,
+            *observed_at_ms,
+            *source,
+            window.as_ref(),
+            event,
+        ),
         Input::FetchCompleted {
             trace_id,
             query_id,
@@ -232,7 +239,7 @@ fn classify(
     attention: Option<&Attention>,
     focus_source: Option<Pid>,
     source: Pid,
-    window: Option<WindowFacts>,
+    window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Acceptance {
     let Some(attention) = attention else {
@@ -317,7 +324,7 @@ fn is_stale_focus(
     state: &SrState,
     outpost: OutpostId,
     observed_at_ms: u64,
-    window: Option<WindowFacts>,
+    window: Option<&WindowFacts>,
 ) -> bool {
     let top_level = window.map(|window| window.top_level);
     observed_at_ms != 0
@@ -400,7 +407,7 @@ fn observed_before_foreground_change(state: &SrState, observed_at_ms: u64) -> bo
 /// read it, by NVDA's test for accepting an event: inside the foreground
 /// window or sharing its root owner, a topmost window, or a
 /// `Windows.UI.Core` window under the input thread's active window.
-fn event_window_is_foreground(event: WindowFacts) -> bool {
+fn event_window_is_foreground(event: &WindowFacts) -> bool {
     event.in_foreground || event.topmost || event.under_active_window == Some(true)
 }
 
@@ -412,8 +419,8 @@ fn event_window_is_foreground(event: WindowFacts) -> bool {
 /// When either side has no window facts there is nothing to compare, so the
 /// application decides. Focus events with window facts are judged by
 /// [`event_window_is_foreground`] instead.
-fn window_is_attended(attention: &Attention, source: Pid, window: Option<WindowFacts>) -> bool {
-    match (attention.window, window) {
+fn window_is_attended(attention: &Attention, source: Pid, window: Option<&WindowFacts>) -> bool {
+    match (attention.window.as_ref(), window) {
         (Some(attended), Some(event)) => {
             event.top_level == attended.top_level
                 || event.root_owner == attended.root_owner
@@ -529,7 +536,7 @@ fn reduce_activation_completed(
 fn focus_dropped_first(
     state: &mut SrState,
     observed_at_ms: u64,
-    window: Option<WindowFacts>,
+    window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> bool {
     let NormalizedEvent::FocusChanged {
@@ -591,10 +598,12 @@ fn reduce_event(
     trace_id: TraceId,
     observed_at_ms: u64,
     source: Pid,
-    window: Option<WindowFacts>,
+    window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if focus_dropped_first(state, observed_at_ms, window, event) {
+    if crate::applications::is_shell_staging_focus(window, event)
+        || focus_dropped_first(state, observed_at_ms, window, event)
+    {
         return Vec::new();
     }
     match classify(
@@ -797,13 +806,16 @@ fn reduce_focus_changed(
     state: &mut SrState,
     trace_id: TraceId,
     source: Pid,
-    window: Option<WindowFacts>,
+    window: Option<&WindowFacts>,
     report: &FocusReport<'_>,
 ) -> Vec<Effect> {
     if report.foreground {
-        state.attention = Some(Attention { source, window });
+        state.attention = Some(Attention {
+            source,
+            window: window.cloned(),
+        });
         if let Some(focus) = state.focus.as_ref()
-            && let (Some(focus_window), Some(window)) = (focus.window, window)
+            && let (Some(focus_window), Some(window)) = (focus.window.as_ref(), window)
             && focus_window.top_level == window.top_level
         {
             return Vec::new();
@@ -832,15 +844,16 @@ fn reduce_focus_changed(
     // window would replace the control as the focus and be announced over
     // it. NVDA never meets this: it always has the focused element, and
     // from it the nearest window handle.
-    let focus_window = window.or_else(|| {
+    let focus_window = window.cloned().or_else(|| {
         state
             .attention
+            .as_ref()
             .filter(|attention| attention.source == source)
-            .and_then(|attention| attention.window)
+            .and_then(|attention| attention.window.clone())
     });
     let new_focus = FocusContext {
         source,
-        window: focus_window,
+        window: focus_window.clone(),
         snapshot: report.node.clone(),
         ancestors,
         last_selection: report.selected_child.map(|selected| selected.id),
@@ -880,7 +893,8 @@ fn reduce_focus_changed(
     // new foreground window cancels speech, nameless or not, and so does
     // entering a menu; speech for a focus the user has since left is
     // dropped by the speech manager, which is told where the focus now is.
-    let foreground_changed = foreground_changed(state.focus.as_ref(), report, focus_window);
+    let foreground_changed =
+        foreground_changed(state.focus.as_ref(), report, focus_window.as_ref());
     if foreground_changed && report.observed_at_ms != 0 {
         state.foreground_changed_at = Some(report.observed_at_ms);
     }
@@ -933,12 +947,13 @@ fn reduce_focus_changed(
 fn follow_an_unreported_foreground(
     state: &mut SrState,
     source: Pid,
-    window: WindowFacts,
+    window: &WindowFacts,
     report: &FocusReport<'_>,
 ) {
     let attended = state
         .attention
-        .and_then(|attention| attention.window)
+        .as_ref()
+        .and_then(|attention| attention.window.as_ref())
         .is_some_and(|attended| {
             attended.top_level == window.top_level || attended.root_owner == window.root_owner
         });
@@ -947,7 +962,7 @@ fn follow_an_unreported_foreground(
     }
     state.attention = Some(Attention {
         source,
-        window: Some(window),
+        window: Some(window.clone()),
     });
     state.foreground = if report.ancestors_unknown {
         None
@@ -983,10 +998,10 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
 fn foreground_changed(
     previous: Option<&FocusContext>,
     report: &FocusReport<'_>,
-    window: Option<WindowFacts>,
+    window: Option<&WindowFacts>,
 ) -> bool {
     let previous_top = previous
-        .and_then(|focus| focus.window)
+        .and_then(|focus| focus.window.as_ref())
         .map(|window| window.top_level);
     report.foreground
         || match (previous_top, window.map(|window| window.top_level)) {
@@ -2260,14 +2275,14 @@ pub(crate) fn source_of(node: &NodeSnapshot) -> UtteranceSource {
 /// outpost could not read the ancestors in time.
 fn entered_ancestors<'a>(
     previous: Option<&FocusContext>,
-    window: Option<WindowFacts>,
+    window: Option<&WindowFacts>,
     report: &FocusReport<'a>,
 ) -> Vec<&'a NodeSnapshot> {
     if report.ancestors_unknown {
         return Vec::new();
     }
     let same_window = previous.is_some_and(|previous| {
-        matches!((previous.window, window), (Some(old), Some(new)) if old.top_level == new.top_level)
+        matches!((previous.window.as_ref(), window), (Some(old), Some(new)) if old.top_level == new.top_level)
     });
     let already_entered = |ancestor: &NodeSnapshot| {
         let Some(previous) = previous else {

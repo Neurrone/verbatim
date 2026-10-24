@@ -39,7 +39,7 @@ pub struct WindowHandle(pub u64);
 /// calls when the event is observed. The reducer classifies every event
 /// against its attention record with these (decision D14 as amended by the
 /// outpost redesign; `docs/parity/focus-events.md`, "Event acceptance").
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowFacts {
     /// The event's top-level window.
     pub top_level: WindowHandle,
@@ -62,6 +62,57 @@ pub struct WindowFacts {
     /// learns the foreground moved without a foreground fact.
     #[serde(default)]
     pub in_foreground: bool,
+    /// The class of the event's own window, which Core's rules for an
+    /// application's windows match, as NVDA's app modules match a window's
+    /// class (decision D6).
+    #[serde(default)]
+    pub class: String,
+}
+
+/// The window that came to the system's foreground, as the focus listener
+/// learned it from the foreground `WinEvent`, or from its own local reads
+/// when it starts (architecture section 5): what Core needs to decide how
+/// the keyboard hook treats the keys that go to it ([`HookForeground`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForegroundWindow {
+    /// The window.
+    pub window: WindowHandle,
+    /// The thread that raised the window's event, which for a console host
+    /// window is the console host's own thread; 0 when no event has named
+    /// it yet.
+    pub thread: u32,
+    /// Whether the window is a console host window, whose owner Windows
+    /// reports as the first process attached to the console rather than
+    /// the console host, so that its event's thread is the only way to
+    /// know the console host's thread.
+    pub console: bool,
+    /// The integrity level of the window's process (its mandatory label's
+    /// relative identifier, such as `0x2000` for medium and `0x3000` for
+    /// high), or `None` when it cannot be read.
+    pub integrity: Option<u32>,
+    /// Verbatim's own integrity level, read by Verbatim's process, or
+    /// `None` when it cannot be read.
+    pub own_integrity: Option<u32>,
+}
+
+/// What the keyboard hook needs to know of the foreground window, decided
+/// by Core from the [`ForegroundWindow`] the focus listener reported and
+/// read by the hook from a lock-free snapshot (architecture section 5). The
+/// hook applies it only while `window` is still the foreground window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HookForeground {
+    /// The foreground window this was decided for.
+    pub window: WindowHandle,
+    /// Whether the hook may hold keys back for this window: not when its
+    /// process has higher integrity than Verbatim's, or either cannot be
+    /// read, since Windows drops a key Verbatim sends again to such a
+    /// window (`docs/design/key-holding.md`, "Elevated windows").
+    pub holds_keys: bool,
+    /// The thread whose keyboard layout translates the keys typed into
+    /// this window, when it is not the thread Windows names as the
+    /// window's owner: a console host window's own thread
+    /// (`docs/crates/verbatim-input-windows.md`, "Typed text").
+    pub keyboard_thread: Option<u32>,
 }
 
 /// Identifies one in-flight fetch so its completion can re-enter the reducer.
@@ -728,6 +779,10 @@ pub enum Input {
         /// events' `observed_at_ms` use.
         ended_at_ms: u64,
     },
+    /// A window came to the foreground, as the focus listener tells it
+    /// (architecture section 5): Core decides from it what the keyboard
+    /// hook reads of the foreground ([`HookForeground`]).
+    ForegroundWindow(ForegroundWindow),
 }
 
 /// A lock key whose state Verbatim announces.

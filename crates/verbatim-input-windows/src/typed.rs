@@ -21,11 +21,12 @@
 //!   the exception Windows makes: asked which thread owns it, Windows names
 //!   the first process attached to the console (a shell), whose layout is
 //!   not the one the console host translates keys with. The console host's
-//!   own thread is learned from the console window's `WinEvents`, which
-//!   always carry the thread that raised them ([`ConsoleThreads`]), as
-//!   NVDA does for its issue 10113 (`IAccessibleHandler/internalWinEventHandler.py`
+//!   own thread is learned by the focus listener from the console window's
+//!   `WinEvents`, which always carry the thread that raised them, as NVDA
+//!   does for its issue 10113 (`IAccessibleHandler/internalWinEventHandler.py`
 //!   151 to 153 and 266 to 273, `NVDAObjects/UIA/winConsoleUIA.py` 378 to
-//!   388).
+//!   388), and published by Core in the hook's view of the foreground
+//!   ([`HookForeground::keyboard_thread`]); the hook hooks no event.
 //! - An input method composes keys into text the hook cannot know (Chinese,
 //!   Japanese, and Korean input), so with an input method's layout active
 //!   nothing is translated. Its committed text is not echoed; announcing
@@ -47,7 +48,7 @@
 //! end-to-end harness) arrive as `VK_PACKET` carrying the UTF-16 unit
 //! itself, a surrogate pair as two keys.
 
-use std::cell::{Cell, RefCell};
+use verbatim_model::{HookForeground, WindowHandle};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, GetKeyState, GetKeyboardLayout, HKL, ToUnicodeEx, VK_CAPITAL, VK_CONTROL,
@@ -60,12 +61,7 @@ use windows::Win32::UI::TextServices::{
 };
 
 use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
-use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_CONSOLE_CARET, EVENT_CONSOLE_END, EVENT_SYSTEM_FOREGROUND, GetClassNameW,
-    GetForegroundWindow, GetWindowThreadProcessId, IsWindow, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS,
-};
+use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
 
 /// `ToUnicodeEx`'s flag that leaves the keyboard state, a pending dead key
 /// above all, unchanged (Windows 10 version 1607 and later).
@@ -128,11 +124,14 @@ impl Typing {
     /// not yet passed on, in order, which the key follows: the modifiers
     /// among them are taken as made, since the key reaches the application
     /// after them.
+    /// `foreground` is the window in front, read as the key came, and
+    /// `view` Core's view of the foreground, from which a console host
+    /// window's own thread is taken.
     pub(crate) fn translate(
         &mut self,
-        vk: u16,
-        scan_code: u32,
+        (vk, scan_code): (u16, u32),
         deferred: &[(u16, bool)],
+        (foreground, view): (HWND, Option<HookForeground>),
     ) -> Option<String> {
         if vk == VK_PACKET.0 {
             return self.packet(u16::try_from(scan_code).ok()?);
@@ -142,7 +141,7 @@ impl Typing {
         if !modifiers.allow_typing() {
             return None;
         }
-        let layout = foreground_layout();
+        let layout = foreground_layout(foreground, view);
         if is_input_method(layout) || is_text_service(self.active_keyboard_profile(), layout) {
             return None;
         }
@@ -271,217 +270,36 @@ impl Modifiers {
     }
 }
 
-/// The keyboard layout of the thread that owns the foreground window, the
-/// thread a key goes to: for a console host window, the console host's
-/// thread as its `WinEvents` named it ([`ConsoleThreads`]).
-fn foreground_layout() -> HKL {
+/// The keyboard layout of the thread that owns the foreground window
+/// `foreground`, the thread a key goes to: for a console host window, the
+/// console host's own thread, as Core's view of the foreground names it
+/// ([`keyboard_thread`]).
+fn foreground_layout(foreground: HWND, view: Option<HookForeground>) -> HKL {
     // A null window or a thread id of zero yields the calling thread's
     // layout, a harmless fallback.
-    // SAFETY: a local read with no preconditions.
-    let foreground = unsafe { GetForegroundWindow() };
-    let thread = CONSOLE_THREADS
-        .with(|threads| threads.borrow().thread_of(foreground.0 as isize))
+    let thread = keyboard_thread(window_handle(foreground), view)
         // SAFETY: tolerates any handle, answering 0 for a null one.
         .unwrap_or_else(|| unsafe { GetWindowThreadProcessId(foreground, None) });
     // SAFETY: a local read of a thread's layout.
     unsafe { GetKeyboardLayout(thread) }
 }
 
-/// The class of the console host's windows.
-const CONSOLE_WINDOW_CLASS: &str = "ConsoleWindowClass";
-
-thread_local! {
-    /// The console windows' real threads, kept by the hook thread's
-    /// `WinEvent` hooks and read by its translation.
-    static CONSOLE_THREADS: RefCell<ConsoleThreads> = RefCell::new(ConsoleThreads::default());
+/// The thread whose layout translates the keys typed into `foreground`
+/// when it is not the one Windows names as the window's owner: the one
+/// Core's `view` names, while `view` is about that window. A view about
+/// another window is one Core has not yet brought up to date, and names
+/// nothing.
+pub(crate) fn keyboard_thread(
+    foreground: WindowHandle,
+    view: Option<HookForeground>,
+) -> Option<u32> {
+    view.filter(|view| view.window == foreground)
+        .and_then(|view| view.keyboard_thread)
 }
 
-/// The thread each console host window was created on, as its `WinEvents`
-/// name it, by window handle. Windows answers `GetWindowThreadProcessId`
-/// for a console window with the first attached process's thread instead.
-#[derive(Debug, Default)]
-pub(crate) struct ConsoleThreads {
-    threads: Vec<(isize, u32)>,
-}
-
-impl ConsoleThreads {
-    /// Notes that `window`'s event came from `thread`, forgetting windows
-    /// that no longer exist (`exists` says which do).
-    fn note(&mut self, window: isize, thread: u32, exists: impl Fn(isize) -> bool) {
-        if let Some(entry) = self.threads.iter_mut().find(|(known, _)| *known == window) {
-            entry.1 = thread;
-            return;
-        }
-        self.threads.retain(|&(known, _)| exists(known));
-        self.threads.push((window, thread));
-    }
-
-    /// The thread `window` was created on, when it is a console window
-    /// whose events were seen.
-    fn thread_of(&self, window: isize) -> Option<u32> {
-        self.threads
-            .iter()
-            .find(|(known, _)| *known == window)
-            .map(|&(_, thread)| thread)
-    }
-}
-
-thread_local! {
-    /// The hook on every console's events, installed only while the console
-    /// window in front has not yet named its thread ([`ConsoleWatch`]).
-    static CONSOLE_HOOK: Cell<Option<HWINEVENTHOOK>> = const { Cell::new(None) };
-}
-
-/// The `WinEvent` hooks that keep [`CONSOLE_THREADS`] on the calling
-/// thread, which must pump messages; unhooked when dropped.
-///
-/// The foreground event is hooked for as long as this lives: a console
-/// window raises it, from the console host's own thread, when it comes to
-/// the front, and it is rare. The same event, from every process,
-/// Verbatim's own included, tells the hook whether the window in front
-/// belongs to a process of higher integrity ([`crate::foreground_changed`]).
-/// Every console's events (its caret, its
-/// output) are hooked only while the console window in front has not yet
-/// named its thread through one of them, when Verbatim starts with a
-/// console in front or a console comes to the front, and unhooked at the
-/// first: a console busy with output raises thousands a second, which
-/// would otherwise each wake this thread, the one Windows waits on for
-/// every key (`docs/design/wake-ups.md`).
-pub(crate) struct ConsoleWatch {
-    foreground: Option<HWINEVENTHOOK>,
-}
-
-impl ConsoleWatch {
-    /// Hooks the foreground event, out of context, so the callback runs on
-    /// this thread while it reads messages, and every console's events too
-    /// if a console window is in front now.
-    pub(crate) fn start() -> Self {
-        let foreground = hook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
-            on_foreground_event,
-            WINEVENT_OUTOFCONTEXT,
-        );
-        // SAFETY: a local read with no preconditions.
-        let window = unsafe { GetForegroundWindow() };
-        watch_console_events(!window.is_invalid() && is_console_window(window));
-        Self { foreground }
-    }
-}
-
-impl Drop for ConsoleWatch {
-    fn drop(&mut self) {
-        watch_console_events(false);
-        if let Some(hook) = self.foreground.take() {
-            // SAFETY: set by `start` and not yet removed.
-            unsafe {
-                let _ = UnhookWinEvent(hook);
-            }
-        }
-    }
-}
-
-/// Hooks events `first` to `last` with `callback` and `flags`; `None` if
-/// Windows refuses.
-fn hook(
-    first: u32,
-    last: u32,
-    callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
-    flags: u32,
-) -> Option<HWINEVENTHOOK> {
-    // SAFETY: `callback` has the WINEVENTPROC signature and lives for the
-    // process; the caller removes the hook.
-    let hook = unsafe { SetWinEventHook(first, last, None, Some(callback), 0, 0, flags) };
-    if hook.is_invalid() {
-        tracing::warn!(first, last, "a console event hook could not be set");
-        return None;
-    }
-    Some(hook)
-}
-
-/// Hooks every console's events when `on`, and removes that hook when not,
-/// each only if it is not already so.
-fn watch_console_events(on: bool) {
-    CONSOLE_HOOK.with(|slot| match (on, slot.get()) {
-        (true, None) => slot.set(hook(
-            EVENT_CONSOLE_CARET,
-            EVENT_CONSOLE_END,
-            on_console_event,
-            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
-        )),
-        (false, Some(hook)) => {
-            slot.set(None);
-            // SAFETY: set by this function and not yet removed.
-            unsafe {
-                let _ = UnhookWinEvent(hook);
-            }
-        }
-        _ => {}
-    });
-}
-
-/// Notes that `window`'s event came from `thread`, if it is a console
-/// window.
-fn note_console_thread(window: HWND, thread: u32) -> bool {
-    if window.is_invalid() || !is_console_window(window) {
-        return false;
-    }
-    CONSOLE_THREADS.with(|threads| {
-        // A translation in progress holds the map only while it reads it,
-        // never across a message wait, so this borrow is free.
-        if let Ok(mut threads) = threads.try_borrow_mut() {
-            threads.note(window.0 as isize, thread, |known| {
-                // SAFETY: tolerates any handle.
-                unsafe { IsWindow(Some(HWND(known as *mut _))) }.as_bool()
-            });
-        }
-    });
-    true
-}
-
-/// Notes the thread of a console window that came to the front, and hooks
-/// every console's events until one of its own confirms it; another
-/// window's coming to the front removes that hook. Tells the hook which
-/// window is in front.
-unsafe extern "system" fn on_foreground_event(
-    _hook: HWINEVENTHOOK,
-    _event: u32,
-    window: HWND,
-    _object: i32,
-    _child: i32,
-    thread: u32,
-    _time: u32,
-) {
-    crate::foreground_changed(window);
-    watch_console_events(note_console_thread(window, thread));
-}
-
-/// Notes the thread of a console window's event, and once the console in
-/// front has named its own, removes the hook on every console's events.
-unsafe extern "system" fn on_console_event(
-    _hook: HWINEVENTHOOK,
-    _event: u32,
-    window: HWND,
-    _object: i32,
-    _child: i32,
-    thread: u32,
-    _time: u32,
-) {
-    // SAFETY: a local read with no preconditions.
-    if note_console_thread(window, thread) && window == unsafe { GetForegroundWindow() } {
-        watch_console_events(false);
-    }
-}
-
-/// Whether `window` is a console host window.
-fn is_console_window(window: HWND) -> bool {
-    let mut class = [0u16; 32];
-    // SAFETY: the buffer is a local of the length passed.
-    let length = unsafe { GetClassNameW(window, &mut class) };
-    usize::try_from(length)
-        .ok()
-        .and_then(|length| class.get(..length))
-        .is_some_and(|class| String::from_utf16_lossy(class) == CONSOLE_WINDOW_CLASS)
+/// `window` as the model names windows.
+pub(crate) fn window_handle(window: HWND) -> WindowHandle {
+    WindowHandle(u64::from_ne_bytes((window.0 as isize).to_ne_bytes()))
 }
 
 /// Whether `layout` is an input method's, whose keys compose text the hook
@@ -618,19 +436,29 @@ mod tests {
     }
 
     #[test]
-    fn a_console_window_takes_the_thread_its_events_named() {
-        let mut threads = ConsoleThreads::default();
-        assert_eq!(threads.thread_of(10), None);
-        threads.note(10, 100, |_| true);
-        threads.note(20, 200, |_| true);
-        assert_eq!(threads.thread_of(10), Some(100));
-        // A later event's thread replaces the earlier.
-        threads.note(10, 101, |_| true);
-        assert_eq!(threads.thread_of(10), Some(101));
-        // Windows that no longer exist are forgotten when another is noted.
-        threads.note(30, 300, |window| window != 20);
-        assert_eq!(threads.thread_of(20), None);
-        assert_eq!(threads.thread_of(30), Some(300));
-        assert_eq!(threads.thread_of(10), Some(101));
+    fn a_console_window_takes_the_thread_core_names_while_it_is_in_front() {
+        let console = HookForeground {
+            window: WindowHandle(10),
+            holds_keys: true,
+            keyboard_thread: Some(100),
+        };
+        assert_eq!(keyboard_thread(WindowHandle(10), Some(console)), Some(100));
+        assert_eq!(
+            keyboard_thread(WindowHandle(20), Some(console)),
+            None,
+            "a view Core has not yet brought up to date"
+        );
+        assert_eq!(
+            keyboard_thread(
+                WindowHandle(10),
+                Some(HookForeground {
+                    keyboard_thread: None,
+                    ..console
+                })
+            ),
+            None,
+            "a window whose owner Windows names rightly"
+        );
+        assert_eq!(keyboard_thread(WindowHandle(10), None), None);
     }
 }

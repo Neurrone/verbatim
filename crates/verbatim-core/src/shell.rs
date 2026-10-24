@@ -3,10 +3,11 @@
 //! sounds, the error sound, an application that stopped responding, a lock
 //! key's new state, the time and date, the clipboard's result, a shell
 //! item that has gone, the theme page's previews, and the fake focus after
-//! a menu or the Alt+Tab switcher closes. The shell reads each fact (a
-//! key's state, the clock, the clipboard) and the reducer decides what is
-//! said and how, so all speech is ordered, cancellable and recorded in one
-//! place.
+//! a menu or the Alt+Tab switcher closes; and the window in the foreground,
+//! from which Core decides what the keyboard hook reads of it. The shell
+//! reads each fact (a key's state, the clock, the clipboard) and the
+//! reducer decides what is said and how, so all speech is ordered,
+//! cancellable and recorded in one place.
 
 use verbatim_model::{
     Earcon, Effect, Input, LockKey, Message, Phrase, SegmentContent, SpeechPriority, TraceId,
@@ -17,7 +18,7 @@ use crate::state::SrState;
 
 /// Handles one input the shell's threads produce; any other input does
 /// nothing here.
-pub(crate) fn reduce(state: &SrState, input: &Input) -> Vec<Effect> {
+pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::Started => started(),
         Input::Exiting { replaced } => exiting(*replaced),
@@ -39,6 +40,12 @@ pub(crate) fn reduce(state: &SrState, input: &Input) -> Vec<Effect> {
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
         Input::MenuOrSwitchEnded { ended_at_ms } => menu_or_switch_ended(state, *ended_at_ms),
+        Input::ForegroundWindow(foreground) => {
+            // Decided into the keyboard hook's view of the foreground
+            // (`SrState::hook_foreground`); nothing is said.
+            state.foreground_window = Some(*foreground);
+            Vec::new()
+        }
         _ => Vec::new(),
     }
 }

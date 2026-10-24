@@ -215,6 +215,22 @@ Implementation notes, `reduce`:
   for a window read through UI Automation (`docs/design/focus-pipeline.md`,
   section 16.4); there is no separate rule for an unannounced foreground
   window.
+- `SrState::hook_foreground()`, the keyboard hook's view of the window
+  in front (`verbatim_model::HookForeground`), decided from the window the
+  focus listener last reported (`Input::ForegroundWindow`) and published
+  by the shell after each input, as `holds_caret_keys()` is: keys may be
+  held for the window only when its process's integrity is known and no
+  higher than Verbatim's, and a console host window's keys are translated
+  with the layout of the thread its event named (architecture section 5).
+- Rules for particular applications' windows (`applications.rs`, decision
+  D6: they live in Core until the extension host runs application
+  modules, never in the listener or an outpost). A focus or foreground
+  change on one of the shell's staging windows (`ForegroundStaging`,
+  `LauncherTipWnd`, `ApplicationManager_DesktopShellWindow`, matched by
+  the window class its window facts carry) is dropped before anything
+  else judges it: nothing is said, speech is not cut, and the focus and
+  attention stay as they were (`docs/parity/windows-and-processes.md`,
+  "The shell's staging windows"). `tests/reduce.rs` checks it.
 - Event acceptance (decision D14 as amended by the outpost redesign;
   `docs/parity/focus-events.md`, "Event acceptance"): the state keeps an attention
   record, the application and window facts of the most recent foreground
@@ -760,7 +776,8 @@ by a later key press, as that key's other speech is.
 `MenuOrSwitchEnded` asks for the application in front's focus
 (`Effect::ReadForegroundFocus`, NVDA's fake focus) unless a focus
 observed since the close has been applied
-(`docs/parity/backends.md`). `tests/shell.rs` checks each rule.
+(`docs/parity/backends.md`). `ForegroundWindow` says nothing; it is kept
+for `SrState::hook_foreground`. `tests/shell.rs` checks each rule.
 
 ## Terminals
 

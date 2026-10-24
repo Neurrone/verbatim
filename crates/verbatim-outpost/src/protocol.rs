@@ -622,6 +622,9 @@ pub enum FactKey {
     Alert(isize, i32, i32, u32),
     /// A tooltip shown at this address, raised by this thread.
     Show(isize, i32, i32, u32),
+    /// The window in the foreground, whichever it is: only the newest
+    /// report waits ([`OutpostToSupervisor::ForegroundWindow`]).
+    ForegroundWindow,
 }
 
 /// Messages from the Core-side supervisor to an outpost.
@@ -1005,6 +1008,10 @@ pub struct FocusedControl {
 /// Messages from an outpost to the Core-side supervisor.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a message is built once, written, read and moved, never stored in bulk"
+)]
 pub enum OutpostToSupervisor {
     /// The outpost has its application and its `WinEvent` hook is in: the
     /// first message of an outpost started for an application, and the
@@ -1133,6 +1140,27 @@ pub enum OutpostToSupervisor {
         /// verbatim.exe logs the listener's stages from them.
         #[serde(default)]
         timing: EventTiming,
+    },
+    /// A window came to the system's foreground, for the keyboard hook's
+    /// view of it (architecture section 5). Sent only by the listener, for
+    /// every foreground `WinEvent`, whatever process raised it and whether
+    /// or not its fact is forwarded; once when the listener starts, for the
+    /// window then in front; and again for a console window in front whose
+    /// thread no event had named, once one of its events names it. Only
+    /// the newest waits. The supervisor passes it to the app, which gives
+    /// it to Core.
+    ForegroundWindow {
+        /// The window.
+        window: isize,
+        /// The thread that raised its event, the console host's own for a
+        /// console window; 0 for a console window whose thread no event
+        /// has named yet.
+        thread: u32,
+        /// Whether it is a console host window.
+        console: bool,
+        /// The integrity level of the process that owns the window, or
+        /// `None` when it cannot be read.
+        integrity: Option<u32>,
     },
     /// The outpost's target application has exited. Sent once, ahead of
     /// ordinary messages; the supervisor then shuts the outpost down

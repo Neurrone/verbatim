@@ -101,10 +101,12 @@
 //! — the same binary as a per-application outpost, with no target pid,
 //! supervised by the same machinery.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::io;
 use std::os::windows::io::OwnedHandle;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
@@ -134,6 +136,7 @@ use crate::focus_read::{
     Arrival, FocusEvent, FocusReader, Judged, LastAccepted, Meta, READ_DEADLINE, Readers, Reading,
     WatchedRead,
 };
+use crate::foreground::{ForegroundWatch, Front, Step};
 use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::MOVED_ON_GRACE;
@@ -579,6 +582,25 @@ impl Outgoing {
         );
     }
 
+    /// Sends Core the window in front, `front`, with the integrity level of
+    /// the process that owns it, read here, a local call; only the newest
+    /// such report waits. Sent for every process, ignored ones included,
+    /// since the keyboard hook needs to know of every window in front.
+    fn foreground_window(&self, front: Front) {
+        let owner = window_pid(front.window);
+        let message = OutpostToSupervisor::ForegroundWindow {
+            window: front.window,
+            thread: front.thread,
+            console: front.console,
+            integrity: crate::integrity::process_integrity(owner),
+        };
+        sent(&self.sender.send(Sent::Fact(
+            Some((Pid(0), FactKey::ForegroundWindow)),
+            message,
+            None,
+        )));
+    }
+
     /// Marks the desktop-wide UIA subscriptions as installed, or as failed:
     /// UIA events are taken from then on.
     fn uia_installation_ended(&self) {
@@ -894,24 +916,49 @@ impl Listener {
             let idle_outgoing = Arc::clone(&msaa_outgoing);
             let readers = Arc::clone(&idle_readers);
             let foreground_readers = Arc::clone(&readers);
+            // The window in front, for the keyboard hook's view of it,
+            // kept on this thread by both handlers.
+            let watch = Rc::new(RefCell::new(ForegroundWatch::default()));
+            let start_watch = Rc::clone(&watch);
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
-                    let foreground = event.kind == WinEventKind::Foreground;
+                    if matches!(
+                        event.kind,
+                        WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
+                    ) {
+                        let step = watch.borrow_mut().console_event(event.hwnd, event.thread);
+                        foreground_step(&outgoing, step);
+                        return;
+                    }
+                    let foreground = (event.kind == WinEventKind::Foreground).then_some(Front {
+                        window: event.hwnd,
+                        thread: event.thread,
+                        console: false,
+                    });
                     // Forwarded first, so the event's observation time is
                     // taken before anything else the callback does.
                     forward_msaa_event(&outgoing, event);
-                    // A foreground change is the evidence that the user may
-                    // have moved on from a slow read's window
-                    // (`focus_read`'s watchdog).
-                    if foreground {
+                    if let Some(front) = foreground {
+                        let console = window_class_name(front.window) == CONSOLE_WINDOW_CLASS;
+                        let step = watch.borrow_mut().foreground(Front { console, ..front });
+                        foreground_step(&outgoing, step);
+                        // A foreground change is the evidence that the
+                        // user may have moved on from a slow read's window
+                        // (`focus_read`'s watchdog).
                         foreground_readers.foreground_changed();
                     }
                 }),
-                // The only nudge is the idle barrier's query, its round in
-                // the first word: every event delivered before it has been
-                // handled, so the reading threads are waited for next.
-                nudge: Some(Box::new(move |round, _| {
-                    answer_when_reads_are_done(&readers, &idle_outgoing, round as u64);
+                // The idle barrier's query, its round in the first word:
+                // every event delivered before it has been handled, so the
+                // reading threads are waited for next. Or, once, the start
+                // of the foreground's watch, once the hooks are in.
+                nudge: Some(Box::new(move |round, kind| {
+                    if kind == NUDGE_FOREGROUND_START {
+                        let step = start_watch.borrow_mut().start(front_now());
+                        foreground_step(&idle_outgoing, step);
+                    } else {
+                        answer_when_reads_are_done(&readers, &idle_outgoing, round as u64);
+                    }
                 })),
             }
         });
@@ -920,6 +967,10 @@ impl Listener {
             tracing::warn!(error, "failed to install WinEvent hooks");
         }
         let nudger = event_thread.nudger();
+        // The window in front now, reported from the event thread behind the
+        // hooks' install, so a foreground event raised since is reported
+        // after it.
+        nudger.nudge((0, NUDGE_FOREGROUND_START));
 
         // The listener has no target application; `target_pid` is a sentinel
         // the supervisor only logs.
@@ -1349,6 +1400,51 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
         Some(WinEventStamp { thread, time }),
         observed_at_us,
     );
+}
+
+/// The listener's nudge that starts the watch of the window in front
+/// ([`ForegroundWatch::start`]), in the nudge's second word; the idle
+/// barrier's carry 0.
+const NUDGE_FOREGROUND_START: isize = 1;
+
+/// The window in the foreground now, with the thread Windows names as its
+/// owner, read locally; `None` when no window is in front.
+fn front_now() -> Option<Front> {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: a local read with no preconditions.
+    let window = unsafe { GetForegroundWindow() }.0 as isize;
+    if window == 0 {
+        return None;
+    }
+    Some(Front {
+        window,
+        thread: crate::outpost::window::window_owner(window).0,
+        console: window_class_name(window) == CONSOLE_WINDOW_CLASS,
+    })
+}
+
+/// Carries out a step of the foreground's watch, on the `WinEvent` thread:
+/// sends Core the window in front, with its process's integrity level read
+/// locally ([`OutpostToSupervisor::ForegroundWindow`]), and hooks or
+/// unhooks every console's events.
+fn foreground_step(outgoing: &Outgoing, step: Step) {
+    if let Some(front) = step.report {
+        outgoing.foreground_window(front);
+    }
+    if let Some(hooked) = step.console_events {
+        let suspended: &[WinEventKind] = if hooked {
+            &[]
+        } else {
+            &[WinEventKind::ConsoleUpdate, WinEventKind::ConsoleCaret]
+        };
+        if let Err(error) = verbatim_ia2::suspend_kinds(suspended) {
+            tracing::warn!(
+                error,
+                hooked,
+                "the consoles' events could not be hooked or unhooked"
+            );
+        }
+    }
 }
 
 /// The owning process id of `hwnd`, or 0 for an invalid or ownerless window.

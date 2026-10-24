@@ -119,10 +119,14 @@ leaves the focus on them unsaid, after NVDA has made the window its
 focus and run its foreground event, which cuts speech ([App modules,
 global plugins, and add-ons: the
 mechanism](../nvda/app-modules-mechanism.md), "App modules").
-Verbatim: the outpost drops a focus or foreground fact on such a
-window (`ForegroundStaging`, `LauncherTipWnd`,
-`ApplicationManager_DesktopShellWindow`), so nothing is said for it.
-**matched (verified)** for what is said (the two-window scenarios).
+Verbatim: the outposts and the listener report a focus or foreground
+change on such a window (`ForegroundStaging`, `LauncherTipWnd`,
+`ApplicationManager_DesktopShellWindow`) like any other, with the
+window's class, and Core drops it whole (decision D6), so nothing is said
+for it. **matched (verified)** for what is said, by NVDA's capture of
+Alt+Tab of 2026-10-09; no scenario reaches a staging window since the
+two-window scenarios stopped switching with Alt+Tab, and Core's unit
+test pins the rule (`a_focus_or_foreground_on_a_shell_staging_window_is_dropped_whole`).
 Different: since the focus is dropped, speech is not cut at the staging
 window, only at the window switched to ([the roadmap](../roadmap.md),
 M4, "Follow-ups from M4.1").

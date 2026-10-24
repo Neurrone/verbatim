@@ -695,8 +695,9 @@ each of them end to end.
   story in the VM (R5).
 - Remove the keyboard hook's guard that holds no caret key while a
   window of higher integrity is in front
-  (`verbatim_input_windows`'s `integrity::foreground_above`, kept in the
-  hook's `HookState::foreground_above`): with UIAccess, keys Verbatim
+  (Core's `SrState::hook_foreground`, from the integrity level the focus
+  listener reports for the window in front, published in the hook's
+  `ForegroundView`): with UIAccess, keys Verbatim
   sends on reach elevated windows, so they are held there too
   ([holding caret keys](design/key-holding.md), "Elevated windows";
   Dickson, 2026-10-22).

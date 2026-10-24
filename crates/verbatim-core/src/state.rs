@@ -9,9 +9,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use verbatim_model::{
-    CaretKey, Fetches, HeldAnchors, NodeId, NodeSnapshot, OutpostId, Pid, QueryId, ReaderSettings,
-    ReviewCommand, Selection, SpeechMark, TextAttributes, TextChunk, TextPosition, TextUnit,
-    TraceId, WindowFacts, WindowHandle,
+    CaretKey, Fetches, ForegroundWindow, HeldAnchors, HookForeground, NodeId, NodeSnapshot,
+    OutpostId, Pid, QueryId, ReaderSettings, ReviewCommand, Selection, SpeechMark, TextAttributes,
+    TextChunk, TextPosition, TextUnit, TraceId, WindowFacts, WindowHandle,
 };
 
 /// The focused node and what the reducer knows about where it sits.
@@ -61,7 +61,7 @@ pub(crate) struct FocusContext {
 /// D14 as amended by the outpost redesign): the reducer's stand-in for the
 /// system's foreground window, which is what NVDA classifies events against.
 /// Every event other than a foreground change is classified against it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Attention {
     pub(crate) source: Pid,
     pub(crate) window: Option<WindowFacts>,
@@ -664,6 +664,12 @@ pub struct SrState {
     /// value"), the most recent last, at most [`PROGRESS_BARS_KEPT`].
     #[serde(default)]
     pub(crate) progress_reported: Vec<((i32, i32), u32)>,
+    /// The window the focus listener last reported in the system's
+    /// foreground (`Input::ForegroundWindow`), from which the keyboard
+    /// hook's view of the foreground is decided
+    /// ([`SrState::hook_foreground`]).
+    #[serde(default)]
+    pub(crate) foreground_window: Option<ForegroundWindow>,
 }
 
 /// How many progress bars' last indications are remembered: more than are
@@ -692,6 +698,33 @@ impl SrState {
     #[must_use]
     pub fn holds_caret_keys(&self) -> bool {
         crate::editing::text_focus(self).is_some()
+    }
+
+    /// What the keyboard hook reads of the foreground window, decided from
+    /// the window the focus listener last reported in front (architecture
+    /// section 5), or `None` before it has reported one. Keys may be held
+    /// back for the window only when its process's integrity is known and
+    /// no higher than Verbatim's, since Windows drops a key Verbatim sends
+    /// again to a window of higher integrity, and a key lost costs more
+    /// than a key judged without its caret (`docs/design/key-holding.md`,
+    /// "Elevated windows"). A console host window's keys are translated
+    /// with the keyboard layout of the console host's own thread, named by
+    /// its event, since Windows names the console's first attached process
+    /// as the window's owner (`docs/crates/verbatim-input-windows.md`,
+    /// "Typed text"); any other window's with its owner's, which the hook
+    /// reads itself.
+    #[must_use]
+    pub fn hook_foreground(&self) -> Option<HookForeground> {
+        let foreground = self.foreground_window?;
+        Some(HookForeground {
+            window: foreground.window,
+            holds_keys: matches!(
+                (foreground.integrity, foreground.own_integrity),
+                (Some(window), Some(own)) if window <= own
+            ),
+            keyboard_thread: (foreground.console && foreground.thread != 0)
+                .then_some(foreground.thread),
+        })
     }
 
     /// Forgets the focus's caret and its timed reports.
@@ -735,7 +768,7 @@ impl SrState {
     /// seen yet. The shell derives the supervisor's view of attention from this.
     #[must_use]
     pub fn attention(&self) -> Option<Pid> {
-        self.attention.map(|attention| attention.source)
+        self.attention.as_ref().map(|attention| attention.source)
     }
 
     /// The details to fetch, as the active theme decides: a detail whose

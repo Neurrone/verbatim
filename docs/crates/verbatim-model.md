@@ -24,9 +24,17 @@ Public API:
   number, and the facts about an event's window its outpost reads with
   local calls: top-level window, root owner, whether it is topmost, and for
   `Windows.UI.Core` windows whether it is under the input thread's active
-  window, and whether it is in the system's foreground window. The reducer
-  classifies events with these, against its attention record or, for a
-  focus, against the foreground window.
+  window, whether it is in the system's foreground window, and the
+  window's class, which Core's rules for an application's windows match.
+  The reducer classifies events with these, against its attention record
+  or, for a focus, against the foreground window.
+- `ForegroundWindow` and `HookForeground` — the window the focus listener
+  reported in front (its handle, the thread its event named, whether it
+  is a console host window, its process's integrity level and Verbatim's
+  own), carried in `Input::ForegroundWindow`, and what Core decides from
+  it for the keyboard hook: whether keys may be held back for that window
+  and which thread's keyboard layout translates its keys (architecture
+  section 5).
 - `Backend` — `Uia` or `Msaa`; which client stack sourced a node or event.
   Diagnostics only above the outpost.
 - `Role`, `State`, `StateSet` — the role vocabulary (window, dialog, menu
@@ -113,8 +121,9 @@ Public API:
   `LockKey` and its new state), `ClockRead` (the press count and the time
   and date the system formatted), `ClipboardCopied` (the text and whether
   the clipboard holds it), `ShellItemGone`, the theme page's
-  `PreviewSpeech` and `PreviewEarcon`, and `MenuOrSwitchEnded` (when a
-  menu or the Alt+Tab switcher closed). Milestone M4 adds the text protocol's
+  `PreviewSpeech` and `PreviewEarcon`, `MenuOrSwitchEnded` (when a
+  menu or the Alt+Tab switcher closed), and `ForegroundWindow` (the
+  window the focus listener reported in front). Milestone M4 adds the text protocol's
   inputs and effects, described under "The text protocol" below.
 - `ActionName` — the name of the action an activation performed, carried
   in `Input::ActivationCompleted`: `Invoke` (UIA, spoken "invoke") or

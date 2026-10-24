@@ -99,6 +99,8 @@ pub(super) enum OwnerEvent {
     /// Read from the listener's pipe: a menu or the Alt+Tab switcher
     /// closed.
     MenuOrSwitchEnded { ended_at_ms: u64 },
+    /// Read from the listener's pipe: a window came to the foreground.
+    ForegroundWindow(crate::supervisor::ForegroundReport),
     /// Read from a child's pipe: the child sent `Ready`.
     Ready(OutpostId),
     /// Read from a child's pipe: the child answered a ping.
@@ -685,7 +687,8 @@ impl Owner {
     }
 
     /// A message read from the listener `outpost`'s pipe at `received`:
-    /// focus facts, pongs, and `Ready` are handled as the owner's events;
+    /// focus facts, the window in front, pongs, and `Ready` are handled as
+    /// the owner's events;
     /// faults are logged.
     fn listener_message(
         &mut self,
@@ -739,6 +742,17 @@ impl Owner {
                 );
                 OwnerEvent::MenuOrSwitchEnded { ended_at_ms }
             }
+            OutpostToSupervisor::ForegroundWindow {
+                window,
+                thread,
+                console,
+                integrity,
+            } => OwnerEvent::ForegroundWindow(crate::supervisor::ForegroundReport {
+                window,
+                thread,
+                console,
+                integrity,
+            }),
             OutpostToSupervisor::Ready { .. } => OwnerEvent::Ready(outpost),
             OutpostToSupervisor::IdleAnswer { round } => {
                 self.listener_idle(outpost, round);
@@ -830,6 +844,9 @@ impl Owner {
             OwnerEvent::MenuOrSwitchEnded { ended_at_ms } => {
                 self.outbox
                     .send(OutpostMessage::MenuOrSwitchEnded { ended_at_ms });
+            }
+            OwnerEvent::ForegroundWindow(report) => {
+                self.outbox.send(OutpostMessage::ForegroundWindow(report));
             }
             OwnerEvent::Ready(outpost) => self.on_ready(outpost),
             OwnerEvent::Pong { outpost, abandoned } => {

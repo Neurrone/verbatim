@@ -23,9 +23,9 @@ mod tree;
 
 pub use calls::{CallCounts, CallKind};
 pub use event::{
-    ActionName, Earcon, Effect, FetchResult, Input, LockKey, NormalizedEvent, Notification,
-    NotificationKind, NotificationProcessing, Pid, ProgressReading, PropertyChange, Query, QueryId,
-    QueryKind, ReviewCommand, WindowFacts, WindowHandle,
+    ActionName, Earcon, Effect, FetchResult, ForegroundWindow, HookForeground, Input, LockKey,
+    NormalizedEvent, Notification, NotificationKind, NotificationProcessing, Pid, ProgressReading,
+    PropertyChange, Query, QueryId, QueryKind, ReviewCommand, WindowFacts, WindowHandle,
 };
 pub use gesture::{GestureId, GestureParseError};
 pub use settings::{

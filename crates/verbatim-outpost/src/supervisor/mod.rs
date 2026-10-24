@@ -265,6 +265,23 @@ impl std::fmt::Debug for EventSink {
     }
 }
 
+/// The window in the foreground as the focus listener reported it
+/// ([`crate::protocol::OutpostToSupervisor::ForegroundWindow`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForegroundReport {
+    /// The window.
+    pub window: isize,
+    /// The thread that raised its event, the console host's own for a
+    /// console window; 0 for a console window whose thread no event has
+    /// named yet.
+    pub thread: u32,
+    /// Whether it is a console host window.
+    pub console: bool,
+    /// The integrity level of the process that owns it, or `None` when it
+    /// cannot be read.
+    pub integrity: Option<u32>,
+}
+
 /// A message from the supervisor to the app.
 #[derive(Debug)]
 pub enum OutpostMessage {
@@ -317,6 +334,10 @@ pub enum OutpostMessage {
         /// When it ended, in milliseconds since the Unix epoch.
         ended_at_ms: u64,
     },
+    /// A window came to the system's foreground, as the focus listener
+    /// learned it: the app gives it to Core, which decides the keyboard
+    /// hook's view of the foreground (architecture section 5).
+    ForegroundWindow(ForegroundReport),
     /// An outpost incarnation ended. Its node ids are dead from now on.
     Ended {
         /// The incarnation that ended.

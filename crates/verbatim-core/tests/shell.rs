@@ -2,15 +2,15 @@
 //! threads learn (architecture section 2, "Only the reducer speaks"): the
 //! start, exit and error sounds, an application not responding, a lock
 //! key's new state, the time and date, the clipboard's result, a shell
-//! item gone, the theme page's previews, and the fake focus after a menu
-//! or the Alt+Tab switcher closes. Each asserts every effect its input
-//! produces.
+//! item gone, the theme page's previews, the fake focus after a menu
+//! or the Alt+Tab switcher closes, and the keyboard hook's view of the
+//! foreground window. Each asserts every effect its input produces.
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
-    Backend, Earcon, Effect, Input, LockKey, Message, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Phrase, Pid, Role, SegmentContent, SpeechPriority, StateSet,
-    TraceId, Utterance, UtteranceSegment,
+    Backend, Earcon, Effect, ForegroundWindow, HookForeground, Input, LockKey, Message,
+    NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Phrase, Pid, Role,
+    SegmentContent, SpeechPriority, StateSet, TraceId, Utterance, UtteranceSegment, WindowHandle,
 };
 
 /// An utterance of `content` alone, with no source node.
@@ -223,5 +223,104 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
     assert_eq!(
         reduce(&mut state, &Input::MenuOrSwitchEnded { ended_at_ms: 1_001 }),
         [Effect::ReadForegroundFocus]
+    );
+}
+
+/// A foreground report for window 7, raised by thread 40, of a process at
+/// `integrity`, Verbatim being at `own`.
+fn foreground(console: bool, thread: u32, integrity: Option<u32>, own: Option<u32>) -> Input {
+    Input::ForegroundWindow(ForegroundWindow {
+        window: WindowHandle(7),
+        thread,
+        console,
+        integrity,
+        own_integrity: own,
+    })
+}
+
+/// The hook's view of the foreground once `input` is reduced, which must
+/// say nothing.
+fn hook_view_after(input: &Input) -> Option<HookForeground> {
+    let mut state = SrState::new();
+    assert_eq!(reduce(&mut state, input), []);
+    state.hook_foreground()
+}
+
+const MEDIUM: u32 = 0x2000;
+const HIGH: u32 = 0x3000;
+
+/// Keys are held back for a window only when its process's integrity is
+/// known and no higher than Verbatim's (`docs/design/key-holding.md`,
+/// "Elevated windows"); nothing is known before the listener reports.
+#[test]
+fn keys_are_held_only_for_a_window_of_no_higher_integrity() {
+    assert_eq!(SrState::new().hook_foreground(), None);
+    let view = |integrity, own| {
+        hook_view_after(&foreground(false, 40, integrity, own)).map(|view| view.holds_keys)
+    };
+    assert_eq!(view(Some(MEDIUM), Some(MEDIUM)), Some(true));
+    assert_eq!(view(Some(0x1000), Some(MEDIUM)), Some(true));
+    assert_eq!(view(Some(HIGH), Some(HIGH)), Some(true));
+    assert_eq!(view(Some(HIGH), Some(MEDIUM)), Some(false));
+    assert_eq!(view(None, Some(MEDIUM)), Some(false));
+    assert_eq!(view(Some(MEDIUM), None), Some(false));
+}
+
+/// A console host window's keys are translated with the layout of the
+/// thread its event named, any other window's with its owner's, which the
+/// hook reads itself (`docs/crates/verbatim-input-windows.md`, "Typed
+/// text").
+#[test]
+fn a_console_window_takes_the_thread_its_event_named() {
+    assert_eq!(
+        hook_view_after(&foreground(true, 40, Some(MEDIUM), Some(MEDIUM))),
+        Some(HookForeground {
+            window: WindowHandle(7),
+            holds_keys: true,
+            keyboard_thread: Some(40),
+        })
+    );
+    assert_eq!(
+        hook_view_after(&foreground(true, 0, Some(MEDIUM), Some(MEDIUM))),
+        Some(HookForeground {
+            window: WindowHandle(7),
+            holds_keys: true,
+            keyboard_thread: None,
+        }),
+        "a console whose thread no event has named yet"
+    );
+    assert_eq!(
+        hook_view_after(&foreground(false, 40, Some(MEDIUM), Some(MEDIUM))),
+        Some(HookForeground {
+            window: WindowHandle(7),
+            holds_keys: true,
+            keyboard_thread: None,
+        })
+    );
+}
+
+/// A later report replaces the earlier.
+#[test]
+fn the_latest_foreground_report_decides() {
+    let mut state = SrState::new();
+    assert_eq!(
+        reduce(&mut state, &foreground(true, 40, Some(HIGH), Some(MEDIUM))),
+        []
+    );
+    let next = Input::ForegroundWindow(ForegroundWindow {
+        window: WindowHandle(9),
+        thread: 50,
+        console: false,
+        integrity: Some(MEDIUM),
+        own_integrity: Some(MEDIUM),
+    });
+    assert_eq!(reduce(&mut state, &next), []);
+    assert_eq!(
+        state.hook_foreground(),
+        Some(HookForeground {
+            window: WindowHandle(9),
+            holds_keys: true,
+            keyboard_thread: None,
+        })
     );
 }

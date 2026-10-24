@@ -145,7 +145,11 @@ Counts are for one traced window of 5 to 8 seconds.
     key. Fixed: those events are hooked only while the console window in
     front has not yet named its thread, and unhooked at the first; the
     foreground event, which names it when a console comes to the front, is
-    hooked throughout. The same window then had 43.
+    hooked throughout. The same window then had 43. Since 2026-10-24 the
+    hook thread hooks no event at all: the focus listener learns the
+    window in front and a console's thread, hooking the consoles' events
+    only when it starts with a console in front whose thread no event has
+    named, and Core publishes what the hook needs (architecture section 5).
 11. Threads that exist only for the test harness (the WAV recorder, the
     control plane's speech writers) wake often in every run and cost a
     user nothing.

@@ -791,6 +791,7 @@ mod tests {
             topmost: false,
             under_active_window,
             in_foreground: true,
+            class: "Notepad".to_owned(),
         }
     }
 
@@ -822,7 +823,7 @@ mod tests {
                 node: control.clone(),
                 ancestors: Some(ancestors.clone()),
                 selected_child: selected_child.clone(),
-                window: Some(control_facts),
+                window: Some(control_facts.clone()),
                 text: Some(Box::new(FocusText::NoText)),
             }),
             observed_at_ms: 1234,
@@ -875,7 +876,7 @@ mod tests {
             id,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Focus(FocusNow {
-                window: Some((window.clone(), facts)),
+                window: Some((window.clone(), facts.clone())),
                 focus: None,
                 observed_at_ms: 1234,
             })),
@@ -887,7 +888,7 @@ mod tests {
                 observed_at_ms: 1234,
                 source: Pid(5),
                 backend: Backend::Uia,
-                window: Some(facts),
+                window: Some(facts.clone()),
                 event: NormalizedEvent::FocusChanged {
                     node: window.clone(),
                     foreground: true,
@@ -905,7 +906,7 @@ mod tests {
             id,
             OutpostId(1),
             QueryOutcome::Done(QueryResult::Focus(FocusNow {
-                window: Some((window, facts)),
+                window: Some((window, facts.clone())),
                 focus: Some(FocusedControl {
                     node: control.clone(),
                     ancestors: Some(Vec::new()),

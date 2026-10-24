@@ -25,7 +25,9 @@ pub mod arbitration;
 pub mod dialog_text;
 mod event_thread;
 pub mod focus_read;
+mod foreground;
 mod gates;
+pub mod integrity;
 pub mod listener;
 pub mod outpost;
 pub mod protocol;
@@ -38,7 +40,7 @@ pub use outpost::{
     FocusWindowReader, FocusedElementReader, ForegroundReader, Heard, HeardObserver, Outpost,
     OutpostOptions, run_attach, run_pipe,
 };
-pub use supervisor::{EventSink, OutpostMessage, Supervisor, Undelivered};
+pub use supervisor::{EventSink, ForegroundReport, OutpostMessage, Supervisor, Undelivered};
 /// The process that serves a window's UI Automation, and a console client's
 /// console host, read locally: re-exported so Core can route a console
 /// client's focus-now query to its console host without depending on

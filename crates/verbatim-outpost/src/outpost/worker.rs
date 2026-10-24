@@ -66,8 +66,7 @@ use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
     MOVED_ON_GRACE, console_client, event_window_unreadable, focus_window_of,
     foreground_window_handle, front_is_another_thread_of_its_application, is_descendant_window,
-    is_shell_transition_window, now_ms, top_level_of, window_belongs_to_hidden_frame, window_facts,
-    window_is_hidden_frame,
+    now_ms, top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
@@ -3391,23 +3390,6 @@ impl Worker<'_> {
     /// in: an MSAA focus, foreground change, menu opening, alert, or
     /// tooltip, whichever brought it.
     fn fact(&mut self, fact: DeliveredFact, trace: TraceId, observed_at_ms: u64) {
-        // The listener refuses a UIA focus in such a window before it
-        // reads it.
-        let focus_window = match &fact {
-            DeliveredFact::Foreground { hwnd } | DeliveredFact::MsaaFocus { hwnd, .. } => {
-                Some(*hwnd)
-            }
-            _ => None,
-        };
-        if let Some(hwnd) = focus_window
-            && is_shell_transition_window(hwnd)
-        {
-            tracing::debug!(
-                hwnd,
-                "focus dropped: a shell window that only stages a switch"
-            );
-            return;
-        }
         match fact {
             DeliveredFact::Foreground { hwnd } => self.foreground(hwnd, trace, observed_at_ms),
             DeliveredFact::MsaaFocus {

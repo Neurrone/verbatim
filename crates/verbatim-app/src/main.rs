@@ -44,10 +44,10 @@ use verbatim_input::{
     DecisionConfig, EmittedGesture, GestureMap, KeySpeechEffect, KeyboardLayout, ScriptAction,
     SharedGestureMap,
 };
-use verbatim_input_windows::{InputHook, KeyHolding, KeyReport, Routed};
+use verbatim_input_windows::{ForegroundView, InputHook, KeyHolding, KeyReport, Routed};
 use verbatim_model::{
-    CaretKey, Earcon, Effect, GestureId, Input, LockKey, OutpostId, Pid, ReaderSettings,
-    TextRequest, TraceId,
+    CaretKey, Earcon, Effect, ForegroundWindow, GestureId, Input, LockKey, OutpostId, Pid,
+    ReaderSettings, TextRequest, TraceId, WindowHandle,
 };
 use verbatim_outpost::protocol::{
     EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
@@ -300,6 +300,11 @@ fn run(
             .map(|(gesture, _)| gesture),
     ));
 
+    // Core's view of the window in front, for the keyboard hook: whether
+    // it may hold keys there, and which thread's layout translates them,
+    // published by the reducer thread (architecture section 5).
+    let foreground = Arc::new(ForegroundView::new());
+
     // The outpost of Core's focus when it is a terminal, as its number plus
     // one, 0 for none: the keyboard hook's thread tells it of each key it
     // passes on (`docs/design/terminal-model.md`, section 5.5).
@@ -310,6 +315,7 @@ fn run(
     {
         let context = ReducerContext {
             holding: Arc::clone(&holding),
+            foreground: Arc::clone(&foreground),
             terminal_outpost: Arc::clone(&terminal_outpost),
             clipboard: clipboard::Clipboard::start(command_tx.clone())?,
             manager: Arc::clone(&manager),
@@ -541,6 +547,7 @@ fn run(
             let _ = reports_tx.send(command);
         }),
         holding,
+        foreground,
     )?;
 
     // The start, which the reducer reports with the start sound, and the
@@ -1053,6 +1060,9 @@ struct ReducerContext {
     /// Whether the keyboard hook holds caret keys back, set from Core's
     /// focus after each input.
     holding: Arc<KeyHolding>,
+    /// Core's view of the window in front for the keyboard hook, set after
+    /// each input.
+    foreground: Arc<ForegroundView>,
     /// The outpost of Core's focus when it is a terminal, its number plus
     /// one, 0 for none, set after each input.
     terminal_outpost: Arc<AtomicU64>,
@@ -1270,6 +1280,15 @@ impl ReducerThread<'_> {
             OutpostMessage::MenuOrSwitchEnded { ended_at_ms } => {
                 self.apply(Input::MenuOrSwitchEnded { ended_at_ms });
             }
+            OutpostMessage::ForegroundWindow(report) => {
+                self.apply(Input::ForegroundWindow(ForegroundWindow {
+                    window: WindowHandle(u64::from_ne_bytes(report.window.to_ne_bytes())),
+                    thread: report.thread,
+                    console: report.console,
+                    integrity: report.integrity,
+                    own_integrity: verbatim_outpost::integrity::own_integrity(),
+                }));
+            }
             OutpostMessage::IdleQueried { round, outposts } => {
                 self.barrier.queried(round, outposts);
             }
@@ -1334,7 +1353,7 @@ impl ReducerThread<'_> {
     fn in_ignored_window(
         &self,
         event: &verbatim_model::NormalizedEvent,
-        window: Option<verbatim_model::WindowFacts>,
+        window: Option<&verbatim_model::WindowFacts>,
     ) -> bool {
         let (verbatim_model::NormalizedEvent::FocusChanged { .. }, Some(window)) = (event, window)
         else {
@@ -1435,7 +1454,7 @@ impl ReducerThread<'_> {
                     }
                     None => source,
                 };
-                if self.in_ignored_window(&event, window) {
+                if self.in_ignored_window(&event, window.as_ref()) {
                     return;
                 }
                 let first_observed_ms = match timing.observed_at_us {
@@ -1451,7 +1470,13 @@ impl ReducerThread<'_> {
                 if let Some(server) = self.context.server_slot.get()
                     && server.has_event_subscribers()
                 {
-                    server.broadcast_event(trace_id, source, backend, window, event.clone());
+                    server.broadcast_event(
+                        trace_id,
+                        source,
+                        backend,
+                        window.clone(),
+                        event.clone(),
+                    );
                 }
                 self.apply(Input::Event {
                     trace_id,
@@ -1736,6 +1761,7 @@ impl ReducerThread<'_> {
         }
         self.context.ledger.reduced(trace_id);
         self.context.holding.set(self.state.holds_caret_keys());
+        self.context.foreground.set(self.state.hook_foreground());
         self.context.terminal_outpost.store(
             self.state
                 .terminal_outpost()

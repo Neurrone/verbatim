@@ -591,7 +591,10 @@ that are global by nature:
   this consolidates them into one;
 - global MSAA WinEvent hooks (process id zero) for focus, foreground
   changes, and menu-popup opens — NVDA's own arrangement, and what
-  absorbs the foreground trigger that previously ran inside Core.
+  absorbs the foreground trigger that previously ran inside Core. Every
+  foreground change is also reported to Core as the window in front, with
+  the thread its event names and its process's integrity level, for the
+  keyboard hook's view of the foreground (section 5).
 
 The listener's contract is a single hard rule: **it never makes a
 cross-process call.** A UIA focus callback delivers the element with its

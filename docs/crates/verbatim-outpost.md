@@ -118,9 +118,11 @@ event's own element:
   (`focus_read::FocusReader::read`, which takes the sender as the
   `Cached<ListenerEvent>` it resolves, as `FocusReader::check_fact` does
   for a selection or notification, and reads the window, class name and
-  framework of its judgment and log from that cache). An event from a hung window, a shell
-  window that only stages a switch, or the console window's own element
-  is dropped before any call. Then the classic read
+  framework of its judgment and log from that cache). An event from a hung
+  window or the console window's own element is dropped before any call;
+  one on a shell window that only stages a switch is read and reported,
+  and Core drops it (`docs/crates/verbatim-core.md`, the rules for
+  particular applications' windows). Then the classic read
   (`verbatim_uia_rops::focus_ancestry_classic`, with `refresh`, and with
   the nearest window the checks found as `nearest_window`), every call on
   an element the listener holds, with no remote operation and no
@@ -1088,7 +1090,25 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   carries when its grace is over, and a callback that runs before then (one
   of an earlier end's grace that took the lock only once a later end was
   noted, or a timer firing a little early) sends nothing and sets the
-  timer again for the rest. It answers
+  timer again for the rest. For the keyboard hook's view of the
+  foreground (architecture section 5), it sends Core
+  `OutpostToSupervisor::ForegroundWindow` for every foreground event,
+  whatever process raised it, ignored ones and Verbatim's own included,
+  and whether or not the event's fact is forwarded: the window, the
+  thread the event names, whether it is a console host window, and the
+  integrity level of the process that owns the window, read with local
+  kernel calls (`integrity::process_integrity`; `integrity::own_integrity`
+  is what verbatim.exe reads of itself). Only the newest such report
+  waits (`FactKey::ForegroundWindow`). Once its hooks are in, the
+  `WinEvent` thread reports the window then in front from local reads
+  (a nudge, `NUDGE_FOREGROUND_START`). The console's events are in the
+  listener's hook set but kept unhooked (`verbatim_ia2::suspend_kinds`),
+  except when it starts with a console window in front, whose thread no
+  foreground event will name: then they stay hooked until one of that
+  window's own names its thread, which is reported, and are unhooked
+  (`foreground::ForegroundWatch`, the pure state, unit-tested). The
+  supervisor passes the report to the app as
+  `OutpostMessage::ForegroundWindow` (a `ForegroundReport`). It answers
   `Ping` with a `Pong`, takes the hand-over's
   `HookInstalled` and `HookRemoved` (above), `HookRemoved` also ending the
   application's reading thread, and ignores everything else.

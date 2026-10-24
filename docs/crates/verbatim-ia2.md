@@ -29,7 +29,8 @@ Public API:
   and text selection changes (`WinEventKind::TextSelectionChange`,
   `EVENT_OBJECT_TEXTSELECTIONCHANGED`); and
   `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
-  globally, forwarding an application's events only until its outpost's
+  globally (its console events kept unhooked but while a console window
+  in front has not named its thread), forwarding an application's events only until its outpost's
   own hook is in — focus (`EVENT_OBJECT_FOCUS`), foreground
   (`EVENT_SYSTEM_FOREGROUND`, the `WinEventKind::Foreground` variant that
   absorbs Core's old foreground trigger), menu-popup opens
@@ -90,7 +91,7 @@ Public API:
   unhooked, and an empty list hooks everything again. Each raw event's
   hook is set and removed on its own within the one set, never a second
   set on the thread, and it may be called from the thread's own callback,
-  as the keyboard hook thread hooks and unhooks the console's events. The
+  as the focus listener hooks and unhooks the console's events. The
   set's hooks are kept in a thread-local beside its callback, so dropping
   the `WinEventHook` removes whichever are hooked then. An outpost
   unhooks the change events of windows read through MSAA this way while

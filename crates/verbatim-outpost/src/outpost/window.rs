@@ -171,8 +171,9 @@ fn window_is_topmost(window: HWND) -> bool {
 /// (`docs/parity/focus-events.md`, "Event acceptance"): its top-level window, the top of
 /// its owner chain, whether it or its top-level window is topmost, and, for a
 /// `Windows.UI.Core` window only, whether it is the input thread's active
-/// window or inside it — NVDA's test for UWP windows — and whether it is in
-/// the system's foreground window right now.
+/// window or inside it — NVDA's test for UWP windows — whether it is in
+/// the system's foreground window right now, and its class, which Core's
+/// rules for an application's windows match (decision D6).
 pub(super) fn window_facts(handle: isize) -> WindowFacts {
     let window = hwnd(handle);
     // SAFETY: GetAncestor tolerates any handle, returning null for an
@@ -186,20 +187,19 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
     } else {
         root_owner
     };
-    let under_active_window = window_class_name(handle)
-        .starts_with("Windows.UI.Core")
-        .then(|| {
-            let mut info = GUITHREADINFO {
-                cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
-                ..Default::default()
-            };
-            // SAFETY: `info` has cbSize set before the call.
-            unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok()
-                && !info.hwndActive.0.is_null()
-                && (info.hwndActive == window
+    let class = window_class_name(handle);
+    let under_active_window = class.starts_with("Windows.UI.Core").then(|| {
+        let mut info = GUITHREADINFO {
+            cbSize: u32::try_from(size_of::<GUITHREADINFO>()).unwrap_or(0),
+            ..Default::default()
+        };
+        // SAFETY: `info` has cbSize set before the call.
+        unsafe { GetGUIThreadInfo(0, &raw mut info) }.is_ok()
+            && !info.hwndActive.0.is_null()
+            && (info.hwndActive == window
                     // SAFETY: IsChild tolerates any pair of handles.
                     || unsafe { IsChild(info.hwndActive, window) }.as_bool())
-        });
+    });
     // SAFETY: GetForegroundWindow has no preconditions.
     let foreground = unsafe { GetForegroundWindow() };
     let in_foreground = !foreground.0.is_null()
@@ -213,6 +213,7 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
         topmost: window_is_topmost(window) || window_is_topmost(root),
         under_active_window,
         in_foreground,
+        class,
     }
 }
 
@@ -220,25 +221,6 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
 pub(super) fn desktop_window() -> isize {
     // SAFETY: GetDesktopWindow has no preconditions.
     unsafe { windows::Win32::UI::WindowsAndMessaging::GetDesktopWindow() }.0 as isize
-}
-
-/// Whether `hwnd` is one of the shell's windows that take the focus or the
-/// foreground only while a switch is staged: the Alt+Tab switcher's and
-/// Task View's staging windows, the Windows+X menu's host, and the desktop
-/// shell's application manager window. NVDA's File Explorer app module
-/// leaves the focus on them unsaid (`appModules/explorer.py` lines 443 to
-/// 449, issues 5116 and 8137): NVDA still makes such a window its focus
-/// and runs its foreground event, which cuts speech, and only the
-/// announcement is skipped. The outposts and the focus listener drop the
-/// focus on them altogether, so speech is not cut there (`docs/parity/windows-and-processes.md`,
-/// "The shell's staging windows"): on Alt+Tab, Explorer's
-/// `ForegroundStaging` window takes the focus with no name, and was said
-/// as "pane" before the window switched to.
-pub(crate) fn is_shell_transition_window(hwnd: isize) -> bool {
-    matches!(
-        window_class_name(hwnd).as_str(),
-        "ForegroundStaging" | "LauncherTipWnd" | "ApplicationManager_DesktopShellWindow"
-    )
 }
 
 /// Whether window `handle` itself is reported hung by the system

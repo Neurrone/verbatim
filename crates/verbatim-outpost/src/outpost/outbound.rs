@@ -529,7 +529,7 @@ fn within_limit(message: OutpostToSupervisor) -> Vec<OutpostToSupervisor> {
                 trace_id,
                 observed_at_ms,
                 backend,
-                window,
+                window: window.clone(),
                 application,
                 timing,
                 event: NormalizedEvent::TerminalSpeech { node_id, speech },

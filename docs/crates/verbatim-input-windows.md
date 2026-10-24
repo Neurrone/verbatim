@@ -6,8 +6,10 @@ pure `DecisionMachine`. It is a separate crate so that the machine, the key
 names, and the gesture tables carry no Windows dependency.
 
 Public API: `InputHook::start(config, map, events, speech, reports,
-holding)`, which installs `WH_KEYBOARD_LL` on a dedicated thread; drop
-uninstalls.
+holding, foreground)`, which installs `WH_KEYBOARD_LL` on a dedicated
+thread; drop uninstalls. The hook thread hooks nothing else and sends
+nowhere else (architecture section 5): what it needs to know of the
+window in front, `foreground`, is Core's.
 `events` is the gesture router's channel of `Routed` values, in the order
 the keys came. It must be unbounded, so that no key is ever lost, and
 `start` refuses a bounded one with `InvalidInput`. The values are
@@ -128,18 +130,26 @@ Scroll Lock) are never deferred: they pass at once, since their new state
 is announced from Windows' own and Windows translates numpad keys by Num
 Lock's state before the hook sees them.
 
-Elevated windows (the `integrity` module): while the foreground window's
-process has higher integrity than Verbatim's, or its integrity cannot be
-read, nothing is held or deferred, since Windows drops input Verbatim
-sends to it; a held key's release is still swallowed. The answer is
-worked out on the hook thread when the foreground changes, from the
-foreground `WinEvent` the console watch already receives (now taken from
-every process, Verbatim's own included), and once when the hook starts,
-and kept in the hook's state (`HookState::foreground_above`), so a key
-costs no call. It is a temporary guard until uiAccess (`docs/roadmap.md`,
-M8.1). Unit tests drive `decide` with the hold on and off, with each tag,
-with keys deferred behind held ones and coming back in and out of order,
-with lock keys behind a held key, and with a fixed integrity source above and equal to Verbatim's.
+Elevated windows: while the foreground window's process has higher
+integrity than Verbatim's, or its integrity cannot be read, nothing is
+held or deferred, since Windows drops input Verbatim sends to it; a held
+key's release is still swallowed. The hook does not work this out. The
+focus listener reports each window that comes to the front with its
+process's integrity level, Core decides whether keys may be held there
+(`SrState::hook_foreground`), and the reducer's thread publishes that
+after each input in `foreground`, a `ForegroundView` (a lock-free
+`ArcSwapOption` of `verbatim_model::HookForeground`). The hook reads it
+only for a key it would hold or defer, with one load and a
+`GetForegroundWindow`, and applies it only while the window it names is
+the one in front: until Core has caught up with a foreground change, or
+before Core has any view, nothing is held, a key judged without its
+caret costing less than a key lost. It is a temporary guard until
+uiAccess (`docs/roadmap.md`, M8.1). Unit tests drive `decide` with the
+hold on and off, with each tag, with keys deferred behind held ones and
+coming back in and out of order, with lock keys behind a held key, with
+Core's view forbidding holding, and with a view of another window or
+none; the tests fix the window in front (`HookState::front`), so nothing
+depends on the desktop they run on.
 
 ## Typed text (the `typed` module)
 
@@ -158,16 +168,16 @@ does):
   Caps Lock state read locally. A console host window is the exception:
   Windows answers which thread owns it with the first process attached to
   the console (a shell), not the console host's own thread, whose layout
-  the console translates keys with. The hook thread's `WinEvent` hooks
-  (out of context) note the thread each console window's events come
-  from, which is always the real one, and the translation uses it, as NVDA
-  does for its issue 10113. The foreground event is hooked throughout;
-  every console's events are hooked only while the console window in
-  front has not yet named its thread, and unhooked at the first, since a
-  busy console raises thousands a second and each would wake the hook
-  thread, which Windows waits on for every key; a
-  console window none of whose events were seen yet falls back to the
-  answer Windows gives. Control or Alt alone, or the Windows key,
+  the console translates keys with. A `WinEvent` always names the real
+  thread, as NVDA uses for its issue 10113: the focus listener reports
+  the thread a console window's foreground event names, Core publishes
+  it as the window's keyboard thread in the hook's `ForegroundView`, and
+  the translation uses it while that window is in front. When the
+  listener starts with a console already in front, it hooks every
+  console's events until that console names its thread, then unhooks
+  them (`verbatim-outpost`, the `foreground` module). A console window
+  whose thread is not known yet, or a view Core has not brought up to
+  date, falls back to the answer Windows gives. Control or Alt alone, or the Windows key,
   make a shortcut, which types nothing. The result counts when it is text
   other than control characters, a tab and the carriage return of Enter
   excepted.

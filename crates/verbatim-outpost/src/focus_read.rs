@@ -120,9 +120,7 @@ use crate::ForegroundReader;
 use crate::arbitration::{Arbitrator, Clock, known_verdict, uses_uia, window_class_name};
 use crate::outpost::acceptance::{EventName, RequestedEvents, SystemWindows, accepts_event};
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
-use crate::outpost::window::{
-    front_is_another_thread_of_its_application, is_shell_transition_window, window_is_hung,
-};
+use crate::outpost::window::{front_is_another_thread_of_its_application, window_is_hung};
 use crate::protocol::{
     DeliveredFact, DropEvidence, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
     now_us,
@@ -443,10 +441,6 @@ const NOT_RELATED: &str = "its window is not related to the foreground window";
 /// The reason the console window's own element's focus is dropped.
 const CONSOLE_OWN: &str = "the console window's own focus";
 
-/// The reason a focus in a shell window that only stages a switch is
-/// dropped.
-const SHELL_STAGING: &str = "a shell window that only stages a switch";
-
 /// The reason a focus is dropped whose window does not use UIA.
 const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for it";
 
@@ -458,14 +452,7 @@ const NOT_UIA: &str = "its window does not use UIA, so its MSAA events speak for
 /// items view, or a disagreement of the listener's and the outpost's
 /// verdicts, and establishes nothing of the copy's focus (Dickson,
 /// 2026-10-21).
-const VERDICTS: [&str; 6] = [
-    HUNG,
-    COMPARISON_FAILED,
-    REPEAT,
-    NOT_RELATED,
-    CONSOLE_OWN,
-    SHELL_STAGING,
-];
+const VERDICTS: [&str; 5] = [HUNG, COMPARISON_FAILED, REPEAT, NOT_RELATED, CONSOLE_OWN];
 
 /// The drops of a focus because the listener gave up on its read, the
 /// application not answering in time ([`DropEvidence::Focus`]): a read
@@ -1271,14 +1258,6 @@ impl FocusReader {
         // text area has none.
         if hwnd != 0 && window_class_name(hwnd) == CONSOLE_WINDOW_CLASS {
             return Err(CONSOLE_OWN);
-        }
-        // The shell's windows that take the focus only while a switch is
-        // staged, which NVDA's File Explorer app module ignores when it
-        // handles the focus (`appModules/explorer.py` 443 to 449). NVDA
-        // makes such a window its focus object before the app module
-        // ignores it; that is not ported here.
-        if is_shell_transition_window(window) {
-            return Err(SHELL_STAGING);
         }
         // 6. NVDA's last check before it queues the focus,
         // `shouldAllowUIAFocusEvent` (`UIAHandler/__init__.py` 948,
@@ -2544,7 +2523,6 @@ mod tests {
             "a repeat of the last focus, which still has the keyboard focus",
             "its window is not related to the foreground window",
             "the console window's own focus",
-            "a shell window that only stages a switch",
             "its read did not return in time",
             "it waited too long behind its application's abandoned reads",
             "its read ran out of time before its window was looked up",

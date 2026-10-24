@@ -203,7 +203,11 @@ pub const APP_SUBSCRIPTIONS: &[WinEventKind] = &[
 /// tooltip events, which it forwards for an application whose outpost's own
 /// hook is not yet in, and the end of a menu or of the Alt+Tab switcher,
 /// which is global because focus returns to whichever application is then
-/// in front, usually not the one that owned the menu.
+/// in front, usually not the one that owned the menu. The console's events
+/// are in the set too, for the keyboard hook's view of the foreground
+/// (architecture section 5), but the listener keeps them unhooked
+/// ([`suspend_kinds`]) except while a console window in front has not yet
+/// named its thread through one of them.
 pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::Focus,
     WinEventKind::Foreground,
@@ -212,6 +216,8 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::SwitchEnd,
     WinEventKind::Alert,
     WinEventKind::Show,
+    WinEventKind::ConsoleUpdate,
+    WinEventKind::ConsoleCaret,
 ];
 
 /// One `WinEvent` as a hook delivers it.

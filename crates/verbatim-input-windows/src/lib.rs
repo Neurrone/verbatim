@@ -49,7 +49,6 @@
 //! never speaks it (`docs/nvda/input.md`, "What a key press does to
 //! speech").
 
-mod integrity;
 mod typed;
 
 use std::cell::RefCell;
@@ -60,16 +59,17 @@ use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
+use arc_swap::ArcSwapOption;
 use crossbeam_channel::Sender;
-use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_NUMLOCK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG,
-    PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_KEYDOWN,
-    WM_QUIT, WM_SYSKEYDOWN,
+    CallNextHookEx, GetForegroundWindow, GetMessageW, HC_ACTION, KBDLLHOOKSTRUCT, LLKHF_EXTENDED,
+    LLKHF_INJECTED, MSG, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+    WH_KEYBOARD_LL, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN,
 };
 
 use verbatim_input::map::SharedGestureMap;
@@ -144,6 +144,45 @@ impl KeyHolding {
     }
 }
 
+/// Core's view of the foreground window, as the keyboard hook needs it
+/// (architecture section 5): the focus listener learns which window is in
+/// front, Core decides from it whether keys may be held back for it and
+/// which thread's keyboard layout translates its keys, and the reducer's
+/// thread publishes that here after each input ([`ForegroundView::set`]).
+/// The hook reads it with one lock-free load and applies it only while the
+/// window it names is still the foreground window, as the hook reads it
+/// locally; until Core catches up with a change, no key is held and keys
+/// are translated with the layout of the thread Windows names as the
+/// window's owner. The hook itself hooks no event.
+#[derive(Debug, Default)]
+pub struct ForegroundView(ArcSwapOption<HookForeground>);
+
+impl ForegroundView {
+    /// A view of no foreground window yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Publishes Core's newest view, when it changed.
+    pub fn set(&self, view: Option<HookForeground>) {
+        if self.get() != view {
+            self.0.store(view.map(Arc::new));
+        }
+    }
+
+    /// The view published last.
+    fn get(&self) -> Option<HookForeground> {
+        self.0.load().as_deref().copied()
+    }
+}
+
+/// Whether keys may be held back now, with `foreground` in front: only
+/// when Core's `view` is about that window and lets them be.
+fn may_hold(foreground: WindowHandle, view: Option<HookForeground>) -> bool {
+    view.is_some_and(|view| view.window == foreground && view.holds_keys)
+}
+
 /// The key a held or deferred key transition came from, for the
 /// application to be sent it again.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -183,6 +222,16 @@ pub enum Routed {
 /// COM call, `SendMessage`), which would deliver the next key to the hook
 /// while this one is still being handled.
 pub type SpeechEffectFn = Box<dyn Fn(KeySpeechEffect, u64) + Send>;
+
+/// What the hook thread is given to act on and report keys through, and
+/// Core's views it reads: the speech effect, the key reports, which keys
+/// are held, and the foreground.
+type Effects = (
+    SpeechEffectFn,
+    KeyReportFn,
+    Arc<KeyHolding>,
+    Arc<ForegroundView>,
+);
 
 /// The last key sequence number given out.
 static KEY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -228,7 +277,7 @@ pub fn key_of(trace: TraceId) -> Option<u64> {
 /// [`SpeechEffectFn`] explains.
 pub type KeyReportFn = Box<dyn Fn(KeyReport) + Send>;
 use verbatim_input::{KeyDecision, KeyEvent};
-use verbatim_model::{GestureId, TraceId};
+use verbatim_model::{GestureId, HookForeground, TraceId, WindowHandle};
 
 /// What a key the hook passed to the application did, reported after the
 /// key's effect on speech.
@@ -328,10 +377,11 @@ struct HookState {
     outstanding: VecDeque<Outstanding>,
     /// The last place in line given out ([`HeldStroke::sequence`]).
     sequence: u32,
-    /// Whether the foreground window belongs to a process of higher
-    /// integrity than Verbatim's, where no key is held or deferred
-    /// ([`integrity`]); set when the foreground changes.
-    foreground_above: bool,
+    /// Core's view of the foreground window ([`ForegroundView`]).
+    foreground: Arc<ForegroundView>,
+    /// Reads the window in front: `GetForegroundWindow`, a local read, or
+    /// a fixed window in tests.
+    front: fn() -> HWND,
 }
 
 /// A key transition held back or deferred, not yet seen passed on.
@@ -349,7 +399,7 @@ impl HookState {
     fn new(
         machine: DecisionMachine,
         events: Sender<Routed>,
-        (speech, reports, holding): (SpeechEffectFn, KeyReportFn, Arc<KeyHolding>),
+        (speech, reports, holding, foreground): Effects,
         typing: typed::Typing,
     ) -> Self {
         Self {
@@ -362,7 +412,11 @@ impl HookState {
             held_downs: HashSet::new(),
             outstanding: VecDeque::new(),
             sequence: 0,
-            foreground_above: false,
+            foreground,
+            front: || {
+                // SAFETY: a local read with no preconditions.
+                unsafe { GetForegroundWindow() }
+            },
         }
     }
 
@@ -405,20 +459,6 @@ impl HookState {
     }
 }
 
-/// Notes that `window` came to the front: whether its process has higher
-/// integrity than Verbatim's decides whether keys are held there. Called
-/// on the hook thread from its foreground event.
-pub(crate) fn foreground_changed(window: windows::Win32::Foundation::HWND) {
-    let above = integrity::foreground_above(&integrity::WindowIntegrity(window));
-    HOOK_STATE.with(|state| {
-        if let Ok(mut state) = state.try_borrow_mut()
-            && let Some(state) = state.as_mut()
-        {
-            state.foreground_above = above;
-        }
-    });
-}
-
 thread_local! {
     static HOOK_STATE: RefCell<Option<HookState>> = const { RefCell::new(None) };
 }
@@ -443,7 +483,8 @@ impl InputHook {
     /// press's gesture is sent, so speech the gesture causes is never the
     /// speech it cancels. `reports` receives, after the speech effect, what
     /// each passed or held key did ([`KeyReport`]). `holding` says which
-    /// caret keys are held back, and when.
+    /// caret keys are held back, and when, and `foreground` Core's view of
+    /// the window in front ([`ForegroundView`]).
     ///
     /// # Errors
     ///
@@ -456,6 +497,7 @@ impl InputHook {
         speech: SpeechEffectFn,
         reports: KeyReportFn,
         holding: Arc<KeyHolding>,
+        foreground: Arc<ForegroundView>,
     ) -> io::Result<Self> {
         if events.capacity().is_some() {
             return Err(io::Error::new(
@@ -470,7 +512,13 @@ impl InputHook {
         let join = thread::Builder::new()
             .name("verbatim-input-hook".to_owned())
             .spawn(move || {
-                hook_thread(config, map, events, (speech, reports, holding), &ready_tx);
+                hook_thread(
+                    config,
+                    map,
+                    events,
+                    (speech, reports, holding, foreground),
+                    &ready_tx,
+                );
             })?;
 
         match ready_rx.recv() {
@@ -517,7 +565,7 @@ fn hook_thread(
     config: DecisionConfig,
     map: SharedGestureMap,
     events: Sender<Routed>,
-    (speech, reports, holding): (SpeechEffectFn, KeyReportFn, Arc<KeyHolding>),
+    effects: Effects,
     ready_tx: &mpsc::Sender<io::Result<u32>>,
 ) {
     prioritize_role("keyboard hook", HOOK_PRIORITY);
@@ -552,17 +600,12 @@ fn hook_thread(
     // Install this thread's decision state before announcing readiness, so the
     // procedure never runs against an empty thread-local.
     HOOK_STATE.with(|state| {
-        let mut hook_state = HookState::new(
+        *state.borrow_mut() = Some(HookState::new(
             DecisionMachine::new(config, map),
             events,
-            (speech, reports, holding),
+            effects,
             typed::Typing::with_text_services(),
-        );
-        // SAFETY: a local read with no preconditions.
-        let window = unsafe { windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-        hook_state.foreground_above =
-            integrity::foreground_above(&integrity::WindowIntegrity(window));
-        *state.borrow_mut() = Some(hook_state);
+        ));
     });
 
     // SAFETY: reads a thread-owned integer.
@@ -577,11 +620,7 @@ fn hook_thread(
         return;
     }
 
-    // The console windows' threads, for their keyboard layout (`typed`),
-    // kept while the loop runs.
-    let consoles = typed::ConsoleWatch::start();
     pump_messages();
-    drop(consoles);
 
     // SAFETY: `hook` is the handle installed above and not yet unhooked.
     unsafe {
@@ -731,9 +770,11 @@ enum Hold {
 /// the application, every later transition the hook would pass is
 /// deferred, swallowed and sent again behind it, so that no key overtakes
 /// a held one (`docs/design/key-holding.md`, "Keys behind a held key").
-/// Nothing is held or deferred while the foreground window's process has
-/// higher integrity than Verbatim's, which Windows would drop a key sent
-/// again to ([`integrity`]); Verbatim's own keys are never held, and the
+/// Nothing is held or deferred unless Core's view of the foreground is
+/// about the window in front and lets keys be held there, which it does
+/// not while the window's process has higher integrity than Verbatim's,
+/// since Windows would drop a key sent again to it ([`ForegroundView`]);
+/// Verbatim's own keys are never held, and the
 /// lock keys are never deferred: Windows translates the numpad's keys by
 /// Num Lock's state before the hook sees them, and a lock key's new state
 /// is announced from Windows' own, so a lock key held back would turn a
@@ -746,7 +787,7 @@ fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decisi
         decision.decision = KeyDecision::Swallow;
         return Hold::No;
     }
-    if own || state.foreground_above || verbatim_input::ToggleKey::from_vk(event.vk).is_some() {
+    if own || verbatim_input::ToggleKey::from_vk(event.vk).is_some() {
         return Hold::No;
     }
     let held = event.pressed
@@ -754,12 +795,22 @@ fn hold(state: &mut HookState, event: KeyEvent, own: bool, decision: &mut Decisi
             .observed
             .as_ref()
             .is_some_and(|observed| state.holding.holds(&observed.gesture));
+    let deferred = !held && decision.decision == KeyDecision::Pass && !state.outstanding.is_empty();
+    // Read only for a key that would be held or deferred.
+    if (held || deferred)
+        && !may_hold(
+            typed::window_handle((state.front)()),
+            state.foreground.get(),
+        )
+    {
+        return Hold::No;
+    }
     if held {
         state.held_downs.insert(stroke);
         decision.decision = KeyDecision::Swallow;
         return Hold::Held(state.queue(None));
     }
-    if decision.decision == KeyDecision::Pass && !state.outstanding.is_empty() {
+    if deferred {
         decision.decision = KeyDecision::Swallow;
         return Hold::Deferred(state.queue(Some((event.vk, event.pressed))));
     }
@@ -780,7 +831,11 @@ fn report_passed(
     let pressed_at_us = unix_us();
     let trace_id = TraceId::mint();
     let deferred = state.deferred_transitions();
-    match state.typing.translate(event.vk, scan_code, &deferred) {
+    let foreground = ((state.front)(), state.foreground.get());
+    match state
+        .typing
+        .translate((event.vk, scan_code), &deferred, foreground)
+    {
         Some(text) => {
             record_key_origin(trace_id, key_number);
             (state.reports)(KeyReport::Typed {
@@ -969,6 +1024,7 @@ mod tests {
                 Box::new(|_, _| {}),
                 Box::new(|_| {}),
                 Arc::new(KeyHolding::new([])),
+                Arc::new(ForegroundView::new()),
             ),
             typed::Typing::default(),
         );
@@ -1012,6 +1068,7 @@ mod tests {
             Box::new(|_, _| {}),
             Box::new(|_| {}),
             Arc::new(KeyHolding::new([])),
+            Arc::new(ForegroundView::new()),
         )
         .expect_err("a bounded channel could drop a key");
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
@@ -1035,18 +1092,36 @@ mod tests {
         let holding = Arc::new(KeyHolding::new([right]));
         let (events, routed) = crossbeam_channel::unbounded();
         let sink = Arc::clone(reports);
-        let state = HookState::new(
+        let foreground = Arc::new(ForegroundView::new());
+        foreground.set(Some(IN_FRONT));
+        let mut state = HookState::new(
             DecisionMachine::new(DecisionConfig::default(), map.into_shared()),
             events,
             (
                 Box::new(|_, _| {}),
                 Box::new(move |report| sink.lock().unwrap().push(report)),
                 Arc::clone(&holding),
+                foreground,
             ),
             typed::Typing::default(),
         );
+        state.front = window_in_front;
         (state, routed, holding)
     }
+
+    /// The window the hook's tests have in front: not a real window, so
+    /// that nothing depends on the desktop the tests run on; its keys are
+    /// translated with the test thread's own keyboard layout.
+    fn window_in_front() -> HWND {
+        HWND(7 as *mut core::ffi::c_void)
+    }
+
+    /// Core's view of [`window_in_front`], whose keys may be held.
+    const IN_FRONT: HookForeground = HookForeground {
+        window: WindowHandle(7),
+        holds_keys: true,
+        keyboard_thread: None,
+    };
 
     /// The letter X, a key neither held nor observed, pressed or released.
     fn letter_x(pressed: bool) -> KeyEvent {
@@ -1209,15 +1284,13 @@ mod tests {
         );
     }
 
-    /// While the foreground window's process has higher integrity than
-    /// Verbatim's, as a fixed integrity source says, a caret key passes
-    /// unheld and is reported observed, and no key is deferred behind a
-    /// key held before the window came to the front, whose release is
-    /// still held back with it.
+    /// While Core's view of the window in front says keys may not be held
+    /// for it, as for a window of higher integrity than Verbatim's, a caret
+    /// key passes unheld and is reported observed, and no key is deferred
+    /// behind a key held before the window came to the front, whose
+    /// release is still held back with it.
     #[test]
-    fn no_key_is_held_for_a_window_of_higher_integrity() {
-        use integrity::tests::Fixed;
-
+    fn no_key_is_held_where_core_says_none_may_be() {
         let reports = Arc::new(Mutex::new(Vec::new()));
         let (mut state, _routed, holding) = holding_state(&reports);
         holding.set(true);
@@ -1225,7 +1298,10 @@ mod tests {
             decide(&mut state, right_arrow(true), 0x4D, 0),
             KeyDecision::Swallow
         );
-        state.foreground_above = integrity::foreground_above(&Fixed(Some(0x3000), Some(0x2000)));
+        state.foreground.set(Some(HookForeground {
+            holds_keys: false,
+            ..IN_FRONT
+        }));
         assert_eq!(
             decide(&mut state, right_arrow(false), 0x4D, 0),
             KeyDecision::Swallow
@@ -1242,8 +1318,40 @@ mod tests {
             described(&reports.lock().unwrap()),
             ["held kb:rightarrow #1", "typed x", "observed kb:rightarrow"]
         );
-        // Back at a window of Verbatim's own integrity, keys are held again.
-        state.foreground_above = integrity::foreground_above(&Fixed(Some(0x2000), Some(0x2000)));
+        // Back at a window where keys may be held, they are held again.
+        state.foreground.set(Some(IN_FRONT));
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Swallow
+        );
+    }
+
+    /// Core's view is applied only to the window it was decided for: while
+    /// another window is in front, before Core has caught up with it, or
+    /// before Core has any view, no key is held.
+    #[test]
+    fn no_key_is_held_until_core_has_a_view_of_the_window_in_front() {
+        let reports = Arc::new(Mutex::new(Vec::new()));
+        let (mut state, _routed, holding) = holding_state(&reports);
+        holding.set(true);
+        state.foreground.set(Some(HookForeground {
+            window: WindowHandle(8),
+            ..IN_FRONT
+        }));
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Pass
+        );
+        state.foreground.set(None);
+        assert_eq!(
+            decide(&mut state, right_arrow(true), 0x4D, 0),
+            KeyDecision::Pass
+        );
+        assert_eq!(
+            described(&reports.lock().unwrap()),
+            ["observed kb:rightarrow", "observed kb:rightarrow"]
+        );
+        state.foreground.set(Some(IN_FRONT));
         assert_eq!(
             decide(&mut state, right_arrow(true), 0x4D, 0),
             KeyDecision::Swallow

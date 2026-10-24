@@ -32,6 +32,7 @@ fn main() {
         Box::new(|_, _| {}),
         Box::new(|report| println!("{report:?}")),
         std::sync::Arc::new(verbatim_input_windows::KeyHolding::new([])),
+        std::sync::Arc::new(verbatim_input_windows::ForegroundView::new()),
     )
     .expect("install hook");
 
