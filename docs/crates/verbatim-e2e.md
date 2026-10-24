@@ -613,30 +613,33 @@ without the video; crash dumps are archived with their run.
 ## Recording
 
 A video of each scenario with Verbatim's speech (decision D16), unless
-`RECORD_ENV` (`VERBATIM_E2E_RECORD`) is `0` or `false`. ffmpeg, named by
-`FFMPEG_ENV`, captures the desktop on the agent's machine into fragmented
-MP4; `start` returns once ffmpeg has created its output file, which it
-does only after capturing its first frame and logging that frame's time,
+`RECORD_ENV` (`VERBATIM_E2E_RECORD`) is `0` or `false`. `start` launches
+the agent's desktop capture through the agent (the command
+`verbatim_agent::protocol::AGENT_SELF` with `capture-desktop`,
+`verbatim_agent::capture`): it duplicates the first output with DXGI
+Desktop Duplication and writes a raw frame to ffmpeg, named by
+`FFMPEG_ENV`, every frame interval, the newest the compositor presented
+or the last again, which ffmpeg encodes into fragmented MP4 with
+`capture_args`. It does not use ffmpeg's `gdigrab`, whose GDI blit of the
+screen waits while the compositor renders, which on a machine without 3D
+graphics held it for seconds while the console host drew a flood.
+`start` returns once ffmpeg has created its output file, which it does
+only after reading its first frames and logging the first one's time,
 within `FIRST_FRAME_TIMEOUT` (30 seconds). Verbatim always writes
 everything it plays into a WAV file (`VERBATIM_RECORD_AUDIO`), recording
 or not, so recording changes nothing about Verbatim's run.
 
-`stop` ends the capture as a user ends ffmpeg: the capture is launched
-with a stdin pipe (the agent's `stdin_piped`), and `stop` writes `q` to it
-(`WriteStdin`) and waits for ffmpeg to exit with code 0 within
-`STOP_TIMEOUT` (15 seconds). ffmpeg reads its stdin only once per stats
-period, and on `q` its threaded scheduler stops without draining: the
-frames still queued between the `gdigrab` input and the scale and encode
-stages are dropped, so the video loses a random tail of a few frames, up
-to about a second, while every frame ffmpeg encoded reaches the file and
-it exits with code 0. The capture is stopped only after Verbatim has quit
-and the teardown and artifact collection have run, so that tail is never
-the scenario's. Killing ffmpeg instead loses frames it encoded, its last
+`stop` ends the capture: it is launched with a stdin pipe (the agent's
+`stdin_piped`), and `stop` writes `q` to it (`WriteStdin`) and waits for
+it to exit with code 0 within `STOP_TIMEOUT` (15 seconds). The capture
+closes ffmpeg's input, ffmpeg encodes every frame it was given, writes its
+last fragment and exits, and the capture exits with ffmpeg's code.
+Killing it instead loses frames ffmpeg encoded, its last
 one to two seconds, not just the fragment being written: the muxer holds every frame
 since the last keyframe in memory, and up to 32 KB of the fragment before
 that waits in a file buffer that is never flushed, so the video ends in a
-cut keyframe. ffmpeg is killed only when the bound passes, and that is a
-failure. A scenario that panicked is stopped the same way, by the
+cut keyframe. The capture is killed, ffmpeg with it, only when the bound
+passes, and that is a failure. A scenario that panicked is stopped the same way, by the
 scenario's `Drop` when `finish` was never reached.
 
 `finish` takes the wall-clock time the scenario's body ended, which
@@ -646,14 +649,15 @@ check decodes the recording with `ffmpeg -v error -f null`, and fails
 when that logs anything; when the mux log has an error or a corrupt
 packet (the mux exits 0 on both); when the frame count on the final
 stats line of the capture's log differs from the number of frames a
-`framecrc` list of the video gives, or that line's `time=` is more than
-one frame from the last frame's time, either of which means frames
-ffmpeg encoded are missing; or when the first frame's wall-clock time
-plus the last frame's time is before the body ended. Every frame keeps the time
-`gdigrab` captured it at, to the millisecond (`-fps_mode passthrough`),
-so the video keeps real time when a loaded machine makes the capture
-miss frames; ffmpeg's default rounds each time to the frame interval and
-drops a late frame that rounds onto the next one's time. A recording that cannot start or be finished, or fails the check,
+`framecrc` list of the video gives, or that line's `time=`, the end of
+the last encoded frame, is more than one frame from the end of the last
+listed frame, either of which means frames ffmpeg encoded are missing;
+or when the first frame's wall-clock time plus the last frame's time is
+before the body ended. Every frame keeps the wall-clock time ffmpeg read
+it at (`-use_wallclock_as_timestamps`, then `-fps_mode passthrough`), so
+the video keeps real time when a loaded machine makes the capture fall
+behind; the time base is the frame interval, so times are to 1/15 of a
+second. The mouse pointer is not drawn. A recording that cannot start or be finished, or fails the check,
 is a failure.
 
 ## The registry

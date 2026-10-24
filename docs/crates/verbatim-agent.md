@@ -18,7 +18,7 @@ it when the suite is done.
 Public API:
 
 - `protocol` — the agent's own wire vocabulary, versioned separately from
-  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 23) and framed
+  the control plane's (`AGENT_PROTOCOL_VERSION`, currently 24) and framed
   with the same newline-JSON helpers the control plane uses
   (`verbatim_control::protocol::write_message`/`read_message`). Its pids
   are raw OS process ids naming a process a test is driving, not
@@ -183,8 +183,22 @@ Public API:
   shell sets a title. Both fields default when omitted on the wire.
   `stdin_piped` (protocol version 14) gives the child a pipe as its
   standard input, whose writing end the agent keeps with the launch for
-  `WriteStdin`: the recording stops ffmpeg by writing `q` to it, since
-  killing ffmpeg cuts the end off its video.
+  `WriteStdin`: the recording stops its capture by writing `q` to it,
+  since killing ffmpeg cuts the end off its video. The command
+  `AGENT_SELF` (protocol version 24) launches the agent's own executable,
+  wherever it was deployed: the recording launches it as
+  `verbatim-agent capture-desktop --framerate <n> --ffmpeg <path> --
+  <ffmpeg output arguments>` (`capture`), which duplicates the first
+  output with DXGI Desktop Duplication on a plain Direct3D 11 device and
+  writes a raw BGRA frame to an ffmpeg child every frame interval, the
+  newest the compositor presented or the last again, ffmpeg stamping each
+  with the wall-clock time it reads it; `q` or the end of its standard
+  input closes ffmpeg's input, and it exits with ffmpeg's code once ffmpeg
+  has encoded every frame. A duplication lost, as on a switch of
+  desktops, is made again at the next frame. ffmpeg's `gdigrab` is not
+  used because its GDI blit of the screen waits while the compositor
+  renders, seconds at a time on a machine without 3D graphics while the
+  console host draws a flood.
   `ignore_foreign_terminals`, set for a launch of Verbatim (protocol
   version 11), names to the child, in `VERBATIM_IGNORE_PIDS`, every
   `WindowsTerminal.exe` process outside the agent's jobs and the

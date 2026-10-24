@@ -59,11 +59,18 @@ use serde::{Deserialize, Serialize};
 /// handle could otherwise close the owner's own folder window; version 22
 /// removed `WindowCondition::NotForeground` and `Request::ProcessStatus`,
 /// which no client sent; version 23 added [`Request::RepeatKey`], for the
-/// measurement of a caret key held with auto-repeat. A test
+/// measurement of a caret key held with auto-repeat; version 24 launches
+/// the agent's own executable for [`AGENT_SELF`], which the recordings'
+/// desktop capture runs as. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 23;
+pub const AGENT_PROTOCOL_VERSION: u32 = 24;
+
+/// The command of a [`Request::LaunchProcess`] that names the agent's own
+/// executable, wherever it was deployed: the recordings launch
+/// `verbatim-agent capture-desktop` with it (`crate::capture`).
+pub const AGENT_SELF: &str = "<verbatim-agent>";
 
 /// The environment variable that names, to the Verbatim under test, the
 /// processes it ignores entirely (`ignore_foreign_terminals` in

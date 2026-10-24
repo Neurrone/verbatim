@@ -1,41 +1,39 @@
 //! A video of each scenario, with Verbatim's speech (decision D16).
 //!
-//! [`Recording::start`] launches ffmpeg through the agent, before Verbatim,
-//! capturing the desktop with `gdigrab` into fragmented MP4, and returns
-//! once ffmpeg has captured its first frame, so the video shows Verbatim
-//! start. It has to run through the agent because only a process in the
-//! interactive session can capture the desktop. Verbatim records its own
-//! audio in every run, recording or not, so that recording changes nothing
-//! Verbatim does: the launch always passes [`audio_env`], naming a WAV file
-//! the mixer writes everything it plays into, in step with the clock, with
-//! the time it started beside it. So the video has exactly what Verbatim
-//! played, wherever its audio went and whatever else the machine was
-//! playing.
+//! [`Recording::start`] launches the agent's desktop capture
+//! (`verbatim-agent capture-desktop`, `verbatim_agent::capture`) through the
+//! agent, before Verbatim, and returns once ffmpeg has its first frame, so
+//! the video shows Verbatim start. It has to run through the agent because
+//! only a process in the interactive session can capture the desktop. The
+//! capture duplicates the screen with DXGI Desktop Duplication and writes a
+//! raw frame to an ffmpeg child at a steady rate, which ffmpeg encodes into
+//! fragmented MP4 with the arguments [`capture_args`] gives. It does not use
+//! ffmpeg's `gdigrab`, whose GDI blit of the screen waits while the
+//! compositor renders: on a machine without 3D graphics that held it for
+//! seconds while the console host drew a flood. Verbatim
+//! records its own audio in every run, recording or not, so that recording
+//! changes nothing Verbatim does: the launch always passes [`audio_env`],
+//! naming a WAV file the mixer writes everything it plays into, in step
+//! with the clock, with the time it started beside it. So the video has
+//! exactly what Verbatim played, wherever its audio went and whatever else
+//! the machine was playing.
 //!
 //! [`Recording::finish`] stops the capture, lines the audio up with the
-//! video from the two start times (`gdigrab` reports the wall-clock time of
-//! its first frame), muxes them into one MP4 with AAC audio on the agent's
-//! machine, copies that here with ffmpeg's logs, and checks it
-//! ([`verify`]). The capture is stopped as a user stops ffmpeg, with `q` on
-//! its standard input. ffmpeg reads its standard input only once per stats
-//! period, and on `q` its threaded scheduler stops at once rather than
-//! draining: the frames still queued between the `gdigrab` input, whose
-//! queue holds up to 512, and the scale and encode stages are dropped. So
-//! the video loses a tail of a few frames, up to about a second, at
-//! random. Every frame ffmpeg did encode reaches the file: it writes its
-//! last fragment, closes the file, and exits with code 0. The lost tail is
-//! of no consequence, since the capture is stopped only after Verbatim has
-//! quit, the scenario's teardown has run and its artifacts are collected,
-//! so it shows the desktop after the scenario. The check therefore asks
-//! that every encoded frame reached the file and that the video reaches
-//! the end of the scenario's body, not that it lasts as long as the
-//! capture ran. Killing ffmpeg loses frames it did encode: the muxer holds
-//! every frame since the last keyframe in memory, and the file output
-//! holds up to 32 KB of the fragment before that in a buffer that is never
-//! flushed, so a killed capture loses its last one to two seconds of
-//! encoded frames and ends in a cut keyframe. ffmpeg is killed only when
-//! it does not exit within [`STOP_TIMEOUT`] of being told to stop, and
-//! that fails the scenario.
+//! video from the two start times (ffmpeg stamps each frame with the
+//! wall-clock time it reads it, and logs the first as its input's start, to
+//! the frame interval), muxes them into one MP4 with AAC audio on the
+//! agent's machine, copies that here with ffmpeg's logs, and checks it
+//! ([`verify`]). The capture is stopped with `q` on its standard input: it
+//! closes ffmpeg's input, and ffmpeg encodes every frame it was given,
+//! writes its last fragment, closes the file and exits with code 0, the
+//! capture with it. The check asks that every encoded frame reached the
+//! file and that the video reaches the end of the scenario's body. Killing
+//! ffmpeg loses frames it did encode: the muxer holds every frame since the
+//! last keyframe in memory, and the file output holds up to 32 KB of the
+//! fragment before that in a buffer that is never flushed, so a killed
+//! capture loses its last one to two seconds of encoded frames and ends in
+//! a cut keyframe. The capture is killed only when it does not exit within
+//! [`STOP_TIMEOUT`] of being told to stop, and that fails the scenario.
 //!
 //! Every scenario, recorded or not, starts from the desktop with every
 //! window minimized (`crate::scenario::Scenario::launch`), so the video
@@ -50,7 +48,7 @@ use std::io;
 use std::path::Path;
 use std::time::Duration;
 
-use verbatim_agent::protocol::ProcessState;
+use verbatim_agent::protocol::{AGENT_SELF, ProcessState};
 
 use crate::agent_client::AgentClient;
 
@@ -95,8 +93,8 @@ const DEMO_MUX_TIMEOUT: Duration = Duration::from_mins(15);
 /// runner or a fresh VM, where the executable is scanned before it runs.
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// How long ffmpeg may take to exit once told to stop. It took 0.4 s,
-/// reading the `q`, finishing the encoder and writing its last fragment;
+/// How long the capture may take to exit once told to stop. It took 0.04 s
+/// (2026-10-24), ffmpeg finishing its encoder and writing its last fragment;
 /// the bound leaves room for a loaded machine whose encoder has fallen
 /// seconds behind the capture.
 pub const STOP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -157,12 +155,20 @@ impl Recording {
         // its capture for the evidence of this one's first frame.
         agent.write_file(&format!("{}.start", recording.audio), b"")?;
         agent.delete_file(&recording.video)?;
+        let mut args: Vec<String> = [
+            "capture-desktop",
+            "--framerate",
+            &framerate(demo).to_string(),
+            "--ffmpeg",
+            &recording.ffmpeg,
+            "--",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        args.extend(capture_args(&recording.video, demo));
         let pid = agent
-            .launch_with_stdin(
-                &recording.ffmpeg,
-                &capture_args(&recording.video, demo),
-                &recording.video_log,
-            )?
+            .launch_with_stdin(AGENT_SELF, &args, &recording.video_log)?
             .pid;
         recording.video_pid = Some(pid);
         match recording.first_frame(agent) {
@@ -179,7 +185,7 @@ impl Recording {
 
     /// Waits for the evidence of the capture's first frame, and returns the
     /// wall-clock time ffmpeg logged for it. ffmpeg opens its input, which
-    /// for `gdigrab` captures the first frame, and logs the input with its
+    /// reads the capture's first frames, and logs the input with its
     /// `start:` time before it creates its output file, so the output
     /// file's appearance is the evidence; the time is then read from the
     /// log.
@@ -345,13 +351,14 @@ impl Recording {
         }
     }
 
-    /// Stops the capture, if it is still running: tells ffmpeg to stop with
-    /// `q` on its standard input, and waits up to [`STOP_TIMEOUT`] for it
-    /// to exit with code 0. Only when it does not is it killed.
+    /// Stops the capture, if it is still running: tells it to stop with `q`
+    /// on its standard input, and waits up to [`STOP_TIMEOUT`] for it to
+    /// exit with code 0, which it does once ffmpeg has. Only when it does
+    /// not is it killed, ffmpeg with it.
     ///
     /// # Errors
     ///
-    /// Returns an error if ffmpeg could not be told to stop, did not exit
+    /// Returns an error if the capture could not be told to stop, did not exit
     /// within [`STOP_TIMEOUT`], or exited with an error: in the first two
     /// cases it was killed, and the capture is cut short.
     pub fn stop(&mut self, agent: &mut AgentClient) -> io::Result<()> {
@@ -364,13 +371,13 @@ impl Recording {
         let failure = match stopped {
             Ok(ProcessState::Exited { exit_code: Some(0) }) => return Ok(()),
             Ok(ProcessState::Exited { exit_code }) => {
-                format!("ffmpeg (pid {pid}) exited with code {exit_code:?} when told to stop")
+                format!("the capture (pid {pid}) exited with code {exit_code:?} when told to stop")
             }
             Ok(ProcessState::Running) => format!(
-                "ffmpeg (pid {pid}) did not stop within {STOP_TIMEOUT:?} of being told to, so it was killed and the recording is cut short"
+                "the capture (pid {pid}) did not stop within {STOP_TIMEOUT:?} of being told to, so it was killed and the recording is cut short"
             ),
             Err(error) => format!(
-                "ffmpeg (pid {pid}) could not be told to stop ({error}), so it was killed and the recording is cut short"
+                "the capture (pid {pid}) could not be told to stop ({error}), so it was killed and the recording is cut short"
             ),
         };
         agent.kill_process(pid)?;
@@ -394,39 +401,26 @@ fn framerate(demo: bool) -> u32 {
     if demo { 30 } else { 15 }
 }
 
-/// ffmpeg's arguments capturing the desktop into fragmented MP4 at
-/// `output`, a fragment starting at each keyframe, one a second, with the
-/// zero-latency tuning keeping the encoder from holding frames back.
+/// ffmpeg's arguments encoding the capture's raw frames into fragmented
+/// MP4 at `output`, after the raw input the capture itself names
+/// (`verbatim_agent::capture`), a fragment starting at each keyframe, one
+/// a second, with the zero-latency tuning keeping the encoder from holding
+/// frames back.
 ///
-/// Every frame keeps the time `gdigrab` captured it at, to the
-/// millisecond, so the video keeps real time however many frames the
-/// capture misses. `gdigrab` aims for `framerate` frames a second, stamps
-/// each with the wall-clock time it was taken, and skips a frame's slot
-/// when it is more than a frame late, which it is on a loaded machine.
-/// ffmpeg's default would round each time to a multiple of the frame
-/// interval and drop a late frame that rounds onto the next one's time:
-/// a flood scenario lost 62 of its 1629 frames that way.
+/// Every frame keeps the wall-clock time ffmpeg read it at, so the video
+/// keeps real time however far the capture falls behind on a loaded
+/// machine: ffmpeg's default would give each frame the next slot of the
+/// frame rate, and stretch or squeeze time.
 ///
-/// The file is complete only once ffmpeg is told to stop and exits
-/// ([`Recording::stop`]): a fragment reaches the disk only once the next
-/// keyframe arrives, and then not all of it until ffmpeg flushes its file
-/// buffer. `demo` captures twice the frames, losslessly, for [`mux_args`]
-/// to encode.
+/// The file is complete only once the capture is told to stop and ffmpeg
+/// exits ([`Recording::stop`]): a fragment reaches the disk only once the
+/// next keyframe arrives, and then not all of it until ffmpeg flushes its
+/// file buffer. `demo` captures twice the frames, losslessly, for
+/// [`mux_args`] to encode.
 fn capture_args(output: &str, demo: bool) -> Vec<String> {
     let framerate = framerate(demo).to_string();
     let crf = if demo { "0" } else { "28" };
     [
-        "-hide_banner",
-        "-nostats",
-        "-y",
-        "-f",
-        "gdigrab",
-        "-framerate",
-        &framerate,
-        "-thread_queue_size",
-        "512",
-        "-i",
-        "desktop",
         // libx264's 4:2:0 output needs even dimensions.
         "-vf",
         "scale=trunc(iw/2)*2:trunc(ih/2)*2",
@@ -575,13 +569,12 @@ struct Logs<'a> {
 ///
 /// That every frame ffmpeg encoded reached the file is checked against
 /// the final stats line of the capture's log: its frame count must equal
-/// the number of frames the recording lists, and its `time=`, the last
-/// encoded frame's time since the first, printed to the hundredth of a
-/// second, must be within one frame at `framerate` frames a second of the
-/// last listed frame's time. A capture killed before it wrote its last
-/// fragments fails this. The frames ffmpeg drops when told to stop, as the
-/// module's documentation explains, were never encoded, so neither count
-/// includes them.
+/// the number of frames the recording lists, and its `time=`, the end of
+/// the last encoded frame since the first frame, printed to the hundredth
+/// of a second, must be within one frame at `framerate` frames a second of
+/// the end of the last listed frame, its time plus one frame (a raw frame
+/// lasts one frame interval). A capture killed before it wrote its last
+/// fragments fails this.
 ///
 /// That the recording covers the scenario is checked on the wall clock:
 /// `video_start`, the time ffmpeg logged for the first frame, plus the
@@ -627,9 +620,9 @@ fn verify(logs: &Logs, video_start: f64, body_end: f64, framerate: u32) -> Resul
         return Err(format!("has {count} frames, but ffmpeg encoded {encoded}"));
     }
     let frame = 1.0 / f64::from(framerate);
-    if (last - encoded_last).abs() > frame {
+    if (last + frame - encoded_last).abs() > frame {
         return Err(format!(
-            "ends with a frame at {last:.3} s, but ffmpeg's last encoded frame was at {encoded_last:.2} s"
+            "ends with a frame at {last:.3} s, but ffmpeg's last encoded frame ended at {encoded_last:.2} s"
         ));
     }
     let end = video_start + last;
@@ -702,8 +695,8 @@ fn final_stats(log: &str) -> Option<(usize, f64)> {
     Some((frames, f64::from(hours * 3_600 + minutes * 60) + seconds))
 }
 
-/// The wall-clock time of `gdigrab`'s first frame, which ffmpeg logs as
-/// the input's `start:`.
+/// The wall-clock time ffmpeg read the capture's first frame at, which it
+/// logs as the input's `start:`.
 fn video_start_seconds(log: &str) -> Option<f64> {
     log.lines()
         .filter_map(|line| line.split_once("start: ").map(|(_, rest)| rest))
@@ -722,8 +715,8 @@ mod tests {
 
     #[test]
     fn reads_the_capture_start_from_ffmpegs_log() {
-        let log = "Input #0, gdigrab, from 'desktop':\n  Duration: N/A, start: 1791097373.167541, bitrate: 491526 kb/s\n";
-        assert_eq!(video_start_seconds(log), Some(1_791_097_373.167_541));
+        let log = "Input #0, rawvideo, from 'pipe:0':\n  Duration: N/A, start: 1792822606.666667, bitrate: 491520 kb/s\n";
+        assert_eq!(video_start_seconds(log), Some(1_792_822_606.666_667));
         assert_eq!(
             video_start_seconds("Duration: N/A, start: 0.000000, bitrate"),
             None
@@ -746,11 +739,10 @@ mod tests {
 
     #[test]
     fn captures_a_demo_at_thirty_frames_a_second_losslessly() {
+        assert_eq!((framerate(false), framerate(true)), (15, 30));
         let usual = capture_args("v.mp4", false).join(" ");
-        assert!(usual.contains("-framerate 15 "), "{usual}");
         assert!(usual.contains("-crf 28 -pix_fmt yuv420p -g 15 "), "{usual}");
         let demo = capture_args("v.mp4", true).join(" ");
-        assert!(demo.contains("-framerate 30 "), "{demo}");
         assert!(demo.contains("-crf 0 -pix_fmt yuv420p -g 30 "), "{demo}");
     }
 
@@ -775,7 +767,7 @@ mod tests {
 
     /// The end of the capture's log for [`FRAMES`], as ffmpeg 9 writes it
     /// when told to stop.
-    const VIDEO_LOG: &str = "[q] command received. Exiting.\n\n[out#0/mp4 @ 0] video:1952KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.152643%\nframe=    4 fps= 15 q=26.0 Lsize=    1955KiB time=00:00:04.13 bitrate=3153.7kbits/s speed=0.982x elapsed=0:00:04.20    \n[libx264 @ 0] frame I:1     Avg QP:17.33  size:282568\n";
+    const VIDEO_LOG: &str = "[q] command received. Exiting.\n\n[out#0/mp4 @ 0] video:1952KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.152643%\nframe=    4 fps= 15 q=26.0 Lsize=    1955KiB time=00:00:04.20 bitrate=3153.7kbits/s speed=0.982x elapsed=0:00:04.20    \n[libx264 @ 0] frame I:1     Avg QP:17.33  size:282568\n";
 
     /// The wall-clock time of [`FRAMES`]' first frame.
     const START: f64 = 1_791_097_373.0;
@@ -800,7 +792,7 @@ mod tests {
 
     #[test]
     fn reads_ffmpegs_final_stats() {
-        assert_eq!(final_stats(VIDEO_LOG), Some((4, 4.13)));
+        assert_eq!(final_stats(VIDEO_LOG), Some((4, 4.2)));
         assert_eq!(
             final_stats("frame=   77 fps= 15 time=01:02:05.07 bitrate=N/A\n"),
             Some((77, 3_725.07))
@@ -824,12 +816,12 @@ mod tests {
             verify_frames(&one_more, "", "", START),
             Err("has 4 frames, but ffmpeg encoded 5".to_owned())
         );
-        // A last frame more than a frame (0.067 s) from 4.133 s.
-        let later = VIDEO_LOG.replace("time=00:00:04.13", "time=00:00:04.21");
+        // A last frame ending more than a frame (0.067 s) from 4.2 s.
+        let later = VIDEO_LOG.replace("time=00:00:04.20", "time=00:00:04.28");
         assert_eq!(
             verify_frames(&later, "", "", START),
             Err(
-                "ends with a frame at 4.133 s, but ffmpeg's last encoded frame was at 4.21 s"
+                "ends with a frame at 4.133 s, but ffmpeg's last encoded frame ended at 4.28 s"
                     .to_owned()
             )
         );

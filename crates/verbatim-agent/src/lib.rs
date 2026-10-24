@@ -13,6 +13,9 @@
 //!   would, without injecting anything, and waits for evidence on the
 //!   desktop (windows appearing, closing, taking the foreground; processes
 //!   exiting; files appearing; events set) rather than for time.
+//! - Records the desktop for the scenarios' videos, as `verbatim-agent
+//!   capture-desktop` ([`capture`]), which the agent launches as it launches
+//!   any program.
 //! - Numbers every key it injects, so Verbatim can say when it has handled
 //!   it (`verbatim_input::harness`).
 //! - Tunnels a connection through to Verbatim's own control-plane named
@@ -26,6 +29,7 @@
 //! suite) can drive an agent in-process, plus a thin `verbatim-agent.exe`
 //! binary for real guest deployment.
 
+pub mod capture;
 pub mod desktop;
 mod events;
 mod files;

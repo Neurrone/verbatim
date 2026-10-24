@@ -744,11 +744,12 @@ same suite on GitHub's runner or against a Hyper-V guest
    `summary.txt` (`ScenarioSummary`); losing one fails the run. Each run is
    also copied into `history/` (the newest 100 per scenario, without
    video).
-7. **Recording.** Before Verbatim starts, ffmpeg is launched through the
-   agent to capture the desktop (`gdigrab`, fragmented MP4).
+7. **Recording.** Before Verbatim starts, the agent's desktop capture is
+   launched through the agent (`verbatim-agent capture-desktop`: DXGI
+   Desktop Duplication, raw frames encoded by ffmpeg into fragmented MP4).
    `VERBATIM_RECORD_AUDIO` makes Verbatim's mixer tap write everything it
    plays to a WAV file with its start time, in every run. At the end,
-   `Scenario::finish_recording` ends ffmpeg, lines the audio up with the
+   `Scenario::finish_recording` ends the capture, lines the audio up with the
    video by their start times, muxes them on the agent's machine, and
    copies `<scenario>.mp4` back. A recording that cannot start or finish
    fails the run; `VERBATIM_E2E_RECORD=0` turns recording off.

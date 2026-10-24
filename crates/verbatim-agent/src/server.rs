@@ -21,7 +21,8 @@ use std::time::Duration;
 use verbatim_input::keys::KeyName;
 
 use crate::protocol::{
-    AGENT_PROTOCOL_VERSION, Frame, IGNORE_PIDS_ENV, ReplyPayload, Request, RequestEnvelope,
+    AGENT_PROTOCOL_VERSION, AGENT_SELF, Frame, IGNORE_PIDS_ENV, ReplyPayload, Request,
+    RequestEnvelope,
 };
 use crate::{
     desktop, events, files, focus, jobs, keys, process, scenario_windows, session, terminals,
@@ -398,6 +399,14 @@ fn launch(id: u64, request: Request) -> Frame {
         Vec::new()
     };
     let ignored: Vec<u32> = held.iter().map(|(pid, _)| *pid).collect();
+    let command = if command == AGENT_SELF {
+        match std::env::current_exe() {
+            Ok(path) => path.to_string_lossy().into_owned(),
+            Err(error) => return error_frame(id, &error),
+        }
+    } else {
+        command
+    };
     match process::launch(
         &command,
         &args,

@@ -304,23 +304,6 @@ times or tightly bounds such a read fails from load elsewhere in the
 session, not from its own code, so no test does (`docs/testing.md`,
 "Waits are for evidence").
 
-**A recorded console flood fails its recording on a machine with no 3D
-graphics.** The recorder captures the screen with `gdigrab`, which takes
-each frame with a GDI blit of the screen, and on a machine whose
-compositor renders in software (this development machine's display
-adapter is a Red Hat VirtIO GPU) that blit waits while the console host
-draws a flood: measured on 2026-10-24 with no Verbatim running, a blit
-waited 1.7 to 3.3 seconds while a console window drew 200 lines its
-program had written in 58 milliseconds, at any capture rate from 5 to 15
-frames a second. A stall that reaches the end of the scenario's body fails
-the check that the video covers it ("ends N s before the scenario's body
-did"), and one that outlasts the 15 seconds ffmpeg has to stop fails the
-stop. ffmpeg's capture sources that bypass GDI, `ddagrab` and
-`gfxcapture`, need a Direct3D 11 video device, which this adapter lacks
-("Failed to create D3D11VA device"). Run such scenarios with
-`VERBATIM_E2E_RECORD=0` to see their speech results apart from the
-recording's.
-
 **`cargo xtask trace scenario` and `cargo xtask measure` refuse to start
 while `VERBATIM_E2E_VERBATIM_EXE` is set.** Name the other build with
 `--verbatim-exe <path>` instead, because the commands once discarded the

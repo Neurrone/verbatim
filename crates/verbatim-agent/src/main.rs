@@ -41,11 +41,50 @@ struct Cli {
     /// instance uses.
     #[arg(long, default_value_t = verbatim_control::protocol::PIPE_NAME.to_owned())]
     pipe_name: String,
+    /// What to run instead of the agent.
+    #[command(subcommand)]
+    mode: Option<Mode>,
+}
+
+/// What `verbatim-agent.exe` runs other than the agent.
+#[derive(clap::Subcommand)]
+enum Mode {
+    /// Records the desktop into ffmpeg until `q` on standard input
+    /// (`verbatim_agent::capture`), exiting with ffmpeg's code.
+    CaptureDesktop {
+        /// Frames a second.
+        #[arg(long)]
+        framerate: u32,
+        /// The ffmpeg executable.
+        #[arg(long)]
+        ffmpeg: String,
+        /// ffmpeg's arguments for its output, after its raw input.
+        #[arg(last = true)]
+        output: Vec<String>,
+    },
 }
 
 fn main() -> ExitCode {
     init_tracing();
     let cli = Cli::parse();
+    if let Some(Mode::CaptureDesktop {
+        framerate,
+        ffmpeg,
+        output,
+    }) = &cli.mode
+    {
+        return match verbatim_agent::capture::run(*framerate, ffmpeg, output) {
+            Ok(0) => ExitCode::SUCCESS,
+            Ok(code) => {
+                eprintln!("verbatim-agent capture-desktop: ffmpeg exited with code {code}");
+                ExitCode::FAILURE
+            }
+            Err(error) => {
+                eprintln!("verbatim-agent capture-desktop: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
 
     let info = match verbatim_agent::session::current() {
         Ok(info) => info,
