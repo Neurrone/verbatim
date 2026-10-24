@@ -12,6 +12,9 @@
 //!   timeout, and the registration's next move is made after it, as is
 //!   another registration's move, since every registration of a process
 //!   shares its registering thread.
+//! - A tree walk whose step to an element's first child is held fails with
+//!   the step's `UIA_E_TIMEOUT`, rather than reading the element as having
+//!   no children.
 //!
 //! Each test runs in a process of its own on a desktop of its own
 //! (`common/harness.rs`), since the timeouts belong to the process.
@@ -21,12 +24,13 @@ mod common;
 mod harness;
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use verbatim_uia::{
-    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, Node, Part, PropertyEvent, Registration,
-    Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
+    BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, Node, NodeIdRegistry, Part, PropertyEvent,
+    Registration, Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
 };
 use windows::Win32::UI::Accessibility::{UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId};
 
@@ -247,6 +251,57 @@ fn a_second_registrations_commands_wait_behind_the_firsts_held_move() {
     next_app.quit();
 }
 
+/// A tree walk from mockapp's list, whose step to the list's first child
+/// is held at its first provider call, the list's `FragmentRoot`, which UIA
+/// asks before it navigates, fails with that step's `UIA_E_TIMEOUT` once
+/// UIA's transaction timeout has passed, rather than reading the list as
+/// having no items.
+fn a_tree_walk_held_at_a_child_step_fails_with_the_timeout() {
+    common::init_com();
+    let title = common::unique_title("mockapp-held-tree");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let uia = Uia::new().expect("a UIA client");
+    let nodes = uia
+        .request::<Node>(Node::all_on())
+        .expect("a cache request");
+    let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
+    // The list, a child of the window, found by a walk before the hold, so
+    // the held call is the held walk's first step.
+    let window = uia
+        .window_element(hwnd, &nodes)
+        .expect("mockapp's window element");
+    let (tree, _) = uia
+        .tree(&window, &nodes, &registry, 8, 64)
+        .expect("mockapp's tree");
+    let list = tree
+        .children
+        .iter()
+        .find(|child| child.snapshot.name.as_deref() == Some("Options"))
+        .expect("the window's list");
+    assert_eq!(list.children.len(), 2, "the list's two items, unheld");
+    let list = registry
+        .element_of(list.snapshot.id)
+        .expect("the list's element")
+        .resolve()
+        .expect("the list's element, resolved")
+        .live()
+        .refresh(&nodes)
+        .expect("the list, read as a node");
+
+    app.hold();
+    let walked = uia.tree(&list, &nodes, &registry, 8, 64);
+    let held = app.held();
+    app.release();
+    assert_eq!(held, "FragmentRoot", "the walk's step to a child was held");
+    let error = walked.expect_err("the held walk failed");
+    assert!(
+        verbatim_uia::timed_out(&error),
+        "the walk ended by UIA's timeout: {error}"
+    );
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -265,6 +320,10 @@ fn main() {
         (
             "a_second_registrations_commands_wait_behind_the_firsts_held_move",
             a_second_registrations_commands_wait_behind_the_firsts_held_move,
+        ),
+        (
+            "a_tree_walk_held_at_a_child_step_fails_with_the_timeout",
+            a_tree_walk_held_at_a_child_step_fails_with_the_timeout,
         ),
     ]);
 }

@@ -655,7 +655,12 @@ impl Uia {
     ///
     /// # Errors
     ///
-    /// Returns the COM error if the tree walker cannot be created.
+    /// Returns the COM error if the tree walker cannot be created, or the
+    /// error of any step that fails rather than reaching no element: a
+    /// step the provider did not answer within UIA's transaction timeout
+    /// fails the walk with `UIA_E_TIMEOUT` ([`timed_out`](crate::timed_out)),
+    /// so an element whose children could not be read is never reported as
+    /// having none.
     pub fn tree(
         &self,
         root: &Cached<TreeDump>,
@@ -675,7 +680,7 @@ impl Uia {
             visited: 1, // the root counts as one node.
             truncated: false,
         };
-        let root = walk_shaped(&walker, root, &limits, 0, &mut state);
+        let root = walk_shaped(&walker, root, &limits, 0, &mut state)?;
         Ok((root, state.truncated))
     }
 
@@ -1394,48 +1399,55 @@ struct ShapedWalk<'a> {
 
 /// The recursive worker for [`Uia::tree`]. `state.visited` already counts
 /// `element` itself; children are counted as they are accepted into the
-/// walk, before recursing into them.
+/// walk, before recursing into them. A step that fails, rather than
+/// reaching no element, fails the walk with its error.
 fn walk_shaped(
     walker: &IUIAutomationTreeWalker,
     element: &Cached<TreeDump>,
     limits: &ShapedWalk<'_>,
     depth: u32,
     state: &mut WalkState,
-) -> TreeNode {
+) -> windows::core::Result<TreeNode> {
     let snapshot = element.snapshot(limits.registry);
     let live = element.live();
     if depth >= limits.max_depth {
         // Peek only: is there a child we are declining to descend into?
-        if live
-            .walk(walker, Direction::FirstChild, limits.request)
-            .is_ok()
-        {
+        if reached(live.walk(walker, Direction::FirstChild, limits.request))?.is_some() {
             state.truncated = true;
         }
-        return TreeNode {
+        return Ok(TreeNode {
             snapshot,
             children: Vec::new(),
-        };
+        });
     }
     let mut children = Vec::new();
-    // An `Err` here means "no first child".
-    let mut next_child = live
-        .walk(walker, Direction::FirstChild, limits.request)
-        .ok();
+    let mut next_child = reached(live.walk(walker, Direction::FirstChild, limits.request))?;
     while let Some(current) = next_child {
         if state.visited >= limits.max_nodes {
             state.truncated = true;
             break;
         }
         state.visited += 1;
-        children.push(walk_shaped(walker, &current, limits, depth + 1, state));
-        // `Err` means "no next sibling".
-        next_child = current
-            .live()
-            .walk(walker, Direction::NextSibling, limits.request)
-            .ok();
+        children.push(walk_shaped(walker, &current, limits, depth + 1, state)?);
+        next_child = reached(
+            current
+                .live()
+                .walk(walker, Direction::NextSibling, limits.request),
+        )?;
     }
-    TreeNode { snapshot, children }
+    Ok(TreeNode { snapshot, children })
+}
+
+/// A tree walker step's result, with the error carrying no failure code,
+/// which `windows` reports for a null element, read as reaching no element
+/// (`Ok(None)`); any other error, such as UIA's transaction timeout
+/// ([`timed_out`](crate::timed_out)), stays an error.
+fn reached<T>(found: windows::core::Result<T>) -> windows::core::Result<Option<T>> {
+    match found {
+        Ok(element) => Ok(Some(element)),
+        Err(error) if error.code().is_ok() => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// NVDA's layout judgment (`presentationType`), ported from

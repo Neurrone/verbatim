@@ -228,7 +228,12 @@ Public API:
   the returned array. A search that finds nothing is `Ok(None)`; a search
   that fails is an error. `Uia::tree(root, request, registry, max_depth,
   max_nodes)` walks a subtree the same way, every node read as a
-  `TreeDump`, for the control plane's tree dump.
+  `TreeDump`, for the control plane's tree dump. Unlike `neighbor`, it
+  reads only a step that reaches no element (the null element, an error
+  with no failure code) as the end of an element's children; any other
+  failed step, UIA's transaction timeout included, fails the whole walk
+  with that step's error, so an element whose children could not be read
+  is never shown as having none.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then `SelectionItem`'s select, answering `ActionName::Invoke` for an
   Invoke and no name otherwise, as NVDA names them; each fetched live since
