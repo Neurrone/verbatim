@@ -234,6 +234,14 @@ fn lines(lines: &[&str]) -> TerminalSpeech {
     }
 }
 
+/// Speech of what a growing line gained, `text` (section 5.3).
+fn grown(text: &str) -> TerminalSpeech {
+    TerminalSpeech {
+        items: vec![TerminalItem::Growth(text.to_owned())],
+        followed: false,
+    }
+}
+
 /// Asks the outpost `op` about `node`.
 fn ask(outpost: &mut OutpostUnderTest, node: NodeId, op: TextOp) -> u64 {
     outpost.ask(Query::Text { node_id: node, op })
@@ -723,8 +731,8 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     // it gained, without the space before it, its last word, unfinished
     // with the caret after it, held until the quiet period has passed
     // (`docs/design/terminal-model.md`, section 5.3).
-    assert_eq!(reported(&outpost, term), lines(&["echo "]));
-    assert_eq!(reported(&outpost, term), lines(&["onex"]));
+    assert_eq!(reported(&outpost, term), grown("echo "));
+    assert_eq!(reported(&outpost, term), grown("onex"));
     outpost.settled();
     drop(outpost);
     app.quit();

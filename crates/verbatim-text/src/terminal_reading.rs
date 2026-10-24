@@ -1566,7 +1566,11 @@ impl TerminalReader {
                 .iter()
                 .zip(&rows[line_rows.clone()])
                 .any(|(kind, row)| {
-                    !row.is_blank() && matches!(kind, NewRow::New | NewRow::Rewritten { .. })
+                    !row.is_blank()
+                        && matches!(
+                            kind,
+                            NewRow::New | NewRow::Rewritten { .. } | NewRow::Returned { .. }
+                        )
                 });
             if unit.is_none() && changed {
                 self.set_before(caret);

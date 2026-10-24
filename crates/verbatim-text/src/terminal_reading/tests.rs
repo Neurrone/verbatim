@@ -1292,3 +1292,29 @@ fn a_read_inside_a_programs_redraw_speaks_the_change_not_the_line_its_cursor_pas
         says(vec![growth(1, " changed")])
     );
 }
+
+#[test]
+fn a_scroll_up_in_a_region_with_the_cursor_parked_back_says_only_the_new_row() {
+    // Section 5.5: as the cursor parked back on the status row after the
+    // program scrolled the rows above it up a line and wrote the new last
+    // one, as conhost_full_screen's last key does.
+    let mut term = Term::new(20, 5, 10);
+    term.write(
+        "row 1\r\nrow 2\r\nrow 3\r\nrow 4\r\nstatus: ready\x1b[5;14H",
+        100,
+    );
+    // The key before, 270 milliseconds earlier and so in the same window,
+    // scrolled them down a line and wrote the new first one.
+    term.typed("n", 4730);
+    assert_eq!(
+        term.write("\x1b[1;4r\x1b[1T\x1b[r\x1b[1;1H\x1b[2Krow 0", 4740),
+        says(vec![line(0, "row 0")])
+    );
+    assert_eq!(term.write("\x1b[5;14H", 4750), quiet(None));
+    term.typed("n", 5000);
+    assert_eq!(
+        term.write("\x1b[1;4r\x1b[1S\x1b[r\x1b[4;1H\x1b[2Krow 5", 5010),
+        says(vec![line(3, "row 5")])
+    );
+    assert_eq!(term.write("\x1b[5;14H", 5020), quiet(None));
+}
