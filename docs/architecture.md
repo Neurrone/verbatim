@@ -300,8 +300,9 @@ screen reader in both rendered and source form.
   property changes, selections and dialog texts are spoken) is defined
   once, in a platform-neutral crate unless it is ported from NVDA, in
   which case once in the Windows-specific crate the judges before a read
-  share, and every place that applies it calls that one definition. A judgment is made outside Core only when it must
-  come before an element is read, because a UIA element cannot pass to
+  share, and every place that applies it calls that one definition. A
+  judgment is made outside Core only when it must come before an element
+  is read, because a UIA element cannot pass to
   another process: the focus listener judges a UIA focus before reading
   it, and an outpost judges an event against the foreground before calling
   into the application. Those judgments use the focus Core holds, which
