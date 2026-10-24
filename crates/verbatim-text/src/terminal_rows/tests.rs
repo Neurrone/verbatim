@@ -477,9 +477,10 @@ fn a_rotation_between_one_and_two_screens_is_settled_in_one_read() {
 #[test]
 fn a_footer_over_more_output_than_the_history_holds_overflows() {
     // The whole document keeps no row of the last read at or above the
-    // caret: the history overflowed. The footer below the caret, which the
-    // whole read kept, stays kept and silent; only the rest is new
-    // ("Screens").
+    // caret, and nothing of the remembered history, in a full buffer:
+    // output may have been lost ("Screens"). The footer below the caret
+    // stays kept and silent, and the caret's line, its first row where it
+    // was, counts as rewritten; the rest is new.
     let mut watch = Watch::console(10, 3, 6);
     watch.write("\x1b[3;1Hfooter\x1b[1;2r\x1b[1;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh");
     let outcome = watch.write("\r\nn\r\no\r\np\r\nq\r\nr\r\ns\r\nt\r\nu\r\nv\r\nw\r\nx\r\ny");
@@ -491,7 +492,21 @@ fn a_footer_over_more_output_than_the_history_holds_overflows() {
     assert!(outcome.overflowed, "more went by than the history holds");
     assert_eq!(
         outcome.rows,
-        [NEW, NEW, NEW, NEW, NEW, NEW, NEW, NEW, kept(8)]
+        [
+            NEW,
+            NEW,
+            NEW,
+            NEW,
+            NEW,
+            NEW,
+            NEW,
+            NewRow::Rewritten {
+                from: 7,
+                moved: false,
+                alone: false,
+            },
+            kept(8)
+        ]
     );
 }
 
@@ -627,34 +642,33 @@ fn a_whole_document_read_takes_the_known_history_from_the_document() {
 fn output_repeated_after_a_clear_that_lost_the_old_screen_is_new() {
     // Windows Terminal: `type f.txt`, then `cls` and other output within
     // one read. The clear takes the history too, so the whole document is
-    // read, and it keeps no row of the last read: a new screen, every row
-    // of its visible screen new, though some repeat the remembered history,
-    // and the row above it history ("Screens").
+    // read, and it keeps no row of the last read: a new screen. The clear
+    // erased the history, so the remembered history is gone too, and every
+    // row is new, though some repeat what it held ("Screens").
     let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
     watch.write("alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     watch.write("1111\r\n2222\r\n3333\r\n4444");
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\nzulu\r\n");
     assert_eq!(watch.texts(), ["alpha", "bravo", "zulu", ""]);
     assert_eq!(outcome.switch, Switch::New);
-    assert_eq!(outcome.rows, [NewRow::Shown, NEW, NEW, NEW]);
+    assert_eq!(outcome.rows, [NEW, NEW, NEW, NEW]);
 }
 
 #[test]
-fn output_repeated_after_a_clear_that_erases_rows_of_the_last_read_is_silent() {
+fn output_repeated_after_a_clear_that_erases_rows_of_the_last_read_speaks_the_rows_above_the_screen()
+ {
     // Windows Terminal: `type f.txt`, more output, then `cls` and `type
-    // f.txt` within one read. The document the clear leaves is the last
-    // one with rows erased, rows the last read had among them, so nothing
-    // is new: a limit ("Limits").
+    // f.txt` within one read. The clear erased the history, so the rows
+    // above the screen match no remembered history and are new; the
+    // visible screen's rows are aligned with the last read, which had them
+    // ("Screens").
     let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
     watch.write("alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     watch.write("1111\r\n2222\r\n3333\r\n4444");
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     assert_eq!(watch.texts(), ["alpha", "bravo", "charlie", "delta", ""]);
     assert_eq!(outcome.switch, Switch::None);
-    assert_eq!(
-        outcome.rows,
-        [NewRow::Shown, NewRow::Shown, kept(2), kept(3), NEW]
-    );
+    assert_eq!(outcome.rows, [NEW, NEW, kept(2), kept(3), NEW]);
 }
 
 #[test]
