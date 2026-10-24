@@ -58,8 +58,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, mpsc};
 
 use verbatim_model::{
-    CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, TreeNode,
-    WindowHandle,
+    CallCounts, Fetches, FocusText, NodeSnapshot, NormalizedEvent, QueryKind, Role, WindowHandle,
 };
 use verbatim_model::{
     CaretWatch, LineStyle, SelectionChange, TextAttributes, TextMovement, TextOp, TextPoint,
@@ -963,7 +962,12 @@ fn msaa_navigation_steps_cost_exactly() {
 }
 
 /// A UIA client on this thread over mockapp's tree, with every element the
-/// tree holds, by name, for the operations to start from.
+/// tree holds, by name, for the operations to start from. The elements are
+/// found by one search of the window's descendants and named by one read
+/// each, which reads nothing else of them, so the window's title bar is
+/// passed by: reading its location or states has UIA ask the window's
+/// thread (`WM_GETTITLEBARINFOEX`), which Windows answers for one window at
+/// a time across the desktop, seconds on a busy machine.
 struct UiaUnderTest {
     uia: Uia,
     elements: HashMap<String, IUIAutomationElement>,
@@ -972,18 +976,22 @@ struct UiaUnderTest {
 impl UiaUnderTest {
     fn new(hwnd: HWND) -> Self {
         let uia = Uia::new().expect("a UIA client");
-        let nodes = uia
-            .request::<Node>(Node::all_on())
-            .expect("the node's cache request");
-        let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
         let root = uia
-            .window_element(hwnd.0 as isize, &nodes)
+            .window_live(hwnd.0 as isize)
             .expect("mockapp's root element");
-        let (tree, _) = uia
-            .tree(&root, &nodes, &registry, 8, 64)
-            .expect("mockapp's tree");
+        // SAFETY: a live client; the condition takes no arguments.
+        let condition = unsafe { uia.client().CreateTrueCondition() }.expect("a condition");
+        // SAFETY: `root` and `condition` are live and this thread's.
+        let found = unsafe { root.element().FindAll(TreeScope_Descendants, &condition) }
+            .expect("the window's descendants");
         let mut elements = HashMap::new();
-        collect(&tree, &registry, &mut elements);
+        for element in verbatim_uia::elements_of(&found) {
+            // SAFETY: `element` is live and this thread's.
+            let name = unsafe { element.CurrentName() }.expect("an element's name");
+            if !name.is_empty() {
+                elements.insert(name.to_string(), element);
+            }
+        }
         Self { uia, elements }
     }
 
@@ -1025,25 +1033,6 @@ impl UiaUnderTest {
         root.find_first(TreeScope_Descendants, &condition, &request)
             .expect("the search")
             .expect("mockapp reports a focused element")
-    }
-}
-
-/// Every named node's live element, from the registry the walk filled.
-fn collect(
-    node: &TreeNode,
-    registry: &NodeIdRegistry,
-    elements: &mut HashMap<String, IUIAutomationElement>,
-) {
-    if let Some(name) = &node.snapshot.name
-        && let Some(element) = registry
-            .element_of(node.snapshot.id)
-            .and_then(|agile| agile.resolve().ok())
-            .map(|kept| kept.live().element().clone())
-    {
-        elements.insert(name.clone(), element);
-    }
-    for child in &node.children {
-        collect(child, registry, elements);
     }
 }
 

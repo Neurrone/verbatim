@@ -389,6 +389,13 @@ focused button.
   `OBJID_WINDOW`, `OBJID_QUERYCLASSNAMEIDX`, and any other object id;
   `WM_APP + 7` returns the count of the kind whose index is `wParam`
   (`common::read_get_objects`), and `WM_APP + 3` zeroes them too. The
+  host window also counts each `WM_GETTITLEBARINFOEX` it takes, as the
+  method `WM_GETTITLEBARINFOEX` (`hit_title_bar_info`), before its
+  default procedure answers it: UIA's proxy for the window's frame sends
+  one for each read of the title bar's location or off-screen state, and
+  of its buttons', and Windows answers it for one window at a time across
+  the desktop, so a test shows a read passes the title bar by. It is only
+  counted, never delayed by `slow` or held by `hold`. The
   tests compile `src/hits.rs` into their shared module, so the
   method list and message numbers cannot drift apart. Every counted call
   is also where `slow` delays a call and `hold` holds one. Started with
@@ -466,7 +473,11 @@ Implementation notes:
 The cross-process integration tests in `tests/` spawn the compiled binary
 via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
 `tests/fixtures/`, and a shared `tests/common/mod.rs` harness
-(`MockApp`, killed on drop; `find_window` by exact, per-test-unique title). Before it starts its first
+(`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
+`named_element`, an element found by one search of the window's
+descendants by name, which reads nothing of the window's title bar, where
+a walk of the window's whole tree would wait on its
+`WM_GETTITLEBARINFOEX`, seconds on a busy machine). Before it starts its first
 `mockapp`, a test process puts itself in a kill-on-close job of its own
 (`contain_children`), so every `mockapp` it starts ends with it however it
 ends: a panic in a callback the system calls aborts the process without

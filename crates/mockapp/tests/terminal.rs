@@ -20,8 +20,6 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CallCounts, CaretKey, CaretMotion, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
@@ -31,7 +29,7 @@ use verbatim_model::{
 use verbatim_outpost::protocol::now_us;
 use verbatim_outpost::terminal::{Terminal, read};
 use verbatim_outpost::text::uia::UiaText;
-use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
+use verbatim_uia::Uia;
 use verbatim_uia_rops::CaretLineQuery;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::IUIAutomationElement;
@@ -39,30 +37,10 @@ use windows::Win32::UI::Accessibility::IUIAutomationElement;
 /// The terminal's width in cells.
 const WIDTH: usize = 12;
 
-/// mockapp's terminal's element.
+/// mockapp's terminal's element, found by its name
+/// (`common::named_element`), which passes the window's title bar by.
 fn terminal_element(uia: &Uia, hwnd: HWND) -> IUIAutomationElement {
-    let nodes = uia
-        .request::<Node>(Node::all_on())
-        .expect("a cache request");
-    let root = uia
-        .window_element(hwnd.0 as isize, &nodes)
-        .expect("mockapp's root element");
-    let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    let (tree, _) = uia
-        .tree(&root, &nodes, &registry, 8, 64)
-        .expect("mockapp's tree");
-    let terminal = tree
-        .children
-        .iter()
-        .find(|child| child.snapshot.name.as_deref() == Some("Terminal"))
-        .expect("the terminal")
-        .snapshot
-        .id;
-    registry
-        .element_of(terminal)
-        .and_then(|agile| agile.resolve().ok())
-        .map(|kept| kept.live().element().clone())
-        .expect("its element")
+    common::named_element(uia, hwnd, "Terminal")
 }
 
 /// `rows` as a terminal's text: each padded to [`WIDTH`] and ended by a

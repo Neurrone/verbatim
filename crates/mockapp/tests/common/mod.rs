@@ -626,3 +626,41 @@ pub fn listener_focus(
     .expect("the search")
     .expect("mockapp reports a focused element")
 }
+
+/// The element named `name` under mockapp's window `hwnd`, found by one
+/// search of the window's descendants by name, its cache filled with what
+/// its role is read from. The search reads nothing of the elements it
+/// passes but their names, so it never reads the window's title bar, whose
+/// location and states UIA asks of the window's thread
+/// (`WM_GETTITLEBARINFOEX`), and Windows answers for one window at a time
+/// across the desktop: a walk of the window's whole tree waits on that,
+/// seconds on a busy machine.
+#[must_use]
+pub fn named_element(
+    uia: &verbatim_uia::Uia,
+    hwnd: HWND,
+    name: &str,
+) -> windows::Win32::UI::Accessibility::IUIAutomationElement {
+    let root = uia
+        .window_live(hwnd.0 as isize)
+        .expect("mockapp's window element");
+    let condition = uia
+        .property_condition(
+            windows::Win32::UI::Accessibility::UIA_NamePropertyId,
+            &windows::Win32::System::Variant::VARIANT::from(windows::core::BSTR::from(name)),
+        )
+        .expect("a condition");
+    let request = uia
+        .request_fixed::<verbatim_uia::RoleCore>()
+        .expect("a cache request");
+    root.find_first(
+        windows::Win32::UI::Accessibility::TreeScope_Descendants,
+        &condition,
+        &request,
+    )
+    .expect("the search")
+    .unwrap_or_else(|| panic!("no element named {name:?} under mockapp's window"))
+    .live()
+    .element()
+    .clone()
+}

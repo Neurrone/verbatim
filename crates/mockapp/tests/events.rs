@@ -28,8 +28,8 @@ use std::time::Instant;
 use verbatim_ia2::{APP_SUBSCRIPTIONS, WinEvent, WinEventHook, WinEventKind};
 use verbatim_model::{NotificationKind, NotificationProcessing, State, StateSet};
 use verbatim_uia::{
-    Cached, ElementExt as _, FOCUS_PROPERTIES, ListenerEvent, Node, Part, PropertyEvent,
-    Registration, Scope, Shape, Subscription, Uia,
+    Cached, ElementExt as _, FOCUS_PROPERTIES, ListenerEvent, Part, PropertyEvent, Registration,
+    Scope, Subscription, Uia,
     map::{ignores_notifications, notification_kind_from_uia, notification_processing_from_uia},
 };
 use windows::Win32::Foundation::{HWND, WAIT_TIMEOUT};
@@ -94,22 +94,26 @@ fn property_changes(hwnd: HWND) -> (Registration, Receiver<PropertyChange>) {
     (registration, changes)
 }
 
-/// The names of the root's children, read afresh through a new client.
+/// The roles and names of the root's children, read afresh through a new
+/// client, each read as a focus event's element is
+/// ([`ListenerEvent`]): what neither the title bar's location nor its
+/// states are among, which UIA asks of the window's thread
+/// (`WM_GETTITLEBARINFOEX`) and Windows answers for one window at a time
+/// across the desktop, seconds on a busy machine.
 fn children_names(hwnd: HWND) -> Vec<(verbatim_model::Role, Option<String>)> {
     let uia = Uia::new().expect("Uia::new");
-    let nodes = uia
-        .request::<Node>(Node::all_on())
-        .expect("the node's cache request");
+    let request = uia
+        .request_fixed::<ListenerEvent>()
+        .expect("the focus event's cache request");
     let root = uia
         .window_live(hwnd.0 as isize)
         .expect("mockapp's window element");
-    let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    uia.children(&root, &nodes)
+    uia.children(&root, &request)
         .expect("the window's children")
         .iter()
         .map(|child| {
-            let snapshot = child.snapshot(&registry);
-            (snapshot.role, snapshot.name)
+            let read = child.read();
+            (read.role.role(), read.name)
         })
         .collect()
 }
@@ -162,23 +166,8 @@ fn uia_only_the_focus_is_followed() {
     let hwnd = common::find_window(&title);
 
     let uia = Uia::new().expect("Uia::new");
-    let nodes = uia
-        .request::<Node>(Node::all_on())
-        .expect("the node's cache request");
-    let registry = verbatim_uia::NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    let root = uia
-        .window_element(hwnd.0 as isize, &nodes)
-        .expect("mockapp's window element");
-    let (tree, _) = uia
-        .tree(&root, &nodes, &registry, 8, 64)
-        .expect("mockapp's tree");
-    let first = tree
-        .children
-        .iter()
-        .flat_map(|group| &group.children)
-        .find(|node| node.snapshot.name.as_deref() == Some("First"))
-        .and_then(|node| registry.element_of(node.snapshot.id))
-        .expect("the button First");
+    let first = AgileReference::new(&common::named_element(&uia, hwnd, "First"))
+        .expect("the button First, agile");
 
     let (sender, names) = mpsc::channel();
     let _registration = Registration::with_parts(
@@ -188,7 +177,7 @@ fn uia_only_the_focus_is_followed() {
                 let _ = sender.send((element.read().name, property));
             }),
         })],
-        Scope::Elements(vec![first.reference()]),
+        Scope::Elements(vec![first]),
     )
     .expect("Registration::with_parts");
 

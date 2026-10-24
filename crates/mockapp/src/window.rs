@@ -39,6 +39,10 @@ use crate::{msaa, uia};
 
 const CLASS_NAME: PCWSTR = w!("VerbatimMockAppWindow");
 
+/// `WM_GETTITLEBARINFOEX`, which UIA's MSAA proxy sends to read the
+/// window's title bar; `windows` does not name it.
+const WM_GETTITLEBARINFOEX: u32 = 0x033F;
+
 /// Posted by the stdin thread to wake the message loop and check the
 /// command channel; carries no payload, so nothing crosses threads except
 /// the wake-up itself.
@@ -263,6 +267,9 @@ unsafe extern "system" fn wnd_proc(
                 return handle_get_object(hwnd, wparam, lparam, context);
             }
         }
+        // Counted, then answered by the default procedure below, which
+        // waits for the desktop's title bar information as any window's does.
+        WM_GETTITLEBARINFOEX => hits::hit_title_bar_info(),
         // The hit counters' readout (see `crate::hits`), answered here so a
         // test's read is in order with every provider call, which this
         // thread also runs.

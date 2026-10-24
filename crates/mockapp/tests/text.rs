@@ -20,7 +20,6 @@ mod common;
 mod harness;
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
@@ -34,8 +33,8 @@ use verbatim_outpost::text::uia::UiaText;
 use verbatim_outpost::text::{
     Anchors, CaretSignal, NodeText, TextSource, Watched, caret_report, check_caret, perform,
 };
+use verbatim_uia::Uia;
 use verbatim_uia::text::Endpoint;
-use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
 use verbatim_uia_rops::{
     Attributes, CaretAnswer, CaretQuery, FormatSpan, LocationQuery, Movement, Position,
     RangeAction, RangeAnswer, RangeEnd, RangeQuery, RunAttributes, TextAttribute, TextFrom,
@@ -70,31 +69,11 @@ fn answered(watched: Watched) -> TextReply {
     }
 }
 
-/// mockapp's "Notes" document's element.
+/// mockapp's "Notes" document's element, found by its name
+/// (`common::named_element`), which passes the window's title bar by.
 fn notes_element(hwnd: HWND) -> IUIAutomationElement {
     let uia = Uia::new().expect("a UIA client");
-    let nodes = uia
-        .request::<Node>(Node::all_on())
-        .expect("a cache request");
-    let root = uia
-        .window_element(hwnd.0 as isize, &nodes)
-        .expect("mockapp's root element");
-    let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    let (tree, _) = uia
-        .tree(&root, &nodes, &registry, 8, 64)
-        .expect("mockapp's tree");
-    let notes_id = tree
-        .children
-        .iter()
-        .find(|child| child.snapshot.name.as_deref() == Some("Notes"))
-        .expect("the Notes document")
-        .snapshot
-        .id;
-    registry
-        .element_of(notes_id)
-        .and_then(|agile| agile.resolve().ok())
-        .map(|kept| kept.live().element().clone())
-        .expect("its element")
+    common::named_element(&uia, hwnd, "Notes")
 }
 
 /// The text of mockapp's "Notes" document through UIA, read remotely or

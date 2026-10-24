@@ -29,6 +29,13 @@
 //! - [`WM_ADVISED_READ`]: `wParam` is the event's id, and the result is
 //!   its live registrations.
 //!
+//! The `WM_GETTITLEBARINFOEX`s the host window takes are counted too, as
+//! [`Method::GetTitleBarInfoEx`] ([`hit_title_bar_info`]): UIA's MSAA proxy
+//! sends one for most reads of the window's title bar, its location and
+//! states among them, and Windows answers it for one window at a time
+//! across the desktop, so a test can show a read passes the title bar by.
+//! It is only counted: the `slow` delay and the `hold` command leave it be.
+//!
 //! The `WM_GETOBJECT`s the host window takes are also counted by their
 //! object id, and for `UiaRootObjectId` by `wParam` ([`GetObjectKind`]),
 //! so a test can tell UIA's connection messages, `UiaRootObjectId` with a
@@ -156,6 +163,17 @@ static GET_OBJECTS: [AtomicU32; GetObjectKind::ALL.len()] =
 pub(crate) fn hit_get_object(wparam: usize, lparam: isize) {
     GET_OBJECTS[GetObjectKind::of(wparam, lparam) as usize].fetch_add(1, Ordering::Relaxed);
     hit(Method::GetObject);
+}
+
+/// Counts one `WM_GETTITLEBARINFOEX` the host window took, as a hit of
+/// [`Method::GetTitleBarInfoEx`], with no delay and no hold: it is not a
+/// provider call, and the window's default procedure answers it.
+#[allow(
+    dead_code,
+    reason = "mockapp counts with it; the tests compile this file too"
+)]
+pub(crate) fn hit_title_bar_info() {
+    HITS[Method::GetTitleBarInfoEx.index()].fetch_add(1, Ordering::Relaxed);
 }
 
 /// The count for the kind at `index` in [`GetObjectKind::ALL`], or 0 for
@@ -322,6 +340,9 @@ pub(crate) enum Method {
     RangeMoveEndpointByRange,
     /// `ITextRangeProvider::Select`.
     RangeSelect,
+    /// `WM_GETTITLEBARINFOEX`, which the host window's default procedure
+    /// answers, counted by [`hit_title_bar_info`].
+    GetTitleBarInfoEx,
 }
 
 /// How many methods are counted.
@@ -333,7 +354,7 @@ static HITS: [AtomicU32; COUNT] = [const { AtomicU32::new(0) }; COUNT];
 impl Method {
     /// Every counted method, in counter order: a method's index here is the
     /// `wParam` that reads it.
-    pub(crate) const ALL: [Method; 74] = [
+    pub(crate) const ALL: [Method; 75] = [
         Method::GetObject,
         Method::ProviderOptions,
         Method::GetPatternProvider,
@@ -408,6 +429,7 @@ impl Method {
         Method::RangeMoveEndpointByUnit,
         Method::RangeMoveEndpointByRange,
         Method::RangeSelect,
+        Method::GetTitleBarInfoEx,
     ];
 
     /// The method's name, as its interface names it.
@@ -491,6 +513,7 @@ impl Method {
             Method::RangeMoveEndpointByUnit => "MoveEndpointByUnit",
             Method::RangeMoveEndpointByRange => "MoveEndpointByRange",
             Method::RangeSelect => "ITextRangeProvider::Select",
+            Method::GetTitleBarInfoEx => "WM_GETTITLEBARINFOEX",
         }
     }
 

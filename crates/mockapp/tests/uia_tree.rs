@@ -359,32 +359,17 @@ fn named(node: &verbatim_model::TreeNode) -> Named {
 fn a_tree_dump_ends_an_elements_children_at_a_gone_element() {
     let title = common::unique_title("mockapp-uia-gone-tree");
     let mut app = common::spawn("small.json", "uia", &title);
-    let hwnd = common::find_window(&title).0 as isize;
+    let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     let nodes = uia
         .request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
         .expect("a cache request");
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    // The list, a child of the window, found by a dump before its item
-    // goes. The dump starts from the list, since the window's title bar is
-    // Windows' and named in the machine's language.
-    let window = uia
-        .window_element(hwnd, &nodes)
-        .expect("mockapp's window element");
-    let (tree, _) = uia
-        .tree(&window, &nodes, &registry, 8, 64)
-        .expect("mockapp's tree");
-    let list = tree
-        .children
-        .iter()
-        .find(|child| child.snapshot.name.as_deref() == Some("Options"))
-        .expect("the window's list");
-    let list = registry
-        .element_of(list.snapshot.id)
-        .expect("the list's element")
-        .resolve()
-        .expect("the list's element, resolved")
-        .live()
+    // The list, a child of the window, found by its name before its item
+    // goes (`common::named_element`), which passes the window's title bar
+    // by; the dump starts from the list for the same reason, and since the
+    // title bar is Windows' and named in the machine's language.
+    let list = Live::new(common::named_element(&uia, hwnd, "Options"))
         .refresh(&nodes)
         .expect("the list, read as a node");
     let item = |name: &str| Named {
