@@ -11,8 +11,13 @@
 //! file named for the step (`progress-20` and so on), which the scenario
 //! writes. So every rewrite is new output of its own, never part of a
 //! burst. Verbatim speaks the line the first time, and after that only the
-//! word that changed: "20%", "30%", and so on. The prompt follows the last
-//! step.
+//! word that changed: "20%", "30%", and so on. Steps come less than 2
+//! seconds apart, so from the third the row is volatile: each step is held
+//! until the row has been still for the quiet period, and then spoken
+//! (`docs/design/terminal-model.md`, sections 5.4 and 5.14), before the
+//! scenario writes the next. The script ends the line and the shell
+//! prints the prompt just after the last step, so the prompt, new output,
+//! is spoken at once and "100%" after it, once the quiet period passes.
 
 use std::io;
 
@@ -59,11 +64,14 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
             scenario
                 .speech()
                 .expect(&[&format!("Downloading {percent}%")]);
+        } else if percent == 100 {
+            // The prompt is new output, spoken at once; the volatile row's
+            // last step once it has been still for the quiet period.
+            scenario.speech().expect(&[PROMPT, "100%"]);
         } else {
             scenario.speech().expect(&[&format!("{percent}%")]);
         }
     }
-    scenario.speech().expect(&[PROMPT]);
 }
 
 /// `conhost_progress`.
@@ -88,9 +96,12 @@ pub(crate) fn body_console_host(scenario: &mut Scenario, state: &mut ScenarioSta
             scenario
                 .speech()
                 .expect(&[&format!("Downloading {percent}%")]);
+        } else if percent == 100 {
+            // The prompt is new output, spoken at once; the volatile row's
+            // last step once it has been still for the quiet period.
+            scenario.speech().expect(&[PROMPT, "100%"]);
         } else {
             scenario.speech().expect(&[&format!("{percent}%")]);
         }
     }
-    scenario.speech().expect(&[PROMPT]);
 }
