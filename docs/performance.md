@@ -1477,6 +1477,72 @@ the milliseconds and, for a focus, the microseconds of one clock read.
   pane").
 - Target: the minimum.
 
+### The focus Core holds, told to the judges before a read
+
+Decision D14, "Where the rules run": the focus listener and the outposts
+judge events before they read them against the focus Core holds, which
+Core sends them (`SupervisorToOutpost::CoreFocus`), never against a copy of
+the focus they last reported.
+
+- Minimum: one notice per change of Core's focus to each process that
+  judges against it, and none on the event path's own threads.
+- Today: after every focus event the reducer judges, taken or refused,
+  and every change of its focus, verbatim.exe's reducer thread hands one
+  `OwnerEvent` to the supervisor's owner thread, which writes one
+  `CoreFocus` to the listener and one to the outpost whose event was
+  judged, and, when the focus moved between applications, one to the
+  outpost it left. Before, a taken focus cost one notice to the listener
+  and, on a change of application, one to the outpost left; a refused
+  focus cost none. So each judged focus now costs one message, and one
+  wake-up of the reporting outpost's pipe thread, more than before, and a
+  refused focus two messages and an owner wake-up where it cost none; a
+  focus in an ignored process's window, which Core drops before the
+  reducer, costs the same notices. The outpost's pipe thread takes a lock
+  and replaces the focus it holds, with no call into the application and
+  without waking the worker. The notice to an outpost carries the focus's
+  ancestors (id, backend, role, name, states), allocated once per
+  receiver; the listener's carries none. verbatim.exe compares the
+  focus's owner across each input without copying the focus, and builds
+  the notice only when one is sent.
+- Local calls added: the acceptance test's last part,
+  `acceptance::foreground_relation`, now reads all three of its facts,
+  where the test stopped at the first that held: up to one `GetAncestor`
+  and two `GetWindowLongW` more per accepted event, and `GetGUIThreadInfo`
+  only for a `Windows.UI.Core` window; the outposts' window facts read the
+  same calls they read before. The listener reads one window property
+  (`GetPropW`, with `GetAncestor` for a windowless sender's top-level
+  window) per UIA focus that passes the acceptance test, to drop a focus
+  in Core's hidden frame before its read, which saves that read.
+- Reads added while a focus waits for Core's judgement: a repeated focus
+  is not dropped before its read while a focus the judge sent waits (the
+  listener skips its comparison then, two calls fewer, and reads the
+  focus in full; an outpost reads an MSAA focus in full unless every focus
+  it judges against is the same object), and a change is read when it can
+  be spoken for the focus Core holds or one that waits; Core's own
+  duplicate rule then drops the repeat unspoken. A change of a focus Core
+  no longer holds, as after Core took another application's focus, is now
+  not read, where it was read and dropped by Core before. mockapp's call
+  counts are unchanged, its harness answering each focus as it is read.
+- Measured on 2026-10-25 with `cargo xtask trace scenario
+  rapid_tabbing_in_settings --after 4 --seconds 8`, debug builds staged
+  from copies of each build (`--verbatim-exe`), alternating, two complete
+  runs each: all of Verbatim's processes woken 8,992 and 8,435 times for
+  873 and 816 ms on a processor before, 8,447 and 7,098 times for 809 and
+  775 ms after; the reducer 72 and 65 times before, 76 and 71 after;
+  within the runs' spread. Three runs of the after build staged from its
+  own `target\debug` against three of the before build from a copy had
+  shown 12,767 to 13,307 wake-ups against 6,906 to 8,574; staged the same
+  way the difference is gone, and the outposts' logs of those runs show
+  the same entries and calls, so it came from how the two were staged,
+  not the change. Latency with `cargo xtask measure` over
+  `measure_focus_text_box`, `measure_focus_new_application` and
+  `measure_focus_windows_terminal` (`measure_focus_explorer` failed in
+  both builds, on the desktop's state): a key to its speech queued, median
+  0.6 ms in both, 99th percentile 6.1 ms after and 7.2 ms before.
+- Target: the minimum, but for the reporting outpost's notice of a
+  refused focus, which keeps a refused focus from standing as the focus
+  it judges against.
+
 ### The task switcher's frame
 
 Core refuses the UI Automation focus of the task switcher's frame in
