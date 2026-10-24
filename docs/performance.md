@@ -1325,16 +1325,29 @@ The other costs of holding, none of them a call into an application:
   `SendInput` once the keys ahead of it have gone (one `SendInput` for
   everything that may go at once), and passes through the hook a second
   time, where its tag passes it straight on.
-- Each change of the foreground window costs the hook's thread
-  `GetWindowThreadProcessId`, `OpenProcess`, `OpenProcessToken`, two
-  `GetTokenInformation` and two `CloseHandle`, to learn whether the new
-  window's process has higher integrity than Verbatim's (the guard for
-  elevated windows, `verbatim-input-windows`'s `integrity` module); a key
-  costs none of them.
-- The hook's thread now also wakes for foreground changes among
-  Verbatim's own windows, since its foreground event hook no longer skips
-  Verbatim's process (`WINEVENT_SKIPOWNPROCESS` dropped in `typed.rs`), so
-  that the guard sees Verbatim's own window come to the front.
+- Each change of the foreground window, from any process, costs the
+  focus listener `GetWindowThreadProcessId`, `OpenProcess`,
+  `OpenProcessToken`, two `GetTokenInformation` and two `CloseHandle`,
+  to learn whether the new window's process has higher integrity than
+  Verbatim's (the guard for elevated windows, `verbatim-outpost`'s
+  `integrity` module), and one message to Core
+  (`OutpostToSupervisor::ForegroundWindow`), which the reducer thread
+  decides into the hook's view (`SrState::hook_foreground`) and publishes
+  with one lock-free store when the view changed. The hook's thread
+  hooks no event and is not woken by a foreground change; a key costs
+  none of these. Traced with `cargo xtask trace scenario
+  measure_focus_new_application`, debug build, info logging, runs of
+  the build before this mechanism (d509a240) and after it (7015ae08 with
+  the staging-window change) alternated: over `--after 3 --seconds 20`,
+  the reducer thread was woken 117, 116 and 128 times over 34.1, 30.7
+  and 34.3 ms before and 114, 114 and 122 times over 31.5, 32.3 and 33.7
+  ms after, while the hook's thread went from 77 to 80 wake-ups and 3.2
+  to 3.8 ms to none, and the listener's reading thread from 587 to 688
+  wake-ups to 472 to 665; over `--after 8 --seconds 5`, five runs each,
+  the reducer thread 30 to 38 wake-ups and 7.2 to 9.1 ms before and 24
+  to 41 and 6.1 to 9.3 ms after. The reducer's samples show no time in
+  the foreground's decision or publication, so the change costs the
+  reducer nothing measurable and saves the hook's wake-ups.
 - A held key that waits for the watch of the key ahead of it costs the
   reducer thread one wake-up more, at the wait's bound, 100 ms after the
   key ahead was passed on (`Effect::BoundHeldKeyWait`), whether or not
