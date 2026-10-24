@@ -12,14 +12,24 @@
 //! The written script `phased.ps1` prints "before line 1" to "before line
 //! 30" in one write, so that one read takes all 30 and Core, with a
 //! group's worth of lines waiting, tells the outpost to hold before the
-//! first of them is heard; printed line by line, a read could take some of
+//! first of them is heard; written in pieces, a read could take some of
 //! them, speech start, and the rest arrive with fewer than a group's worth
 //! waiting, so that the outpost read live through the second part's write
-//! and a read landing in the middle of it changed what was said. It then
-//! waits, on its folder's change notifications, for a go file,
-//! and then writes its whole second part, "after line 1" onwards, in one
-//! write. The prompt follows, and counts as a line like any other: the
-//! last 30 lines are 29 after lines and the prompt.
+//! and a read landing in the middle of it changed what was said. That
+//! write is one call of the raw standard output stream's `Write` with the
+//! text encoded in the console's output encoding, which Windows PowerShell
+//! 5.1's console stream passes to one `WriteFile`, unbuffered;
+//! `[Console]::Out` would not do, since it is a `StreamWriter` with a
+//! 256-character buffer and automatic flushing, and so writes the 30 lines
+//! as two. The script then waits, on its folder's change notifications,
+//! for a go file, and then writes its second part, "after line 1" onwards,
+//! with one `[Console]::Out.Write`, which reaches the terminal 256
+//! characters at a time, so that the first read after the go file takes
+//! the second part's first lines. Written with one `WriteFile`, the
+//! console host took all 12,000 lines before the outpost's first read, and
+//! the first line spoken was "after line 3001" (2026-10-25). The prompt
+//! follows, and counts as a line like any other: the last 30 lines are 29
+//! after lines and the prompt.
 //!
 //! The go file is written at one of two points:
 //!
@@ -85,9 +95,10 @@ const FLOOD_STEP: Duration = Duration::from_secs(120);
 /// waits for between the two writes.
 const SECOND_GO_FILE: &str = "phased-go-2";
 
-/// The script: 30 lines, the go file, then `$After` lines in one write; or,
-/// given `$First`, the first `$First` of them in one write, the second go
-/// file, and the rest in another.
+/// The script: 30 lines in one `WriteFile`, the go file, then `$After`
+/// lines in one `[Console]::Out.Write`; or, given `$First`, the first
+/// `$First` of them in one such call, the second go file, and the rest in
+/// another.
 const SCRIPT: &str = "param([int]$After, [int]$First = 0)\r\n\
 function Wait-Go($name) {\r\n\
 \x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $name)\r\n\
@@ -99,7 +110,8 @@ function Write-After($from, $to) {\r\n\
 \x20   [Console]::Out.Write(($lines -join \"`r`n\") + \"`r`n\")\r\n\
 }\r\n\
 $before = foreach ($line in 1..30) { \"before line $line\" }\r\n\
-[Console]::Out.Write(($before -join \"`r`n\") + \"`r`n\")\r\n\
+$bytes = [Console]::OutputEncoding.GetBytes(($before -join \"`r`n\") + \"`r`n\")\r\n\
+[Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)\r\n\
 Wait-Go 'phased-go'\r\n\
 if ($First -gt 0) {\r\n\
 \x20   Write-After 1 $First\r\n\
