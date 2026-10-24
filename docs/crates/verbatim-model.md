@@ -479,7 +479,9 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   change at once again (answer `Terminal(speech)`). Cancel: speech was cut
   off, so read to the end, live again (answer `Terminal(speech)`, of which
   Core speaks only the answers to keys).
-- `TerminalKey(TerminalKey)`: a key reached the focused terminal: its
+- `TerminalKey(TerminalKey)`: a key Core held reached the focused
+  terminal (the keyboard hook's thread tells the outpost of the keys it
+  passes itself, in the outpost's own protocol): its
   `TerminalKeyKind` (`Typed` text, a `Caret` key Verbatim knows with its
   `TerminalUnit`, `Forget` for Enter, Tab, Escape, Control+C, Control+D and
   Control+Break, or `Other`) and `at_ms`, when it reached the program on

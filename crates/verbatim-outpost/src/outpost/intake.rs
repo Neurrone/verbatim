@@ -290,6 +290,9 @@ pub(super) enum Item {
     /// else to do: the focused terminal's quiet period has passed for what
     /// waited for it (`docs/design/terminal-model.md`, section 5.14).
     TerminalTimer,
+    /// A key reached the focused application
+    /// ([`crate::protocol::SupervisorToOutpost::TerminalKey`]).
+    TerminalKey(verbatim_model::TerminalKey),
 }
 
 /// An item with its trace and observation time.
@@ -962,6 +965,32 @@ impl Intake {
         self.ready.notify_one();
     }
 
+    /// Takes out the keys waiting ([`Item::TerminalKey`]), oldest first,
+    /// planned or not: a terminal's read about to begin takes them first,
+    /// since each reached the application before the read began.
+    pub(super) fn take_terminal_keys(&self) -> Vec<verbatim_model::TerminalKey> {
+        let mut state = self.lock();
+        let mut keys = Vec::new();
+        state.batch.retain(|planned| match planned {
+            Planned::Run(Entry {
+                item: Item::TerminalKey(key),
+                ..
+            }) => {
+                keys.push(key.clone());
+                false
+            }
+            _ => true,
+        });
+        state.waiting.retain(|waiting| match &waiting.entry.item {
+            Item::TerminalKey(key) => {
+                keys.push(key.clone());
+                false
+            }
+            _ => true,
+        });
+        keys
+    }
+
     /// Withdraws query `request_id` if it has not started. Returns whether it
     /// was found.
     pub(super) fn cancel(&self, request_id: u64) -> bool {
@@ -1327,7 +1356,8 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         | Item::Settle(_)
         | Item::IdleQuery { .. }
         | Item::Wake
-        | Item::TerminalTimer => (None, Category::Exempt, 0),
+        | Item::TerminalTimer
+        | Item::TerminalKey(_) => (None, Category::Exempt, 0),
     }
 }
 

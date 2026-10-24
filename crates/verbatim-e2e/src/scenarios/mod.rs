@@ -60,6 +60,7 @@ pub(crate) mod terminal_pager;
 pub(crate) mod terminal_progress;
 pub(crate) mod terminal_review_grid;
 pub(crate) mod terminal_review_output;
+pub(crate) mod terminal_review_padding;
 pub(crate) mod terminal_screens;
 pub(crate) mod terminal_settings_page;
 pub(crate) mod terminal_short_output;

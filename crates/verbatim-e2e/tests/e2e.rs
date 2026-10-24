@@ -116,6 +116,8 @@ scenario_tests! {
     conhost_editing
     windows_terminal_review_grid
     conhost_review_grid
+    windows_terminal_review_padding
+    conhost_review_padding
     windows_terminal_progress
     conhost_progress
     windows_terminal_typing

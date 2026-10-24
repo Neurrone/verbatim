@@ -1447,24 +1447,11 @@ fn a_newer_key_or_a_focus_change_supersedes_a_waiting_key() {
 fn caret_keys_are_watched_in_a_terminal_and_not_at_all_without_text() {
     let mut state = SrState::new();
     focus(&mut state, node(7, Role::Terminal, StateSet::new()));
-    // The key is told to the terminal's reading rules first, then watched.
-    let ops: Vec<TextOp> = reduce(&mut state, &key(CaretMotion::PreviousLine, false))
-        .iter()
-        .filter_map(|effect| match own(effect) {
-            Effect::Text(request) => Some(request.op.clone()),
-            _ => None,
-        })
-        .collect();
-    let [TextOp::TerminalKey(told), TextOp::AwaitCaret(watch)] = ops.as_slice() else {
-        panic!("expected the key told and a caret watch, not {ops:?}");
+    let TextOp::AwaitCaret(watch) =
+        request(&reduce(&mut state, &key(CaretMotion::PreviousLine, false))).op
+    else {
+        panic!("expected a caret watch");
     };
-    assert_eq!(
-        told,
-        &verbatim_model::TerminalKey {
-            kind: verbatim_model::TerminalKeyKind::Caret(verbatim_model::TerminalUnit::Line),
-            at_ms: KEY_PRESSED_AT,
-        }
-    );
     assert!(watch.since.is_none(), "no caret known yet");
 
     let mut state = SrState::new();
@@ -1768,6 +1755,40 @@ fn the_review_cursor_meets_each_character_of_a_line_break() {
     let mut state = reviewing("ab", 0);
     let effects = reduce(&mut state, &command(ReviewCommand::ReviewEndOfLine, 0));
     assert_eq!(spoken(&effects), vec![character("b")]);
+}
+
+/// A terminal row's line ends at its last character: padding is never
+/// reviewed (`docs/design/terminal-model.md`, section 5.12), so moving on
+/// from the last character is at the edge, padded or not.
+#[test]
+fn a_terminal_rows_line_ends_at_its_last_character() {
+    for row in [
+        "ab",
+        "ab        
+",
+    ] {
+        let mut state = SrState::new();
+        focus(&mut state, node(15, Role::Terminal, StateSet::new()));
+        caret_event(&mut state, 15, line(row, 400, 1));
+        settle(&mut state, line(row, 400, 1));
+        let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
+        let read = request(&effects);
+        let effects = reduce(
+            &mut state,
+            &completed(
+                read.query_id,
+                TextReply::Read {
+                    moved: 0,
+                    chunk: line(row, 400, 1),
+                },
+            ),
+        );
+        assert_eq!(
+            spoken(&effects),
+            vec![message(Message::Right), character("b")],
+            "{row:?}"
+        );
+    }
 }
 
 #[test]

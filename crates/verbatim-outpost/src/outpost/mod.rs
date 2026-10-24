@@ -1319,6 +1319,12 @@ impl Outpost {
                     .unwrap_or_else(PoisonError::into_inner) = *fetches;
                 context.msaa_registry.set_fetches(*fetches);
             }
+            SupervisorToOutpost::TerminalKey(key) => context.push(
+                Item::TerminalKey(key.clone()),
+                TraceId::mint(),
+                now_ms(),
+                EventTiming::default(),
+            ),
             SupervisorToOutpost::TerminalSettings(settings) => {
                 *context
                     .terminal_settings

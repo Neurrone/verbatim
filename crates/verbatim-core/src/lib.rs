@@ -32,3 +32,4 @@ pub use flight_recorder::FlightRecorder;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::{SNAP_RESULTS_ACTIVITY, is_selection_container, reduce};
 pub use state::SrState;
+pub use terminal::{caret_key_kind, typed_kind};

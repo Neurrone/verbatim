@@ -27,7 +27,7 @@ mod themes;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -300,11 +300,17 @@ fn run(
             .map(|(gesture, _)| gesture),
     ));
 
+    // The outpost of Core's focus when it is a terminal, as its number plus
+    // one, 0 for none: the keyboard hook's thread tells it of each key it
+    // passes on (`docs/design/terminal-model.md`, section 5.5).
+    let terminal_outpost = Arc::new(AtomicU64::new(0));
+
     // The reducer thread: normalized events and review commands in, speech,
     // fetches, text requests, activations, and clipboard copies out.
     {
         let context = ReducerContext {
             holding: Arc::clone(&holding),
+            terminal_outpost: Arc::clone(&terminal_outpost),
             clipboard: clipboard::Clipboard::start(Arc::clone(&manager))?,
             manager: Arc::clone(&manager),
             supervisor: Arc::clone(&supervisor),
@@ -390,6 +396,29 @@ fn run(
     let caret_keys: HashMap<GestureId, CaretKey> =
         verbatim_input::caret_bindings().into_iter().collect();
     let clearing_keys: HashSet<GestureId> = verbatim_input::clearing_keys().into_iter().collect();
+    // Tells the focused terminal's outpost of a key the hook passes, as the
+    // hook reports it and before the key is passed on, so it reaches the
+    // outpost ahead of what the terminal shows of it; a key held back is
+    // told by Core as it passes it on.
+    let terminal_key = {
+        let supervisor = Arc::clone(&supervisor);
+        let terminal_outpost = Arc::clone(&terminal_outpost);
+        move |kind: verbatim_model::TerminalKeyKind, pressed_at_us: u64| {
+            let Some(outpost) = terminal_outpost.load(Ordering::Relaxed).checked_sub(1) else {
+                return;
+            };
+            let key = verbatim_model::TerminalKey {
+                kind,
+                at_ms: pressed_at_us / 1_000,
+            };
+            if let Err(error) = supervisor.send_to_outpost(
+                verbatim_model::OutpostId(outpost),
+                SupervisorToOutpost::TerminalKey(key),
+            ) {
+                tracing::debug!(%error, outpost, "a key was not told to the terminal's outpost");
+            }
+        }
+    };
     let hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
@@ -409,15 +438,20 @@ fn run(
                     gesture,
                     pressed_at_us,
                 } => match caret_keys.get(&gesture.gesture) {
-                    Some(&key) => ShellCommand::CaretKey {
-                        input: Box::new(Input::CaretKey {
-                            trace_id: gesture.trace_id,
-                            key,
-                            pressed_at_ms: pressed_at_us / 1_000,
-                        }),
-                        pressed_at_us,
-                    },
+                    Some(&key) => {
+                        terminal_key(verbatim_core::caret_key_kind(key), pressed_at_us);
+                        ShellCommand::CaretKey {
+                            input: Box::new(Input::CaretKey {
+                                trace_id: gesture.trace_id,
+                                key,
+                                pressed_at_ms: pressed_at_us / 1_000,
+                            }),
+                            pressed_at_us,
+                        }
+                    }
                     None if clearing_keys.contains(&gesture.gesture) => {
+                        terminal_key(verbatim_model::TerminalKeyKind::Forget, pressed_at_us);
+                        terminal_key(verbatim_model::TerminalKeyKind::Other, pressed_at_us);
                         // The typing held is forgotten first; then the key
                         // is judged like any other (Escape clearing a line
                         // speaks what it removed).
@@ -465,26 +499,32 @@ fn run(
                 KeyReport::Passed {
                     trace_id,
                     pressed_at_us,
-                } => ShellCommand::CaretKey {
-                    input: Box::new(Input::CaretKey {
-                        trace_id,
-                        key: CaretKey {
-                            motion: verbatim_model::CaretMotion::Other,
-                            select: false,
-                        },
-                        pressed_at_ms: pressed_at_us / 1_000,
-                    }),
-                    pressed_at_us,
-                },
+                } => {
+                    terminal_key(verbatim_model::TerminalKeyKind::Other, pressed_at_us);
+                    ShellCommand::CaretKey {
+                        input: Box::new(Input::CaretKey {
+                            trace_id,
+                            key: CaretKey {
+                                motion: verbatim_model::CaretMotion::Other,
+                                select: false,
+                            },
+                            pressed_at_ms: pressed_at_us / 1_000,
+                        }),
+                        pressed_at_us,
+                    }
+                }
                 KeyReport::Typed {
                     trace_id,
                     text,
                     pressed_at_us,
-                } => ShellCommand::Input(Box::new(Input::CharacterTyped {
-                    trace_id,
-                    text,
-                    at_ms: pressed_at_us / 1_000,
-                })),
+                } => {
+                    terminal_key(verbatim_core::typed_kind(&text), pressed_at_us);
+                    ShellCommand::Input(Box::new(Input::CharacterTyped {
+                        trace_id,
+                        text,
+                        at_ms: pressed_at_us / 1_000,
+                    }))
+                }
             };
             let _ = reports_tx.send(command);
         }),
@@ -970,6 +1010,9 @@ struct ReducerContext {
     /// Whether the keyboard hook holds caret keys back, set from Core's
     /// focus after each input.
     holding: Arc<KeyHolding>,
+    /// The outpost of Core's focus when it is a terminal, its number plus
+    /// one, 0 for none, set after each input.
+    terminal_outpost: Arc<AtomicU64>,
     manager: Arc<SpeechManager>,
     /// Where copies to the clipboard are made, off the reducer thread.
     clipboard: clipboard::Clipboard,
@@ -1627,6 +1670,12 @@ impl ReducerThread<'_> {
         }
         self.context.ledger.reduced(trace_id);
         self.context.holding.set(self.state.holds_caret_keys());
+        self.context.terminal_outpost.store(
+            self.state
+                .terminal_outpost()
+                .map_or(0, |outpost| outpost.0 + 1),
+            Ordering::Relaxed,
+        );
         {
             let mut recorder = self
                 .context

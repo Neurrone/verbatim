@@ -759,12 +759,25 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
     assert_eq!(spoken(&effects), Vec::<String>::new());
 }
 
+/// `effect`, or the effect it carries on a key's behalf.
+fn own(effect: &Effect) -> &Effect {
+    match effect {
+        Effect::ForKey(_, effect) => effect,
+        effect => effect,
+    }
+}
+
+/// The keys the hook passes itself are told to the terminal's outpost by
+/// the hook's thread (`verbatim-app`); Core tells it of a key it held, as it
+/// passes the key on, taken as reaching the program just after the read
+/// before it.
 #[test]
-fn every_key_that_reaches_the_terminal_is_told_to_its_outpost() {
+fn a_held_key_is_told_to_the_terminals_outpost_as_it_is_passed_on() {
     let mut state = terminal();
     let told = |effects: &[Effect]| -> Vec<TerminalKey> {
         effects
             .iter()
+            .map(own)
             .filter_map(|effect| match effect {
                 Effect::Text(TextRequest {
                     op: TextOp::TerminalKey(key),
@@ -775,25 +788,10 @@ fn every_key_that_reaches_the_terminal_is_told_to_its_outpost() {
             })
             .collect()
     };
-    let effects = reduce(&mut state, &typed("a"));
-    assert_eq!(
-        told(&effects),
-        [TerminalKey {
-            kind: TerminalKeyKind::Typed("a".to_owned()),
-            at_ms: 1_000,
-        }]
-    );
-    let effects = reduce(&mut state, &typed("\r"));
-    assert_eq!(
-        told(&effects),
-        [TerminalKey {
-            kind: TerminalKeyKind::Forget,
-            at_ms: 1_000,
-        }]
-    );
+    assert_eq!(told(&reduce(&mut state, &typed("a"))), []);
     let effects = reduce(
         &mut state,
-        &Input::CaretKey {
+        &Input::HeldKey {
             trace_id: TraceId::mint(),
             key: CaretKey {
                 motion: CaretMotion::PreviousLine,
@@ -802,25 +800,27 @@ fn every_key_that_reaches_the_terminal_is_told_to_its_outpost() {
             pressed_at_ms: 2_000,
         },
     );
-    assert_eq!(
-        told(&effects),
-        [TerminalKey {
-            kind: TerminalKeyKind::Caret(TerminalUnit::Line),
-            at_ms: 2_000,
-        }]
-    );
+    let Some(Effect::Text(TextRequest {
+        query_id,
+        op: TextOp::ReadCaret,
+        ..
+    })) = effects.first().map(own)
+    else {
+        panic!("the caret is read before the held key, not {effects:?}");
+    };
     let effects = reduce(
         &mut state,
-        &Input::ClearingKey {
+        &Input::TextCompleted {
             trace_id: TraceId::mint(),
-            at_ms: 3_000,
+            query_id: *query_id,
+            reply: TextReply::Unanswered,
         },
     );
     assert_eq!(
         told(&effects),
         [TerminalKey {
-            kind: TerminalKeyKind::Forget,
-            at_ms: 3_000,
+            kind: TerminalKeyKind::Caret(TerminalUnit::Line),
+            at_ms: 2_000,
         }]
     );
 }

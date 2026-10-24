@@ -106,6 +106,8 @@
 //!   [`terminal_flood`](crate::scenarios::terminal_flood)), editing
 //!   ([`terminal_editing`](crate::scenarios::terminal_editing)), review grid
 //!   ([`terminal_review_grid`](crate::scenarios::terminal_review_grid)),
+//!   review along a short row
+//!   ([`terminal_review_padding`](crate::scenarios::terminal_review_padding)),
 //!   progress ([`terminal_progress`](crate::scenarios::terminal_progress)),
 //!   typing the terminal does not show plainly ([`terminal_typing`](crate::scenarios::terminal_typing)),
 //!   short output
@@ -168,8 +170,8 @@ use crate::scenarios::{
     system_information_tree, terminal_commands, terminal_editing, terminal_flood,
     terminal_flood_kinds, terminal_footer, terminal_key_timing, terminal_lists, terminal_overflow,
     terminal_pager, terminal_progress, terminal_review_grid, terminal_review_output,
-    terminal_screens, terminal_settings_page, terminal_short_output, terminal_typing,
-    terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
+    terminal_review_padding, terminal_screens, terminal_settings_page, terminal_short_output,
+    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -1317,6 +1319,28 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: terminal_review_grid::setup_console_host,
         body: terminal_review_grid::body_console_host,
         teardown: terminal_review_grid::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_review_padding",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: terminal_review_padding::setup_windows_terminal,
+        body: terminal_review_padding::body_windows_terminal,
+        teardown: terminal_review_padding::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_review_padding",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: terminal_review_padding::setup_console_host,
+        body: terminal_review_padding::body_console_host,
+        teardown: terminal_review_padding::teardown,
     },
     ScenarioDef {
         name: "windows_terminal_progress",

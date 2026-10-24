@@ -14,10 +14,11 @@
 //! of any output. Text is sent without padding, and a line whole, however
 //! long (Dickson, 2026-10-07); Core bounds what it keeps waiting.
 //!
-//! Core tells the outpost of every key that reaches a focused terminal
-//! ([`TerminalKey`], in [`crate::TextOp::TerminalKey`]), with when it reached
-//! the program, since the rules judge which read a key's effects can be in
-//! by that time (section 5.5).
+//! The outpost is told of every key that reaches a focused terminal
+//! ([`TerminalKey`]), with when it reached the program, since the rules
+//! judge which read a key's effects can be in by that time (section 5.5):
+//! by the keyboard hook's thread for a key it passes itself, and by Core,
+//! in [`crate::TextOp::TerminalKey`], for a key it held.
 
 use serde::{Deserialize, Serialize};
 

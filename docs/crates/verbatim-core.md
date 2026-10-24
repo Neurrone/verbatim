@@ -758,17 +758,17 @@ anything but the focus is ignored.
   speech carries says nothing more. A caret key's watch's answer in a
   terminal keeps Core's caret current and says nothing, the reading rules
   having answered the key.
-- Every key that reaches a focused terminal is told to its outpost
-  (`TextOp::TerminalKey`, not waited for): text typed (`Typed`, or `Forget`
-  for Enter and Tab, `Other` for a control character), a caret key by its
-  unit (`terminal::caret_key_kind`: the arrows left and right, Home and End
-  a character; Control with them a word; the arrows up and down, the page
+- A key Core held is told to the focused terminal's outpost as Core
+  passes it on (`TextOp::TerminalKey`, not waited for), before its watch is
+  asked for, taken as reaching the program just after the read before it;
+  the keyboard hook's thread tells the outpost of every key it passes
+  itself (`verbatim-app`), with what a key is to the reading rules worked
+  out here (`caret_key_kind`: the arrows left and right, Home and End a
+  character; Control with them a word; the arrows up and down, the page
   keys, Control with Home and End or the arrows up and down a line; any
-  other `Other`), and a clearing key (`Forget`), each with when it reached
-  the program (`Input::CharacterTyped::at_ms`, `Input::ClearingKey::at_ms`,
-  `Input::CaretKey::pressed_at_ms`; a key that waited behind a held key
-  taken as reaching it no earlier than that key was passed on), told
-  before the key's watch is asked for.
+  other `Other`; `typed_kind`: text typed, `Forget` for Enter and Tab,
+  `Other` for a control character), and from `SrState::terminal_outpost`,
+  the focused terminal's outpost.
 - The review cursor in a terminal follows the caret only when the
   outpost's reading rules say a key moved it within its window
   (`TerminalSpeech::followed`): the next review command then reads at the

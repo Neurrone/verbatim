@@ -62,10 +62,12 @@ mod harness;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
     CaretWatch, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, TerminalItem,
-    TerminalSpeech, TextOp, TextPosition, TextReply, TextUnit,
+    TerminalKey, TerminalKeyKind, TerminalSpeech, TextOp, TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::protocol::DeliveredFact;
-use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
+use verbatim_outpost::protocol::{
+    OutpostToSupervisor, Query, QueryOutcome, QueryResult, SupervisorToOutpost,
+};
 use verbatim_outpost::{Heard, OutpostOptions};
 use verbatim_uia::{Cached, ListenerEvent, Uia};
 use windows::Win32::Foundation::HWND;
@@ -728,9 +730,52 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     app.quit();
 }
 
+/// A key the keyboard hook's thread tells the outpost of
+/// (`SupervisorToOutpost::TerminalKey`) reaches the focused terminal's
+/// reading rules, ahead of the text change that shows it: the terminal
+/// showing the typed character at the caret is its echo, and the review
+/// cursor follows the caret the key moved.
+fn a_key_told_by_the_hook_is_echoed_when_the_terminal_shows_it() {
+    let (mut app, outpost, term) = start("mockapp-terminal-key-echo");
+    let row = WIDTH + 2;
+    app.send(&format!("caret term {}", 2 * row + 6));
+    app.send("caret-event term");
+    caret_read(&outpost, term);
+    outpost.settled();
+    outpost
+        .outpost
+        .handle_command(&SupervisorToOutpost::TerminalKey(TerminalKey {
+            kind: TerminalKeyKind::Typed("x".to_owned()),
+            at_ms: verbatim_outpost::protocol::now_us() / 1_000,
+        }));
+    app.send(&format!(
+        "set-text term {}",
+        terminal_text(&["one", "two", "ready>x"])
+    ));
+    app.send(&format!("caret term {}", 2 * row + 7));
+    app.send("text-changed term");
+    assert_eq!(
+        reported_after_caret(&outpost, term),
+        TerminalSpeech {
+            items: vec![TerminalItem::Echo("x".to_owned())],
+            // The key moved the caret within its window, and the review
+            // cursor follows it (`docs/design/terminal-model.md`, section
+            // 5.6).
+            followed: true,
+        }
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_key_told_by_the_hook_is_echoed_when_the_terminal_shows_it",
+            a_key_told_by_the_hook_is_echoed_when_the_terminal_shows_it,
+        ),
         (
             "a_focus_now_terminal_reports_its_output",
             a_focus_now_terminal_reports_its_output,

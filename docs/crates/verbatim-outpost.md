@@ -2582,10 +2582,16 @@ it.
   (`text::same_caret`), is not sent again, unless the read answers Core's
   request. The read is stamped with when it began, so output read before a
   key's cut is never spoken after it.
-- Keys. Core tells the outpost of every key that reaches a focused
-  terminal (`TextOp::TerminalKey`, answered `Done`): a typed character, a
-  caret key Verbatim knows with its unit, a key that forgets typing not yet
-  shown, or any other, with when it reached the program. The rules open the
+- Keys. The outpost is told of every key that reaches a focused terminal:
+  a typed character, a caret key Verbatim knows with its unit, a key that
+  forgets typing not yet shown, or any other, with when it reached the
+  program. The keyboard hook's thread in `verbatim.exe` tells it of each
+  key it passes itself, as it reports the key and before passing it on
+  (`SupervisorToOutpost::TerminalKey`, queued as `Item::TerminalKey`), so
+  the key arrives ahead of what the terminal shows of it; Core tells it of
+  a key it held, as it passes the key on (`TextOp::TerminalKey`, answered
+  `Done`). A read about to begin first takes every key still waiting in the
+  intake (`Intake::take_terminal_keys`). The rules open the
   key's window, 300 milliseconds in which reads can carry its effects
   (section 5.5), and the next read takes the colours. A typed character
   the terminal does not show within 300 milliseconds is dropped at the next
@@ -2596,11 +2602,12 @@ it.
   before the key; the watch's evidence, a caret event or a text change,
   then reads the terminal, and the rules' answer to the key is the key's
   speech. The watch's own answer keeps Core's caret current and says
-  nothing in a terminal. The time a key's report reaches the outpost and
-  the time the program shows its effect race for a key that is not held:
-  a read that began after a typed character reached the program but was
-  handled before the character's report arrived speaks the echo as the
-  line's growth instead, the same text.
+  nothing in a terminal. A key that is not held still races its report:
+  the report is written to the outpost's pipe by the supervisor's writer
+  thread just as the program receives the key, so a read that began after
+  the program showed the key but was handled before the report arrived
+  would take the echo for the line's growth, the same text spoken as
+  output once the quiet period passes.
 - The quiet-period timer (section 5.14): the rules say when what waits for
   the quiet period is due (a volatile row to settle, a growing line's
   unfinished word, rows a key changed waiting for the keys to pause); the

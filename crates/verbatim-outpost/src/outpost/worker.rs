@@ -931,7 +931,8 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::Settle(_)
         | Item::IdleQuery { .. }
         | Item::Wake
-        | Item::TerminalTimer => (HANDLING_DEADLINE, None),
+        | Item::TerminalTimer
+        | Item::TerminalKey(_) => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -962,6 +963,7 @@ fn describe(item: &Item) -> String {
         Item::IdleQuery { round, .. } => format!("idle query {round}"),
         Item::Wake => "wake".to_owned(),
         Item::TerminalTimer => "terminal timer".to_owned(),
+        Item::TerminalKey(key) => format!("terminal key {key:?}"),
     }
 }
 
@@ -1161,6 +1163,14 @@ impl Worker<'_> {
             } => self.idle_query(round, behind_noted, trace),
             Item::Wake => self.wake(),
             Item::TerminalTimer => self.terminal_timer(trace),
+            Item::TerminalKey(key) => {
+                // The tracking's lock is let go before the key is taken,
+                // which takes it again.
+                let focus = self.context.tracking().focus;
+                if let Some(node_id) = focus {
+                    self.terminal_key(node_id, &key, trace);
+                }
+            }
         }
     }
 
@@ -1733,6 +1743,11 @@ impl Worker<'_> {
         waited: bool,
         (trace, observed_at_ms): (TraceId, u64),
     ) {
+        // Keys that reached the application before the read began are taken
+        // first, wherever they wait.
+        for key in self.context.intake.take_terminal_keys() {
+            self.terminal_key(node_id, &key, trace);
+        }
         let Some(uia) = self.client.uia() else {
             if let Some(request) = owed {
                 self.reply_terminal(request, TerminalSpeech::default());

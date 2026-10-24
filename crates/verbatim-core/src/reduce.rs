@@ -145,12 +145,13 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::CaretKey {
             key, pressed_at_ms, ..
         } => editing::caret_key(state, *key, *pressed_at_ms),
-        Input::CharacterTyped {
-            trace_id,
-            text,
-            at_ms,
-        } => editing::character_typed(state, *trace_id, text, *at_ms),
-        Input::ClearingKey { at_ms, .. } => editing::clearing_key(state, *at_ms),
+        Input::CharacterTyped { trace_id, text, .. } => {
+            editing::character_typed(state, *trace_id, text)
+        }
+        Input::ClearingKey { .. } => {
+            editing::clearing_key(state);
+            Vec::new()
+        }
         _ => Vec::new(),
     }
 }

@@ -100,13 +100,6 @@ pub(crate) fn position_in(text: &str, offset: usize, grid: bool) -> usize {
     }
 }
 
-/// The width of a terminal row in cells: its text without the line break,
-/// padding included, so the review cursor can move across the blank cells
-/// at its end.
-pub(crate) fn row_width(text: &str) -> usize {
-    verbatim_text::cell_width(text.trim_end_matches(is_line_break))
-}
-
 /// `offset` as a character boundary of `text`: at most its length, and
 /// moved back to the start of a character it falls inside. An outpost
 /// promises boundaries; this keeps a broken promise from panicking Core.
@@ -547,7 +540,6 @@ mod tests {
         assert_eq!(line_content("abc\u{2029}", false), "abc");
         assert_eq!(line_content("abc  \n", false), "abc  ");
         assert_eq!(line_content("abc  \n", true), "abc");
-        assert_eq!(row_width("abc  \r\n"), 5);
     }
 
     #[test]

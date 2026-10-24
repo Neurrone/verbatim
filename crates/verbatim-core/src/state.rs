@@ -759,6 +759,17 @@ impl SrState {
         self.settings
     }
 
+    /// The outpost of the focus when it is a terminal, which the keyboard
+    /// hook's thread tells of each key it passes on
+    /// (`docs/design/terminal-model.md`, section 5.5).
+    #[must_use]
+    pub fn terminal_outpost(&self) -> Option<verbatim_model::OutpostId> {
+        self.focus
+            .as_ref()
+            .filter(|focus| focus.alive && focus.snapshot.role == verbatim_model::Role::Terminal)
+            .map(|focus| focus.snapshot.id.outpost())
+    }
+
     /// The terminal reading rules' settings, which the outposts apply
     /// (`docs/design/terminal-model.md`, section 5): "report new output",
     /// "review follows caret", and the flood policy's limits, clamped by

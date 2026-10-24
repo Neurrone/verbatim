@@ -847,7 +847,10 @@ closes the second tab and hears the first's terminal and prompt.
 
 The review-output scenarios (`scenarios/terminal_review_output.rs`)
 review a line above the caret, let a script print two lines, and hear the
-review cursor follow the caret to the prompt. The footer-flood scenarios
+review cursor follow the caret to the prompt. The review-padding
+scenarios (`scenarios/terminal_review_padding.rs`) move the review cursor
+along a short printed row and hear it stop at the row's last character,
+"Right b", padding never being reviewed. The footer-flood scenarios
 (`scenarios/terminal_footer.rs`) write a hundred lines into a scroll
 region above a footer that is redrawn during the flood and changed after
 it: the flood policy's thirty lines, "skipped 41 lines", the last

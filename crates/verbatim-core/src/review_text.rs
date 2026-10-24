@@ -291,13 +291,13 @@ fn execute(
         ReviewCommand::ReviewNextCharacter => {
             let character = text::character_at(&line.text, position.offset, grid);
             if grid {
-                // Cells, up to the row's width, padding included.
+                // Cells, up to the row's last character: padding is never
+                // reviewed (`docs/design/terminal-model.md`, section 5.12).
+                // A cell past the text, where moving down a column leaves
+                // the cursor, is at the edge already.
                 let next = position.column
                     + character.map_or(1, |character| verbatim_text::cell_width(character).max(1));
-                if next
-                    >= text::row_width(&line.text)
-                        .max(text::column_of(content, content.len(), true) + 1)
-                {
+                if next >= text::column_of(content, content.len(), true) {
                     return edge(trace_id, Message::Right, character, language);
                 }
                 return move_column(state, trace_id, position, next, grid);

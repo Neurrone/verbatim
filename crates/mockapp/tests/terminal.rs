@@ -13,7 +13,8 @@
 //! line, and the read costs one call remotely; and a terminal whose text
 //! changes with no caret event, as the console host's does while typing,
 //! has the reading rules echo the typing and say what Backspace deleted,
-//! Core speaking it, with the keys told to the outpost as Core tells them.
+//! Core speaking it, with the keys told to the terminal as the keyboard
+//! hook's thread tells its outpost.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -179,24 +180,16 @@ fn terminal_node() -> NodeId {
     NodeId::in_outpost(OutpostId(1), 1)
 }
 
-/// What Core spoke of `effects`, and the keys it told the terminal, which
-/// the terminal takes; a caret key's watch is answered, as the outpost
-/// answers one, with nothing Core speaks.
-fn handle(
-    state: &mut SrState,
-    terminal: &mut Terminal,
-    effects: Vec<Effect>,
-    spoken: &mut Vec<Vec<SegmentContent>>,
-) {
+/// What Core spoke of `effects`; a caret key's watch is answered, as the
+/// outpost answers one when the reading rules answer the key, with nothing
+/// Core speaks.
+fn handle(state: &mut SrState, effects: Vec<Effect>, spoken: &mut Vec<Vec<SegmentContent>>) {
     let mut pending = effects;
     while !pending.is_empty() {
         let mut inputs = Vec::new();
         for effect in pending {
             match effect {
                 Effect::Text(request) => match &request.op {
-                    TextOp::TerminalKey(key) => {
-                        assert!(terminal.key(key).is_empty(), "a key alone says nothing");
-                    }
                     TextOp::AwaitCaret(_) => inputs.push(Input::TextCompleted {
                         trace_id: TraceId::mint(),
                         query_id: request.query_id,
@@ -219,6 +212,13 @@ fn handle(
             .flat_map(|input| reduce(state, input))
             .collect();
     }
+}
+
+/// Tells the terminal of a key that reached it at `at_ms`, as the keyboard
+/// hook's thread tells its outpost of a key it passes on.
+fn tell(terminal: &mut Terminal, kind: verbatim_model::TerminalKeyKind, at_ms: u64) {
+    let speech = terminal.key(&verbatim_model::TerminalKey { kind, at_ms });
+    assert!(speech.is_empty(), "a key alone says nothing");
 }
 
 /// What the terminal said, given to Core.
@@ -281,38 +281,47 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
     let mut spoken = Vec::new();
     let mut prompt = "ready>".to_owned();
     for character in ["h", "e", "l", "o"] {
+        let at_ms = now_us() / 1_000;
+        tell(&mut terminal, verbatim_core::typed_kind(character), at_ms);
         let effects = reduce(
             &mut state,
             &Input::CharacterTyped {
                 trace_id: TraceId::mint(),
                 text: character.to_owned(),
-                at_ms: now_us() / 1_000,
+                at_ms,
             },
         );
-        handle(&mut state, &mut terminal, effects, &mut spoken);
+        handle(&mut state, effects, &mut spoken);
         prompt.push_str(character);
         show(&mut app, hwnd, &["one", "two", &prompt]);
         let speech = read_terminal(&uia, &source, &mut terminal, remote);
         let effects = reduce(&mut state, &said(speech, now_us() / 1_000));
-        handle(&mut state, &mut terminal, effects, &mut spoken);
+        handle(&mut state, effects, &mut spoken);
     }
+    let at_ms = now_us() / 1_000;
+    let backspace = CaretKey {
+        motion: CaretMotion::Backspace,
+        select: false,
+    };
+    tell(
+        &mut terminal,
+        verbatim_core::caret_key_kind(backspace),
+        at_ms,
+    );
     let effects = reduce(
         &mut state,
         &Input::CaretKey {
             trace_id: TraceId::mint(),
-            key: CaretKey {
-                motion: CaretMotion::Backspace,
-                select: false,
-            },
-            pressed_at_ms: now_us() / 1_000,
+            key: backspace,
+            pressed_at_ms: at_ms,
         },
     );
-    handle(&mut state, &mut terminal, effects, &mut spoken);
+    handle(&mut state, effects, &mut spoken);
     prompt.pop();
     show(&mut app, hwnd, &["one", "two", &prompt]);
     let speech = read_terminal(&uia, &source, &mut terminal, remote);
     let effects = reduce(&mut state, &said(speech, now_us() / 1_000));
-    handle(&mut state, &mut terminal, effects, &mut spoken);
+    handle(&mut state, effects, &mut spoken);
     let character = |text: &str| vec![SegmentContent::Character(text.to_owned())];
     assert_eq!(
         spoken,

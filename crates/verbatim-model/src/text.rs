@@ -642,9 +642,11 @@ pub enum TextOp {
     /// once again. Answered [`TextReply::Terminal`], whose answers to keys
     /// Core speaks and whose output it drops.
     TerminalCancel,
-    /// A key reached the focused terminal (`docs/design/terminal-model.md`,
-    /// section 5.5): the outpost's reading rules open the key's window and
-    /// read the colours with the next read. Answered [`TextReply::Done`].
+    /// A key Core held reached the focused terminal as Core passed it on
+    /// (`docs/design/terminal-model.md`, section 5.5): the outpost's
+    /// reading rules open the key's window and read the colours with the
+    /// next read. The keyboard hook's thread tells the outpost of the keys
+    /// it passes itself. Answered [`TextReply::Done`].
     TerminalKey(crate::TerminalKey),
 }
 

@@ -43,10 +43,12 @@
 //!   while holding tells the outpost to read to the end without speaking
 //!   ([`TextOp::TerminalCancel`]); of what was read before a cut, still on
 //!   its way, only the answers to keys are spoken.
-//! - Every key that reaches a focused terminal is told to its outpost
-//!   ([`TextOp::TerminalKey`]), with when it reached the program, since
-//!   the reading rules judge by that time which reads a key's effects can
-//!   be in (section 5.5).
+//! - Every key that reaches a focused terminal is told to its outpost, with
+//!   when it reached the program, since the reading rules judge by that
+//!   time which reads a key's effects can be in (section 5.5): the keyboard
+//!   hook's thread tells it of each key it passes itself, before passing
+//!   it on, and Core of a key it held, as it passes it on
+//!   ([`TextOp::TerminalKey`]).
 
 use std::collections::VecDeque;
 
@@ -189,7 +191,8 @@ pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64) -> Vec
 
 /// What a caret key is to the reading rules: one Verbatim knows, by the
 /// unit it moves by, or any other (section 5.5).
-pub(crate) fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
+#[must_use]
+pub fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
     match key.motion {
         CaretMotion::PreviousCharacter
         | CaretMotion::NextCharacter
@@ -213,7 +216,8 @@ pub(crate) fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
 /// What text typed is to the reading rules: Enter and Tab forget the
 /// typing not yet shown, and so does a control character, which types
 /// nothing the terminal shows as itself; anything else is typed.
-pub(crate) fn typed_kind(typed: &str) -> TerminalKeyKind {
+#[must_use]
+pub fn typed_kind(typed: &str) -> TerminalKeyKind {
     if typed.chars().any(|c| matches!(c, '\r' | '\n' | '\t')) {
         TerminalKeyKind::Forget
     } else if typed.chars().any(char::is_control) {
