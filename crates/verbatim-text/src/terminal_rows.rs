@@ -745,16 +745,14 @@ impl TerminalMemory {
                 ..shape
             };
         }
-        // The remembered history holds only rows the buffer still holds: a
-        // start refused because the document shrank empties it ("The
-        // memory").
-        let mut current = current;
-        if whole && refused {
-            current.known.clear();
-            current.unknown_above = None;
-        }
+        // The buffer is full when the document is no shorter than before
+        // while its first row, a row of the history at the last read,
+        // changed, as only a full buffer's does ("Screens").
+        let full = !current.no_history
+            && hash(&read.first_row) != current.first_row
+            && rows.len() >= current.document_rows();
         let aligned = if whole {
-            align_whole(&current, (&rows, height), read, caret)
+            align_whole(&current, (&rows, height), read, caret, full)
         } else {
             align_read(&current, &rows, read, caret)
         };
@@ -773,17 +771,16 @@ impl TerminalMemory {
         // A read that reached the document's start is whole already, and is
         // aligned as a whole read when it would have been asked for.
         let (aligned, whole) = if aligned.lost() && moved {
-            (align_whole(&current, (&rows, height), read, caret), true)
+            (
+                align_whole(&current, (&rows, height), read, caret, full),
+                true,
+            )
         } else {
             (aligned, whole)
         };
         // Output may have been lost only when a whole document holds
-        // nothing of the remembered history and the buffer is full: no
-        // shorter than before, while its first row, a row of the history at
-        // the last read, changed, as only a full buffer's does ("Screens").
-        let full = !current.no_history
-            && hash(&read.first_row) != current.first_row
-            && rows.len() >= current.document_rows();
+        // nothing of the remembered history and the buffer is full
+        // ("Screens").
         let shape = Outcome {
             overflowed: whole && !aligned.matched && full,
             ..shape
@@ -1024,9 +1021,8 @@ struct Aligned {
     /// less its index in the memory.
     fixed: isize,
     rotation: usize,
-    /// Whether the last read had a row with text at or above the caret, and
-    /// whether one of them was kept.
-    had_caret_text: bool,
+    /// Whether a row with text the last read had at or above the caret was
+    /// kept.
     kept_caret: bool,
     /// Whether a row with text of the memory was kept.
     kept_text: bool,
@@ -1042,9 +1038,10 @@ struct Aligned {
 
 impl Aligned {
     /// Whether the read keeps no row with text that the last read had at or
-    /// above the caret ("The read").
+    /// above the caret ("The read"), which holds too when the last read had
+    /// none.
     fn lost(&self) -> bool {
-        self.had_caret_text && !self.kept_caret
+        !self.kept_caret
     }
 
     /// What became of each row of the last read, counted from its first:
@@ -1268,6 +1265,7 @@ fn align_whole(
     (rows, height): (&[Row], usize),
     read: &Read,
     caret: Option<usize>,
+    full: bool,
 ) -> Aligned {
     let old = &memory.rows;
     let history = memory.screen_start();
@@ -1292,31 +1290,49 @@ fn align_whole(
     // nothing. The visible screen is judged against the last read only.
     let screen = rows.len().saturating_sub(height);
     let top = pairs.first().map_or(rows.len(), |&(_, to)| to).min(screen);
-    let blank = hash("");
-    // The old rows above the last read's screen are history too: the
-    // remembered history followed by the last read's rows above its screen
-    // that the subsequence did not keep.
-    let kept_old: HashSet<usize> = pairs.iter().map(|&(from, _)| from).collect();
-    let known: Vec<u64> = memory
+    // The rows above the visible screen that, from the document's first
+    // row, continue the old history in order are history: the remembered
+    // history followed by the last read's rows above its screen, where the
+    // remembered history starts `unknown_above` rows down the document,
+    // shifted up as a full history moves up. Every other row there is new
+    // ("The alignment").
+    let old_history: Vec<u64> = memory
         .known
         .iter()
-        .map(|&hash| if hash == blank { UNREAD } else { hash })
-        .chain((0..history.min(old.len())).map(|from| {
-            if old[from].is_blank() || kept_old.contains(&from) {
-                UNREAD
-            } else {
-                old[from].hash
-            }
-        }))
+        .copied()
+        .chain(old[..history.min(old.len())].iter().map(|row| row.hash))
         .collect();
-    let new: Vec<u64> = rows[..top]
-        .iter()
-        .map(|row| if row.is_blank() { UNREAD } else { row.hash })
-        .collect();
-    let shown: Vec<usize> = align::histogram(&known, &new, UNREAD)
-        .into_iter()
-        .map(|(_, to)| to)
-        .collect();
+    let start = memory.unknown_above.unwrap_or(0);
+    let first = rows.first().map(|row| row.hash);
+    let shift = if full {
+        old_history
+            .iter()
+            .position(|&hash| Some(hash) == first && hash != UNREAD)
+            .map(|at| isize_of(at) - isize_of(start))
+    } else {
+        Some(-isize_of(start))
+    };
+    // In order, by the histogram diff over the hashes, from where the
+    // document's first row falls in the old history: a reprint with a line
+    // taken out leaves the rest in order. Blank rows match nothing.
+    let mut shown = Vec::new();
+    if let Some(shift) = shift {
+        let from = usize::try_from(shift).unwrap_or(0).min(old_history.len());
+        let skipped = usize::try_from(-shift).unwrap_or(0).min(top);
+        let blank = hash("");
+        let old_rest: Vec<u64> = old_history[from..]
+            .iter()
+            .map(|&hash| if hash == blank { UNREAD } else { hash })
+            .collect();
+        let new_rest: Vec<u64> = rows[skipped..top]
+            .iter()
+            .map(|row| if row.is_blank() { UNREAD } else { row.hash })
+            .collect();
+        shown = align::histogram(&old_rest, &new_rest, UNREAD)
+            .into_iter()
+            .map(|(_, to)| to + skipped)
+            .collect();
+    }
     // A row that did not move is where most rows went, so that the fewest
     // rows move; on a tie, where the topmost of them went.
     let mut shifts: HashMap<isize, (usize, usize)> = HashMap::new();
@@ -1643,9 +1659,6 @@ fn classify(
         }
     }
     let caret_rows = |from: &usize| old_caret.is_none_or(|row| *from <= row);
-    let had_caret_text = (0..count)
-        .filter(caret_rows)
-        .any(|from| !old[from].is_blank());
     let kept_caret = (0..count).filter(caret_rows).any(|from| {
         !old[from].is_blank()
             && matches!(fates[from], OldRow::Kept(to) if !matches!(new[to], NewRow::Shown))
@@ -1663,7 +1676,6 @@ fn classify(
         old: fates,
         fixed,
         rotation,
-        had_caret_text,
         kept_caret,
         kept_text,
         paired,

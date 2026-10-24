@@ -642,33 +642,35 @@ fn a_whole_document_read_takes_the_known_history_from_the_document() {
 fn output_repeated_after_a_clear_that_lost_the_old_screen_is_new() {
     // Windows Terminal: `type f.txt`, then `cls` and other output within
     // one read. The clear takes the history too, so the whole document is
-    // read, and it keeps no row of the last read: a new screen. The clear
-    // erased the history, so the remembered history is gone too, and every
-    // row is new, though some repeat what it held ("Screens").
+    // read, and it keeps no row of the last read: a new screen, its
+    // visible rows new; the row above the screen repeats the remembered
+    // history from the document's first row, so it is taken for history, a
+    // listed limit ("Limits": output repeated after a clear).
     let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
     watch.write("alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     watch.write("1111\r\n2222\r\n3333\r\n4444");
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\nzulu\r\n");
     assert_eq!(watch.texts(), ["alpha", "bravo", "zulu", ""]);
     assert_eq!(outcome.switch, Switch::New);
-    assert_eq!(outcome.rows, [NEW, NEW, NEW, NEW]);
+    assert_eq!(outcome.rows, [NewRow::Shown, NEW, NEW, NEW]);
 }
 
 #[test]
-fn output_repeated_after_a_clear_that_erases_rows_of_the_last_read_speaks_the_rows_above_the_screen()
- {
+fn output_repeated_after_a_clear_that_erases_rows_of_the_last_read_is_silent() {
     // Windows Terminal: `type f.txt`, more output, then `cls` and `type
-    // f.txt` within one read. The clear erased the history, so the rows
-    // above the screen match no remembered history and are new; the
-    // visible screen's rows are aligned with the last read, which had them
-    // ("Screens").
+    // f.txt` within one read. The rows above the screen repeat the
+    // remembered history from the document's first row, and the visible
+    // rows are the last read's, so nothing is new: a limit ("Limits").
     let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
     watch.write("alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     watch.write("1111\r\n2222\r\n3333\r\n4444");
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     assert_eq!(watch.texts(), ["alpha", "bravo", "charlie", "delta", ""]);
     assert_eq!(outcome.switch, Switch::None);
-    assert_eq!(outcome.rows, [NEW, NEW, kept(2), kept(3), NEW]);
+    assert_eq!(
+        outcome.rows,
+        [NewRow::Shown, NewRow::Shown, kept(2), kept(3), NEW]
+    );
 }
 
 #[test]
