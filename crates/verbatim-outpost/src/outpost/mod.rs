@@ -133,6 +133,11 @@ pub(crate) struct Context {
     /// spare's value while it waits, which names no application: the
     /// System Idle Process owns no window.
     target_pid: AtomicU32,
+    /// The application names a focus change carries
+    /// ([`verbatim_model::WindowFacts::application`]), by process: the
+    /// application's own, read when it is assigned, and a console client's,
+    /// read the first time a focus in its console window is reported.
+    application_names: Mutex<HashMap<u32, String>>,
     outbound: Outbound,
     intake: Intake,
     watch: Watch,
@@ -310,6 +315,19 @@ impl Context {
     /// The application this outpost watches; 0 before it has one.
     fn target_pid(&self) -> u32 {
         self.target_pid.load(Ordering::Acquire)
+    }
+
+    /// The name of the application `pid`, its executable's file name
+    /// without the extension, lower-cased, as NVDA names an application
+    /// module; empty when it cannot be read. Read once per process, then
+    /// remembered.
+    fn application_name(&self, pid: u32) -> String {
+        self.application_names
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entry(pid)
+            .or_insert_with(|| crate::supervisor::image_stem(Pid(pid)).unwrap_or_default())
+            .clone()
     }
 
     /// [`Outpost::failed_reads`].
@@ -910,6 +928,7 @@ impl Outpost {
         let held_anchors = HeldAnchors::default();
         let context = Arc::new(Context {
             target_pid: AtomicU32::new(0),
+            application_names: Mutex::default(),
             outbound,
             intake: Intake::default(),
             watch: Watch::default(),
@@ -1066,9 +1085,7 @@ impl Outpost {
         context.nudge_event_thread(narrowing::Nudge::Decide);
         tracing::info!(
             target_pid,
-            image = crate::supervisor::image_stem(Pid(target_pid))
-                .as_deref()
-                .unwrap_or(""),
+            image = %context.application_name(target_pid),
             "watching its application"
         );
         context.outbound.urgent(OutpostToSupervisor::Ready {

@@ -902,6 +902,10 @@ pub(super) fn focused_control_in(
             element.live().element(),
             element.snapshot(&context.uia_registry),
         );
+        // The element's own UIA class, from its cache, for Core's rules for
+        // an application's elements (decision D6): no call.
+        let fields = element.read();
+        node.details.class_name.clone_from(&fields.role.class_name);
         console_text_area(&mut node, Some(hwnd));
         // A focus that has moved on since the focused element was read is
         // still this query's answer, read the classic way.
@@ -924,7 +928,7 @@ pub(super) fn focused_control_in(
         // A combo box without the `Value` pattern, or a looping selector:
         // its first selected item is its value.
         let mut selected_child = selected_child;
-        if element.read().value_from_selection() {
+        if fields.value_from_selection() {
             node.value = selected_child.take().and_then(|child| child.name);
         }
         Some((

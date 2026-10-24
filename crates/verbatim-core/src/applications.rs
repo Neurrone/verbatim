@@ -27,17 +27,28 @@ pub(crate) fn is_shell_staging_window(window: Option<&WindowFacts>) -> bool {
     window.is_some_and(|window| SHELL_STAGING_CLASSES.contains(&window.class.as_str()))
 }
 
-/// The class of the window in which Windows 11's Alt+Tab switcher raises
-/// the focus of its pane when switching tasks.
-const SWITCHER_PANE_WINDOW_CLASS: &str = "Windows.UI.Input.InputSite.WindowClass";
+/// File Explorer, by its application name ([`WindowFacts::application`]).
+const FILE_EXPLORER: &str = "explorer";
 
-/// Whether a UI Automation focus on `node` in `window` is the Windows 11
-/// Alt+Tab switcher's pane, whose focus is refused whole: it is dropped
-/// before it moves the focus or the navigator or cuts speech
+/// Whether a UI Automation focus on `node`, with the window facts
+/// `window`, is the task switcher's frame, whose focus is refused whole: it
+/// is dropped before it moves the focus or the navigator or cuts speech
 /// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
-/// The switcher's list items, in the same window, are taken as any focus.
+/// It is when `node` was read through UI Automation, `window` names File
+/// Explorer as its application, and `node`'s own UI Automation class and
+/// role are `MultitaskingViewFrame` and window (Windows 10) or
+/// `Windows.UI.Input.InputSite.WindowClass` and pane (Windows 11). The
+/// class of the window the focus is in is not matched: a pane of another
+/// class in an `InputSite` window, or a pane of that class in another
+/// application, such as Windows Terminal's, is taken as any focus, and so
+/// are the switcher's list items. Core applies it to a focus event and a
+/// menu opening, never to a foreground change.
 pub(crate) fn refuses_focus(window: Option<&WindowFacts>, node: &NodeSnapshot) -> bool {
     node.backend == Backend::Uia
-        && node.role == Role::Pane
-        && window.is_some_and(|window| window.class == SWITCHER_PANE_WINDOW_CLASS)
+        && window.is_some_and(|window| window.application == FILE_EXPLORER)
+        && matches!(
+            (node.details.class_name.as_deref(), node.role),
+            (Some("MultitaskingViewFrame"), Role::Window)
+                | (Some("Windows.UI.Input.InputSite.WindowClass"), Role::Pane)
+        )
 }

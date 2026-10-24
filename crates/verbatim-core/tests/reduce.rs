@@ -75,6 +75,7 @@ fn window(handle: u64) -> WindowFacts {
         under_active_window: None,
         in_foreground: false,
         class: String::new(),
+        application: String::new(),
     }
 }
 
@@ -1816,6 +1817,7 @@ fn details_speak_in_nvda_property_order() {
         level: Some(1),
         rect: None,
         top_level_client: false,
+        class_name: None,
     };
 
     // The first level spoken goes first ("Where the level goes" in
@@ -5656,21 +5658,42 @@ fn a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing(
     );
 }
 
-/// A UI Automation focus on a pane in a `Windows.UI.Input.InputSite.WindowClass`
-/// window, the Windows 11 Alt+Tab switcher's pane, is refused whole, as
-/// NVDA's File Explorer module refuses it: no speech is cut, nothing is
-/// said, and the focus and the navigator stay where they were
-/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
-/// pane"). The switcher's list item in the same window is announced.
+/// The Windows 11 task switcher's `InputSite` window, in File Explorer, as
+/// its outpost reads it for a focus.
+fn task_switcher_window() -> WindowFacts {
+    WindowFacts {
+        class: "Windows.UI.Input.InputSite.WindowClass".to_owned(),
+        application: "explorer".to_owned(),
+        topmost: true,
+        ..window(50)
+    }
+}
+
+/// Node `id`, of `role` and named `name`, whose own UI Automation class is
+/// `class`.
+fn node_of_class(id: u64, role: Role, name: Option<&str>, class: &str) -> NodeSnapshot {
+    let mut snapshot = node(id, role, name, None, StateSet::new());
+    snapshot.details.class_name = Some(class.to_owned());
+    snapshot
+}
+
+/// A UI Automation focus in File Explorer on a pane whose own class is
+/// `Windows.UI.Input.InputSite.WindowClass`, the Windows 11 Alt+Tab
+/// switcher's pane, is refused whole, as NVDA's File Explorer module
+/// refuses it: no speech is cut, nothing is said, and the focus and the
+/// navigator stay where they were (`docs/parity/windows-and-processes.md`,
+/// "The Alt+Tab switcher's pane"). The switcher's list item in the same
+/// window is announced.
 #[test]
 fn a_uia_focus_on_the_task_switching_pane_is_refused_whole() {
     let state = switch_to(&SrState::new(), Pid(1));
-    let facts = WindowFacts {
-        class: "Windows.UI.Input.InputSite.WindowClass".to_owned(),
-        topmost: true,
-        ..window(50)
-    };
-    let pane = node(3, Role::Pane, None, None, StateSet::new());
+    let facts = task_switcher_window();
+    let pane = node_of_class(
+        3,
+        Role::Pane,
+        None,
+        "Windows.UI.Input.InputSite.WindowClass",
+    );
     let (after, effects) = reduce(&state, &focus_in(Pid(2), facts.clone(), pane, vec![]));
     assert_eq!(heard(&effects), vec![]);
     assert_eq!(after, state);
@@ -5683,6 +5706,108 @@ fn a_uia_focus_on_the_task_switching_pane_is_refused_whole() {
             Heard::Expire(focus_now(OutpostId(2), 4, &[], Some((OutpostId(1), 1000)))),
             Heard::Stop,
             queued(vec![UtteranceSegment::label("Notes")]),
+        ]
+    );
+}
+
+/// On Windows 10, the task switcher's frame is a window whose own UI
+/// Automation class is `MultitaskingViewFrame`, in File Explorer: its UI
+/// Automation focus is refused whole too, by the same rule of NVDA's File
+/// Explorer module (`docs/parity/windows-and-processes.md`, "The Alt+Tab
+/// switcher's pane").
+#[test]
+fn a_uia_focus_on_the_windows_10_task_switching_frame_is_refused_whole() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let facts = WindowFacts {
+        class: "MultitaskingViewFrame".to_owned(),
+        application: "explorer".to_owned(),
+        topmost: true,
+        ..window(50)
+    };
+    let frame = node_of_class(
+        3,
+        Role::Window,
+        Some("Task Switching"),
+        "MultitaskingViewFrame",
+    );
+    let (after, effects) = reduce(&state, &focus_in(Pid(2), facts, frame, vec![]));
+    assert_eq!(heard(&effects), vec![]);
+    assert_eq!(after, state);
+}
+
+/// The rule matches the focused element's own class and its application,
+/// not the class of the window it is in: a pane of another class in File
+/// Explorer's `InputSite` window, and a pane of the `InputSite` class in
+/// another application's `InputSite` window, as a XAML island in Windows
+/// Terminal has, are taken as any focus (`docs/parity/windows-and-processes.md`,
+/// "The Alt+Tab switcher's pane").
+#[test]
+fn a_pane_is_refused_only_by_its_own_class_in_file_explorer() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let scroll_viewer = node_of_class(3, Role::Pane, Some("Output"), "ScrollViewer");
+    let terminal_window = WindowFacts {
+        application: "windowsterminal".to_owned(),
+        ..task_switcher_window()
+    };
+    let terminal_pane = node_of_class(
+        3,
+        Role::Pane,
+        Some("Output"),
+        "Windows.UI.Input.InputSite.WindowClass",
+    );
+    for (facts, pane) in [
+        (task_switcher_window(), scroll_viewer),
+        (terminal_window, terminal_pane),
+    ] {
+        let (_, effects) = reduce(&state, &focus_in(Pid(2), facts, pane, vec![]));
+        assert_eq!(
+            heard(&effects),
+            vec![
+                Heard::Expire(focus_now(OutpostId(2), 3, &[], Some((OutpostId(1), 1000)))),
+                Heard::Stop,
+                queued(vec![UtteranceSegment::label("Output")]),
+            ]
+        );
+    }
+}
+
+/// The rule refuses a UI Automation focus event only: the same pane as a
+/// foreground change, which NVDA never refuses so, or read through MSAA,
+/// which NVDA's rule does not match, is taken as any focus or foreground
+/// change (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
+/// pane").
+#[test]
+fn the_task_switching_panes_foreground_change_or_msaa_focus_is_taken() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let pane = node_of_class(
+        3,
+        Role::Pane,
+        Some("Output"),
+        "Windows.UI.Input.InputSite.WindowClass",
+    );
+    let (after, _) = reduce(
+        &state,
+        &foreground_in(Pid(2), task_switcher_window(), pane.clone()),
+    );
+    assert_eq!(
+        after.focused().map(|(source, focus)| (source, focus.id)),
+        Some((Pid(2), NodeId::in_outpost(OutpostId(2), 3)))
+    );
+
+    let msaa_pane = NodeSnapshot {
+        backend: Backend::Msaa,
+        ..pane
+    };
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), task_switcher_window(), msaa_pane, vec![]),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 3, &[], Some((OutpostId(1), 1000)))),
+            Heard::Stop,
+            queued(vec![UtteranceSegment::label("Output")]),
         ]
     );
 }

@@ -796,6 +796,7 @@ mod tests {
             under_active_window,
             in_foreground: true,
             class: "Notepad".to_owned(),
+            application: String::new(),
         }
     }
 

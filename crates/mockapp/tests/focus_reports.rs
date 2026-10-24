@@ -1772,8 +1772,9 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
             "the listener did not report a focus whose keyboard focus read timed out: {judged:?}"
         );
     };
-    // Reported whole as its event's cache gives it, with the Focused
-    // state, its ancestors unknown, in its own window.
+    // Reported whole as its event's cache gives it, its own class
+    // included, with the Focused state, its ancestors unknown, in its own
+    // window.
     assert_eq!(
         *read,
         UiaFocusRead {
@@ -1784,7 +1785,10 @@ fn a_focus_whose_keyboard_focus_read_times_out_is_reported() {
                 name: Some("Mockapp Events Fixture".to_owned()),
                 value: None,
                 states: [State::Focused].into_iter().collect::<StateSet>(),
-                details: NodeDetails::default(),
+                details: NodeDetails {
+                    class_name: Some("VerbatimMockAppWindow".to_owned()),
+                    ..NodeDetails::default()
+                },
             },
             ancestors: None,
             selected_child: None,

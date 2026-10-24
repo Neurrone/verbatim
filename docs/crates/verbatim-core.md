@@ -232,10 +232,13 @@ Implementation notes, `reduce`:
   speech is cut when the foreground window changed, as for any focus, but
   nothing is said for it
   (`docs/parity/windows-and-processes.md`, "The shell's staging
-  windows"). A UI Automation focus on a pane whose window class is
-  `Windows.UI.Input.InputSite.WindowClass`, the Alt+Tab switcher's pane,
-  is refused whole before anything else judges it, moving nothing and
-  cutting no speech (`docs/parity/windows-and-processes.md`, "The
+  windows"). A UI Automation focus, a menu opening's included but never a
+  foreground change, on the task switcher's frame is refused whole before
+  anything else judges it, moving nothing and cutting no speech: a node
+  read through UI Automation whose own class (`NodeDetails::class_name`)
+  and role are `MultitaskingViewFrame` and window, or
+  `Windows.UI.Input.InputSite.WindowClass` and pane, in the application
+  its window facts name `explorer` (`docs/parity/windows-and-processes.md`, "The
   Alt+Tab switcher's pane"). `tests/reduce.rs` checks both.
 - Event acceptance (decision D14 as amended by the outpost redesign;
   `docs/parity/focus-events.md`, "Event acceptance"): the state keeps an attention

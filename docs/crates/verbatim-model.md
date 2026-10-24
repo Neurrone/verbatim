@@ -25,8 +25,10 @@ Public API:
   local calls: top-level window, root owner, whether it is topmost, and for
   `Windows.UI.Core` windows whether it is under the input thread's active
   window, whether it is in the system's foreground window, and the
-  window's class, which Core's rules for an application's windows match.
-  The reducer classifies events with these, against its attention record
+  window's class, which Core's rules for an application's windows match,
+  and, on a focus change only, the application's name as NVDA names an
+  application module (`explorer` for File Explorer), which Core's rules
+  for an application's elements match. The reducer classifies events with these, against its attention record
   or, for a focus, against the foreground window.
 - `ForegroundWindow` and `HookForeground` — the window the focus listener
   reported in front (its handle, the thread its event named, whether it
@@ -50,7 +52,9 @@ Public API:
   optional properties (description, keyboard shortcut, position in set,
   set size, level, bounding `Rect`, and `top_level_client`, set on the
   MSAA client area of a top-level window with a system menu, which the
-  reducer presents as that window) that backends fill as they learn to
+  reducer presents as that window, and `class_name`, the node's own UI
+  Automation class, carried only on a UI Automation focus's snapshot for
+  Core's rules for an application's elements) that backends fill as they learn to
   fetch each one; everything in it defaults to "not reported", and its
   serde default keeps snapshots recorded before it existed deserializing
   unchanged.

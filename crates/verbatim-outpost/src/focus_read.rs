@@ -109,7 +109,7 @@ use windows::Win32::UI::Accessibility::{
 };
 use windows::core::AgileReference;
 
-use verbatim_model::{Pid, State, TraceId};
+use verbatim_model::{NodeDetails, Pid, State, TraceId};
 use verbatim_uia::map::{CachedUiaParts, add_legacy_checked_state, wants_legacy_checked_state};
 use verbatim_uia::{
     Ancestor, AncestorGates, Cached, ElementExt as _, Fill, FocusInput, ListenerEvent, Node,
@@ -823,7 +823,11 @@ impl FocusReader {
         let fields = sender.read();
         let element = sender.live().element();
         let hwnd = fields.role.hwnd;
-        let event = fields.parts(sender.runtime_id());
+        let mut event = fields.parts(sender.runtime_id());
+        // The sender's own UIA class, from the event's cache, as NVDA's app
+        // modules read it (`cachedClassName`), for Core's rules for an
+        // application's elements (decision D6): no call.
+        event.details.class_name.clone_from(&fields.role.class_name);
         // The read's one time budget, from here, for its checks and its
         // read alike, the probe's wait aside.
         let budget = Budget::new(self.clock());
@@ -1017,11 +1021,14 @@ impl FocusReader {
         &mut self,
         element: &IUIAutomationElement,
         (hwnd, nearest): (isize, isize),
-        event: CachedUiaParts,
+        mut event: CachedUiaParts,
         ancestry: &Ancestry,
         (arrival, budget): (Arrival, &Budget),
     ) -> Judged {
         let path = "classic";
+        // The sender's class, from the event's cache, whatever details are
+        // read afresh.
+        let class_name = event.details.class_name.take();
         let live = ancestry
             .element
             .as_ref()
@@ -1045,7 +1052,10 @@ impl FocusReader {
             name: event.name,
             value,
             states: states.with(State::Focused),
-            details,
+            details: NodeDetails {
+                class_name,
+                ..details
+            },
         };
         if wants_legacy_checked_state(snapshot.role, snapshot.states) && !budget.out_of_time() {
             // A menu item without the Toggle pattern: its checked state may

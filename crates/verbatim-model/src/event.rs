@@ -69,6 +69,15 @@ pub struct WindowFacts {
     /// event, and left out of the message, so that they carry no string.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub class: String,
+    /// The application the event belongs to, by the name NVDA gives an
+    /// application module: its executable's file name without the
+    /// extension, lower-cased, such as `explorer` for File Explorer, and for
+    /// a console window its client's. Core's rules for an application's
+    /// elements match it (decision D6). Only a focus change carries it; it is
+    /// empty on every other event and on a focus-now answer, and when the
+    /// name could not be read.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub application: String,
 }
 
 /// The window that came to the system's foreground, as the focus listener
@@ -150,6 +159,10 @@ pub enum PropertyChange {
 /// An accessibility event, normalized by an outpost from either backend.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "an event is built once per observation and moved, as its input is"
+)]
 pub enum NormalizedEvent {
     /// Keyboard focus moved to a node.
     FocusChanged {

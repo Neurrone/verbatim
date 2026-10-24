@@ -1677,6 +1677,7 @@ fn read_snapshot_with(
             level,
             rect,
             top_level_client,
+            class_name: None,
         },
     }
 }

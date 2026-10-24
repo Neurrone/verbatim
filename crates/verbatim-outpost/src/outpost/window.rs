@@ -219,6 +219,7 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
         under_active_window,
         in_foreground,
         class,
+        application: String::new(),
     }
 }
 

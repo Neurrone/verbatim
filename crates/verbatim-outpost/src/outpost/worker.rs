@@ -2296,13 +2296,19 @@ impl Worker<'_> {
         window: Option<isize>,
         event: NormalizedEvent,
     ) -> OutpostToSupervisor {
+        let target = self.context.target_pid();
+        let client = window.and_then(|hwnd| console_client(hwnd, target));
+        let name = || {
+            self.context
+                .application_name(client.map_or(target, |client| client.0))
+        };
         OutpostToSupervisor::Event {
             trace_id: trace,
             observed_at_ms: stamp.0,
             observed_at_us: stamp.1,
             backend,
-            window: window.map(|hwnd| event_window_facts(window_facts(hwnd), &event)),
-            application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid())),
+            window: window.map(|hwnd| event_window_facts(window_facts(hwnd), &event, name)),
+            application: client,
             timing: EventTiming {
                 published_at_us: now_us(),
                 calls: take_calls(),
@@ -4272,11 +4278,18 @@ impl Worker<'_> {
 }
 
 /// `facts`, the window facts of an event message carrying `event`, with
-/// the window's class only for a focus change, the one event whose window
-/// Core's rules for an application's windows match (decision D6), so that
-/// no other event carries the class's string to Core.
-fn event_window_facts(mut facts: WindowFacts, event: &NormalizedEvent) -> WindowFacts {
-    if !matches!(event, NormalizedEvent::FocusChanged { .. }) {
+/// the window's class, and the application's name that `application`
+/// gives, only for a focus change, the one event Core's rules for an
+/// application's windows and elements match (decision D6), so that no
+/// other event carries their strings to Core.
+fn event_window_facts(
+    mut facts: WindowFacts,
+    event: &NormalizedEvent,
+    application: impl FnOnce() -> String,
+) -> WindowFacts {
+    if matches!(event, NormalizedEvent::FocusChanged { .. }) {
+        facts.application = application();
+    } else {
         facts.class = String::new();
     }
     facts
@@ -4334,9 +4347,11 @@ mod tests {
     }
 
     /// A focus change's window facts keep the window's class, which Core's
-    /// staging rule matches; any other event's carry none.
+    /// staging rule matches, and take the application's name, which its
+    /// rule for the task switcher's frame matches; any other event's carry
+    /// neither.
     #[test]
-    fn only_a_focus_change_carries_its_windows_class() {
+    fn only_a_focus_change_carries_its_windows_class_and_application() {
         let facts = WindowFacts {
             top_level: verbatim_model::WindowHandle(5),
             root_owner: verbatim_model::WindowHandle(5),
@@ -4344,6 +4359,7 @@ mod tests {
             under_active_window: None,
             in_foreground: true,
             class: "ForegroundStaging".to_owned(),
+            application: String::new(),
         };
         let focus = NormalizedEvent::FocusChanged {
             node: NodeSnapshot {
@@ -4361,13 +4377,20 @@ mod tests {
             selected_child: None,
             text: None,
         };
-        assert_eq!(event_window_facts(facts.clone(), &focus), facts);
+        let explorer = || "explorer".to_owned();
+        assert_eq!(
+            event_window_facts(facts.clone(), &focus, explorer),
+            WindowFacts {
+                application: "explorer".to_owned(),
+                ..facts.clone()
+            }
+        );
         let value = NormalizedEvent::ValueChanged {
             node_id: NodeId::new(1),
             value: Some("1".to_owned()),
         };
         assert_eq!(
-            event_window_facts(facts.clone(), &value),
+            event_window_facts(facts.clone(), &value, explorer),
             WindowFacts {
                 class: String::new(),
                 ..facts

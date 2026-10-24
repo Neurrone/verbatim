@@ -1467,10 +1467,42 @@ the milliseconds and, for a focus, the microseconds of one clock read.
   its focus event 15 ms after the console's, the listener received the
   switcher's UI Automation focus after the console's, and the switcher
   was still announced over the console: that focus did happen later, so
-  no ordering drops it. NVDA never announces it, by its File Explorer
-  module's refusal of the Windows 11 switcher pane's focus, which Core
-  now applies (`docs/parity/windows-and-processes.md`, "The Alt+Tab
-  switcher's pane").
+  no ordering drops it. NVDA said nothing for the switcher's pane in its
+  capture; its File Explorer module refuses the UI Automation focus of
+  the Windows 11 switcher's pane, which Core now applies, though that
+  rule does not explain all of NVDA's silence
+  (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
+  pane").
+- Target: the minimum.
+
+### The task switcher's frame
+
+Core refuses the UI Automation focus of the task switcher's frame in
+File Explorer (`docs/parity/windows-and-processes.md`, "The Alt+Tab
+switcher's pane"), matching the focused element's own UI Automation
+class and the focus's application.
+
+- Minimum: NVDA reads the element's class from the event's cache, which
+  its base cache request holds, and knows the application from the
+  object's process, which it has already; no call.
+- Today: no cross-process call, thread, timer, message or wake-up is
+  added. The class is read from the element's cache: the focus
+  listener's registration caches it for every event's sender (the
+  `ListenerEvent` shape, NVDA's base properties), and the outpost's own
+  read of the focus caches it with the element (the `Node` shape's role
+  group). A UI Automation focus's snapshot carries the class's string to
+  Core: one allocation where the listener, or the outpost's own read,
+  copies it from the cache, and one where the outpost copies the
+  listener's snapshot's details; no other snapshot carries one, and every
+  snapshot is 24 bytes larger for the field. The
+  application's name is read once per application, with
+  `QueryFullProcessImageNameW`, a local call that the outpost already
+  made for its log when it was assigned and now remembers, and once per
+  console client; each focus change's window facts carry a copy of it,
+  one allocation and one map lookup under a lock per focus change in the
+  outpost, and no other event's facts carry it. For each UI Automation
+  focus that is not a foreground change, Core compares the application's
+  name, and for File Explorer's the element's class, with constants.
 - Target: the minimum.
 
 ### The system caret's events

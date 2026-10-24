@@ -527,6 +527,7 @@ impl Node {
             level: self.level.flatten(),
             rect: self.place.as_ref().and_then(|place| place.rect),
             top_level_client: false,
+            class_name: None,
         };
         strip_bidi_controls([&mut name, &mut value, &mut details.description]);
         let offscreen = self.place.as_ref().is_some_and(|place| place.offscreen);

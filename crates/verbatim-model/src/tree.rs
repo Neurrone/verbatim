@@ -449,6 +449,13 @@ pub struct NodeDetails {
     /// this field existed deserializing unchanged.
     #[serde(default)]
     pub top_level_client: bool,
+    /// The node's own UI Automation class name (`ClassName`), carried only
+    /// on the snapshot of a UI Automation focus, a menu opening's or the
+    /// outpost's own read of the focus, whose rules for an application's
+    /// elements Core matches it with (decision D6); `None` on every other
+    /// snapshot, and left out of the message, so that they carry no string.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub class_name: Option<String>,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.
@@ -460,7 +467,9 @@ pub struct NodeDetails {
 pub struct NodeSnapshot {
     /// Outpost-stable identity of the node.
     pub id: NodeId,
-    /// Which backend sourced this snapshot (diagnostics only above the outpost).
+    /// Which backend sourced this snapshot, which Core's rules for an
+    /// application's elements match, as NVDA's app modules match an
+    /// object's API class (decision D6).
     pub backend: Backend,
     /// Normalized role.
     pub role: Role,

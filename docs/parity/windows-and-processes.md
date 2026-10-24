@@ -141,41 +141,87 @@ replacing the earlier rule that dropped the change whole.
 
 ### The Alt+Tab switcher's pane
 
-On Alt+Tab in Windows 11, File Explorer gives the UI Automation focus to
-the switcher's pane, the element of its
-`Windows.UI.Input.InputSite.WindowClass` window, with no name, before
-its list items, and in some switches 11 to 15 ms after the window
-switched to has taken the focus. NVDA's File Explorer app module gives
-every UI Automation object in File Explorer's process whose UI
-Automation class is `Windows.UI.Input.InputSite.WindowClass` and whose
-role is pane (on Windows 10, the `MultitaskingViewFrame` window) a class
-that refuses its UI Automation focus events: the event is dropped as it
-arrives, before it becomes NVDA's focus, so the focus, the navigator and
-the foreground stay where they were, speech is not cut, and nothing is
-said ([App modules, global plugins, and add-ons: the
-mechanism](../nvda/app-modules-mechanism.md), "App modules"). The
+On Alt+Tab in Windows 11, File Explorer gives the focus to the
+switcher's `Windows.UI.Input.InputSite.WindowClass` window, whose own
+element is a pane of that UI Automation class, with no name. Windows
+raises the `WinEvent` focus on that window in every switch; a UI
+Automation focus on the pane follows only in some: Verbatim's focus
+listener received one in two of six switches in each of the two runs
+below made before this rule and in one of twelve with it, each with Alt
+held. When none follows
+within about a second, Verbatim's outpost reads the focus itself and
+reports it as a UI Automation focus, which NVDA does not do
+([Focus events](focus-events.md), "A focus UIA does not deliver").
+
+NVDA's File Explorer app module gives a UI Automation object in File
+Explorer's process a class that refuses its UI Automation focus events
+when the object's own UI Automation class and role are
+`MultitaskingViewFrame` and window (Windows 10) or
+`Windows.UI.Input.InputSite.WindowClass` and pane (Windows 11)
+(`appModules/explorer.py` 35 to 36 and 290 to 302). NVDA's UI Automation
+handler drops a focus-changed event, and a menu-opened event, which it
+handles as a focus, for such an object as the event arrives, before it
+becomes NVDA's focus (`UIAHandler/__init__.py` 261, 856 and 948), so the
+focus, the navigator and the foreground stay where they were, speech is
+not cut, and nothing is said. A foreground change is not refused so. The
 switcher's list items are not refused: with Alt held, NVDA says the item
 reached, by its window's title, row, column and position ("row 1 column
-2 2 of 10"), and then the window switched to. NVDA's capture of Alt+Tab between two console windows,
-three quick switches and two with Alt held, said nothing for the
-switcher's pane in any switch.
-Verbatim: Core refuses a UI Automation focus, not a foreground change,
-whose node is a pane and whose window facts carry the class
-`Windows.UI.Input.InputSite.WindowClass`, before anything else judges it
-(decision D6), so it moves nothing and cuts nothing. Core matches the
-class of the focus's window and does not know the focus's application,
-where NVDA matches the element's own class in File Explorer's process;
-for the switcher's pane, its window's own element, the two agree.
-**matched (verified)** for what is said, by NVDA's capture and a
-hand-run Alt+Tab check of 2026-10-24 with Verbatim before and after
-(`target/e2e-evidence/switcher-pane-2026-10-24/`): before, Verbatim
-queued "Task Switching window, pane" in five of six switches; after, it
-queued nothing for the pane in any. No scenario can use Alt+Tab
-(`docs/testing.md`), so Core's unit test pins the rule
-(`a_uia_focus_on_the_task_switching_pane_is_refused_whole`).
-A case that differs: with Alt held, Verbatim says the switcher's window
-and list ("Task Switching window", "Running applications list") before
-the item, and the item without its row and column, where NVDA says the
-item alone with them. The same app module's rule that drops a task
-switching list item's ancestry while Alt is held is not ported; whether
-it is what silences the ancestry on Windows 11 is not established.
+2 2 of 10"), and then the window switched to. NVDA's capture of Alt+Tab
+between two console windows, four quick switches and two with Alt held
+(`target/e2e-evidence/switcher-pane-2026-10-24/NvdaSw/`), said nothing
+for the switcher's pane in any switch. This rule does not explain all of
+that silence: an independent observer in the same run saw no UI
+Automation focus on the `InputSite` pane, but a late one, in four
+switches, on the Task Switching window's own pane, of class
+`XamlExplorerHostIslandWindow`, which the rule does not refuse, and NVDA
+said nothing for it either; why is not established.
+
+Verbatim: a UI Automation focus's snapshot, from the focus listener's
+read of an event or a menu opening or from the outpost's own read,
+carries the element's own UI Automation class from the element's cache
+(`NodeDetails::class_name`), and every focus change's window facts carry
+the application's name as NVDA names an application module
+(`WindowFacts::application`, `explorer` for File Explorer). Core refuses
+a focus that is not a foreground change, whose node was read through UI
+Automation, whose application is `explorer`, and whose node's own class
+and role are `MultitaskingViewFrame` and window or
+`Windows.UI.Input.InputSite.WindowClass` and pane, before anything else
+judges it (decision D6), so it moves nothing and cuts nothing. The class
+of the window the focus is in is not matched: Windows Terminal's
+terminal control is in an `InputSite` window too (`ExactV2/flight.jsonl`
+below), so a pane of another
+class there, or one of that class in another application, is taken as
+any focus. The outpost's own read is refused by the same rule, since the
+element it reads in the switcher is the `InputSite` window's own
+element, of that class, read through UI Automation.
+**matched (verified)** for the pane's focus by NVDA's capture and two
+hand-run checks of 2026-10-24 with this rule, built on 6ab6b25d
+(`ExactV/` and `ExactV2/` in the same folder, each four quick switches
+and two with Alt held): Verbatim said nothing for the pane in any of the
+twelve switches, and announced the window switched to in each. The
+second run's flight recorder (`ExactV2/flight.jsonl`) shows four of the
+outpost's own reads and one listener focus (switch 5, Alt held), each
+with class `Windows.UI.Input.InputSite.WindowClass`, role pane and
+application `explorer`, each producing no effect, and the list item
+that followed the listener's focus in the same window announced. Before
+the rule (`BeforeV/`, built before e4b959c3 from a commit not recorded),
+Verbatim queued "Task Switching window, pane" in five of six switches,
+each from the outpost's own read; the listener's two focuses on the pane
+(switches 4 and 5) came after the outpost's read of the same element and
+were not spoken, so that run does not show a listener focus refused.
+`AfterV/`, the first rule of e4b959c3, which matched the window's class,
+said nothing for the pane in any switch. No scenario can use Alt+Tab
+(`docs/testing.md`), so Core's unit tests pin the rule
+(`a_uia_focus_on_the_task_switching_pane_is_refused_whole`,
+`a_uia_focus_on_the_windows_10_task_switching_frame_is_refused_whole`,
+`a_pane_is_refused_only_by_its_own_class_in_file_explorer`,
+`the_task_switching_panes_foreground_change_or_msaa_focus_is_taken`);
+no Windows 10 machine has run it.
+Cases that differ: the outpost's own read of a focus UI Automation did
+not deliver is Verbatim's alone (see above). With Alt held, Verbatim
+says the switcher's window and list ("Task Switching window", "Running
+applications list") before the item, and the item without its row and
+column, where NVDA says the item alone with them. The same app module's
+rule that drops a task switching list item's ancestry while Alt is held
+is not ported; whether it is what silences the ancestry on Windows 11 is
+not established.
