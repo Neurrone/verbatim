@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, Switch, TerminalMemory};
+use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, RowsAbove, Switch, TerminalMemory};
 use crate::{Segmenter, WordRules, graphemes, is_space};
 
 pub use crate::terminal_rows::LINGERING_MS;
@@ -273,11 +273,16 @@ pub struct Step {
     /// nothing changed, and only the outcome's shape (the screen's width
     /// and height) is set.
     pub whole_document: bool,
-    /// Read again from the same start with this many rows above it, to
-    /// find how far a full history rotated, and give that read instead
-    /// (section 4.3, item 5); nothing changed, and only the outcome's shape
-    /// is set.
-    pub search_above: Option<usize>,
+    /// Read these runs of rows by their place, to tell how far a full
+    /// history rotated, and give the same read again with them
+    /// ([`Read::checked`], section 4.3, item 5); nothing changed, and only
+    /// the outcome's shape is set. Empty otherwise.
+    pub check_rows: Vec<RowsAbove>,
+    /// Read again from the same start with this many rows above it, as the
+    /// rows between the history's block and the read went by unread, and
+    /// give that read instead (section 4.3, item 5); nothing changed, and
+    /// only the outcome's shape is set.
+    pub read_above: Option<usize>,
     /// The alignment of the read, for a read.
     pub outcome: Option<Outcome>,
     /// Whether the read moved the review position to the caret because a
@@ -753,22 +758,34 @@ impl TerminalReader {
     ) -> Step {
         let now = read.at_ms;
         let mut outcome = memory.read(read);
-        if outcome.whole_document || outcome.search_above.is_some() {
+        if outcome.whole_document || !outcome.check_rows.is_empty() || outcome.read_above.is_some()
+        {
             if self.settings.report_new_output {
                 return Step {
                     whole_document: outcome.whole_document,
-                    search_above: outcome.search_above,
+                    check_rows: std::mem::take(&mut outcome.check_rows),
+                    read_above: outcome.read_above,
                     timer: self.next_due(),
                     outcome: Some(outcome),
                     ..Step::default()
                 };
             }
-            // With nothing reported nothing waits, so the memory is simply
-            // taken from the read (section 4.2), its command marks kept.
-            self.screen = Screen::default();
-            self.aside = None;
-            self.lingering.clear();
-            outcome = memory.restart(read);
+            // With nothing reported nothing waits, so no read is taken that
+            // only tells the rotation: the memory decides it from this read,
+            // or, when the last screen is not in it, is simply taken from the
+            // read (section 4.2), its command marks kept.
+            if let Some(settled) = memory.settle(read).filter(|settled| {
+                !settled.whole_document
+                    && settled.check_rows.is_empty()
+                    && settled.read_above.is_none()
+            }) {
+                outcome = settled;
+            } else {
+                self.screen = Screen::default();
+                self.aside = None;
+                self.lingering.clear();
+                outcome = memory.restart(read);
+            }
         }
         self.reads += 1;
         let previous = match outcome.switch {

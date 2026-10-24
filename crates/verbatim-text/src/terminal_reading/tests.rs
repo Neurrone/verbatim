@@ -10,7 +10,7 @@ use super::{
     ColourRun, Counted, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit,
     Withheld,
 };
-use crate::terminal_rows::{Anchor, Read, hash};
+use crate::terminal_rows::{Anchor, Checked, Read, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
 /// said, as many rows above it as the memory asks, and the whole document,
@@ -89,24 +89,43 @@ impl Term {
         let mut query = self.query;
         loop {
             let snapshot = self.terminal.snapshot(&query).expect("a simulated read");
-            let step = self.reader.read(
-                &Read {
-                    text: snapshot.text,
-                    screen: snapshot.screen,
-                    from_start: snapshot.from_start,
-                    shrank: snapshot.shrank,
-                    at_document_start: snapshot.at_document_start,
-                    alternate: snapshot.alternate,
-                    first_row: snapshot.first_row,
-                    caret_rows_to_end: snapshot.caret_rows_to_end,
-                    caret_line: snapshot.caret_line,
-                    caret_column: snapshot.caret_column,
-                    at_ms,
-                    above: usize::try_from(snapshot.above).expect("a few rows"),
-                },
-                waited,
-                colours,
-            );
+            let mut read = Read {
+                text: snapshot.text,
+                screen: snapshot.screen,
+                from_start: snapshot.from_start,
+                shrank: snapshot.shrank,
+                at_document_start: snapshot.at_document_start,
+                alternate: snapshot.alternate,
+                first_row: snapshot.first_row,
+                caret_rows_to_end: snapshot.caret_rows_to_end,
+                caret_line: snapshot.caret_line,
+                caret_column: snapshot.caret_column,
+                at_ms,
+                above: usize::try_from(snapshot.above).expect("a few rows"),
+                checked: None,
+            };
+            let mut step = self.reader.read(&read, waited, colours);
+            while !step.check_rows.is_empty() {
+                let runs: Vec<(u32, u32)> = step
+                    .check_rows
+                    .iter()
+                    .map(|run| {
+                        (
+                            u32::try_from(run.above).expect("a small buffer"),
+                            u32::try_from(run.rows).expect("a small buffer"),
+                        )
+                    })
+                    .collect();
+                let rows = self
+                    .terminal
+                    .rows_above(query.start.expect("rows are read from a start"), &runs)
+                    .expect("a simulated read");
+                read.checked = Some(Checked {
+                    runs: rows.runs,
+                    first_row: rows.first_row,
+                });
+                step = self.reader.read(&read, waited, colours);
+            }
             let screen_rows = u32::try_from(
                 step.outcome
                     .as_ref()
@@ -114,6 +133,10 @@ impl Term {
                     .height,
             )
             .expect("a small screen");
+            if let Some(above) = step.read_above {
+                query.above = u32::try_from(above).expect("a small buffer");
+                continue;
+            }
             if step.whole_document {
                 query = Query {
                     start: None,
@@ -121,10 +144,6 @@ impl Term {
                     whole: true,
                     above: 0,
                 };
-                continue;
-            }
-            if let Some(above) = step.search_above {
-                query.above = u32::try_from(above).expect("a small buffer");
                 continue;
             }
             self.query = Query {
@@ -165,7 +184,8 @@ fn step(speech: Vec<Speech>, withheld: Vec<Withheld>, timer: Option<u64>) -> Ste
         withheld,
         timer,
         whole_document: false,
-        search_above: None,
+        check_rows: Vec::new(),
+        read_above: None,
         outcome: None,
         followed: false,
     }
@@ -943,6 +963,7 @@ fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms:
         caret_column: column,
         at_ms,
         above: 0,
+        checked: None,
     }
 }
 

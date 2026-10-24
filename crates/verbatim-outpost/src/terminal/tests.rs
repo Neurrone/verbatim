@@ -13,7 +13,7 @@ use verbatim_model::{
 };
 use verbatim_term_sim::{Flavor, Query};
 use verbatim_text::terminal_reading::{Counted, Speech, Step};
-use verbatim_text::terminal_rows::Read;
+use verbatim_text::terminal_rows::{Checked, Read};
 
 use super::review::{self, CaretAt, History};
 use super::{Terminal, rules_key, speech_of, split};
@@ -58,7 +58,7 @@ impl Watch {
         let mut query = self.query;
         loop {
             let snapshot = self.sim.snapshot(&query).expect("a simulated read");
-            let read = Read {
+            let mut read = Read {
                 text: snapshot.text,
                 screen: snapshot.screen,
                 from_start: snapshot.from_start,
@@ -71,8 +71,30 @@ impl Watch {
                 caret_column: snapshot.caret_column,
                 at_ms: self.at_ms,
                 above: usize::try_from(snapshot.above).expect("a few rows"),
+                checked: None,
             };
-            let step = self.terminal.reader.read(&read, false, None);
+            let mut step = self.terminal.reader.read(&read, false, None);
+            while !step.check_rows.is_empty() {
+                let runs: Vec<(u32, u32)> = step
+                    .check_rows
+                    .iter()
+                    .map(|run| {
+                        (
+                            u32::try_from(run.above).expect("a small buffer"),
+                            u32::try_from(run.rows).expect("a small buffer"),
+                        )
+                    })
+                    .collect();
+                let rows = self
+                    .sim
+                    .rows_above(query.start.expect("rows are read from a start"), &runs)
+                    .expect("a simulated read");
+                read.checked = Some(Checked {
+                    runs: rows.runs,
+                    first_row: rows.first_row,
+                });
+                step = self.terminal.reader.read(&read, false, None);
+            }
             let screen_rows = step.outcome.as_ref().map_or(0, |outcome| {
                 u32::try_from(outcome.height).expect("a small screen")
             });
@@ -85,7 +107,7 @@ impl Watch {
                 };
                 continue;
             }
-            if let Some(above) = step.search_above {
+            if let Some(above) = step.read_above {
                 query.above = u32::try_from(above).expect("a small buffer");
                 continue;
             }

@@ -58,6 +58,16 @@ pub struct Snapshot {
     pub above: u32,
 }
 
+/// What a read of rows by their place answers ([`Terminal::rows_above`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RowsRead {
+    /// Each run's text, line breaks included; empty for a run whose first
+    /// row the document's start came before.
+    pub runs: Vec<String>,
+    /// The document's first row, read after the runs.
+    pub first_row: String,
+}
+
 /// A stretch of a row in one foreground and background, as shown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Run {
@@ -153,6 +163,17 @@ impl Terminal {
         } else {
             self.provider().seen(0)
         }
+    }
+
+    /// Runs of rows read by their place, as Verbatim's read program reads
+    /// them: each run `(above, rows)` is `rows` rows from `above` rows above
+    /// `start`'s start.
+    ///
+    /// # Errors
+    ///
+    /// [`Refused`] when the provider would fail a call the read makes.
+    pub fn rows_above(&self, start: Range, runs: &[(u32, u32)]) -> Result<RowsRead, Refused> {
+        self.provider().rows_above(start.start, runs)
     }
 
     /// The colours of the screen's rows, each row's stretches of one

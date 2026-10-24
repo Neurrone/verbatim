@@ -283,6 +283,7 @@ pub fn read_of(snapshot: &Snapshot, at_ms: u64) -> Read {
         caret_column,
         at_ms,
         above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
+        checked: None,
     }
 }
 
@@ -402,11 +403,11 @@ pub fn read<'a>(
         let read = read_of(&snapshot, started_ms);
         let read_colours = snapshot.colours.as_deref().map(colours_of);
         let step = terminal.reader.read(&read, waited, read_colours.as_deref());
-        if step.whole_document {
+        if step.whole_document || !step.check_rows.is_empty() {
             whole = true;
             continue;
         }
-        if let Some(rows) = step.search_above {
+        if let Some(rows) = step.read_above {
             above = u32::try_from(rows).unwrap_or(u32::MAX);
             continue;
         }

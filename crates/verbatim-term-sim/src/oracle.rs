@@ -131,7 +131,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, RngSeed};
 
 use crate::conformance::{Chunk, Stream};
-use crate::{Flavor, Query, Refused, RowId, Snapshot, Terminal};
+use crate::{Flavor, Query, Refused, RowId, RowsRead, Snapshot, Terminal};
 
 /// A row of a read as it truly is: its identity, its text as the read
 /// gives it (padding included), and whether its line wraps onto the next.
@@ -301,9 +301,14 @@ pub enum Reply {
     /// Read again at once with this query, before anything more is
     /// written, as a reader reads the whole text when its last screen is
     /// not in the read (`docs/design/terminal-model.md`, section 4.2), or
-    /// reads from further above its start to find how far a full history
-    /// rotated (section 4.3, item 5).
+    /// when only the whole text tells how far a full history rotated
+    /// (section 4.3, item 5).
     Again(Query),
+    /// Read these runs of rows by their place, each `(above, rows)` from
+    /// above the query's start ([`Terminal::rows_above`]), and give them to
+    /// [`Reader::rows`], as a reader checks a rotation whose block lies
+    /// above its read (section 4.3, item 5).
+    Rows(Vec<(u32, u32)>),
 }
 
 /// A reader of terminals under test: given each read's snapshot and its
@@ -314,6 +319,17 @@ pub trait Reader {
 
     /// One read's answer, and what the reader makes of it.
     fn read(&mut self, read: &Result<Snapshot, Refused>) -> Reply;
+
+    /// The rows a [`Reply::Rows`] asked for, and what the reader makes of
+    /// the read it asked them for.
+    ///
+    /// # Panics
+    ///
+    /// Unless the reader asks for rows by their place, which by default it
+    /// does not.
+    fn rows(&mut self, rows: &Result<RowsRead, Refused>) -> Reply {
+        panic!("this reader asks for no rows by their place, but was given {rows:?}")
+    }
 
     /// The quiet period has passed since the last write, longer than any
     /// hold waits, and nothing more will be written: the read that follows
@@ -390,9 +406,9 @@ pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader
     Run { reads }
 }
 
-/// The most times a reader may ask to read again at one point: a reader
-/// searching upward from a screen above its start, four times as far each
-/// time, reaches the start of any buffer the oracle writes in far fewer.
+/// The most times a reader may ask to read again at one point, rows by
+/// their place included: Verbatim's reader asks at most twice, for rows by
+/// their place and then the whole document.
 pub const AGAIN_LIMIT: usize = 16;
 
 /// One read of `terminal` by `reader`, taken again as often as the reader asks;
@@ -406,7 +422,20 @@ fn read(terminal: &Terminal, reader: &mut dyn Reader, gone: &mut (usize, usize))
             Ok((snapshot, start, rows)) => (Ok(snapshot), start, rows),
             Err(refused) => (Err(refused), 0, Vec::new()),
         };
-        match reader.read(&snapshot) {
+        let mut reply = reader.read(&snapshot);
+        while let Reply::Rows(runs) = &reply {
+            again += 1;
+            assert!(
+                again <= AGAIN_LIMIT,
+                "the reader asked to read again more than {AGAIN_LIMIT} times at one point"
+            );
+            let start = query
+                .start
+                .expect("rows by their place are read from a start");
+            reply = reader.rows(&terminal.rows_above(start, runs));
+        }
+        match reply {
+            Reply::Rows(_) => unreachable!("rows by their place are answered above"),
             Reply::Heard(heard) => {
                 let grid = terminal.grid();
                 let left = grid.main.rotated[gone.0..].to_vec();

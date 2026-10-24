@@ -21,9 +21,9 @@ use verbatim_term_sim::oracle::{
     Heard, Op, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation, Withheld,
     every_stream, observe, random_config, random_steps, stream,
 };
-use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
+use verbatim_term_sim::{Flavor, Query, Range, Refused, RowsRead, Snapshot};
 use verbatim_text::terminal_reading::{self as rules, Settings, Speech, Step, TerminalReader};
-use verbatim_text::terminal_rows::{OldRow, Read};
+use verbatim_text::terminal_rows::{Checked, OldRow, Read};
 
 /// How long after the last chunk the stream's last read comes: past the
 /// quiet period and the time a row lingers.
@@ -44,6 +44,9 @@ struct Core {
     /// The reads answered so far.
     reads: usize,
     quiet: bool,
+    /// The read waiting for the rows by their place it asked for, and
+    /// where its snapshot said the next read starts.
+    checking: Option<(Read, Range)>,
 }
 
 impl Core {
@@ -59,6 +62,7 @@ impl Core {
             at_ms: stream.at_ms.clone(),
             reads: 0,
             quiet: false,
+            checking: None,
         }
     }
 
@@ -152,24 +156,49 @@ impl Reader for Core {
         let snapshot = read
             .as_ref()
             .expect("the simulated terminal answers every read");
-        let step = self.reader.read(
-            &Read {
-                text: snapshot.text.clone(),
-                screen: snapshot.screen.clone(),
-                from_start: snapshot.from_start,
-                shrank: snapshot.shrank,
-                at_document_start: snapshot.at_document_start,
-                alternate: snapshot.alternate,
-                first_row: snapshot.first_row.clone(),
-                caret_rows_to_end: snapshot.caret_rows_to_end,
-                caret_line: snapshot.caret_line.clone(),
-                caret_column: snapshot.caret_column,
-                at_ms: self.now(),
-                above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
-            },
-            false,
-            None,
-        );
+        let read = Read {
+            text: snapshot.text.clone(),
+            screen: snapshot.screen.clone(),
+            from_start: snapshot.from_start,
+            shrank: snapshot.shrank,
+            at_document_start: snapshot.at_document_start,
+            alternate: snapshot.alternate,
+            first_row: snapshot.first_row.clone(),
+            caret_rows_to_end: snapshot.caret_rows_to_end,
+            caret_line: snapshot.caret_line.clone(),
+            caret_column: snapshot.caret_column,
+            at_ms: self.now(),
+            above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
+            checked: None,
+        };
+        self.answer(read, snapshot.next_start)
+    }
+
+    fn rows(&mut self, rows: &Result<RowsRead, Refused>) -> Reply {
+        let rows = rows
+            .as_ref()
+            .expect("the simulated terminal answers every read");
+        let (mut read, next_start) = self
+            .checking
+            .take()
+            .expect("rows by their place come after the read that asked for them");
+        read.checked = Some(Checked {
+            runs: rows.runs.clone(),
+            first_row: rows.first_row.clone(),
+        });
+        self.answer(read, next_start)
+    }
+
+    fn quiet(&mut self) {
+        self.quiet = true;
+    }
+}
+
+impl Core {
+    /// What the reader makes of `read`, whose snapshot said the next read
+    /// starts at `next_start`.
+    fn answer(&mut self, read: Read, next_start: Range) -> Reply {
+        let step = self.reader.read(&read, false, None);
         let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
         let screen_rows = u32::try_from(height).unwrap_or(u32::MAX);
         if step.whole_document {
@@ -180,27 +209,37 @@ impl Reader for Core {
                 above: 0,
             });
         }
-        if let Some(above) = step.search_above {
+        if let Some(above) = step.read_above {
             return Reply::Again(Query {
                 above: u32::try_from(above).unwrap_or(u32::MAX),
                 ..self.query
             });
         }
+        if !step.check_rows.is_empty() {
+            let runs = step
+                .check_rows
+                .iter()
+                .map(|run| {
+                    (
+                        u32::try_from(run.above).unwrap_or(u32::MAX),
+                        u32::try_from(run.rows).unwrap_or(u32::MAX),
+                    )
+                })
+                .collect();
+            self.checking = Some((read, next_start));
+            return Reply::Rows(runs);
+        }
         let memory = self.reader.memory();
         let review = memory.review().map(|anchor| anchor.row);
         let heard = heard(&step, review);
         self.query = Query {
-            start: Some(snapshot.next_start),
+            start: Some(next_start),
             screen_rows,
             whole: false,
             above: u32::try_from(memory.above()).unwrap_or(u32::MAX),
         };
         self.reads += 1;
         Reply::Heard(heard)
-    }
-
-    fn quiet(&mut self) {
-        self.quiet = true;
     }
 }
 
@@ -247,14 +286,6 @@ fn counts(expected: &[(&str, usize)]) -> Vec<(String, usize)> {
 /// of the oracle's specification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Question {
-    /// The history rotated between two reads, and the block of history rows
-    /// above the kept start shows the smallest rotation consistent with the
-    /// text (section 4.3, item 5), but output repeating earlier output
-    /// rotated it further: the first rows of the document changed above
-    /// the read, which no read covered, and their lines are missed. The
-    /// document's first row, which every read takes, changed too. Should a
-    /// changed first row refuse a block found in place?
-    PeriodicHistory,
     /// The last read had no history, so the memory keeps no block, and the
     /// next read finds the buffer filled and rotated (section 4.3, item 5):
     /// with no block the rotation is taken from kept rows, and a row whose
@@ -441,7 +472,7 @@ fn the_cores_violations_over_random_streams() {
 )]
 fn smallest_pins() -> Vec<SmallestPin> {
     use Question::{
-        ClearedOverRepeatedText, LingeringInAnotherLine, PeriodicHistory, RotationWithoutBlock,
+        ClearedOverRepeatedText, LingeringInAnotherLine, RotationWithoutBlock,
         VolatileMovedByRewrite,
     };
     let word = "wrapping-word";
@@ -477,29 +508,6 @@ fn smallest_pins() -> Vec<SmallestPin> {
                 ),
             ],
             vec![("FalseReason Volatile", 1)],
-        ),
-        (
-            PeriodicHistory,
-            Flavor::WindowsTerminal,
-            vec![
-                (
-                    Op::Flood {
-                        lines: 9,
-                        word: "ok",
-                    },
-                    false,
-                ),
-                (Op::MoveRows(3), true),
-                (Op::Redraw("cat"), false),
-                (
-                    Op::Flood {
-                        lines: 10,
-                        word: "ok",
-                    },
-                    false,
-                ),
-            ],
-            vec![("Missed", 1)],
         ),
         // A status row's timer ticking twice, then the status row drawn a
         // row lower as the output above it grows.
