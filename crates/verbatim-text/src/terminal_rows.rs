@@ -370,6 +370,12 @@ struct Screen {
     places: Vec<(u64, Anchor)>,
     /// Whether the first row continues a line that starts above it.
     continued: bool,
+    /// The remembered history a read from the document's start that showed
+    /// no rows above its visible screen left as it was, as a full-screen
+    /// program's, with how many rows the buffer held above it: what the
+    /// next read from the document's start is matched against ("The
+    /// memory").
+    held: Option<(VecDeque<u64>, Option<usize>)>,
 }
 
 impl Screen {
@@ -789,6 +795,12 @@ impl TerminalMemory {
         // survives, rows below the caret included ("Screens").
         let had_text = current.rows.iter().any(|row| !row.is_blank());
         if had_text && !aligned.kept_text && !aligned.paired {
+            // A read that reached the document's start is judged by the
+            // history match from the document's first row ("Screens").
+            if !whole && read.at_document_start {
+                let as_whole = align_whole(&current, (&rows, height), read, caret, full);
+                return self.screens(&current, rows, read, &shape, &as_whole, true);
+            }
             return self.screens(&current, rows, read, &shape, &aligned, whole);
         }
         let next = remember(&current, rows, &aligned, read, (width, height), caret);
@@ -903,6 +915,12 @@ impl TerminalMemory {
         let old = vec![OldRow::Gone { lingering: false }; current.total()];
         let mut next = Screen::fresh(rows, read, (width, height), current.height);
         next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
+        // A read showing no rows above its visible screen, as a full-screen
+        // program's, leaves the remembered history as it was ("The
+        // memory").
+        if read.at_document_start && next.rows.len() <= height {
+            next.held = Some(carried_history(current));
+        }
         let total = current.total();
         next.lost_marks.clone_from(&current.lost_marks);
         next.lost_marks
@@ -1296,13 +1314,21 @@ fn align_whole(
     // remembered history starts `unknown_above` rows down the document,
     // shifted up as a full history moves up. Every other row there is new
     // ("The alignment").
-    let old_history: Vec<u64> = memory
-        .known
-        .iter()
-        .copied()
-        .chain(old[..history.min(old.len())].iter().map(|row| row.hash))
-        .collect();
-    let start = memory.unknown_above.unwrap_or(0);
+    let (old_history, start) = match &memory.held {
+        Some((held, above)) => (
+            held.iter().copied().collect::<Vec<u64>>(),
+            above.unwrap_or(0),
+        ),
+        None => (
+            memory
+                .known
+                .iter()
+                .copied()
+                .chain(old[..history.min(old.len())].iter().map(|row| row.hash))
+                .collect(),
+            memory.unknown_above.unwrap_or(0),
+        ),
+    };
     let first = rows.first().map(|row| row.hash);
     let shift = if full {
         old_history
@@ -1742,6 +1768,7 @@ fn remember(
         }
     }
     let (known, unknown_above) = known_after(memory, aligned, read);
+    let rows_len = rows.len();
     let mut next = Screen {
         next: next_of(rows.len(), read.above, memory.height),
         rows,
@@ -1759,6 +1786,7 @@ fn remember(
         review: None,
         marks: Vec::new(),
         lost_marks: memory.lost_marks.clone(),
+        held: (read.at_document_start && rows_len <= height).then(|| carried_history(memory)),
         places: Vec::new(),
         continued: false,
         unplaced: None,
@@ -1815,6 +1843,24 @@ fn known_after(memory: &Screen, aligned: &Aligned, read: &Read) -> (VecDeque<u64
     let over = known.len().saturating_sub(KNOWN_LIMIT);
     known.drain(..over);
     (known, unknown_above.map(|unknown| unknown + over))
+}
+
+/// The remembered history `memory` leaves: the one it holds for the next
+/// read from the document's start, or else its own and its rows above its
+/// screen.
+fn carried_history(memory: &Screen) -> (VecDeque<u64>, Option<usize>) {
+    if let Some(held) = &memory.held {
+        return held.clone();
+    }
+    let mut known = memory.known.clone();
+    known.extend(
+        memory.rows[..memory.screen_start()]
+            .iter()
+            .map(|row| row.hash),
+    );
+    let over = known.len().saturating_sub(KNOWN_LIMIT);
+    known.drain(..over);
+    (known, memory.unknown_above.map(|unknown| unknown + over))
 }
 
 /// An anchor on row `row` of `rows`, at `column` clamped to its text.
