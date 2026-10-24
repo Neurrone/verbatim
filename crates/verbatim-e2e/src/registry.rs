@@ -982,6 +982,32 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_flood::teardown,
     },
     ScenarioDef {
+        name: "windows_terminal_full_history_flood",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No(
+            "it fills the history with report new output off, a Verbatim setting NVDA does not have",
+        ),
+        setup: terminal_flood::setup_full_history_windows_terminal,
+        body: terminal_flood::body_full_history_windows_terminal,
+        teardown: terminal_flood::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_full_history_flood",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::No(
+            "it fills the history with report new output off, a Verbatim setting NVDA does not have",
+        ),
+        setup: terminal_flood::setup_full_history_console_host,
+        body: terminal_flood::body_full_history_console_host,
+        teardown: terminal_flood::teardown,
+    },
+    ScenarioDef {
         name: "conhost_flood",
         group: Group::Text,
         settings: None,

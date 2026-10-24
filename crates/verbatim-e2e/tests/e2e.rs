@@ -87,6 +87,8 @@ scenario_tests! {
     conhost_spoken_password
     windows_terminal_flood
     conhost_flood
+    windows_terminal_full_history_flood
+    conhost_full_history_flood
     windows_terminal_control_flood
     conhost_control_flood
     windows_terminal_shift_flood

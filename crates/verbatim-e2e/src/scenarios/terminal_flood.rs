@@ -36,6 +36,16 @@
 //!    `wall-time-ratio.txt`, for trends; it varies by machine, so it is not
 //!    asserted.
 //!
+//! `windows_terminal_full_history_flood` and `conhost_full_history_flood`
+//! flood a full history (`docs/design/terminal-model.md`, "A lost read"):
+//! with output reporting off, `fill.ps1` writes 9,100 lines in one write,
+//! more than either terminal's history holds, and nothing is said; output
+//! reporting back on, `echo back` is answered with "back" and the prompt;
+//! then the first flood is heard as above but with the count taken from
+//! text, "skipped about 1941 lines", since the read after the first group
+//! finds the buffer moved further than it covers, reads the whole document
+//! and finds the last read's rows in it by their text.
+//!
 //! `conhost_wrapped_flood` floods the console host while a line that
 //! wrapped onto three rows is on its screen: `long.ps1` prints forty
 //! numbered words, heard whole, then the first flood is heard exactly as
@@ -83,6 +93,95 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
 
 pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_console_host(scenario, "flood", &[("flood.ps1", SCRIPT)])
+}
+
+/// 9,100 numbered lines in one write, more than either terminal's
+/// history holds.
+const FILL_SCRIPT: &str = "$lines = foreach ($line in 1..9100) { \"fill line $line\" }\r\n\
+[Console]::Out.Write(($lines -join \"`r`n\") + \"`r`n\")\r\n";
+
+pub(crate) fn setup_full_history_windows_terminal(
+    scenario: &mut Scenario,
+) -> io::Result<ScenarioState> {
+    terminal::open_windows_terminal(
+        scenario,
+        "full-history-flood",
+        &[("flood.ps1", SCRIPT), ("fill.ps1", FILL_SCRIPT)],
+    )
+}
+
+pub(crate) fn setup_full_history_console_host(
+    scenario: &mut Scenario,
+) -> io::Result<ScenarioState> {
+    terminal::open_console_host(
+        scenario,
+        "full-history-flood",
+        &[("flood.ps1", SCRIPT), ("fill.ps1", FILL_SCRIPT)],
+    )
+}
+
+/// Fills the history with output reporting off, then turns it back on and
+/// has `echo back` answered, so the flood after it starts from a read of
+/// a full history.
+fn fill_history(scenario: &mut Scenario) {
+    scenario
+        .send_gesture("kb:verbatim+5")
+        .expect("sends Verbatim+5");
+    scenario.speech().expect(&[OUTPUT_OFF]);
+    terminal::type_hearing(scenario, r".\fill.ps1", terminal::Echo::Shown);
+    let watch = watch_for_prompt(scenario);
+    scenario.send_keys(&["enter"]).expect("presses enter");
+    wait_for_prompt(watch);
+    scenario.expect_nothing_more();
+    scenario
+        .send_gesture("kb:verbatim+5")
+        .expect("sends Verbatim+5");
+    scenario.speech().expect(&[OUTPUT_ON]);
+    terminal::type_with_echo(scenario, "echo back", terminal::Echo::Shown);
+    scenario.speech().expect(&["back", PROMPT]);
+}
+
+/// Runs flood 1 into a full history and asserts exactly what it says: as
+/// any flood, with the count taken from text.
+fn heard_full_history_flood(scenario: &mut Scenario) {
+    terminal::type_with_echo(scenario, r".\flood.ps1 1", terminal::Echo::Shown);
+    let speech: Vec<String> = flood_speech()
+        .into_iter()
+        .map(|said| {
+            said.replace(
+                "sound: skipped-lines skipped ",
+                "sound: skipped-lines skipped about ",
+            )
+        })
+        .collect();
+    let speech: Vec<&str> = speech.iter().map(String::as_str).collect();
+    scenario.speech().expect_within(&speech, FLOOD_STEP);
+}
+
+/// `windows_terminal_full_history_flood`.
+pub(crate) fn body_full_history_windows_terminal(
+    scenario: &mut Scenario,
+    state: &mut ScenarioState,
+) {
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
+    fill_history(scenario);
+    heard_full_history_flood(scenario);
+}
+
+/// `conhost_full_history_flood`.
+pub(crate) fn body_full_history_console_host(
+    scenario: &mut Scenario,
+    state: &mut ScenarioState,
+) {
+    let title = terminal::title(state).to_owned();
+    // The console host's text area has no name.
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{title} window"), "terminal", "blank"],
+    );
+    fill_history(scenario);
+    heard_full_history_flood(scenario);
 }
 
 /// Forty numbered words on one line, which wraps onto three rows.
