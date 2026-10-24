@@ -761,8 +761,9 @@ anything but the focus is ignored.
 - A key Core held is told to the focused terminal's outpost as Core
   passes it on (`TextOp::TerminalKey`, not waited for), before its watch is
   asked for, taken as reaching the program just after the read before it;
-  the keyboard hook's thread tells the outpost of every key it passes
-  itself (`verbatim-app`), with what a key is to the reading rules worked
+  the keyboard hook's thread tells the outpost of every other key it
+  passes itself, and the reducer thread of a key deferred behind a held
+  one as it sends it on (`verbatim-app`), with what a key is to the reading rules worked
   out here (`caret_key_kind`: the arrows left and right, Home and End a
   character; Control with them a word; the arrows up and down, the page
   keys, Control with Home and End or the arrows up and down a line; any

@@ -2592,9 +2592,10 @@ it.
   program. The keyboard hook's thread in `verbatim.exe` tells it of each
   key it passes itself, as it reports the key and before passing it on
   (`SupervisorToOutpost::TerminalKey`, queued as `Item::TerminalKey`), so
-  the key arrives ahead of what the terminal shows of it; Core tells it of
-  a key it held, as it passes the key on (`TextOp::TerminalKey`, answered
-  `Done`). A read about to begin first takes every key still waiting in the
+  the key arrives ahead of what the terminal shows of it; the reducer
+  thread tells it of a key deferred behind a held key just before sending
+  it on, and Core of a key it held, as it passes the key on
+  (`TextOp::TerminalKey`, answered `Done`). A read about to begin first takes every key still waiting in the
   intake (`Intake::take_terminal_keys`). The rules open the
   key's window, 300 milliseconds in which reads can carry its effects
   (section 5.5), and the next read takes the colours. A typed character

@@ -17,8 +17,9 @@
 //! The outpost is told of every key that reaches a focused terminal
 //! ([`TerminalKey`]), with when it reached the program, since the rules
 //! judge which read a key's effects can be in by that time (section 5.5):
-//! by the keyboard hook's thread for a key it passes itself, and by Core,
-//! in [`crate::TextOp::TerminalKey`], for a key it held.
+//! by the keyboard hook's thread for a key it passes itself, by the reducer
+//! thread for a key deferred behind a held one as it sends it on, and by
+//! Core, in [`crate::TextOp::TerminalKey`], for a key it held.
 
 use serde::{Deserialize, Serialize};
 
