@@ -346,7 +346,7 @@ thread_local! {
     /// thread's hooks hear windows destroyed ([`WinEventKind::Destroy`]),
     /// which forgets a destroyed window's: a flood of events from one
     /// window asks its class once. `None` for hooks that do not hear it,
-    /// such as the focus listener's, which ask each time.
+    /// such as the focus listener's, which ask it once for each event.
     static CLASSES: RefCell<Option<WindowCache<Rc<str>>>> = const { RefCell::new(None) };
     /// This thread's hook set: the process it is scoped to, and each raw
     /// event hooked now with its hook, `None` while the thread has none.
@@ -730,11 +730,15 @@ fn wanted_kind(
             .contains(&WinEventKind::Caret)
             .then_some(WinEventKind::Caret);
     }
-    let mut class = || match classes.as_mut() {
-        Some(classes) => {
-            Rc::clone(classes.get_or_learn(hwnd, owner_of(hwnd), || Rc::from(class_of(hwnd))))
-        }
-        None => Rc::from(class_of(hwnd)),
+    // Read at most once for the event, whether or not `classes` keeps it.
+    let mut read: Option<Rc<str>> = None;
+    let mut class = || {
+        Rc::clone(read.get_or_insert_with(|| match classes.as_mut() {
+            Some(classes) => {
+                Rc::clone(classes.get_or_learn(hwnd, owner_of(hwnd), || Rc::from(class_of(hwnd))))
+            }
+            None => Rc::from(class_of(hwnd)),
+        }))
     };
     // Program Manager's or the taskbar's coming to the front, for an install
     // that asks for it, as its own kind.
@@ -946,6 +950,28 @@ mod tests {
                 [WinEventKind::ValueChange]
             );
         }
+        assert_eq!(reads.get(), 1);
+    }
+
+    /// The focus listener, which keeps no classes, reads a window's class
+    /// once for its foreground event, though both the shell's foreground
+    /// and the foreground change ask it.
+    #[test]
+    fn the_listener_reads_a_foreground_windows_class_once() {
+        let reads = Cell::new(0);
+        let kind = wanted_kind(
+            (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
+            LISTENER_SUBSCRIPTIONS,
+            &mut None,
+            (
+                |_| 7,
+                |_| {
+                    reads.set(reads.get() + 1);
+                    "Notepad".to_owned()
+                },
+            ),
+        );
+        assert_eq!(kind, Some(WinEventKind::Foreground));
         assert_eq!(reads.get(), 1);
     }
 

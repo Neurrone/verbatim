@@ -1049,7 +1049,19 @@ Passing a gesture from the keyboard hook to the gesture router.
 
 - Minimum: none: the hook decides the key from its own state, and nothing
   about the application is read.
-- Today: none. The hook sends each gesture and harness mark on an
+- Today: no call into an application. Two local reads decide the keys
+  that need to know the window in front, against Core's view of it
+  (`ForegroundView`, architecture section 5): a key that would be held
+  back or deferred behind a held one reads `GetForegroundWindow` and
+  loads the view, one lock-free `ArcSwap` load, to learn whether keys may
+  be held there; and every press that reaches the application and is
+  not Verbatim's own loads the view once more, which the typed-text
+  translation uses for a key that may type, with the
+  `GetForegroundWindow` that translation already read, to learn which
+  thread's keyboard layout a console window's keys take. Neither load
+  waits or allocates; the press's load replaces the hook thread's own
+  table of console threads, which its `WinEvent` hooks kept. The hook
+  sends each gesture and harness mark on an
   unbounded channel (`docs/crates/verbatim-input-windows.md`), so a key's
   wake-ups are unchanged: the send wakes the router once, as before. The
   channel stores its messages in blocks of 31 slots, so the hook thread
@@ -1333,9 +1345,14 @@ The other costs of holding, none of them a call into an application:
   `integrity` module), and one message to Core
   (`OutpostToSupervisor::ForegroundWindow`), which the reducer thread
   decides into the hook's view (`SrState::hook_foreground`) and publishes
-  with one lock-free store when the view changed. The hook's thread
-  hooks no event and is not woken by a foreground change; a key costs
-  none of these. Traced with `cargo xtask trace scenario
+  with one lock-free store when the view changed. The listener reads
+  the new window's class once in its `WinEvent` callback, to drop
+  Program Manager's and the taskbar's foreground changes, and once to
+  route the event, which also tells it whether the window is a console
+  host's, so a foreground change costs it no class read more than
+  before. The hook's thread hooks no event and is not woken by a
+  foreground change; a key reads only the view Core published ("A key
+  through the keyboard hook"). Traced with `cargo xtask trace scenario
   measure_focus_new_application`, debug build, info logging, runs of
   the build before this mechanism (d509a240) and after it (7015ae08 with
   the staging-window change) alternated: over `--after 3 --seconds 20`,
@@ -1360,6 +1377,49 @@ The other costs of holding, none of them a call into an application:
   the last of 15 repeats reached the text box 1.05 to 1.06 s after the
   release (about 110 ms per repeat), against 149.2 s before the bound
   (`target/e2e-evidence/m42-key-holding-fixes-2026-10-22/held-repeat-analysis.txt`).
+
+### The shell's staging windows
+
+On Alt+Tab, Task View and the Windows+X menu, File Explorer gives the
+focus or the foreground to windows that only stage the switch
+(`ForegroundStaging`, `LauncherTipWnd`,
+`ApplicationManager_DesktopShellWindow`; `docs/parity/windows-and-processes.md`,
+"The shell's staging windows"). Core decides what is said for them
+(decision D6), so they are read like any other window.
+
+- Minimum: NVDA makes each such window its focus object, reading it, and
+  says nothing.
+- Today: Explorer's outpost reads each focus and foreground event there
+  as for any window: an MSAA focus's acquisition, 13 or 14 MSAA calls
+  and one window message, and a foreground change's read, 8 MSAA calls
+  and one window message; the listener judges and reads a UIA focus
+  there, and its arbitration probes each window's UIA support once. Until
+  Core took the rule, the listener and the outposts dropped these events
+  before any call into Explorer. The window facts of a focus change carry
+  the window's class (`WindowFacts::class`), which Core matches; every
+  other event's facts carry none, so that only focus changes and
+  focus-now answers bring a class's string to Core, where it is copied
+  with the focus's and the attention's window and, with an event
+  subscriber, to the control plane.
+- Measured on 2026-10-24 with a hand-run script, since the scenarios
+  never use Alt+Tab (`docs/testing.md`): two console host windows and six
+  Alt+Tab switches between them, four with Alt released at once and two
+  with Alt held for 1.5 seconds, run once with no Verbatim and twice
+  with a debug build of Verbatim
+  (`target/e2e-evidence/fg-review-fix-2026-10-24/`). Every switch
+  completed. The window switched to was in front 450 to 890 ms after
+  Alt's release for a quick switch and 18 to 33 ms after it with Alt
+  held, against 525 to 811 ms and 22 to 28 ms with no Verbatim: in both,
+  a quick switch waits on the switcher's own window ("Task Switching"),
+  which held the foreground until then, on this machine whose File
+  Explorer was answering slowly. Explorer's outpost's reads of the
+  staging windows took 1.5 to 14 ms, and three times 400 to 542 ms (one
+  of them a first UIA probe of 473 ms), each begun as its switch was
+  already completing. Verbatim said "<title> window", "terminal" and the
+  prompt's line for each quick switch and nothing for the staging
+  window, as in NVDA's capture of 2026-10-09; with Alt held it said the
+  switcher and its selected item, which that capture does not cover.
+- Target: the minimum.
 
 ### The system caret's events
 

@@ -39,6 +39,7 @@ use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
     Backend, CallCounts, CaretWatch, FocusText, NodeId, NodeSnapshot, NormalizedEvent,
     PropertyChange, Role, State, StateSet, TerminalSpeech, TextOp, TextPoint, TextReply, TraceId,
+    WindowFacts,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Kept, Node, SelectedItem, SuggestionsRefresh,
@@ -2280,7 +2281,7 @@ impl Worker<'_> {
             trace_id: trace,
             observed_at_ms,
             backend,
-            window: window.map(window_facts),
+            window: window.map(|hwnd| event_window_facts(window_facts(hwnd), &event)),
             application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid())),
             timing: EventTiming {
                 published_at_us: now_us(),
@@ -4261,9 +4262,62 @@ impl Worker<'_> {
     }
 }
 
+/// `facts`, the window facts of an event message carrying `event`, with
+/// the window's class only for a focus change, the one event whose window
+/// Core's rules for an application's windows match (decision D6), so that
+/// no other event carries the class's string to Core.
+fn event_window_facts(mut facts: WindowFacts, event: &NormalizedEvent) -> WindowFacts {
+    if !matches!(event, NormalizedEvent::FocusChanged { .. }) {
+        facts.class = String::new();
+    }
+    facts
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A focus change's window facts keep the window's class, which Core's
+    /// staging rule matches; any other event's carry none.
+    #[test]
+    fn only_a_focus_change_carries_its_windows_class() {
+        let facts = WindowFacts {
+            top_level: verbatim_model::WindowHandle(5),
+            root_owner: verbatim_model::WindowHandle(5),
+            topmost: false,
+            under_active_window: None,
+            in_foreground: true,
+            class: "ForegroundStaging".to_owned(),
+        };
+        let focus = NormalizedEvent::FocusChanged {
+            node: NodeSnapshot {
+                id: NodeId::new(1),
+                backend: Backend::Msaa,
+                role: Role::Pane,
+                name: None,
+                value: None,
+                states: StateSet::new(),
+                details: verbatim_model::NodeDetails::default(),
+            },
+            foreground: false,
+            ancestors_unknown: true,
+            ancestors: Vec::new(),
+            selected_child: None,
+            text: None,
+        };
+        assert_eq!(event_window_facts(facts.clone(), &focus), facts);
+        let value = NormalizedEvent::ValueChanged {
+            node_id: NodeId::new(1),
+            value: Some("1".to_owned()),
+        };
+        assert_eq!(
+            event_window_facts(facts.clone(), &value),
+            WindowFacts {
+                class: String::new(),
+                ..facts
+            }
+        );
+    }
 
     /// A last focus in window `window`, from the MSAA event `event`.
     fn last_focus(window: isize, event: Option<(isize, i32, i32)>) -> QueuedFocus {

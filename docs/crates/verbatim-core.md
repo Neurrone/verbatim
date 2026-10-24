@@ -228,8 +228,9 @@ Implementation notes, `reduce`:
   change on one of the shell's staging windows (`ForegroundStaging`,
   `LauncherTipWnd`, `ApplicationManager_DesktopShellWindow`, matched by
   the window class its window facts carry) is taken like any other
-  focus, so the focus, the navigator and the foreground move to it and
-  speech is cut, but nothing is said for it
+  focus, so the focus, the navigator and the foreground move to it, and
+  speech is cut when the foreground window changed, as for any focus, but
+  nothing is said for it
   (`docs/parity/windows-and-processes.md`, "The shell's staging
   windows"). `tests/reduce.rs` checks it.
 - Event acceptance (decision D14 as amended by the outpost redesign;

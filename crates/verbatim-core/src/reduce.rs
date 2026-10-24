@@ -926,7 +926,8 @@ fn reduce_focus_changed(
     state.focuses_queued += 1;
     state.navigator = Some(navigator);
     // A nameless foreground window, and any focus in the shell's staging
-    // windows, cut speech but say nothing.
+    // windows, say nothing; speech was cut above if the foreground window
+    // changed.
     if report.foreground && !has_text(report.node.name.as_deref())
         || crate::applications::is_shell_staging_window(window)
     {

@@ -950,10 +950,10 @@ impl Listener {
                         console: false,
                     });
                     // Forwarded first, so the event's observation time is
-                    // taken before anything else the callback does.
-                    forward_msaa_event(&outgoing, event);
+                    // taken before anything else the callback does; its
+                    // window's class, read to route it, tells a console.
+                    let console = forward_msaa_event(&outgoing, event);
                     if let Some(front) = foreground {
-                        let console = window_class_name(front.window) == CONSOLE_WINDOW_CLASS;
                         let step = watch.borrow_mut().foreground(Front { console, ..front });
                         foreground_step(&outgoing, step);
                         // A foreground change is the evidence that the
@@ -1350,8 +1350,10 @@ fn install_desktop_subscriptions(
 /// that process's outpost has its own hook in and took it in itself
 /// ([`Outgoing::fact`]). Drops a null window or a pid-zero owner; the raw
 /// object address is forwarded untouched, and the app outpost does the
-/// acquisition.
-fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
+/// acquisition. Returns whether the event's window is a console host
+/// window, by the class read to route it; `false` for an event dropped
+/// before that read, whose window is null or has no owner.
+fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) -> bool {
     // The observation, before the callback's local reads, which the
     // listener's handling stage then holds.
     let observed_at_us = outgoing.now();
@@ -1369,7 +1371,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
         // the focus of whichever application is then in front. NVDA accepts
         // these from any window, even an invalid one.
         outgoing.menu_or_switch_ended(observed_at_us);
-        return;
+        return false;
     }
     // NVDA takes a null window as the desktop window
     // (`internalWinEventHandler.py` 113 to 129), whose process is the
@@ -1377,23 +1379,23 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
     // (`shouldAllowIAccessibleFocusEvent` on the desktop window's object)
     // and Verbatim cannot open: dropping it here is the same outcome.
     if hwnd == 0 {
-        return;
+        return false;
     }
     let owner = window_pid(hwnd);
     if owner == 0 {
-        return;
+        return false;
     }
-    let Some(pid) = routed_process(&window_class_name(hwnd), owner, || {
-        process_of_thread(thread)
-    }) else {
+    let class = window_class_name(hwnd);
+    let console = class == CONSOLE_WINDOW_CLASS;
+    let Some(pid) = routed_process(&class, owner, || process_of_thread(thread)) else {
         log_unread_console_once(hwnd, thread);
-        return;
+        return console;
     };
     if pid != owner {
         if outgoing.ignored.contains(Pid(owner)) {
             // The console of a process Verbatim ignores, whose events were
             // dropped by its owner before they went to its console host.
-            return;
+            return console;
         }
         tracing::debug!(
             hwnd,
@@ -1403,9 +1405,11 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
             "a console window's event goes to its console host"
         );
     }
-    // The listener subscribes to nothing else (LISTENER_SUBSCRIPTIONS).
+    // Every kind the listener subscribes to (LISTENER_SUBSCRIPTIONS) that
+    // reaches here is a fact: the console's and the shell's foreground
+    // events are handled before this.
     let Some(fact) = DeliveredFact::from_win_event(kind, (hwnd, id_object, id_child)) else {
-        return;
+        return console;
     };
     outgoing.fact(
         Pid(pid),
@@ -1414,6 +1418,7 @@ fn forward_msaa_event(outgoing: &Outgoing, event: WinEvent) {
         Some(WinEventStamp { thread, time }),
         observed_at_us,
     );
+    console
 }
 
 /// The listener's nudge that starts the watch of the window in front

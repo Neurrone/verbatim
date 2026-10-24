@@ -18,8 +18,8 @@ const SHELL_STAGING_CLASSES: [&str; 3] = [
 
 /// Whether `window` is one of the shell's staging windows. A focus or a
 /// foreground change there is taken like any other, so the focus, the
-/// navigator and the foreground move to it and speech is cut, but nothing
-/// is said for it (`docs/parity/windows-and-processes.md`, "The shell's
+/// navigator and the foreground move to it, and speech is cut when the
+/// foreground window changed, but nothing is said for it (`docs/parity/windows-and-processes.md`, "The shell's
 /// staging windows"). On Alt+Tab, File Explorer's staging window takes the
 /// focus with no name, and was said as "pane" before the window switched
 /// to.

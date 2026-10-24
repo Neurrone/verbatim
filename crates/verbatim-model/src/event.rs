@@ -64,8 +64,10 @@ pub struct WindowFacts {
     pub in_foreground: bool,
     /// The class of the event's own window, which Core's rules for an
     /// application's windows match, as NVDA's app modules match a window's
-    /// class (decision D6).
-    #[serde(default)]
+    /// class (decision D6). Only a focus change, the one event those rules
+    /// match, and a focus-now answer carry it; it is empty on every other
+    /// event, and left out of the message, so that they carry no string.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub class: String,
 }
 

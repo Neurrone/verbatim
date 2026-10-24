@@ -1553,8 +1553,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   top-level window and root owner from `GetAncestor`, the topmost extended
   style on the window or its top-level window, and for `Windows.UI.Core`
   windows whether `GetGUIThreadInfo`'s active window is it or contains it,
-  and whether it is in `GetForegroundWindow`'s window by NVDA's test), all
-  local calls.
+  and whether it is in `GetForegroundWindow`'s window by NVDA's test, and,
+  for a focus change only, the window's class, which Core's rules for an
+  application's windows match), all local calls.
 
 ### Reading the focus
 

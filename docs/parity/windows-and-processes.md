@@ -124,14 +124,18 @@ change on such a window (`ForegroundStaging`, `LauncherTipWnd`,
 `ApplicationManager_DesktopShellWindow`) like any other, with the
 window's class, and Core takes it like any other focus (decision D6):
 the focus, the navigator and, for a foreground change, the foreground
-object move to the staging window, and speech is cut as for any new
-foreground window, but nothing is said for it, whatever its name. As in
+object move to the staging window, and speech is cut when the
+foreground window changed, as for any focus and as in NVDA, but nothing
+is said for it, whatever its name. As in
 NVDA, the focus that follows, in the window switched to, is a new focus
 and is announced. **matched (verified)** for what is said, by NVDA's
 capture of Alt+Tab of 2026-10-09; no scenario reaches a staging window
 since the two-window scenarios stopped switching with Alt+Tab, and the
 Windows+X menu's host took neither the focus nor the foreground in the
 `quick_link_menu` scenario's runs, so Core's unit test pins the rule
-(`a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing`).
+(`a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing`),
+and a hand-run Alt+Tab check of 2026-10-24 found every switch completing
+as fast as with no Verbatim and nothing said for the staging window
+(`docs/performance.md`, "The shell's staging windows").
 Dickson decided on 2026-10-24 that speech is cut there as NVDA cuts it,
 replacing the earlier rule that dropped the change whole.
