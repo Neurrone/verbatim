@@ -777,9 +777,10 @@ the speech pipeline. Consequences:
   speech is ordered, cancellable and recorded in one place. A sound file
   the user plays from the settings window to hear it is not speech the
   reducer decides, and plays directly. The speech
-  pipeline reports each utterance's end to the reducer as an `Input`,
-  whether it finished or was cancelled, so nothing the reducer waits on is
-  lost by a cut.
+  pipeline reports an utterance that carried marks and was cut off or
+  failed to the reducer as an `Input`; one that finished says so through
+  its last mark. So nothing the reducer waits on is lost by a cut, and a
+  finished utterance costs no extra wake-up (Dickson, 2026-10-24).
 
 ## 3. Normalized accessibility model
 
