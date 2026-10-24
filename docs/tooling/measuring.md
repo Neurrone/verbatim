@@ -112,7 +112,9 @@ for one thread by its id, such as an unnamed waker a wakers report named. The tr
 unless `--keep` is given; a kept trace is about 20 MB a second, so delete
 it from `C:\ProgramData\Verbatim\Traces`, with its `.NGENPDB` folder, as
 soon as it has been read again (`cargo xtask trace waits <trace.etl>
-...`).
+...`). Delete it with `cmd /c del` or `cmd /c rd /s /q`: PowerShell's
+`Remove-Item` fails there even with `-Force`, because Dickson's account
+may delete in that folder but not change attributes, which `-Force` needs.
 
 The window must lie inside the scenario, away from its start and its end:
 after a trace that covered a scenario's start or end, File Explorer has
