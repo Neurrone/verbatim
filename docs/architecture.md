@@ -273,7 +273,9 @@ screen reader in both rendered and source form.
   foreground cleanly (an Explorer folder window), and for background
   events users expect to hear. Attention moves only on a foreground
   change, reported as a focus on the window, which the listener has
-  confirmed is still the foreground window.
+  confirmed is still the foreground window; an ordinary focus fact is
+  classified like any other event, so a topmost popup that takes focus
+  does not take attention.
 
   Acceptance follows NVDA's `shouldAcceptEvent` rules: a focus is attended
   when its window, read at the event, is in the system's foreground window
@@ -281,7 +283,9 @@ screen reader in both rendered and source form.
   its root owner), is topmost, or is a `Windows.UI.Core` window under the
   input thread's active window, judged against the real foreground window
   rather than the attention record, because a focus can arrive before the
-  report of the foreground change that left its window. UIA notifications
+  report of the foreground change that left its window; a focus with no
+  window facts is judged by its application. Of the alerts, only toasts
+  are reported for now. UIA notifications
   are accepted from the attention application only, except the shell's
   window-snap results; menu popups, tooltip and notification-bar classes,
   configured progress bars and toast alerts are accepted from anywhere as
