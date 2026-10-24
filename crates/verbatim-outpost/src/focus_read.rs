@@ -17,19 +17,21 @@
 //!   `docs/design/focus-pipeline.md`, section 18): a sender whose cached
 //!   window the system reports hung is dropped; one whose nearest window
 //!   does not use UIA, or that has none, is not native and is dropped; a
-//!   sender UI Automation counts as the last focus any of the listener's
-//!   readers accepted (`CompareElements`), while that element still has
-//!   the keyboard focus, read live, is a repeat and is dropped
-//!   ([`HeldElements`]); one whose nearest window fails NVDA's acceptance
-//!   test is dropped; the console window's own element, which NVDA's
-//!   `consoleUIAWindow` refuses, and a shell window that only stages a
-//!   switch, whose focus NVDA's File Explorer app module leaves unsaid,
+//!   sender UI Automation counts as the element of the focus Core holds
+//!   (`CompareElements`), while that element still has the keyboard
+//!   focus, read live, is a repeat and is dropped, but only once Core has
+//!   judged every focus the listener read ([`HeldElements`]; decision D14,
+//!   "Where the rules run"); one whose nearest window fails NVDA's
+//!   acceptance test is dropped; the console window's own element, which
+//!   NVDA's `consoleUIAWindow` refuses, and a focus in Core's hidden frame
 //!   are dropped; and a sender without the keyboard focus, read with a
 //!   plain property read, is dropped, as NVDA's `shouldAllowUIAFocusEvent`
-//!   drops it; a menu opening is judged by NVDA's automation event
-//!   handler's checks instead, the same but for the repeat, and with a
-//!   sender UI Automation counts as the current focus judged as that
-//!   focus, with its window and without the native check;
+//!   drops it. A shell window that only stages a switch is read and goes to
+//!   Core like any focus, and Core's rules decide what is said of it. A
+//!   menu opening is judged by NVDA's automation event handler's checks
+//!   instead, the same but for the repeat, and with a sender UI Automation
+//!   counts as the element of the focus Core holds judged as that focus,
+//!   with its window and without the native check;
 //! - then the classic read, every call on an element the listener holds,
 //!   with no connection to any window and no remote operation
 //!   (`docs/design/listener-without-connections.md`, sections 2 and 3):
@@ -332,9 +334,9 @@ type OnLearn = Box<dyn Fn(&WatchedRead) + Send + Sync>;
 /// foreground event since its event does.
 ///
 /// And whether the watchdog has abandoned it ([`abandon`](Self::abandon)):
-/// a read that returns after that makes no focus the last one accepted
-/// ([`HeldElements`]), so it cannot overwrite a newer focus accepted while
-/// it was held.
+/// a read that returns after that keeps no focus for Core's judgement
+/// ([`HeldElements`]), as Core is told of its drop instead and never
+/// judges it.
 #[derive(Clone, Default)]
 pub(crate) struct WatchedRead(Arc<Watched>);
 
@@ -436,7 +438,7 @@ const HUNG: &str = "its window is hung";
 /// focus failed.
 const COMPARISON_FAILED: &str = "its comparison with the current focus failed";
 
-/// The reason a focus is dropped that repeats the last focus accepted.
+/// The reason a focus is dropped that repeats the focus Core holds.
 const REPEAT: &str = "a repeat of the last focus, which still has the keyboard focus";
 
 /// The reason a focus is dropped that fails NVDA's acceptance test.
@@ -743,7 +745,8 @@ pub struct FocusReader {
     last: Option<LastFocus>,
     /// This reader's number among the listener's readers.
     number: u64,
-    /// The last focus any reader accepted.
+    /// The elements of the focuses the listener's readers accepted, by how
+    /// Core has judged them.
     held_elements: HeldElements,
     /// Reads the foreground window for NVDA's acceptance test: the
     /// system's, unless a test supplies its own
@@ -771,8 +774,8 @@ impl FocusReader {
     /// which joins COM's multithreaded apartment. Every read is the classic
     /// walk, which makes no remote operation
     /// (`docs/design/listener-without-connections.md`, section 2).
-    /// `held_elements` is the last focus any of the listener's readers
-    /// accepted, which this one shares.
+    /// `held_elements` holds the elements of the focuses the listener's
+    /// readers accepted, by how Core has judged them, which this one shares.
     ///
     /// # Errors
     ///
@@ -1181,8 +1184,8 @@ impl FocusReader {
     /// it, judged with the focus's window and its keyboard focus read from
     /// the focus's element, without the native check. Its drop while a
     /// focus is pending is made as it arrives (`Readers::focus_pending`).
-    /// As NVDA queues it as a focus on the menu, it becomes the last focus
-    /// accepted.
+    /// As NVDA queues it as a focus on the menu, its read is kept for Core's
+    /// judgement as a focus's is.
     ///
     /// The read's time, `budget`, is asked before each call after the
     /// first. Once it is up, a focus whose window's verdict is known is
@@ -1201,9 +1204,9 @@ impl FocusReader {
     /// of NVDA's live read, a sender whose event says it did not have the
     /// focus being dropped. Skipped, a deliberate divergence from NVDA: the
     /// repeat check (step 3), whose comparison the runtime ids could answer
-    /// but which drops a repeat only while the last focus still has the
-    /// keyboard focus, read live from that element, which no cache holds;
-    /// a repeat out of time is spoken. A menu opening's comparison is its
+    /// but which drops a repeat only while the element of the focus Core
+    /// holds still has the keyboard focus, read live from that element,
+    /// which no cache holds; a repeat out of time is spoken. A menu opening's comparison is its
     /// read's first call, made within the budget.
     fn judge_before_reading(
         &self,
@@ -1314,9 +1317,9 @@ impl FocusReader {
         // 4. NVDA's acceptance test against the same window
         // (`shouldAcceptEvent`, `UIAHandler/__init__.py` 924 to 930, and
         // for a menu opening 825 to 837; sections 16.2 and 16.3). A focus
-        // that fails is dropped and never becomes the last accepted, so the
-        // same element's focus once its window is in front, as a console's
-        // text area's comes, is no repeat.
+        // that fails is dropped and never reaches Core, so the same
+        // element's focus once its window is in front, as a console's text
+        // area's comes, is no repeat.
         // Local calls, timed apart from the call before them.
         budget.call("the acceptance test and the window checks");
         let windows = SystemWindows {
@@ -1492,10 +1495,9 @@ impl FocusReader {
     /// asks to see of each read before the duplicate rule is built on
     /// `CompareElements`: the sender's runtime id, class name, framework,
     /// and own native window handle, `hwnd`, and whether UI Automation
-    /// counts it as the same element as the current focus, the last focus
-    /// any of the listener's readers accepted, in any application, while no
-    /// newer focus has been queued (`same_as_current`, the duplicate rule's
-    /// comparison, and a menu opening's with the focus). All but
+    /// counts it as the same element as the focus Core holds, when the
+    /// listener holds that focus's element (`same_as_current`, the
+    /// duplicate rule's comparison, and a menu opening's with the focus). All but
     /// the comparison come from the event's cache, as NVDA's debug strings
     /// do; nothing is read live for the log.
     fn log_sender(
