@@ -811,7 +811,11 @@ anything but the focus is ignored.
   waiting lines folded into the skipped count beyond it; a single line
   larger than that is cut on a grapheme boundary and followed by "line
   cut" (`Message::TerminalLineCut`). So the state stays bounded and every
-  count stays exact. The outpost's reading rules apply the policy within
+  count stays exact: a skipped count counts each terminal line once, so
+  a line's growth (`TerminalItem::Growth`) adds nothing to it, and a line
+  the history still holds that came before a "more than" count in its
+  read (`TerminalItem::HistoryLine`) adds to that count, since N is the
+  history's lines left unspoken. The outpost's reading rules apply the policy within
   each read as well, so a read of a flood arrives with its own count.
 - On-demand reading. Once a group's worth of lines waits or is queued for
   speech, Core tells the outpost to hold (`TextOp::TerminalHold`): it only

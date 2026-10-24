@@ -892,15 +892,12 @@ impl TerminalReader {
                 .retain(|(_, at)| now <= at.saturating_add(TYPED_LIMIT_MS));
             for kept in [&mut keys.before, &mut keys.origin] {
                 if let Some(before) = kept {
+                    // When the caret's row went but its line's first row
+                    // stayed, as when a wrapped line is erased, the caret
+                    // was on that line, at its column.
                     match (outcome.old.get(before.row), outcome.old.get(before.line)) {
-                        (Some(OldRow::Kept(to) | OldRow::Rewritten(to)), _) => {
-                            before.row = *to;
-                            before.line = screen.starts[*to];
-                        }
-                        // The caret's row went but its line's first row
-                        // stayed, as when a wrapped line is erased: the
-                        // caret was on that line, at its column.
-                        (_, Some(OldRow::Kept(to) | OldRow::Rewritten(to))) => {
+                        (Some(OldRow::Kept(to) | OldRow::Rewritten(to)), _)
+                        | (_, Some(OldRow::Kept(to) | OldRow::Rewritten(to))) => {
                             before.row = *to;
                             before.line = screen.starts[*to];
                         }

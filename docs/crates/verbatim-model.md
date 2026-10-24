@@ -319,9 +319,12 @@ the contract the Windows side implements.
   key, or once the quiet period passed (`docs/design/terminal-model.md`,
   section 5). A `TerminalSpeech` (`terminal.rs`) holds its `items` in the
   order they are spoken, each a `TerminalItem`: output, which Core queues
-  by the flood policy (`Output`, a new line whole, what a growing line
-  gained, a redrawn row from the word that changed, or a held line as it
-  was last read, an empty one a blank line; `Skipped`, a read's own flood
+  by the flood policy (`Output`, a new line whole, a redrawn row from the
+  word that changed, or a held line as it was last read, an empty one a
+  blank line; `Growth`, what a growing line gained, spoken like a line but
+  counted as none when skipped; `HistoryLine`, a line a read past a full
+  history speaks before its `Skipped::MoreThan`, which adds to that count
+  when skipped; `Skipped`, a read's own flood
   summary: `Skipped::Count`, `Skipped::Uncounted` when the count is not
   known, or `Skipped::MoreThan` when the terminal's history overflowed, its
   count the history's lines left unspoken; `plus` adds an older and a

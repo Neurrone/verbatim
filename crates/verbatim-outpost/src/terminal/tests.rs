@@ -233,9 +233,11 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                     unit: TerminalUnit::Word,
                     text: "word".to_owned(),
                 },
-                TerminalItem::Output("first".to_owned()),
+                // A line before a read's "more than" summary is one the
+                // history still holds; a line's growth is not a line.
+                TerminalItem::HistoryLine("first".to_owned()),
                 TerminalItem::Skipped(Skipped::MoreThan(9000)),
-                TerminalItem::Output("grown".to_owned()),
+                TerminalItem::Growth("grown".to_owned()),
                 TerminalItem::Echo("x".to_owned()),
             ],
             followed: true,

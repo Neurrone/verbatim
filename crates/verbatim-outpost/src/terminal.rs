@@ -223,16 +223,32 @@ impl Terminal {
 /// What the reading rules said, as Core takes it.
 #[must_use]
 pub fn speech_of(step: &Step) -> TerminalSpeech {
+    // A read past a full history speaks the oldest lines the history still
+    // holds before its summary: lines of the history, which add to that
+    // summary when Core skips them.
+    let overflow = step.speech.iter().position(|speech| {
+        matches!(
+            speech,
+            Speech::Skipped {
+                count: Counted::MoreThan(_),
+                ..
+            }
+        )
+    });
     let items = step
         .speech
         .iter()
-        .map(|speech| match speech {
+        .enumerate()
+        .map(|(at, speech)| match speech {
+            Speech::Line { text, .. } if overflow.is_some_and(|overflow| at < overflow) => {
+                TerminalItem::HistoryLine(text.clone())
+            }
             Speech::Line { text, .. } | Speech::Changed { text, .. } | Speech::Held { text } => {
                 TerminalItem::Output(text.clone())
             }
             // What a line gained, without the space that parts it from the
             // text it follows, which says nothing.
-            Speech::Growth { text, .. } => TerminalItem::Output(text.trim_start().to_owned()),
+            Speech::Growth { text, .. } => TerminalItem::Growth(text.trim_start().to_owned()),
             Speech::Skipped { count, .. } => TerminalItem::Skipped(match *count {
                 Counted::Lines(lines) => Skipped::Count(u32::try_from(lines).unwrap_or(u32::MAX)),
                 Counted::MoreThan(lines) => {

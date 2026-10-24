@@ -7,7 +7,8 @@
 //!
 //! Output (new lines, what a growing line gained, a redrawn row's change, a
 //! held line spoken as it was last read) goes through Core's flood policy,
-//! one utterance a line; a read's own flood summary arrives as
+//! one utterance each, and a summary counts each but a line's growth as a
+//! line; a read's own flood summary arrives as
 //! [`TerminalItem::Skipped`]. The answers to keys (typing shown, the key's
 //! unit at the caret, text the caret's line gained or lost, a row away from
 //! the caret that is a key's answer, a suggestion) are spoken at once, ahead
@@ -58,12 +59,22 @@ pub enum TerminalUnit {
 /// One thing a terminal says.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerminalItem {
-    /// Output: a new line whole, what a growing line gained, a redrawn
-    /// row from the word that changed, or a held line as it was last read
-    /// (sections 4.3, 5.3 and 5.4). Spoken by the flood policy, one
-    /// utterance each; an empty one is a blank line, counted but not
-    /// spoken.
+    /// Output: a new line whole, a redrawn row from the word that changed,
+    /// or a held line as it was last read (sections 4.3, 5.3 and 5.4).
+    /// Spoken by the flood policy, one utterance each; an empty one is a
+    /// blank line, counted but not spoken.
     Output(String),
+    /// What a growing line gained (section 5.3): output, spoken by the
+    /// flood policy as one utterance like a line, but not a terminal line
+    /// of its own, so a flood's summary does not count it (every terminal
+    /// line counts in the summary once, Dickson, 2026-10-09).
+    Growth(String),
+    /// A line the history still holds, which a read past a full history
+    /// speaks before its [`Skipped::MoreThan`]: output like any line, and
+    /// when the flood policy skips it, one more of the history's lines left
+    /// unspoken, so it adds to that count (`docs/design/terminal-model.md`,
+    /// section 1: N is the history's rows less the lines spoken).
+    HistoryLine(String),
     /// Lines of output counted, not spoken: a read's own flood summary.
     Skipped(Skipped),
     /// Typing the terminal showed at the caret, echoed by the typing echo
@@ -95,7 +106,10 @@ impl TerminalItem {
     /// key's answer, which is spoken at once.
     #[must_use]
     pub fn is_output(&self) -> bool {
-        matches!(self, Self::Output(_) | Self::Skipped(_))
+        matches!(
+            self,
+            Self::Output(_) | Self::Growth(_) | Self::HistoryLine(_) | Self::Skipped(_)
+        )
     }
 
     /// The text it carries, for bounding a message's size; none for a
@@ -104,6 +118,8 @@ impl TerminalItem {
     pub fn text(&self) -> &str {
         match self {
             Self::Output(text)
+            | Self::Growth(text)
+            | Self::HistoryLine(text)
             | Self::Echo(text)
             | Self::Caret { text, .. }
             | Self::Gained(text)

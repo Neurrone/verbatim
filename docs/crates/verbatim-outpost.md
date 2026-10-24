@@ -2574,8 +2574,10 @@ it.
   from further above to find how far a full history rotated, that read is
   taken at once, up to `MAX_SNAPSHOTS` (12) snapshots for one read. What
   the rules say becomes Core's `TerminalSpeech` (`terminal::speech_of`):
-  output (`TerminalItem::Output` for a new line, what a growing line
-  gained, a redrawn row's change and a held line as last read, and
+  output (`TerminalItem::Output` for a new line, a redrawn row's change
+  and a held line as last read; `TerminalItem::Growth` for what a growing
+  line gained; `TerminalItem::HistoryLine` for a line a read past a full
+  history speaks before its "more than" summary; and
   `TerminalItem::Skipped` for a read's own flood summary) and the answers
   to keys (`Echo`, `Caret` in its unit, `Gained`, `Lost`, `Answer`,
   `Suggestion`), and whether the review cursor followed the caret. It is
