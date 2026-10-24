@@ -42,7 +42,24 @@
 //! (section 4.3), so it stays with its row as the history grows, rotates or
 //! is erased; a row written since is compared with the line at its place,
 //! since a reader sees only the screen there. This is ground truth of
-//! where rows went, not a row's identity. A row's text is its
+//! where rows went, not a row's identity. A line is also followed through
+//! a move with its neighbours, judged by text alone, as a reader's
+//! alignment finds a block of rows moved by the same distance (section
+//! 4.3, items 3 and 6): a row with text moved when its text is on exactly
+//! one row of the main screen at the last read and at this one, at other
+//! coordinates than following by the history alone gives. A line whose
+//! first row moved is followed to where that row was; and a line whose
+//! place by the history alone had no text at the last read, or text that
+//! moved, and whose nearest row with text above it, or below its last
+//! row, over rows blank in both reads, moved by some distance, is followed
+//! by the same distance when a line with text started there at the last
+//! read and the rows between were blank then too, as a footer's status
+//! row that changed as output above it pushed the footer down a row, or a
+//! row that changed while the rows of a scroll region moved up. A line
+//! rewritten where it was is never followed by its neighbours' move, so a
+//! header stays put while the scroll region below it moves. Where a line
+//! changed from one text to another moves with the line, so a row's
+//! volatility moves with it, and only with it. A row's text is its
 //! text with the padding after a line's end left out, so a row that wraps
 //! onto the next keeps the spaces at its end (section 5.12).
 //!
@@ -150,7 +167,10 @@ pub enum Spoken {
     /// end of a line reported whole that begins it), with this growth and
     /// any before it at this read, is the whole line; when it is only the
     /// line's start, the line must also be withheld. A line withheld as a
-    /// spinner or as having lost text counts as reported whole.
+    /// spinner or as having lost text counts as reported whole. Growth also
+    /// says the line's new text when it completes the line from what was
+    /// said of a line withheld as having lost text (see
+    /// [`Reason::LostText`]).
     Growth {
         /// The row the line starts on.
         row: usize,
@@ -164,7 +184,9 @@ pub enum Spoken {
     /// text to the last, counted from the line's end, or, when the line only
     /// lost characters, a part that touches where they were. So a row that
     /// had no text, or speech of a letter of a changed word, says nothing
-    /// new.
+    /// new. When the vanished line was withheld as having lost text, the
+    /// change may instead be counted from what was said of it (see
+    /// [`Reason::LostText`]).
     Redrawn {
         /// The row the line starts on.
         row: usize,
@@ -200,8 +222,9 @@ pub enum Reason {
     /// spoken once it settles (section 5.4). Premise: the line starting at
     /// its row at the last read on the main screen had other text, and at
     /// an earlier read the line there had changed from one text to another
-    /// too, the row followed to where it was (see the module's
-    /// documentation).
+    /// too, the row followed to where it was, through the history's growth
+    /// and rotation and through moves with its neighbours, at each read
+    /// since (see the module's documentation).
     Volatile,
     /// A hold: a growing line's unfinished last word waits for the line to
     /// grow past it, the cursor to leave, or the quiet period (section
@@ -225,7 +248,12 @@ pub enum Reason {
     /// Premise: compared without spaces, the line covering its row at the
     /// last read on the main screen, followed to where it was (see the
     /// module's documentation), or a vanished line, as when a line is split
-    /// in two, contains this one's text and is longer.
+    /// in two, contains this one's text and is longer. What was reported of
+    /// each such longer line is what was said of this one, kept while a
+    /// line with its text is shown: when the line gains text again, the
+    /// text it gets back is not new, so a redrawn row's speech or growth
+    /// says the line's new text when it says what the line gained beyond
+    /// what was said of it.
     LostText,
     /// The caret's row showing characters the user typed, which typing
     /// echo speaks (section 5.5). Premise: a key was typed; the oracle's
@@ -642,12 +670,21 @@ impl Lines {
             .map(|&number| self.list[number].text.as_str())
     }
 
-    /// The text of the line whose rows cover `place`.
-    fn covering(&self, place: isize) -> Option<&str> {
-        let after = self.list.partition_point(|line| line.place <= place);
-        let line = &self.list[after.checked_sub(1)?];
+    /// The line whose rows cover `place`.
+    fn covering(&self, place: isize) -> Option<usize> {
+        let number = self
+            .list
+            .partition_point(|line| line.place <= place)
+            .checked_sub(1)?;
+        let line = &self.list[number];
         let end = line.place + isize::try_from(line.rows.len()).unwrap_or(isize::MAX);
-        (place < end).then_some(line.text.as_str())
+        (place < end).then_some(number)
+    }
+
+    /// Whether a line with text starts at coordinate `coordinate`.
+    fn starts_at(&self, coordinate: usize) -> bool {
+        self.holding(coordinate)
+            .is_some_and(|number| self.list[number].rows.start == coordinate)
     }
 
     /// How many lines have `text`.
@@ -707,6 +744,17 @@ struct Check<'a> {
     /// discarded from its front by that read, which stays with the row as
     /// the history grows, rotates or is erased.
     changed: HashSet<usize>,
+    /// The lines of the read checked that moved with their neighbours since
+    /// the last read on the main screen (see the module's documentation):
+    /// each line's first row's coordinate, and the coordinate it is
+    /// followed to at that read.
+    block: HashMap<usize, usize>,
+    /// The rows of the last read on the main screen with each text that is
+    /// on exactly one of its rows.
+    unique_last: HashMap<&'a str, usize>,
+    /// What was said of each text of a line withheld as having lost text,
+    /// while a line with that text is shown (see [`Reason::LostText`]).
+    lost: HashMap<String, Vec<String>>,
     /// The rows the main buffer rotated out up to the read checked.
     rotated: HashSet<RowId>,
     /// How many rows the main buffer discarded from its front, rotated out
@@ -732,6 +780,9 @@ struct ReadState {
     /// The redrawn rows' speech: the line, the row named, and what was
     /// said.
     redrawn: Vec<(usize, usize, String)>,
+    /// The lines withheld as having lost text whose premise holds, and what
+    /// was said of each.
+    lost: Vec<(usize, Vec<String>)>,
     /// The lowest coordinate a new line reported next may have.
     latest: usize,
 }
@@ -759,6 +810,109 @@ impl Check<'_> {
         self.alternate
             .as_deref()
             .or_else(|| self.last.and_then(|last| self.lines[last].as_deref()))
+    }
+
+    /// The lines of read `index`, on the main screen, that moved with their
+    /// neighbours since the last read on the main screen, as
+    /// [`Check::block`] holds them (see the module's documentation).
+    fn block_moves(&self, index: usize, unique: &HashMap<&str, usize>) -> HashMap<usize, usize> {
+        let mut block = HashMap::new();
+        let Some(last) = self.last.filter(|_| self.alternate.is_none()) else {
+            return block;
+        };
+        let (old, new) = (&self.reads[last].main, &self.reads[index].main);
+        let (old_lines, new_lines) = (self.lines_of(last), self.lines_of(index));
+        let signed = |at: usize| isize::try_from(at).unwrap_or(isize::MAX);
+        // Following by the history alone: the coordinate at the last read is
+        // this read's moved down by the rows discarded since.
+        let history = signed(self.discarded - self.discarded_at_last);
+        // How far a row with text moved, as its coordinate at the last read
+        // less its coordinate now, when its text is on exactly one row of
+        // each read and it moved otherwise than by the history alone.
+        let moved = |row: usize| {
+            let text = row_text(new, row);
+            unique.get(text)?;
+            let &then = self.unique_last.get(text)?;
+            let by = signed(then) - signed(row);
+            (by != history).then_some(by)
+        };
+        // The row of the last read `by` from `row`, when it is one.
+        let then = |row: usize, by: isize| {
+            usize::try_from(signed(row) + by)
+                .ok()
+                .filter(|&then| then < old.len())
+        };
+        let blank_then = |rows: Range<usize>, by: isize| {
+            rows.into_iter()
+                .all(|row| then(row, by).is_some_and(|then| row_text(old, then).is_empty()))
+        };
+        // Whether the row of the last read at `row` by the history alone
+        // left that place: it had no text, or its text moved.
+        let vacated = |row: usize| {
+            then(row, history).is_none_or(|then| {
+                let text = row_text(old, then);
+                text.is_empty()
+                    || (self.unique_last.contains_key(text)
+                        && unique
+                            .get(text)
+                            .is_some_and(|&now| signed(now) + history != signed(then)))
+            })
+        };
+        for line in &new_lines.list {
+            let start = line.rows.start;
+            // The nearest row with text above the line, over blank rows.
+            let above = || {
+                let above = (0..start)
+                    .rev()
+                    .find(|&row| !row_text(new, row).is_empty())?;
+                let by = moved(above)?;
+                blank_then(above + 1..start, by).then_some(by)
+            };
+            // The nearest row with text below the line's last row, over
+            // blank rows, and the rows between it and the end of the line
+            // that started where this line's first row was.
+            let below = || {
+                let below =
+                    (line.rows.end..new.len()).find(|&row| !row_text(new, row).is_empty())?;
+                let by = moved(below)?;
+                let was = old_lines.holding(then(start, by)?)?;
+                let end = old_lines.list[was].rows.end;
+                let below_then = then(below, by)?;
+                (below_then >= end && (end..below_then).all(|row| row_text(old, row).is_empty()))
+                    .then_some(by)
+            };
+            // A line rewritten where it was is not followed by its
+            // neighbours' move.
+            let by =
+                moved(start).or_else(|| vacated(start).then(|| above().or_else(below)).flatten());
+            if let Some(by) = by
+                && let Some(then) = then(start, by)
+                && old_lines.starts_at(then)
+            {
+                block.insert(start, then);
+            }
+        }
+        block
+    }
+
+    /// Whether `said`, speech of a redrawn row now showing `text`, says
+    /// what it gained beyond what was said of a line with `old`, a text of
+    /// a line withheld as having lost text (see [`Reason::LostText`]).
+    fn regained(&self, old: &str, text: &str, said: &str) -> bool {
+        self.lost.get(old).is_some_and(|before| {
+            before
+                .iter()
+                .any(|before| covers_change(before, text, said))
+        })
+    }
+
+    /// Whether `growth` completes `text` from what was said of a line
+    /// withheld as having lost text (see [`Reason::LostText`]).
+    fn regrown(&self, text: &str, growth: &str) -> bool {
+        self.lost
+            .values()
+            .flatten()
+            .any(|said| !said.is_empty() && format!("{said}{growth}") == text)
     }
 
     /// Whether `line` is new: no read checked so far showed its text.
@@ -818,11 +972,14 @@ impl Check<'_> {
     /// then: its coordinate moved down by the rows the buffer discarded
     /// from its front since, rotated out or erased with the history, which
     /// is where the row was, as a reader follows it by the coordinates the
-    /// providers report and the rotation it measures (section 4.3). `None`
-    /// for a row written since, and when the last read is the alternate
-    /// screen's.
+    /// providers report and the rotation it measures (section 4.3), or
+    /// where it was before it moved with its neighbours. `None` for a row
+    /// written since, and when the last read is the alternate screen's.
     fn held_at_last(&self, line: &Line) -> Option<usize> {
         let last = self.last.filter(|_| self.alternate.is_none())?;
+        if let Some(&then) = self.block.get(&line.rows.start) {
+            return Some(then);
+        }
         let then = line.rows.start + (self.discarded - self.discarded_at_last);
         (then < self.reads[last].main.len()).then_some(then)
     }
@@ -917,6 +1074,9 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
         heard: Vec::new(),
         covered: HashMap::new(),
         changed: HashSet::new(),
+        block: HashMap::new(),
+        unique_last: HashMap::new(),
+        lost: HashMap::new(),
         rotated: HashSet::new(),
         discarded: 0,
         discarded_at_last: 0,
@@ -957,9 +1117,13 @@ fn check_read(check: &mut Check, index: usize) {
         said: Vec::new(),
         heard: Vec::new(),
         redrawn: Vec::new(),
+        lost: Vec::new(),
         latest: 0,
     };
+    check.block.clear();
     if main {
+        let unique = unique_rows(&read.main);
+        check.block = check.block_moves(index, &unique);
         let lines = check.shared(index);
         for line in &lines.list {
             let new = check.is_new(line);
@@ -1003,6 +1167,7 @@ fn check_read(check: &mut Check, index: usize) {
         }
         check_changes(check, index, &mut state);
         finish_main(check, index, &state);
+        check.unique_last = unique;
     } else {
         // While the alternate screen is up the main screen's lines are not
         // on the screen, but those the alternate screen also shows.
@@ -1170,6 +1335,33 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
             });
         }
     }
+    // Where a line changed moves with a line that moved with its
+    // neighbours, and the row it moved to keeps only that line's.
+    let moves: Vec<(usize, usize)> = check
+        .block
+        .iter()
+        .map(|(&now, &then)| (then + check.discarded_at_last, now + check.discarded))
+        .collect();
+    let carried: Vec<usize> = moves
+        .iter()
+        .filter(|(then, _)| check.changed.contains(then))
+        .map(|&(_, now)| now)
+        .collect();
+    for (then, now) in &moves {
+        check.changed.remove(then);
+        check.changed.remove(now);
+    }
+    check.changed.extend(carried);
+    // What was said of a line that lost text is kept while a line with its
+    // text is shown.
+    check.lost.retain(|text, _| lines.count(text) > 0);
+    for (number, said) in &state.lost {
+        check
+            .lost
+            .entry(lines.list[*number].text.clone())
+            .or_default()
+            .extend(said.iter().cloned());
+    }
     let changes: Vec<usize> = match check.last_lines() {
         Some(last) => lines
             .list
@@ -1303,6 +1495,9 @@ fn check_spoken(check: &mut Check, index: usize, spoken: &Spoken, state: &mut Re
                 } else {
                     state.heard[number] = grown;
                 }
+            } else if check.regrown(&line.text, text) {
+                // A line that lost text and gained it back, and more.
+                check.say(index, row, number, false, state);
             }
         }
         Spoken::Redrawn { .. } => state.redrawn.push((number, row, text.clone())),
@@ -1369,6 +1564,26 @@ enum Claim {
     Withheld(Withheld, usize),
 }
 
+/// The vanished lines' texts (see the module's documentation), one for
+/// each time a text of the last read on the main screen is no longer shown
+/// in `lines`, a read's.
+fn vanished(check: &Check, lines: &Lines) -> Vec<String> {
+    check.last_lines().map_or_else(Vec::new, |last| {
+        let mut texts: Vec<(&String, usize)> = last
+            .texts
+            .iter()
+            .map(|(text, numbers)| (text, numbers.len()))
+            .collect();
+        texts.sort();
+        texts
+            .into_iter()
+            .flat_map(|(text, count)| {
+                std::iter::repeat_n(text.clone(), count.saturating_sub(lines.count(text)))
+            })
+            .collect()
+    })
+}
+
 /// Checks the redrawn rows' speech and what read `index` withheld, each
 /// reason's premise, and resolves the holds of earlier reads; holds made
 /// now wait for later reads.
@@ -1409,20 +1624,7 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
         settled.push((*withheld, number, premise));
     }
     if !claims.is_empty() {
-        let vanished: Vec<String> = check.last_lines().map_or_else(Vec::new, |last| {
-            let mut texts: Vec<(&String, usize)> = last
-                .texts
-                .iter()
-                .map(|(text, numbers)| (text, numbers.len()))
-                .collect();
-            texts.sort();
-            texts
-                .into_iter()
-                .flat_map(|(text, count)| {
-                    std::iter::repeat_n(text.clone(), count.saturating_sub(lines.count(text)))
-                })
-                .collect()
-        });
+        let vanished = vanished(check, &lines);
         let edges: Vec<Vec<usize>> = claims
             .iter()
             .map(|claim| {
@@ -1431,7 +1633,10 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
                     .enumerate()
                     .filter(|(_, old)| match claim {
                         Claim::Redrawn(number, _, said) => {
-                            covers_change(old, &lines.list[*number].text, said)
+                            let text = &lines.list[*number].text;
+                            // A line that lost text is judged by what was
+                            // said of it.
+                            covers_change(old, text, said) || check.regained(old, text, said)
                         }
                         Claim::Withheld(withheld, number) => {
                             let text = &lines.list[*number].text;
@@ -1467,6 +1672,10 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
         if premise && matches!(withheld.reason, Reason::Spinner | Reason::LostText) {
             state.heard[number].clone_from(&lines.list[number].text);
         }
+        if premise && withheld.reason == Reason::LostText {
+            let said = lost_from(check, &lines, &lines.list[number]);
+            state.lost.push((number, said));
+        }
         settle(
             check,
             index,
@@ -1491,27 +1700,42 @@ fn premise(check: &Check, lines: &Lines, line: &Line, reason: Reason) -> bool {
             last.text_at(check.followed(line)).is_some()
                 && check.changed.contains(&check.followed_key(line))
         }
-        Reason::LostText => {
-            let now = without_spaces(&line.text);
-            let shorter = |before: &str| {
-                let before = without_spaces(before);
-                before.len() > now.len() && before.contains(&now)
-            };
-            // The line that covered its row, followed to where it was, or
-            // one no longer shown as often, as the parts of a line split in
-            // two.
-            last.covering(check.followed(line)).is_some_and(shorter)
-                || last
-                    .texts
-                    .iter()
-                    .any(|(before, numbers)| numbers.len() > lines.count(before) && shorter(before))
-        }
+        Reason::LostText => !lost_from(check, lines, line).is_empty(),
         Reason::UnfinishedWord
         | Reason::Spinner
         | Reason::HeldForKeys
         | Reason::HeldTyping
         | Reason::KeyAnswer => false,
     }
+}
+
+/// What was reported of each line of the last read on the main screen that
+/// `line`, a new line of `lines`, only lost text from: compared without
+/// spaces, the line that covered its row, followed to where it was, or one
+/// no longer shown as often, as the parts of a line split in two, that
+/// contains its text and is longer. Empty when it gained or changed text.
+fn lost_from(check: &Check, lines: &Lines, line: &Line) -> Vec<String> {
+    let Some(last) = check.last_lines() else {
+        return Vec::new();
+    };
+    let now = without_spaces(&line.text);
+    let shorter = |before: &str| {
+        let before = without_spaces(before);
+        before.len() > now.len() && before.contains(&now)
+    };
+    let covering = last
+        .covering(check.followed(line))
+        .filter(|&number| shorter(&last.list[number].text));
+    let vanished = last
+        .texts
+        .iter()
+        .filter(|(before, numbers)| numbers.len() > lines.count(before) && shorter(before))
+        .flat_map(|(_, numbers)| numbers.iter().copied());
+    covering
+        .into_iter()
+        .chain(vanished)
+        .map(|number| check.heard[number].clone())
+        .collect()
 }
 
 /// A withholding at read `index` of `line` whose premise is `premise`: a

@@ -264,16 +264,15 @@ enum Question {
     /// read whose document grew past a screen from one with no history be
     /// taken as the whole document's, searched for the old screen?
     RotationWithoutBlock,
-    /// A program redraws its bottom rows lower as the history grows, and
-    /// the alignment pairs a volatile row with a new row further down that
-    /// is alike to it (section 4.3, item 4), as Pi's input row "/model"
-    /// with its model selector's "Model catalogs refreshed.", and carries
-    /// the row's changes to it (item 6), so the new row is held as
-    /// volatile and never spoken once the selector erases it. Every row
-    /// keeps its coordinate as the history grows, and the new row's was
-    /// blank at the last read, so the oracle finds no change there. Should
-    /// a row's volatility move with a rewrite that moves it by other than
-    /// the history's growth or rotation?
+    /// The alignment pairs a volatile row alone with a new row elsewhere
+    /// that is alike to it (section 4.3, item 4), as Pi's input row
+    /// "/model" with its model selector's "Model catalogs refreshed." seven
+    /// rows away, and carries the row's changes to it, so the new row is
+    /// held as volatile and never spoken once the selector erases it. A
+    /// row's change history moves only with a row kept in place or moved
+    /// with its neighbours as part of a block (section 4.3, item 6, decided
+    /// by Dickson, 2026-10-24), and the oracle follows a row only so, so
+    /// this is the core's to fix.
     VolatileMovedByRewrite,
     /// A row that vanished lingers and is taken back silently when its
     /// text comes back (section 4.1), but the memory takes back rows, not
@@ -284,13 +283,6 @@ enum Question {
     /// its change from the lingering row is spoken. Should a lingering row
     /// be taken back only when it comes back as the line it was in?
     LingeringInAnotherLine,
-    /// A row that only lost text is silent and keeps what it last said
-    /// (section 5.7), so when it gains text again its change is spoken
-    /// from what it last said; the oracle judges the change from the text
-    /// the last read showed, so the part the row got back counts as
-    /// unspoken. Should the oracle judge a row that was silent for lost
-    /// text by what was said of it?
-    RegrownAfterLostText,
     /// The screen erased into the history as the full history rotates,
     /// with the same text on more than one row (section 4.4): the rows are
     /// paired with the wrong copies of their text, and a line that stayed
@@ -339,33 +331,12 @@ fn the_cores_violations_over_the_corpus() {
         })
         .filter(|(_, _, tally)| !tally.is_empty())
         .collect();
-    // The recordings of verbatim-stream-test whose status row is drawn a
-    // row lower as the output above it grows, or whose rows move up in a
-    // scroll region, each in both terminals.
-    let moved = |name: &'static str, count: usize| {
-        [Flavor::ConsoleHost, Flavor::WindowsTerminal].map(|flavor| {
-            (
-                name,
-                flavor,
-                Question::VolatileMovedByRewrite,
-                vec![("FalseReason Volatile", count)],
-            )
-        })
-    };
-    let mut pinned: Vec<CorpusPin> = vec![(
+    let pinned: Vec<CorpusPin> = vec![(
         "pi-regular",
         Flavor::ConsoleHost,
         Question::VolatileMovedByRewrite,
         vec![("FalseReason Volatile", 1)],
     )];
-    pinned.extend(moved("stream-append-footer", 1));
-    pinned.extend(moved("stream-ink-footer", 2));
-    pinned.extend(moved("stream-markdown-footer", 2));
-    pinned.extend(moved("stream-markdown-header", 1));
-    pinned.extend(moved("stream-markdown-middle", 1));
-    pinned.extend(moved("stream-rewrite-footer", 1));
-    pinned.extend(moved("stream-rewrite-middle", 1));
-    pinned.extend(moved("stream-wrap-footer", 1));
     let expected: Vec<StreamTally> = pinned
         .iter()
         .map(|(name, flavor, _, kinds)| ((*name).to_owned(), *flavor, counts(kinds)))
@@ -399,8 +370,8 @@ fn the_cores_violations_over_random_streams() {
     // order from the same seed, every case run rather than stopping at the
     // first failure, each case numbered in that order.
     use Question::{
-        ClearedOverRepeatedText, LingeringInAnotherLine, RegrownAfterLostText,
-        RotationWithoutBlock, VolatileMovedByRewrite,
+        ClearedOverRepeatedText, LingeringInAnotherLine, RotationWithoutBlock,
+        VolatileMovedByRewrite,
     };
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
@@ -427,7 +398,7 @@ fn the_cores_violations_over_random_streams() {
     let missed = || vec![("Missed", 1)];
     let pinned: Vec<Pin> = vec![
         (36, RotationWithoutBlock, missed()),
-        (39, RegrownAfterLostText, missed()),
+        (39, LingeringInAnotherLine, missed()),
         (54, LingeringInAnotherLine, missed()),
         (57, LingeringInAnotherLine, missed()),
         (
@@ -470,8 +441,8 @@ fn the_cores_violations_over_random_streams() {
 )]
 fn smallest_pins() -> Vec<SmallestPin> {
     use Question::{
-        ClearedOverRepeatedText, LingeringInAnotherLine, PeriodicHistory, RegrownAfterLostText,
-        RotationWithoutBlock, VolatileMovedByRewrite,
+        ClearedOverRepeatedText, LingeringInAnotherLine, PeriodicHistory, RotationWithoutBlock,
+        VolatileMovedByRewrite,
     };
     let word = "wrapping-word";
     vec![
@@ -579,21 +550,6 @@ fn smallest_pins() -> Vec<SmallestPin> {
                     },
                     false,
                 ),
-            ],
-            vec![("Missed", 1)],
-        ),
-        // A wrapped line that lost its first row, written over with a
-        // longer line.
-        (
-            RegrownAfterLostText,
-            Flavor::WindowsTerminal,
-            vec![
-                (Op::Redraw("dog"), false),
-                (Op::WordDown { column: 3, word }, false),
-                (Op::MoveTo { row: 3, column: 4 }, true),
-                (Op::DeleteRows(2), true),
-                (Op::Write(word), false),
-                (Op::Write(word), false),
             ],
             vec![("Missed", 1)],
         ),

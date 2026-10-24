@@ -589,13 +589,11 @@ history past the smallest rotation the block shows, so lines above the
 read are missed; the last read had no history, so no block, and a flood
 filled and rotated the buffer, a row whose text was written again in its
 place taken as kept or rewritten; a row's volatility carried to a row
-paired with it by likeness elsewhere, as Pi's model selector and every
-status row drawn a row lower as the output above it grows, in
-`verbatim-stream-test`'s recordings; a lingering row taken back when its
-text comes back as a row of another line; a row silent for lost text
-whose regrowth is spoken from what it last said, while the oracle judges
-it from what the last read showed; and a clear over rows of repeated
-text paired with the wrong copies.
+paired with it alone by likeness elsewhere, as Pi's model selector,
+which the design decided against and the core is yet to change; a
+lingering row taken back when its text comes back as a row of another
+line; and a clear over rows of repeated text paired with the wrong
+copies.
 
 ## Units
 

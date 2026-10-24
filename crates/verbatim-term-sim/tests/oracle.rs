@@ -1075,6 +1075,50 @@ fn a_volatile_row_whose_place_another_row_changed_as_the_history_grows_is_caught
 }
 
 #[test]
+fn a_volatile_row_followed_through_a_move_with_its_neighbours_is_accepted_and_one_moved_alone_is_caught()
+ {
+    // "1s" between "a" and ">" changes to "2s"; then a row inserted above
+    // it pushes it and ">" down a row, "b" is written in the new row and
+    // "2s" changes to "3s".
+    let changed = [
+        (Op::Write("a\r\n1s\r\n>"), true),
+        (Op::MoveTo { row: 2, column: 1 }, false),
+        (Op::Rewrite("2s"), true),
+    ];
+    let mut moved = changed.to_vec();
+    moved.extend([
+        (Op::InsertRows(1), false),
+        (Op::Write("b"), false),
+        (Op::MoveTo { row: 3, column: 1 }, false),
+        (Op::Rewrite("3s"), true),
+    ]);
+    // "b" written over "2s", and "3s" over ">": the row of "3s" moved
+    // alone, so by text it never changed before.
+    let mut alone = changed.to_vec();
+    alone.extend([
+        (Op::Rewrite("b"), false),
+        (Op::MoveTo { row: 3, column: 1 }, false),
+        (Op::Rewrite("3s"), true),
+    ]);
+    let script = || {
+        Scripted::new(vec![
+            Heard::default(),
+            says(vec![line(0, "a"), line(1, "1s"), line(2, ">")]),
+            says(vec![redrawn(1, "2s")]),
+            holds(
+                vec![line(1, "b"), redrawn(2, "3s")],
+                &[(2, Reason::Volatile)],
+            ),
+        ])
+    };
+    assert_eq!(violations(&stream(&moved), &mut script()), []);
+    assert_eq!(
+        violations(&stream(&alone), &mut script()),
+        [false_reason(3, 2, "3s", Reason::Volatile)]
+    );
+}
+
+#[test]
 fn a_row_that_lost_text_as_the_full_history_rotates_is_followed_up() {
     // "> foo" loses its marker just before a newline rotates the history,
     // which moves it up from row 9 to row 8, where "y" was; its old text
@@ -1709,6 +1753,33 @@ fn a_line_that_lost_text_grows_from_its_shorter_text() {
         says(vec![growth(0, "yz")]),
     ]);
     assert_eq!(violations(&stream, &mut reader), []);
+}
+
+#[test]
+fn a_line_that_lost_text_and_gained_it_back_is_judged_by_what_was_said_of_it() {
+    // "abc def" loses " def", then gets it back with " gh" after it.
+    let stream = stream(&[
+        (Op::Write("abc def"), true),
+        (Op::CarriageReturn, false),
+        (Op::MoveColumns(3), false),
+        (Op::EraseLine(0), true),
+        (Op::Write(" def gh"), true),
+    ]);
+    let script = |regrown: Spoken| {
+        Scripted::new(vec![
+            Heard::default(),
+            says(vec![line(0, "abc def")]),
+            holds(vec![], &[(0, Reason::LostText)]),
+            says(vec![regrown]),
+        ])
+    };
+    assert_eq!(violations(&stream, &mut script(redrawn(0, " gh"))), []);
+    assert_eq!(violations(&stream, &mut script(growth(0, " gh"))), []);
+    // Only the text it got back.
+    assert_eq!(
+        violations(&stream, &mut script(redrawn(0, " def"))),
+        [missed(3, 0, "abc def gh")]
+    );
 }
 
 #[test]
