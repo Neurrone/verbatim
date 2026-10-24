@@ -222,10 +222,13 @@ pub(crate) fn foreground_relation(
         // Windows sharing the foreground window's root owner, as the Office
         // ribbon's (NVDA issues 5504, 14916 and 15432); the foreground
         // application, and windows owned from inside it, as context menus
-        // (NVDA issues 3899 and 3905).
-        in_foreground: root_owner == windows.root_owner(foreground)
-            || is_descendant(windows, foreground, window)
-            || is_descendant(windows, foreground, root_owner),
+        // (NVDA issues 3899 and 3905). With no foreground window nothing
+        // is in it: an invalid window's root owner reads as 0, as the
+        // missing foreground's does, and would otherwise match it.
+        in_foreground: foreground != 0
+            && (root_owner == windows.root_owner(foreground)
+                || is_descendant(windows, foreground, window)
+                || is_descendant(windows, foreground, root_owner)),
         // Menus, combo box drop-downs, and the task switching list.
         topmost: windows.is_topmost(window) || windows.is_topmost(windows.root(window)),
         // A UWP window is under the input thread's active window, not under
@@ -591,6 +594,17 @@ mod tests {
             }
         );
         assert!(!foreground_relation(BACKGROUND_CHILD, "Edit", &desk).related());
+    }
+
+    #[test]
+    fn an_invalid_window_is_not_in_a_missing_foreground() {
+        /// A handle no window has.
+        const INVALID: isize = 99;
+        let desk = Desk {
+            foreground: 0,
+            ..Desk::new()
+        };
+        assert!(!foreground_relation(INVALID, "", &desk).in_foreground);
     }
 
     #[test]
