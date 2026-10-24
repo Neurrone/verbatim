@@ -747,6 +747,12 @@ impl TerminalMemory {
         // already, that keeps nothing the last read had at or above the
         // caret: the history overflowed ("Screens").
         let overflowed = aligned.lost() && ((whole && !refused) || moved);
+        // First, a read that keeps rows of the screen set aside where they
+        // were returns to it, whatever its caret's line did ("Screens").
+        let (rows, current) = match self.return_aside(current, rows, read, &shape) {
+            Ok(outcome) => return outcome,
+            Err(back) => back,
+        };
         // Whether this is a different screen: nothing of the last read
         // survives, rows below the caret included ("Screens").
         let had_text = current.rows.iter().any(|row| !row.is_blank());
@@ -754,7 +760,25 @@ impl TerminalMemory {
             return self.screens(current, rows, read, &shape, overflowed);
         }
         if overflowed {
-            return self.start_again(&current, rows, read, &shape, Start::Overflow);
+            // The rows the whole read kept stay kept and silent; only the
+            // rest is new ("Screens").
+            let mut aligned = aligned;
+            for kind in &mut aligned.new {
+                if !matches!(kind, NewRow::Kept { .. } | NewRow::Grown { .. }) {
+                    *kind = NewRow::New;
+                }
+            }
+            for fate in &mut aligned.old {
+                if !matches!(fate, OldRow::Kept(_)) {
+                    *fate = OldRow::Gone { lingering: false };
+                }
+            }
+            let next = remember(&current, rows, &aligned, read, (width, height), caret);
+            let shape = Outcome {
+                overflowed: true,
+                ..shape
+            };
+            return self.finish(&current, next, &aligned, &shape, Switch::None);
         }
         let next = remember(&current, rows, &aligned, read, (width, height), caret);
         self.finish(&current, next, &aligned, &shape, Switch::None)
@@ -857,6 +881,48 @@ impl TerminalMemory {
     /// the history overflowed; and any other is a new screen, dropping what
     /// is aside. On a new screen every row is new and the review position is
     /// at the caret.
+    /// The return to the screen set aside ("Screens"): when `rows` keep
+    /// rows with text of it where they were, the read is aligned against
+    /// that screen and the last read, `current`, together, so only rows in
+    /// neither are new. Otherwise the rows and the last read back.
+    #[expect(
+        clippy::result_large_err,
+        reason = "the read's rows handed back when there is no return"
+    )]
+    fn return_aside(
+        &mut self,
+        current: Screen,
+        rows: Vec<Row>,
+        read: &Read,
+        shape: &Outcome,
+    ) -> Result<Outcome, (Vec<Row>, Screen)> {
+        let (width, height, caret) = (shape.width, shape.height, shape.caret);
+        let Some(aside) = self.aside.take() else {
+            return Err((rows, current));
+        };
+        let mut attempt = align_whole(&aside, (&rows, height), read, caret, false);
+        let returned = attempt.new.iter().enumerate().any(|(to, kind)| {
+            matches!(kind, NewRow::Kept { moved: false, .. }) && !rows[to].is_blank()
+        });
+        if !returned {
+            self.aside = Some(aside);
+            return Err((rows, current));
+        }
+        let last: HashSet<u64> = current
+            .rows
+            .iter()
+            .filter(|row| !row.is_blank())
+            .map(|row| row.hash)
+            .collect();
+        for (to, kind) in attempt.new.iter_mut().enumerate() {
+            if *kind == NewRow::New && last.contains(&rows[to].hash) {
+                *kind = NewRow::Shown;
+            }
+        }
+        let next = remember(&aside, rows, &attempt, read, (width, height), caret);
+        Ok(self.finish(&aside, next, &attempt, shape, Switch::Closed))
+    }
+
     fn screens(
         &mut self,
         current: Screen,
@@ -866,27 +932,6 @@ impl TerminalMemory {
         overflowed: bool,
     ) -> Outcome {
         let (width, height, caret) = (shape.width, shape.height, shape.caret);
-        if let Some(aside) = self.aside.take() {
-            let mut attempt = align_whole(&aside, (&rows, height), read, caret, false);
-            if attempt.kept_text {
-                // Aligned against the screen set aside and the last read
-                // together: only rows in neither are new.
-                let last: HashSet<u64> = current
-                    .rows
-                    .iter()
-                    .filter(|row| !row.is_blank())
-                    .map(|row| row.hash)
-                    .collect();
-                for (to, kind) in attempt.new.iter_mut().enumerate() {
-                    if *kind == NewRow::New && last.contains(&rows[to].hash) {
-                        *kind = NewRow::Shown;
-                    }
-                }
-                let next = remember(&aside, rows, &attempt, read, (width, height), caret);
-                return self.finish(&aside, next, &attempt, shape, Switch::Closed);
-            }
-            self.aside = Some(aside);
-        }
         let old = vec![OldRow::Gone { lingering: false }; current.total()];
         if rows.len() == height {
             // The last read's screen goes aside with its anchors, unless a

@@ -478,9 +478,9 @@ fn a_rotation_between_one_and_two_screens_is_settled_in_one_read() {
 #[test]
 fn a_footer_over_more_output_than_the_history_holds_overflows() {
     // The whole document keeps no row of the last read at or above the
-    // caret, the footer below it aside, and is longer than a screen and no
-    // shorter than before: the history overflowed, and the memory starts
-    // again from the read, every row new ("Starting again").
+    // caret: the history overflowed. The footer below the caret, which the
+    // whole read kept, stays kept and silent; only the rest is new
+    // ("Screens").
     let mut watch = Watch::console(10, 3, 6);
     watch.write("\x1b[3;1Hfooter\x1b[1;2r\x1b[1;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh");
     let outcome = watch.write("\r\nn\r\no\r\np\r\nq\r\nr\r\ns\r\nt\r\nu\r\nv\r\nw\r\nx\r\ny");
@@ -490,7 +490,10 @@ fn a_footer_over_more_output_than_the_history_holds_overflows() {
         ["r", "s", "t", "u", "v", "w", "x", "y", "footer"]
     );
     assert!(outcome.overflowed, "more went by than the history holds");
-    assert_eq!(outcome.rows, [NEW; 9]);
+    assert_eq!(
+        outcome.rows,
+        [NEW, NEW, NEW, NEW, NEW, NEW, NEW, NEW, kept(8)]
+    );
 }
 
 #[test]
