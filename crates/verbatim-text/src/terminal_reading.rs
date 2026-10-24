@@ -251,6 +251,12 @@ pub struct Step {
     /// nothing changed, and only the outcome's shape (the screen's width
     /// and height) is set.
     pub whole_document: bool,
+    /// Read again from a screen above the screen, the screen counted up
+    /// from the document's end by the outcome's height, with no start, and
+    /// give that read instead: a first read with no rows above its screen
+    /// ([`crate::terminal_rows::Outcome::history_block`]); nothing changed,
+    /// and only the outcome's shape is set.
+    pub history_block: bool,
     /// The alignment of the read, for a read.
     pub outcome: Option<Outcome>,
     /// Whether the read moved the review position to the caret because a
@@ -733,6 +739,14 @@ impl TerminalReader {
     ) -> Step {
         let now = read.at_ms;
         let mut outcome = memory.read(read);
+        if outcome.history_block {
+            return Step {
+                history_block: true,
+                timer: self.next_due(),
+                outcome: Some(outcome),
+                ..Step::default()
+            };
+        }
         if outcome.blank {
             // A read whose screen shows no text changes nothing ("A read with
             // no text").

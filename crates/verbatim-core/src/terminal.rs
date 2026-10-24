@@ -616,24 +616,57 @@ fn decide(state: &mut SrState) {
         terminal.group = None;
         return;
     }
+    let mut lines = waiting_lines(&terminal.waiting);
+    if skips(&terminal.waiting, 0, full) {
+        skip_all_but(&mut terminal.waiting, 0, last);
+        lines = lines.min(last);
+    }
+    terminal.group = Some(full.max(lines));
+}
+
+/// Whether the flood policy skips what waits in `waiting` from `start` on
+/// once it is looked at: more lines than "Lines spoken in full" (`full`),
+/// those skipped already included. A lost read's mark with none of its
+/// lines skipped yet ([`is_mark`]) counts no line.
+fn skips(waiting: &VecDeque<Waiting>, start: usize, full: usize) -> bool {
     let mut lines = 0usize;
     let mut skipped = Skipped::Count(0);
-    for item in &terminal.waiting {
+    for item in waiting.iter().skip(start) {
         match item {
+            item if is_mark(item) => {}
             Waiting::Skipped(count) => skipped = skipped.plus(*count),
             item if is_line(item) => lines += 1,
             _ => {}
         }
     }
-    let waiting = match skipped {
-        Skipped::Count(count) => lines.saturating_add(usize::try_from(count).unwrap_or(usize::MAX)),
-        Skipped::Uncounted | Skipped::MoreThan(_) | Skipped::About(_) => usize::MAX,
-    };
-    if waiting > full {
-        skip_all_but(&mut terminal.waiting, 0, last);
-        lines = lines.min(last);
+    match skipped {
+        Skipped::Count(count) => {
+            lines.saturating_add(usize::try_from(count).unwrap_or(usize::MAX)) > full
+        }
+        Skipped::Uncounted | Skipped::MoreThan(_) | Skipped::About(_) => true,
     }
-    terminal.group = Some(full.max(lines));
+}
+
+/// Whether `item` is a lost read's mark with none of its lines skipped yet:
+/// the lines after it were counted from text ("about") or went by past a
+/// full history ("more than"), and a count that skips them says so.
+fn is_mark(item: &Waiting) -> bool {
+    matches!(
+        item,
+        Waiting::Skipped(Skipped::About(0) | Skipped::MoreThan(0))
+    )
+}
+
+/// Where [`pump`] takes the next item from `waiting`: past a lost read's
+/// mark at the front when the flood policy will skip lines behind it once
+/// this group is heard, so that the mark stays ahead of them and the count
+/// that skips them carries it ("skipped about N lines", "skipped more than
+/// N lines"); otherwise the front.
+fn next_index(waiting: &VecDeque<Waiting>, group_left: usize, full: usize) -> usize {
+    usize::from(
+        waiting.front().is_some_and(is_mark)
+            && skips(waiting, backlog_start(waiting, group_left), full),
+    )
 }
 
 /// Hands waiting output to speech until enough is ahead of playback, as
@@ -641,12 +674,15 @@ fn decide(state: &mut SrState) {
 /// speech while the outpost holds asks it for what is new.
 fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let mut effects = Vec::new();
+    let full = state.settings.full_lines();
     while state.terminal.ahead.len() < AHEAD {
+        let terminal = &state.terminal;
+        let index = next_index(&terminal.waiting, terminal.group.unwrap_or(0), full);
         // A group ends after its last line and what belongs to it.
-        if state.terminal.group == Some(0) && !state.terminal.waiting.front().is_some_and(belongs) {
+        if terminal.group == Some(0) && !terminal.waiting.get(index).is_some_and(belongs) {
             break;
         }
-        let Some(item) = state.terminal.waiting.pop_front() else {
+        let Some(item) = state.terminal.waiting.remove(index) else {
             break;
         };
         if is_line(&item)
@@ -657,8 +693,8 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
                 effects.extend(ask(state, true));
             }
         }
-        // A blank line counts, but is not spoken; a lost read's mark with
-        // none of its lines skipped says nothing.
+        // A blank line counts, but is not spoken; a lost read's mark found
+        // by text with none of its lines skipped says nothing.
         if matches!(&item, Waiting::Line(line, _) if text::is_blank(line))
             || matches!(item, Waiting::Skipped(Skipped::About(0)))
         {

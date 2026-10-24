@@ -2285,6 +2285,18 @@ between two reads:
 - A clear and a reprint of 8,905 rows of the 9,005, read whole: 5.3 to
   8.3 milliseconds of the memory's and rules' time.
 
+A terminal's first read knows no screen's height and takes only the
+screen; when the document goes on above it, the read is taken again at
+once with a screen of rows above the screen, counted up from the
+document's end, so that the next read has rows to compare ("Positions").
+That second snapshot is the snapshot with the screen above measured
+above, 0.45 to 1.06 milliseconds in the console host, paid once each
+time the outpost begins reading a terminal: the focus arriving at a
+terminal whose memory the outpost does not hold, at the start and when
+the focus returns to it. It adds no wake-up and nothing to the reads
+that follow, and a terminal whose screen starts at the document's start
+is not read again.
+
 ### A terminal's upward search
 
 A read finds the screen's top row as last read without any search while

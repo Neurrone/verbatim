@@ -193,6 +193,14 @@ impl Core {
                 above: 0,
             });
         }
+        if step.history_block {
+            return Reply::Again(Query {
+                start: None,
+                screen_rows,
+                whole: false,
+                above: screen_rows,
+            });
+        }
         let memory = self.reader.memory();
         // A read with no text leaves the memory as it was, so where its rows
         // went and where the review position is are said of the read before

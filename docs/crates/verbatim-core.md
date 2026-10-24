@@ -890,9 +890,13 @@ anything but the focus is ignored.
   lines" (`Phrase::SkippedMoreThanLines`), N being the lines left
   unspoken after it; lines a lost read counted from text
   (`Skipped::About`) make it "skipped about N lines"
-  (`Phrase::SkippedAboutLines`); a lost read's own marker, a count of
-  none, says "skipped lines" when nothing after it is skipped, and an
-  "about" count of none says nothing. What waits is then
+  (`Phrase::SkippedAboutLines`). A lost read's own marker, a count of
+  none, stays ahead of its lines while the policy will skip some of them
+  once the group playing is heard, so that the count that skips them
+  carries it, even when the marker starts a burst and the group's lines
+  are handed to speech from behind it; when none of its lines can be
+  skipped, a "more than" marker says "skipped lines" and an "about" marker
+  says nothing. What waits is then
   the next group, and the decision repeats after it, until the output
   stops and everything waiting has been heard; the next output starts a
   burst of its own. A burst ends only once its last line has been heard,

@@ -2673,7 +2673,10 @@ it.
   stamped with when the read began on the run's shared clock), the
   colours converted at the boundary from `verbatim_uia_rops::ColourRun` to
   the rules' own. When the rules ask for the whole document, that read is
-  taken at once, so a read costs at most two snapshots. What
+  taken at once, so a read costs at most two snapshots; so is a first
+  read's history block, when the document goes on above the screen: the
+  read again with no start, the screen counted up from the document's end
+  by the height the first found and a screen of rows above it. What
   the rules say becomes Core's `TerminalSpeech` (`terminal::speech_of`):
   output (`TerminalItem::Output` for a new line, a redrawn row's change
   and a held line as last read; `TerminalItem::Growth` for what a growing

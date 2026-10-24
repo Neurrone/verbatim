@@ -94,7 +94,9 @@ speak: the reading rules (`terminal_reading`, below) are built on its
 - `TerminalMemory::new` and `TerminalMemory::read(&Read) -> Outcome`: one
   memory per terminal, kept while the terminal exists. `above` gives how
   many rows the next read takes above its start: a screen, as the last
-  read found it, and none before the first read. `rows` gives the last
+  read found it, and none before the first read, which is read again with
+  a screen above its screen when the document goes on above it
+  (`history_block`). `rows` gives the last
   read's rows as `Rows`, counted from the read's first row: `len` is how
   many the read held, `first_kept` the first the memory keeps, `kept`
   those rows and `get` one of them (`Row`: its text without padding,
@@ -137,8 +139,12 @@ speak: the reading rules (`terminal_reading`, below) are built on its
   rows were found by their text (`by_text`); `first`, the memory's first
   read; and, each set alone with the
   memory unchanged, `whole_document`, when the caller is to read the whole
-  document and give that read instead, and `blank`, when the read's screen
-  shows no text where the last read's had text.
+  document and give that read instead, `history_block`, when a first read
+  holds no rows above its screen though the document goes on above it and
+  the caller is to read again with no start, counting the screen up from
+  the document's end by the outcome's height and reading that many rows
+  above it, and give that read instead, and `blank`, when the read's
+  screen shows no text where the last read's had text.
 - `hash`: the 64-bit hash of a row's text (FNV-1a), the same in every
   process.
 - `rows_of`: a read's text split into rows as the memory splits a read,
@@ -164,14 +170,17 @@ width or height starts the memory again.
 Each read starts one screen above the top of the last read's screen, at
 the provider range the last read kept; a refused start (the document
 shrank below it, as after Windows Terminal's clear) reads from a screen
-above the screen instead. The memory holds only the last read.
+above the screen instead. A first read, which knows no screen's height,
+takes only the screen; when the document goes on above it, it is read
+again at once from a screen above the screen, so that every read the
+memory holds has its history block. The memory holds only the last read.
 
 Positions are trusted when the read's rows above the last read's screen
 read exactly as the last read's history block did in the same places and
-at least one of them has text, or when no row can be compared: the read
-holds no rows above the last read's screen, or the last read held none
-there, as a first read takes only the screen. Rows only one of the two
-reads holds are not compared. The
+at least one of them has text, or when no row can be compared, which
+happens only when the last read's screen started at the document's start,
+so that it held no rows above it. Rows only one of the two reads holds
+are not compared. The
 last read's rows are then where they were: the history block is kept in
 place and every row below the end of the last read is new. Otherwise, as
 once the history is full and the buffer moves under fixed places, the last
@@ -348,7 +357,9 @@ the memory, which the reader lends out. Floods are Core's to split
   - `set_settings(Settings)`.
 - `Step`: the `Speech` in order, the lines `Withheld` with a `Reason`, the
   `timer` due time, `whole_document` when the read is to be taken again
-  over the whole document, the read's `Outcome`, and `followed`, whether a
+  over the whole document, `history_block` when a first read is to be
+  taken again with a screen above its screen, the read's `Outcome`, and
+  `followed`, whether a
   key moved the caret within its window and the review position followed
   it. `Speech` is a new line (`Line`, a blank one with empty text, which
   Core counts and does not speak), what a growing line gained (`Growth`), a

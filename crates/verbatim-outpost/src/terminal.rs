@@ -349,14 +349,25 @@ pub fn read<'a>(
     let colours = terminal.colours_due.then_some(terminal.width);
     let above = u32::try_from(terminal.reader.memory().above()).unwrap_or(u32::MAX);
     let mut whole = false;
+    // A first read read again with its history block: the screen's height
+    // it found.
+    let mut history_block: Option<u32> = None;
     loop {
         let query = SnapshotQuery {
             element,
             pattern,
-            start: if whole { None } else { start.as_ref() },
-            screen_rows: terminal.screen_rows,
+            start: if whole || history_block.is_some() {
+                None
+            } else {
+                start.as_ref()
+            },
+            screen_rows: history_block.unwrap_or(terminal.screen_rows),
             whole,
-            above: if whole { 0 } else { above },
+            above: if whole {
+                0
+            } else {
+                history_block.unwrap_or(above)
+            },
             caret: Some(caret),
             colours,
         };
@@ -398,6 +409,14 @@ pub fn read<'a>(
         // is never asked for again.
         if step.whole_document && !whole {
             whole = true;
+            continue;
+        }
+        // A first read with no rows above its screen is read again from a
+        // screen above it, once.
+        if step.history_block && history_block.is_none() {
+            history_block = Some(step.outcome.as_ref().map_or(0, |outcome| {
+                u32::try_from(outcome.height).unwrap_or(u32::MAX)
+            }));
             continue;
         }
         terminal.handled(&read, &step);

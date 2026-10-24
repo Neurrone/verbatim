@@ -121,6 +121,16 @@ impl Term {
                 };
                 continue;
             }
+            if step.history_block {
+                assert_eq!(taken, 1, "a first read is read again at most once");
+                query = Query {
+                    start: None,
+                    screen_rows,
+                    whole: false,
+                    above: screen_rows,
+                };
+                continue;
+            }
             self.query = Query {
                 start: Some(snapshot.next_start),
                 screen_rows,
@@ -159,6 +169,7 @@ fn step(speech: Vec<Speech>, withheld: Vec<Withheld>, timer: Option<u64>) -> Ste
         withheld,
         timer,
         whole_document: false,
+        history_block: false,
         outcome: None,
         followed: false,
     }
@@ -1260,10 +1271,10 @@ fn a_lost_read_taken_as_the_focus_arrives_says_nothing() {
 
 #[test]
 fn the_rows_above_a_first_reads_screen_are_history_at_the_next_read() {
-    // A terminal first read with output already in its history takes only
-    // the screen; the next read starts a screen above it, and with no rows
-    // of the first read there to compare, positions are trusted and those
-    // rows are history, not output ("Positions").
+    // A terminal first read with output already in its history is read
+    // again with the screen above its screen, its history block; the next
+    // read starts a screen above it, finds those rows as they were, and
+    // they are history, not output ("The read", "Positions").
     let mut term = Term::new(20, 5, 100);
     let lines = (1..=40)
         .map(|line| format!("line {line}\r\n"))
@@ -1274,4 +1285,32 @@ fn the_rows_above_a_first_reads_screen_are_history_at_the_next_read() {
     term.query = Query::default();
     assert_eq!(term.read(1000), quiet(None));
     assert_eq!(term.read(1100), quiet(None));
+}
+
+#[test]
+fn a_flood_past_a_first_reads_screen_and_its_history_is_a_lost_read() {
+    // A first read of a terminal whose history is full, as when the focus
+    // returns to a Windows Terminal tab while a build streams, holds the
+    // screen above its screen. More than two screens of output before the
+    // next read move the buffer under those rows, so positions are not
+    // trusted, nothing of the first read is found, and the whole document
+    // is read: its rows went by past a full history ("A lost read").
+    let mut term = Term::of(Flavor::WindowsTerminal, 12, 5, 6, Settings::default());
+    let lines = (1..=20)
+        .map(|line| format!("p{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    term.terminal.write(lines.as_bytes());
+    term.reader = TerminalReader::new(Settings::default());
+    term.query = Query::default();
+    assert_eq!(term.read(1000), quiet(None));
+    let mut flood = (1..=22)
+        .map(|line| format!("n{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    flood.push_str("PS C:> ");
+    let mut expected = vec![Speech::LostRead(Lost::MoreThan)];
+    expected.extend((13..=22).map(|number| line(number - 13, &format!("n{number}"))));
+    expected.push(line(10, "PS C:>"));
+    assert_eq!(term.write(&flood, 2000), says(expected));
 }

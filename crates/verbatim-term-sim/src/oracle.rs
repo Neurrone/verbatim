@@ -411,7 +411,8 @@ pub fn observe(terminal: &mut Terminal, stream: &Stream, reader: &mut dyn Reader
 }
 
 /// The most times a reader may ask to read again at one point: a change
-/// costs at most two reads, the second of the whole document
+/// costs at most two reads, the second of the whole document, or, for a
+/// first read, of its screen and the screen above it
 /// (`docs/design/terminal-model.md`, "The read").
 pub const AGAIN_LIMIT: usize = 1;
 

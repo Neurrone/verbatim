@@ -261,6 +261,13 @@ pub struct Outcome {
     /// document and gives that read instead ("The read"). Nothing else is
     /// set, and the memory is unchanged.
     pub whole_document: bool,
+    /// The memory's first read holds no rows above its screen though the
+    /// document goes on above it, so the caller reads again from a screen
+    /// above the screen, the screen counted up from the document's end as
+    /// every later read counts it, and gives that read instead ("The
+    /// read"): every read holds its history block, which the next read's
+    /// positions compare. Nothing else is set, and the memory is unchanged.
+    pub history_block: bool,
     /// The memory's first read: every row is new, and nothing was heard
     /// before it.
     pub first: bool,
@@ -459,6 +466,10 @@ pub struct TerminalMemory {
     screen: Option<Screen>,
     /// Whether the whole document was asked for, until it is read.
     asked_whole: bool,
+    /// The screen's height a first read was asked again with, a screen of
+    /// rows above its screen ([`Outcome::history_block`]), until that read
+    /// comes.
+    asked_above: Option<usize>,
     /// The number the next place gets ([`TerminalMemory::add_place`]).
     next_place: u64,
 }
@@ -631,14 +642,29 @@ impl TerminalMemory {
             ..Outcome::default()
         };
         let asked_whole = std::mem::take(&mut self.asked_whole);
+        let asked_above = self.asked_above.take();
         let Some(current) = self.screen.take() else {
+            // A first read takes only the screen: when the document goes on
+            // above it, it is read again with its history block.
+            if asked_above.is_none() && read.above == 0 && !read.at_document_start {
+                self.asked_above = Some(height);
+                return Outcome {
+                    history_block: true,
+                    ..shape
+                };
+            }
             let outcome = Outcome {
                 first: true,
                 rows: vec![NewRow::New; rows.len()],
                 lines: lines(&rows),
                 ..shape
             };
-            self.screen = Some(Screen::fresh(rows, read, (width, height), 0));
+            self.screen = Some(Screen::fresh(
+                rows,
+                read,
+                (width, height),
+                asked_above.unwrap_or(0),
+            ));
             return outcome;
         };
         // A changed width or height rewraps every row: the memory starts

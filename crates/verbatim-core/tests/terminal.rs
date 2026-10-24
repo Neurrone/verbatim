@@ -466,16 +466,53 @@ fn lines_after_a_lost_read_found_by_text_are_counted_as_about() {
 #[test]
 fn a_flood_past_the_history_is_counted_as_more_than() {
     // A burst that starts past a full history of 100 rows: the history's
-    // first 30 lines are spoken whole after the note that lines went by
-    // unread, and of the rest all but the last 30 are skipped.
+    // first 30 lines are spoken whole, and of the rest all but the last 30
+    // are skipped, more than went by unread before them.
     let mut state = terminal();
     let mut playback = Playback::default();
     playback.feed(&mut state, &said(TERMINAL, 0, overflowed(lines(1..=100))));
-    let mut expected = vec!["skipped".to_owned()];
-    expected.extend(lines(1..=30));
-    expected.push("skipped 40".to_owned());
+    let mut expected = lines(1..=30);
+    expected.push("skipped more than 40".to_owned());
     expected.extend(lines(71..=100));
     assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_flood_that_starts_with_a_lost_read_is_counted_as_about() {
+    // A lost read whose last rows were found by their text starts a burst
+    // of 2,000 lines with nothing playing: the first 30 are spoken whole,
+    // and the skip that follows carries the read's "about".
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(
+        &mut state,
+        &said(
+            TERMINAL,
+            0,
+            speech_of(Some(Skipped::About(0)), lines(1..=2000)),
+        ),
+    );
+    let mut expected = lines(1..=30);
+    expected.push("skipped about 1940".to_owned());
+    expected.extend(lines(1971..=2000));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_lost_read_with_none_of_its_lines_skipped_says_only_its_lines() {
+    // A lost read found by text whose 20 lines are all spoken: nothing is
+    // skipped, so its "about" says nothing.
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(
+        &mut state,
+        &said(
+            TERMINAL,
+            0,
+            speech_of(Some(Skipped::About(0)), lines(1..=20)),
+        ),
+    );
+    assert_eq!(playback.play_all(&mut state), lines(1..=20));
 }
 
 #[test]

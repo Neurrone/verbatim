@@ -80,6 +80,15 @@ impl Watch {
                 };
                 continue;
             }
+            if step.history_block && query.start.is_none() && query.above == 0 {
+                query = Query {
+                    start: None,
+                    screen_rows,
+                    whole: false,
+                    above: screen_rows,
+                };
+                continue;
+            }
             self.terminal.handled(&read, &step);
             self.query = Query {
                 start: Some(snapshot.next_start),
