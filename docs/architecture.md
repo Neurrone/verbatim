@@ -307,11 +307,16 @@ screen reader in both rendered and source form.
   Core sends to the listener and to the focused application's outpost
   whenever it changes, never a copy of the focus the listener or outpost
   last reported. Everything decided after the read is decided in the
-  reducer, from facts the outposts report. Ratified 2026-09-02; amended
+  reducer, from facts the outposts report. Focuses reach Core from several
+  processes, and a slow read in one can deliver an earlier focus after a
+  later one; Core orders them by when they happened, on the shared clock,
+  so a focus that happened before the focus Core has applied never
+  replaces it (found live: Alt+Tab's switcher announced after the window
+  switched to, 2026-10-24). Ratified 2026-09-02; amended
   2026-10-01 (the outpost redesign: the attention model), 2026-10-05
   (acceptance against the real foreground) and 2026-10-24 (Dickson: each
   rule defined once, judged against Core's focus, only pre-read judgments
-  outside Core).
+  outside Core, focuses ordered by when they happened).
 - **D15 — The latency budget is split in two and measured per stage.**
   From observation of the OS event to the utterance being queued: 10 ms
   or under on every backend. From queued to the first audio sample: 10 ms
