@@ -265,52 +265,49 @@ screen reader in both rendered and source form.
   section 2, not by a lock.
 - **D14 — Attention follows focus; foreground is announced, not used as a
   gate.** The reducer tracks an attention record: the process and root
-  window that most recently received a focus fact. It replaces the earlier
+  window that most recently received a focus fact. It replaces an earlier
   rule that dropped every event whose process did not own the foreground
   window, which failed for broker-hosted applications (a Settings page
   lives in the Settings process while its frame belongs to the frame
   host), for windows of the already-running shell that never take the
   foreground cleanly (an Explorer folder window), and for background
-  events users expect to hear. Event acceptance moves out of Core into the
-  outposts, which classify each event as attended or background with
-  hang-safe local reads following NVDA's `shouldAcceptEvent` rules: the
-  attention window, its descendants, windows sharing its root owner,
-  topmost windows, and the `Windows.UI.Core` case are attended; UIA
-  notifications, toast alerts, menu popups, tooltip and notification-bar
-  classes, and configured progress bars are accepted from anywhere as
+  events users expect to hear. Attention moves only on a foreground
+  change, reported as a focus on the window, which the listener has
+  confirmed is still the foreground window.
+
+  Acceptance follows NVDA's `shouldAcceptEvent` rules: a focus is attended
+  when its window, read at the event, is in the system's foreground window
+  (its top-level window or root owner is the foreground window, or shares
+  its root owner), is topmost, or is a `Windows.UI.Core` window under the
+  input thread's active window, judged against the real foreground window
+  rather than the attention record, because a focus can arrive before the
+  report of the foreground change that left its window. UIA notifications
+  are accepted from the attention application only, except the shell's
+  window-snap results; menu popups, tooltip and notification-bar classes,
+  configured progress bars and toast alerts are accepted from anywhere as
   background. Background events never move focus or the navigator, are
   spoken at Queued priority, and sit under a per-source flood cap (not
-  implemented yet; `docs/parity/focus-events.md`, "Event acceptance" lists it). So that
-  processes which never held focus can still be heard, the focus listener
-  additionally hooks `EVENT_SYSTEM_ALERT` and a desktop-wide UIA
+  implemented yet; `docs/parity/focus-events.md`, "Event acceptance"). The
+  focus listener also hooks `EVENT_SYSTEM_ALERT` and a desktop-wide UIA
   notification registration and forwards them as facts that spawn an
-  outpost on demand, which stays within its never-block rule because both
-  are cached reads. Ratified 2026-09-02.
-  Amended 2026-10-01 (the outpost redesign): acceptance is classified by
-  the reducer, not the outposts. Outposts attach window facts read with
-  local calls (top-level window, root owner, topmost, and for
-  `Windows.UI.Core` windows whether the window is under the input
-  thread's active window); the reducer compares them with its attention
-  record, so attention is never broadcast to outposts. Attention moves
-  only on a foreground change, reported as a focus on the window, which
-  the listener has confirmed is still the foreground window; an ordinary
-  focus fact is classified like any other event, so a topmost popup that
-  takes focus does not take attention. UIA notifications are accepted
-  from the attention application only, except the shell's window-snap
-  results. Of the alerts, only toasts are reported for now. The attention
-  model is implemented in this redesign instead of at M4.
-  Amended 2026-10-05: a focus event is attended only when its outpost
-  found its window in the system's foreground window when it read the
-  event (its top-level window or root owner is the foreground window, or
-  shares the foreground window's root owner), or the window is topmost,
-  or it is a `Windows.UI.Core` window under the input thread's active
-  window; that is NVDA's own test, made against the real foreground
-  window rather than the attention record. A focus with no window facts
-  is still judged by its application. A focus can reach Core before the
-  report of the foreground change that left its window (found live: the
-  desktop's list raised a focus 4 ms after Notepad became the foreground,
-  and Verbatim spoke it), and judged against the attention record it was
-  attended. Foreground changes and the other events keep their rules.
+  outpost on demand, cached reads within its never-block rule.
+
+  Where the rules run: each rule (acceptance, a repeated focus, which
+  property changes, selections and dialog texts are spoken) is defined
+  once, in a platform-neutral crate, and every place that applies it calls
+  that one definition. A judgment is made outside Core only when it must
+  come before an element is read, because a UIA element cannot pass to
+  another process: the focus listener judges a UIA focus before reading
+  it, and an outpost judges an event against the foreground before calling
+  into the application. Those judgments use the focus Core holds, which
+  Core sends to the listener and to the focused application's outpost
+  whenever it changes, never a copy of the focus the listener or outpost
+  last reported. Everything decided after the read is decided in the
+  reducer, from facts the outposts report. Ratified 2026-09-02; amended
+  2026-10-01 (the outpost redesign: the attention model), 2026-10-05
+  (acceptance against the real foreground) and 2026-10-24 (Dickson: each
+  rule defined once, judged against Core's focus, only pre-read judgments
+  outside Core).
 - **D15 — The latency budget is split in two and measured per stage.**
   From observation of the OS event to the utterance being queued: 10 ms
   or under on every backend. From queued to the first audio sample: 10 ms
