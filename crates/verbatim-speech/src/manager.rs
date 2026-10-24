@@ -825,10 +825,10 @@ fn playback_listener(
                 ending,
             } => {
                 trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, ?ending, "utterance_ended");
-                let _ = queue_tx.send(QueueEvent::Ended(utterance, ending.clone()));
                 if let Some(events) = &events {
                     events.utterance_ended(utterance, trace_id, &ending, now);
                 }
+                let _ = queue_tx.send(QueueEvent::Ended(utterance, ending));
             }
         }
     })

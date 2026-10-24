@@ -119,3 +119,81 @@ impl SpeechEvents for ShellSpeechEvents {
         self.ledger.utterance_ended(utterance, trace_id, ending, at);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::OnceLock;
+
+    use verbatim_process::port_queue::port_queue;
+
+    use super::*;
+
+    /// An observer posting to a fresh reducer port, and that port's taker.
+    fn observer() -> (
+        ShellSpeechEvents,
+        verbatim_process::port_queue::PortQueue<ShellCommand>,
+    ) {
+        let (commands, taker) = port_queue().expect("a port");
+        let ledger = Arc::new(LatencyLedger::new(
+            3,
+            LatencyLedger::DEFAULT_MAX_BYTES,
+            Arc::new(OnceLock::new()),
+        ));
+        (ShellSpeechEvents { ledger, commands }, taker)
+    }
+
+    /// The single input posted to the reducer, unboxed.
+    fn only_input(taker: &mut verbatim_process::port_queue::PortQueue<ShellCommand>) -> Input {
+        let Some(ShellCommand::Input(input)) = taker.try_recv() else {
+            panic!("the observer posted no input to the reducer");
+        };
+        assert!(
+            taker.try_recv().is_none(),
+            "the observer posted more than one command"
+        );
+        *input
+    }
+
+    /// A cut utterance's marks re-enter the reducer as
+    /// `Input::UtteranceCancelled`, every mark in order, stamped with the
+    /// time it was reported.
+    #[test]
+    fn a_cut_utterance_reaches_the_reducer_with_its_marks() {
+        let (events, mut taker) = observer();
+        let before = crate::latency::now_ms();
+        events.marks_cancelled(
+            UtteranceId(1),
+            TraceId::mint(),
+            &[IndexMark(5), IndexMark(6)],
+            Instant::now(),
+        );
+        let after = crate::latency::now_ms();
+        let Input::UtteranceCancelled { marks, at_ms } = only_input(&mut taker) else {
+            panic!("the input is not a cut utterance");
+        };
+        assert_eq!(marks, vec![SpeechMark(5), SpeechMark(6)]);
+        assert!(
+            (before..=after).contains(&at_ms),
+            "{at_ms} is outside {before}..={after}"
+        );
+    }
+
+    /// A failed utterance's marks re-enter the reducer as
+    /// `Input::UtteranceFailed`, every mark in order.
+    #[test]
+    fn a_failed_utterance_reaches_the_reducer_with_its_marks() {
+        let (events, mut taker) = observer();
+        events.marks_failed(
+            UtteranceId(1),
+            TraceId::mint(),
+            &[IndexMark(5), IndexMark(6)],
+            Instant::now(),
+        );
+        assert_eq!(
+            only_input(&mut taker),
+            Input::UtteranceFailed {
+                marks: vec![SpeechMark(5), SpeechMark(6)],
+            }
+        );
+    }
+}
