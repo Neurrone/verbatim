@@ -6,7 +6,11 @@
   and exactly what GitHub Actions runs: the platform-neutral dependency
   check (each crate the `CLAUDE.md` NVDA provenance section lists as
   neutral has its `cargo tree` inspected, and the step fails naming every
-  crate that pulls in the `windows` or `windows-core` bindings), rustfmt,
+  crate that pulls in the `windows` or `windows-core` bindings by any
+  path, or reaches `windows-sys` through a workspace crate that names it
+  directly; `windows-sys` beneath third-party libraries and the generated
+  `workspace-hack` crate is allowed, since those libraries are
+  cross-platform), rustfmt,
   pedantic clippy with warnings denied, and unit tests, all for the
   host's own architecture into `target/debug` (no step names a target, so
   an ARM64 machine checks ARM64; GitHub Actions runs it on both, in the

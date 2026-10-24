@@ -80,11 +80,22 @@ const PLATFORM_NEUTRAL_CRATES: &[&str] = &[
     "verbatim-text",
 ];
 
-/// The crates through which Verbatim reaches the Windows API. Third-party
-/// libraries with target-gated `windows-sys` dependencies are deliberately
-/// not on this list: they are cross-platform code, not a dependency on
-/// Windows.
+/// The crates through which Verbatim reaches the Windows API, which no
+/// platform-neutral crate may reach by any path.
 const WINDOWS_BINDINGS: &[&str] = &["windows", "windows-core"];
+
+/// The raw Windows bindings, which no workspace crate in a platform-neutral
+/// crate's tree may depend on directly. Third-party libraries with
+/// target-gated `windows-sys` dependencies are cross-platform code, not a
+/// dependency on Windows, so `windows-sys` beneath them is allowed, as it is
+/// beneath the generated `workspace-hack` crate, which only unifies those
+/// libraries' features.
+const RAW_WINDOWS_BINDINGS: &[&str] = &["windows-sys"];
+
+/// The generated crate that unifies third-party features across the
+/// workspace (`docs/tooling/setup.md`), exempt from
+/// [`RAW_WINDOWS_BINDINGS`].
+const WORKSPACE_HACK: &str = "workspace-hack";
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -307,13 +318,24 @@ fn ci() -> ExitCode {
 
 /// Fails if any of [`PLATFORM_NEUTRAL_CRATES`] has one of
 /// [`WINDOWS_BINDINGS`] anywhere in its normal (non-dev, non-build)
-/// dependency tree for the host's target. The error names every offending
-/// crate and binding so one run reports the whole problem.
+/// dependency tree for the host's target, or a workspace crate in that tree
+/// other than [`WORKSPACE_HACK`] depends directly on one of
+/// [`RAW_WINDOWS_BINDINGS`]. The error names every offending crate and
+/// binding so one run reports the whole problem.
 fn check_platform_neutral_deps() -> Result<(), String> {
+    // The workspace root, the parent of this crate's directory; a crate
+    // whose source path lies under it is a workspace crate.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .ok_or("xtask's directory has no parent")?
+        .to_string_lossy()
+        .into_owned();
     let mut offences = Vec::new();
     for crate_name in PLATFORM_NEUTRAL_CRATES {
         let output = Command::new(env!("CARGO"))
-            .args(["tree", "-p", crate_name, "-e", "normal", "--prefix", "none"])
+            .args([
+                "tree", "-p", crate_name, "-e", "normal", "--prefix", "depth",
+            ])
             .output()
             .map_err(|error| format!("could not run cargo tree for {crate_name}: {error}"))?;
         if !output.status.success() {
@@ -325,13 +347,34 @@ fn check_platform_neutral_deps() -> Result<(), String> {
         }
         let tree = str::from_utf8(&output.stdout)
             .map_err(|error| format!("cargo tree output for {crate_name} is not UTF-8: {error}"))?;
-        // Each line is "name vX.Y.Z (source)"; the first word is the crate.
-        for binding in tree
-            .lines()
-            .filter_map(|line| line.split_whitespace().next())
-            .filter(|name| WINDOWS_BINDINGS.contains(name))
-        {
-            offences.push(format!("{crate_name} depends on {binding}"));
+        // Each line is the depth, then "name vX.Y.Z (source)"; the crate on
+        // the line above at one less depth is the one that depends on it.
+        // `ancestors[depth]` is the latest crate seen at each depth, with
+        // whether it is a workspace crate.
+        let mut ancestors: Vec<(&str, bool)> = Vec::new();
+        for line in tree.lines() {
+            let digits = line.bytes().take_while(u8::is_ascii_digit).count();
+            let Ok(depth) = line[..digits].parse::<usize>() else {
+                continue;
+            };
+            let rest = &line[digits..];
+            let Some(name) = rest.split_whitespace().next() else {
+                continue;
+            };
+            let in_workspace = rest.contains(&format!("({root}{}", std::path::MAIN_SEPARATOR));
+            if WINDOWS_BINDINGS.contains(&name) {
+                offences.push(format!("{crate_name} depends on {name}"));
+            }
+            if RAW_WINDOWS_BINDINGS.contains(&name)
+                && let Some(&(parent, true)) = depth.checked_sub(1).and_then(|up| ancestors.get(up))
+                && parent != WORKSPACE_HACK
+            {
+                offences.push(format!(
+                    "{crate_name} depends on {name} through {parent}, a workspace crate"
+                ));
+            }
+            ancestors.truncate(depth);
+            ancestors.push((name, in_workspace));
         }
     }
     if offences.is_empty() {
