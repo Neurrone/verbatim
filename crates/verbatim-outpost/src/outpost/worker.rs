@@ -2374,20 +2374,31 @@ impl Worker<'_> {
         foreground: bool,
     ) -> held::Focus {
         let top_level = window.map_or(0, top_level_of);
-        let held = self.context.held();
-        let before = held.expected();
-        let entered_in_front = match before {
-            Some(before) if top_level != 0 && before.top_level == top_level => {
-                before.entered_in_front
-            }
-            _ => (top_level != 0 && top_level == self.context.foreground_window())
+        // What the focus before it gives it, taken under the lock, which
+        // is let go before the foreground window is read.
+        let (inherited, ancestors_before) = {
+            let held = self.context.held();
+            let before = held.expected();
+            (
+                before
+                    .filter(|before| top_level != 0 && before.top_level == top_level)
+                    .map(|before| before.entered_in_front),
+                ancestors
+                    .is_none()
+                    .then(|| before.map(|before| before.ancestors.clone()))
+                    .flatten(),
+            )
+        };
+        // A foreground change's window was just found in front.
+        let entered_in_front = match inherited {
+            Some(entered) => entered,
+            None if foreground => Some(top_level).filter(|&top| top != 0),
+            None => (top_level != 0 && top_level == self.context.foreground_window())
                 .then_some(top_level),
         };
         let ancestors = match ancestors {
             Some(ancestors) => ancestors.iter().map(held_node).collect(),
-            None => before
-                .map(|before| before.ancestors.clone())
-                .unwrap_or_default(),
+            None => ancestors_before.unwrap_or_default(),
         };
         held::Focus {
             trace,

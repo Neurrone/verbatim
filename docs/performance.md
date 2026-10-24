@@ -334,8 +334,9 @@ each UIA focus from the event's own element, 2026-10-11;
 `docs/design/focus-pipeline.md`, sections 16.2 and 16.3), every UIA focus
 costs one call more before its read, the nearest window of a windowless
 element (`NormalizeElementBuildCache`), and every focus after the first
-one more again, the comparison with the last focus accepted
-(`CompareElements`, which reaches no provider). The nearest window costs
+one more again, the comparison with the element of the focus Core holds
+(`CompareElements`, which reaches no provider), made once Core has
+judged the focus before. The nearest window costs
 mockapp 31 provider calls for a button or the list and 22 for a list item.
 A repeated focus on the element that still has the keyboard focus is
 dropped after the comparison and that element's keyboard focus read: 2
@@ -388,9 +389,10 @@ verdict for the focus's window rather than asking the window again.
     native check and acceptance test; a sender that is a window answers
     it from the event's cache without a call. NVDA makes it before its
     duplicate rule, so it stays there;
-  - the comparison with the last focus accepted (`CompareElements`),
-    NVDA's duplicate rule, made while that focus is still the last focus
-    queued. It reaches no provider, but it is a UIA client call and is
+  - the comparison with the element of the focus Core holds
+    (`CompareElements`), NVDA's duplicate rule, made while Core holds a
+    focus it took from the listener's read and has judged every focus the
+    listener read. It reaches no provider, but it is a UIA client call and is
     counted as one, as NVDA makes it;
   - the sender's keyboard focus, read plainly (`CurrentHasKeyboardFocus`),
     NVDA's last check: read inside a remote program, the element is the
@@ -1445,8 +1447,8 @@ the milliseconds and, for a focus, the microseconds of one clock read.
   Automation focus, its forwarded `WinEvent` facts and the outposts' own
   hooks read the clock twice, so a stamp costs one read fewer. A focus's
   message carries one more number, its microseconds, and so does Core's
-  notice of a focus it queued (`FocusQueued`); Core, the listener and the
-  outposts compare two numbers instead of one. No thread,
+  notice of the focus it holds (`CoreFocus`); Core and the outposts
+  compare two numbers instead of one. No thread,
   timer, message or wake-up is added. Measured on 2026-10-24 with three
   traces each of `conhost_two_windows` (`cargo xtask trace scenario
   conhost_two_windows --after 4 --seconds 8`, debug builds, info

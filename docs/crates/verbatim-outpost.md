@@ -603,7 +603,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `verbatim_core::focus_rules::HeldFocus`, the trace of the event Core took
   its focus from, the focus and its ancestors with their ids, backends,
   roles, names and states, its top-level window, and whether it is alive,
-  whole to the listener and to an outpost only when the focus is that
+  to the listener without its ancestors, which it does not judge by, and
+  to an outpost only when the focus is that
   outpost's, its node ids as the outpost issued them
   (`HeldFocus::for_outpost`); and `observed`, when that focus was
   observed, which an outpost whose focus Core no longer holds takes for
@@ -1181,7 +1182,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   incarnation has ended or its queue is full; `note_views(attention,
   holding)` passes the views the app derives from the reducer state;
   `core_focus(judged, focus, outposts)` sends `CoreFocus` to the
-  listener whole and to each of `outposts` as its own focus or none; and
+  listener, without its ancestors, and to each of `outposts` as its own
+  focus or none; and
   `query_idle(round)` runs the idle barrier's round through the children
   (under "The idle barrier" below), the app hearing which outposts it
   asked through `OutpostMessage::IdleQueried`. The

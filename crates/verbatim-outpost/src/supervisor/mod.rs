@@ -611,7 +611,8 @@ impl Supervisor {
     /// Tells the focus listener and `outposts` the focus Core holds,
     /// `focus`, once Core has judged the focus event traced `judged` or
     /// its focus has changed ([`SupervisorToOutpost::CoreFocus`]): the
-    /// listener whole, and each outpost only when the focus is its own.
+    /// listener without its ancestors, and each outpost only when the focus
+    /// is its own.
     pub fn core_focus(
         &self,
         judged: Option<TraceId>,

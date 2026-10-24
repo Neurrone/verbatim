@@ -105,10 +105,11 @@ NVDA says "Fruits list"). The outpost applies these rules before it
 reads an MSAA selection: one on the focus or an ancestor has its states
 read alone and is reported as a change of state, one inside a focused
 list or tab control is read in full, and any other is dropped after its
-acquisition, never read. Core's rule asks whether its own focus is a
-container, the outpost's whether the focus it last reported is one, so
-a selection under an older focus that is a container, whose outpost's
-newer focus Core did not take, is not spoken.
+acquisition, never read. Both apply one definition
+(`verbatim_core::focus_rules::selection_target`; decision D14, "Where the
+rules run"), the outpost against the focus Core holds and those it
+reported that Core has not judged yet, and Core against its own focus
+once it has judged them.
 
 ### A selection container's selected item through UIA
 

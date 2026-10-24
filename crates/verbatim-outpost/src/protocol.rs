@@ -725,8 +725,9 @@ pub enum SupervisorToOutpost {
         /// has been judged too.
         #[serde(default)]
         judged: Option<TraceId>,
-        /// The focus Core holds, to the listener whole, and to an outpost
-        /// only when it is that outpost's, its node ids as the outpost
+        /// The focus Core holds, to the listener without its ancestors,
+        /// which it does not judge by, and to an outpost only when it is
+        /// that outpost's, with them, its node ids as the outpost
         /// issued them (`HeldFocus::for_outpost`); `None` when Core holds
         /// none, or another outpost's.
         #[serde(default)]

@@ -136,13 +136,13 @@ NVDA: [The UIA client](../nvda/uia.md), "Caching discipline", and
 - An MSAA focus is accepted only when the object or one of its
   ancestors has the focused state (`shouldAllowIAccessibleFocusEvent`);
   the states are checked first and read live, as NVDA reads them,
-  ancestors included. A focus event naming the address of the focus
-  last reported, a whole object, is dropped before it is read, as NVDA's
-  `isDuplicateIAccessibleEvent` drops it, unless a foreground change the
-  outpost reported, or a focus Core queued from another application,
-  came after it, as NVDA compares with the last focus queued from any
-  application (`docs/parity/focus-events.md`, "Duplicate focus
-  suppression"). `msaa_focus_changes_cost_exactly` pins both.
+  ancestors included. A focus event naming the address of the focus Core
+  holds, a whole object, is dropped before it is read, as NVDA's
+  `isDuplicateIAccessibleEvent` drops it, when every focus the outpost
+  reported that Core has not judged yet is that object too, as NVDA
+  compares with the last focus queued from any application
+  (`docs/parity/focus-events.md`, "Duplicate focus suppression").
+  `msaa_focus_changes_cost_exactly` pins both.
 - Each consecutive run of a batch's MSAA focus events and foreground
   changes is tried newest first until one is reported, as NVDA's event
   pump tries a run of focus and foreground events: when the newest cannot

@@ -769,8 +769,8 @@ impl Owner {
 
     /// Tells the listener and `outposts` the focus Core holds, `focus`,
     /// after Core judged the focus event traced `judged` or its focus
-    /// changed ([`SupervisorToOutpost::CoreFocus`]): the listener whole,
-    /// and each outpost only when the focus is its own.
+    /// changed ([`SupervisorToOutpost::CoreFocus`]): the listener without
+    /// its ancestors, and each outpost only when the focus is its own.
     fn tell_core_focus(
         &mut self,
         judged: Option<TraceId>,
@@ -787,9 +787,14 @@ impl Owner {
             })
         };
         // A listener still launching has read no focus to judge against
-        // it.
+        // it. It judges by the focus's trace and liveness alone, so the
+        // ancestors are left out of its notice.
+        let to_listener = focus.map(|focus| crate::protocol::HeldFocus {
+            ancestors: Vec::new(),
+            ..focus.clone()
+        });
         if let Some(child) = self.listener.as_ref().and_then(|l| l.child.as_ref())
-            && let Err(error) = child.writer.push(notice(focus.cloned()))
+            && let Err(error) = child.writer.push(notice(to_listener))
         {
             tracing::warn!(%error, "Core's focus could not be told to the listener");
         }
