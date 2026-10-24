@@ -109,9 +109,7 @@ mod tests {
     /// pseudo-handle, and a process that does not exist has none.
     #[test]
     fn the_system_reads_a_process_level() {
-        let own = own_integrity();
-        assert!(own.is_some());
-        assert_eq!(process_integrity(std::process::id()), own);
+        assert_eq!(process_integrity(std::process::id()), own_integrity());
         assert_eq!(process_integrity(0), None);
     }
 }

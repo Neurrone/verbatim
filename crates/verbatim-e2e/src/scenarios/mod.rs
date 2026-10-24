@@ -32,6 +32,7 @@ pub(crate) mod object_navigation_in_settings;
 pub(crate) mod object_navigation_over_uia;
 pub(crate) mod outpost_crash_recovery;
 pub(crate) mod password;
+pub(crate) mod quick_link_menu;
 pub(crate) mod rapid_tabbing_in_settings;
 pub(crate) mod return_after_retirement;
 pub(crate) mod review_cursor;

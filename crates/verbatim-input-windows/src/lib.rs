@@ -831,7 +831,7 @@ fn report_passed(
     let pressed_at_us = unix_us();
     let trace_id = TraceId::mint();
     let deferred = state.deferred_transitions();
-    let foreground = ((state.front)(), state.foreground.get());
+    let foreground = (state.front, state.foreground.get());
     match state
         .typing
         .translate((event.vk, scan_code), &deferred, foreground)

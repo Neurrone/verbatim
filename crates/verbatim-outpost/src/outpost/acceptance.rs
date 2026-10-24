@@ -73,7 +73,8 @@ impl EventName {
     /// The name NVDA gives a `WinEvent` of `kind`, or `None` for a kind the
     /// worker handles outside the test: an object destroyed, which NVDA
     /// handles in its event callback, and Verbatim's own kinds, the text
-    /// selection of edit controls, and the console host's updates and caret
+    /// selection of edit controls, the console host's updates and caret,
+    /// and the shell's coming to the front, which only the listener takes
     /// (`docs/parity/focus-events.md`, "Event acceptance").
     pub(crate) fn of_win_event(kind: WinEventKind) -> Option<Self> {
         Some(match kind {
@@ -92,7 +93,8 @@ impl EventName {
             WinEventKind::Destroy
             | WinEventKind::TextSelectionChange
             | WinEventKind::ConsoleUpdate
-            | WinEventKind::ConsoleCaret => return None,
+            | WinEventKind::ConsoleCaret
+            | WinEventKind::ShellForeground => return None,
         })
     }
 }

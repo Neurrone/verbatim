@@ -318,7 +318,7 @@ fn event_thread_main(
                     // Unhooking some of the set's kinds and hooking them
                     // again (`verbatim_ia2::suspend_kinds`) changes one raw
                     // event's hook at a time within this one set, as the
-                    // keyboard hook thread hooks and unhooks the console's
+                    // focus listener hooks and unhooks the console's
                     // events.
                     let target_pid = u32::try_from(message.wParam.0).unwrap_or(0);
                     // The sync markers' hook is one more hook of the set.

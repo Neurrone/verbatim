@@ -689,7 +689,9 @@ The groups:
   through a new outpost), `return_after_retirement` (a Windows Forms text
   box brought forward again once Core reports its outpost retired after
   two minutes without attention, announced as before through a new
-  outpost), `explorer_folder_window`, and
+  outpost), `quick_link_menu` (the Windows+X menu opened from the
+  desktop and closed with Escape, said as NVDA says it),
+  `explorer_folder_window`, and
   `settings_system_page` (the list focused by its UI Automation
   identifier through the agent), and `settings_combo_box_expanded` (a
   Date and time combo box focused the same way, opened with Alt+Down

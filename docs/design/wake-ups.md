@@ -142,14 +142,13 @@ Counts are for one traced window of 5 to 8 seconds.
     console on the desktop, to learn which console host thread to
     translate typed keys with: a console flooding in the background woke
     it 47,061 times in 6 seconds, on the thread Windows waits on for every
-    key. Fixed: those events are hooked only while the console window in
-    front has not yet named its thread, and unhooked at the first; the
-    foreground event, which names it when a console comes to the front, is
-    hooked throughout. The same window then had 43. Since 2026-10-24 the
-    hook thread hooks no event at all: the focus listener learns the
-    window in front and a console's thread, hooking the consoles' events
-    only when it starts with a console in front whose thread no event has
-    named, and Core publishes what the hook needs (architecture section 5).
+    key. Fixed: the hook thread hooks no event. The focus listener learns
+    the window in front and a console's thread from the foreground event,
+    which a console raises from its console host's thread, and hooks every
+    console's events only when it starts with a console in front, until
+    that console names its thread; Core publishes what the hook needs
+    (architecture section 5). With the hook thread hooking them only while
+    the console in front was unknown, the same window had 43 wake-ups.
 11. Threads that exist only for the test harness (the WAV recorder, the
     control plane's speech writers) wake often in every run and cost a
     user nothing.
@@ -1107,7 +1106,7 @@ application's focus window and foreground window are both known to be read
 through UIA, the value, state, name, description, selection and text
 selection events are unhooked
 (`verbatim_ia2::suspend_kinds`, one raw event at a time within the one
-hook set, as the keyboard hook thread hooks the console's events); as soon
+hook set, as the focus listener hooks the console's events); as soon
 as the focus, a menu opening, or the foreground is in a window read
 through MSAA, or not yet decided, they are hooked again, before that event
 is queued. Focus, foreground, menu opening, alert, tooltip, the system

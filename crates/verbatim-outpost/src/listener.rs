@@ -36,7 +36,9 @@
 //! `GetProcessIdOfThread` on the event's own thread, which names a console
 //! window's console host ([`routed_process`]); and, for a UIA focus on an
 //! element with no window of its own, `GetGUIThreadInfo`, which names the
-//! keyboard focus window. A foreground
+//! keyboard focus window; and, for the window in front, its class and its
+//! process's integrity level (`OpenProcess`, `OpenProcessToken`,
+//! `GetTokenInformation`, kernel calls that wait on no process). A foreground
 //! event is forwarded unchecked; the outpost's worker checks that its
 //! window is the foreground when it handles it, as NVDA's
 //! `processForegroundWinEvent` does.
@@ -927,6 +929,18 @@ impl Listener {
                         WinEventKind::ConsoleUpdate | WinEventKind::ConsoleCaret
                     ) {
                         let step = watch.borrow_mut().console_event(event.hwnd, event.thread);
+                        foreground_step(&outgoing, step);
+                        return;
+                    }
+                    // Program Manager or the taskbar in front: no foreground
+                    // change to forward, as NVDA takes none, but the window
+                    // in front for the keyboard hook's view.
+                    if event.kind == WinEventKind::ShellForeground {
+                        let step = watch.borrow_mut().foreground(Front {
+                            window: event.hwnd,
+                            thread: event.thread,
+                            console: false,
+                        });
                         foreground_step(&outgoing, step);
                         return;
                     }

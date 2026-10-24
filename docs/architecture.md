@@ -602,7 +602,9 @@ properties already cached, so building a snapshot is local memory reads;
 an MSAA WinEvent delivers raw window and object ids, which are forwarded
 untouched; the only other reads are hang-safe local ones (the window's
 owning process id, its class name, and for a UIA focus on an element with
-no window of its own, the keyboard focus window from `GetGUIThreadInfo`). No cross-process calls means no
+no window of its own, the keyboard focus window from `GetGUIThreadInfo`,
+and for the window in front its process's integrity level, read from the
+kernel). No cross-process calls means no
 deadlines, no query pool, no parked threads, and no way for any
 application — hung or not — to stall focus detection for the rest of the
 desktop. The listener holds no per-application state either, so a crash

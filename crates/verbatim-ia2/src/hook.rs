@@ -116,6 +116,13 @@ pub enum WinEventKind {
     /// `EVENT_CONSOLE_UPDATE_SCROLL`, or `EVENT_CONSOLE_LAYOUT`: the console
     /// host's text changed, scrolled, or was laid out anew.
     ConsoleUpdate,
+    /// `EVENT_SYSTEM_FOREGROUND` on Program Manager's or the taskbar's window,
+    /// which never reports a foreground change ([`WinEventKind::Foreground`]
+    /// drops it, as NVDA does) but is still the window in front: only an
+    /// install that asks for this kind receives it, as this kind, so that
+    /// the focus listener can tell Core which window is in front for the
+    /// keyboard hook (architecture section 5).
+    ShellForeground,
     /// `EVENT_CONSOLE_CARET`: the console host's cursor moved, or the moving
     /// end of a selection did. Its `idObject` holds flags
     /// (`CONSOLE_CARET_SELECTION`, `CONSOLE_CARET_VISIBLE`) and its
@@ -216,6 +223,7 @@ pub const LISTENER_SUBSCRIPTIONS: &[WinEventKind] = &[
     WinEventKind::SwitchEnd,
     WinEventKind::Alert,
     WinEventKind::Show,
+    WinEventKind::ShellForeground,
     WinEventKind::ConsoleUpdate,
     WinEventKind::ConsoleCaret,
 ];
@@ -669,6 +677,12 @@ pub fn suspend_kinds(suspended: &[WinEventKind]) -> Result<(), String> {
     })
 }
 
+/// Whether `class` is Program Manager's or the taskbar's, whose foreground
+/// events NVDA never takes for a foreground change.
+fn is_shell_foreground_class(class: &str) -> bool {
+    matches!(class, "Progman" | "Shell_TrayWnd")
+}
+
 /// The window class of a standard tooltip, help balloons included.
 pub const TOOLTIP_CLASS: &str = "tooltips_class32";
 
@@ -722,6 +736,14 @@ fn wanted_kind(
         }
         None => Rc::from(class_of(hwnd)),
     };
+    // Program Manager's or the taskbar's coming to the front, for an install
+    // that asks for it, as its own kind.
+    if event == EVENT_SYSTEM_FOREGROUND
+        && kinds.contains(&WinEventKind::ShellForeground)
+        && is_shell_foreground_class(&class())
+    {
+        return Some(WinEventKind::ShellForeground);
+    }
     kind_among(event, kinds).filter(|&kind| is_wanted(kind, id_object, id_child, &mut class))
 }
 
@@ -779,7 +801,7 @@ fn is_wanted(
         return false;
     }
     match kind {
-        WinEventKind::Foreground => !matches!(&*class(), "Progman" | "Shell_TrayWnd"),
+        WinEventKind::Foreground => !is_shell_foreground_class(&class()),
         WinEventKind::MenuPopupStart | WinEventKind::MenuEnd => {
             &*class() != "Microsoft.IME.UIManager.CandidateWindow.Host"
         }
@@ -997,6 +1019,38 @@ mod tests {
                 (|_| 7, |_| "Edit".to_owned()),
             ),
             None
+        );
+    }
+
+    /// Program Manager's or the taskbar's foreground event is never a
+    /// foreground change; the listener, which asks for it, gets it as its
+    /// own kind, and an outpost, which does not, gets nothing. Any other
+    /// window's is a foreground change for both.
+    #[test]
+    fn the_shells_foreground_event_reaches_only_the_listener_as_its_own_kind() {
+        let kind = |kinds: &[WinEventKind], class: &'static str| {
+            wanted_kind(
+                (EVENT_SYSTEM_FOREGROUND, 42, OBJID_WINDOW.0, CHILDID_SELF),
+                kinds,
+                &mut None,
+                (|_| 7, move |_| class.to_owned()),
+            )
+        };
+        for class in ["Progman", "Shell_TrayWnd"] {
+            assert_eq!(
+                kind(LISTENER_SUBSCRIPTIONS, class),
+                Some(WinEventKind::ShellForeground),
+                "{class}"
+            );
+            assert_eq!(kind(APP_SUBSCRIPTIONS, class), None, "{class}");
+        }
+        assert_eq!(
+            kind(LISTENER_SUBSCRIPTIONS, "Notepad"),
+            Some(WinEventKind::Foreground)
+        );
+        assert_eq!(
+            kind(APP_SUBSCRIPTIONS, "Notepad"),
+            Some(WinEventKind::Foreground)
         );
     }
 

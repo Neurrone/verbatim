@@ -29,9 +29,12 @@ Public API:
   and text selection changes (`WinEventKind::TextSelectionChange`,
   `EVENT_OBJECT_TEXTSELECTIONCHANGED`); and
   `LISTENER_SUBSCRIPTIONS`, what the focus listener installs
-  globally (its console events kept unhooked but while a console window
-  in front has not named its thread), forwarding an application's events only until its outpost's
-  own hook is in — focus (`EVENT_OBJECT_FOCUS`), foreground
+  globally, forwarding an application's events only until its outpost's
+  own hook is in (its console events are hooked from the install until
+  the listener's start, and afterwards only while a console window in
+  front has not named its thread; Program Manager's and the taskbar's
+  foreground events come to it alone, as `WinEventKind::ShellForeground`,
+  never a foreground change) — focus (`EVENT_OBJECT_FOCUS`), foreground
   (`EVENT_SYSTEM_FOREGROUND`, the `WinEventKind::Foreground` variant that
   absorbs Core's old foreground trigger), menu-popup opens
   (`EVENT_SYSTEM_MENUPOPUPSTART`), and the end of a menu or of the Alt+Tab

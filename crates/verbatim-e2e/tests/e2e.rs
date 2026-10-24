@@ -44,6 +44,7 @@ scenario_tests! {
     outpost_crash_recovery
     return_after_retirement
     lock_key_announcements
+    quick_link_menu
     explorer_folder_window
     settings_dialog_keys
     settings_search_suggestions

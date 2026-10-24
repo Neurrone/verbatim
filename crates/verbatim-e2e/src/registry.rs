@@ -68,6 +68,8 @@
 //!   ([`outpost_crash_recovery`](crate::scenarios::outpost_crash_recovery)),
 //!   an application returned to after its outpost was retired
 //!   ([`return_after_retirement`](crate::scenarios::return_after_retirement)),
+//!   the Windows+X menu opened and closed
+//!   ([`quick_link_menu`](crate::scenarios::quick_link_menu)),
 //!   a File Explorer window
 //!   ([`explorer_folder_window`](crate::scenarios::explorer_folder_window)),
 //!   the Settings app's System page
@@ -163,15 +165,16 @@ use crate::scenarios::{
     demo_terminal_session, document_keys, editing, explorer_folder_window, lock_key_announcements,
     measure, menu_and_settings_dialog, notepad_say_all, notepad_spelling_errors,
     object_navigation_in_settings, object_navigation_over_uia, outpost_crash_recovery, password,
-    rapid_tabbing_in_settings, return_after_retirement, review_cursor, review_words,
-    second_application_and_verbatim_menu, selection_keys, settings_combo_box_expanded,
-    settings_dialog_keys, settings_search_suggestions, settings_search_suggestions_reentered,
-    settings_system_page, spelling_errors, switch_to_onecore, synth_host_crash_recovery,
-    system_information_tree, terminal_commands, terminal_editing, terminal_flood,
-    terminal_flood_kinds, terminal_footer, terminal_key_timing, terminal_lists, terminal_overflow,
-    terminal_pager, terminal_progress, terminal_review_grid, terminal_review_output,
-    terminal_review_padding, terminal_screens, terminal_settings_page, terminal_short_output,
-    terminal_typing, terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
+    quick_link_menu, rapid_tabbing_in_settings, return_after_retirement, review_cursor,
+    review_words, second_application_and_verbatim_menu, selection_keys,
+    settings_combo_box_expanded, settings_dialog_keys, settings_search_suggestions,
+    settings_search_suggestions_reentered, settings_system_page, spelling_errors,
+    switch_to_onecore, synth_host_crash_recovery, system_information_tree, terminal_commands,
+    terminal_editing, terminal_flood, terminal_flood_kinds, terminal_footer, terminal_key_timing,
+    terminal_lists, terminal_overflow, terminal_pager, terminal_progress, terminal_review_grid,
+    terminal_review_output, terminal_review_padding, terminal_screens, terminal_settings_page,
+    terminal_short_output, terminal_typing, terminal_windows, text_box_say_all, theme_panel,
+    typed_words, word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -499,6 +502,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: lock_key_announcements::setup,
         body: lock_key_announcements::body,
         teardown: lock_key_announcements::teardown,
+    },
+    ScenarioDef {
+        name: "quick_link_menu",
+        group: Group::Shell,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: quick_link_menu::setup,
+        body: quick_link_menu::body,
+        teardown: quick_link_menu::teardown,
     },
     ScenarioDef {
         name: "explorer_folder_window",

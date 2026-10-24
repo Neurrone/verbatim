@@ -1010,7 +1010,7 @@ pub struct FocusedControl {
 #[non_exhaustive]
 #[expect(
     clippy::large_enum_variant,
-    reason = "a message is built once, written, read and moved, never stored in bulk"
+    reason = "a message is built once and moved; the backlogs that hold messages are short"
 )]
 pub enum OutpostToSupervisor {
     /// The outpost has its application and its `WinEvent` hook is in: the
