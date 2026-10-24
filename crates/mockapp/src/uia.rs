@@ -285,6 +285,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .replace_items(&id)?,
+        Command::Disconnect(id) => tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .disconnect(&id)?,
         Command::AnswerParent(id, answer, after) => {
             let mut guard = tree
                 .lock()

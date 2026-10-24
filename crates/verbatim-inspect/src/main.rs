@@ -397,7 +397,7 @@ fn dump_tree(client: &mut Client) -> io::Result<()> {
     };
     print_tree_node(&root, 0);
     if truncated {
-        println!("(tree truncated: depth or node-count cap reached)");
+        println!("(tree incomplete: a cap was reached, or an element went away during the walk)");
     }
     Ok(())
 }

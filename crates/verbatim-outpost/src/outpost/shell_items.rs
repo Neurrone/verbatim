@@ -244,11 +244,11 @@ impl Walk<'_> {
         if depth >= MAX_DEPTH || (self.out_of_time)() {
             return;
         }
-        // An error from the walker means "no child" or "no sibling".
-        let mut next = element
-            .live()
-            .walk(self.walker, Direction::FirstChild, self.request)
-            .ok();
+        let mut next = step(
+            element
+                .live()
+                .walk(self.walker, Direction::FirstChild, self.request),
+        );
         while let Some(current) = next {
             *visited += 1;
             if *visited >= MAX_NODES {
@@ -259,10 +259,27 @@ impl Walk<'_> {
             if (self.out_of_time)() {
                 return;
             }
-            next = current
-                .live()
-                .walk(self.walker, Direction::NextSibling, self.request)
-                .ok();
+            next = step(
+                current
+                    .live()
+                    .walk(self.walker, Direction::NextSibling, self.request),
+            );
+        }
+    }
+}
+
+/// One step of the walk: the element reached, or none at the end of an
+/// element's children (the null element, an error carrying no failure
+/// code). A step that fails is read as no more items too, as NVDA reads a
+/// failed UIA step as no child, so the list keeps the items read by then;
+/// the failure is logged, naming its error, so it is not invisible.
+fn step(found: windows::core::Result<Cached<ShellButton>>) -> Option<Cached<ShellButton>> {
+    match found {
+        Ok(element) => Some(element),
+        Err(error) if error.code().is_ok() => None,
+        Err(error) => {
+            tracing::warn!(%error, "a shell walk step failed; its items there are not read");
+            None
         }
     }
 }

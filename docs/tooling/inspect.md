@@ -197,7 +197,9 @@ pipe, each in microseconds.
   accessibility tree, walked from its top-level window, and prints one node
   per line indented two spaces per depth level, reusing the same
   role-and-name summary the event stream uses. A trailing line notes when
-  the outpost's depth or node-count cap cut the walk short.
+  the tree is incomplete: the outpost's depth or node-count cap cut the
+  walk short, or an element went away during it, leaving the part of the
+  tree under it unread.
 - `dump-recorder` asks Core to write its flight recorder's current contents
   to disk (next to `verbatim.exe`, under a `dumps` folder, named
   `flight-<UTC timestamp>.jsonl`) and prints the path it wrote to. Useful

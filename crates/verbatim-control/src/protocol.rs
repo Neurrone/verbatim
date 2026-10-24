@@ -235,13 +235,14 @@ pub enum ReplyPayload {
     Status(StatusInfo),
     /// Answer to [`Request::Latency`], newest first.
     Latency(Vec<LatencyRecord>),
-    /// Answer to [`Request::DumpTree`]: the walked tree, and whether the
-    /// depth or node-count cap was hit before the walk covered every node.
+    /// Answer to [`Request::DumpTree`]: the walked tree, and whether it is
+    /// incomplete.
     DumpTree {
         /// The root of the walked tree.
         root: TreeNode,
-        /// Whether the walk stopped early against the outpost's depth or
-        /// node-count cap.
+        /// Whether the tree is incomplete: the walk stopped early against
+        /// the outpost's depth or node-count cap, or an element gone during
+        /// the walk left the part of the tree under it unread.
         truncated: bool,
     },
     /// Answer to [`Request::DumpRecorder`]: the path the dump was written

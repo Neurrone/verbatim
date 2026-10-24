@@ -1380,10 +1380,7 @@ pub(super) fn dump_tree(context: &Context, client: &mut Client) -> Result<Dumped
             &context.msaa_registry,
             MAX_DUMP_DEPTH,
             MAX_DUMP_NODES,
-        )
-        .ok_or_else(|| {
-            ReadError::Failed("could not acquire the top-level MSAA object".to_owned())
-        })?;
+        )?;
         Ok(DumpedTree { root, truncated })
     }
 }

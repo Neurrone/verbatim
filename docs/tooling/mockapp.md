@@ -138,6 +138,11 @@ nothing. `crates/mockapp/src/stdin.rs` documents each command in full.
   with `UIA_E_ELEMENTNOTAVAILABLE`. It raises no event, as the Settings
   app replaces its search suggestions' items after raising a selection
   for one of the old ones.
+- `disconnect <id>` kills that node where it stands: its parent still
+  lists it, but every call on it fails as on an object that is gone,
+  with `UIA_E_ELEMENTNOTAVAILABLE` on UIA and `RPC_E_DISCONNECTED` on
+  MSAA, as an item of a menu that closed after its parent named it does.
+  It raises no event.
 - `focus-child <container> <child>` (MSAA only) addresses the container's
   children as numbered simple children, moves the focused state to
   `child`, and raises `EVENT_OBJECT_FOCUS` on the container and then on

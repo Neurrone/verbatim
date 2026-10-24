@@ -230,10 +230,13 @@ Public API:
   max_nodes)` walks a subtree the same way, every node read as a
   `TreeDump`, for the control plane's tree dump. Unlike `neighbor`, it
   reads only a step that reaches no element (the null element, an error
-  with no failure code) as the end of an element's children; any other
-  failed step, UIA's transaction timeout included, fails the whole walk
-  with that step's error, so an element whose children could not be read
-  is never shown as having none.
+  with no failure code) as the end of an element's children, and a step
+  that fails because its element is gone (`UIA_E_ELEMENTNOTAVAILABLE`)
+  as the end of them too, marking the walk incomplete, as the depth and
+  node-count caps do, so a menu that closes during the walk costs only
+  its own items; any other failed step, UIA's transaction timeout
+  included, fails the whole walk with that step's error, so an element
+  whose children could not be read is never shown as having none.
 - `Uia::activate` — NVDA's activation ladder: `Invoke`, then `Toggle`,
   then `SelectionItem`'s select, answering `ActionName::Invoke` for an
   Invoke and no name otherwise, as NVDA names them; each fetched live since

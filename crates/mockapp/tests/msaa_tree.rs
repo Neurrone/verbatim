@@ -6,7 +6,9 @@
 //! node through `verbatim_ia2::map` — the same tables the real client stack
 //! uses — asserting the whole tree read back, every node's role, name,
 //! value, whole state set, description, and keyboard shortcut, and every
-//! node's children in order, equals the fixture's.
+//! node's children in order, equals the fixture's. A tree dump
+//! (`verbatim_ia2::acquire::walk_tree`) that meets an object gone during it
+//! ends that object's children there and marks the dump incomplete.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -371,6 +373,72 @@ fn msaa_sightings_of_one_live_object_are_one_node() {
     app.quit();
 }
 
+/// A dumped tree's names, each node's with its children's in order.
+#[derive(Debug, PartialEq)]
+struct Named {
+    name: Option<String>,
+    children: Vec<Named>,
+}
+
+/// [`Named`] for a dumped `node`.
+fn named(node: &verbatim_model::TreeNode) -> Named {
+    Named {
+        name: node.snapshot.name.clone(),
+        children: node.children.iter().map(named).collect(),
+    }
+}
+
+/// A tree dump (`walk_tree`) of mockapp's window, whose list's first item
+/// is gone where it stands (`disconnect`), so that every call on it, its
+/// `accChildCount` among them, fails with `RPC_E_DISCONNECTED`: the item
+/// keeps its place with no name and no children, the dump goes on to the
+/// list's second item, and the dump is marked incomplete, rather than the
+/// item being reported as having no children in a complete dump.
+fn msaa_tree_dump_ends_an_objects_children_where_it_is_gone() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-gone-tree");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let registry = verbatim_ia2::NodeIdRegistry::new(std::sync::Arc::new(
+        std::sync::atomic::AtomicU64::new(1),
+    ));
+    let node = |name: Option<&str>, children: Vec<Named>| Named {
+        name: name.map(str::to_owned),
+        children,
+    };
+    let tree = |first: Option<&str>| {
+        node(
+            Some("Mockapp Events Fixture"),
+            vec![
+                node(Some("Original Name"), Vec::new()),
+                node(Some("Level"), Vec::new()),
+                node(
+                    Some("Options"),
+                    vec![node(first, Vec::new()), node(Some("Second"), Vec::new())],
+                ),
+            ],
+        )
+    };
+    let (whole, truncated) =
+        verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096).expect("the dump");
+    assert_eq!(
+        (named(&whole), truncated),
+        (tree(Some("First")), false),
+        "the tree before the list's first item goes"
+    );
+
+    app.send("disconnect item1");
+    let (dumped, truncated) =
+        verbatim_ia2::acquire::walk_tree(hwnd.0 as isize, &registry, 64, 4096)
+            .expect("the dump with a gone item");
+    assert_eq!(
+        (named(&dumped), truncated),
+        (tree(None), true),
+        "the tree after the list's first item went"
+    );
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -389,6 +457,10 @@ fn main() {
         (
             "msaa_sightings_of_one_live_object_are_one_node",
             msaa_sightings_of_one_live_object_are_one_node,
+        ),
+        (
+            "msaa_tree_dump_ends_an_objects_children_where_it_is_gone",
+            msaa_tree_dump_ends_an_objects_children_where_it_is_gone,
         ),
     ]);
 }

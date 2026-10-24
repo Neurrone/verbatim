@@ -287,6 +287,10 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::ReplaceItems(_) => {
             return Err("replace-items is not supported on the msaa backend".into());
         }
+        Command::Disconnect(id) => tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .disconnect(&id)?,
         Command::AnswerParent(..) => {
             return Err("answer-parent is not supported on the msaa backend".into());
         }
@@ -537,6 +541,22 @@ mod handler {
         guard.nodes[index].children.get(position).copied()
     }
 
+    /// Fails as a call on an object whose server has disconnected it
+    /// (`RPC_E_DISCONNECTED`) when node `index` has died (`disconnect`).
+    fn alive(tree: &SharedTree, index: usize) -> WinResult<()> {
+        let dead = tree
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .nodes[index]
+            .dead;
+        if dead {
+            return Err(Error::from_hresult(
+                windows::Win32::Foundation::RPC_E_DISCONNECTED,
+            ));
+        }
+        Ok(())
+    }
+
     fn dispatch_variant(disp: IDispatch) -> VARIANT {
         VARIANT {
             Anonymous: VARIANT_0 {
@@ -570,6 +590,7 @@ mod handler {
     impl IAccessible_Impl for NodeAccessible_Impl {
         fn accParent(&self) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccParent);
+            alive(&self.tree, self.index)?;
             let parent = self
                 .tree
                 .lock()
@@ -588,6 +609,7 @@ mod handler {
 
         fn accChildCount(&self) -> WinResult<i32> {
             hits::hit(hits::Method::AccChildCount);
+            alive(&self.tree, self.index)?;
             let guard = self
                 .tree
                 .lock()
@@ -598,6 +620,7 @@ mod handler {
 
         fn get_accChild(&self, varchild: &VARIANT) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccChild);
+            alive(&self.tree, self.index)?;
             // Only a VT_I4 names a child.
             if varchild.vt() != VT_I4 {
                 return Err(Error::from_hresult(
@@ -628,6 +651,7 @@ mod handler {
 
         fn get_accName(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccName);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -644,6 +668,7 @@ mod handler {
 
         fn get_accValue(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccValue);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -660,6 +685,7 @@ mod handler {
 
         fn get_accDescription(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccDescription);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -676,6 +702,7 @@ mod handler {
 
         fn get_accRole(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccRole);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -700,6 +727,7 @@ mod handler {
 
         fn get_accState(&self, varchild: &VARIANT) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccState);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -724,16 +752,19 @@ mod handler {
 
         fn get_accHelp(&self, _varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccHelp);
+            alive(&self.tree, self.index)?;
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn get_accHelpTopic(&self, _pszhelpfile: *mut BSTR, _varchild: &VARIANT) -> WinResult<i32> {
             hits::hit(hits::Method::AccHelpTopic);
+            alive(&self.tree, self.index)?;
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn get_accKeyboardShortcut(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccKeyboardShortcut);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -749,6 +780,7 @@ mod handler {
 
         fn accFocus(&self) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccFocus);
+            alive(&self.tree, self.index)?;
             let (focused, simple_child) = {
                 let guard = self
                     .tree
@@ -784,6 +816,7 @@ mod handler {
 
         fn accSelection(&self) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccSelection);
+            alive(&self.tree, self.index)?;
             // The selected child, as its own object, as a real container
             // reports it; an empty variant when none of the children is
             // selected.
@@ -811,6 +844,7 @@ mod handler {
 
         fn get_accDefaultAction(&self, varchild: &VARIANT) -> WinResult<BSTR> {
             hits::hit(hits::Method::AccDefaultAction);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -826,6 +860,7 @@ mod handler {
 
         fn accSelect(&self, _flagsselect: i32, _varchild: &VARIANT) -> WinResult<()> {
             hits::hit(hits::Method::AccSelect);
+            alive(&self.tree, self.index)?;
             Ok(())
         }
 
@@ -838,6 +873,7 @@ mod handler {
             _varchild: &VARIANT,
         ) -> WinResult<()> {
             hits::hit(hits::Method::AccLocation);
+            alive(&self.tree, self.index)?;
             let outputs = [pxleft, pytop, pcxwidth, pcyheight];
             if outputs.iter().any(|output| output.is_null()) {
                 return Err(E_POINTER.into());
@@ -857,6 +893,7 @@ mod handler {
                 NAVDIR_FIRSTCHILD, NAVDIR_LASTCHILD, NAVDIR_NEXT, NAVDIR_PREVIOUS,
             };
             hits::hit(hits::Method::AccNavigate);
+            alive(&self.tree, self.index)?;
             let Some(start) = resolve_child(&self.tree, self.index, varstart) else {
                 return Err(Error::from_hresult(S_FALSE));
             };
@@ -890,11 +927,13 @@ mod handler {
 
         fn accHitTest(&self, _xleft: i32, _ytop: i32) -> WinResult<VARIANT> {
             hits::hit(hits::Method::AccHitTest);
+            alive(&self.tree, self.index)?;
             Err(Error::from_hresult(S_FALSE))
         }
 
         fn accDoDefaultAction(&self, varchild: &VARIANT) -> WinResult<()> {
             hits::hit(hits::Method::AccDoDefaultAction);
+            alive(&self.tree, self.index)?;
             let target = resolve_child(&self.tree, self.index, varchild)
                 .ok_or_else(|| Error::from_hresult(S_FALSE))?;
             let guard = self
@@ -910,11 +949,13 @@ mod handler {
 
         fn put_accName(&self, _varchild: &VARIANT, _szname: &BSTR) -> WinResult<()> {
             hits::hit(hits::Method::PutAccName);
+            alive(&self.tree, self.index)?;
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
 
         fn put_accValue(&self, _varchild: &VARIANT, _szvalue: &BSTR) -> WinResult<()> {
             hits::hit(hits::Method::PutAccValue);
+            alive(&self.tree, self.index)?;
             Err(Error::from_hresult(windows::Win32::Foundation::E_NOTIMPL))
         }
     }

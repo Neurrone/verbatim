@@ -111,7 +111,7 @@ impl DialogObject {
             Ok(count) if count > 0 => usize::try_from(count).unwrap_or(0),
             _ => return Vec::new(),
         };
-        let Some(entries) = acc.children(count) else {
+        let Ok(entries) = acc.children(count) else {
             return Vec::new();
         };
         entries

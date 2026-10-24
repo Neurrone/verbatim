@@ -1251,13 +1251,14 @@ impl OutpostToSupervisor {
 
 /// One completed tree walk from a target application's top-level window
 /// (architecture section 1). The walk is bounded by a depth cap of 64 and a
-/// node-count cap of 4096; `truncated` notes when it stopped early against
-/// either cap rather than reaching every node.
+/// node-count cap of 4096; `truncated` notes when it is incomplete: it
+/// stopped early against either cap rather than reaching every node, or an
+/// element gone during the walk left the part of the tree under it unread.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DumpedTree {
     /// The root node reached.
     pub root: TreeNode,
-    /// Whether the walk stopped early against the depth or node-count cap.
+    /// Whether the tree is incomplete, against a cap or at a gone element.
     pub truncated: bool,
 }
 

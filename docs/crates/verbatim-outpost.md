@@ -2258,15 +2258,19 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   proxy rule (`any_window_element`) and the overflow flyout's window
   under it (`window_element`), and asks its time budget (`WALK_BUDGET`,
   2 seconds) before each call after the first, answering the items read
-  by then once it has passed, within the worker's deadline for the query
+  by then once it has passed; a walk step that fails is read as no more
+  items there, as NVDA reads a failed UIA step, and logged as a warning
+  naming its error; all within the worker's deadline for the query
   (`protocol::WALK_DEADLINE`, 5 seconds, public so that Core's deadline
   for the shell items can outlast it).
   `DumpTree` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `Uia::tree`, every node read as the `TreeDump` shape, MSAA via
   `verbatim_ia2::acquire::walk_tree` from `OBJID_CLIENT` — capped at depth 64
-  and 4096 nodes, reporting whether a cap cut it short. `Ancestors`,
-  `Navigate`, and `Activate` dispatch to whichever registry issued the node:
+  and 4096 nodes, reporting whether it is incomplete: a cap cut it short,
+  or an element or object gone during the walk left the part of the tree
+  under it unread; any other failed step fails the dump with its error.
+  `Ancestors`, `Navigate`, and `Activate` dispatch to whichever registry issued the node:
   UIA hops through the raw-view tree walker with the base cache request, MSAA
   through `accParent`, `accNavigate`, and `accDoDefaultAction` on the object
   the registry kept for the node. A node no registry knows, or one that can

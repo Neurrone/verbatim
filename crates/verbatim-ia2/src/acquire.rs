@@ -1215,16 +1215,29 @@ pub fn focused_snapshot(target_pid: u32, registry: &NodeIdRegistry) -> Option<No
 /// across the whole walk, including the root). Unlike UIA there are no
 /// cache requests on this backend, so every step is its own cross-process
 /// COM round trip (architecture section 4's IA2 cost model); blocking,
-/// worker only, guarded by the caller's deadline. Returns `None` if the
-/// window has no accessible client object.
-#[must_use]
+/// worker only, guarded by the caller's deadline. Returns the walked tree
+/// and whether it is incomplete: either cap was hit before the walk reached
+/// every node, or an object's children could not be read because the
+/// object was gone ([`object_gone`]), which ends that object's children
+/// there and lets the rest of the walk go on, as when a menu closes during
+/// the walk.
+///
+/// # Errors
+///
+/// [`AcquireError::Failed`] when the window has no accessible client
+/// object, or when reading an object's children (`accChildCount` or
+/// `AccessibleChildren`) fails for any reason other than the object being
+/// gone, so an object whose children could not be read is never reported
+/// as having none.
 pub fn walk_tree(
     hwnd: isize,
     registry: &NodeIdRegistry,
     max_depth: u32,
     max_nodes: usize,
-) -> Option<(TreeNode, bool)> {
-    let acc = Accessible::client_of_window(hwnd)?;
+) -> Result<(TreeNode, bool), AcquireError> {
+    let acc = Accessible::client_of_window(hwnd).ok_or_else(|| {
+        AcquireError::Failed("could not acquire the top-level MSAA object".to_owned())
+    })?;
     let limits = WalkLimits {
         registry,
         max_depth,
@@ -1235,8 +1248,9 @@ pub fn walk_tree(
         truncated: false,
     };
     let key = (hwnd, OBJID_CLIENT.0, CHILDID_SELF);
-    let root = walk_recursive(&acc, hwnd, (key, true), &limits, 0, &mut state);
-    Some((root, state.truncated))
+    let root = walk_recursive(&acc, hwnd, (key, true), &limits, 0, &mut state)
+        .map_err(|error| AcquireError::Failed(format!("MSAA tree walk failed: {error}")))?;
+    Ok((root, state.truncated))
 }
 
 /// The per-walk parameters threaded through every level of
@@ -1248,16 +1262,48 @@ struct WalkLimits<'a> {
 }
 
 /// Mutable state accumulated across the whole walk, shared by every level
-/// of recursion.
+/// of recursion: the nodes accepted so far, and whether the walk is
+/// incomplete, against a cap or at a gone object ([`walk_tree`]).
 struct WalkState {
     visited: usize,
     truncated: bool,
 }
 
+/// Whether a failed call says the object it was made on is gone: its
+/// server disconnected it (`CoDisconnectObject`), so COM answers
+/// `RPC_E_DISCONNECTED`, or its stub no longer exists
+/// (`CO_E_OBJNOTCONNECTED`). These are the two COM errors NVDA's log
+/// handler counts as a dead object's rather than as errors. A process that
+/// has died answers other errors, and `E_FAIL`, which a server may answer
+/// for any failure, says nothing about the object.
+fn object_gone(error: &windows::core::Error) -> bool {
+    [RPC_E_DISCONNECTED, CO_E_OBJNOTCONNECTED].contains(&error.code())
+}
+
+/// A read of an object's children for the walk, with a failure because the
+/// object is gone ([`object_gone`]) read as no children (`Ok(None)`) and
+/// marking the walk incomplete, since its children are unknown; any other
+/// failure stays an error.
+fn walk_read<T>(
+    read: windows::core::Result<T>,
+    state: &mut WalkState,
+) -> windows::core::Result<Option<T>> {
+    match read {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if object_gone(&error) => {
+            state.truncated = true;
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Recursive worker for [`walk_tree`]. `state.visited` already counts the
 /// node named by `acc`. A simple element (addressed purely by a child id,
 /// not its own `IAccessible`) is always a leaf per the MSAA model, so only
-/// `CHILDID_SELF` nodes are ever expanded.
+/// `CHILDID_SELF` nodes are ever expanded. A failed read of an object's
+/// children fails the walk with its error, unless the object is gone
+/// ([`walk_read`]).
 fn walk_recursive(
     acc: &Accessible,
     hwnd: isize,
@@ -1265,43 +1311,34 @@ fn walk_recursive(
     limits: &WalkLimits<'_>,
     depth: u32,
     state: &mut WalkState,
-) -> TreeNode {
+) -> windows::core::Result<TreeNode> {
     let snapshot = read_snapshot(acc, key, at_address, limits.registry);
-
-    if acc.child() != CHILDID_SELF {
-        return TreeNode {
+    let leaf = |snapshot| {
+        Ok(TreeNode {
             snapshot,
             children: Vec::new(),
-        };
+        })
+    };
+
+    if acc.child() != CHILDID_SELF {
+        return leaf(snapshot);
     }
 
     if depth >= limits.max_depth {
         // Only peeks whether there is a child we are declining to descend
         // into.
-        let has_children = acc.child_count().is_ok_and(|children| children > 0);
-        if has_children {
+        if walk_read(acc.child_count(), state)?.is_some_and(|children| children > 0) {
             state.truncated = true;
         }
-        return TreeNode {
-            snapshot,
-            children: Vec::new(),
-        };
+        return leaf(snapshot);
     }
 
-    let child_count = match acc.child_count() {
-        Ok(children) if children > 0 => children,
-        _ => {
-            return TreeNode {
-                snapshot,
-                children: Vec::new(),
-            };
-        }
+    let child_count = match walk_read(acc.child_count(), state)? {
+        Some(children) if children > 0 => children,
+        _ => return leaf(snapshot),
     };
     let Ok(child_count) = usize::try_from(child_count) else {
-        return TreeNode {
-            snapshot,
-            children: Vec::new(),
-        };
+        return leaf(snapshot);
     };
 
     // The application's count, bounded by the walk's remaining budget:
@@ -1310,11 +1347,8 @@ fn walk_recursive(
     if child_count > budget {
         state.truncated = true;
     }
-    let Some(entries) = acc.children(child_count.min(budget)) else {
-        return TreeNode {
-            snapshot,
-            children: Vec::new(),
-        };
+    let Some(entries) = walk_read(acc.children(child_count.min(budget)), state)? else {
+        return leaf(snapshot);
     };
 
     let mut children = Vec::new();
@@ -1337,11 +1371,11 @@ fn walk_recursive(
             limits,
             depth + 1,
             state,
-        );
+        )?;
         children.push(child_node);
     }
 
-    TreeNode { snapshot, children }
+    Ok(TreeNode { snapshot, children })
 }
 
 /// Resolves one entry from `AccessibleChildren` into `(accessible, hwnd)` to
@@ -1392,7 +1426,7 @@ fn navigation_result_is_usable(
 /// The first entry `AccessibleChildren` reports for `acc`, as `accNavigate`
 /// would name it, or `None` when it has no children.
 fn first_accessible_child(acc: &Accessible) -> Option<Related> {
-    acc.children(1)?.into_iter().next()
+    acc.children(1).ok()?.into_iter().next()
 }
 
 /// Whether `hwnd` is a window a user would navigate onto — NVDA's

@@ -12,7 +12,7 @@
 //! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
 //! `answer-property <property id> <fail|empty|usual>`,
 //! `answer-parent <id> <fail|none|usual> [<after>]`, `report-window <id>`,
-//! `take-runtime-id <id> <from>`, `replace-items <id>`,
+//! `take-runtime-id <id> <from>`, `replace-items <id>`, `disconnect <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
 //! `client-identity`, `disable-client`, `hold`, `release`, and `quit`.
 //! Parsing runs on a dedicated thread (reading stdin blocks, and the window
@@ -217,6 +217,12 @@ pub(crate) enum Command {
     /// items under new runtime ids after raising a selection for one of
     /// the old ones. Raises no event. UIA-only.
     ReplaceItems(String),
+    /// `disconnect <id>`: node `id` dies where it stands: its parent
+    /// still lists it, but every call on it fails as on an object that is
+    /// gone, `UIA_E_ELEMENTNOTAVAILABLE` on UIA and `RPC_E_DISCONNECTED`
+    /// on MSAA, as an element of a menu that closed after its parent named
+    /// it does. Raises no event.
+    Disconnect(String),
     /// `focus-child <container> <child>`: addresses `container`'s children
     /// as numbered simple children from then on, moves the focused state to
     /// `child`, and raises `EVENT_OBJECT_FOCUS` on `container` itself and
@@ -389,6 +395,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         "report-window" if !rest.is_empty() => Some(Command::ReportWindow(rest.to_owned())),
         "take-runtime-id" => take_runtime_id(rest),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),
+        "disconnect" if !rest.is_empty() => Some(Command::Disconnect(rest.to_owned())),
         "active-text-position" => {
             let mut parts = rest.split_whitespace();
             let id = parts.next()?;

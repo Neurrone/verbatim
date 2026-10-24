@@ -261,9 +261,9 @@ impl Accessible {
     }
 
     /// Up to `max` of the object's children from the first, never more
-    /// than [`MAX_CHILDREN`], through `AccessibleChildren`, or `None` when
-    /// the call fails.
-    pub(crate) fn children(&self, max: usize) -> Option<Vec<Related>> {
+    /// than [`MAX_CHILDREN`], through `AccessibleChildren`, or the call's
+    /// error when it fails.
+    pub(crate) fn children(&self, max: usize) -> windows::core::Result<Vec<Related>> {
         // `max` usually comes from the application's own `accChildCount`;
         // an absurd count must not size an allocation that aborts.
         let max = max.min(MAX_CHILDREN);
@@ -273,9 +273,9 @@ impl Accessible {
         // SAFETY: a live interface; `buffer` is a local slice of `max` empty
         // `VARIANT`s, which the call fills no further than its length, and
         // `obtained` a local it writes the count to.
-        unsafe { AccessibleChildren(&self.object, 0, &mut buffer, &raw mut obtained) }.ok()?;
+        unsafe { AccessibleChildren(&self.object, 0, &mut buffer, &raw mut obtained) }?;
         let obtained = usize::try_from(obtained).unwrap_or(0).min(buffer.len());
-        Some(buffer[..obtained].iter().map(related).collect())
+        Ok(buffer[..obtained].iter().map(related).collect())
     }
 
     /// `accNavigate` in the MSAA direction `navdir`, from this child id.

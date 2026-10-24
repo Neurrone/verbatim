@@ -61,9 +61,10 @@ pub(crate) struct NodeData {
     /// The number the node's UIA runtime id is made from: its own index,
     /// until `take-runtime-id` gives it a dead node's.
     pub(crate) runtime_id: usize,
-    /// Whether the node has died (`take-runtime-id`, `replace-items`): it
-    /// has left the tree, and every call on its elements fails as on an
-    /// element that is gone.
+    /// Whether the node has died (`take-runtime-id`, `replace-items`,
+    /// `disconnect`): every call on its elements fails as on an element
+    /// that is gone, and it has left the tree, unless `disconnect` killed
+    /// it where it stands.
     pub(crate) dead: bool,
     /// How the node's UIA provider answers `Navigate(Parent)`, once it has
     /// answered as many calls as usual as the count says (`answer-parent`).
@@ -178,6 +179,19 @@ impl Tree {
             self.selected = None;
         }
         self.nodes[taker].runtime_id = self.nodes[dying].runtime_id;
+        Ok(())
+    }
+
+    /// Node `id` dies where it stands, its parent still listing it
+    /// (`disconnect`). The root cannot die.
+    pub(crate) fn disconnect(&mut self, id: &str) -> Result<(), String> {
+        let index = self
+            .index_of(id)
+            .ok_or_else(|| format!("no node has the id {id}"))?;
+        if index == 0 || self.nodes[index].dead {
+            return Err(format!("{id} cannot be disconnected"));
+        }
+        self.nodes[index].dead = true;
         Ok(())
     }
 

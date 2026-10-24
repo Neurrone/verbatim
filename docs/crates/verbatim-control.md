@@ -42,8 +42,10 @@ Public API:
   Shift again or by a cancel ending the pause: whether it paused, and
   when, sent once the change is applied, once per change.
   `ReplyPayload::DumpTree` answers `Request::DumpTree` with the walked
-  tree (`verbatim_model::TreeNode`) and whether the outpost's depth or
-  node-count cap cut it short; a walk that could not complete at all comes
+  tree (`verbatim_model::TreeNode`) and whether it is incomplete: the
+  outpost's depth or node-count cap cut it short, or an element gone
+  during the walk left the part of the tree under it unread; a walk that
+  could not complete at all comes
   back as `Frame::Error`, the same convention `SendGesture` uses.
   `ReplyPayload::DumpRecorder` answers `Request::DumpRecorder` (milestone
   M2) with the path Core wrote its flight recorder's contents to.

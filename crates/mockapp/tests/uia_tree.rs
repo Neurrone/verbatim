@@ -8,7 +8,9 @@
 //! and details, and every node's children in order, equals the fixture's. This is
 //! the "provider-level fake" promised by architecture section 13: COM
 //! marshaling, cache requests, and role/state mapping are all exercised for
-//! real, with no actual application.
+//! real, with no actual application. A tree dump (`Uia::tree`) that meets
+//! an element gone during it ends that element's children there and marks
+//! the dump incomplete.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -334,6 +336,94 @@ fn a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read() {
     app.quit();
 }
 
+/// A dumped tree's names, each node's with its children's in order.
+#[derive(Debug, PartialEq)]
+struct Named {
+    name: Option<String>,
+    children: Vec<Named>,
+}
+
+/// [`Named`] for a dumped `node`.
+fn named(node: &verbatim_model::TreeNode) -> Named {
+    Named {
+        name: node.snapshot.name.clone(),
+        children: node.children.iter().map(named).collect(),
+    }
+}
+
+/// A tree dump from mockapp's list, whose second item is gone where it
+/// stands (`disconnect`), so the step to it fails with
+/// `UIA_E_ELEMENTNOTAVAILABLE`, ends the list's children at its first
+/// item, which keeps its place, and marks the dump incomplete, rather than
+/// failing the whole dump.
+fn a_tree_dump_ends_an_elements_children_at_a_gone_element() {
+    let title = common::unique_title("mockapp-uia-gone-tree");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let uia = Uia::new().expect("a UIA client");
+    let nodes = uia
+        .request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
+        .expect("a cache request");
+    let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
+    // The list, a child of the window, found by a dump before its item
+    // goes. The dump starts from the list, since the window's title bar is
+    // Windows' and named in the machine's language.
+    let window = uia
+        .window_element(hwnd, &nodes)
+        .expect("mockapp's window element");
+    let (tree, _) = uia
+        .tree(&window, &nodes, &registry, 8, 64)
+        .expect("mockapp's tree");
+    let list = tree
+        .children
+        .iter()
+        .find(|child| child.snapshot.name.as_deref() == Some("Options"))
+        .expect("the window's list");
+    let list = registry
+        .element_of(list.snapshot.id)
+        .expect("the list's element")
+        .resolve()
+        .expect("the list's element, resolved")
+        .live()
+        .refresh(&nodes)
+        .expect("the list, read as a node");
+    let item = |name: &str| Named {
+        name: Some(name.to_owned()),
+        children: Vec::new(),
+    };
+    let (whole, truncated) = uia
+        .tree(&list, &nodes, &registry, 8, 64)
+        .expect("the list's tree");
+    assert_eq!(
+        (named(&whole), truncated),
+        (
+            Named {
+                name: Some("Options".to_owned()),
+                children: vec![item("First"), item("Second")],
+            },
+            false
+        ),
+        "the list's tree before its second item goes"
+    );
+
+    app.send("disconnect item2");
+    let (dumped, truncated) = uia
+        .tree(&list, &nodes, &registry, 8, 64)
+        .expect("the dump with a gone item");
+    assert_eq!(
+        (named(&dumped), truncated),
+        (
+            Named {
+                name: Some("Options".to_owned()),
+                children: vec![item("First")],
+            },
+            true
+        ),
+        "the list's tree after its second item went"
+    );
+    app.quit();
+}
+
 /// Runs this file's tests through the UIA test runner, which explains why
 /// these binaries do not exit normally (`common/harness.rs`).
 fn main() {
@@ -349,6 +439,10 @@ fn main() {
         (
             "a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read",
             a_node_kept_from_a_text_event_navigates_remotely_with_no_failed_read,
+        ),
+        (
+            "a_tree_dump_ends_an_elements_children_at_a_gone_element",
+            a_tree_dump_ends_an_elements_children_at_a_gone_element,
         ),
     ]);
 }

@@ -168,6 +168,14 @@ Public API:
   its first child and each next sibling through `TVM_GETNEXTITEM`, as
   NVDA counts them; read by the outpost only with a state change that
   leaves the item expanded),
+  `walk_tree` (the control plane's tree dump, from a window's client
+  object, bounded by a depth and a node-count cap; a failed
+  `accChildCount` or `AccessibleChildren` fails the dump with its error,
+  except on an object that is gone, answering `RPC_E_DISCONNECTED` or
+  `CO_E_OBJNOTCONNECTED`, which ends that object's children there and
+  marks the dump incomplete, as a cap does, so a menu closing during the
+  dump costs only its own items; `E_FAIL`, which a server may answer for
+  any failure, is not read as gone),
   `snapshot_from_focus_event` (the
   focus-specific entry the outpost uses for `EVENT_OBJECT_FOCUS` addresses,
   applying NVDA's `processFocusWinEvent` child-0-on-a-list redirect: when a
