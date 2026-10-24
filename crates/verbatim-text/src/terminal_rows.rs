@@ -1248,16 +1248,18 @@ fn first_row_hashes(text: &str) -> [u64; 2] {
     [hash(crate::trim_padding(text)), hash(text)]
 }
 
-/// The hashes of the rows of a run read by its place, split at `width`: a
-/// run that does not end with a line break ends in a row its line wraps
-/// from, whose padding is its own.
-fn run_hashes(text: &str, width: usize) -> Vec<u64> {
+/// The hashes each row of a run read by its place may have, split at
+/// `width`: a run that does not end with a line break may end in a row its
+/// line wraps from, whose padding is its own, or, in the console host, whose
+/// row ranges end before their line break (measured 2026-10-24), in a
+/// line's last row, so its last row may have either.
+fn run_hashes(text: &str, width: usize) -> Vec<[u64; 2]> {
     if text.is_empty() {
         return Vec::new();
     }
-    let mut rows: Vec<u64> = split_rows(text, width, 0)
+    let mut rows: Vec<[u64; 2]> = split_rows(text, width, 0)
         .iter()
-        .map(|row| row.hash)
+        .map(|row| [row.hash; 2])
         .collect();
     if !text.ends_with("\r\n")
         && let Some(last) = rows.last_mut()
@@ -1266,7 +1268,7 @@ fn run_hashes(text: &str, width: usize) -> Vec<u64> {
             .next()
             .and_then(|line| row_pieces(line, width).last().copied())
     {
-        *last = hash(piece);
+        last[1] = hash(piece);
     }
     rows
 }
@@ -1538,7 +1540,10 @@ fn align(
                 .zip(&runs)
                 .zip(&texts.runs)
                 .filter(|((candidate, run), text)| {
-                    run_hashes(text, width) != hashes[candidate.cut..candidate.cut + run.rows]
+                    let read = run_hashes(text, width);
+                    let want = &hashes[candidate.cut..candidate.cut + run.rows];
+                    read.len() != want.len()
+                        || read.iter().zip(want).any(|(may, hash)| !may.contains(hash))
                 })
                 .map(|((candidate, _), _)| candidate.rotation)
                 .collect();

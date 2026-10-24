@@ -363,10 +363,18 @@ impl Provider<'_> {
                 continue;
             }
             let (to, _) = self.move_rows(from, isize::try_from(rows).unwrap_or(isize::MAX))?;
-            texts.push(self.text(Range {
+            let text = self.text(Range {
                 start: from,
                 end: to,
-            })?);
+            })?;
+            // The console host's text of rows ending at the next row's start
+            // leaves out the last row's line break (measured 2026-10-24).
+            texts.push(if self.row_includes_break {
+                text
+            } else {
+                text.strip_suffix("\r\n")
+                    .map_or(text.clone(), str::to_owned)
+            });
         }
         let first_row = self.text(self.row_of(self.document().start)?)?;
         Ok(RowsRead {
