@@ -5771,6 +5771,29 @@ fn a_pane_is_refused_only_by_its_own_class_in_file_explorer() {
     }
 }
 
+/// The rule matches the class with its role: an element of the Windows 11
+/// switcher pane's class in File Explorer that is a window, not a pane, is
+/// taken as any focus (`docs/parity/windows-and-processes.md`, "The Alt+Tab
+/// switcher's pane").
+#[test]
+fn a_window_of_the_task_switching_panes_class_is_taken() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let window = node_of_class(
+        3,
+        Role::Window,
+        None,
+        "Windows.UI.Input.InputSite.WindowClass",
+    );
+    let (after, _) = reduce(
+        &state,
+        &focus_in(Pid(2), task_switcher_window(), window, vec![]),
+    );
+    assert_eq!(
+        after.focused().map(|(source, focus)| (source, focus.id)),
+        Some((Pid(2), NodeId::in_outpost(OutpostId(2), 3)))
+    );
+}
+
 /// The rule refuses a UI Automation focus event only: the same pane as a
 /// foreground change, which NVDA never refuses so, or read through MSAA,
 /// which NVDA's rule does not match, is taken as any focus or foreground
