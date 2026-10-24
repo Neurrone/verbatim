@@ -780,7 +780,11 @@ the speech pipeline. Consequences:
   pipeline reports an utterance that carried marks and was cut off or
   failed to the reducer as an `Input`; one that finished says so through
   its last mark. So nothing the reducer waits on is lost by a cut, and a
-  finished utterance costs no extra wake-up (Dickson, 2026-10-24).
+  finished utterance costs no extra wake-up (Dickson, 2026-10-24). The
+  report says which: a cut utterance stops what waited on it, and a failed
+  one counts as heard, so say-all and terminal output carry on past it, as
+  NVDA's speech manager does when a later index arrives (Dickson,
+  2026-10-24).
 
 ## 3. Normalized accessibility model
 
