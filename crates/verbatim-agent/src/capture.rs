@@ -17,7 +17,8 @@
 //! Render Driver does not offer, so the agent duplicates the output itself
 //! on a plain device and hands ffmpeg raw frames.
 //!
-//! A frame is written every frame interval, the newest the compositor
+//! A frame is written every frame interval, on the agent's high-resolution
+//! pacing timer ([`crate::pace::Pacer`]), the newest the compositor
 //! presented, or the last one again when nothing changed, so a still
 //! screen is still recorded to the end. ffmpeg stamps each frame with the
 //! wall-clock time it reads it (`-use_wallclock_as_timestamps`), which it
@@ -32,6 +33,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+use crate::pace::Pacer;
 
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
@@ -65,14 +68,16 @@ pub fn run(framerate: u32, ffmpeg: &str, output_args: &[String]) -> io::Result<i
         .ok_or_else(|| io::Error::other("ffmpeg has no standard input"))?;
     let stop = Arc::new(AtomicBool::new(false));
     watch_stdin(Arc::clone(&stop));
-    let interval = Duration::from_secs(1) / framerate.max(1);
+    let interval_ms = 1000 / framerate.clamp(1, 1000);
+    let mut pacer = Pacer::new(interval_ms)?;
+    let started = Instant::now();
+    let interval = Duration::from_millis(u64::from(interval_ms));
     let mut frame = vec![0u8; width * height * 4];
-    let mut deadline = Instant::now();
+    let mut slot = 0usize;
     while !stop.load(Ordering::Relaxed) {
-        deadline += interval;
-        // The newest frame presented before the deadline; the wait for one
-        // is the frame clock.
-        duplication.take_until(deadline, &mut frame);
+        pacer.wait_for(slot)?;
+        // The newest frame the compositor presented since the last slot.
+        duplication.take_newest(&mut frame);
         if let Err(error) = input.write_all(&frame) {
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -82,12 +87,10 @@ pub fn run(framerate: u32, ffmpeg: &str, output_args: &[String]) -> io::Result<i
                 "writing a frame to ffmpeg failed: {error}"
             )));
         }
-        let now = Instant::now();
-        if deadline < now {
-            // Behind by more than a frame: the next frame is due now, not
-            // in a burst of the ones missed.
-            deadline = now;
-        }
+        // The next slot after now: a capture that fell behind goes on from
+        // the present rather than writing the slots it missed in a burst.
+        let elapsed = started.elapsed().as_millis() / interval.as_millis().max(1);
+        slot = (slot + 1).max(usize::try_from(elapsed).unwrap_or(usize::MAX) + 1);
     }
     drop(input);
     exit_code(&mut child)
@@ -219,31 +222,20 @@ impl Duplication {
         })
     }
 
-    /// Copies into `frame` the newest frame the compositor presents before
-    /// `deadline`, leaving it as it was when none is; waits until the
-    /// deadline either way. A duplication lost, as on a switch of desktops,
-    /// is made again at the next frame.
-    fn take_until(&mut self, deadline: Instant, frame: &mut [u8]) {
-        loop {
-            let now = Instant::now();
-            let Some(left) = deadline.checked_duration_since(now) else {
-                return;
-            };
-            let Some(duplication) = self.output.clone() else {
-                self.output = duplicate(&self.device).ok();
-                if self.output.is_none() {
-                    // Nothing to wait on until the desktop can be duplicated
-                    // again: the last frame stands for this interval.
-                    std::thread::sleep(left);
-                }
-                continue;
-            };
-            let timeout = u32::try_from(left.as_millis()).unwrap_or(u32::MAX);
+    /// Copies into `frame` the newest frame the compositor presented since
+    /// the last call, without waiting, leaving it as it was when none was.
+    /// A duplication lost, as on a switch of desktops, is made again, or
+    /// at the next call when it cannot be yet.
+    fn take_newest(&mut self, frame: &mut [u8]) {
+        if self.output.is_none() {
+            self.output = duplicate(&self.device).ok();
+        }
+        while let Some(duplication) = self.output.clone() {
             let mut info = DXGI_OUTDUPL_FRAME_INFO::default();
             let mut resource: Option<IDXGIResource> = None;
             // SAFETY: the out pointers point at locals that outlive the call.
             let acquired =
-                unsafe { duplication.AcquireNextFrame(timeout, &raw mut info, &raw mut resource) };
+                unsafe { duplication.AcquireNextFrame(0, &raw mut info, &raw mut resource) };
             match acquired {
                 Ok(()) => {
                     if let Some(resource) = resource
