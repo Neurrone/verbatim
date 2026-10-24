@@ -208,12 +208,11 @@ More environment variables matter for less common cases:
   without. Set but
   empty, Verbatim logs as its own configuration says. For a terminal's
   reads during a flood, set it to `info,verbatim_outpost::terminal=debug,verbatim_outpost::outpost::worker=debug`:
-  each screen read then logs `terminal screen timing` (the path, its time
-  in microseconds, its calls, how far the text scrolled, the unread rows
-  read, the text's rows when counted, whether the screen had history
-  above it and whether the read settled, and its top row), each event of
-  on-demand reading `terminal read timing` (the event, what it did, its
-  time, how long it waited in the queue, and what it found), and each
+  each snapshot then logs `terminal snapshot timing` (the path, its time
+  in microseconds, its calls, whether it read the whole document, the
+  rows above its start, its text's length, and its flags), each read
+  `terminal read timing` (its time, how long its event waited in the
+  queue, and what the reading rules said), and each
   caret read `caret read timing`. The console
   host's outpost log then grows past the agent's 8 MB file limit, so
   read it from `target\e2e-stage\logs\<Verbatim's pid>` rather than from

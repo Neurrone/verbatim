@@ -14,7 +14,7 @@ The design of record is phase 6's "UIA remote operations" section.
 
 The crate has three layers: the instruction set and a typed builder,
 execution, and algorithms. The algorithms are the focus ancestry, for
-milestone M4's terminals `terminal_screen`, for caret reports `caret_read`,
+terminals `terminal_snapshot`, for caret reports `caret_read`,
 for the text protocol's other requests `text_units`, `text_range`, and
 `text_location`, for object navigation `navigation_step`, and for a
 selection inside an element the focus controls `controlled_selection`
@@ -418,104 +418,15 @@ from one shape. Against mockapp, every other cached property reads the
 same both ways, and what the two implementations' elements map to is
 equal.
 
-## Layer 3: a terminal's screen
-
-`terminal_screen_remote` and `terminal_screen_classic` share one
-signature (`TerminalScreenFn`), and `terminal_screen(uia, query,
-remote)` chooses between them as `focus_ancestry` does, answering with a
-`Path` (milestone M4 item 9; `docs/design/phase6-design.md`, "Terminal reading by
-diffing the screen"). A `ScreenQuery` names the element and its text
-pattern, the screen's top two rows as last read (`ScreenAnchor`: their
-text as the provider gave it, a range at the start of the top row, the
-text's first row as last read, and whether that screen had history above
-it), whether the provider's `FindText` matches a row's padding
-(`matches_padding`, the console host's does), how many rows of the old
-screen held its text (`seen_rows`, rows: a line that wrapped counts each
-of its rows), how many of those its last line took (`last_rows`), and how
-many of the rows that went by
-unread to read (`head_wanted`). With `caret` (a `CaretLineQuery`), the
-caret and its line are read too, in the same program or, classically,
-after the text, and come back as `Screen::caret`: a terminal raises no
-caret event for every character typed. A `CaretLineQuery` with `since`
-also says, in the same round trip, whether the caret is no longer there
-(`CaretAnswer::moved`); without one the program compares nothing. The
-answer, a `Screen`, gives text as the provider gave it, padding and line
-breaks included, so comparisons are exact and the caller trims:
-
-- `text`: the text pattern's first visible range (the screen), read in
-  one call; the whole text when the provider reports no visible range.
-  It and `head` stay UTF-16, so the caller trims each row's padding,
-  most of a terminal's screen, before it decodes the rest.
-- `top_row`, `next_row`, `top`, `first_row`: the screen's top two rows, a
-  range at the top row's start, and the text's first row, for the next
-  read's anchor.
-- `alternate`: whether the text starts where the screen starts, with no
-  history above it (a full-screen program's alternate screen, or a
-  terminal whose text still fits on its screen).
-- `shift`: how many rows the anchor's top row now lies above the screen's
-  top, how far the text scrolled; `None` with no anchor or when it was not
-  found. The anchor is found first at its range, without a search, when
-  nothing can have been discarded from the text since (the text's first
-  row reads as it did, or the old screen had no history above it): a
-  range stays on its row until a terminal discards its oldest rows,
-  however the rows' text changes (a prompt being edited on the top row).
-  A range that cannot be compared with the text (one from the other
-  screen of a terminal that switched screens) is not found there.
-  Otherwise the anchor is sought by its text: `FindText` backward from the
-  end of the screen's second row to the start of the text, for the more
-  distinctive of the two rows (not blank, then the longer), padded where
-  the provider matches padding (so a longer row starting with the same
-  text does not match) and without its padding otherwise, as Windows
-  Terminal's `FindText` was measured to throw on padding on 2026-10-08,
-  which did not reproduce on 2026-10-24 (`docs/performance.md`, "A
-  terminal's upward search"). A match counts when it starts
-  its row, the row holds exactly the row sought, and the other row of the
-  pair is beside it; at most `SEARCH_MATCHES` (20) matches are checked
-  (Dickson, 2026-10-07), and a search that throws is not found. A needle
-  spanning a line break is never used: measured on 2026-10-08, the
-  console host's `FindText` returns a range for one whose text then
-  cannot be read (`E_FAIL`), and Windows Terminal's matches none. Found,
-  the rows from the anchor to the text's end less those from the screen's
-  top to the end, the second walk made before and after the first, so
-  output written meanwhile is caught.
-- `old_last_row`: with the anchor found, the rows the old screen's last
-  line was on (its `last_rows` rows, ending `seen_rows` from the anchor's
-  top row), as they are now: the whole line, when it wrapped.
-- `head` and `head_rows`: the first of the rows past the old screen's
-  `seen_rows` that went by unread, up to `head_wanted`, in one read.
-- `document_rows`: the rows of the whole text, counted (a walk from its
-  start, corrected for providers that stop past the last row's start)
-  when the anchor was sought by its text and not found.
-- `settled`: whether the text held still while it was read: the screen's
-  text starts with its top row as read on its own, that row reads the same
-  at the end, and the shift is exact: the screen's two walks to the
-  text's end agree, or, where output grew the text between them, moving
-  from the anchor finds the screen's top within the rows it grew by
-  (halving them each step, since rows at a fixed place keep their
-  distance while output is added below them).
-- `view_moved`: whether the first visible range starts elsewhere at the
-  end of the read than at its start, so the rows read are no longer all
-  on screen. The caller judges it: output scrolling the view leaves the
-  rows read where they were, while the console host, which moves its view
-  down a row for each line written into a scroll region above a footer,
-  draws the footer lower and writes over the row it left.
-
-Against mockapp's text provider (`crates/mockapp/tests/terminal.rs`, its
-`screen` command putting only the text's last lines on screen), both
-implementations agree on every field, the anchor is found past rows that
-only contain its text and a row with another partner, a provider whose
-`FindText` fails finds it nowhere, and each read's cost is pinned, one
-round trip remotely (`docs/performance.md`, "A terminal output line").
-
 ## Layer 3: a terminal's snapshot
 
 `terminal_snapshot_remote` and `terminal_snapshot_classic` share one
 signature (`TerminalSnapshotFn`), and `terminal_snapshot(uia, query,
 remote)` chooses between them as `focus_ancestry` does, answering with a
 `Path`. It is the read of `docs/design/terminal-model.md`, section 4.2:
+the outpost reads every focused terminal with it, and
 `cargo xtask regenerate-terminal-conformance-expectations` reads the real
-terminals with it, and the redesigned terminal reading replaces
-`terminal_screen` with it. A `SnapshotQuery` names the element and its
+terminals with it. A `SnapshotQuery` names the element and its
 text pattern, where the last read said to start (`start`, a range; none
 for a first read), the screen's height in rows as the last read found it
 (`screen_rows`, 0 when not known), whether to read the whole text instead
@@ -1137,12 +1048,12 @@ The terminal reading, audited call by call on 2026-10-24:
   inside it. Only a screen of many colours takes more, each further
   program reading as many rows as stay under its budget. Classic only as
   the per-call fallback.
-- The screen read the outpost runs until the redesign replaces it
-  (`terminal_screen`), with the caret and its line: one program.
 - The caret event's read in a terminal, and the caret read before a held
   key: the caret read's program (`caret_read`), one program each.
 - The outpost's terminal code (`crates/verbatim-outpost/src/terminal.rs`
-  and `terminal/`): no UIA call of its own; it runs the screen read above.
+  and `terminal/`): no UIA call of its own; it runs the snapshot above,
+  for every read, the read before a held key, and the history a review
+  command reads above the memory's rows.
   Around it, the text patterns are fetched once a node and kept (above),
   the class name comes from the element's cache, the console window's
   class from `GetClassName`, and the caret's positions are kept as the

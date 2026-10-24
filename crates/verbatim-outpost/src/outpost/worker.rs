@@ -38,7 +38,7 @@ use verbatim_ia2::acquire::Purpose;
 use verbatim_ia2::{CHILDID_SELF, WinEventKind};
 use verbatim_model::{
     Backend, CallCounts, CaretWatch, FocusText, NodeId, NodeSnapshot, NormalizedEvent,
-    PropertyChange, Role, State, StateSet, TerminalOutput, TextOp, TextPoint, TextReply, TraceId,
+    PropertyChange, Role, State, StateSet, TerminalSpeech, TextOp, TextPoint, TextReply, TraceId,
 };
 use verbatim_uia::{
     Cached, Fill, HelpTextRefresh, Kept, Node, SelectedItem, SuggestionsRefresh,
@@ -70,9 +70,7 @@ use super::window::{
     window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
-use crate::terminal::keys;
 use crate::terminal::reading::{Action, Event, Reading};
-use crate::terminal::{Found, Memory, ReadMode};
 use crate::text::Watched;
 
 /// The deadline for handling an event, a focus, or a focus-now query: NVDA's
@@ -805,7 +803,9 @@ fn answer_idle(context: &Context, gap_open: bool) {
     // Neither lock is held across a call into the application, so a worker
     // abandoned in a terminal's read, which holds the terminals' lock,
     // cannot hold the answer back.
-    if context.caret_watch().is_some() || !context.owed_reads().is_empty() {
+    // A terminal's quiet-period timer is work still to do: what waits for
+    // it is spoken when it ends.
+    if context.caret_watch().is_some() || context.terminal_due().is_some() {
         return;
     }
     let answered = context.idle_query().take();
@@ -930,7 +930,8 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         | Item::NotedCaret { .. }
         | Item::Settle(_)
         | Item::IdleQuery { .. }
-        | Item::Wake => (HANDLING_DEADLINE, None),
+        | Item::Wake
+        | Item::TerminalTimer => (HANDLING_DEADLINE, None),
         // Releasing thousands of objects after a tree dump takes a while.
         Item::NodesHeld { .. } => (WALK_DEADLINE, None),
     }
@@ -960,6 +961,7 @@ fn describe(item: &Item) -> String {
         Item::Settle(_) => "settle".to_owned(),
         Item::IdleQuery { round, .. } => format!("idle query {round}"),
         Item::Wake => "wake".to_owned(),
+        Item::TerminalTimer => "terminal timer".to_owned(),
     }
 }
 
@@ -1158,6 +1160,7 @@ impl Worker<'_> {
                 behind_noted,
             } => self.idle_query(round, behind_noted, trace),
             Item::Wake => self.wake(),
+            Item::TerminalTimer => self.terminal_timer(trace),
         }
     }
 
@@ -1173,12 +1176,7 @@ impl Worker<'_> {
         // Every update from now on is evidence the watch may need.
         self.context.intake.absorb_console_updates(None);
         self.end_watch("the next caret key replaced it");
-        let mut watched = text_reads::check_watch(self.context, node_id, watch, false);
-        if let Watched::Answered(reply) = &mut watched
-            && self.wrapped_removal(node_id, watch, reply, trace)
-        {
-            watched = Watched::Watching;
-        }
+        let watched = text_reads::check_watch(self.context, node_id, watch, false);
         match watched {
             Watched::Answered(reply) => {
                 self.sent_reply_caret(node_id, &reply);
@@ -1187,6 +1185,11 @@ impl Worker<'_> {
                     trace,
                     QueryOutcome::Done(QueryResult::Text(reply)),
                 );
+                // A terminal's reading rules answer the key from a read
+                // that shows what it did.
+                if self.focused_terminal(node_id) {
+                    self.terminal_output(node_id, trace, now_ms());
+                }
             }
             Watched::Watching => {
                 let calls = take_calls();
@@ -1251,12 +1254,7 @@ impl Worker<'_> {
             *context.caret_watch() = Some(open);
             return false;
         }
-        let mut watched = text_reads::check_watch(context, node_id, &open.watch, caret_event);
-        if let Watched::Answered(reply) = &mut watched
-            && self.wrapped_removal(node_id, &open.watch, reply, open.trace)
-        {
-            watched = Watched::Watching;
-        }
+        let watched = text_reads::check_watch(context, node_id, &open.watch, caret_event);
         match watched {
             Watched::Watching => {
                 open.calls += take_calls();
@@ -1609,12 +1607,25 @@ impl Worker<'_> {
     /// console host's text area, from its console: evidence for an open
     /// caret key's watch, and otherwise the caret reported, or noted while
     /// the terminal's reading is held with its text changed.
+    ///
+    /// In a terminal the reading rules answer a key, so the caret event that
+    /// is its evidence reads the terminal; and Windows Terminal, which
+    /// sometimes moves its caret with no text change, has every caret event
+    /// read it, the read taking the caret too
+    /// (`docs/design/terminal-model.md`, section 5.1).
     fn caret_event(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
         if self.check_open_watch(node_id, true) {
+            if self.focused_terminal(node_id) {
+                self.terminal_output(node_id, trace, observed_at_ms);
+            }
             return;
         }
         if self.held_with_changes(node_id) {
             self.note_caret(node_id, trace, observed_at_ms);
+        } else if self.focused_terminal(node_id)
+            && !text_reads::console_focus(self.context, node_id)
+        {
+            self.terminal_output(node_id, trace, observed_at_ms);
         } else {
             self.caret_of(node_id, trace, observed_at_ms);
         }
@@ -1624,10 +1635,11 @@ impl Worker<'_> {
     /// terminal `node_id` ([`crate::terminal::Terminal::sent_caret`]).
     fn sent_caret(&self, node_id: NodeId, caret: &verbatim_model::CaretReport) {
         if self.focused_terminal(node_id) {
+            let settings = self.context.terminal_settings();
             self.context
                 .terminals()
                 .entry(node_id.number())
-                .or_default()
+                .or_insert_with(|| crate::terminal::Terminal::new(settings))
                 .sent_caret = Some(caret.clone());
         }
     }
@@ -1662,65 +1674,11 @@ impl Worker<'_> {
             && self.context.tracking().focus_role == Some(Role::Terminal)
     }
 
-    /// For `reply`, the answer to a key judged by where the caret landed
-    /// (`watch`) in the focused terminal `node_id`, whose caret left its
-    /// row: reads the terminal, and adds the text removed when the key
-    /// removed a typed line that had wrapped onto more rows
-    /// ([`keys::wrapped_removal`]). Returns whether that removal is still
-    /// under way, the watch then staying open.
-    fn wrapped_removal(
-        &mut self,
-        node_id: NodeId,
-        watch: &CaretWatch,
-        reply: &mut TextReply,
-        trace: TraceId,
-    ) -> bool {
-        let TextReply::Caret(reply) = reply else {
-            return false;
-        };
-        if !watch.landing || reply.same_line != Some(false) || !self.focused_terminal(node_id) {
-            return false;
-        }
-        let before = self
-            .context
-            .terminals()
-            .get(&node_id.number())
-            .and_then(|terminal| terminal.screen_at(watch.pressed_at_ms).cloned());
-        let Some(before) = before else {
-            tracing::debug!("no read of the terminal kept ended before the key");
-            return false;
-        };
-        self.terminal_event(node_id, Event::TextChanged, None, (trace, now_ms()));
-        let now = self
-            .context
-            .terminals()
-            .get(&node_id.number())
-            .and_then(|terminal| terminal.memory().cloned());
-        let Some(now) = now else {
-            return false;
-        };
-        let removal = keys::wrapped_removal(&before, &now);
-        tracing::debug!(?removal, "a landing key's answer in a terminal");
-        match removal {
-            Some(keys::WrappedRemoval::Removed(text)) => {
-                reply.removed = Some(text);
-                false
-            }
-            Some(keys::WrappedRemoval::UnderWay) => true,
-            None => false,
-        }
-    }
-
     /// Takes a focused terminal's on-demand reading through `event`
     /// ([`crate::terminal::reading`]) and does what the transition says:
-    /// reads and reports what is new, answers Core's request (`request`, its
-    /// id and trace, asked now, or the one owed from an earlier read the
-    /// terminal disturbed), or only notes the change. An answer the
-    /// transition no longer owes is given, empty.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one transition and the read it calls for, top to bottom"
-    )]
+    /// reads and reports what the terminal says, answers Core's request
+    /// (`request`, its id and trace), or only notes the change. A request
+    /// the transition reads nothing for is answered empty.
     fn terminal_event(
         &mut self,
         node_id: NodeId,
@@ -1733,77 +1691,79 @@ impl Worker<'_> {
             // update observed after it begins.
             self.context.intake.absorb_console_updates(None);
         }
-        let (action, owed, superseded) = {
+        let settings = self.context.terminal_settings();
+        let action = {
             let mut terminals = self.context.terminals();
-            let terminal = terminals.entry(node_id.number()).or_default();
+            let terminal = terminals
+                .entry(node_id.number())
+                .or_insert_with(|| crate::terminal::Terminal::new(settings));
             if event == Event::Focused {
-                terminal.focus_arrived();
+                terminal.focus(now_ms());
             }
             let (reading, action) = terminal.reading.next(event);
             terminal.reading = reading;
-            let mut owed = self.context.owed_reads().remove(&node_id.number());
-            // A request asked now takes the place of one owed.
-            let superseded = request.and_then(|request| owed.replace(request));
-            (action, owed, superseded)
+            action
         };
-        if let Some(earlier) = superseded {
-            self.reply_terminal(earlier, TerminalOutput::default());
+        match action {
+            Action::Nothing | Action::ReplyEmpty => {
+                if let Some(request) = request {
+                    self.reply_terminal(request, TerminalSpeech::default());
+                }
+                return;
+            }
+            Action::Report | Action::Reply | Action::ReplySilently | Action::Baseline => {}
         }
-        let mode = match action {
-            Action::Nothing => {
-                if let Some(owed) = owed {
-                    self.context.owed_reads().insert(node_id.number(), owed);
-                }
-                return;
-            }
-            Action::ReplyEmpty => {
-                if let Some(request) = owed {
-                    self.reply_terminal(request, TerminalOutput::default());
-                }
-                return;
-            }
-            Action::Baseline => {
-                if let Some(request) = owed {
-                    self.reply_terminal(request, TerminalOutput::default());
-                }
-                ReadMode::Baseline
-            }
-            Action::Report | Action::Reply => ReadMode::Change,
-            Action::ReplySilently => ReadMode::Cancel,
-        };
-        let replies = matches!(action, Action::Reply | Action::ReplySilently);
-        let owed = owed.filter(|_| replies);
+        let owed = request.filter(|_| matches!(action, Action::Reply | Action::ReplySilently));
+        self.read_terminal(
+            node_id,
+            owed,
+            action == Action::Reply,
+            (trace, observed_at_ms),
+        );
+    }
+
+    /// Reads the focused terminal `node_id` and sends what its reading
+    /// rules said: as the answer to Core's request `owed`, or reported; the
+    /// caret read with it goes first, when it is not the caret Core has.
+    /// `waited` says whether the read waited for Core's speech queue.
+    fn read_terminal(
+        &mut self,
+        node_id: NodeId,
+        owed: Option<(u64, TraceId)>,
+        waited: bool,
+        (trace, observed_at_ms): (TraceId, u64),
+    ) {
         let Some(uia) = self.client.uia() else {
             if let Some(request) = owed {
-                self.reply_terminal(request, TerminalOutput::default());
+                self.reply_terminal(request, TerminalSpeech::default());
             }
             return;
         };
         let started = std::time::Instant::now();
-        let read = text_reads::terminal_output(self.context, uia, node_id, mode);
+        let read = text_reads::terminal_read(self.context, uia, node_id, waited);
+        self.arm_terminal_timer();
         // Each read, end to end, and how long its event waited in the
         // queue: during a flood the reads follow one another, so these say
         // how much of the time the outpost spends in the terminal.
         tracing::debug!(
-            ?event,
-            ?action,
             queued_us = self
                 .timing
                 .dequeued_at_us
                 .saturating_sub(self.timing.observed_at_us),
             elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            found = ?read.as_ref().map(|(found, _)| found),
+            speech = ?read.as_ref().map(|(answer, _)| &answer.speech),
             "terminal read timing"
         );
         let window = self.context.tracking().window;
-        let (found, caret) = match read {
-            Some(read) => read,
+        // What the read found is stamped with when the read began, not with
+        // when the change that caused it was observed: a read that began
+        // after a key may show what the key did, and its output is then no
+        // output read before the cut the key made.
+        let (speech, caret, read_at_ms) = match read {
+            Some((answer, caret)) => (answer.speech, caret, answer.started_ms),
             // Gone or failed: nothing to say, and Core's request is
             // answered empty.
-            None => (
-                Found::Output(TerminalOutput::default(), Memory::default()),
-                None,
-            ),
+            None => (TerminalSpeech::default(), None, observed_at_ms),
         };
         // The caret read with the text: the console host raises no caret
         // event for every character typed, so this keeps Core's copy of it
@@ -1827,88 +1787,229 @@ impl Worker<'_> {
                 });
             }
         }
-        // A read that reports output as well as the caret sends both in one
-        // write, the caret first; anything else the read says follows the
-        // caret, sent alone.
-        let reports_output = matches!(
-            &found,
-            Found::Output(output, _)
-                if owed.is_none() && action == Action::Report && !output.is_empty()
-        );
+        let reports = owed.is_none() && !speech.is_empty();
         if let Some(caret_moved) = caret_moved {
-            if reports_output && let Found::Output(output, _) = found {
+            if reports {
+                // One write, the caret first.
                 self.emit_all(
                     trace,
-                    observed_at_ms,
+                    read_at_ms,
                     Backend::Uia,
                     window,
                     vec![
                         caret_moved,
-                        NormalizedEvent::TerminalOutput { node_id, output },
+                        NormalizedEvent::TerminalSpeech { node_id, speech },
                     ],
                 );
                 return;
             }
-            self.emit(trace, observed_at_ms, Backend::Uia, window, caret_moved);
+            self.emit(trace, read_at_ms, Backend::Uia, window, caret_moved);
         }
-        match found {
-            Found::Output(output, _) => {
-                if let Some(request) = owed {
-                    // An answer too large for one message carries its
-                    // first part, and the rest follows as output.
-                    let mut parts =
-                        crate::terminal::split(output, crate::terminal::MESSAGE_TEXT_BUDGET)
-                            .into_iter();
-                    self.reply_terminal(request, parts.next().unwrap_or_default());
-                    for output in parts {
-                        self.emit(
-                            trace,
-                            observed_at_ms,
-                            Backend::Uia,
-                            window,
-                            NormalizedEvent::TerminalOutput { node_id, output },
-                        );
-                    }
-                } else if action == Action::Report && !output.is_empty() {
-                    self.emit(
-                        trace,
-                        observed_at_ms,
-                        Backend::Uia,
-                        window,
-                        NormalizedEvent::TerminalOutput { node_id, output },
-                    );
-                }
+        if let Some(request) = owed {
+            // An answer too large for one message carries its first part,
+            // and the rest follows as speech of its own.
+            let mut parts =
+                crate::terminal::split(speech, crate::terminal::MESSAGE_TEXT_BUDGET).into_iter();
+            self.reply_terminal(request, parts.next().unwrap_or_default());
+            for speech in parts {
+                self.emit(
+                    trace,
+                    read_at_ms,
+                    Backend::Uia,
+                    window,
+                    NormalizedEvent::TerminalSpeech { node_id, speech },
+                );
             }
-            Found::Unsettled if owed.is_some() => {
-                // The writing that disturbed it raises a change, which
-                // reads again and answers.
-                let mut terminals = self.context.terminals();
-                let terminal = terminals.entry(node_id.number()).or_default();
-                terminal.reading = terminal.reading.next(Event::ReplyUnsettled).0;
-                if let Some(owed) = owed {
-                    self.context.owed_reads().insert(node_id.number(), owed);
-                }
-            }
-            // A report the terminal wrote to while it was read: the change
-            // that disturbed it raises another.
-            Found::Unsettled => {}
+        } else if reports {
+            self.emit(
+                trace,
+                read_at_ms,
+                Backend::Uia,
+                window,
+                NormalizedEvent::TerminalSpeech { node_id, speech },
+            );
         }
     }
 
-    /// Answers Core's terminal request `request` with `output`.
-    fn reply_terminal(&self, (request_id, trace): (u64, TraceId), output: TerminalOutput) {
+    /// Asks the intake for the focused terminal's quiet-period timer when
+    /// something waits for it ([`Item::TerminalTimer`]), or for none.
+    fn arm_terminal_timer(&self) {
+        let due = *self.context.terminal_due();
+        let at = due.map(|(_, due_ms)| {
+            Instant::now() + std::time::Duration::from_millis(due_ms.saturating_sub(now_ms()))
+        });
+        self.context.intake.terminal_timer_at(at);
+    }
+
+    /// [`Item::TerminalTimer`]: the focused terminal's quiet period passed
+    /// for what waited for it, which its reading rules now say.
+    fn terminal_timer(&mut self, trace: TraceId) {
+        let due = *self.context.terminal_due();
+        let Some((number, _)) = due else {
+            return;
+        };
+        let now = now_ms();
+        let found = {
+            let mut terminals = self.context.terminals();
+            terminals.get_mut(&number).map(|terminal| {
+                let speech = terminal.timer(now);
+                (speech, terminal.due_ms())
+            })
+        };
+        let (speech, next) = found.unwrap_or_default();
+        *self.context.terminal_due() = next.map(|due| (number, due));
+        self.arm_terminal_timer();
+        let focus = self.context.tracking().focus;
+        if let Some(node_id) = focus.filter(|focus| focus.number() == number)
+            && self.focused_terminal(node_id)
+            && !speech.is_empty()
+        {
+            let window = self.context.tracking().window;
+            self.emit(
+                trace,
+                now,
+                Backend::Uia,
+                window,
+                NormalizedEvent::TerminalSpeech { node_id, speech },
+            );
+        }
+    }
+
+    /// A key reached the focused terminal `node_id` ([`TextOp::TerminalKey`]):
+    /// its reading rules open the key's window, and the next read takes the
+    /// colours; what that says, the end of an earlier window's typing among
+    /// it, is sent.
+    fn terminal_key(&mut self, node_id: NodeId, key: &verbatim_model::TerminalKey, trace: TraceId) {
+        if !self.focused_terminal(node_id) {
+            return;
+        }
+        let settings = self.context.terminal_settings();
+        let (speech, due) = {
+            let mut terminals = self.context.terminals();
+            let terminal = terminals
+                .entry(node_id.number())
+                .or_insert_with(|| crate::terminal::Terminal::new(settings));
+            terminal.update_settings(settings);
+            (terminal.key(key), terminal.due_ms())
+        };
+        *self.context.terminal_due() = due.map(|due| (node_id.number(), due));
+        self.arm_terminal_timer();
+        if !speech.is_empty() {
+            let window = self.context.tracking().window;
+            self.emit(
+                trace,
+                now_ms(),
+                Backend::Uia,
+                window,
+                NormalizedEvent::TerminalSpeech { node_id, speech },
+            );
+        }
+    }
+
+    /// The read before a held caret key in the focused terminal `node_id`
+    /// ([`TextOp::ReadCaret`], `docs/design/key-holding.md`): a read of its
+    /// text and caret given to its reading rules, so the key's window
+    /// compares with the screen as it was just before the key
+    /// (`docs/design/terminal-model.md`, section 5.1), whose caret answers
+    /// the request and is kept as the node's newest caret report, for the
+    /// key's watch to take as its baseline. What the read says is sent
+    /// first.
+    fn terminal_before_key(&mut self, request_id: u64, trace: TraceId, node_id: NodeId) {
+        let Some(uia) = self.client.uia() else {
+            self.reply(
+                request_id,
+                trace,
+                QueryOutcome::Done(QueryResult::Text(TextReply::Unanswered)),
+            );
+            return;
+        };
+        let read = text_reads::terminal_read(self.context, uia, node_id, false);
+        self.arm_terminal_timer();
+        let read_at_ms = now_ms();
+        let reply = match read {
+            Some((answer, caret)) => {
+                if !answer.speech.is_empty() {
+                    let window = self.context.tracking().window;
+                    self.emit(
+                        trace,
+                        answer.started_ms,
+                        Backend::Uia,
+                        window,
+                        NormalizedEvent::TerminalSpeech {
+                            node_id,
+                            speech: answer.speech,
+                        },
+                    );
+                }
+                match caret {
+                    Some(caret) => {
+                        self.sent_caret(node_id, &caret.report);
+                        TextReply::Caret(Box::new(verbatim_model::CaretReply {
+                            moved: false,
+                            caret: caret.report,
+                            read_at_ms,
+                            unit: None,
+                            selection_changes: Vec::new(),
+                            content_changed: false,
+                            new_selection: None,
+                            same_line: None,
+                            removed: None,
+                        }))
+                    }
+                    None => TextReply::Unanswered,
+                }
+            }
+            None => TextReply::Unanswered,
+        };
         self.reply(
             request_id,
             trace,
-            QueryOutcome::Done(QueryResult::Text(TextReply::Terminal(Box::new(output)))),
+            QueryOutcome::Done(QueryResult::Text(reply)),
         );
     }
 
-    /// A focused terminal's text changed: read at once or noted, as its
-    /// on-demand reading stands.
-    /// A change observed before the last read that settled began is
-    /// covered by that read and changes nothing (a console terminal's text
-    /// change comes by UIA and as a console update both).
+    /// A review command's request in the focused terminal `node_id`
+    /// (`docs/design/terminal-model.md`, section 5.6): a read first, so the
+    /// memory's alignment maps every place onto the text as it is now, what
+    /// it says sent as any read's, and then the request answered within
+    /// that read; `None` when the terminal's review does not answer it.
+    fn terminal_review(
+        &mut self,
+        node_id: NodeId,
+        op: &TextOp,
+        trace: TraceId,
+    ) -> Option<TextReply> {
+        {
+            let mut terminals = self.context.terminals();
+            let terminal = terminals.get_mut(&node_id.number())?;
+            if !crate::terminal::review::answers(terminal, op) {
+                return None;
+            }
+            // Read now, whether or not the reading holds: what was held is
+            // read with it.
+            if let Reading::Held { changed: true } = terminal.reading {
+                terminal.reading = Reading::Held { changed: false };
+            }
+        }
+        self.read_terminal(node_id, None, false, (trace, now_ms()));
+        let uia = self.client.uia()?;
+        text_reads::terminal_review(self.context, uia, node_id, op)
+    }
+
+    /// Answers Core's terminal request `request` with `speech`.
+    fn reply_terminal(&self, (request_id, trace): (u64, TraceId), speech: TerminalSpeech) {
+        self.reply(
+            request_id,
+            trace,
+            QueryOutcome::Done(QueryResult::Text(TextReply::Terminal(Box::new(speech)))),
+        );
+    }
+
+    /// A focused terminal's text changed, or another event asks for a read:
+    /// read at once or noted, as its on-demand reading stands. A change
+    /// observed before the last read began is covered by that read and
+    /// changes nothing (a console terminal's text change comes by UIA and
+    /// as a console update both).
     fn terminal_output(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
         let covered = observed_at_ms != 0
             && self
@@ -1982,8 +2083,13 @@ impl Worker<'_> {
     /// ([`read_focus_text`](Self::read_focus_text)): moves the
     /// focus-following subscription to it ([`follow_focus`](Self::follow_focus)),
     /// and, for a terminal whose caret was read, notes that caret as the one
-    /// sent to Core and where the terminal's text ends now, since what it
-    /// held before the focus arrived is not new output.
+    /// sent to Core and takes the terminal's first read, which speaks
+    /// nothing, since what it held before the focus arrived is not new
+    /// output. That read waits until the subscription has moved to the
+    /// terminal, so output written after the read began raises a change
+    /// that reads it (`docs/design/terminal-model.md`, section 5.10), where
+    /// output written before the handlers were registered raised nothing
+    /// and went unspoken.
     fn follow_text(
         &mut self,
         (node_id, role): (NodeId, Role),
@@ -1994,6 +2100,9 @@ impl Worker<'_> {
         if let Some(FocusText::Caret { caret, .. }) = text
             && self.focused_terminal(node_id)
         {
+            if let Some(subscription) = self.context.focus_events.get() {
+                subscription.settle();
+            }
             self.sent_caret(node_id, caret);
             self.terminal_event(node_id, Event::Focused, None, (trace, observed_at_ms));
         }
@@ -2306,6 +2415,7 @@ impl Worker<'_> {
         observed_at_ms: u64,
     ) {
         self.end_watch_elsewhere(node_id);
+        self.blur_terminal_elsewhere(node_id);
         self.note_focused(object, role, window);
         let mut tracking = self.context.tracking();
         tracking.role = Some(role);
@@ -2330,6 +2440,30 @@ impl Worker<'_> {
         // it.
         if let Some(chain) = chain {
             tracking.chain = chain;
+        }
+    }
+
+    /// Tells the terminal the focus left, when the focus was a terminal
+    /// other than `node_id`, the new focus: what waited for its quiet period
+    /// is dropped, and output written while it is in the background is not
+    /// heard on return (`docs/design/terminal-model.md`, section 5.10).
+    fn blur_terminal_elsewhere(&mut self, node_id: NodeId) {
+        let Some(left) = self
+            .context
+            .tracking()
+            .focus
+            .filter(|&focus| focus != node_id)
+        else {
+            return;
+        };
+        if let Some(terminal) = self.context.terminals().get_mut(&left.number()) {
+            terminal.blur();
+        }
+        let mut due = self.context.terminal_due();
+        if due.is_some_and(|(terminal, _)| terminal == left.number()) {
+            *due = None;
+            drop(due);
+            self.arm_terminal_timer();
         }
     }
 
@@ -3896,6 +4030,77 @@ impl Worker<'_> {
         );
     }
 
+    /// Answers a text request `op` about a terminal, when it is one: a
+    /// key that reached it, the read before a held key, a review command's
+    /// request the terminal's memory answers, and Core's on-demand
+    /// reading. Returns whether it answered.
+    fn terminal_query(
+        &mut self,
+        request_id: u64,
+        trace: TraceId,
+        node_id: NodeId,
+        op: &TextOp,
+    ) -> bool {
+        if let TextOp::TerminalKey(key) = op {
+            self.terminal_key(node_id, key, trace);
+            self.reply(
+                request_id,
+                trace,
+                QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+            );
+            return true;
+        }
+        if *op == TextOp::ReadCaret && self.focused_terminal(node_id) {
+            self.terminal_before_key(request_id, trace, node_id);
+            return true;
+        }
+        if self.focused_terminal(node_id)
+            && let Some(reply) = self.terminal_review(node_id, op, trace)
+        {
+            self.reply(
+                request_id,
+                trace,
+                QueryOutcome::Done(QueryResult::Text(reply)),
+            );
+            return true;
+        }
+        if let Some(event) = terminal_event_of(op) {
+            // Core's on-demand reading of the focused terminal; a node that
+            // is not a focused terminal has nothing to read.
+            if !self.focused_terminal(node_id) {
+                let reply = if event == Event::Hold {
+                    TextReply::Done
+                } else {
+                    TextReply::Terminal(Box::default())
+                };
+                self.reply(
+                    request_id,
+                    trace,
+                    QueryOutcome::Done(QueryResult::Text(reply)),
+                );
+                return true;
+            }
+            let observed_at_ms = now_ms();
+            if event == Event::Hold {
+                self.terminal_event(node_id, event, None, (trace, observed_at_ms));
+                self.reply(
+                    request_id,
+                    trace,
+                    QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
+                );
+            } else {
+                self.terminal_event(
+                    node_id,
+                    event,
+                    Some((request_id, trace)),
+                    (trace, observed_at_ms),
+                );
+            }
+            return true;
+        }
+        false
+    }
+
     /// A query from Core, answered with exactly one reply: at once, or, for
     /// a caret key's watch kept open, when its evidence comes or it ends.
     fn query(&mut self, request_id: u64, query: &Query, trace: TraceId) {
@@ -3908,39 +4113,8 @@ impl Worker<'_> {
             return;
         }
         if let Query::Text { node_id, op } = query
-            && let Some(event) = terminal_event_of(op)
+            && self.terminal_query(request_id, trace, *node_id, op)
         {
-            // Core's on-demand reading of the focused terminal; a node that
-            // is not a focused terminal has nothing to read.
-            if !self.focused_terminal(*node_id) {
-                let reply = if event == Event::Hold {
-                    TextReply::Done
-                } else {
-                    TextReply::Terminal(Box::default())
-                };
-                self.reply(
-                    request_id,
-                    trace,
-                    QueryOutcome::Done(QueryResult::Text(reply)),
-                );
-                return;
-            }
-            let observed_at_ms = now_ms();
-            if event == Event::Hold {
-                self.terminal_event(*node_id, event, None, (trace, observed_at_ms));
-                self.reply(
-                    request_id,
-                    trace,
-                    QueryOutcome::Done(QueryResult::Text(TextReply::Done)),
-                );
-            } else {
-                self.terminal_event(
-                    *node_id,
-                    event,
-                    Some((request_id, trace)),
-                    (trace, observed_at_ms),
-                );
-            }
             return;
         }
         let context = self.context;

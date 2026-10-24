@@ -761,11 +761,11 @@ pub enum SupervisorToOutpost {
     /// outpost starts and whenever the theme in use changes; everything is
     /// read until the first arrives.
     Fetches(verbatim_model::Fetches),
-    /// How many of a change's newest lines a terminal read takes
-    /// (`ReaderSettings::terminal_read_lines`): as many as the flood
-    /// policy's limits can keep. Sent when an outpost starts and whenever
-    /// the limits change; 30 until the first arrives.
-    TerminalLines(u16),
+    /// The terminal reading rules' settings ("report new output", "review
+    /// follows caret", and the flood policy's limits), from Core's. Sent
+    /// when an outpost starts and whenever they change; the defaults until
+    /// the first arrives.
+    TerminalSettings(verbatim_model::TerminalSettings),
     /// The nodes from this outpost that Core still holds (outpost redesign,
     /// "Held objects"), as the numbers the outpost issued, and the position
     /// of the last message from this outpost that Core has handled

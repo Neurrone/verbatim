@@ -416,7 +416,7 @@ fn selection_text_read(query: &CaretQuery<'_>, selected: bool, selection_moved: 
 pub type CaretReadFn = fn(&CaretQuery<'_>) -> Result<CaretAnswer, Error>;
 
 /// The caret and its line alone, read as part of another program (a
-/// terminal's screen, [`crate::ScreenQuery::caret`]) or, classically, after it:
+/// terminal's snapshot, [`crate::SnapshotQuery::caret`]) or, classically, after it:
 /// a [`CaretQuery`] with no selection to compare and no unit or
 /// formatting.
 #[derive(Clone, Copy)]

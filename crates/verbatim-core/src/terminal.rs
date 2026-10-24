@@ -1,12 +1,16 @@
-//! Terminal output (milestone M4 item 9; `docs/design/phase6-design.md`, "Terminal
-//! output: notifications or diffing" and "The flood policy, reconsidered").
+//! What a focused terminal says (`docs/design/terminal-model.md`, section
+//! 5): the terminal's outpost reads it, applies the reading rules, and sends
+//! what they say as `NormalizedEvent::TerminalSpeech`. Here it is spoken:
 //!
-//! The focused terminal's outpost diffs its text and sends what is new as
-//! `NormalizedEvent::TerminalOutput`. Here it is spoken:
-//!
-//! - In order, queued, as it arrives, one line per utterance; blank lines are
-//!   not spoken, but count as lines like any other. Newer output never
-//!   cancels older output still waiting.
+//! - The answers to keys (typing the terminal showed, a caret key's unit or
+//!   the landing rule's, text the caret's line gained or lost, a row away
+//!   from the caret that is a key's answer, a suggestion) are spoken at
+//!   once, typing by the typing echo settings. With "speak passwords" on,
+//!   typing is echoed as it is typed instead, so the terminal showing it is
+//!   not echoed again.
+//! - Output, in order, queued, as it arrives, one line per utterance; blank
+//!   lines are not spoken, but count as lines like any other. Newer output
+//!   never cancels older output still waiting.
 //! - Lines are handed to speech a few at a time, each starting and ending
 //!   with an index mark, and the rest wait here, so the backlog of output
 //!   not yet spoken is known. Output is spoken in groups (the flood policy):
@@ -25,41 +29,37 @@
 //!   ends only once its last line has been heard: one whose first line
 //!   starts playing before its second arrives is still one burst. Nothing
 //!   is lost for good: every line stays reachable with the review cursor.
-//! - The last line read, changed in place (a prompt that grew, a progress
-//!   bar rewritten), speaks what changed; while an earlier version of that
-//!   line is still waiting, the newer one takes its place, so a line
-//!   rewritten quickly is spoken once.
-//! - Typing held for the terminal (the password rule, in `editing`) is
-//!   echoed when the terminal shows it at the end of the line, and that
-//!   text is not spoken again as output. White space the line may have had
-//!   already (a prompt's trailing space, which the outpost cannot tell from
-//!   padding) is matched only as far as the typing starts with it. When the terminal shows something
-//!   else (a password prompt's asterisks), what was held is never spoken.
 //! - Anything that cuts speech off (a key, a focus change, an interrupting
 //!   utterance) drops the output still waiting, as a key press does in
-//!   NVDA. "Report new output" off (Verbatim+5) speaks no output at all.
-//! - On-demand reading (`docs/design/phase6-design.md`, "Terminal decisions"): once as
-//!   many lines wait as a group speaks, the outpost is told to hold
+//!   NVDA, and output read before the cut is never spoken after it. "Report
+//!   new output" off (Verbatim+5) speaks no output at all.
+//! - On-demand reading (`docs/design/terminal-model.md`, section 5.1): once
+//!   as many lines wait as a group speaks, the outpost is told to hold
 //!   ([`TextOp::TerminalHold`]), and only notes that the terminal changed.
 //!   When the group's last line is handed to speech, Core asks for what is
 //!   new ([`TextOp::TerminalRead`]), so the answer is ready before that line
 //!   ends; the backlog is looked at once the line plays and the answer is
 //!   in, never before. Once nothing waits, reading goes live again. A cut
 //!   while holding tells the outpost to read to the end without speaking
-//!   ([`TextOp::TerminalCancel`]); output read before a cut, still on its
-//!   way, is used only to echo typing.
+//!   ([`TextOp::TerminalCancel`]); of what was read before a cut, still on
+//!   its way, only the answers to keys are spoken.
+//! - Every key that reaches a focused terminal is told to its outpost
+//!   ([`TextOp::TerminalKey`]), with when it reached the program, since
+//!   the reading rules judge by that time which reads a key's effects can
+//!   be in (section 5.5).
 
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Effect, FocusValidity, LineChange, Message, NodeId, Phrase, QueryId, SegmentContent, Skipped,
-    SpeechMark, SpeechPriority, TerminalOutput, TextOp, TextReply, TextRequest, TraceId, Utterance,
+    CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, Phrase, QueryId, SegmentContent,
+    Skipped, SpeechMark, SpeechPriority, TerminalItem, TerminalKey, TerminalKeyKind,
+    TerminalSpeech, TerminalUnit, TextOp, TextReply, TextRequest, TraceId, Utterance,
     UtteranceSegment,
 };
 
-use crate::editing::{self, MAX_HELD_TYPING};
-use crate::state::SrState;
+use crate::editing;
+use crate::state::{ReviewText, SrState};
 use crate::text;
 
 /// How many utterances of output are handed to speech before their marks
@@ -67,14 +67,9 @@ use crate::text;
 /// between lines and the backlog stays here, where it can be trimmed.
 const AHEAD: usize = 2;
 
-/// The focused terminal's output still to be spoken, and its typing that
-/// was echoed before the terminal showed it.
+/// The focused terminal's output still to be spoken.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent facts about the terminal's speech, each set and cleared by its own events"
-)]
-pub(crate) struct TerminalSpeech {
+pub(crate) struct TerminalSpeechState {
     /// The terminal this is about.
     pub(crate) node: Option<NodeId>,
     /// Output not yet handed to speech, oldest first: what is left of the
@@ -94,13 +89,6 @@ pub(crate) struct TerminalSpeech {
     /// heard.
     #[serde(default)]
     pub(crate) sounding: Option<SpeechMark>,
-    /// Whether the newest waiting item is the terminal's last line read, so
-    /// a change to that line replaces it.
-    pub(crate) last_line_waiting: bool,
-    /// Characters typed and echoed at once ("speak passwords" on) that the
-    /// terminal has not shown yet; when it shows them, they are not spoken
-    /// again as output. At most `MAX_HELD_TYPING` bytes.
-    pub(crate) echoed_typing: String,
     /// The trace of the newest output, which output handed to speech when
     /// a mark is reached is spoken under.
     pub(crate) trace: Option<TraceId>,
@@ -121,80 +109,15 @@ pub(crate) struct TerminalSpeech {
     pub(crate) cancel: Option<QueryId>,
     /// Core's request for what is new that a cancel overtook, not yet
     /// answered. The outpost answers it before the cancel, from a read made
-    /// before it took the cancel, so its answer is output read before a cut:
-    /// used only to echo typing, which may be the change that read found.
+    /// before it took the cancel, so its output was read before a cut, and
+    /// only its answers to keys are spoken.
     #[serde(default)]
     pub(crate) overtaken: Option<QueryId>,
-    /// When speech was last cut off (Unix milliseconds): output from a
-    /// change observed before it was read before the cut, and is used only
-    /// to echo typing.
+    /// When speech was last cut off (milliseconds on the shared clock):
+    /// output from a read that began before it was read before the cut,
+    /// and is not spoken.
     #[serde(default)]
     pub(crate) cut_at_ms: u64,
-    /// Whether the newest key is a caret key whose answer has said what it
-    /// did: until another key, the change of the line it edits or recalls
-    /// (Delete, Control+Backspace, Up through the shell's history) is that
-    /// key's, and not spoken again as output (the live caret checks of
-    /// 2026-10-08, where the redrawn line was heard twice). Until the
-    /// answer comes, and when the key moves no caret (a list a program
-    /// redraws in place), the change is output like any other (Dickson,
-    /// 2026-10-09: screen changes are spoken at once).
-    #[serde(default)]
-    pub(crate) key_owns_line: bool,
-}
-
-/// Echoes typing a terminal shows without its text changing: a space at the
-/// end of a line, which is padding until something follows it, and a
-/// character typed over inline prediction (ghost text) that showed the same
-/// character already. The caret moved past it (`caret`, the focus `node`'s
-/// caret as just read, against the caret Core had): the start of the
-/// typing held is echoed when the caret moved over exactly that text on a
-/// line whose text is unchanged.
-pub(crate) fn caret_shows_typing(
-    state: &mut SrState,
-    trace_id: TraceId,
-    node: NodeId,
-    caret: &verbatim_model::CaretReport,
-) -> Vec<Effect> {
-    let terminal = state.focus.as_ref().is_some_and(|focus| {
-        focus.alive
-            && focus.snapshot.id == node
-            && focus.snapshot.role == verbatim_model::Role::Terminal
-    });
-    if !terminal || state.held_typing.is_empty() {
-        return Vec::new();
-    }
-    let Some(old) = state.caret.as_ref().filter(|old| old.node == node) else {
-        return Vec::new();
-    };
-    let unchanged =
-        text::line_content(&old.line.text, true) == text::line_content(&caret.line.text, true);
-    let from = old.line.offset as usize;
-    let moved = (caret.line.offset as usize).saturating_sub(from);
-    let shown = state.held_typing.get(..moved).is_some_and(|typed| {
-        moved > 0
-            && caret
-                .line
-                .text
-                .get(from..)
-                .is_some_and(|after| after.starts_with(typed))
-    });
-    if !unchanged || !shown {
-        return Vec::new();
-    }
-    let typed: String = state.held_typing.drain(..moved).collect();
-    // The read of the screen that shows it may come after this caret: it
-    // is echoed now, and not spoken again as output then.
-    if state.terminal.echoed_typing.len() + typed.len() <= MAX_HELD_TYPING {
-        state.terminal.echoed_typing.push_str(&typed);
-    }
-    editing::echo(state, trace_id, &typed)
-}
-
-/// A caret key was pressed: the line an earlier key changed is no longer
-/// that key's. The line becomes this key's once its answer says what it
-/// did ([`editing::caret_reply`]).
-pub(crate) fn caret_key(state: &mut SrState) {
-    state.terminal.key_owns_line = false;
 }
 
 /// One piece of output waiting to be spoken.
@@ -240,14 +163,75 @@ fn push_line(waiting: &mut VecDeque<Waiting>, line: &str) {
     }
 }
 
-/// Handles new output in `node`, the focus: echoes typing it shows, then
-/// queues the rest by the flood policy and hands the oldest to speech.
-pub(crate) fn output(
+/// Whether the focus is a live terminal.
+fn terminal_focus(state: &SrState) -> Option<NodeId> {
+    state
+        .focus
+        .as_ref()
+        .filter(|focus| focus.alive && focus.snapshot.role == verbatim_model::Role::Terminal)
+        .map(|focus| focus.snapshot.id)
+}
+
+/// Tells the focused terminal's outpost of a key of `kind` that reached it
+/// at `at_ms` (milliseconds on the shared clock): nothing when the focus is
+/// not a terminal. The answer is not waited for.
+pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64) -> Vec<Effect> {
+    let Some(node) = terminal_focus(state) else {
+        return Vec::new();
+    };
+    let query_id = state.allocate_query_id();
+    vec![Effect::Text(TextRequest {
+        query_id,
+        node_id: node,
+        op: TextOp::TerminalKey(TerminalKey { kind, at_ms }),
+    })]
+}
+
+/// What a caret key is to the reading rules: one Verbatim knows, by the
+/// unit it moves by, or any other (section 5.5).
+pub(crate) fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
+    match key.motion {
+        CaretMotion::PreviousCharacter
+        | CaretMotion::NextCharacter
+        | CaretMotion::StartOfLine
+        | CaretMotion::EndOfLine => TerminalKeyKind::Caret(TerminalUnit::Character),
+        CaretMotion::PreviousWord | CaretMotion::NextWord => {
+            TerminalKeyKind::Caret(TerminalUnit::Word)
+        }
+        CaretMotion::PreviousLine
+        | CaretMotion::NextLine
+        | CaretMotion::PreviousPage
+        | CaretMotion::NextPage
+        | CaretMotion::PreviousParagraph
+        | CaretMotion::NextParagraph
+        | CaretMotion::Top
+        | CaretMotion::Bottom => TerminalKeyKind::Caret(TerminalUnit::Line),
+        _ => TerminalKeyKind::Other,
+    }
+}
+
+/// What text typed is to the reading rules: Enter and Tab forget the
+/// typing not yet shown, and so does a control character, which types
+/// nothing the terminal shows as itself; anything else is typed.
+pub(crate) fn typed_kind(typed: &str) -> TerminalKeyKind {
+    if typed.chars().any(|c| matches!(c, '\r' | '\n' | '\t')) {
+        TerminalKeyKind::Forget
+    } else if typed.chars().any(char::is_control) {
+        TerminalKeyKind::Other
+    } else {
+        TerminalKeyKind::Typed(typed.to_owned())
+    }
+}
+
+/// Handles what the focused terminal `node` said, read at `observed_at_ms`:
+/// the answers to keys spoken at once, then the output queued by the flood
+/// policy and the oldest handed to speech.
+pub(crate) fn speech(
     state: &mut SrState,
     trace_id: TraceId,
     observed_at_ms: u64,
     node: NodeId,
-    output: &TerminalOutput,
+    speech: &TerminalSpeech,
 ) -> Vec<Effect> {
     if !state.focus_matches(node) {
         return Vec::new();
@@ -255,80 +239,70 @@ pub(crate) fn output(
     focus_moved(state, node);
     state.terminal.node = Some(node);
     // Read before speech was last cut off, or before the outpost took the
-    // cancel: what was pending then is dropped, as NVDA drops it.
+    // cancel: the output pending then is dropped, as NVDA drops it.
     let before_cut = state.terminal.cancel.is_some()
         || (observed_at_ms != 0 && observed_at_ms < state.terminal.cut_at_ms);
-    take(state, trace_id, output, before_cut)
+    take(state, trace_id, speech, before_cut)
 }
 
-/// Whether the first new line of `output` is typing held that went past
-/// the right margin onto a row of its own: the whole line is the start of
-/// the typing held, with nothing between it and the line it continues.
-fn typing_wrapped(state: &SrState, output: &TerminalOutput) -> bool {
-    output.head.is_empty()
-        && output.skipped.is_none()
-        && output
-            .lines
-            .first()
-            .is_some_and(|first| !first.is_empty() && state.held_typing.starts_with(first.as_str()))
+/// The segments of a key's answer.
+fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
+    Some(match item {
+        TerminalItem::Caret { unit, text } => match unit {
+            TerminalUnit::Character => {
+                text::character_segments(Some(text.as_str()).filter(|text| !text.is_empty()), None)
+            }
+            TerminalUnit::Word => text::word_segments(text, None),
+            TerminalUnit::Line => text::text_segments(text, None),
+        },
+        TerminalItem::Lost(text) => text::word_segments(text, None),
+        TerminalItem::Gained(text)
+        | TerminalItem::Answer(text)
+        | TerminalItem::Suggestion(text) => text::text_segments(text, None),
+        TerminalItem::Output(_) | TerminalItem::Skipped(_) | TerminalItem::Echo(_) => return None,
+    })
 }
 
-/// Takes in output read from the focused terminal: echoes typing it shows,
-/// then, unless it is `echo_only` (read before a cut), queues the rest
+/// Takes in what the focused terminal said: speaks the answers to keys,
+/// then, unless the output is `before_cut` (read before a cut), queues it
 /// by the flood policy and hands the oldest to speech.
 fn take(
     state: &mut SrState,
     trace_id: TraceId,
-    output: &TerminalOutput,
-    echo_only: bool,
+    speech: &TerminalSpeech,
+    before_cut: bool,
 ) -> Vec<Effect> {
     let mut effects = Vec::new();
-    let mut changed = output.changed.clone();
-    // While typing is held or echoed, the line's change since it was read
-    // is the one that shows it (`LineChange::since_read`): when that change
-    // is all typing, it is echoed and nothing else of the line is said;
-    // otherwise the line's change from what it said is spoken as usual.
-    let typing = !state.held_typing.is_empty() || !state.terminal.echoed_typing.is_empty();
-    let since_read = changed.as_mut().and_then(|change| change.since_read.take());
-    if typing && let Some(mut since_read) = since_read {
-        effects.extend(typing_shown(state, trace_id, &mut since_read));
-        if since_read.text.is_empty() {
-            changed = None;
+    for item in &speech.items {
+        match item {
+            // With passwords spoken, typing was echoed as it was typed.
+            TerminalItem::Echo(typed) if !state.settings.speak_terminal_passwords => {
+                effects.extend(editing::echo(state, trace_id, typed));
+            }
+            item => {
+                if let Some(segments) = answer_segments(item) {
+                    effects.push(editing::speak(trace_id, segments));
+                }
+            }
         }
     }
-    if let Some(change) = changed.as_mut() {
-        effects.extend(typing_shown(state, trace_id, change));
+    if speech.followed
+        && let Some(navigator) = state.navigator.as_mut()
+        && Some(navigator.object.id) == state.terminal.node
+    {
+        // The review cursor followed the caret: the next review command
+        // reads at the caret as the outpost finds it.
+        navigator.text = ReviewText::Caret;
     }
-    let wrapped = typing_wrapped(state, output);
-    if wrapped {
-        // Typing past the right margin: the terminal showed it on a new
-        // row, which is the typing, not output.
-        let typed: String = state.held_typing.drain(..output.lines[0].len()).collect();
-        effects.extend(editing::echo(state, trace_id, &typed));
-    }
-    if !state.settings.report_terminal_output || echo_only {
+    let output = speech.items.iter().any(TerminalItem::is_output);
+    if !state.settings.report_terminal_output || before_cut || !output {
         return effects;
-    }
-    let unwrapped;
-    let output = if wrapped {
-        unwrapped = TerminalOutput {
-            lines: output.lines[1..].to_vec(),
-            ..output.clone()
-        };
-        &unwrapped
-    } else {
-        output
-    };
-    // The line a caret key redrew is the key's own (`key_owns_line`), and
-    // a line that came back to what it said says nothing more.
-    if state.terminal.key_owns_line {
-        changed = None;
     }
     state.terminal.trace = Some(trace_id);
     if state.terminal.group.is_none() {
         state.terminal.group = Some(state.settings.full_lines());
     }
-    queue(state, changed.as_ref(), output);
+    queue(state, speech);
     bound(state);
     effects.extend(pump(state, trace_id));
     effects.extend(hold_if_full(state));
@@ -404,7 +378,8 @@ pub(crate) fn is_pending(state: &SrState, query_id: QueryId) -> bool {
 /// Handles the outpost's answer to a terminal request: what was new when
 /// Core asked, taken in, and the backlog looked at when the group's last
 /// line is already playing; or the cancel's read, or the answer to a
-/// request the cancel overtook, used only to echo typing.
+/// request the cancel overtook, of which only the answers to keys are
+/// spoken.
 pub(crate) fn reply(
     state: &mut SrState,
     trace_id: TraceId,
@@ -412,8 +387,8 @@ pub(crate) fn reply(
     reply: TextReply,
 ) -> Vec<Effect> {
     let output = match reply {
-        TextReply::Terminal(output) => *output,
-        _ => TerminalOutput::default(),
+        TextReply::Terminal(speech) => *speech,
+        _ => TerminalSpeech::default(),
     };
     if state.terminal.cancel == Some(query_id) {
         state.terminal.cancel = None;
@@ -431,142 +406,18 @@ pub(crate) fn reply(
     effects
 }
 
-/// The length in bytes of the longest common prefix of `a` and `b`, at a
-/// character boundary of both.
-fn common_prefix(a: &str, b: &str) -> usize {
-    a.char_indices()
-        .zip(b.chars())
-        .find(|((_, x), y)| x != y)
-        .map_or_else(|| a.len().min(b.len()), |((index, _), _)| index)
-}
-
-/// Echoes the typing the terminal now shows at the end of its line, and
-/// takes it out of `change`, so it is not spoken again as output. Typing
-/// held while the line changed some other way is dropped unspoken: the
-/// terminal did not show it (a password prompt that prints asterisks). A
-/// line rewritten while typing was held or echoed is taken as the typing
-/// showing: the typing is echoed and the rewrite is not spoken.
-fn typing_shown(state: &mut SrState, trace_id: TraceId, change: &mut LineChange) -> Vec<Effect> {
-    // Control characters (Backspace, Tab) never show as themselves.
-    let visible = state.held_typing.trim_start_matches(char::is_control).len();
-    let start = state.held_typing.len() - visible;
-    state.held_typing.drain(..start);
-    if !change.appended {
-        // A line rewritten shows the typing only when what it gained is the
-        // typing (a character typed in the middle of a command): then the
-        // typing is echoed and the rewrite is not spoken. A rewrite that
-        // gained something else (a clock ticking on a password prompt's
-        // line) never echoes typing held, which waits for the terminal to
-        // show it, or for Enter.
-        let echoed = &state.terminal.echoed_typing;
-        if !echoed.is_empty() && change.inserted == *echoed {
-            state.terminal.echoed_typing.clear();
-            change.text.clear();
-            return Vec::new();
-        }
-        if state.held_typing.is_empty() || change.inserted != state.held_typing {
-            return Vec::new();
-        }
-        change.text.clear();
-        let held = std::mem::take(&mut state.held_typing);
-        return editing::echo(state, trace_id, &held);
-    }
-    let typing = if state.held_typing.is_empty() {
-        &state.terminal.echoed_typing
-    } else {
-        &state.held_typing
-    };
-    let already = already_there(change, typing);
-    change.text.drain(..already);
-    let echoed = common_prefix(&state.terminal.echoed_typing, &change.text);
-    if echoed > 0 {
-        state.terminal.echoed_typing.drain(..echoed);
-        change.text.drain(..echoed);
-    } else if !change.text.is_empty() {
-        state.terminal.echoed_typing.clear();
-    }
-    let shown = common_prefix(&state.held_typing, &change.text);
-    let held: String = state.held_typing.drain(..shown).collect();
-    change.text.drain(..shown);
-    if !change.text.is_empty() {
-        // The terminal showed something other than what was typed.
-        state.held_typing.clear();
-    }
-    editing::echo(state, trace_id, &held)
-}
-
-/// The length in bytes of the white space at the start of a grown line's
-/// `change` that was on the line already, as far as `typing` tells: the
-/// uncertain white space (a prompt's trailing space, which the outpost
-/// cannot tell from padding) beyond what the typing itself starts with.
-/// Without typing, nothing is taken away.
-fn already_there(change: &LineChange, typing: &str) -> usize {
-    if typing.is_empty() {
-        return 0;
-    }
-    let typed_space = typing.len() - typing.trim_start().len();
-    let uncertain = change.uncertain.min(change.text.len());
-    let mut already = 0;
-    for character in change.text.chars() {
-        if uncertain.saturating_sub(already) <= typed_space || !character.is_whitespace() {
-            break;
-        }
-        already += character.len_utf8();
-    }
-    already
-}
-
-/// Notes characters typed into a terminal and echoed at once, so the
-/// terminal showing them is not spoken again; Enter forgets them.
-pub(crate) fn typed(state: &mut SrState, typed: &str) {
-    let echoed = &mut state.terminal.echoed_typing;
-    if typed.chars().any(|c| c == '\r' || c == '\n') {
-        echoed.clear();
-    } else if echoed.len() + typed.len() <= MAX_HELD_TYPING {
-        echoed.push_str(typed.trim_start_matches(char::is_control));
-    }
-}
-
 /// Adds the output to the waiting queue, in the order it is spoken.
-fn queue(state: &mut SrState, changed: Option<&LineChange>, output: &TerminalOutput) {
+fn queue(state: &mut SrState, speech: &TerminalSpeech) {
     let terminal = &mut state.terminal;
     // Every line counts, blank ones included (Dickson, 2026-10-07, and the
     // coherence review of 2026-10-09): a blank line waits like any other
-    // and is counted when skipped, but is never spoken ([`pump`]). Rows a
-    // program passed over without writing are no lines: the outpost leaves
-    // them out.
-    for line in &output.above {
-        push_line(&mut terminal.waiting, line);
-        terminal.last_line_waiting = false;
-    }
-    // The changed line comes next, and a blank one is never queued.
-    if let Some(change) = changed.filter(|change| !text::is_blank(&change.text)) {
-        if terminal.last_line_waiting
-            && let Some(Waiting::Line(waiting)) = terminal.waiting.back_mut()
-        {
-            // The earlier version was never spoken: the whole line now
-            // takes its place.
-            let (line, cut) = within_bound(&change.line);
-            *waiting = line;
-            if cut {
-                terminal.waiting.push_back(Waiting::Cut);
-            }
-        } else {
-            push_line(&mut terminal.waiting, &change.text);
+    // and is counted when skipped, but is never spoken ([`pump`]).
+    for item in &speech.items {
+        match item {
+            TerminalItem::Output(line) => push_line(&mut terminal.waiting, line),
+            TerminalItem::Skipped(skipped) => push_skipped(&mut terminal.waiting, *skipped),
+            _ => {}
         }
-        terminal.last_line_waiting = true;
-    }
-    for line in &output.head {
-        push_line(&mut terminal.waiting, line);
-        terminal.last_line_waiting = false;
-    }
-    if let Some(skipped) = output.skipped {
-        push_skipped(&mut terminal.waiting, skipped);
-        terminal.last_line_waiting = false;
-    }
-    for line in &output.lines {
-        push_line(&mut terminal.waiting, line);
-        terminal.last_line_waiting = !text::is_blank(line);
     }
 }
 
@@ -751,9 +602,6 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
                 effects.extend(ask(state, true));
             }
         }
-        if state.terminal.waiting.is_empty() {
-            state.terminal.last_line_waiting = false;
-        }
         // A blank line counts, but is not spoken.
         if matches!(&item, Waiting::Line(line) if text::is_blank(line)) {
             continue;
@@ -890,7 +738,6 @@ pub(crate) fn cut(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
     terminal.waiting.clear();
     terminal.ahead.clear();
     terminal.sounding = None;
-    terminal.last_line_waiting = false;
     terminal.group = None;
     terminal.deciding = false;
     terminal.cut_at_ms = terminal.cut_at_ms.max(at_ms);
@@ -917,7 +764,7 @@ fn cancel(state: &mut SrState) -> Vec<Effect> {
 /// The focus moved to `node`: another node's output is forgotten.
 pub(crate) fn focus_moved(state: &mut SrState, node: NodeId) {
     if state.terminal.node.is_some_and(|terminal| terminal != node) {
-        state.terminal = TerminalSpeech::default();
+        state.terminal = TerminalSpeechState::default();
     }
 }
 
@@ -935,7 +782,6 @@ pub(crate) fn cuts_speech(effect: &Effect) -> bool {
 /// output" off does, whether by its key or from the settings.
 pub(crate) fn drop_waiting(state: &mut SrState) -> Vec<Effect> {
     state.terminal.waiting.clear();
-    state.terminal.last_line_waiting = false;
     if state.terminal.ahead.is_empty() {
         state.terminal.group = None;
     }
@@ -966,13 +812,34 @@ pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 
 #[cfg(test)]
 mod tests {
-    use super::common_prefix;
+    use super::{caret_key_kind, typed_kind};
+    use verbatim_model::{CaretKey, CaretMotion, TerminalKeyKind, TerminalUnit};
 
     #[test]
-    fn the_common_prefix_ends_at_a_character_boundary() {
-        assert_eq!(common_prefix("abc", "abd"), 2);
-        assert_eq!(common_prefix("ab", "abc"), 2);
-        assert_eq!(common_prefix("", "x"), 0);
-        assert_eq!(common_prefix("é1", "é2"), "é".len());
+    fn keys_are_told_to_the_reading_rules_by_their_unit() {
+        let key = |motion| CaretKey {
+            motion,
+            select: false,
+        };
+        assert_eq!(
+            caret_key_kind(key(CaretMotion::NextCharacter)),
+            TerminalKeyKind::Caret(TerminalUnit::Character)
+        );
+        assert_eq!(
+            caret_key_kind(key(CaretMotion::PreviousWord)),
+            TerminalKeyKind::Caret(TerminalUnit::Word)
+        );
+        assert_eq!(
+            caret_key_kind(key(CaretMotion::PreviousLine)),
+            TerminalKeyKind::Caret(TerminalUnit::Line)
+        );
+        assert_eq!(
+            caret_key_kind(key(CaretMotion::Backspace)),
+            TerminalKeyKind::Other
+        );
+        assert_eq!(typed_kind("a"), TerminalKeyKind::Typed("a".to_owned()));
+        assert_eq!(typed_kind("\r"), TerminalKeyKind::Forget);
+        assert_eq!(typed_kind("\t"), TerminalKeyKind::Forget);
+        assert_eq!(typed_kind("\u{1}"), TerminalKeyKind::Other);
     }
 }

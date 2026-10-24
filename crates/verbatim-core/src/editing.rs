@@ -47,9 +47,6 @@ use crate::text;
 /// run of letters is not a word anyone needs echoed whole.
 pub(crate) const MAX_TYPED_WORD: usize = 256;
 
-/// The most bytes of typing held for a terminal to show.
-pub(crate) const MAX_HELD_TYPING: usize = 1024;
-
 /// The longest a held key waits for the watch of the key ahead of it to be
 /// answered, counted from when that key was passed on: 100 ms, NVDA's
 /// default wait for the caret to move, which NVDA lengthens in Windows
@@ -117,6 +114,13 @@ pub(crate) fn speak(trace_id: TraceId, segments: Vec<UtteranceSegment>) -> Effec
 /// `pressed_at_ms` is when the hook saw the key, on the outposts' clock.
 pub(crate) fn caret_key(state: &mut SrState, key: CaretKey, pressed_at_ms: u64) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
+    // A terminal's reading rules answer the key, from the reads its window
+    // holds; the watch below is the key's evidence, for the keys behind it.
+    effects.extend(crate::terminal::key(
+        state,
+        crate::terminal::caret_key_kind(key),
+        pressed_at_ms,
+    ));
     // The word being typed is forgotten when a caret key without Shift
     // moves the caret elsewhere or deletes; a key that selects, or one
     // outside the caret table such as Control+C, leaves it, so typing over
@@ -351,7 +355,6 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
 /// without holding.
 fn pass_held(state: &mut SrState, held: HeldKey, at_ms: u64) -> Vec<Effect> {
     state.held_keys.passed_at_ms = at_ms;
-    crate::terminal::caret_key(state);
     let mut effects = caret_key(state, held.key, at_ms);
     state.held_keys.awaiting_watch = effects.iter().find_map(|effect| match effect {
         Effect::Text(TextRequest {
@@ -652,7 +655,12 @@ pub(crate) fn caret_reply(
         return Vec::new();
     };
     let grid = is_grid(focus.snapshot.role);
-    let terminal = focus.snapshot.role == verbatim_model::Role::Terminal;
+    // A terminal's reading rules say what the key did
+    // (`crate::terminal`); its answer keeps the caret current.
+    if focus.snapshot.role == Role::Terminal {
+        update_caret(state, pending.node, reply.caret, reply.read_at_ms);
+        return heard(state, trace_id, pending);
+    }
     let CaretReply {
         moved: _,
         caret,
@@ -706,11 +714,6 @@ pub(crate) fn caret_reply(
         }
     };
     update_caret(state, pending.node, caret, read_at_ms);
-    // The key's answer says what it did to the caret's line, so that line's
-    // change is not spoken again as output (`terminal::caret_key`).
-    if terminal {
-        state.terminal.key_owns_line = true;
-    }
     let mut effects: Vec<Effect> = Vec::new();
     if !segments.is_empty() {
         effects.push(speak(trace_id, segments));
@@ -1225,10 +1228,17 @@ pub(crate) fn caret_moved_by_core(state: &mut SrState, node: NodeId, line: TextC
 /// Puts the review cursor at the caret of `node` when it follows the caret
 /// and the navigator is on that node: the next review command reads the
 /// line at the caret as the outpost finds it ([`ReviewText::Caret`]).
+///
+/// A terminal's review cursor follows the caret only when its reading rules
+/// find that a key moved the caret, which its outpost tells
+/// (`crate::terminal`), never on a caret report alone, since a program
+/// moves the cursor as it draws (`docs/design/terminal-model.md`, section
+/// 5.6).
 fn follow_caret(state: &mut SrState, node: NodeId) {
     if state.settings.follow_caret
         && let Some(navigator) = state.navigator.as_mut()
         && navigator.object.id == node
+        && !is_grid(navigator.object.role)
     {
         navigator.text = ReviewText::Caret;
     }
@@ -1595,29 +1605,35 @@ pub(crate) fn later_key(state: &mut SrState, at_ms: u64) {
 }
 
 /// Handles a key that ends or clears the command line being typed (Escape,
-/// Control+C, Control+D, Control+Break): in a terminal, the typing held,
-/// never shown, is forgotten, as NVDA forgets its queued characters on
-/// Enter, Tab, Control+C, Control+D, and Control+Break
-/// (`docs/parity/terminals.md`, "New terminal output"); Escape clears a line
-/// too.
-pub(crate) fn clearing_key(state: &mut SrState) {
+/// Control+C, Control+D, Control+Break), pressed at `at_ms`: in a
+/// terminal, the typing its reading rules hold, never shown, is forgotten,
+/// as NVDA forgets its queued characters on Enter, Tab, Control+C,
+/// Control+D, and Control+Break (`docs/parity/terminals.md`, "New terminal
+/// output"); Escape clears a line too.
+pub(crate) fn clearing_key(state: &mut SrState, at_ms: u64) -> Vec<Effect> {
     let terminal = state
         .focus
         .as_ref()
         .is_some_and(|focus| focus.alive && focus.snapshot.role == Role::Terminal);
-    if terminal {
-        state.held_typing.clear();
-        state.typed_word.clear();
-        state.terminal.echoed_typing.clear();
+    if !terminal {
+        return Vec::new();
     }
+    state.typed_word.clear();
+    crate::terminal::key(state, verbatim_model::TerminalKeyKind::Forget, at_ms)
 }
 
-/// Handles text typed into the focused application: echoes characters and
-/// words by the settings, a protected field's characters as the protected
-/// character only, and holds what is typed into a terminal until the
-/// terminal shows it, unless the user asked for terminal passwords to be
-/// spoken.
-pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &str) -> Vec<Effect> {
+/// Handles text typed into the focused application at `at_ms`: echoes
+/// characters and words by the settings, a protected field's characters as
+/// the protected character only. What is typed into a terminal is echoed
+/// once the terminal shows it, which its reading rules tell
+/// (`crate::terminal`), unless the user asked for terminal passwords to be
+/// spoken, when it is echoed as it is typed.
+pub(crate) fn character_typed(
+    state: &mut SrState,
+    trace_id: TraceId,
+    typed: &str,
+    at_ms: u64,
+) -> Vec<Effect> {
     let mut effects = crate::say_all::stop(state);
     // A caret key still watched is not answered by the caret the typing
     // moves: the typing's key press has marked it (`later_key`), so its
@@ -1625,35 +1641,24 @@ pub(crate) fn character_typed(state: &mut SrState, trace_id: TraceId, typed: &st
     let Some(focus) = state.focus.as_ref().filter(|focus| focus.alive) else {
         return effects;
     };
-    let terminal = focus.snapshot.role == Role::Terminal;
-    if terminal && state.settings.speak_terminal_passwords {
-        crate::terminal::typed(state, typed);
-    } else if terminal {
+    if focus.snapshot.role == Role::Terminal {
         if typed.chars().any(|c| matches!(c, '\r' | '\n' | '\t')) {
-            // Enter or Tab: whatever was held was never shown, a password
-            // perhaps (Escape and the Control keys that clear a line come
-            // as [`clearing_key`]).
-            state.held_typing.clear();
+            // Enter or Tab ends the word being typed, which in a terminal
+            // is never echoed whole (Escape and the Control keys that clear
+            // a line come as [`clearing_key`]).
             state.typed_word.clear();
-        } else if state.held_typing.len() + typed.len() <= MAX_HELD_TYPING {
-            state.held_typing.push_str(typed);
+        } else if state.settings.speak_terminal_passwords {
+            effects.extend(echo(state, trace_id, typed));
         }
+        effects.extend(crate::terminal::key(
+            state,
+            crate::terminal::typed_kind(typed),
+            at_ms,
+        ));
         return effects;
     }
     effects.extend(echo(state, trace_id, typed));
     effects
-}
-
-/// Handles a change of a node's text: characters held for a terminal are
-/// echoed now that it has shown something. An outpost that diffs a
-/// terminal's text sends `TerminalOutput` instead, which echoes only what
-/// the terminal shows (`crate::terminal`).
-pub(crate) fn text_changed(state: &mut SrState, trace_id: TraceId, node: NodeId) -> Vec<Effect> {
-    if !state.focus_matches(node) || state.held_typing.is_empty() {
-        return Vec::new();
-    }
-    let held = std::mem::take(&mut state.held_typing);
-    echo(state, trace_id, &held)
 }
 
 /// Echoes typed text by the settings: a finished word first, when word echo

@@ -280,6 +280,12 @@ pub struct Step {
     pub search_above: Option<usize>,
     /// The alignment of the read, for a read.
     pub outcome: Option<Outcome>,
+    /// Whether the read moved the review position to the caret because a
+    /// key moved the caret within its window with "review follows caret"
+    /// on (section 5.6). The first read after the focus arrived moves it
+    /// there too, which the caller's focus does as well, so it is not
+    /// told.
+    pub followed: bool,
 }
 
 /// What a line waits for.
@@ -895,6 +901,7 @@ impl TerminalReader {
                 && self.settings.review_follows_caret
                 && moved
             {
+                step.followed = true;
                 reviews.push((caret.row, read.caret_column));
             }
         }

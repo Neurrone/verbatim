@@ -9,7 +9,7 @@
       "name": "Terminal",
       "class_name": "TermControl",
       "states": ["focusable"],
-      "text": "one\ntwo\nready>"
+      "text": "one                 \r\ntwo                 \r\nready>              \r\n"
     }
   ]
 }

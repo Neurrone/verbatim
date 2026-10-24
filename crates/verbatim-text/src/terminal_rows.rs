@@ -345,6 +345,9 @@ struct Screen {
     unknown_above: Option<usize>,
     review: Option<Anchor>,
     marks: Vec<Anchor>,
+    /// The places the caller keeps, each by its number
+    /// ([`TerminalMemory::add_place`]).
+    places: Vec<(u64, Anchor)>,
     /// Whether the first row continues a line that starts above it.
     continued: bool,
     /// How many rows directly above the screen's top form the block, whose
@@ -474,6 +477,8 @@ pub struct TerminalMemory {
     aside: Option<Screen>,
     /// What was asked for, until it is read.
     pending: Option<Pending>,
+    /// The number the next place gets ([`TerminalMemory::add_place`]).
+    next_place: u64,
 }
 
 impl TerminalMemory {
@@ -555,6 +560,63 @@ impl TerminalMemory {
                 column,
                 line_hash: found.line_hash,
             });
+        }
+    }
+
+    /// Puts the review position at `anchor`, which may be on a row above
+    /// the rows the memory keeps, in the history, whose line's hash the
+    /// caller read (section 5.6). Does nothing before the first read.
+    pub fn set_review_anchor(&mut self, anchor: Anchor) {
+        if let Some(screen) = &mut self.screen {
+            screen.review = Some(anchor);
+        }
+    }
+
+    /// An anchor on row `row` of the last read at `column`, clamped to the
+    /// row's text, when the memory keeps the row.
+    #[must_use]
+    pub fn anchor(&self, row: usize, column: usize) -> Option<Anchor> {
+        let screen = self.screen.as_ref()?;
+        let found = screen.row(row)?;
+        Some(Anchor {
+            row: isize_of(row),
+            column: column.min(found.text.chars().count()),
+            line_hash: found.line_hash,
+        })
+    }
+
+    /// Keeps a place at `anchor`, a position the caller holds in the
+    /// terminal's text, such as the start of a row of text it sent on, and
+    /// returns its number. A place moves with its row as the review
+    /// position does (section 5.6), is kept aside with the memory while the
+    /// alternate screen is up, and is dropped when its row cannot be
+    /// followed, as when the history overflowed and its row was not kept.
+    /// Before the first read it is only numbered.
+    pub fn add_place(&mut self, anchor: Anchor) -> u64 {
+        self.next_place += 1;
+        let number = self.next_place;
+        if let Some(screen) = &mut self.screen {
+            screen.places.push((number, anchor));
+        }
+        number
+    }
+
+    /// Where place `number` is now, `None` once it was dropped
+    /// ([`TerminalMemory::add_place`]).
+    #[must_use]
+    pub fn place(&self, number: u64) -> Option<Anchor> {
+        let screen = self.screen.as_ref()?;
+        screen
+            .places
+            .iter()
+            .find(|(kept, _)| *kept == number)
+            .map(|(_, anchor)| *anchor)
+    }
+
+    /// Forgets place `number`.
+    pub fn drop_place(&mut self, number: u64) {
+        if let Some(screen) = &mut self.screen {
+            screen.places.retain(|(kept, _)| *kept != number);
         }
     }
 
@@ -796,6 +858,20 @@ impl TerminalMemory {
                 .filter(|mark| mark.row >= 0)
                 .filter_map(|&mark| map_mark(mark, &fates, shift, &next.rows))
                 .collect();
+            // A place stays only on a row that was kept.
+            next.places = reference
+                .places
+                .iter()
+                .filter_map(|&(number, anchor)| {
+                    let from = usize::try_from(anchor.row).ok()?;
+                    match fates.get(from)? {
+                        OldRow::Kept(to) => {
+                            Some((number, anchor_at(&next.rows, *to, anchor.column)))
+                        }
+                        _ => None,
+                    }
+                })
+                .collect();
         } else {
             next.review = reference.review.and_then(|anchor| {
                 map_anchor(
@@ -807,6 +883,16 @@ impl TerminalMemory {
                 .iter()
                 .filter_map(|&mark| map_mark(mark, &fates, shift, &next.rows))
                 .collect();
+            next.places = reference
+                .places
+                .iter()
+                .filter_map(|&(number, anchor)| {
+                    map_anchor(
+                        anchor, &reference, &kinds, &fates, shift, &next, caret, read,
+                    )
+                    .map(|anchor| (number, anchor))
+                })
+                .collect();
         }
         if opened {
             // The memory before the switch is kept aside with its anchors;
@@ -815,6 +901,7 @@ impl TerminalMemory {
             self.aside = Some(reference);
             next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
             next.marks.clear();
+            next.places.clear();
             next.known.clear();
             for (flag, kind) in next.read_since.iter_mut().zip(&kinds) {
                 *flag = !matches!(kind, NewRow::Kept { .. });
@@ -847,21 +934,28 @@ impl TerminalMemory {
     pub fn restart(&mut self, read: &Read) -> Outcome {
         // Each anchor moved as the read's start moved, or none when where
         // the memory's rows are in the read is not known.
-        let (marks, review): (Vec<Anchor>, Option<Option<Anchor>>) =
-            self.screen.as_ref().map_or_default(|screen| {
-                let base = base_of(screen, read).map(|base| base - isize_of(screen.skipped));
-                let moved = |anchor: &Anchor| {
-                    base.map(|base| Anchor {
-                        row: anchor.row + base,
-                        ..*anchor
-                    })
-                };
-                (
-                    screen.marks.iter().filter_map(moved).collect(),
-                    screen.review.as_ref().map(moved),
-                )
-            });
+        type Moved = (Vec<Anchor>, Option<Option<Anchor>>, Vec<(u64, Anchor)>);
+        let (marks, review, places): Moved = self.screen.as_ref().map_or_default(|screen| {
+            let base = base_of(screen, read).map(|base| base - isize_of(screen.skipped));
+            let moved = |anchor: &Anchor| {
+                base.map(|base| Anchor {
+                    row: anchor.row + base,
+                    ..*anchor
+                })
+            };
+            (
+                screen.marks.iter().filter_map(moved).collect(),
+                screen.review.as_ref().map(moved),
+                screen
+                    .places
+                    .iter()
+                    .filter_map(|(number, anchor)| Some((*number, moved(anchor)?)))
+                    .collect(),
+            )
+        });
+        let next_place = self.next_place;
         *self = Self::new();
+        self.next_place = next_place;
         let outcome = self.read(read);
         if let Some(screen) = &mut self.screen {
             let rows = &screen.rows;
@@ -881,6 +975,17 @@ impl TerminalMemory {
                     })
                     .or_else(|| caret.map(|row| anchor_at(rows, row, read.caret_column)))
             });
+            // A place stays where the read shows its line, or above the
+            // read, as the review position does; otherwise it is dropped.
+            screen.places = places
+                .into_iter()
+                .filter(|(_, anchor)| match usize::try_from(anchor.row) {
+                    Ok(row) => rows
+                        .get(row)
+                        .is_some_and(|found| found.line_hash == anchor.line_hash),
+                    Err(_) => !read.at_document_start,
+                })
+                .collect();
             screen.marks = marks
                 .into_iter()
                 .filter(|mark| match usize::try_from(mark.row) {
@@ -1668,6 +1773,7 @@ fn remember(
         unknown_above,
         review: None,
         marks: Vec::new(),
+        places: Vec::new(),
         continued: false,
         block: 0,
         above: 0,
@@ -2001,6 +2107,16 @@ fn split_rows(text: &str, width: usize, now: u64) -> Vec<Row> {
 fn caret_row(rows: usize, to_end: u32) -> Option<usize> {
     let to_end = usize::try_from(to_end).ok()?;
     (to_end > 0 && to_end <= rows).then(|| rows - to_end)
+}
+
+/// The rows of `text`, a read's text from a row's start, split as the
+/// memory splits a read (section 4.3, item 1): its lines split at line
+/// breaks, each into rows of `width` cells, padding trimmed from each
+/// line's last row only. For a caller that reads rows the memory does not
+/// keep, such as the history above them, at the width a read found.
+#[must_use]
+pub fn rows_of(text: &str, width: usize) -> Vec<Row> {
+    split_rows(text, width, 0)
 }
 
 /// A 64-bit hash of `text` (FNV-1a): the same in every process and build,

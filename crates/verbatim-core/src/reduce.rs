@@ -111,7 +111,6 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         }
         Input::SpeechCancelled { at_ms } => {
             editing::later_key(state, *at_ms);
-            state.terminal.key_owns_line = false;
             let mut effects = terminal::cut(state, *at_ms);
             effects.extend(say_all::stop(state));
             effects
@@ -145,17 +144,13 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
     match input {
         Input::CaretKey {
             key, pressed_at_ms, ..
-        } => {
-            terminal::caret_key(state);
-            editing::caret_key(state, *key, *pressed_at_ms)
-        }
-        Input::CharacterTyped { trace_id, text } => {
-            editing::character_typed(state, *trace_id, text)
-        }
-        Input::ClearingKey { .. } => {
-            editing::clearing_key(state);
-            Vec::new()
-        }
+        } => editing::caret_key(state, *key, *pressed_at_ms),
+        Input::CharacterTyped {
+            trace_id,
+            text,
+            at_ms,
+        } => editing::character_typed(state, *trace_id, text, *at_ms),
+        Input::ClearingKey { at_ms, .. } => editing::clearing_key(state, *at_ms),
         _ => Vec::new(),
     }
 }
@@ -165,7 +160,7 @@ pub(crate) fn key_trace(input: &Input) -> Option<TraceId> {
     match input {
         Input::CaretKey { trace_id, .. }
         | Input::CharacterTyped { trace_id, .. }
-        | Input::ClearingKey { trace_id }
+        | Input::ClearingKey { trace_id, .. }
         | Input::HeldKey { trace_id, .. } => Some(*trace_id),
         _ => None,
     }
@@ -183,6 +178,22 @@ pub(crate) fn pressed_no_earlier(input: Input, at_ms: u64) -> Input {
             trace_id,
             key,
             pressed_at_ms: pressed_at_ms.max(at_ms),
+        },
+        Input::CharacterTyped {
+            trace_id,
+            text,
+            at_ms: typed_at_ms,
+        } if typed_at_ms != 0 => Input::CharacterTyped {
+            trace_id,
+            text,
+            at_ms: typed_at_ms.max(at_ms),
+        },
+        Input::ClearingKey {
+            trace_id,
+            at_ms: cleared_at_ms,
+        } if cleared_at_ms != 0 => Input::ClearingKey {
+            trace_id,
+            at_ms: cleared_at_ms.max(at_ms),
         },
         input => input,
     }
@@ -552,7 +563,7 @@ fn reduce_caret_moved(
         return Vec::new();
     };
     let node = *node;
-    let mut effects = terminal::caret_shows_typing(state, trace_id, node, caret);
+    let mut effects = Vec::new();
     editing::update_caret(state, node, caret.clone(), observed_at_ms);
     let general = content_changed.then_some(editing::General {
         selection: new_selection.as_ref(),
@@ -640,11 +651,8 @@ fn reduce_event(
         moved @ NormalizedEvent::CaretMoved { .. } => {
             reduce_caret_moved(state, (trace_id, observed_at_ms), moved)
         }
-        NormalizedEvent::TextChanged { node_id } => {
-            editing::text_changed(state, trace_id, *node_id)
-        }
-        NormalizedEvent::TerminalOutput { node_id, output } => {
-            terminal::output(state, trace_id, observed_at_ms, *node_id, output)
+        NormalizedEvent::TerminalSpeech { node_id, speech } => {
+            terminal::speech(state, trace_id, observed_at_ms, *node_id, speech)
         }
         NormalizedEvent::PropertyChanged {
             node_id,
@@ -671,6 +679,8 @@ fn reduce_event(
             // `PropertyChange` is `#[non_exhaustive]`.
             _ => Vec::new(),
         },
+        // A text change says nothing of its own: typing is echoed as it is
+        // typed, and a terminal's outpost reads its text changes itself.
         // `NormalizedEvent` is `#[non_exhaustive]`.
         _ => Vec::new(),
     };
@@ -952,7 +962,6 @@ fn end_text_activity(state: &mut SrState, node: NodeId, cut: bool, effects: &mut
     }
     state.pending_caret = None;
     state.typed_word.clear();
-    state.held_typing.clear();
     crate::terminal::focus_moved(state, node);
     if state.caret.as_ref().is_some_and(|caret| caret.node != node) {
         state.forget_caret();

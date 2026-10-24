@@ -21,13 +21,10 @@
 //!   [`focus_ancestry_remote`] and [`focus_ancestry_classic`], and
 //!   [`focus_ancestry`], which call sites use: it runs the remote program
 //!   when asked to, falls back to the classic walk when the program fails,
-//!   and says which path answered; and, for milestone M4's terminals,
-//!   [`terminal_screen_remote`], [`terminal_screen_classic`], and
-//!   [`terminal_screen`]: the text on screen, and how far the screen's top
-//!   row as last read now lies above it, found again by its text, with the
-//!   first rows that went by unread; [`terminal_snapshot`], the read that
-//!   replaces it, with the screen's colours ([`ColourRun`]) after a key;
-//!   and, for
+//!   and says which path answered; for terminals, [`terminal_snapshot`]:
+//!   the text from where the last read said to start to the document's
+//!   end in one `GetText`, with the screen, the caret, and the screen's
+//!   colours ([`ColourRun`]) after a key; and, for
 //!   caret reports, [`caret_read_remote`], [`caret_read_classic`], and
 //!   [`caret_read`]: the caret, the evidence a caret key moved it, its line
 //!   and another unit at it, the formatting of the text to be spoken, and
@@ -55,7 +52,6 @@ mod navigate;
 mod opcode;
 mod operation;
 mod path;
-mod terminal;
 mod terminal_colours;
 mod terminal_snapshot;
 mod text;
@@ -88,10 +84,6 @@ pub use opcode::{
 pub use operation::{Operation, Outcome, Read, Value, counting, work};
 pub use path::{
     ElementByPathFn, PathQuery, element_by_path, element_by_path_classic, element_by_path_remote,
-};
-pub use terminal::{
-    SEARCH_MATCHES, Screen, ScreenAnchor, ScreenQuery, TerminalScreenFn, terminal_screen,
-    terminal_screen_classic, terminal_screen_remote,
 };
 pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun, row_width, screen_height};
 pub use terminal_snapshot::{

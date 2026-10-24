@@ -2068,6 +2068,7 @@ dependencies = [
  "verbatim-ia2",
  "verbatim-model",
  "verbatim-process",
+ "verbatim-term-sim",
  "verbatim-test-console",
  "verbatim-text",
  "verbatim-uia",

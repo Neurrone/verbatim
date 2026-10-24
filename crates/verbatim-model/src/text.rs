@@ -625,8 +625,8 @@ pub enum TextOp {
     /// Read several units ahead (say-all): answered [`TextReply::Chunks`],
     /// or as [`TextOp::Read`] is when the first unit cannot be read.
     ReadAhead(TextReadAhead),
-    /// A focused terminal's on-demand reading (`docs/design/phase6-design.md`,
-    /// "Terminal decisions"): Core's output queue is full, so the outpost
+    /// A focused terminal's on-demand reading (`docs/design/terminal-model.md`,
+    /// section 5.1): Core's output queue is full, so the outpost
     /// only notes that the terminal's text changed from now on, without
     /// reading it. Answered [`TextReply::Done`].
     TerminalHold,
@@ -639,9 +639,13 @@ pub enum TextOp {
     },
     /// Speech was cut off: read the terminal to its end without speaking
     /// what is new, as NVDA drops what was pending, and read each change at
-    /// once again. Answered [`TextReply::Terminal`], whose output Core uses
-    /// only to echo typing it shows.
+    /// once again. Answered [`TextReply::Terminal`], whose answers to keys
+    /// Core speaks and whose output it drops.
     TerminalCancel,
+    /// A key reached the focused terminal (`docs/design/terminal-model.md`,
+    /// section 5.5): the outpost's reading rules open the key's window and
+    /// read the colours with the next read. Answered [`TextReply::Done`].
+    TerminalKey(crate::TerminalKey),
 }
 
 /// A text request from Core to the outpost that owns `node_id`; the answer
@@ -690,7 +694,8 @@ pub enum TextReply {
         /// The text was cut.
         truncated: bool,
     },
-    /// A [`TextOp::MoveCaret`] or [`TextOp::TerminalHold`] was done.
+    /// A [`TextOp::MoveCaret`], [`TextOp::TerminalHold`] or
+    /// [`TextOp::TerminalKey`] was done.
     Done,
     /// The answer to [`TextOp::Select`]: how the selection changed from
     /// the one the outpost read just before selecting (collapsed at the
@@ -698,8 +703,8 @@ pub enum TextReply {
     /// the rule [`CaretReply`] describes for its `selection_changes`.
     Selected(Vec<SelectionChange>),
     /// The answer to [`TextOp::TerminalRead`] and
-    /// [`TextOp::TerminalCancel`]: what is new, empty when nothing is.
-    Terminal(Box<crate::TerminalOutput>),
+    /// [`TextOp::TerminalCancel`]: what the read said, empty when nothing.
+    Terminal(Box<crate::TerminalSpeech>),
     /// The answer to [`TextOp::Location`]: screen coordinates of the point,
     /// in pixels.
     Location {

@@ -306,14 +306,11 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
-        event: NormalizedEvent::TerminalOutput {
+        event: NormalizedEvent::TerminalSpeech {
             node_id: NodeId::new(1),
-            output: verbatim_model::TerminalOutput {
-                above: Vec::new(),
-                changed: None,
-                head: Vec::new(),
-                skipped: None,
-                lines: vec!["total 42".to_owned()],
+            speech: verbatim_model::TerminalSpeech {
+                items: vec![verbatim_model::TerminalItem::Output("total 42".to_owned())],
+                followed: false,
             },
         },
     };

@@ -177,9 +177,10 @@ pub(crate) fn heard_flood(scenario: &mut Scenario, run: u32) {
 /// script finishing is no evidence that the terminal has shown all of its
 /// output. The caret is the evidence, not the prompt's output, because
 /// while Core holds the terminal's output the prompt is read in an answer
-/// to Core's request, which the subscription does not carry; where the
-/// prompt must have been read as output, [`watch_for_prompt_output`]
-/// watches instead. The subscription is read as events arrive, since
+/// to Core's request, which the subscription does not carry; and with
+/// output reporting off, the reading rules say nothing of the prompt, which
+/// is not spoken once reporting is back on either, since it is no longer
+/// new. The subscription is read as events arrive, since
 /// one left unread through a flood falls behind and is disconnected. In
 /// compare mode NVDA offers no events, so nothing is watched, and NVDA's
 /// quiet period, waited for before the next input, is the only evidence
@@ -197,32 +198,7 @@ pub(crate) fn watch_for_prompt(scenario: &mut Scenario) -> Option<std::thread::J
     }))
 }
 
-/// Starts watching, as [`watch_for_prompt`] does, for the prompt after the
-/// flood whose command has just been typed, with output reporting off:
-/// for Core receiving terminal output that ends on the prompt. A caret on
-/// the prompt is no evidence here, as the outpost reads the caret after
-/// the text it reads with it, so the caret can show the prompt that read
-/// has not reported as output; the prompt's own report would then come
-/// after reporting is turned back on and be spoken. With reporting off,
-/// Core never holds the terminal's output, so every read of it is
-/// reported to Core as output, the prompt's among them.
-pub(crate) fn watch_for_prompt_output(
-    scenario: &mut Scenario,
-) -> Option<std::thread::JoinHandle<()>> {
-    if scenario.is_comparing() {
-        return None;
-    }
-    let mut events = scenario
-        .subscribe_events()
-        .expect("subscribes to Verbatim's events");
-    Some(std::thread::spawn(move || {
-        terminal::wait_for_output_ending_on(&mut events, PROMPT, FLOOD_STEP)
-            .expect("Core receives the prompt after the flood as output");
-    }))
-}
-
-/// Waits for the evidence of [`watch_for_prompt`] or
-/// [`watch_for_prompt_output`], when it watches.
+/// Waits for the evidence of [`watch_for_prompt`], when it watches.
 pub(crate) fn wait_for_prompt(watch: Option<std::thread::JoinHandle<()>>) {
     if let Some(watch) = watch
         && let Err(panic) = watch.join()
@@ -253,7 +229,7 @@ fn output_off_during_flood(scenario: &mut Scenario, directory: &str) {
 /// Step 3: the third flood, silent, then output reporting back on.
 fn silent_flood(scenario: &mut Scenario, directory: &str) -> Duration {
     terminal::type_hearing(scenario, r".\flood.ps1 3", terminal::Echo::Shown);
-    let watch = watch_for_prompt_output(scenario);
+    let watch = watch_for_prompt(scenario);
     scenario.send_keys(&["enter"]).expect("presses enter");
     let unreported = elapsed(scenario, directory, 3);
     wait_for_prompt(watch);

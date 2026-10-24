@@ -1,10 +1,13 @@
-//! A focused terminal's on-demand reading (`docs/design/phase6-design.md`, "Terminal
-//! decisions") through a real outpost's worker, against mockapp's UIA text
+//! A focused terminal's on-demand reading (`docs/design/terminal-model.md`,
+//! section 5.1) through a real outpost's worker, against mockapp's UIA text
 //! provider presenting a Windows Terminal control (UIA class
-//! `TermControl`): each transition of `verbatim_outpost::terminal::reading`
-//! as the worker drives it, by text change events and Core's requests.
+//! `TermControl`), its text given as a terminal gives it, every row padded
+//! to the width and ended by a carriage return and line feed: each
+//! transition of `verbatim_outpost::terminal::reading` as the worker drives
+//! it, by text change events and Core's requests.
 //!
-//! - Live, a text change is read at once and reported as terminal output,
+//! - Live, a text change is read at once and what the reading rules say of
+//!   it reported as the terminal's speech,
 //!   after the caret read with it when that moved: a caret read finding the
 //!   caret Core last had, at the same place with the same line, is not
 //!   reported again.
@@ -27,7 +30,8 @@
 //!   terminal writes between the read's calls, so that the line shows a
 //!   character the caret was read before, answers nothing; the text change
 //!   that follows answers it, whether the read is one remote operation or
-//!   the classic read's separate calls.
+//!   the classic read's separate calls, and its read says what the line
+//!   gained, its unfinished last word once the quiet period has passed.
 //! - While the console's window is the application's focus window and its
 //!   foreground window, both read through UI Automation, the outpost's
 //!   hook leaves out the change events of windows read through MSAA, UI
@@ -35,7 +39,7 @@
 //!   them again once the focus is in a Win32 button read through MSAA.
 //! - A terminal that a focus-now query answered with, and no focus event
 //!   reported, is the outpost's focus: its text change is reported as
-//!   terminal output; so is a focused terminal's text change after a
+//!   the terminal's speech; so is a focused terminal's text change after a
 //!   foreground report of another window, which names a window and not the
 //!   control focus is in, both before and after the same query answers with
 //!   the terminal.
@@ -57,8 +61,8 @@ mod harness;
 
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    CaretWatch, FocusText, LineChange, NodeId, NormalizedEvent, PropertyChange, Role,
-    TerminalOutput, TextOp, TextPosition, TextReply, TextUnit,
+    CaretWatch, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, TerminalItem,
+    TerminalSpeech, TextOp, TextPosition, TextReply, TextUnit,
 };
 use verbatim_outpost::protocol::DeliveredFact;
 use verbatim_outpost::protocol::{OutpostToSupervisor, Query, QueryOutcome, QueryResult};
@@ -71,8 +75,23 @@ use windows::core::w;
 
 use common::outpost::OutpostUnderTest;
 
-/// The terminal's text before each test writes to it.
-const START: &str = "one\ntwo\nready>";
+/// The terminal's rows before each test writes to it.
+const START: [&str; 3] = ["one", "two", "ready>"];
+
+/// The terminal's width in cells.
+const WIDTH: usize = 20;
+
+/// `rows` as the terminal's text, each padded to [`WIDTH`] and ended by a
+/// carriage return and line feed, escaped for `set-text`. The last line
+/// break gives mockapp an empty last line, so that moving by lines from
+/// the caret to the document's end counts the caret's row, as the
+/// terminals' providers do.
+fn terminal_text(rows: &[&str]) -> String {
+    rows.iter()
+        .map(|row| format!(r"{row:WIDTH$}\r\n"))
+        .collect::<Vec<_>>()
+        .concat()
+}
 
 /// The element mockapp reports as having the keyboard focus, built with the
 /// listener's cache request, as a focus event's element arrives.
@@ -117,6 +136,8 @@ fn start_with(
     let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
     let outpost = OutpostUnderTest::with_options(&app, options);
+    // The screen: the text's last three rows, and the empty last line.
+    app.send(&format!("screen {id} 4"));
     app.send(&format!("set-focus {id}"));
     let element = focused(hwnd);
     outpost.deliver(outpost.listener_fact(&element));
@@ -140,12 +161,8 @@ fn start_with(
 /// Writes `lines` after [`START`] as the terminal's whole text and raises
 /// its text changed event.
 fn write(app: &mut common::MockApp, lines: &[&str]) {
-    let mut text = START.to_owned();
-    for line in lines {
-        text.push('\n');
-        text.push_str(line);
-    }
-    app.send(&format!("set-text term {}", text.replace('\n', r"\n")));
+    let rows: Vec<&str> = START.iter().chain(lines).copied().collect();
+    app.send(&format!("set-text term {}", terminal_text(&rows)));
     app.send("text-changed term");
 }
 
@@ -166,22 +183,22 @@ fn write_held(
     outpost.settled();
 }
 
-/// The output the outpost reports live, after the caret read with it,
-/// which is reported too when it moved.
-fn reported_after_caret(outpost: &OutpostUnderTest, node: NodeId) -> TerminalOutput {
+/// What the outpost reports the terminal said live, after the caret read
+/// with it, which is reported too when it moved.
+fn reported_after_caret(outpost: &OutpostUnderTest, node: NodeId) -> TerminalSpeech {
     caret_read(outpost, node);
     reported(outpost, node)
 }
 
-/// The output the outpost reports live, with the caret where Core last
-/// had it, so not reported again.
-fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalOutput {
+/// What the outpost reports the terminal said live, with the caret where
+/// Core last had it, so not reported again.
+fn reported(outpost: &OutpostUnderTest, node: NodeId) -> TerminalSpeech {
     match outpost.next() {
         OutpostToSupervisor::Event {
-            event: NormalizedEvent::TerminalOutput { node_id, output },
+            event: NormalizedEvent::TerminalSpeech { node_id, speech },
             ..
-        } if node_id == node => output,
-        other => panic!("the outpost said {other:?}, not the terminal's output"),
+        } if node_id == node => speech,
+        other => panic!("the outpost said {other:?}, not the terminal's speech"),
     }
 }
 
@@ -204,11 +221,14 @@ fn read_answer(outpost: &OutpostUnderTest, node: NodeId, request: u64) -> TextRe
     answer_to(outpost, request)
 }
 
-/// Output of new lines only.
-fn lines(lines: &[&str]) -> TerminalOutput {
-    TerminalOutput {
-        lines: lines.iter().map(|line| (*line).to_owned()).collect(),
-        ..TerminalOutput::default()
+/// Speech of output alone, `lines`.
+fn lines(lines: &[&str]) -> TerminalSpeech {
+    TerminalSpeech {
+        items: lines
+            .iter()
+            .map(|line| TerminalItem::Output((*line).to_owned()))
+            .collect(),
+        followed: false,
     }
 }
 
@@ -227,13 +247,14 @@ fn hold(outpost: &mut OutpostUnderTest, node: NodeId) {
 /// A terminal the outpost was asked for with a focus-now query, as Core
 /// asks at its start and after an outpost is replaced, with no focus event
 /// for it, becomes the outpost's focus as a reported focus does: its new
-/// line is reported as terminal output.
+/// line is reported as the terminal's speech.
 fn a_focus_now_terminal_reports_its_output() {
     common::init_com();
     let title = common::unique_title("mockapp-terminal-focus-now");
     let mut app = common::spawn("terminal_reading.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let mut outpost = OutpostUnderTest::new(&app);
+    app.send("screen term 4");
     app.send("set-focus term");
     outpost.read_focus_as(focused(hwnd).live().element());
     let control = outpost
@@ -515,10 +536,7 @@ fn a_read_covering_a_caret_event_answers_a_watch_with_no_caret() {
     assert!(reply.moved);
     assert_eq!(
         (reply.caret.line.text.as_str(), reply.caret.line.offset),
-        (
-            "one
-", 1
-        )
+        ("one                 \r\n", 1)
     );
     assert_eq!(reply.unit.expect("the character").text, "n");
     assert_eq!(reported(&outpost, term), lines(&["three"]));
@@ -648,10 +666,15 @@ fn a_classic_watch_read_while_the_terminal_writes_waits_for_its_change() {
 /// the outpost reading as `options` say.
 fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     let (mut app, mut outpost, term) = start_with(name, "terminal_reading.json", "term", options);
-    let padding = " ".repeat(10);
-    let prompt = format!("{START} {padding}\n");
-    app.send(&format!("set-text term {}", prompt.replace('\n', r"\n")));
-    app.send("caret term 15");
+    // The prompt's trailing space, which the padding hides, and the caret
+    // after it: a caret event's read finds the text as it was and the
+    // caret moved.
+    app.send(&format!(
+        "set-text term {}",
+        terminal_text(&["one", "two", "ready> "])
+    ));
+    let row = WIDTH + 2;
+    app.send(&format!("caret term {}", 2 * row + 7));
     app.send("caret-event term");
     let since = match outpost.next() {
         OutpostToSupervisor::Event {
@@ -665,9 +688,11 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     };
     assert_eq!(since.offset, 7);
     outpost.settled();
-    let recalled = format!("{START} echo one{padding}\n");
-    app.send(&format!("set-text term {}", recalled.replace('\n', r"\n")));
-    app.send("caret term 23");
+    app.send(&format!(
+        "set-text term {}",
+        terminal_text(&["one", "two", "ready> echo one"])
+    ));
+    app.send(&format!("caret term {}", 2 * row + 15));
     app.send("write-on-read term x");
     let key = ask(
         &mut outpost,
@@ -690,22 +715,14 @@ fn watch_read_while_the_terminal_writes(name: &str, options: OutpostOptions) {
     assert!(reply.moved);
     assert_eq!(
         (reply.caret.line.text.as_str(), reply.caret.line.offset),
-        ("ready> echo onex         \n", 16)
+        ("ready> echo onex    \r\n", 16)
     );
-    assert_eq!(
-        reported(&outpost, term),
-        TerminalOutput {
-            changed: Some(LineChange {
-                text: " echo onex".to_owned(),
-                line: "ready> echo onex".to_owned(),
-                appended: true,
-                uncertain: 1,
-                inserted: " echo onex".to_owned(),
-                since_read: None,
-            }),
-            ..TerminalOutput::default()
-        }
-    );
+    // The prompt's line grew with no key told to the reading rules: what
+    // it gained, its last word, unfinished with the caret after it, held
+    // until the quiet period has passed (`docs/design/terminal-model.md`,
+    // section 5.3).
+    assert_eq!(reported(&outpost, term), lines(&[" echo "]));
+    assert_eq!(reported(&outpost, term), lines(&["onex"]));
     outpost.settled();
     drop(outpost);
     app.quit();

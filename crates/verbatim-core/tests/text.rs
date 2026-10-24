@@ -1447,11 +1447,24 @@ fn a_newer_key_or_a_focus_change_supersedes_a_waiting_key() {
 fn caret_keys_are_watched_in_a_terminal_and_not_at_all_without_text() {
     let mut state = SrState::new();
     focus(&mut state, node(7, Role::Terminal, StateSet::new()));
-    let TextOp::AwaitCaret(watch) =
-        request(&reduce(&mut state, &key(CaretMotion::PreviousLine, false))).op
-    else {
-        panic!("expected a caret watch");
+    // The key is told to the terminal's reading rules first, then watched.
+    let ops: Vec<TextOp> = reduce(&mut state, &key(CaretMotion::PreviousLine, false))
+        .iter()
+        .filter_map(|effect| match own(effect) {
+            Effect::Text(request) => Some(request.op.clone()),
+            _ => None,
+        })
+        .collect();
+    let [TextOp::TerminalKey(told), TextOp::AwaitCaret(watch)] = ops.as_slice() else {
+        panic!("expected the key told and a caret watch, not {ops:?}");
     };
+    assert_eq!(
+        told,
+        &verbatim_model::TerminalKey {
+            kind: verbatim_model::TerminalKeyKind::Caret(verbatim_model::TerminalUnit::Line),
+            at_ms: KEY_PRESSED_AT,
+        }
+    );
     assert!(watch.since.is_none(), "no caret known yet");
 
     let mut state = SrState::new();
@@ -1466,6 +1479,7 @@ fn typed(text: &str) -> Input {
     Input::CharacterTyped {
         trace_id: TraceId::mint(),
         text: text.to_owned(),
+        at_ms: 0,
     }
 }
 
@@ -1631,16 +1645,13 @@ fn echo_only_in_edit_controls_stays_quiet_elsewhere() {
 }
 
 #[test]
-fn a_terminal_holds_typing_until_its_text_changes() {
+fn a_terminals_typing_waits_for_its_reading_rules_to_show_it() {
     let mut state = SrState::new();
     focus(&mut state, node(12, Role::Terminal, StateSet::new()));
+    // Its echo comes from the reading rules, once the terminal shows it
+    // (`tests/terminal.rs`); a text change alone says nothing.
     assert_eq!(spoken(&reduce(&mut state, &typed("l"))), []);
     let changed = event(NormalizedEvent::TextChanged { node_id: id(12) });
-    assert_eq!(spoken(&reduce(&mut state, &changed)), vec![character("l")]);
-
-    // A password prompt shows nothing: Enter drops what was held.
-    assert_eq!(spoken(&reduce(&mut state, &typed("s"))), []);
-    assert_eq!(spoken(&reduce(&mut state, &typed("\r"))), []);
     assert_eq!(spoken(&reduce(&mut state, &changed)), []);
 
     // With terminal passwords spoken, typing is echoed at once.
@@ -1766,9 +1777,41 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
     // The caret on 中 at cells 2 and 3 of a padded row.
     caret_event(&mut state, 13, line("ab中文cd    \r\n", 200, 2));
     settle(&mut state, line("ab中文cd    \r\n", 200, 2));
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextCharacter, 0));
+    // Every review command in a terminal reads the review cursor's line
+    // again first, where the cursor is (`docs/design/terminal-model.md`,
+    // section 5.6); a line read the same keeps its cell column.
+    let seeded = |state: &mut SrState, command: ReviewCommand, chunk: TextChunk| {
+        let effects = reduce(state, &self::command(command, 0));
+        let read = request(&effects);
+        let TextOp::Read(TextRead {
+            at, movement: None, ..
+        }) = read.op
+        else {
+            panic!("a read of the review cursor's line, not {:?}", read.op);
+        };
+        assert_eq!(
+            at,
+            TextPoint::At(TextPosition {
+                anchor: chunk.start,
+                offset: chunk.offset,
+            })
+        );
+        reduce(
+            state,
+            &completed(read.query_id, TextReply::Read { moved: 0, chunk }),
+        )
+    };
+    let effects = seeded(
+        &mut state,
+        ReviewCommand::ReviewNextCharacter,
+        line("ab中文cd    \r\n", 200, 2),
+    );
     assert_eq!(spoken(&effects), vec![character("文")]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewNextLine, 0));
+    let effects = seeded(
+        &mut state,
+        ReviewCommand::ReviewNextLine,
+        line("ab中文cd    \r\n", 200, 5),
+    );
     let effects = reduce(
         &mut state,
         &completed(
@@ -1781,12 +1824,17 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
     );
     assert_eq!(spoken(&effects), vec![UtteranceSegment::text("xy")]);
     // Cell 4 is past "xy": a blank cell, and the column is kept exactly.
-    let effects = reduce(
+    let effects = seeded(
         &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+        ReviewCommand::ReviewCurrentCharacter,
+        line("xy\r\n", 201, 2),
     );
     assert_eq!(spoken(&effects), vec![message(Message::Blank)]);
-    let effects = reduce(&mut state, &command(ReviewCommand::ReviewPreviousLine, 0));
+    let effects = seeded(
+        &mut state,
+        ReviewCommand::ReviewPreviousLine,
+        line("xy\r\n", 201, 2),
+    );
     let _ = reduce(
         &mut state,
         &completed(
@@ -1797,9 +1845,10 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
             },
         ),
     );
-    let effects = reduce(
+    let effects = seeded(
         &mut state,
-        &command(ReviewCommand::ReviewCurrentCharacter, 0),
+        ReviewCommand::ReviewCurrentCharacter,
+        line("ab中文cd    \r\n", 200, 5),
     );
     assert_eq!(spoken(&effects), vec![character("文")]);
 }
@@ -4506,6 +4555,7 @@ fn keys_pressed_behind_a_held_key_are_handled_after_it_in_order() {
     let typed_c = Input::CharacterTyped {
         trace_id: letter,
         text: "c".to_owned(),
+        at_ms: 0,
     };
     assert_eq!(reduce(&mut state, &typed_c), []);
     assert_eq!(

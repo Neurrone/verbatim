@@ -261,17 +261,17 @@ pub enum NormalizedEvent {
         /// The node whose text changed.
         node_id: NodeId,
     },
-    /// New output in a focused terminal, found by the outpost's diff of its
-    /// text (milestone M4 item 9): sent in place of
-    /// [`TextChanged`](Self::TextChanged) for a terminal, and only when its
-    /// text really changed, so a redraw with the same text sends nothing.
-    /// Core speaks it by the flood policy, and echoes typing it held once
-    /// the terminal shows it.
-    TerminalOutput {
+    /// What a focused terminal said (`docs/design/terminal-model.md`,
+    /// section 5): its new output and the answers to keys, which the
+    /// outpost's reading rules found in a read, or once the quiet period
+    /// passed. Sent in place of [`TextChanged`](Self::TextChanged) for a
+    /// terminal, and only when there is something to say. Core speaks the
+    /// answers to keys at once and the output by the flood policy.
+    TerminalSpeech {
         /// The terminal.
         node_id: NodeId,
-        /// What changed.
-        output: crate::TerminalOutput,
+        /// What it said.
+        speech: crate::TerminalSpeech,
     },
     /// The place being read in a node's text moved without the caret: the
     /// application scrolled to it, as a document does to an in-page link's
@@ -321,7 +321,7 @@ impl NormalizedEvent {
             | NormalizedEvent::Notification { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
             | NormalizedEvent::TextChanged { node_id }
-            | NormalizedEvent::TerminalOutput { node_id, .. }
+            | NormalizedEvent::TerminalSpeech { node_id, .. }
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
                 *node_id = node_id.with_outpost(outpost);
             }
@@ -596,6 +596,10 @@ pub enum Input {
         /// The text typed, a tab as a tab character and Enter as a carriage
         /// return.
         text: String,
+        /// Milliseconds on the run's shared clock when the hook saw the
+        /// key, the clock of a caret key's `pressed_at_ms`; 0 when unknown.
+        #[serde(default)]
+        at_ms: u64,
     },
     /// A key that ends or clears the command line being typed, Escape,
     /// Control+C, Control+D, or Control+Break, was passed to the focused
@@ -606,6 +610,10 @@ pub enum Input {
     ClearingKey {
         /// Trace ID minted when the key was observed.
         trace_id: TraceId,
+        /// As [`Input::CharacterTyped`]'s: when the hook saw the key; 0
+        /// when unknown.
+        #[serde(default)]
+        at_ms: u64,
     },
     /// Playback reached an index mark the reducer placed in an utterance
     /// ([`crate::SegmentContent::Mark`]), reported by the speech pipeline

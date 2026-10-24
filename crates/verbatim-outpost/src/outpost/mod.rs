@@ -190,16 +190,23 @@ pub(crate) struct Context {
     /// their cache requests; MSAA reads skip their calls, through the MSAA
     /// registry, which holds the same.
     fetches: Mutex<Fetches>,
-    /// Each focused terminal's anchor and memory, by node (milestone M4
-    /// item 9).
+    /// Each focused terminal's reading rules and memory, by node, kept
+    /// while the node is (`docs/design/terminal-model.md`, section 5.10).
     terminals: Mutex<HashMap<u64, crate::terminal::Terminal>>,
-    /// Core's request, by its id and trace, whose read a focused terminal
-    /// disturbed, by the terminal's node: answered by the terminal's next
-    /// read that settles. Kept apart from [`Context::terminals`], whose
-    /// lock a terminal read holds across its calls into the application,
-    /// under a lock never held across one, so the idle barrier's answer
-    /// never waits on the application (`worker::answer_idle`).
-    owed_reads: Mutex<HashMap<u64, (u64, TraceId)>>,
+    /// The terminal reading rules' settings, from Core
+    /// ([`SupervisorToOutpost::TerminalSettings`]).
+    terminal_settings: Mutex<verbatim_model::TerminalSettings>,
+    /// The focused terminal's node and when its quiet-period timer is due,
+    /// in milliseconds on the shared clock, while something waits for it.
+    /// Kept apart from [`Context::terminals`], whose lock a terminal read
+    /// holds across its calls into the application, under a lock never
+    /// held across one, so the idle barrier's answer, which waits for the
+    /// timer, never waits on the application (`worker::answer_idle`).
+    terminal_due: Mutex<Option<(u64, u64)>>,
+    /// Numbers the text anchors a terminal's review answers mint, from the
+    /// counter the anchor stores share, so no two anchors in an outpost
+    /// have the same number.
+    anchor_counter: Arc<AtomicU64>,
     /// How the worker reads the element that has the keyboard focus, for a
     /// focus-now query: a UIA focus event's element comes from the focus
     /// listener's read instead.
@@ -395,17 +402,24 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn owed_reads(&self) -> MutexGuard<'_, HashMap<u64, (u64, TraceId)>> {
-        self.owed_reads
+    /// The terminal reading rules' settings.
+    fn terminal_settings(&self) -> verbatim_model::TerminalSettings {
+        *self
+            .terminal_settings
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// How many of a change's newest lines a terminal read takes
-    /// ([`SupervisorToOutpost::TerminalLines`]), which also bounds the
-    /// output combined while it waits to be sent.
-    fn terminal_lines(&self) -> u16 {
-        self.outbound.terminal_lines()
+    /// The focused terminal's node and when its quiet-period timer is due.
+    fn terminal_due(&self) -> MutexGuard<'_, Option<(u64, u64)>> {
+        self.terminal_due
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A new text anchor's number.
+    fn mint_anchor(&self) -> u64 {
+        self.anchor_counter.fetch_add(1, Ordering::Relaxed) + 1
     }
 
     /// The request a node is fetched with, for the details the active
@@ -515,7 +529,7 @@ impl Context {
         self.patterns().clear();
         self.text_support().clear();
         self.terminals().clear();
-        self.owed_reads().clear();
+        *self.terminal_due() = None;
         *self.caret_watch() = None;
         drop(objects);
         nodes.len()
@@ -915,13 +929,15 @@ impl Outpost {
                 Arc::clone(&anchor_counter),
                 Arc::clone(&held_anchors),
             )),
-            edit_anchors: Mutex::new(Anchors::sharing(anchor_counter, held_anchors)),
+            edit_anchors: Mutex::new(Anchors::sharing(Arc::clone(&anchor_counter), held_anchors)),
+            anchor_counter,
             patterns: Mutex::new(HashMap::new()),
             text_support: Mutex::new(HashMap::new()),
             caret_read: Mutex::new(CaretRead::default()),
             fetches: Mutex::new(Fetches::default()),
             terminals: Mutex::new(HashMap::new()),
-            owed_reads: Mutex::new(HashMap::new()),
+            terminal_settings: Mutex::new(verbatim_model::TerminalSettings::default()),
+            terminal_due: Mutex::new(None),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             focus_window: Mutex::new(Arc::new(window::focus_window)),
@@ -1303,10 +1319,13 @@ impl Outpost {
                     .unwrap_or_else(PoisonError::into_inner) = *fetches;
                 context.msaa_registry.set_fetches(*fetches);
             }
-            SupervisorToOutpost::TerminalLines(lines) => {
-                context
-                    .outbound
-                    .set_terminal_lines((*lines).clamp(1, verbatim_model::MAX_TERMINAL_LINES));
+            SupervisorToOutpost::TerminalSettings(settings) => {
+                *context
+                    .terminal_settings
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner) = *settings;
+                // The reading rules take them at their next input
+                // (`worker::Worker::terminal_rules`).
             }
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
             // which takes the outpost, and handles `Assign`, which ends the

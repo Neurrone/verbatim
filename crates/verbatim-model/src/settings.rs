@@ -116,13 +116,6 @@ impl ReaderSettings {
     pub fn last_lines(&self) -> usize {
         usize::from(self.terminal_last_lines.clamp(1, MAX_TERMINAL_LINES))
     }
-
-    /// How many of a change's newest terminal lines an outpost reads: as
-    /// many as either limit can keep.
-    #[must_use]
-    pub fn terminal_read_lines(&self) -> u16 {
-        u16::try_from(self.full_lines().max(self.last_lines())).unwrap_or(MAX_TERMINAL_LINES)
-    }
 }
 
 impl Default for ReaderSettings {
@@ -157,7 +150,6 @@ mod tests {
         assert!(settings.report_terminal_output);
         assert_eq!(settings.full_lines(), 30);
         assert_eq!(settings.last_lines(), 30);
-        assert_eq!(settings.terminal_read_lines(), 30);
     }
 
     #[test]
@@ -169,7 +161,6 @@ mod tests {
         };
         assert_eq!(settings.full_lines(), 1);
         assert_eq!(settings.last_lines(), usize::from(MAX_TERMINAL_LINES));
-        assert_eq!(settings.terminal_read_lines(), MAX_TERMINAL_LINES);
     }
 
     #[test]

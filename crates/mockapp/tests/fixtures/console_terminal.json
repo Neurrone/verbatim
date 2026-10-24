@@ -10,7 +10,7 @@
       "name": "Text Area",
       "automation_id": "Text Area",
       "states": ["focusable"],
-      "text": "one\ntwo\nready>"
+      "text": "one                 \r\ntwo                 \r\nready>              \r\n"
     }
   ]
 }

@@ -1,103 +1,168 @@
-//! New output in a terminal (milestone M4 item 9; `docs/design/phase6-design.md`,
-//! "Terminal output: notifications or diffing"): what an outpost's diff of
-//! a terminal's text found since its last read, sent to Core as
-//! [`NormalizedEvent::TerminalOutput`](crate::NormalizedEvent::TerminalOutput).
+//! What a terminal says (`docs/design/terminal-model.md`, section 5): the
+//! outpost reads a focused terminal's text, aligns each read with its memory
+//! of the terminal's rows, and applies the reading rules
+//! (`verbatim_text::terminal_reading`); what they say is sent to Core as
+//! [`NormalizedEvent::TerminalSpeech`](crate::NormalizedEvent::TerminalSpeech),
+//! in the order it is spoken.
 //!
-//! The outpost never reads a terminal's whole buffer. Each read fetches the
-//! screen and diffs it by line with the screen as last seen
-//! (`docs/design/phase6-design.md`, "Terminal reading by diffing the screen"), and
-//! finds the last screen's top row again by its text to count the lines
-//! that scrolled by unread. What it found arrives in the order it is
-//! spoken: what is new above the last line read, that line where it
-//! changed in place, the lines that went by unread, then the newest lines.
-//! Lines are sent without their trailing padding; blank ones are sent as
-//! empty strings, which Core counts as lines but does not speak. A line is
-//! sent whole, however long (Dickson, 2026-10-07); Core bounds what it
-//! keeps waiting.
+//! Output (new lines, what a growing line gained, a redrawn row's change, a
+//! held line spoken as it was last read) goes through Core's flood policy,
+//! one utterance a line; a read's own flood summary arrives as
+//! [`TerminalItem::Skipped`]. The answers to keys (typing shown, the key's
+//! unit at the caret, text the caret's line gained or lost, a row away from
+//! the caret that is a key's answer, a suggestion) are spoken at once, ahead
+//! of any output. Text is sent without padding, and a line whole, however
+//! long (Dickson, 2026-10-07); Core bounds what it keeps waiting.
+//!
+//! Core tells the outpost of every key that reaches a focused terminal
+//! ([`TerminalKey`], in [`crate::TextOp::TerminalKey`]), with when it reached
+//! the program, since the rules judge which read a key's effects can be in
+//! by that time (section 5.5).
 
 use serde::{Deserialize, Serialize};
 
-/// What a terminal's diff found.
+/// What one read, key or quiet period of a terminal said, in order.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalOutput {
-    /// What is new on the screen above the last line read before: lines
-    /// inserted there, and what changed of lines rewritten in place there
-    /// (a message printed above a prompt, a status block, a selection
-    /// list's marker).
+pub struct TerminalSpeech {
+    /// What to say, in the order it is spoken.
+    pub items: Vec<TerminalItem>,
+    /// Whether the review cursor followed the caret: a key moved the caret
+    /// within its window with "review follows caret" on (section 5.6), so
+    /// the next review command reads at the caret.
     #[serde(default)]
-    pub above: Vec<String>,
-    /// The last line read before, changed in place since: a prompt that
-    /// grew, or a progress bar rewritten. `None` when it is unchanged.
-    pub changed: Option<LineChange>,
-    /// When lines went by unread, the first new lines, oldest first, before
-    /// them: the start of a flood, which is spoken in full ("Lines spoken in
-    /// full"). Each as in [`Self::lines`], at most as many. Empty when every
-    /// new line is in `lines`.
-    #[serde(default)]
-    pub head: Vec<String>,
-    /// Lines that went by unread, between [`Self::head`] (or the changed
-    /// line) and [`Self::lines`]. `None` when every new line is in `head`
-    /// and `lines`.
-    pub skipped: Option<Skipped>,
-    /// The newest lines, oldest first, each without its trailing padding;
-    /// an empty string is a blank line. At most `ReaderSettings::terminal_read_lines` of them.
-    pub lines: Vec<String>,
+    pub followed: bool,
 }
 
-impl TerminalOutput {
-    /// Whether nothing at all changed.
+impl TerminalSpeech {
+    /// Whether there is nothing to say and the review cursor did not
+    /// follow the caret.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.changed.is_none()
-            && self.above.is_empty()
-            && self.head.is_empty()
-            && self.skipped.is_none()
-            && self.lines.is_empty()
+        self.items.is_empty() && !self.followed
     }
 }
 
-/// The line an outpost last read, changed in place.
+/// The unit a key's answer at the caret is spoken in (section 5.5).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TerminalUnit {
+    /// The character at the caret.
+    Character,
+    /// The word at the caret.
+    Word,
+    /// The caret's line.
+    Line,
+}
+
+/// One thing a terminal says.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineChange {
-    /// What to speak of it: the text added at its end when it only grew,
-    /// otherwise the line from the start of the word where it first
-    /// differs, without padding.
-    pub text: String,
-    /// The whole line as it is now, without padding: what Core speaks in
-    /// place of an earlier version of the line still waiting to be
-    /// spoken, so a line rewritten quickly is spoken once.
-    pub line: String,
-    /// Whether the line only grew at its end, so `text` is exactly the
-    /// characters added, which may be the user's own typing showing.
-    pub appended: bool,
-    /// For a line that grew, the length in bytes of the white space at the
-    /// start of `text` that may have been on the line already. Lines are
-    /// compared without their trailing white space, which cannot be told
-    /// from the terminal's padding, so a line's own trailing space (the
-    /// space ending a prompt) comes back as if added once text follows it.
-    /// Core matches typing after the part of it the typing does not start
-    /// with.
-    #[serde(default)]
-    pub uncertain: usize,
-    /// What the line gained where it changed, between what it kept at its
-    /// start and at its end: for a line that grew, `text`; for one
-    /// rewritten, the characters inserted (a typed character in the middle
-    /// of a command), which Core matches with typing it holds, so a
-    /// rewrite that does not show the typing (a clock ticking on a password
-    /// prompt's line) never echoes it.
-    #[serde(default)]
-    pub inserted: String,
-    /// The line's change from the line as last read, when it differs from
-    /// this one, which is from what the line last said: a line that only
-    /// got shorter is remembered as it was said, so a progress line read
-    /// half rewritten says "51%", not "oading 51%"; but a line the user
-    /// cut short (Backspace, Escape) and is typing again shows that typing
-    /// only in its change since it was read. Core matches typing with this
-    /// change while it holds typing, and otherwise speaks this one. A
-    /// change with no text, and this set, is a line that came back to what
-    /// it said.
-    #[serde(default)]
-    pub since_read: Option<Box<LineChange>>,
+pub enum TerminalItem {
+    /// Output: a new line whole, what a growing line gained, a redrawn
+    /// row from the word that changed, or a held line as it was last read
+    /// (sections 4.3, 5.3 and 5.4). Spoken by the flood policy, one
+    /// utterance each; an empty one is a blank line, counted but not
+    /// spoken.
+    Output(String),
+    /// Lines of output counted, not spoken: a read's own flood summary.
+    Skipped(Skipped),
+    /// Typing the terminal showed at the caret, echoed by the typing echo
+    /// settings (section 5.5).
+    Echo(String),
+    /// A key's answer at the caret: the key's unit for a caret key, or the
+    /// landing rule's for any other (section 5.5); empty text past the
+    /// line's end.
+    Caret {
+        /// The unit.
+        unit: TerminalUnit,
+        /// The text at the caret in that unit.
+        text: String,
+    },
+    /// Text the caret's line gained that the user did not type (5.5).
+    Gained(String),
+    /// Text the caret's line lost next to the caret (section 5.5).
+    Lost(String),
+    /// A row away from the caret that gained text or emphasis within a
+    /// key's window: the key's answer, whole (section 5.7).
+    Answer(String),
+    /// A suggestion after the caret, in other colours than the typing
+    /// (section 5.7).
+    Suggestion(String),
+}
+
+impl TerminalItem {
+    /// Whether it is output, which the flood policy queues, rather than a
+    /// key's answer, which is spoken at once.
+    #[must_use]
+    pub fn is_output(&self) -> bool {
+        matches!(self, Self::Output(_) | Self::Skipped(_))
+    }
+
+    /// The text it carries, for bounding a message's size; none for a
+    /// count.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        match self {
+            Self::Output(text)
+            | Self::Echo(text)
+            | Self::Caret { text, .. }
+            | Self::Gained(text)
+            | Self::Lost(text)
+            | Self::Answer(text)
+            | Self::Suggestion(text) => text,
+            Self::Skipped(_) => "",
+        }
+    }
+}
+
+/// A key that reached a focused terminal (section 5.5), as the reading
+/// rules take it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalKey {
+    /// What it is.
+    pub kind: TerminalKeyKind,
+    /// When it reached the program, in milliseconds on the run's shared
+    /// clock, the clock reads are stamped with; a key held back reaches it
+    /// when it is passed on.
+    pub at_ms: u64,
+}
+
+/// What a key is, as the reading rules care.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TerminalKeyKind {
+    /// Characters typed.
+    Typed(String),
+    /// A caret key Verbatim knows, with the unit it moves by.
+    Caret(TerminalUnit),
+    /// A key that forgets typing not yet shown: Enter, Tab, Escape,
+    /// Control+C, Control+D and Control+Break.
+    Forget,
+    /// Any other key, answered by what it did.
+    Other,
+}
+
+/// The reading rules' settings, which Core sends each outpost when it
+/// starts and whenever they change
+/// (`SupervisorToOutpost::TerminalSettings`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalSettings {
+    /// "Report new output".
+    pub report_new_output: bool,
+    /// "Review follows caret".
+    pub review_follows_caret: bool,
+    /// "Lines spoken in full".
+    pub lines_in_full: u16,
+    /// "Last lines to speak".
+    pub last_lines: u16,
+}
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            report_new_output: true,
+            review_follows_caret: true,
+            lines_in_full: crate::DEFAULT_TERMINAL_LINES,
+            last_lines: crate::DEFAULT_TERMINAL_LINES,
+        }
+    }
 }
 
 /// How many lines went by unread.
@@ -164,12 +229,10 @@ mod tests {
     }
 
     #[test]
-    fn output_with_nothing_in_it_is_empty() {
-        assert!(TerminalOutput::default().is_empty());
-        let blank = TerminalOutput {
-            lines: vec![String::new()],
-            ..TerminalOutput::default()
-        };
-        assert!(!blank.is_empty());
+    fn output_is_queued_and_a_keys_answer_is_not() {
+        assert!(TerminalItem::Output("a".to_owned()).is_output());
+        assert!(TerminalItem::Skipped(Skipped::Count(2)).is_output());
+        assert!(!TerminalItem::Echo("a".to_owned()).is_output());
+        assert!(TerminalSpeech::default().is_empty());
     }
 }

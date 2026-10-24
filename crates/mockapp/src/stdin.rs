@@ -115,8 +115,8 @@ pub(crate) enum Command {
     SystemCaret(bool),
     /// `set-text <id> <text>`: replaces a text node's text, raising no
     /// event of mockapp's own, as a terminal's text changes before a client
-    /// reads it; `\n` in `text` is a line feed and `\\` a backslash, so one
-    /// stdin line can carry many lines. In the MSAA backend, the edit
+    /// reads it; `\n` in `text` is a line feed, `\r` a carriage return,
+    /// and `\\` a backslash, so one stdin line can carry many lines. In the MSAA backend, the edit
     /// control's text is replaced (`WM_SETTEXT`).
     SetText(String, String),
     /// `write-on-read <id> <text>`: the next time any range of a UIA text
@@ -459,6 +459,7 @@ fn unescape(text: &str) -> String {
         }
         match chars.next() {
             Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
             Some(other) => out.push(other),
             None => out.push('\\'),
         }

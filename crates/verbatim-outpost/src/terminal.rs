@@ -1,635 +1,311 @@
-//! A terminal's new output (milestone M4 item 9; `docs/design/phase6-design.md`,
-//! "Terminal reading by diffing the screen"), public so mockapp's tests
-//! drive it as the worker does.
+//! A focused terminal's reading (`docs/design/terminal-model.md`, sections
+//! 3 to 5), public so mockapp's tests drive it as the worker does.
 //!
-//! Every read fetches the screen, in one remote program
-//! ([`verbatim_uia_rops::terminal_screen`]), and diffs it by line with the
-//! screen as last seen ([`screen::diff`]): what was inserted is spoken,
-//! never what was only deleted, and a changed line speaks from the start of
-//! the word that changed. The screen's top two rows as last read are the
-//! anchor, found again by a range kept at the top row while the terminal
-//! has discarded nothing, and otherwise by their text; how far up they now
-//! lie is how far the text scrolled, which lines the two screens up, and the rows that
-//! scrolled by beyond the old screen's lines went by unread: the first of
-//! them are read too, so a flood's start is heard, and the rest are
-//! counted as skipped. When the anchor has left a history it is not found;
-//! with history above both screens that means the history overflowed, and
-//! the skipped lines are "more than" the history's rows left unspoken.
-//! On a screen with no history above it the range stays on its row while
-//! a full-screen program scrolls the text through the rows, so there the
-//! scroll is found from the text ([`screen::alternate_scroll`]).
-//! Otherwise (the screen cleared, a full-screen program's alternate screen
-//! opened or closed) the screens are lined up by their common lines.
+//! Every read is one snapshot of the terminal's text, from where the last
+//! read said to start to the document's end, taken in one remote program
+//! with the screen, the caret and its line, and, in the first read after a
+//! key, the screen's colours ([`verbatim_uia_rops::terminal_snapshot`]).
+//! The read is given to the terminal's reading rules
+//! ([`verbatim_text::terminal_reading::TerminalReader`]), which align it with
+//! their memory of the terminal's rows and say what is new and what the keys
+//! did; when they ask for the whole document, or for a read from further
+//! above to find how far a full history rotated, that read is taken at once
+//! and given instead. What they say is sent to Core as [`TerminalSpeech`].
 //!
-//! When to read is decided by on-demand reading ([`reading`]).
+//! When to read is decided by on-demand reading ([`reading`]); the review
+//! cursor's commands are answered from the same reads ([`review`]).
 
-pub mod keys;
 pub mod reading;
-pub mod screen;
+pub mod review;
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange,
 };
 use windows::core::AgileReference;
 
-use verbatim_model::{LineChange, Skipped, TerminalOutput};
+use verbatim_model::{
+    Skipped, TerminalItem, TerminalKey, TerminalKeyKind, TerminalSettings, TerminalSpeech,
+    TerminalUnit,
+};
+use verbatim_text::terminal_reading::{
+    ColourRun, Counted, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
+};
+use verbatim_text::terminal_rows::Read;
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
-    CaretAnswer, CaretLineQuery, Error as RopsError, Path, Screen, ScreenAnchor, ScreenQuery,
-    terminal_screen,
+    CaretAnswer, CaretLineQuery, Error as RopsError, Path, Snapshot, SnapshotQuery,
+    terminal_snapshot,
 };
 
 use crate::text::TextError;
 use reading::Reading;
-use screen::{Shift, Unwritten, diff, diff_after};
 
-pub use screen::ScreenRows;
+/// The most snapshots one read takes: its own, a read of the whole
+/// document, and searches further above for the block, each four times as
+/// far as the one before, which reach any history a terminal holds well
+/// within this many (`docs/design/terminal-model.md`, section 4.3, item 5).
+const MAX_SNAPSHOTS: usize = 12;
 
-/// What the outpost remembers of a terminal's screen between reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Memory {
-    /// The screen's lines as last read ([`screen_lines`]).
-    pub screen: Vec<String>,
-    /// The same lines as they were last said: a line that has only got
-    /// shorter since keeps what it said before it was cut, because it is
-    /// being rewritten (a progress line cleared and written again), and
-    /// the read that finds it written again says what changed from what it
-    /// said ("51%"), not from a fragment ("oading 51%").
-    pub said: Vec<String>,
-    /// Its top row, as the provider gave it: the anchor.
-    pub top_row: String,
-    /// The row after it.
-    pub next_row: String,
-    /// Whether that screen had no history above it.
-    pub alternate: bool,
-    /// The text's first row as it was read, as the provider gave it: while
-    /// it reads the same, the terminal has discarded nothing.
-    pub first_row: String,
-    /// The lines of the screen this one replaced whole, sharing no line
-    /// with it: the main screen a full-screen program's alternate screen
-    /// covers, which the terminal shows again as it was when the program
-    /// closes the alternate screen. `None` once a screen shares lines with
-    /// the one before it is replaced whole again.
-    pub main: Option<Vec<String>>,
-    /// The line of `screen` the caret was on, when it was read with it and
-    /// found there: the last line that reads as the caret's row does, or,
-    /// for a line that wrapped onto more rows, the last that holds it.
-    pub caret: Option<usize>,
-    /// How far up the screen before had scrolled when this one was read,
-    /// when that was found: 0 when the two line up row for row.
-    pub scrolled: Option<u32>,
-    /// How many blank rows ended the screen, which `screen` leaves out:
-    /// rows not yet written to ([`screen::unwritten_rows`]).
-    pub unwritten: usize,
-    /// How many rows each line of `screen` takes ([`screen::line_rows`]):
-    /// more than one for a line that wrapped. The reads count rows, and the
-    /// diff compares lines.
-    pub rows: Vec<usize>,
-}
-
-impl Memory {
-    /// How many rows the screen's lines took, which the next read's rows
-    /// are counted from.
-    #[must_use]
-    pub fn rows_held(&self) -> u32 {
-        let rows: usize = (0..self.screen.len()).map(|line| self.rows_of(line)).sum();
-        u32::try_from(rows).unwrap_or(u32::MAX)
-    }
-
-    /// Remembers `footer`, when given, as the screen's last line: still on
-    /// the screen, below the rows a read gave ([`footer_below`]).
-    fn keep_below(&mut self, footer: Option<String>) {
-        if let Some(footer) = footer {
-            self.screen.push(footer.clone());
-            self.said.push(footer);
-            self.rows.push(1);
-            self.unwritten = 0;
-        }
-    }
-
-    /// The memory without its last line: the screen above a footer a read
-    /// did not reach ([`footer_below`]).
-    fn without_last(&self) -> Self {
-        let mut memory = self.clone();
-        memory.screen.pop();
-        memory.said.truncate(memory.screen.len());
-        memory.rows.truncate(memory.screen.len());
-        memory
-    }
-
-    /// How many rows line `line` of the screen took: one when not known.
-    fn rows_of(&self, line: usize) -> usize {
-        self.rows.get(line).copied().unwrap_or(1)
-    }
-
-    /// The lines of the screen, as it said them and as it read, still on
-    /// the screen read after `shift` of its rows scrolled away, `new`: a
-    /// line that wrapped onto more rows and straddles the new screen's top
-    /// is the new screen's first line, what is left of it.
-    fn after_scroll(&self, shift: usize, new: &[String]) -> (Vec<String>, Vec<String>) {
-        let mut gone = 0;
-        let mut first = 0;
-        while first < self.screen.len() && gone + self.rows_of(first) <= shift {
-            gone += self.rows_of(first);
-            first += 1;
-        }
-        if first < self.screen.len() && gone < shift {
-            let left = new.first().cloned().unwrap_or_default();
-            let said = std::iter::once(left.clone())
-                .chain(self.said.iter().skip(first + 1).cloned())
-                .collect();
-            let screen = std::iter::once(left)
-                .chain(self.screen.iter().skip(first + 1).cloned())
-                .collect();
-            return (said, screen);
-        }
-        (
-            self.said.iter().skip(first).cloned().collect(),
-            self.screen.iter().skip(first).cloned().collect(),
-        )
+/// The reading rules' settings from Core's ([`TerminalSettings`]).
+#[must_use]
+pub fn rules_settings(settings: TerminalSettings) -> Settings {
+    Settings {
+        report_new_output: settings.report_new_output,
+        review_follows_caret: settings.review_follows_caret,
+        lines_in_full: usize::from(settings.lines_in_full.max(1)),
+        last_lines: usize::from(settings.last_lines.max(1)),
     }
 }
 
-/// A read of a terminal's screen, as text: [`Screen`] without its caret,
-/// so the diff can be tested on simulated text.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct ScreenText {
-    /// The screen's text, as its rows.
-    pub text: ScreenRows,
-    /// Its top row.
-    pub top_row: String,
-    /// The row after it.
-    pub next_row: String,
-    /// Whether it has no history above it.
-    pub alternate: bool,
-    /// How far up the anchor's top row now lies, when it was found.
-    pub shift: Option<u32>,
-    /// The first rows that went by unread.
-    pub head: ScreenRows,
-    /// How many rows `head` holds.
-    pub head_rows: u32,
-    /// The row the old screen's last line was on, as it is now.
-    pub old_last_row: String,
-    /// The rows of the whole text, when the anchor was sought and not
-    /// found.
-    pub document_rows: Option<u32>,
-    /// Whether the text held still while it was read.
-    pub settled: bool,
-    /// Whether the terminal's view moved while it was read.
-    pub view_moved: bool,
-    /// The text's first row.
-    pub first_row: String,
-    /// The caret's line, when the caret was read with the screen, as the
-    /// provider gave it.
-    pub caret_line: Option<String>,
-}
-
-impl From<&Screen> for ScreenText {
-    fn from(screen: &Screen) -> Self {
-        Self {
-            text: ScreenRows::from_utf16(&screen.text),
-            top_row: screen.top_row.clone(),
-            next_row: screen.next_row.clone(),
-            alternate: screen.alternate,
-            shift: screen.shift,
-            head: ScreenRows::from_utf16(&screen.head),
-            head_rows: screen.head_rows,
-            old_last_row: screen.old_last_row.clone(),
-            document_rows: screen.document_rows,
-            settled: screen.settled,
-            view_moved: screen.view_moved,
-            first_row: screen.first_row.clone(),
-            caret_line: screen
-                .caret
-                .as_ref()
-                .map(|caret| String::from_utf16_lossy(&caret.line.text)),
-        }
-    }
-}
-
-/// Where a terminal's screen is read from: the provider, or simulated text
-/// in the unit tests.
-pub trait ScreenSource {
-    /// What a read fails with.
-    type Error;
-
-    /// Reads the screen, finding `anchor`'s rows when given, and reading up
-    /// to `head_wanted` of the rows past the old screen's `seen_rows` (rows,
-    /// [`Memory::rows_held`]) that went by unread.
-    ///
-    /// # Errors
-    ///
-    /// The source's error, when the terminal is gone or cannot be read.
-    fn read(
-        &mut self,
-        anchor: Option<&Memory>,
-        seen_rows: u32,
-        head_wanted: u32,
-    ) -> Result<ScreenText, Self::Error>;
-}
-
-/// What a read found.
-#[derive(Debug, PartialEq, Eq)]
-#[expect(
-    clippy::large_enum_variant,
-    reason = "one per read, handed straight to the caller, never stored"
-)]
-pub enum Found {
-    /// What is new (empty when nothing is), and what to remember.
-    Output(TerminalOutput, Memory),
-    /// The terminal wrote to the screen while it was read, so nothing is
-    /// trusted and nothing is remembered: the change that disturbed it
-    /// causes another read.
-    Unsettled,
-}
-
-/// The lines of a block of `rows` rows read in one call, each without its
-/// line break and padding; one blank line for an empty block of rows.
-fn block_lines(text: &ScreenRows, rows: u32) -> Vec<String> {
-    if rows == 0 {
-        return Vec::new();
-    }
-    let lines = text.all_lines();
-    if lines.is_empty() {
-        return vec![String::new()];
-    }
-    lines
-}
-
-/// Why a terminal is read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ReadMode {
-    /// A focus arriving: only note where the text is now; what the screen
-    /// holds is not new to the user.
-    Baseline,
-    /// Its text changed, or Core asked: what is new.
-    Change,
-    /// Speech was cut off: what is new, for typing echo only. A read the
-    /// terminal wrote to meanwhile is still remembered, finding nothing, so
-    /// what came before the cut is never spoken.
-    Cancel,
-}
-
-/// What is new on a terminal's screen since `memory` was read, and what to
-/// remember. With no memory, or for a baseline, nothing is new.
-/// `head_wanted` is how many of the lines that went by unread are read
-/// from their first.
-///
-/// # Errors
-///
-/// The source's error.
-pub fn read_new<S: ScreenSource>(
-    source: &mut S,
-    memory: Option<&Memory>,
-    mode: ReadMode,
-    head_wanted: u32,
-) -> Result<Found, S::Error> {
-    let earlier = memory.filter(|_| mode != ReadMode::Baseline);
-    // Rows, as the read counts them: a line that wrapped took more.
-    let seen = earlier.map_or(0, Memory::rows_held);
-    let screen = source.read(earlier, seen, head_wanted)?;
-    let unsettled = earlier.is_some_and(|old| !trusted(old, &screen));
-    if unsettled && mode != ReadMode::Cancel {
-        return Ok(Found::Unsettled);
-    }
-    let new = screen.text.lines();
-    let below = earlier.and_then(|old| footer_below(old, &screen, &new));
-    let new_rows = screen
-        .text
-        .line_rows(screen::row_width(&screen.top_row, &screen.text));
-    let shift = scroll(&screen, earlier, &new);
-    let mut remembered = Memory {
-        screen: new.clone(),
-        said: new.clone(),
-        top_row: screen.top_row.clone(),
-        next_row: screen.next_row.clone(),
-        alternate: screen.alternate,
-        first_row: screen.first_row.clone(),
-        main: None,
-        caret: None,
-        scrolled: shift,
-        unwritten: screen.text.unwritten(),
-        rows: new_rows.clone(),
-    };
-    let Some(old) = earlier.filter(|_| !unsettled) else {
-        return Ok(Found::Output(TerminalOutput::default(), remembered));
-    };
-    // A screen that scrolled by a known shift is the same text moved on, as
-    // a flood moves it, however little of it is left: no screen switch, so
-    // the main screen is neither taken from it nor found again in it.
-    let (main, restored) = match shift {
-        Some(rows) if rows > 0 => (old.main.clone(), None),
-        _ => main_screen(old, &new),
-    };
-    remembered.main = main;
-    if let Some(output) = restored {
-        return Ok(Found::Output(output, remembered));
-    }
-    let (cursor, caret) = caret_lines(&screen, &new);
-    remembered.caret = caret;
-    let output = match shift {
-        Some(shift) => {
-            let unread = shift.saturating_sub(seen);
-            let mut head = block_lines(&screen.head, screen.head_rows);
-            let counted = unread.saturating_sub(screen.head_rows);
-            // The shift counts rows, and the diff compares lines. A footer
-            // below the rows read is no line of theirs.
-            let (said, kept) = match &below {
-                Some(_) => old.without_last().after_scroll(shift as usize, &new),
-                None => old.after_scroll(shift as usize, &new),
-            };
-            // The rows not written to moved up with the rest: those that
-            // scrolled past the old screen's lines are no longer below them.
-            let unwritten = Unwritten {
-                rows: old.unwritten.saturating_sub(unread as usize),
-                line_rows: &new_rows,
-            };
-            let mut found = diff_after(&said, &new, Shift::Known(0), cursor, unwritten);
-            let since_read = diff_after(&kept, &new, Shift::Known(0), cursor, unwritten).changed;
-            found.changed = with_since_read(found.changed, since_read);
-            keep_said(&mut remembered.said, &said);
-            let old_last_row =
-                verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']));
-            let mut lines = found.below;
-            let changed = if shift >= seen {
-                keep_footer(&mut lines, &old.screen, old_last_row);
-                last_line_now(&old.screen, old_last_row, &mut head)
-            } else {
-                found.changed
-            };
-            TerminalOutput {
-                above: found.above,
-                changed,
-                head,
-                skipped: (counted > 0).then_some(Skipped::Count(counted)),
-                lines,
-            }
-        }
-        None => match screen.document_rows {
-            // The anchor left a history above both screens: it overflowed.
-            Some(rows) if !screen.alternate && !old.alternate => overflowed(
-                rows,
-                new_rows.iter().sum::<usize>() + remembered.unwritten,
-                new,
-            ),
-            _ => {
-                let unwritten = Unwritten {
-                    rows: old.unwritten,
-                    line_rows: &new_rows,
-                };
-                let found = diff_after(&old.screen, &new, Shift::Unknown, cursor, unwritten);
-                TerminalOutput {
-                    above: found.above,
-                    changed: found.changed,
-                    lines: found.below,
-                    ..TerminalOutput::default()
-                }
-            }
-        },
-    };
-    remembered.keep_below(below);
-    Ok(Found::Output(output, remembered))
-}
-
-/// The line of `new`, a screen just read, its caret's row reads as, the
-/// last that does: the line whose change typing shows in; and the line the
-/// caret is on, that one or, for a row of a line that wrapped onto more,
-/// which the screen's text gives whole, the last line holding that row.
-fn caret_lines(screen: &ScreenText, new: &[String]) -> (Option<usize>, Option<usize>) {
-    let caret_row = screen
-        .caret_line
-        .as_deref()
-        .map(|line| verbatim_text::trim_padding(line.trim_end_matches(['\r', '\n'])));
-    let cursor = caret_row.and_then(|line| new.iter().rposition(|row| row == line));
-    let caret = cursor.or_else(|| {
-        caret_row
-            .filter(|row| !row.is_empty())
-            .and_then(|row| new.iter().rposition(|line| line.contains(row)))
-    });
-    (cursor, caret)
-}
-
-/// For a screen whose rows all scrolled away since `old` was read, what
-/// its last line, which output may have been written to, says where it is
-/// now, `old_last_row`: what it gained, as it was or grown. A row now
-/// holding something else was written over, as the row of a footer drawn
-/// lower is when a flood scrolls through it: it is a line of its own, the
-/// first after the old screen, put first in `head`, not a change of the
-/// line, which Core would put in place of the newest line still waiting.
-fn last_line_now(old: &[String], old_last_row: &str, head: &mut Vec<String>) -> Option<LineChange> {
-    let last = old.last()?;
-    if old_last_row.starts_with(last.as_str()) {
-        return screen::line_change(last, old_last_row);
-    }
-    if !old_last_row.trim().is_empty() {
-        head.insert(0, old_last_row.to_owned());
-    }
-    None
-}
-
-/// What a read says when the anchor left a history above both screens,
-/// which overflowed: the screen's lines, `new`, after the history's `rows`
-/// less those of the screen, `on_screen` (its lines' and those not written
-/// to), skipped; with no history beyond the screen, no count is possible.
-fn overflowed(rows: u32, on_screen: usize, new: Vec<String>) -> TerminalOutput {
-    TerminalOutput {
-        skipped: Some(
-            match rows.saturating_sub(u32::try_from(on_screen).unwrap_or(u32::MAX)) {
-                0 => Skipped::Uncounted,
-                beyond => Skipped::MoreThan(beyond),
-            },
-        ),
-        lines: new,
-        ..TerminalOutput::default()
-    }
-}
-
-/// Gives each line of `said`, the screen just read, what the same line of
-/// `old`, what the screen before said of its lines still on it, said, when
-/// it has only got shorter since ([`Memory::said`]).
-fn keep_said(said: &mut [String], old: &[String]) {
-    for (row, was) in said.iter_mut().zip(old) {
-        // A row erased whole is drawn again, not rewritten: what is
-        // written to it next is new.
-        if !row.trim().is_empty() && was.starts_with(row.as_str()) && was != row {
-            row.clone_from(was);
-        }
-    }
-}
-
-/// How far the text scrolled since `old` was read, the screen's lines now
-/// being `new`: the read's own shift, except on a screen with no history
-/// above it, before and now, where the range the read found its top row by
-/// stays on its row while a full-screen program scrolls the text through
-/// the rows, so the text says how far ([`screen::alternate_scroll`]).
-fn scroll(screen: &ScreenText, old: Option<&Memory>, new: &[String]) -> Option<u32> {
-    match (screen.shift, old) {
-        (Some(0), Some(old)) if screen.alternate && old.alternate => {
-            // Lines, which took the rows they took.
-            let lines = screen::alternate_scroll(&old.screen, new).unwrap_or(0);
-            let rows: usize = (0..lines).map(|line| old.rows_of(line)).sum();
-            Some(u32::try_from(rows).unwrap_or(u32::MAX))
-        }
-        (shift, _) => shift,
-    }
-}
-
-/// Whether a read after `old` can be trusted: its text held still, and
-/// either its view did not move or the anchor was found. Output that
-/// scrolls the view leaves every row it scrolled where it was, so the rows
-/// read are rows the terminal showed, and those below them are read next
-/// time. The console host moving its view down a row for each line written
-/// into a scroll region above a footer redraws the footer lower and writes
-/// over the row it left: the rows a read whose range was taken before the
-/// move gives are still rows the terminal showed, and the footer it lost
-/// is still below them ([`footer_below`]). During a flood in the console
-/// host the view moves under nearly every read, so distrusting them left
-/// the flood unread until it ended, losing its first lines and the anchor
-/// (9b2aa65 still set aside a flood above a footer that way).
-fn trusted(old: &Memory, screen: &ScreenText) -> bool {
-    screen.settled && (!screen.view_moved || old.screen.is_empty() || screen.shift.is_some())
-}
-
-/// For a read whose view moved while it was read, the old screen's last
-/// line when it is no longer on its row, as it was or grown: a footer the
-/// console host redrew a row lower, below the rows the read gives, and
-/// wrote over where it was. It is still on the screen, so it is
-/// remembered as the screen's last line, not found as new by the next
-/// read. `None` otherwise, or when the read's lines, `new`, end with it: a
-/// range taken after the footer was redrawn, the view moving again only
-/// later.
-fn footer_below(old: &Memory, screen: &ScreenText, new: &[String]) -> Option<String> {
-    let last = old
-        .screen
-        .last()
-        .filter(|_| screen.view_moved && screen.shift.is_some())?;
-    let now = verbatim_text::trim_padding(screen.old_last_row.trim_end_matches(['\r', '\n']));
-    (!last.trim().is_empty() && !now.starts_with(last.as_str()) && new.last() != Some(last))
-        .then(|| last.clone())
-}
-
-/// A focused terminal's memory and reading state, kept by the worker
-/// between reads.
-#[derive(Default)]
+/// A focused terminal's reading rules and what the reads need between
+/// them, kept by the worker while the terminal exists, across focus
+/// changes (`docs/design/terminal-model.md`, section 5.10).
 pub struct Terminal {
-    memory: Option<Memory>,
+    reader: TerminalReader,
+    /// The settings the reading rules were last given.
+    settings: TerminalSettings,
+    /// Where the next read starts ([`Snapshot::next_start`]).
+    start: Option<AgileReference<IUIAutomationTextRange>>,
+    /// The screen's height as the last read found it, in rows.
+    screen_rows: u32,
+    /// The screen's width as the last read found it, in cells.
+    width: usize,
+    /// Whether the next read takes the colours: a key reached the terminal
+    /// since the last read (section 5.7).
+    colours_due: bool,
     /// On-demand reading.
     pub reading: Reading,
-    /// Whether the terminal's `FindText` matches a row's padding, as the
-    /// console host's does and Windows Terminal's does not
-    /// ([`ScreenQuery::matches_padding`]), set by the worker from the
-    /// terminal's window.
-    pub matches_padding: bool,
-    /// When the last read that settled began, in milliseconds since the
-    /// Unix epoch: a text change observed before it is covered by that
-    /// read ([`Terminal::covers`]).
+    /// When the last read began, in milliseconds on the shared clock: a
+    /// text change observed before it is covered by that read
+    /// ([`Terminal::covers`]).
     read_started_ms: u64,
-    /// A range at the start of the screen's top row as last read, tried
-    /// before a search ([`ScreenAnchor::range`]).
-    top: Option<AgileReference<IUIAutomationTextRange>>,
-    /// When the first read that found the screen as `memory` holds it
-    /// ended: a key pressed after that cannot show in it, where one pressed
-    /// while it was under way can. Later reads that find the same screen
-    /// and caret leave it as it was.
-    memory_since_ms: u64,
-    /// The screen `memory` replaced when the screen or its caret last
-    /// changed, with its own `memory_since_ms`: the screen before a key
-    /// whose change was read before the key's request reached the outpost.
-    previous: Option<(Memory, u64)>,
     /// The caret last sent to Core for the terminal, as a caret report or
     /// in the answer to a caret key: a caret read that finds it unchanged,
     /// at the same place with the same line, is not sent again. Forgotten
     /// when the terminal gains the focus, and with the terminal when Core
     /// releases its node.
     pub sent_caret: Option<verbatim_model::CaretReport>,
+    /// When the reading rules' quiet-period timer is due, in milliseconds
+    /// on the shared clock (section 5.14).
+    due_ms: Option<u64>,
+    /// The places the review cursor's answers minted, each a text anchor's
+    /// number and the memory's place for it, oldest first ([`review`]).
+    places: std::collections::VecDeque<(u64, u64)>,
+    /// Whether the last read started at the document's start.
+    at_document_start: bool,
+    /// The caret as the last read found it.
+    caret: Option<review::CaretAt>,
 }
 
 impl Terminal {
-    /// The screen as it was before a key pressed at `pressed_at_ms` (Unix
-    /// milliseconds): the memory, when the first read that found its
-    /// screen ended before then; else the screen before the last change,
-    /// when its first read ended before then, the change having come with
-    /// the key, read before the key's request reached the outpost; `None`
-    /// otherwise, since either may show what the key did.
+    /// A terminal before its first read, read with `settings`.
     #[must_use]
-    pub fn screen_at(&self, pressed_at_ms: u64) -> Option<&Memory> {
-        if self.memory_since_ms < pressed_at_ms {
-            return self.memory.as_ref();
+    pub fn new(settings: TerminalSettings) -> Self {
+        Self {
+            reader: TerminalReader::new(rules_settings(settings)),
+            settings,
+            start: None,
+            screen_rows: 0,
+            width: 0,
+            colours_due: false,
+            reading: Reading::default(),
+            read_started_ms: 0,
+            sent_caret: None,
+            due_ms: None,
+            places: std::collections::VecDeque::new(),
+            at_document_start: false,
+            caret: None,
         }
-        self.previous
-            .as_ref()
-            .filter(|(_, since_ms)| *since_ms < pressed_at_ms)
-            .map(|(memory, _)| memory)
     }
 
-    /// Forgets what was read of the terminal before the focus arrived, as
-    /// NVDA takes a fresh snapshot of a terminal on focus
-    /// (`docs/design/terminal-model.md`, section 2.2):
-    /// the terminal then behaves the same whether the outpost kept it while
-    /// the focus was away or released it with its node. The reading is
-    /// kept, for the focus's transition to answer the request owed (which
-    /// the outpost keeps apart from the terminal), and so is the caret last
-    /// sent, which the focus forgets on its own schedule, before the caret
-    /// it asks for is read.
-    pub fn focus_arrived(&mut self) {
-        *self = Self {
-            reading: self.reading,
-            sent_caret: self.sent_caret.take(),
-            ..Self::default()
-        };
-    }
-
-    /// Remembers `memory`, read just now, with `top` as its range.
-    fn remember(&mut self, memory: Memory, top: Option<AgileReference<IUIAutomationTextRange>>) {
-        self.remember_at(memory, top, crate::protocol::now_us() / 1_000);
-    }
-
-    /// Remembers `memory`, whose read ended at `read_ms`, with `top` as its
-    /// range: when its screen or caret differs from the memory's, the
-    /// memory is kept as the screen before the change.
-    fn remember_at(
-        &mut self,
-        memory: Memory,
-        top: Option<AgileReference<IUIAutomationTextRange>>,
-        read_ms: u64,
-    ) {
-        match self.memory.take() {
-            Some(old) if old.screen == memory.screen && old.caret == memory.caret => {}
-            Some(old) => {
-                self.previous = Some((old, self.memory_since_ms));
-                self.memory_since_ms = read_ms;
-            }
-            None => self.memory_since_ms = read_ms,
-        }
-        self.memory = Some(memory);
-        self.top = top;
-    }
-}
-
-impl Terminal {
-    /// What is remembered of the screen, `None` before the first read.
+    /// The reading rules, for the tests.
     #[must_use]
-    pub fn memory(&self) -> Option<&Memory> {
-        self.memory.as_ref()
+    pub fn reader(&self) -> &TerminalReader {
+        &self.reader
     }
 
-    /// Notes a read that began at `started_ms` (Unix milliseconds) and
-    /// found `found`. Only a read that settled covers the changes observed
-    /// before it began: an unsettled one reported and remembered nothing,
-    /// so a change queued behind it must still be read.
-    pub fn note_read(&mut self, started_ms: u64, found: &Found) {
-        if matches!(found, Found::Output(..)) {
-            self.read_started_ms = started_ms;
-        }
+    /// When the quiet-period timer is due, `None` when nothing waits for
+    /// it.
+    #[must_use]
+    pub fn due_ms(&self) -> Option<u64> {
+        self.due_ms
     }
 
-    /// Whether a text change observed at `observed_at_ms` (Unix
-    /// milliseconds) is covered by the last read that settled, having been
-    /// observed before that read began.
+    /// Whether a text change observed at `observed_at_ms` (milliseconds on
+    /// the shared clock) is covered by the last read, having been observed
+    /// before that read began.
     #[must_use]
     pub fn covers(&self, observed_at_ms: u64) -> bool {
         observed_at_ms < self.read_started_ms
     }
+
+    /// Gives the reading rules `settings` when they changed. Turning
+    /// "report new output" off drops what output held.
+    pub fn update_settings(&mut self, settings: TerminalSettings) {
+        if settings != self.settings {
+            self.settings = settings;
+            let step = self.reader.set_settings(rules_settings(settings));
+            self.due_ms = step.timer;
+        }
+    }
+
+    /// Where the next read starts, for a read of the history above it.
+    #[must_use]
+    pub fn start_range(&self) -> Option<IUIAutomationTextRange> {
+        self.start.as_ref().and_then(|range| range.resolve().ok())
+    }
+
+    /// The screen's height as the last read found it, in rows.
+    #[must_use]
+    pub fn screen_rows(&self) -> u32 {
+        self.screen_rows
+    }
+
+    /// The focus arrived at the terminal at `at_ms`: the next read speaks
+    /// nothing but puts the review cursor at the caret (section 5.10).
+    pub fn focus(&mut self, at_ms: u64) {
+        let step = self.reader.focus(at_ms);
+        self.due_ms = step.timer;
+    }
+
+    /// The focus left the terminal: what waited for the quiet period is
+    /// dropped, and output written meanwhile is not heard on return.
+    pub fn blur(&mut self) {
+        let step = self.reader.blur();
+        self.due_ms = step.timer;
+    }
+
+    /// A key reached the terminal (section 5.5): its window opens, and the
+    /// next read takes the colours.
+    pub fn key(&mut self, key: &TerminalKey) -> TerminalSpeech {
+        self.colours_due = true;
+        let step = self.reader.key(rules_key(key));
+        self.take(&step)
+    }
+
+    /// The caret as the last read found it.
+    #[must_use]
+    pub fn caret(&self) -> Option<review::CaretAt> {
+        self.caret
+    }
+
+    /// The quiet-period timer came due at `now_ms`: what waited for it.
+    pub fn timer(&mut self, now_ms: u64) -> TerminalSpeech {
+        let step = self.reader.timer(now_ms);
+        self.take(&step)
+    }
+
+    /// Keeps what the next read and the review need of `read`, which the
+    /// reading rules handled with `step`, taking nothing again: the
+    /// screen's size, the caret, whether it started at the document's
+    /// start, when it began, and the timer.
+    fn handled(&mut self, read: &Read, step: &Step) {
+        if let Some(outcome) = &step.outcome {
+            self.screen_rows = u32::try_from(outcome.height).unwrap_or(u32::MAX);
+            self.width = outcome.width;
+            self.caret = outcome.caret.map(|row| review::CaretAt {
+                row,
+                column: read.caret_column,
+            });
+        }
+        self.at_document_start = read.at_document_start;
+        self.read_started_ms = read.at_ms;
+        self.due_ms = step.timer;
+    }
+
+    /// What `step` says, its timer kept.
+    fn take(&mut self, step: &Step) -> TerminalSpeech {
+        self.due_ms = step.timer;
+        speech_of(step)
+    }
+}
+
+/// What the reading rules said, as Core takes it.
+#[must_use]
+pub fn speech_of(step: &Step) -> TerminalSpeech {
+    let items = step
+        .speech
+        .iter()
+        .map(|speech| match speech {
+            Speech::Line { text, .. }
+            | Speech::Growth { text, .. }
+            | Speech::Changed { text, .. }
+            | Speech::Held { text } => TerminalItem::Output(text.clone()),
+            Speech::Skipped { count, .. } => TerminalItem::Skipped(match *count {
+                Counted::Lines(lines) => Skipped::Count(u32::try_from(lines).unwrap_or(u32::MAX)),
+                Counted::MoreThan(lines) => {
+                    Skipped::MoreThan(u32::try_from(lines).unwrap_or(u32::MAX))
+                }
+                Counted::Unknown => Skipped::Uncounted,
+            }),
+            Speech::Echo { text, .. } => TerminalItem::Echo(text.clone()),
+            Speech::Caret { unit, text, .. } => TerminalItem::Caret {
+                unit: match unit {
+                    Unit::Character => TerminalUnit::Character,
+                    Unit::Word => TerminalUnit::Word,
+                    Unit::Line => TerminalUnit::Line,
+                },
+                text: text.clone(),
+            },
+            Speech::Gained { text, .. } => TerminalItem::Gained(text.clone()),
+            Speech::Lost { text, .. } => TerminalItem::Lost(text.clone()),
+            Speech::Answer { text, .. } => TerminalItem::Answer(text.clone()),
+            Speech::Suggestion { text, .. } => TerminalItem::Suggestion(text.clone()),
+        })
+        .collect();
+    TerminalSpeech {
+        items,
+        followed: step.followed,
+    }
+}
+
+/// The reading rules' form of a snapshot taken at `at_ms`: its text as
+/// UTF-8, and the caret's row and its column in characters, from the caret
+/// read with it.
+#[must_use]
+pub fn read_of(snapshot: &Snapshot, at_ms: u64) -> Read {
+    let (caret_line, caret_column) = snapshot.caret.as_ref().map_or_else(
+        || (String::new(), 0),
+        |caret| caret_row(&caret.line.text, caret.line.offset),
+    );
+    Read {
+        text: String::from_utf16_lossy(&snapshot.text),
+        screen: String::from_utf16_lossy(&snapshot.screen),
+        from_start: snapshot.from_start,
+        shrank: snapshot.shrank,
+        at_document_start: snapshot.at_document_start,
+        alternate: snapshot.alternate,
+        first_row: snapshot.first_row.clone(),
+        caret_rows_to_end: snapshot.caret_rows_to_end,
+        caret_line,
+        caret_column,
+        at_ms,
+        above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
+    }
+}
+
+/// The caret's row as UTF-8, and the caret's column in it in characters,
+/// from the row's UTF-16 text and the code units before the caret.
+fn caret_row(row: &[u16], offset: usize) -> (String, usize) {
+    let before = String::from_utf16_lossy(&row[..offset.min(row.len())]);
+    (String::from_utf16_lossy(row), before.chars().count())
+}
+
+/// The read program's colours as the reading rules take them.
+fn colours_of(colours: &[Vec<verbatim_uia_rops::ColourRun>]) -> Vec<Vec<ColourRun>> {
+    colours
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|run| ColourRun {
+                    column: run.column,
+                    length: run.length,
+                    foreground: run.foreground,
+                    background: run.background,
+                })
+                .collect()
+        })
+        .collect()
 }
 
 /// Whether a failed remote operation or classic read means the terminal
@@ -640,68 +316,65 @@ fn is_gone(error: &RopsError) -> bool {
         .is_some_and(|code| verbatim_uia::element_is_gone(&windows::core::Error::from(code)))
 }
 
-/// A terminal's screen read through UIA: the remote program when `remote`,
-/// the classic implementation otherwise or when the program fails.
-struct UiaScreen<'a> {
-    uia: &'a Uia,
-    element: &'a IUIAutomationElement,
-    pattern: &'a IUIAutomationTextPattern,
-    /// The caret to read with the screen.
-    caret: Option<CaretLineQuery<'a>>,
+/// What [`read`] found.
+pub struct ReadAnswer {
+    /// What the reading rules said.
+    pub speech: TerminalSpeech,
     /// The caret the read found.
-    caret_found: Option<CaretAnswer>,
-    remote: bool,
-    matches_padding: bool,
-    /// The range at the start of the top row the last read remembered.
-    top: Option<IUIAutomationTextRange>,
-    /// The range at the start of the top row this read found.
-    top_found: Option<IUIAutomationTextRange>,
-    /// The path the read took.
-    path: Option<Path>,
+    pub caret: Option<CaretAnswer>,
+    /// The path the last snapshot took, for the caller to log a fallback.
+    pub path: Option<Path>,
+    /// When the read began, in milliseconds on the shared clock: what it
+    /// found is as of then.
+    pub started_ms: u64,
 }
 
-impl ScreenSource for UiaScreen<'_> {
-    type Error = TextError;
-
-    fn read(
-        &mut self,
-        anchor: Option<&Memory>,
-        seen_rows: u32,
-        head_wanted: u32,
-    ) -> Result<ScreenText, TextError> {
-        let query = ScreenQuery {
-            element: self.element,
-            pattern: self.pattern,
-            last_rows: anchor
-                .and_then(|memory| {
-                    memory
-                        .screen
-                        .len()
-                        .checked_sub(1)
-                        .map(|last| memory.rows_of(last))
-                })
-                .map_or(1, |rows| u32::try_from(rows).unwrap_or(u32::MAX)),
-            anchor: anchor.map(|memory| ScreenAnchor {
-                top: &memory.top_row,
-                next: &memory.next_row,
-                range: self.top.as_ref(),
-                first: &memory.first_row,
-                no_history: memory.alternate,
-            }),
-            matches_padding: self.matches_padding,
-            seen_rows,
-            head_wanted,
-            caret: self.caret,
+/// Reads `terminal` through UIA and gives the read to its reading rules,
+/// with the caret and its line read in the same round trip (`caret`), and
+/// the colours when a key reached the terminal since the last read. A read
+/// the rules want taken again, of the whole document or from further above,
+/// is taken at once. `waited` says whether the read waited for Core's
+/// speech queue (section 5.2). `remote` tries the remote program first.
+///
+/// # Errors
+///
+/// [`TextError::Gone`] when the terminal is gone, [`TextError::Failed`]
+/// when it could not be read.
+pub fn read<'a>(
+    uia: &'a Uia,
+    (element, pattern): (&'a IUIAutomationElement, &'a IUIAutomationTextPattern),
+    caret: CaretLineQuery<'a>,
+    terminal: &mut Terminal,
+    (remote, waited): (bool, bool),
+) -> Result<ReadAnswer, TextError> {
+    let started_ms = crate::protocol::now_us() / 1_000;
+    let start = terminal
+        .start
+        .as_ref()
+        .and_then(|range| range.resolve().ok());
+    let colours = terminal.colours_due.then_some(terminal.width);
+    let mut whole = false;
+    let mut above = u32::try_from(terminal.reader.memory().above()).unwrap_or(u32::MAX);
+    for _ in 0..MAX_SNAPSHOTS {
+        let query = SnapshotQuery {
+            element,
+            pattern,
+            start: if whole { None } else { start.as_ref() },
+            screen_rows: terminal.screen_rows,
+            whole,
+            above: if whole { 0 } else { above },
+            caret: Some(caret),
+            colours,
         };
-        let started = std::time::Instant::now();
+        let timer = std::time::Instant::now();
         let calls_before = verbatim_uia::calls::peek().uia;
-        let result = terminal_screen(self.uia, &query, self.remote);
-        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        let result = terminal_snapshot(uia, &query, remote);
+        let elapsed_us = u64::try_from(timer.elapsed().as_micros()).unwrap_or(u64::MAX);
         let calls = verbatim_uia::calls::peek().uia.saturating_sub(calls_before);
-        let (mut screen, path) = match result {
+        let (mut snapshot, path) = match result {
             Ok(answer) => answer,
             Err(error) => {
-                tracing::debug!(elapsed_us, calls, %error, "terminal screen read failed");
+                tracing::debug!(elapsed_us, calls, %error, "terminal snapshot failed");
                 return Err(if is_gone(&error) {
                     TextError::Gone
                 } else {
@@ -715,458 +388,98 @@ impl ScreenSource for UiaScreen<'_> {
             path = path.name(),
             elapsed_us,
             calls,
-            shift = ?screen.shift,
-            head_rows = screen.head_rows,
-            document_rows = ?screen.document_rows,
-            alternate = screen.alternate,
-            settled = screen.settled,
-            view_moved = screen.view_moved,
-            top = screen.top_row.trim_end(),
-            "terminal screen timing"
+            whole,
+            above,
+            text_units = snapshot.text.len(),
+            from_start = snapshot.from_start,
+            shrank = snapshot.shrank,
+            alternate = snapshot.alternate,
+            colours = snapshot.colours.is_some(),
+            "terminal snapshot timing"
         );
-        self.path = Some(path);
-        let text = ScreenText::from(&screen);
-        self.caret_found = screen.caret.take();
-        self.top_found = screen.top.take();
-        Ok(text)
+        let read = read_of(&snapshot, started_ms);
+        let read_colours = snapshot.colours.as_deref().map(colours_of);
+        let step = terminal.reader.read(&read, waited, read_colours.as_deref());
+        if step.whole_document {
+            whole = true;
+            continue;
+        }
+        if let Some(rows) = step.search_above {
+            above = u32::try_from(rows).unwrap_or(u32::MAX);
+            continue;
+        }
+        terminal.handled(&read, &step);
+        terminal.start = snapshot
+            .next_start
+            .take()
+            .and_then(|range| AgileReference::new(&range).ok());
+        if colours.is_some() {
+            terminal.colours_due = false;
+        }
+        return Ok(ReadAnswer {
+            speech: speech_of(&step),
+            caret: snapshot.caret.take(),
+            path: Some(path),
+            started_ms,
+        });
     }
+    tracing::warn!(
+        snapshots = MAX_SNAPSHOTS,
+        "a terminal read was asked again more times than any history needs; it is left unread"
+    );
+    Err(TextError::Failed(
+        "the reading rules asked for more reads than a history needs".to_owned(),
+    ))
 }
 
-/// What [`read`] found.
-pub struct ReadAnswer {
-    /// What is new, or that the read was disturbed.
-    pub found: Found,
-    /// The caret the read found.
-    pub caret: Option<CaretAnswer>,
-    /// The path the read took, for the caller to log a fallback.
-    pub path: Option<Path>,
-}
-
-/// Reads what is new on a focused terminal's screen since the last read
-/// ([`read_new`]) through UIA, keeping the memory in `terminal` (unless the
-/// read was disturbed). `remote` tries the remote program first. With
-/// `caret`, the caret and its line are read in the same round trip.
-///
-/// # Errors
-///
-/// [`TextError::Gone`] when the terminal is gone, [`TextError::Failed`]
-/// when it could not be read.
-pub fn read<'a>(
-    uia: &'a Uia,
-    (element, pattern): (&'a IUIAutomationElement, &'a IUIAutomationTextPattern),
-    caret: Option<CaretLineQuery<'a>>,
-    terminal: &mut Terminal,
-    (head_wanted, remote, mode): (u32, bool, ReadMode),
-) -> Result<ReadAnswer, TextError> {
-    let mut source = UiaScreen {
-        uia,
-        element,
-        pattern,
-        caret,
-        caret_found: None,
-        remote,
-        matches_padding: terminal.matches_padding,
-        top: terminal.top.as_ref().and_then(|range| range.resolve().ok()),
-        top_found: None,
-        path: None,
-    };
-    let found = read_new(&mut source, terminal.memory.as_ref(), mode, head_wanted)?;
-    if let Found::Output(_, memory) = &found {
-        let top = source
-            .top_found
-            .as_ref()
-            .and_then(|range| AgileReference::new(range).ok());
-        terminal.remember(memory.clone(), top);
-    }
-    Ok(ReadAnswer {
-        found,
-        caret: source.caret_found,
-        path: source.path,
-    })
-}
-
-/// The text one message's terminal output may take, well inside
+/// The text one message's terminal speech may take, well inside
 /// [`crate::protocol::MAX_MESSAGE_BYTES`], since JSON's escaping can make a
 /// line several times longer ([`split`]).
 pub const MESSAGE_TEXT_BUDGET: usize = crate::protocol::MAX_MESSAGE_BYTES / 8;
 
-/// `output` split into outputs that each take at most `budget` bytes of
+/// `speech` split into parts that each take at most `budget` bytes of
 /// text, in order, so that a message carrying one stays within
-/// [`crate::protocol::MAX_MESSAGE_BYTES`] (`docs/design/phase6-design.md`, the limit
-/// on outpost messages). What is said of the last line read before
-/// (`above` and `changed`) goes in the first; the rest keeps its order,
-/// the lines before a skipped count as a head and those after it as the
-/// newest lines. A single line larger than the budget is an output of its
-/// own. One output that fits is returned as it is.
+/// [`crate::protocol::MAX_MESSAGE_BYTES`]. A single item larger than the
+/// budget is a part of its own; the review cursor's following goes with the
+/// last part. Speech that fits is returned as it is.
 #[must_use]
-pub fn split(output: TerminalOutput, budget: usize) -> Vec<TerminalOutput> {
-    let size = |line: &String| line.len() + 8;
-    let total: usize = output
-        .above
-        .iter()
-        .chain(&output.head)
-        .chain(&output.lines)
-        .map(size)
-        .sum::<usize>()
-        + output
-            .changed
-            .as_ref()
-            .map_or(0, |change| change.text.len() + change.line.len());
-    if total <= budget {
-        return vec![output];
+pub fn split(speech: TerminalSpeech, budget: usize) -> Vec<TerminalSpeech> {
+    let size = |item: &TerminalItem| item.text().len() + 16;
+    if speech.items.iter().map(size).sum::<usize>() <= budget {
+        return vec![speech];
     }
-    let mut first = TerminalOutput {
-        changed: output.changed.clone(),
-        ..TerminalOutput::default()
-    };
-    let mut parts: Vec<TerminalOutput> = Vec::new();
-    let mut used = first
-        .changed
-        .as_ref()
-        .map_or(0, |change| change.text.len() + change.line.len());
-    let mut above = output.above;
-    let mut stream = pieces(TerminalOutput {
-        above: Vec::new(),
-        ..output
-    });
-    for line in above.drain(..) {
-        if used + size(&line) > budget && !first.above.is_empty() {
-            break;
-        }
-        used += size(&line);
-        first.above.push(line);
-    }
-    // Lines of `above` that did not fit go first among the rest.
-    let mut rest: Vec<Piece> = above.into_iter().map(Piece::Line).collect();
-    rest.append(&mut stream);
-    let mut current = first;
-    for piece in rest {
-        let cost = match &piece {
-            Piece::Line(line) => size(line),
-            Piece::Skipped(_) => 16,
-        };
-        if used + cost > budget && !current.is_empty() {
+    let mut parts: Vec<TerminalSpeech> = Vec::new();
+    let mut current = TerminalSpeech::default();
+    let mut used = 0;
+    for item in speech.items {
+        let cost = size(&item);
+        if used + cost > budget && !current.items.is_empty() {
             parts.push(std::mem::take(&mut current));
             used = 0;
         }
         used += cost;
-        match piece {
-            Piece::Skipped(skipped) => {
-                current.head.append(&mut current.lines);
-                current.skipped = Some(current.skipped.map_or(skipped, |was| was.plus(skipped)));
-            }
-            Piece::Line(line) => current.lines.push(line),
-        }
+        current.items.push(item);
     }
-    if !current.is_empty() {
-        parts.push(current);
-    }
+    current.followed = speech.followed;
+    parts.push(current);
     parts
 }
 
-/// One piece of new output, in the order it is spoken.
-enum Piece {
-    Line(String),
-    Skipped(Skipped),
-}
-
-/// The new lines of `output`, in the order they are spoken, without its
-/// changed line.
-fn pieces(output: TerminalOutput) -> Vec<Piece> {
-    let mut pieces: Vec<Piece> = output.head.into_iter().map(Piece::Line).collect();
-    pieces.extend(output.skipped.map(Piece::Skipped));
-    pieces.extend(output.lines.into_iter().map(Piece::Line));
-    pieces
-}
-
-/// Whether `line` holds nothing but white space, which Core does not speak.
-fn is_blank(line: &str) -> bool {
-    line.chars().all(verbatim_text::is_space)
-}
-
-/// One output that says what `older` and then `newer` say, for the same
-/// terminal, when `newer` was found before `older` could be sent: the
-/// outpost's messages to Core are merged while they wait
-/// (`docs/crates/verbatim-outpost.md`, "Messages to Core"). It keeps the
-/// flood policy's limits: at most `wanted` lines in its head and as many
-/// in its lines, the rest counted as skipped, which Core then treats as it
-/// treats any output.
-///
-/// `newer`'s changed line is the last line `older` read. When `older` has
-/// new lines, that line is among them and not yet spoken, so the whole line
-/// as it is now takes its place, as Core puts a changed line in place of an
-/// earlier version still waiting; when the last of them is blank, Core
-/// would speak the change after it, and so does the combined output. When
-/// `older` has none, the two changes of the same line become one
-/// ([`merged_change`]).
+/// The reading rules' key for what Core sent.
 #[must_use]
-pub fn combine(older: TerminalOutput, newer: TerminalOutput, wanted: usize) -> TerminalOutput {
-    let wanted = wanted.max(1);
-    let mut older = older;
-    // What `older` found above its last line comes first; its change of
-    // that line is then a line like the others.
-    let mut stream: Vec<Piece> = std::mem::take(&mut older.above)
-        .into_iter()
-        .map(Piece::Line)
-        .collect();
-    let mut older_changed = older.changed.take();
-    if !stream.is_empty()
-        && let Some(change) = older_changed.take()
-    {
-        stream.push(Piece::Line(change.text));
-    }
-    stream.extend(pieces(older));
-    let TerminalOutput {
-        above: newer_above,
-        changed: newer_changed,
-        head,
-        skipped,
-        lines,
-    } = newer;
-    let changed = if stream.is_empty() && newer_above.is_empty() {
-        merged_change(older_changed, newer_changed)
-    } else {
-        if stream.is_empty()
-            && let Some(change) = older_changed.take()
-        {
-            stream.push(Piece::Line(change.text));
-        }
-        let in_place = matches!(stream.last(), Some(Piece::Line(line)) if !is_blank(line));
-        match newer_changed {
-            Some(change) if in_place => {
-                if let Some(Piece::Line(line)) = stream.last_mut() {
-                    *line = change.line;
-                }
-                stream.extend(newer_above.into_iter().map(Piece::Line));
-            }
-            Some(change) => {
-                stream.extend(newer_above.into_iter().map(Piece::Line));
-                stream.push(Piece::Line(change.text));
-            }
-            None => stream.extend(newer_above.into_iter().map(Piece::Line)),
-        }
-        older_changed
-    };
-    stream.extend(pieces(TerminalOutput {
-        head,
-        skipped,
-        lines,
-        ..TerminalOutput::default()
-    }));
-    let (head, skipped, lines) = fit(stream, wanted);
-    TerminalOutput {
-        above: Vec::new(),
-        changed,
-        head,
-        skipped,
-        lines,
-    }
-}
-
-/// Fits new output into a head, a skipped count, and the newest lines, at
-/// most `wanted` lines each: everything when it is no more than `wanted`
-/// lines with nothing skipped; otherwise the lines before the first skipped
-/// count (the start of the flood) as the head, the lines after the last
-/// one as the newest lines, and everything between them counted.
-fn fit(stream: Vec<Piece>, wanted: usize) -> (Vec<String>, Option<Skipped>, Vec<String>) {
-    let any_skipped = stream
-        .iter()
-        .any(|piece| matches!(piece, Piece::Skipped(_)));
-    if !any_skipped && stream.len() <= wanted {
-        let lines = stream
-            .into_iter()
-            .filter_map(|piece| match piece {
-                Piece::Line(line) => Some(line),
-                Piece::Skipped(_) => None,
-            })
-            .collect();
-        return (Vec::new(), None, lines);
-    }
-    let mut rest = std::collections::VecDeque::from(stream);
-    let mut head = Vec::new();
-    while head.len() < wanted
-        && let Some(Piece::Line(_)) = rest.front()
-    {
-        if let Some(Piece::Line(line)) = rest.pop_front() {
-            head.push(line);
-        }
-    }
-    let mut lines = Vec::new();
-    while lines.len() < wanted
-        && let Some(Piece::Line(_)) = rest.back()
-    {
-        if let Some(Piece::Line(line)) = rest.pop_back() {
-            lines.push(line);
-        }
-    }
-    lines.reverse();
-    let skipped = rest
-        .into_iter()
-        .map(|piece| match piece {
-            Piece::Line(_) => Skipped::Count(1),
-            Piece::Skipped(count) => count,
-        })
-        .reduce(Skipped::plus);
-    (head, skipped, lines)
-}
-
-/// Two changes of the same line, `older` and then `newer`, as one: what
-/// changed from the line as it was before `older` to the line as it is
-/// after `newer`. Each change's text is the end of its line, from where it
-/// differs, so the line is unchanged up to the earlier of the two starts.
-/// It only grew when both only grew.
-fn merged_change(older: Option<LineChange>, newer: Option<LineChange>) -> Option<LineChange> {
-    let (older, newer) = match (older, newer) {
-        (older, None) => return older,
-        (None, newer) => return newer,
-        (Some(older), Some(newer)) => (older, newer),
-    };
-    let start = |change: &LineChange| {
-        change
-            .line
-            .len()
-            .checked_sub(change.text.len())
-            .filter(|&start| change.line.get(start..) == Some(change.text.as_str()))
-    };
-    let (Some(older_start), Some(newer_start)) = (start(&older), start(&newer)) else {
-        // Not a change this outpost made; say the whole line.
-        return Some(LineChange {
-            text: newer.line.clone(),
-            line: newer.line,
-            appended: false,
-            uncertain: 0,
-            inserted: String::new(),
-            since_read: None,
-        });
-    };
-    let from = older_start.min(newer_start);
-    let appended = older.appended && newer.appended;
-    let inserted = if appended {
-        newer.line[from..].to_owned()
-    } else {
-        older.inserted + &newer.inserted
-    };
-    Some(LineChange {
-        text: newer.line[from..].to_owned(),
-        line: newer.line,
-        appended,
-        uncertain: if appended { older.uncertain } else { 0 },
-        inserted,
-        since_read: merged_change(
-            older.since_read.map(|change| *change),
-            newer.since_read.map(|change| *change),
-        )
-        .map(Box::new),
-    })
-}
-
-/// For a screen whose rows all scrolled away since `old` was read, its
-/// lines `lines`, all new: when the old screen's last line was a footer
-/// that stayed on the screen's last row while the rows above it scrolled
-/// (a scroll region above it), it is said only as it changed. That is so
-/// when the row it was on now holds something else (`old_last_row`, not
-/// that line nor that line grown, as output written to a last line would
-/// be), and the new screen's last line shares a start with it.
-fn keep_footer(lines: &mut Vec<String>, old: &[String], old_last_row: &str) {
-    let Some(footer) = old.last().filter(|line| !line.trim().is_empty()) else {
-        return;
-    };
-    let Some(now) = lines.last() else {
-        return;
-    };
-    let moved_on = !old_last_row.starts_with(footer.as_str());
-    let shares_start = footer
-        .chars()
-        .zip(now.chars())
-        .take_while(|(a, b)| a == b)
-        .next()
-        .is_some();
-    if moved_on && shares_start {
-        let change = screen::line_change(footer, now);
-        lines.pop();
-        lines.extend(change.map(|change| change.text.trim_start().to_owned()));
-    }
-}
-
-/// What a read whose new screen is `new` makes of the main screen
-/// (`Memory::main`), after the screen `old`: the main screen to remember
-/// from now on, and, when `new` is the main screen shown again as it was
-/// after a full-screen program closed its alternate screen, what is new on
-/// it since, which is then the read's output. A screen replaced whole is
-/// remembered as the main screen: a full-screen program opened its
-/// alternate screen over it.
-fn main_screen(old: &Memory, new: &[String]) -> (Option<Vec<String>>, Option<TerminalOutput>) {
-    if !replaces_whole(&old.screen, new) {
-        return (old.main.clone(), None);
-    }
-    let restored = old
-        .main
-        .as_ref()
-        .and_then(|main| main_shift(main, new).map(|shift| (main, shift)));
-    match restored {
-        Some((main, shift)) => {
-            let found = diff(main, new, Shift::Known(shift), None);
-            let output = TerminalOutput {
-                above: found.above,
-                changed: found.changed,
-                lines: found.below,
-                ..TerminalOutput::default()
-            };
-            (None, Some(output))
-        }
-        None => (Some(old.screen.clone()), None),
-    }
-}
-
-/// Whether `new` replaced `old` whole: `old` has lines that are not blank,
-/// and none of them is on `new`, nor grown there or cut short, as a line
-/// being typed on is. A screen cleared on its way to being drawn again
-/// (the alternate screen cleared before a program draws it) counts.
-fn replaces_whole(old: &[String], new: &[String]) -> bool {
-    let written = |line: &&String| !line.trim().is_empty();
-    let related = |old: &String| {
-        new.iter()
-            .filter(written)
-            .any(|new| new.starts_with(old.as_str()) || old.starts_with(new.as_str()))
-    };
-    old.iter().any(|line| written(&line)) && !old.iter().filter(written).any(related)
-}
-
-/// How many of the main screen's first lines, `main`, have scrolled away
-/// on the screen shown again after an alternate screen, `new`: the fewest
-/// whose removal leaves lines that start `new` as they were, the last
-/// allowed to have grown (output written to it). `None` when no part of
-/// the main screen starts `new`, as after the screen was cleared.
-fn main_shift(main: &[String], new: &[String]) -> Option<usize> {
-    (0..main.len()).find(|&first| {
-        let kept = &main[first..];
-        let (last, earlier) = kept.split_last().expect("kept is not empty");
-        new.len() >= kept.len()
-            && new[..earlier.len()] == *earlier
-            && new[earlier.len()].starts_with(last.as_str())
-    })
-}
-
-/// The changed line's change from what it said, `said`, with its change
-/// since it was read, `since_read`, kept beside it where the two differ
-/// ([`LineChange::since_read`]); a line whose change since it was read
-/// brought it back to what it said is a change with nothing to speak.
-fn with_since_read(said: Option<LineChange>, since_read: Option<LineChange>) -> Option<LineChange> {
-    match (said, since_read) {
-        (said, None) => said,
-        (Some(said), Some(since_read)) if said == since_read => Some(said),
-        (Some(said), Some(since_read)) => Some(LineChange {
-            since_read: Some(Box::new(since_read)),
-            ..said
-        }),
-        (None, Some(since_read)) => Some(LineChange {
-            text: String::new(),
-            line: since_read.line.clone(),
-            appended: false,
-            uncertain: 0,
-            inserted: String::new(),
-            since_read: Some(Box::new(since_read)),
-        }),
+pub fn rules_key(key: &TerminalKey) -> Key {
+    Key {
+        kind: match &key.kind {
+            TerminalKeyKind::Typed(text) => KeyKind::Typed(text.clone()),
+            TerminalKeyKind::Caret(unit) => KeyKind::Caret(match unit {
+                TerminalUnit::Character => Unit::Character,
+                TerminalUnit::Word => Unit::Word,
+                TerminalUnit::Line => Unit::Line,
+            }),
+            TerminalKeyKind::Forget => KeyKind::Forget,
+            TerminalKeyKind::Other => KeyKind::Other,
+        },
+        at_ms: key.at_ms,
     }
 }
 

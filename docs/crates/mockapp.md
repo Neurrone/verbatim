@@ -161,10 +161,13 @@ that owns the caret, the window on the UIA backend and the edit control
 on the MSAA backend, as Windows raises them when an application moves
 its caret, or shows it again after a move, as a classic edit control
 does), `set-text <id> <text>` (replaces a UIA
-text node's text, with `\n` for a line feed and `\\` for a backslash,
-raising no event, as a terminal's buffer changes before a client reads it;
-the terminal tests write lines, discard the oldest, and clear the screen
-with it; a UIA range keeps its offsets, so a range read after the text
+text node's text, with `\n` for a line feed, `\r` for a carriage return,
+and `\\` for a backslash, raising no event, as a terminal's buffer changes
+before a client reads it; the terminal tests write rows padded to the
+width, each ended by a carriage return and line feed, as the terminals
+give them, the last line break leaving an empty last line, so moving by
+lines from the caret to the end counts the caret's row as the terminals
+do; a UIA range keeps its offsets, so a range read after the text
 is replaced holds the new text at those offsets, not text that followed
 an edit; on the MSAA backend it replaces the edit control's text with
 `WM_SETTEXT`, on which the control raises its own value change),

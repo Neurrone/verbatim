@@ -467,50 +467,6 @@ pub(crate) fn wait_for_caret_on(
     }
 }
 
-/// Waits until `events`, a subscription to the events Core receives,
-/// carries terminal output whose last line, the terminal's last line as
-/// that read found it, is `line`: the newest of its lines, or, when it has
-/// none, the line last read changed in place.
-///
-/// # Errors
-///
-/// Returns an error if no such output arrives within `timeout`, or the
-/// connection fails.
-pub(crate) fn wait_for_output_ending_on(
-    events: &mut ControlClient,
-    line: &str,
-    timeout: Duration,
-) -> io::Result<()> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match events.next_frame() {
-            Ok(Frame::Event {
-                event: NormalizedEvent::TerminalOutput { output, .. },
-                ..
-            }) if output
-                .lines
-                .last()
-                .or(output.changed.as_ref().map(|changed| &changed.line))
-                .is_some_and(|last| last == line) =>
-            {
-                return Ok(());
-            }
-            Ok(_) => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) => {}
-            Err(error) => return Err(error),
-        }
-        if Instant::now() >= deadline {
-            return Err(io::Error::other(format!(
-                "Core received no terminal output ending on the line {line:?} within {timeout:?}"
-            )));
-        }
-    }
-}
-
 /// The windows of every Windows Terminal process other than `own`, the
 /// harness's: compared before and after the harness's starts, they show
 /// that no other Windows Terminal process was asked to open a window.

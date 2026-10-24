@@ -84,7 +84,19 @@ pub(crate) fn run(
         return Outcome::Done(Vec::new());
     };
     let node = navigator.object.id;
+    let grid = is_grid(navigator.object.role);
     match navigator.text.clone() {
+        // A terminal's review cursor is a place in the outpost's memory of
+        // its rows, which output can move: every command first reads the
+        // line where it is now (`docs/design/terminal-model.md`, section
+        // 5.6).
+        ReviewText::At(position) if grid => Outcome::Done(seed(
+            state,
+            node,
+            TextPoint::At(point_of(&position)),
+            command,
+            repeat,
+        )),
         ReviewText::At(position) => {
             Outcome::Done(execute(state, trace_id, node, command, repeat, &position))
         }
@@ -675,7 +687,18 @@ pub(crate) fn reply(
         (TextFollowUp::Seed { command, repeat }, TextReply::Read { chunk, .. }) => {
             let grid = navigator_grid(state);
             let offset = chunk.offset as usize;
-            let position = position_at(&Arc::new(chunk), offset, grid);
+            let mut position = position_at(&Arc::new(chunk), offset, grid);
+            // A terminal's line read again where the review cursor was,
+            // unchanged, keeps its cell column, which may lie past the
+            // row's text, as moving down a column of a table leaves it.
+            if let Some(ReviewText::At(was)) =
+                state.navigator.as_ref().map(|navigator| &navigator.text)
+                && grid
+                && was.line.text == position.line.text
+                && was.offset == position.offset
+            {
+                position.column = was.column;
+            }
             set_position(state, position.clone());
             execute(state, trace_id, pending.node, command, repeat, &position)
         }

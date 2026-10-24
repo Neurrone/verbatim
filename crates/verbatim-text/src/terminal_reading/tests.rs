@@ -19,6 +19,8 @@ struct Term {
     terminal: Terminal,
     reader: TerminalReader,
     query: Query,
+    /// Whether the last read moved the review position to the caret.
+    followed: bool,
 }
 
 impl Term {
@@ -38,6 +40,7 @@ impl Term {
             terminal: Terminal::new(flavor, width, height, history),
             reader: TerminalReader::new(settings),
             query: Query::default(),
+            followed: false,
         };
         term.query.above = u32::try_from(term.reader.memory().above()).expect("a few rows");
         let first = term.read(0);
@@ -130,8 +133,12 @@ impl Term {
                 whole: false,
                 above: u32::try_from(self.reader.memory().above()).expect("a small screen"),
             };
+            // Whether the review position followed is asserted beside where
+            // it is ([`Term::review`]).
+            self.followed = step.followed;
             return Step {
                 outcome: None,
+                followed: false,
                 ..step
             };
         }
@@ -160,6 +167,7 @@ fn step(speech: Vec<Speech>, withheld: Vec<Withheld>, timer: Option<u64>) -> Ste
         whole_document: false,
         search_above: None,
         outcome: None,
+        followed: false,
     }
 }
 
@@ -739,8 +747,8 @@ fn the_review_cursor_follows_the_caret_a_key_moved() {
     let mut term = Term::new(20, 5, 10);
     term.write("a\r\nb\r\nc", 100);
     assert_eq!(
-        term.review(),
-        Some(0),
+        (term.review(), term.followed),
+        (Some(0), false),
         "the program's cursor is not followed"
     );
     term.key(KeyKind::Caret(Unit::Line), 1000);
@@ -748,7 +756,7 @@ fn the_review_cursor_follows_the_caret_a_key_moved() {
         term.write("\x1b[A", 1050),
         says(vec![caret(1, Unit::Line, "b")])
     );
-    assert_eq!(term.review(), Some(1));
+    assert_eq!((term.review(), term.followed), (Some(1), true));
 }
 
 #[test]

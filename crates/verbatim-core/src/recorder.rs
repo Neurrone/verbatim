@@ -364,6 +364,7 @@ mod tests {
         Input::CharacterTyped {
             trace_id: TraceId::mint(),
             text,
+            at_ms: 0,
         }
     }
 

@@ -198,6 +198,8 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
     let mut app = common::spawn("terminal_reading.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let mut outpost = OutpostUnderTest::new(&app);
+    // The screen: the text's last three rows, and its empty last line.
+    app.send("screen term 4");
     app.send("set-focus term");
     let uia = Uia::new().expect("a UIA client");
     let element = common::listener_focus(&uia, hwnd.0 as isize);
@@ -227,7 +229,12 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
         } if request_id == hold => {}
         other => panic!("the outpost said {other:?}, not the answer to the hold"),
     }
-    app.send(r"set-text term one\ntwo\nready>\nthree");
+    app.send(&format!(
+        "set-text term {}",
+        ["one", "two", "ready>", "three"]
+            .map(|row| format!(r"{row:20}\r\n"))
+            .concat()
+    ));
     app.send("text-changed term");
     outpost.heard(&[
         Heard::UiaTextChanged,
@@ -275,7 +282,10 @@ fn a_noted_caret_holds_the_answer_back_only_for_its_own_read() {
             request_id,
             outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Terminal(output))),
             ..
-        } if request_id == read => assert_eq!(output.lines, ["three"]),
+        } if request_id == read => assert_eq!(
+            output.items,
+            [verbatim_model::TerminalItem::Output("three".to_owned())]
+        ),
         other => panic!("the outpost said {other:?}, not the answer to the read"),
     }
     outpost.settled();

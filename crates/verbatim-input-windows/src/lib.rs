@@ -291,6 +291,9 @@ pub enum KeyReport {
         trace_id: TraceId,
         /// The text typed.
         text: String,
+        /// When the key was pressed, in microseconds on the run's shared
+        /// clock.
+        pressed_at_us: u64,
     },
 }
 
@@ -770,7 +773,11 @@ fn report_passed(
     match state.typing.translate(event.vk, scan_code, &deferred) {
         Some(text) => {
             record_key_origin(trace_id, key_number);
-            (state.reports)(KeyReport::Typed { trace_id, text });
+            (state.reports)(KeyReport::Typed {
+                trace_id,
+                text,
+                pressed_at_us,
+            });
         }
         None if !was_observed && may_edit(event.vk) => {
             record_key_origin(trace_id, key_number);

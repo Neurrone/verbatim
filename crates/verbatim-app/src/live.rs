@@ -35,7 +35,7 @@ pub(crate) struct Live {
     pub(crate) fetches_sent: Option<Fetches>,
     /// How many lines a terminal read takes, as last sent to it, `None`
     /// before the first.
-    pub(crate) terminal_lines_sent: Option<u16>,
+    pub(crate) terminal_settings_sent: Option<verbatim_model::TerminalSettings>,
 }
 
 impl Live {
@@ -75,7 +75,7 @@ impl LiveOutposts {
                 held_left: (BTreeSet::new(), BTreeSet::new(), 0),
                 stalled: false,
                 fetches_sent: None,
-                terminal_lines_sent: None,
+                terminal_settings_sent: None,
             },
         );
     }

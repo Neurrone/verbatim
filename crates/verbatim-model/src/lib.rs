@@ -37,7 +37,10 @@ pub use speech::{
     SpeechPriority, TextFormat, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
     UtteranceSource,
 };
-pub use terminal::{LineChange, Skipped, TerminalOutput};
+pub use terminal::{
+    Skipped, TerminalItem, TerminalKey, TerminalKeyKind, TerminalSettings, TerminalSpeech,
+    TerminalUnit,
+};
 pub use text::{
     BulletStyle, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, FocusText, FormatRun,
     HeldAnchors, LanguageRun, LineStyle, MAX_CHUNK_BYTES, MAX_RANGE_BYTES, MAX_READ_AHEAD,

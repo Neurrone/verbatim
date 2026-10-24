@@ -638,10 +638,6 @@ pub struct SrState {
     /// `editing::MAX_TYPED_WORD` bytes.
     #[serde(default)]
     pub(crate) typed_word: String,
-    /// Characters typed into a terminal, held until its text changes; at
-    /// most `editing::MAX_HELD_TYPING` bytes.
-    #[serde(default)]
-    pub(crate) held_typing: String,
     /// The next index mark number.
     #[serde(default)]
     pub(crate) next_mark: u64,
@@ -651,7 +647,7 @@ pub struct SrState {
     /// The focused terminal's output still to be spoken (milestone M4 item
     /// 9), bounded by the flood policy's limits.
     #[serde(default)]
-    pub(crate) terminal: crate::terminal::TerminalSpeech,
+    pub(crate) terminal: crate::terminal::TerminalSpeechState,
     /// The formatting last reported in a node's text (milestone M4 item 7):
     /// NVDA's per-object cache, from which only changes are spoken
     /// (`docs/nvda/document-formatting.md`). A new focus starts afresh.
@@ -763,13 +759,19 @@ impl SrState {
         self.settings
     }
 
-    /// How many of a change's newest lines an outpost reads from a terminal
-    /// (milestone M4 item 9): as many as the flood policy's limits can keep
-    /// (`ReaderSettings::terminal_read_lines`). Like
-    /// [`fetches`](Self::fetches), a view the shell gives every outpost.
+    /// The terminal reading rules' settings, which the outposts apply
+    /// (`docs/design/terminal-model.md`, section 5): "report new output",
+    /// "review follows caret", and the flood policy's limits, clamped by
+    /// the outpost. Like [`fetches`](Self::fetches), a view the shell
+    /// gives every outpost.
     #[must_use]
-    pub fn terminal_read_lines(&self) -> u16 {
-        self.settings.terminal_read_lines()
+    pub fn terminal_settings(&self) -> verbatim_model::TerminalSettings {
+        verbatim_model::TerminalSettings {
+            report_new_output: self.settings.report_terminal_output,
+            review_follows_caret: self.settings.follow_caret,
+            lines_in_full: u16::try_from(self.settings.full_lines()).unwrap_or(u16::MAX),
+            last_lines: u16::try_from(self.settings.last_lines()).unwrap_or(u16::MAX),
+        }
     }
 
     /// The application the focus belongs to; `None` before any focus.

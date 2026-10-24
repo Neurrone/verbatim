@@ -1802,71 +1802,52 @@ anchors.
 
 ### A terminal output line
 
-A focused terminal's text changed, and the outpost reads its screen and
-diffs it with the screen as last read (`docs/crates/verbatim-outpost.md`,
-"Terminals"): the screen's text in one call, its top two rows and the
-text's first row, the anchor found at its range or by its text, the rows
-from it to the screen counted by moving, and the first unread rows when
-any went by. Measured against mockapp's text provider
-(`tests/fixtures/terminal.json` with a four-row screen,
+A focused terminal's text changed, and the outpost reads it and gives the
+read to its reading rules (`docs/crates/verbatim-outpost.md`,
+"Terminals"): one snapshot (`verbatim_uia_rops::terminal_snapshot`), the
+text from the screen's top as last read, a few history rows above it, to
+the document's end in one `GetText`, with the screen, where the next read
+starts, the document's first row, the caret's distance to the end, and the
+caret and its line, all in one program. A read the rules ask for again, of
+the whole document or from further above to find how far a full history
+rotated, is a snapshot more. Measured against mockapp's text provider
+(`tests/fixtures/terminal.json` with a three-row screen,
 `tests/terminal.rs`), whose `set-text` command rewrites the text as a
 terminal's buffer changes and whose `screen` command puts only its last
 lines on screen.
 
-- Minimum: 1 UIA call, one remote operations program
-  (`verbatim_uia_rops::terminal_screen`), whatever the size of the
-  history and however many lines changed.
-- Today: 1 UIA call for every read, the baseline when the terminal gains
-  the focus included. Classically, with `uia.remote_operations` off or a
-  provider that cannot run programs, one call per provider method: 25 for
-  the baseline, 43 for a read that finds the anchor at its range (a grown
-  prompt, an output line, a redraw), 50 for one that also reads the first
-  rows that went by unread, 43 for one whose anchor has left the history
-  (searched by its text, then the text's rows counted), and 38 for a
-  cleared screen. Every one of these is pinned, both ways, and so is the
-  provider's own work, which is the same either way but for the remote
-  program's import of the element and its text pattern. The screen is
-  read in one call however many lines it holds, so the cost does not grow
-  with them. Of these calls, the top row read again at the end, the
-  walk from the screen's top to the text's end made twice, and the visible
-  range read again at the end tell whether the terminal wrote to the
-  screen, or moved its view, while it was read, when the read is not
-  trusted (the visible range since 2026-10-09: the console host moves its
-  view down a row for each line written into a scroll region above a
-  footer, and a read between the two had the rows above the view).
+- Minimum: 1 UIA call, one remote operations program, whatever the size
+  of the history and however many lines changed.
+- Today: 1 UIA call for every read, the first after the focus included,
+  pinned remotely (`new_output_is_said_line_by_line_remote`). Classically,
+  with `uia.remote_operations` off or a provider that cannot run
+  programs, one call per provider method of the snapshot's classic
+  implementation. The screen is read in one call however many lines it
+  holds, and a read holds what was written since the last, so the cost
+  grows only with the output.
 - Target: 1.
 
-A caret key in a terminal is held for a read of the caret before it is
-sent on ("The caret read before a held key", above), which costs roughly
-8 to 13 wake-ups and 0.7 to 1.5 ms of processor time per key in a debug
-build; the output read after it is unchanged.
+A caret key in a terminal is held for a read before it is sent on ("The
+caret read before a held key", above), which in a terminal is a snapshot,
+so the reading rules compare with the screen just before the key.
 
 A terminal's text change forgets no selection, so it takes no lock on the
 anchors for it, and a terminal's caret reports, the one after its focus
 aside, keep no selection.
 
-The read it replaced (an anchor at the last line read, its two-line
-fingerprint, and a read afresh when it did not match) cost the same one
-call remotely and 27 to 61 classically.
-
 ### A terminal's caret
 
 A terminal raises no caret event for every character typed: the console
 host raises its caret events on a schedule of its own, so a character
-echoed between two of them leaves Core's copy of the caret behind, and a
-Backspace then says the character the caret was last heard after. So each
-read of a focused terminal's changed text reads the caret and its line
-too (`verbatim_uia_rops::ScreenQuery::caret`), and the outpost reports
-it with the output (`docs/crates/verbatim-outpost.md`, "Terminals"),
-stamped as read when the read began.
+echoed between two of them leaves Core's copy of the caret behind. So each
+read of a focused terminal reads the caret and its line too
+(`verbatim_uia_rops::SnapshotQuery::caret`), in the same program, and the
+outpost reports it with what the read says, stamped as read when the
+read began; Windows Terminal's caret events read the terminal itself.
 
 - Minimum: no call more, since it goes in the program the text's read
   already runs.
-- Today: no call more remotely; from mockapp, the text pattern got from
-  the element again, the selection, and the caret's line read.
-  Classically, 8 calls more: 51 for a grown prompt where the read without
-  the caret is 43. Both are pinned (`tests/terminal.rs`,
-  `a_read_with_the_caret_costs_exactly`).
+- Today: no call more remotely.
 - Target: the minimum, met.
 
 ### A terminal flood

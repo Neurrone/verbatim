@@ -76,7 +76,8 @@ Windows API, and `cargo xtask ci` checks that it does not.
 section 4, "Changes as alignments of rows" (`docs/design/terminal-model.md`),
 written from that design. It classifies; it does not speak: the reading
 rules of section 5 (`terminal_reading`, below) are built on its
-`Outcome`. Neither is wired into the outpost yet.
+`Outcome`. The outpost reads every focused terminal through both
+(`docs/crates/verbatim-outpost.md`, "Terminals").
 
 ### Public API
 
@@ -102,7 +103,17 @@ rules of section 5 (`terminal_reading`, below) are built on its
   `review` and `set_review` the review position, and `marks` and
   `add_mark` the command marks, each an `Anchor` (a row counted from the
   last read's first row, negative in the history above it, a column in
-  characters, and its line's hash), set only on a row the memory keeps.
+  characters, and its line's hash), set only on a row the memory keeps;
+  `set_review_anchor` puts the review position at any anchor, a history
+  row above the rows kept among them, whose line's hash the caller read,
+  and `anchor` makes one on a row the memory keeps. `add_place`, `place`
+  and `drop_place` keep places, numbered anchors the caller holds in the
+  text (the outpost's review answers' rows), which move with their rows as
+  the review position does, are kept aside with the memory while the
+  alternate screen is up, and are dropped when their row cannot be
+  followed: when the history overflowed and their row was not kept, or,
+  for a read the memory takes as a first, when their line is not where it
+  should be.
   `above` gives how many rows the next read takes above its start, which
   the read program is asked for. `restart(&Read)` takes a read as a first
   read, keeping the command marks it cannot refute and the review position
@@ -126,6 +137,9 @@ rules of section 5 (`terminal_reading`, below) are built on its
   the same start with that many rows above it.
 - `hash`: the 64-bit hash of a row's text (FNV-1a), the same in every
   process.
+- `rows_of`: a read's text split into rows as the memory splits a read,
+  for a caller that reads rows the memory does not keep, the history above
+  them, at the width a read found.
 
 ### How a read is aligned
 
@@ -387,8 +401,9 @@ are not built here; they act on the memory, which the reader lends out.
 - `Step`: the `Speech` in order, the lines `Withheld` with a `Reason`, the
   `timer` due time, `whole_document` when the read is to be taken again
   over the whole document, `search_above` when it is to be taken again
-  from the same start with that many rows above it, and the read's
-  `Outcome`. `Speech` is a new
+  from the same start with that many rows above it, the read's
+  `Outcome`, and `followed`, whether a key moved the caret within its
+  window and the review position followed it. `Speech` is a new
   line (`Line`), what a growing line gained (`Growth`), a redrawn row from
   the word that changed (`Changed`), a held line that left the read before
   it was spoken, as it was last read (`Held`, naming no row), a flood's

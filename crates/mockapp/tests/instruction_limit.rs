@@ -21,11 +21,10 @@ use verbatim_uia::{Ancestor, Cached, Fill, FocusInput, Kept, Live, Node, Shape, 
 use verbatim_uia_rops::{
     Attributes, Builder, CaretLineQuery, CaretQuery, Comparison, ControlledQuery, Error,
     FocusAncestry, FocusQuery, FormatSpan, Movement, NavigationDirection, PathQuery, Position,
-    RangeAction, RangeEnd, RangeQuery, ScreenAnchor, ScreenQuery, SnapshotQuery, Status, StepQuery,
-    TextAttribute, TextFrom, TextTarget, UnitsQuery, caret_read_remote,
-    controlled_selection_remote, counting, element_by_path_remote, focus_ancestry_remote,
-    navigation_step_remote, terminal_screen_remote, terminal_snapshot_remote, text_range_remote,
-    text_units_remote,
+    RangeAction, RangeEnd, RangeQuery, SnapshotQuery, Status, StepQuery, TextAttribute, TextFrom,
+    TextTarget, UnitsQuery, caret_read_remote, controlled_selection_remote, counting,
+    element_by_path_remote, focus_ancestry_remote, navigation_step_remote,
+    terminal_snapshot_remote, text_range_remote, text_units_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::System::Variant::VARIANT;
@@ -629,71 +628,6 @@ fn range_selections_execute_exactly() {
     assert!(press < LIMIT / 2);
 }
 
-/// A terminal's screen read: an anchor whose top row is nowhere as a row of
-/// its own, under 90 rows that hold its text as part of theirs, so the
-/// search checks its 20 matches and gives up and the text's rows are
-/// counted; and, typically, an anchor found where it was under new output.
-fn terminal_screens_execute_exactly() {
-    common::init_com();
-    let mut fixture = Fixture::start("terminal.json", "mockapp-instructions-terminal");
-    let terminal = fixture.find("Terminal");
-    let (pattern, pattern2) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
-    common::apply(&mut fixture.app, fixture.hwnd, "screen term 30");
-    let decoys: String = (0..90).map(|_| r"x ready>\n").collect();
-    common::apply(
-        &mut fixture.app,
-        fixture.hwnd,
-        &format!(r"set-text term {decoys}one\ntwo"),
-    );
-    // With the caret read in the same program, as the outpost reads a
-    // focused terminal on each change of its text.
-    let query = |top, next| ScreenQuery {
-        element: &terminal,
-        pattern: &pattern,
-        anchor: Some(ScreenAnchor {
-            top,
-            next,
-            range: None,
-            first: "",
-            no_history: false,
-        }),
-        matches_padding: false,
-        seen_rows: 30,
-        last_rows: 1,
-        head_wanted: 30,
-        caret: Some(CaretLineQuery {
-            element: &terminal,
-            pattern: &pattern,
-            pattern2: pattern2.as_ref(),
-            max_text: 4096,
-            since: None,
-        }),
-    };
-    let worst = counted(|| {
-        let screen = terminal_screen_remote(&fixture.uia, &query("ready>\n", "ready>\n"))
-            .expect("the program runs");
-        assert_eq!(screen.shift, None);
-    });
-    let lines = numbered(80);
-    common::apply(
-        &mut fixture.app,
-        fixture.hwnd,
-        &format!(r"set-text term {lines}ready> ls\na\nb"),
-    );
-    let typical = counted(|| {
-        let screen = terminal_screen_remote(&fixture.uia, &query("line 052\n", "line 053\n"))
-            .expect("the program runs");
-        assert_eq!(screen.shift, Some(1));
-    });
-    fixture.app.quit();
-    assert_eq!(
-        [worst, typical],
-        [441, 166],
-        "terminal screen worst and typical"
-    );
-    assert!(worst < LIMIT / 2);
-}
-
 /// A terminal's snapshot: a first read, and a read from where it said to
 /// start with the caret read in the same program, each taking four rows
 /// above its start (the history's block), as the outpost reads a focused
@@ -851,10 +785,6 @@ fn main() {
         (
             "range_selections_execute_exactly",
             range_selections_execute_exactly,
-        ),
-        (
-            "terminal_screens_execute_exactly",
-            terminal_screens_execute_exactly,
         ),
         (
             "terminal_snapshots_execute_exactly",

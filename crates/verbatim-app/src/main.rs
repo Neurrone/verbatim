@@ -424,6 +424,7 @@ fn run(
                         let _ =
                             reports_tx.send(ShellCommand::Input(Box::new(Input::ClearingKey {
                                 trace_id: gesture.trace_id,
+                                at_ms: pressed_at_us / 1_000,
                             })));
                         ShellCommand::CaretKey {
                             input: Box::new(Input::CaretKey {
@@ -475,9 +476,15 @@ fn run(
                     }),
                     pressed_at_us,
                 },
-                KeyReport::Typed { trace_id, text } => {
-                    ShellCommand::Input(Box::new(Input::CharacterTyped { trace_id, text }))
-                }
+                KeyReport::Typed {
+                    trace_id,
+                    text,
+                    pressed_at_us,
+                } => ShellCommand::Input(Box::new(Input::CharacterTyped {
+                    trace_id,
+                    text,
+                    at_ms: pressed_at_us / 1_000,
+                })),
             };
             let _ = reports_tx.send(command);
         }),
@@ -1595,7 +1602,7 @@ impl ReducerThread<'_> {
             | Input::CaretKey { trace_id, .. }
             | Input::HeldKey { trace_id, .. }
             | Input::CharacterTyped { trace_id, .. }
-            | Input::ClearingKey { trace_id } => *trace_id,
+            | Input::ClearingKey { trace_id, .. } => *trace_id,
             _ => TraceId::mint(),
         };
         let queued = self.state.focuses_queued();
@@ -1690,12 +1697,12 @@ impl ReducerThread<'_> {
 
     /// Tells each live outpost the details the active theme wants read
     /// (`SrState::fetches`), when they differ from what it was last told:
-    /// a detail whose indication is off is not read at all; and how many
-    /// lines a terminal read takes (`SrState::terminal_read_lines`). A new
-    /// outpost is told at once, before it reports anything.
+    /// a detail whose indication is off is not read at all; and the
+    /// terminal reading rules' settings (`SrState::terminal_settings`). A
+    /// new outpost is told at once, before it reports anything.
     fn send_fetches(&mut self) {
         let fetches = self.state.fetches();
-        let terminal_lines = self.state.terminal_read_lines();
+        let terminal_settings = self.state.terminal_settings();
         for (outpost, live) in self.live.iter_mut() {
             if live.fetches_sent != Some(fetches) {
                 match self
@@ -1711,17 +1718,15 @@ impl ReducerThread<'_> {
                     }
                 }
             }
-            // Likewise how many lines a terminal read takes, from the flood
-            // policy's limits.
-            if live.terminal_lines_sent != Some(terminal_lines) {
-                match self
-                    .context
-                    .supervisor
-                    .send_to_outpost(*outpost, SupervisorToOutpost::TerminalLines(terminal_lines))
-                {
-                    Ok(()) => live.terminal_lines_sent = Some(terminal_lines),
+            // Likewise the terminal reading rules' settings.
+            if live.terminal_settings_sent != Some(terminal_settings) {
+                match self.context.supervisor.send_to_outpost(
+                    *outpost,
+                    SupervisorToOutpost::TerminalSettings(terminal_settings),
+                ) {
+                    Ok(()) => live.terminal_settings_sent = Some(terminal_settings),
                     Err(error) => {
-                        tracing::debug!(%error, %outpost, "the terminal lines were not sent yet");
+                        tracing::debug!(%error, %outpost, "the terminal settings were not sent yet");
                     }
                 }
             }
