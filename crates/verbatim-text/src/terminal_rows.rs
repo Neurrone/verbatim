@@ -192,6 +192,11 @@ pub enum NewRow {
         /// Whether it moved other than with the history, as a status row
         /// drawn a row lower with its spinner changed.
         moved: bool,
+        /// Whether it moved alone, not with a neighbour kept in the same
+        /// move: it keeps the text it last said but starts its change
+        /// history afresh (section 4.3, item 6), so a volatile row's
+        /// changes never pass to a row that only resembles it.
+        alone: bool,
     },
     /// A lingering row taken back: a row a read found gone, back with its
     /// text (section 4.1).
@@ -364,6 +369,21 @@ struct Lingering {
     /// Where it would be now had it stayed, counted as the last read's
     /// rows are.
     at: isize,
+    /// Its place in its line: how many rows of the line are above it.
+    place: usize,
+}
+
+impl Lingering {
+    /// Whether row `to` of `rows` is this row back: a row of the same line,
+    /// with the same text, at the same place in it (section 4.1). The same
+    /// text in another line, such as a wrapped line's last row printed
+    /// again as a line of its own, is not.
+    fn returns_as(&self, rows: &[Row], to: usize) -> bool {
+        let row = &rows[to];
+        row.hash == self.row.hash
+            && row.line_hash == self.row.line_hash
+            && to - line_start(rows, to) == self.place
+    }
 }
 
 /// One screen's memory. Its rows are the last read's from `skipped` on;
@@ -1459,6 +1479,30 @@ fn align(
             });
         }
     }
+    // A block of blank rows tells no rotation from another that leaves blank
+    // rows where it was, nor from one that takes it out of the buffer, as a
+    // screen cleared into the history leaves it. The old screen's rows with
+    // text, paired in order as well as by text (section 4.4), then tell it,
+    // when the rotation they give is one the history allows: a candidate,
+    // or one that takes the block out of the buffer.
+    if !settling && memory.rows[top - block..top].iter().all(Row::is_blank) {
+        let free = classify(memory, rows, read, height, caret, how(None));
+        let allowed = isize_of(free.rotation) >= span
+            || candidates
+                .iter()
+                .any(|candidate| candidate.rotation == free.rotation);
+        if free.kept_text && allowed {
+            let rotation = free.rotation;
+            return Aligned::Done(classify(
+                memory,
+                rows,
+                read,
+                height,
+                caret,
+                how(Some(rotation)),
+            ));
+        }
+    }
     // A candidate whose block is in the read, as far as the buffer holds
     // it, is decided; the others' blocks are read by their place.
     let decided = candidates
@@ -1876,9 +1920,36 @@ fn classify(
             new[to] = NewRow::Rewritten {
                 from,
                 moved: isize_of(to) - isize_of(from) != shift,
+                alone: false,
             };
             fates[from] = OldRow::Rewritten(to);
         }
+    }
+    // A row rewritten elsewhere than its place moved with its neighbours
+    // when a row next to it was kept in the same move (section 4.3, item 6).
+    for to in 0..total {
+        let NewRow::Rewritten {
+            from,
+            moved: true,
+            alone,
+        } = &mut new[to].clone()
+        else {
+            continue;
+        };
+        let distance = isize_of(to) - isize_of(*from);
+        let with_neighbour = [to.checked_sub(1), Some(to + 1)]
+            .into_iter()
+            .flatten()
+            .any(|next| {
+                matches!(new.get(next), Some(NewRow::Kept { from: kept, .. })
+                    if isize_of(next) - isize_of(*kept) == distance)
+            });
+        *alone = !with_neighbour;
+        new[to] = NewRow::Rewritten {
+            from: *from,
+            moved: true,
+            alone: *alone,
+        };
     }
     let old_had_text = Screen::has_text(old_screen);
     let kept_text = !kept.is_empty();
@@ -1958,15 +2029,22 @@ fn classify(
     }
     // A read of the whole document that finds no row of the old screen in a
     // document longer than a screen: more went by than the history holds.
-    // So does a read from the kept start reaching the document's start
-    // whose only old rows kept moved down with the end of the text, as a
-    // footer does: the rows above it went by.
+    // So does a read from the kept start reaching the document's start,
+    // when no candidate told the rotation, whose only old rows kept moved
+    // down with the end of the text, as a footer does: the rows above it
+    // went by. A rotation the candidates told places the history exactly,
+    // so nothing went by unseen, however the old screen's rows moved.
     let stayed = base.is_some_and(|base| {
         kept.iter()
             .any(|&(from, to)| isize_of(to) - isize_of(from) <= base)
     });
     let whole_read = whole == Some(Whole::Lost) && !kept_text
-        || whole.is_none() && base.is_some() && read.at_document_start && !restoring && !stayed;
+        || whole.is_none()
+            && base.is_some()
+            && how.rotation.is_none()
+            && read.at_document_start
+            && !restoring
+            && !stayed;
     let overflowed = unfound && history_kept.is_none()
         || whole_read && old_had_text && !found_known && total > height;
     // Gone rows that linger, and lingering rows taken back (section 4.1).
@@ -1996,11 +2074,11 @@ fn classify(
             fates[from] = OldRow::Gone { lingering: true };
         }
     }
-    let mut lingering: Vec<(isize, u64)> = memory
+    let mut lingering: Vec<(isize, &Lingering)> = memory
         .lingering
         .iter()
         .filter(|row| read.at_ms.saturating_sub(row.since_ms) <= LINGERING_MS)
-        .map(|row| (row.at - isize_of(skip) + shift, row.row.hash))
+        .map(|row| (row.at - isize_of(skip) + shift, row))
         .collect();
     for to in 0..total {
         if new[to] != NewRow::New || rows[to].is_blank() {
@@ -2009,7 +2087,7 @@ fn classify(
         let nearest = lingering
             .iter()
             .enumerate()
-            .filter(|(_, (_, hash))| *hash == rows[to].hash)
+            .filter(|(_, (_, gone))| gone.returns_as(rows, to))
             .min_by_key(|(_, (at, _))| (at - isize_of(to)).abs())
             .map(|(index, &(at, _))| (index, at));
         if let Some((index, at)) = nearest {
@@ -2069,6 +2147,22 @@ fn remember(
             ..row.clone()
         })
         .collect();
+    // The lingering rows each returned row is, taken before the rows change.
+    let returned: Vec<Option<usize>> = kinds
+        .iter()
+        .enumerate()
+        .map(|(to, kind)| matches!(kind, NewRow::Returned { .. }).then_some(to))
+        .collect();
+    let mut back_of: Vec<Option<Lingering>> = vec![None; rows.len()];
+    for to in returned.into_iter().flatten() {
+        let back = lingering
+            .iter()
+            .enumerate()
+            .filter(|(_, gone)| gone.returns_as(&rows, to))
+            .min_by_key(|(_, gone)| (gone.at - isize_of(to)).abs())
+            .map(|(index, _)| index);
+        back_of[to] = back.map(|index| lingering.remove(index));
+    }
     for (to, kind) in kinds.iter().enumerate() {
         let row = &mut rows[to];
         match *kind {
@@ -2080,20 +2174,14 @@ fn remember(
                     row.changed_ms = old.changed_ms;
                 }
             }
-            NewRow::Rewritten { from, .. } => {
+            // A row that moved alone starts its change history afresh.
+            NewRow::Rewritten { from, alone, .. } => {
                 if let Some(old) = memory.row(from) {
-                    row.redrawn = old.redrawn || !row.text.starts_with(&*old.text);
+                    row.redrawn = old.redrawn && !alone || !row.text.starts_with(&*old.text);
                 }
             }
             NewRow::Returned { .. } => {
-                let back = lingering
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, gone)| gone.row.hash == row.hash)
-                    .min_by_key(|(_, gone)| (gone.at - isize_of(to)).abs())
-                    .map(|(index, _)| index);
-                if let Some(index) = back {
-                    let gone = lingering.remove(index);
+                if let Some(gone) = &back_of[to] {
                     row.changed_ms = gone.row.changed_ms;
                 }
                 row.redrawn = true;
@@ -2105,10 +2193,14 @@ fn remember(
         if *fate == (OldRow::Gone { lingering: true })
             && let Some(old) = memory.row(from)
         {
+            let place = memory
+                .index(from)
+                .map_or(0, |index| index - line_start(&memory.rows, index));
             lingering.push(Lingering {
                 row: old.clone(),
                 since_ms: now,
                 at: isize_of(from) + shift,
+                place,
             });
         }
     }
@@ -2358,9 +2450,10 @@ fn line_text(rows: &[Row]) -> String {
 fn grew_from(line: &Line, kinds: &[NewRow], memory: &Screen, continued: bool) -> Option<usize> {
     let old = &memory.rows;
     let from = match kinds.get(line.rows.start)? {
-        NewRow::Kept { from, moved: false } | NewRow::Rewritten { from, moved: false } => {
-            memory.index(*from)?
-        }
+        NewRow::Kept { from, moved: false }
+        | NewRow::Rewritten {
+            from, moved: false, ..
+        } => memory.index(*from)?,
         _ => return None,
     };
     let starts = if from == 0 {

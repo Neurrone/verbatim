@@ -920,9 +920,8 @@ impl TerminalReader {
                 caret.row == origin.row
                     && caret.column == origin.column
                     && caret.text == origin.text
-                    && before.is_none_or(|before| {
-                        before.line != caret.line || before.text == caret.text
-                    })
+                    && before
+                        .is_none_or(|before| before.line != caret.line || before.text == caret.text)
             }
             _ => false,
         };
@@ -1035,6 +1034,19 @@ impl TerminalReader {
                     .position(|gone| gone.hash == rows[first].hash)
                     .map(|at| *self.lingering.remove(at).line),
                 _ => None,
+            };
+            // A row rewritten alone, away from its neighbours, keeps what it
+            // last said and starts its change history afresh (section 4.3,
+            // item 6).
+            let base = match outcome.rows[first] {
+                NewRow::Rewritten { alone: true, .. } => base.map(|old| LineState {
+                    text: old.text,
+                    said: old.said,
+                    input: old.input,
+                    cut: old.cut,
+                    ..LineState::default()
+                }),
+                _ => base,
             };
             // The text of the old line a row split off a line was in.
             let split = match outcome.rows[first] {
@@ -1591,8 +1603,7 @@ impl TerminalReader {
                     speech.push(text);
                     answer = Some(caret.line);
                 }
-            } else if let Some((echoed, rest)) = echo(&old, &new, before.column, column, &typed)
-            {
+            } else if let Some((echoed, rest)) = echo(&old, &new, before.column, column, &typed) {
                 if !echoed.is_empty() {
                     speech.push(Speech::Echo {
                         row: caret.line,

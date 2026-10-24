@@ -286,40 +286,18 @@ fn counts(expected: &[(&str, usize)]) -> Vec<(String, usize)> {
 /// of the oracle's specification.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Question {
-    /// The last read had no history, so the memory keeps no block, and the
-    /// next read finds the buffer filled and rotated (section 4.3, item 5):
-    /// with no block the rotation is taken from kept rows, and a row whose
-    /// text a flood wrote again in its place is taken as kept or rewritten.
-    /// A line holding its unfinished word is then carried by a line that
-    /// replaced it, so the word is never spoken. Should a
-    /// read whose document grew past a screen from one with no history be
-    /// taken as the whole document's, searched for the old screen?
+    /// The last read had no history, so the memory keeps no block and its
+    /// known history holds no row, and the next read finds the buffer
+    /// filled and rotated (section 4.3, item 5): with no row that was
+    /// history at the last read, every rotation agrees with the known
+    /// history, so a whole-buffer comparison cannot tell them apart, and the
+    /// kept rows decide; a row whose text a flood wrote again in its place
+    /// is taken as kept or rewritten. A line holding its unfinished word, or
+    /// a volatile row, is then carried by a line that replaced it, so the
+    /// word is never spoken, or the new line is held as volatile. The
+    /// decided rule cannot settle it: what should tell a rotation when the
+    /// last read held no history?
     RotationWithoutBlock,
-    /// The alignment pairs a volatile row alone with a new row elsewhere
-    /// that is alike to it (section 4.3, item 4), as Pi's input row
-    /// "/model" with its model selector's "Model catalogs refreshed." seven
-    /// rows away, and carries the row's changes to it, so the new row is
-    /// held as volatile and never spoken once the selector erases it. A
-    /// row's change history moves only with a row kept in place or moved
-    /// with its neighbours as part of a block (section 4.3, item 6, decided
-    /// by Dickson, 2026-10-24), and the oracle follows a row only so, so
-    /// this is the core's to fix.
-    VolatileMovedByRewrite,
-    /// A row that vanished lingers and is taken back silently when its
-    /// text comes back (section 4.1), but the memory takes back rows, not
-    /// lines: a row is taken back when its text returns as a row of
-    /// another line, the end of a wrapped line written again as a line of
-    /// its own, or a line's first row written again with more text after
-    /// it. The line it is now in was never shown, so it is missed, or only
-    /// its change from the lingering row is spoken. Should a lingering row
-    /// be taken back only when it comes back as the line it was in?
-    LingeringInAnotherLine,
-    /// The screen erased into the history as the full history rotates,
-    /// with the same text on more than one row (section 4.4): the rows are
-    /// paired with the wrong copies of their text, and a line that stayed
-    /// on the screen is spoken again. Should a clear be aligned by the
-    /// rows' order as well as their text?
-    ClearedOverRepeatedText,
 }
 
 /// A stream pinned as the smallest that shows a question: the question,
@@ -362,12 +340,7 @@ fn the_cores_violations_over_the_corpus() {
         })
         .filter(|(_, _, tally)| !tally.is_empty())
         .collect();
-    let pinned: Vec<CorpusPin> = vec![(
-        "pi-regular",
-        Flavor::ConsoleHost,
-        Question::VolatileMovedByRewrite,
-        vec![("FalseReason Volatile", 1)],
-    )];
+    let pinned: Vec<CorpusPin> = vec![];
     let expected: Vec<StreamTally> = pinned
         .iter()
         .map(|(name, flavor, _, kinds)| ((*name).to_owned(), *flavor, counts(kinds)))
@@ -400,10 +373,7 @@ fn the_cores_violations_over_random_streams() {
     // The random streams of the oracle's own tests, taken in the same
     // order from the same seed, every case run rather than stopping at the
     // first failure, each case numbered in that order.
-    use Question::{
-        ClearedOverRepeatedText, LingeringInAnotherLine, RotationWithoutBlock,
-        VolatileMovedByRewrite,
-    };
+    use Question::RotationWithoutBlock;
     use proptest::strategy::ValueTree;
     use proptest::test_runner::TestRunner;
     let config = random_config();
@@ -426,36 +396,14 @@ fn the_cores_violations_over_random_streams() {
             found.push((case, tally(&violations)));
         }
     }
-    let missed = || vec![("Missed", 1)];
     let pinned: Vec<Pin> = vec![
-        (36, RotationWithoutBlock, missed()),
-        (39, LingeringInAnotherLine, missed()),
-        (54, LingeringInAnotherLine, missed()),
-        (57, LingeringInAnotherLine, missed()),
-        (
-            69,
-            VolatileMovedByRewrite,
-            vec![("FalseReason Volatile", 1)],
-        ),
-        (
-            101,
-            LingeringInAnotherLine,
-            vec![("FalseReason LostText", 1), ("Missed", 1)],
-        ),
-        (183, LingeringInAnotherLine, missed()),
         (
             221,
             RotationWithoutBlock,
             vec![("FalseReason UnfinishedWord", 1)],
         ),
-        (246, ClearedOverRepeatedText, vec![("Repeated", 1)]),
-        (289, LingeringInAnotherLine, missed()),
-        (318, LingeringInAnotherLine, missed()),
-        (333, LingeringInAnotherLine, missed()),
         (377, RotationWithoutBlock, vec![("FalseReason Volatile", 1)]),
         (440, RotationWithoutBlock, vec![("FalseReason Volatile", 1)]),
-        (469, LingeringInAnotherLine, missed()),
-        (510, LingeringInAnotherLine, missed()),
     ];
     let expected: Vec<(u32, Vec<(String, usize)>)> = pinned
         .iter()
@@ -466,15 +414,8 @@ fn the_cores_violations_over_random_streams() {
 
 /// The smallest streams that show each question, as the random streams'
 /// shrinking left them.
-#[expect(
-    clippy::too_many_lines,
-    reason = "a list of streams, each written out as operations"
-)]
 fn smallest_pins() -> Vec<SmallestPin> {
-    use Question::{
-        ClearedOverRepeatedText, LingeringInAnotherLine, RotationWithoutBlock,
-        VolatileMovedByRewrite,
-    };
+    use Question::RotationWithoutBlock;
     let word = "wrapping-word";
     vec![
         // A line holding its unfinished word, a flood filling the buffer
@@ -508,80 +449,6 @@ fn smallest_pins() -> Vec<SmallestPin> {
                 ),
             ],
             vec![("FalseReason Volatile", 1)],
-        ),
-        // A status row's timer ticking twice, then the status row drawn a
-        // row lower as the output above it grows.
-        (
-            VolatileMovedByRewrite,
-            Flavor::ConsoleHost,
-            vec![
-                (Op::Write("1s"), true),
-                (Op::Rewrite("2s"), true),
-                (Op::Rewrite("3s"), true),
-                (Op::Rewrite("ok"), false),
-                (Op::Newline, false),
-                (Op::Write("4s"), true),
-            ],
-            vec![("FalseReason Volatile", 1)],
-        ),
-        // A wrapped line's second row, erased, written again as a line of
-        // its own.
-        (
-            LingeringInAnotherLine,
-            Flavor::WindowsTerminal,
-            vec![
-                (Op::Write("cat"), false),
-                (Op::MoveColumns(6), false),
-                (Op::Write("a b"), false),
-                (Op::Write("a b"), false),
-                (Op::MoveColumns(3), true),
-                (Op::EraseLines(3), false),
-                (Op::Newline, true),
-                (Op::Write("a b"), false),
-            ],
-            vec![("Missed", 1)],
-        ),
-        // A line's first row, deleted, written again with the rest of its
-        // word after it.
-        (
-            LingeringInAnotherLine,
-            Flavor::WindowsTerminal,
-            vec![
-                (Op::Write(word), false),
-                (Op::DeleteRows(1), true),
-                (Op::InsertAboveFooter, false),
-                (Op::Bytes(b"\x93"), true),
-                (
-                    Op::Restyle {
-                        rows: 2,
-                        text: word,
-                    },
-                    false,
-                ),
-            ],
-            vec![("Missed", 1)],
-        ),
-        (
-            ClearedOverRepeatedText,
-            Flavor::WindowsTerminal,
-            vec![
-                (Op::Redraw("hello"), false),
-                (Op::Newline, false),
-                (
-                    Op::WordDown {
-                        column: 9,
-                        word: "cat",
-                    },
-                    false,
-                ),
-                (Op::Rewrite("hello"), false),
-                (Op::LeaveAlternate, true),
-                (Op::Clear, false),
-                (Op::Write("a b"), false),
-                (Op::Repaint("cat"), false),
-                (Op::Newline, false),
-            ],
-            vec![("Repeated", 1)],
         ),
     ]
 }

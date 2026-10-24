@@ -146,6 +146,10 @@ impl Watch {
     }
 }
 
+fn kept_row(to: usize) -> OldRow {
+    OldRow::Kept(to)
+}
+
 fn kept(from: usize) -> NewRow {
     NewRow::Kept { from, moved: false }
 }
@@ -227,7 +231,8 @@ fn a_footer_redrawn_in_place_is_rewritten() {
             kept(2),
             NewRow::Rewritten {
                 from: 3,
-                moved: false
+                moved: false,
+                alone: false
             }
         ]
     );
@@ -259,7 +264,8 @@ fn a_status_row_moved_down_a_row_pairs_with_its_old_self() {
             NEW,
             NewRow::Rewritten {
                 from: 1,
-                moved: true
+                moved: true,
+                alone: false
             },
             moved(2),
             moved(3)
@@ -595,4 +601,125 @@ fn output_repeated_after_a_clear_that_lost_the_old_screen_is_new() {
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     assert_eq!(watch.texts(), ["alpha", "bravo", "charlie", "delta", ""]);
     assert_eq!(outcome.rows, [NEW, NEW, NEW, NEW, NEW]);
+}
+
+#[test]
+fn a_footer_below_a_cleared_screen_pushed_into_the_history_does_not_overflow() {
+    // `conhost_footer_overflow`'s shape: the console host pushes the
+    // cleared screen into the history, a footer is drawn on the last row
+    // under a scroll region, and the first line of output above it moves
+    // the old screen's blank rows and the footer, while the block above
+    // them, the rows before the clear, stays in place. The one candidate
+    // rotation, none, tells where every row is, so nothing went by unseen,
+    // however the footer moved (section 4.3, item 5).
+    let mut watch = Watch::console(20, 5, 50);
+    watch.write("PS> one\r\nout\r\nPS> run\r\n");
+    watch.write("\x1b[2J\x1b[1;4r\x1b[5;1Hstatus: busy\x1b[4;1H");
+    let outcome = watch.write("\r\nflood line 1");
+    assert_eq!(
+        watch.texts(),
+        [
+            "PS> one",
+            "out",
+            "PS> run",
+            "",
+            "",
+            "",
+            "",
+            "flood line 1",
+            "status: busy"
+        ]
+    );
+    assert_eq!(
+        outcome.rows,
+        [
+            kept(0),
+            kept(1),
+            kept(2),
+            NEW,
+            moved(3),
+            moved(4),
+            moved(5),
+            NEW,
+            moved(7)
+        ]
+    );
+    assert_eq!(outcome.rotation, 0);
+    assert!(!outcome.overflowed, "the history is far from full");
+}
+
+#[test]
+fn a_row_paired_alone_by_likeness_elsewhere_starts_its_change_history_afresh() {
+    // A status row ticks twice, then is written over in place with a line
+    // of output and the next tick is printed a row lower: the alignment
+    // pairs the tick with the old status row, which moved alone, with no
+    // neighbour kept in the same move, so its change history starts afresh
+    // (section 4.3, item 6): the reading rules do not carry its volatility.
+    let mut watch = Watch::console(12, 5, 10);
+    watch.write("1s");
+    watch.write("\r2s");
+    watch.write("\r3s");
+    let outcome = watch.write("\rok\r\n4s");
+    assert_eq!(watch.texts(), ["ok", "4s"]);
+    assert_eq!(
+        outcome.rows,
+        [
+            NEW,
+            NewRow::Rewritten {
+                from: 0,
+                moved: true,
+                alone: true
+            }
+        ]
+    );
+}
+
+#[test]
+fn a_lingering_row_is_taken_back_only_as_a_row_of_its_own_line() {
+    // A wrapped line's last row is erased, so it lingers (section 4.1), and
+    // its text is printed again as a line of its own: the same text inside
+    // another line is new, not the row taken back.
+    let mut watch = Watch::console(10, 5, 10);
+    watch.write("abcdefghijxyz");
+    let erased = watch.write("\x1b[2K");
+    assert_eq!(erased.old, [kept_row(0), OldRow::Gone { lingering: true }]);
+    let outcome = watch.write("\r\nxyz");
+    assert_eq!(watch.texts(), ["abcdefghij", "", "xyz"]);
+    assert_eq!(outcome.rows[2], NEW);
+}
+
+#[test]
+fn a_screen_cleared_into_the_history_over_repeated_text_keeps_its_rows_in_order() {
+    // Windows Terminal clears a screen holding "hello" twice into a full
+    // history whose block above the screen is blank rows, which tell no
+    // rotation: the old screen's rows, paired in order as well as by text
+    // (section 4.4), give it, and each "hello" is kept as the copy in its
+    // own place in the order, none of them new.
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 12, 5, 6);
+    watch.write("\r\n");
+    watch.write("\r\n\r\n\r\nhello\r\n~hello\r\n\r\nhello");
+    assert_eq!(
+        watch.texts(),
+        ["", "", "", "", "hello", "~hello", "", "hello"]
+    );
+    let outcome = watch.write("\x1b[H\x1b[2Ja b\r\ncat\r\n");
+    assert_eq!(
+        watch.texts(),
+        ["", "", "hello", "~hello", "", "hello", "a b", "cat", ""]
+    );
+    assert_eq!(outcome.rotation, 2);
+    assert_eq!(
+        outcome.rows,
+        [
+            kept(2),
+            kept(3),
+            kept(4),
+            kept(5),
+            kept(6),
+            kept(7),
+            NEW,
+            NEW,
+            NEW
+        ]
+    );
 }
