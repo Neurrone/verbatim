@@ -24,17 +24,22 @@ use verbatim_uia::provider_process;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::arbitration::window_class_name;
 
-/// Milliseconds since the Unix epoch, the observation timestamp that anchors
-/// the keypress-to-audio latency timeline. Shared with the listener, which
-/// stamps facts at observation.
+/// Milliseconds since the Unix epoch on the run's shared clock
+/// ([`crate::protocol::now_us`]), the observation timestamp that orders
+/// events across processes and anchors the keypress-to-audio latency
+/// timeline. Shared with the listener, which stamps facts at observation.
 pub(crate) fn now_ms() -> u64 {
-    u64::try_from(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-    )
-    .unwrap_or(u64::MAX)
+    crate::protocol::now_us() / 1_000
+}
+
+/// The millisecond stamp of an observation `timing` holds, taken from the
+/// same clock read as its microseconds, so a focus can be ordered to the
+/// microsecond; now, when `timing` holds none.
+pub(crate) fn observed_ms(timing: &crate::protocol::EventTiming) -> u64 {
+    match timing.observed_at_us {
+        0 => now_ms(),
+        observed_at_us => observed_at_us / 1_000,
+    }
 }
 
 fn hwnd(handle: isize) -> HWND {
@@ -531,6 +536,17 @@ mod tests {
         unsafe { DestroyWindow(hwnd(handle)) }.expect("destroy a window");
     }
 
+    /// An event the outpost's own handlers took in is stamped, in
+    /// milliseconds, from the same clock read as the microseconds of its
+    /// observation.
+    #[test]
+    fn an_observation_is_stamped_from_its_own_clock_read() {
+        let timing = crate::protocol::EventTiming {
+            observed_at_us: 6_543_210,
+            ..crate::protocol::EventTiming::default()
+        };
+        assert_eq!(observed_ms(&timing), 6_543);
+    }
     #[test]
     fn only_a_live_window_can_be_read_for_an_event() {
         let window = create_window();

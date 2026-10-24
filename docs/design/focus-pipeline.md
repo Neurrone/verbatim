@@ -193,7 +193,7 @@ Today the reducer thread selects between `outpost_rx` and `command_rx` (`crates/
 
 Change: one channel, `ReducerInput`, with two kinds of message, and every sender (each outpost's reader thread in the supervisor, the listener's reader, the router thread for gestures, `InputHandled` and idle barriers) sends on it. A crossbeam channel is first in, first out across all its senders, so the reducer sees inputs in the order they reached Core. The idle barrier's two lengths (`answer_idle_waiters`, main.rs 1613) become one.
 
-Order by arrival, not by observation time: ordering by the time each event was observed would need a reorder buffer that waits for slower outposts, which is a delay on every input, and NVDA does not do it either. Arrival order already puts a key before the application's reaction to it, because the key reaches Core in about a millisecond and the reaction has to be raised, received and read first.
+Order by arrival, not by observation time: ordering by the time each event was observed would need a reorder buffer that waits for slower outposts, which is a delay on every input, and NVDA does not do it either. Arrival order already puts a key before the application's reaction to it, because the key reaches Core in about a millisecond and the reaction has to be raised, received and read first. What the observation time decides is narrower and costs no wait: a focus from another outpost that happened before the focus Core has applied is dropped as it arrives (decision D14; `docs/parity/focus-events.md`, "Stale focus events").
 
 ### 4.2 NVDA's duplicate rule, in Core with the outpost's evidence
 

@@ -92,7 +92,10 @@ Public API:
   priority chosen by the processing hint ([verbatim-core](verbatim-core.md)).
 - `Input` and `Effect` — the reducer's contract. Inputs are events (each
   carrying its source pid, backend, optional `WindowFacts`, and the
-  observation time, which is for the latency record only), fetch
+  observation time on the run's shared clock, in milliseconds and, for a
+  focus, in microseconds from the same clock read (0 when the source gave
+  milliseconds only), which the latency record reads and the reducer
+  orders focuses by), fetch
   completions (echoing their `QueryKind`), `OutpostEnded` (an outpost
   incarnation ended, so its node ids are dead), timer ticks, and `Command`
   (a review or object-navigation gesture carrying a `ReviewCommand` and a

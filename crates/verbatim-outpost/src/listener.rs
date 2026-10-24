@@ -139,7 +139,6 @@ use crate::focus_read::{
     WatchedRead,
 };
 use crate::foreground::{ForegroundWatch, Front, Step};
-use crate::outpost::now_ms;
 use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::MOVED_ON_GRACE;
 use crate::protocol::{
@@ -568,7 +567,12 @@ impl Outgoing {
             observed_at_us,
             ..EventTiming::default()
         };
-        self.queue(pid, fact, (TraceId::mint(), now_ms(), timing), win_event);
+        self.queue(
+            pid,
+            fact,
+            (TraceId::mint(), observed_at_us / 1_000, timing),
+            win_event,
+        );
     }
 
     /// Sends `fact`, part of the read of the UIA focus event `meta`
@@ -708,7 +712,7 @@ impl Outgoing {
             listener_handled_at_us: self.now(),
             ..EventTiming::default()
         };
-        self.menu_end.lock().end = Some((now_ms(), timing, over));
+        self.menu_end.lock().end = Some((observed_at_us / 1_000, timing, over));
     }
 
     /// Answers the idle barrier's round `round`, behind every fact sent
@@ -1197,13 +1201,16 @@ fn queue_for_reading(
     let Some(pid) = outgoing.uia_event_process(fields.process_id) else {
         return;
     };
+    // One clock read stamps the event, so its milliseconds and
+    // microseconds are the same observation.
+    let observed_at_us = now_us();
     let meta = Meta {
         marker: outgoing.next_marker(),
         kind,
         trace: TraceId::mint(),
-        observed_at_ms: now_ms(),
+        observed_at_ms: observed_at_us / 1_000,
         timing: EventTiming {
-            observed_at_us: now_us(),
+            observed_at_us,
             ..EventTiming::default()
         },
     };
@@ -2097,6 +2104,27 @@ mod tests {
         );
     }
 
+    /// A `WinEvent`'s fact is stamped, in milliseconds, at its callback's
+    /// observation, from the same clock read as its microseconds, so the
+    /// focus it becomes is ordered by when it happened.
+    #[test]
+    fn a_win_events_fact_is_stamped_at_its_callbacks_observation() {
+        let (outgoing, mut reader) = at_seven_thousand();
+        outgoing.fact(Pid(5), msaa_focus(), None, None, 6_543_210);
+        let sent = sent(&outgoing, &mut reader);
+        let [
+            OutpostToSupervisor::FocusFact {
+                observed_at_ms,
+                timing,
+                ..
+            },
+        ] = sent.as_slice()
+        else {
+            panic!("one fact is sent: {sent:?}");
+        };
+        assert_eq!((*observed_at_ms, timing.observed_at_us), (6_543, 6_543_210));
+    }
+
     #[test]
     fn a_marker_is_handled_as_it_is_sent() {
         let (outgoing, mut reader) = at_seven_thousand();
@@ -2143,6 +2171,22 @@ mod tests {
             timing_of_the_fact(&outgoing, &mut reader).listener_handled_at_us,
             6_500
         );
+    }
+
+    /// A menu's or the switcher's end is stamped when the callback observed
+    /// it, the time Core compares the focuses applied since with.
+    #[test]
+    fn a_menu_end_is_stamped_at_its_observation() {
+        let (outgoing, reader) = at_seven_thousand();
+        let messages = drain(reader);
+        outgoing.menu_or_switch_ended(6_543_210);
+        let message = messages
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the menu end is sent");
+        let OutpostToSupervisor::MenuOrSwitchEnded { ended_at_ms, .. } = message else {
+            panic!("a menu end: {message:?}");
+        };
+        assert_eq!(ended_at_ms, 6_543);
     }
 
     #[test]

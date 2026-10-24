@@ -529,6 +529,37 @@ pub(crate) struct SayAll {
     pub(crate) display_held: bool,
 }
 
+/// The newest focus event applied, by which a focus from another outpost is
+/// ordered ([`SrState::latest_focus`]). It reads from a dump written as the
+/// tuple of its first three fields.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct LatestFocus {
+    /// The outpost that reported it.
+    pub(crate) outpost: OutpostId,
+    /// When it was observed, in milliseconds on the run's shared clock.
+    pub(crate) observed_at_ms: u64,
+    /// Its top-level window, when known.
+    pub(crate) top_level: Option<WindowHandle>,
+    /// When it was observed, in microseconds from the same clock read; 0
+    /// when its source gave milliseconds only.
+    #[serde(default)]
+    pub(crate) observed_at_us: u64,
+}
+
+impl LatestFocus {
+    /// Whether this focus was observed after a focus observed at `ms`
+    /// milliseconds, and at `micros` microseconds when not 0: to the
+    /// microsecond when both are known, else to the millisecond, a tie
+    /// being no later.
+    pub(crate) fn observed_after(&self, (ms, micros): (u64, u64)) -> bool {
+        if micros != 0 && self.observed_at_us != 0 {
+            micros < self.observed_at_us
+        } else {
+            ms < self.observed_at_ms
+        }
+    }
+}
+
 /// The most recently issued object-navigation query whose completion has not
 /// landed yet, and the node it navigates from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -579,9 +610,8 @@ pub struct SrState {
     /// deliver theirs out of the order they were observed in, where NVDA
     /// handles every event in one queue; a focus event from another outpost
     /// observed before this one is stale and dropped, unless it is in the
-    /// same top-level window. The window is this focus's top-level window,
-    /// when known.
-    pub(crate) latest_focus: Option<(OutpostId, u64, Option<WindowHandle>)>,
+    /// same top-level window.
+    pub(crate) latest_focus: Option<LatestFocus>,
     /// When the newest foreground change applied was observed, in
     /// milliseconds since the Unix epoch: a focus with a known observation
     /// time that brought a new foreground window and cut speech off. Speech
@@ -828,8 +858,7 @@ impl SrState {
     /// milliseconds since the Unix epoch; `None` before any.
     #[must_use]
     pub fn latest_focus_observed_at(&self) -> Option<u64> {
-        self.latest_focus
-            .map(|(_, observed_at_ms, _)| observed_at_ms)
+        self.latest_focus.map(|latest| latest.observed_at_ms)
     }
 
     /// Every node the state refers to, grouped by the outpost that issued

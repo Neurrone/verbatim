@@ -594,8 +594,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   message of an outpost started for an application, a spare's answer to
   `Assign`), `SpareReady` (a spare's first message: it waits for
   `Assign`), `Event`
-  (trace id, observation timestamp, backend, the event window's
-  `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
+  (trace id, observation timestamp on the run's shared clock, in
+  milliseconds and, for a focus, in microseconds from the same clock read,
+  backend, the event window's `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
   echoing its request id, with its `EventTiming`, default for a query
   withdrawn or abandoned, and a `QueryOutcome`: `Done` with a
   `QueryResult`, `Gone` when the node is no longer reachable, `Failed` with
@@ -612,7 +613,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   window and its facts, when it holds the system foreground, and its focused
   control with ancestors, selected child, window facts, and what its text
   read found (`FocusedControl::text`, as `FocusChanged`'s `text`), and the time
-  the outpost began reading it, which orders it among the focus events. A
+  the outpost began reading it, in milliseconds and microseconds from one
+  clock read, which orders it among the focus events. A
   `ListenerFact` strips to a pid-less `DeliveredFact` once the supervisor
   has routed it. Node ids arrive from Core stamped with this outpost's id;
   the outpost looks them up with the stamp cleared (`NodeId::unstamped`).

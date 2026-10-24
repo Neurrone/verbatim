@@ -188,6 +188,7 @@ fn a_menus_end_asks_for_the_foreground_focus_unless_a_later_focus_was_applied() 
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_ms: 1_000,
+            observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Uia,
             window: None,

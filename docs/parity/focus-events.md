@@ -116,11 +116,26 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
 - Order within an application comes from its outpost's single queue and
   worker. Core takes the outposts' messages and its keys and commands
   from one channel, in the order they reached it
-  (`docs/design/focus-pipeline.md`, section 4.1). Arrival order, not
-  observation time, orders them.
-- Across outposts, events can arrive out of the order they were observed
-  in, so the reducer drops a focus event from one outpost observed before
-  the newest focus it applied from another.
+  (`docs/design/focus-pipeline.md`, section 4.1), and holds none back.
+- Across outposts, events can arrive out of the order they happened in,
+  so the reducer drops a focus event from one outpost observed before the
+  newest focus it applied from another (decision D14). Every process
+  stamps its observations on the run's shared clock, the performance
+  counter with one offset every process of the run shares
+  (`verbatim_process::clock`), in milliseconds and, for a focus, in
+  microseconds from the same clock read. Two focuses stamped in one
+  millisecond are ordered by their microseconds when both carry them, and
+  otherwise neither is stale: UI Automation delivers focus events in
+  bursts, several in one millisecond, and in the Alt+Tab check of
+  2026-10-24 the switcher's pane, read first, reached Core after the
+  console switched to and was announced over it.
+- What each focus's time is: a UIA focus, when the focus listener's
+  callback received it, since UI Automation gives an event no time of its
+  own; a `WinEvent` focus, when the hook's callback that took it in began,
+  the outpost's own or the listener's; a foreground change, when its
+  window was confirmed (below); a focus read on request, when the read
+  began; and the end of a menu or of the switcher, when the listener's
+  callback observed it.
 - A UIA focus fact whose element is not the focused element is dropped
   when the focus is in another application by then, and otherwise
   reported from the fact with its window: its own, or for a windowless

@@ -276,8 +276,9 @@ Implementation notes, `reduce`:
   selection of an ancestor is such a state change); a name change speaks only on the focused node, where the new name
   alone is spoken, queued. Order within an outpost comes from its queue;
   across outposts, a focus observed before the focus already applied is
-  dropped as stale (`observed_at_ms`, `docs/parity/focus-events.md` "Stale focus
-  events"), and `latest_focus_observed_at` lets the shell skip a fake
+  dropped as stale (`observed_at_ms`, and `observed_at_us` when both
+  focuses carry it, so two focuses stamped in one millisecond are ordered
+  too; `docs/parity/focus-events.md` "Stale focus events"), and `latest_focus_observed_at` lets the shell skip a fake
   focus after a menu closes when a later focus has been applied. The negated-state rules match NVDA's: negated checked for
   check boxes and radio buttons, and negated pressed ("not pressed") for a
   toggle button — a `Button` control that exposes the UIA Toggle pattern,

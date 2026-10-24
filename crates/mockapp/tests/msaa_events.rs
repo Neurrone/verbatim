@@ -86,6 +86,7 @@ fn spoken(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Vec<SegmentCon
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_ms: 0,
+            observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Msaa,
             window: None,
@@ -265,6 +266,7 @@ fn said(state: &mut SrState, mut event: NormalizedEvent) -> Vec<Said> {
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_ms: 0,
+            observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Msaa,
             window: None,
@@ -523,6 +525,7 @@ fn a_progress_bar_off_the_focus_indicates_its_percentage() {
             &Input::Event {
                 trace_id: TraceId::mint(),
                 observed_at_ms: 0,
+                observed_at_us: 0,
                 source: Pid(1),
                 backend: Backend::Msaa,
                 window: None,
@@ -960,8 +963,75 @@ fn a_foreground_change_after_another_application_s_focus_is_reported() {
     app.quit();
 }
 
+/// The stamp of the outpost's next message, which must be a focus change:
+/// its milliseconds and microseconds, and when its event was first
+/// observed, in microseconds.
+fn focus_stamp(outpost: &OutpostUnderTest) -> (u64, u64, u64) {
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            observed_at_ms,
+            observed_at_us,
+            timing,
+            event: NormalizedEvent::FocusChanged { .. },
+            ..
+        } => (observed_at_ms, observed_at_us, timing.observed_at_us),
+        other => panic!("the outpost said {other:?}, not a focus change"),
+    }
+}
+
+/// A focus the outpost's own hook took in is stamped with its hook's
+/// observation to the microsecond, its milliseconds from the same clock
+/// read, so Core orders it against another application's focus in the
+/// same millisecond (`docs/parity/focus-events.md`, "Stale focus events").
+fn a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond() {
+    use verbatim_outpost::Heard;
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-focus-stamp");
+    let mut app = common::spawn("small.json", "msaa", &title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    let (fact, stamp) = raise_focus(&mut app);
+    outpost.heard(&[Heard::Msaa(WinEventKind::Focus)]);
+    let (ms, micros, first_observed) = focus_stamp(&outpost);
+    assert_ne!(first_observed, 0, "the hook observed the focus");
+    assert_eq!((ms, micros), (first_observed / 1_000, first_observed));
+    outpost.deliver_win_event(fact, stamp);
+    outpost.settled();
+    app.quit();
+}
+
+/// A foreground change is stamped when its window was confirmed as the
+/// foreground, to the microsecond, its milliseconds from the same clock
+/// read: the fact it came from carried no observation.
+fn a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-foreground-stamp");
+    let app = common::spawn("counts.json", "msaa", &title);
+    let hwnd = common::find_window(&title);
+    let outpost = OutpostUnderTest::new(&app);
+
+    outpost.set_foreground(hwnd);
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: hwnd.0 as isize,
+    });
+    let (ms, micros, first_observed) = focus_stamp(&outpost);
+    assert_eq!(first_observed, 0, "the fact carried no observation");
+    assert_ne!(micros, 0, "the confirmation is stamped");
+    assert_eq!(ms, micros / 1_000);
+    outpost.settled();
+    app.quit();
+}
+
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond",
+            a_hooked_focus_is_stamped_with_its_observation_to_the_microsecond,
+        ),
+        (
+            "a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond",
+            a_foreground_report_is_stamped_at_its_confirmation_to_the_microsecond,
+        ),
         (
             "a_foreground_change_newest_beside_a_focus_is_reported_and_ends_its_group",
             a_foreground_change_newest_beside_a_focus_is_reported_and_ends_its_group,

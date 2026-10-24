@@ -523,6 +523,11 @@ pub enum Input {
         /// (`docs/parity/focus-events.md`, "Stale focus events").
         #[serde(default)]
         observed_at_ms: u64,
+        /// The same stamp in microseconds on the run's shared clock, which
+        /// orders two focuses stamped in one millisecond; 0 when the source
+        /// gave milliseconds only.
+        #[serde(default)]
+        observed_at_us: u64,
         /// The application the event came from: information about its
         /// source, for attention and logs. Node ids carry the outpost.
         source: Pid,

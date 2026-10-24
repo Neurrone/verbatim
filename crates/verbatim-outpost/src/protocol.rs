@@ -988,6 +988,10 @@ pub struct FocusNow {
     /// older than the answer, and one observed after it newer, as NVDA
     /// queues a focus it reads in order with the events around it.
     pub observed_at_ms: u64,
+    /// The same time in microseconds on the run's shared clock, from the
+    /// same clock read; 0 from an older peer.
+    #[serde(default)]
+    pub observed_at_us: u64,
 }
 
 /// The focused control in a [`FocusNow`] answer.
@@ -1043,6 +1047,12 @@ pub enum OutpostToSupervisor {
         /// for messages from older peers.
         #[serde(default)]
         observed_at_ms: u64,
+        /// For a focus, the same stamp in microseconds on the run's shared
+        /// clock, taken with the same clock read, which orders two focuses
+        /// stamped in one millisecond; 0 for every other event and from
+        /// older peers.
+        #[serde(default)]
+        observed_at_us: u64,
         /// Which backend sourced the event.
         backend: Backend,
         /// Facts about the window the event concerns, read with local calls
@@ -1486,6 +1496,7 @@ mod tests {
             trace_id: TraceId::mint(),
             timing: EventTiming::default(),
             observed_at_ms: 1_752_000_000_000,
+            observed_at_us: 0,
             backend: Backend::Msaa,
             window: None,
             application: Some(Pid(20)),
@@ -1543,6 +1554,7 @@ mod tests {
             trace_id: TraceId::mint(),
             timing: EventTiming::default(),
             observed_at_ms: 0,
+            observed_at_us: 0,
             backend: Backend::Uia,
             window: None,
             application: None,
@@ -1930,6 +1942,7 @@ mod tests {
                     text: None,
                 }),
                 observed_at_ms: 42,
+                observed_at_us: 0,
             })),
             QueryOutcome::Done(QueryResult::Navigated(None)),
             QueryOutcome::Done(QueryResult::Tree(DumpedTree {

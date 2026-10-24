@@ -1401,7 +1401,7 @@ impl Worker<'_> {
             .clock_now
             .saturating_duration_since(open.opened)
             .as_millis();
-        let observed_at_ms = now_ms();
+        let observed_at_us = now_us();
         let Some((hwnd, control)) = read::focused_control_in(context, self.client) else {
             tracing::info!(
                 hwnd = open.hwnd,
@@ -1429,7 +1429,7 @@ impl Worker<'_> {
         let (node_id, role, backend) = (node.id, node.role, node.backend);
         self.emit_focus(
             TraceId::mint(),
-            observed_at_ms,
+            (observed_at_us / 1_000, observed_at_us),
             backend,
             Some(hwnd),
             node,
@@ -2242,11 +2242,32 @@ impl Worker<'_> {
         window: Option<isize>,
         event: NormalizedEvent,
     ) -> bool {
+        self.emit_stamped(trace, (observed_at_ms, 0), backend, window, event)
+    }
+
+    /// Emits `event` stamped in milliseconds and, for a focus, in
+    /// microseconds from the same clock read (0 when not known).
+    fn emit_stamped(
+        &self,
+        trace: TraceId,
+        stamp: (u64, u64),
+        backend: Backend,
+        window: Option<isize>,
+        event: NormalizedEvent,
+    ) -> bool {
         publish(
             self.context,
             self.generation,
-            self.event_message(trace, observed_at_ms, backend, window, event),
+            self.event_message(trace, stamp, backend, window, event),
         )
+    }
+
+    /// The stamp of the entry being handled, observed at `observed_at_ms`,
+    /// with its microseconds when its timing holds the same observation:
+    /// every entry the outpost or the listener stamps at observation takes
+    /// both from one clock read.
+    fn entry_stamp(&self, observed_at_ms: u64) -> (u64, u64) {
+        stamp_with_micros(observed_at_ms, self.timing.observed_at_us)
     }
 
     /// Emits `events`, an entry's, together, as [`emit`](Self::emit) emits
@@ -2262,7 +2283,7 @@ impl Worker<'_> {
     ) -> bool {
         let messages = events
             .into_iter()
-            .map(|event| self.event_message(trace, observed_at_ms, backend, window, event))
+            .map(|event| self.event_message(trace, (observed_at_ms, 0), backend, window, event))
             .collect();
         publish_all(self.context, self.generation, messages)
     }
@@ -2272,14 +2293,15 @@ impl Worker<'_> {
     fn event_message(
         &self,
         trace: TraceId,
-        observed_at_ms: u64,
+        stamp: (u64, u64),
         backend: Backend,
         window: Option<isize>,
         event: NormalizedEvent,
     ) -> OutpostToSupervisor {
         OutpostToSupervisor::Event {
             trace_id: trace,
-            observed_at_ms,
+            observed_at_ms: stamp.0,
+            observed_at_us: stamp.1,
             backend,
             window: window.map(|hwnd| event_window_facts(window_facts(hwnd), &event)),
             application: window.and_then(|hwnd| console_client(hwnd, self.context.target_pid())),
@@ -2301,7 +2323,7 @@ impl Worker<'_> {
     fn emit_focus(
         &mut self,
         trace: TraceId,
-        observed_at_ms: u64,
+        stamp: (u64, u64),
         backend: Backend,
         window: Option<isize>,
         node: NodeSnapshot,
@@ -2357,7 +2379,8 @@ impl Worker<'_> {
             selected_child,
             text: text.clone().map(Box::new),
         };
-        if self.emit(trace, observed_at_ms, backend, window, event) {
+        let observed_at_ms = stamp.0;
+        if self.emit_stamped(trace, stamp, backend, window, event) {
             if foreground {
                 self.end_watch_elsewhere(node_id);
                 self.context.tracking().role = Some(role);
@@ -3630,9 +3653,15 @@ impl Worker<'_> {
             );
             return;
         }
+        let confirmed_at_us = now_us();
+        let stamp = if confirmed_at_us / 1_000 >= observed_at_ms {
+            (confirmed_at_us / 1_000, confirmed_at_us)
+        } else {
+            (observed_at_ms, 0)
+        };
         self.emit_focus(
             trace,
-            observed_at_ms.max(now_ms()),
+            stamp,
             backend,
             Some(hwnd),
             node,
@@ -3752,7 +3781,7 @@ impl Worker<'_> {
             .is_some_and(|object| *object != Object::Msaa(hwnd, id_object, id_child));
         self.emit_focus(
             trace,
-            observed_at_ms,
+            self.entry_stamp(observed_at_ms),
             Backend::Msaa,
             Some(hwnd),
             node,
@@ -3863,7 +3892,7 @@ impl Worker<'_> {
         context.tracking().value_from_selection = read.value_from_selection.then_some(node.id);
         self.emit_focus(
             trace,
-            observed_at_ms,
+            self.entry_stamp(observed_at_ms),
             Backend::Uia,
             reported,
             node,
@@ -4018,7 +4047,7 @@ impl Worker<'_> {
         };
         self.emit_focus(
             entry.trace,
-            entry.observed_at_ms,
+            self.entry_stamp(entry.observed_at_ms),
             Backend::Msaa,
             Some(window),
             node,
@@ -4273,9 +4302,30 @@ fn event_window_facts(mut facts: WindowFacts, event: &NormalizedEvent) -> Window
     facts
 }
 
+/// A stamp of `ms` milliseconds with the microseconds of the observation
+/// `micros` when that is the same observation, read with the same clock
+/// read, and with none (0) otherwise.
+fn stamp_with_micros(ms: u64, micros: u64) -> (u64, u64) {
+    if micros != 0 && micros / 1_000 == ms {
+        (ms, micros)
+    } else {
+        (ms, 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A focus carries the microseconds of its observation only when they
+    /// are of its millisecond stamp: a foreground change, stamped when its
+    /// window was confirmed, does not carry its event's first observation.
+    #[test]
+    fn a_stamp_carries_microseconds_only_of_its_own_observation() {
+        assert_eq!(stamp_with_micros(6_543, 6_543_210), (6_543, 6_543_210));
+        assert_eq!(stamp_with_micros(6_544, 6_543_210), (6_544, 0));
+        assert_eq!(stamp_with_micros(6_543, 0), (6_543, 0));
+    }
 
     /// A focus change's window facts keep the window's class, which Core's
     /// staging rule matches; any other event's carry none.

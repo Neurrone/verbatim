@@ -440,6 +440,7 @@ fn merged(older: OutpostToSupervisor, newer: OutpostToSupervisor) -> OutpostToSu
             OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_ms,
+                observed_at_us,
                 backend,
                 window,
                 application,
@@ -451,6 +452,7 @@ fn merged(older: OutpostToSupervisor, newer: OutpostToSupervisor) -> OutpostToSu
             OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_ms,
+                observed_at_us,
                 backend,
                 window,
                 application,
@@ -473,6 +475,7 @@ fn merged(older: OutpostToSupervisor, newer: OutpostToSupervisor) -> OutpostToSu
             OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_ms,
+                observed_at_us,
                 backend,
                 window,
                 application,
@@ -491,6 +494,7 @@ fn merged(older: OutpostToSupervisor, newer: OutpostToSupervisor) -> OutpostToSu
             OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_ms,
+                observed_at_us,
                 backend,
                 window,
                 application,
@@ -518,6 +522,7 @@ fn within_limit(message: OutpostToSupervisor) -> Vec<OutpostToSupervisor> {
         OutpostToSupervisor::Event {
             trace_id,
             observed_at_ms,
+            observed_at_us,
             backend,
             window,
             application,
@@ -528,6 +533,7 @@ fn within_limit(message: OutpostToSupervisor) -> Vec<OutpostToSupervisor> {
             .map(|speech| OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_ms,
+                observed_at_us,
                 backend,
                 window: window.clone(),
                 application,
@@ -560,6 +566,7 @@ mod tests {
         OutpostToSupervisor::Event {
             trace_id: TraceId::mint(),
             observed_at_ms: 0,
+            observed_at_us: 0,
             backend: Backend::Uia,
             window: None,
             application: None,

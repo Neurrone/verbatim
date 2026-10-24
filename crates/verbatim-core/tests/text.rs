@@ -36,6 +36,7 @@ fn event(event: NormalizedEvent) -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
         observed_at_ms: 0,
+        observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -692,6 +693,7 @@ fn caret_event_at(state: &mut SrState, line: TextChunk, observed_at_ms: u64) -> 
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_ms,
+            observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Uia,
             window: None,
@@ -3270,6 +3272,7 @@ fn selection_report(
     Input::Event {
         trace_id: TraceId::mint(),
         observed_at_ms,
+        observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -3367,6 +3370,7 @@ fn general_report(selection: Option<Selection>, changes: &[bool], new: Option<&s
     Input::Event {
         trace_id: TraceId::mint(),
         observed_at_ms: 0,
+        observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Msaa,
         window: None,

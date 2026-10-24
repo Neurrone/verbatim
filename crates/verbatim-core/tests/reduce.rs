@@ -49,6 +49,7 @@ fn node(
 fn focus_event(trace_id: TraceId, source: Pid, snapshot: NodeSnapshot) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -90,6 +91,7 @@ fn foreground_window(handle: u64) -> WindowFacts {
 fn event_in(source: Pid, facts: Option<WindowFacts>, event: NormalizedEvent) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -353,6 +355,7 @@ fn focus_slider_then_drag_speaks_value_only_on_change() {
     let trace_2 = TraceId::mint();
     let value_changed = Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: trace_2,
         source,
         backend: Backend::Uia,
@@ -538,6 +541,7 @@ fn value_changed_for_non_focused_node_produces_no_effects() {
 
     let other_value_changed = Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -574,6 +578,7 @@ fn a_name_change_on_the_focus_speaks_the_new_name_alone_queued() {
 
     let name_changed = Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -615,6 +620,7 @@ fn states_changed_with_children(
 ) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -900,6 +906,7 @@ fn a_description_change_on_the_focus_is_spoken() {
     );
     let described = |node: u64, description: &str| Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Msaa,
@@ -946,6 +953,7 @@ fn suggestions_opening_on_the_focus_and_closing_play_their_indications() {
     );
     let suggestions = |node: u64, open: bool| Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -1311,6 +1319,7 @@ fn sample_script() -> Vec<Input> {
         focus_event(TraceId::mint(), source, button),
         Input::Event {
             observed_at_ms: 0,
+            observed_at_us: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
@@ -1326,6 +1335,7 @@ fn sample_script() -> Vec<Input> {
         },
         Input::Event {
             observed_at_ms: 0,
+            observed_at_us: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
@@ -1429,6 +1439,7 @@ fn focus_event_with_ancestors(
 ) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -1887,6 +1898,7 @@ fn focus_event_with_selection(
 ) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -1944,6 +1956,7 @@ fn a_repeated_focus_with_another_selected_item_is_silent_until_the_selection_eve
 fn selection_event(trace_id: TraceId, source: Pid, node: NodeSnapshot) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -2056,6 +2069,7 @@ fn notification_event(
 ) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id,
         source,
         backend: Backend::Uia,
@@ -2540,6 +2554,138 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     );
 }
 
+/// Alt+Tab, as found live (2026-10-24): the window switched to, a console,
+/// has its terminal's focus applied first; the switcher's own pane focus,
+/// which happened before it, reaches Core after it, from another
+/// application's outpost. It never replaces the console's focus, so the
+/// console's announcement is neither cut off nor expired.
+#[test]
+fn a_switchers_focus_that_happened_before_the_window_switched_to_is_dropped() {
+    let explorer = Pid(6620);
+    let console = Pid(12284);
+    let switcher = WindowFacts {
+        topmost: true,
+        ..window(131_700)
+    };
+    let item = node(2, Role::ListItem, Some("AltTabDbA"), None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &observed_at(focus_in(explorer, switcher.clone(), item, vec![]), 45_485),
+    );
+    let console_window = node(1, Role::Window, Some("AltTabDbA"), None, StateSet::new());
+    let terminal = node(2, Role::Terminal, None, None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &observed_at(
+            focus_in(
+                console,
+                foreground_window(9_373_252),
+                terminal.clone(),
+                vec![console_window],
+            ),
+            46_905,
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(
+                outpost_of(console),
+                2,
+                &[1],
+                Some((outpost_of(console), 1))
+            )),
+            Heard::Stop,
+            queued(vec![
+                UtteranceSegment::label("AltTabDbA"),
+                role(Role::Window)
+            ]),
+            queued(vec![role(Role::Terminal)]),
+        ],
+        "the console is announced"
+    );
+    let pane = node(1, Role::Pane, None, None, StateSet::new());
+    let (state, effects) = reduce(
+        &state,
+        &observed_at(focus_in(explorer, switcher, pane, vec![]), 46_491),
+    );
+    assert_eq!(heard(&effects), vec![], "the switcher's focus is dropped");
+    assert_eq!(
+        state.focused().map(|(source, node)| (source, node.id)),
+        Some((console, NodeId::in_outpost(outpost_of(console), 2)))
+    );
+}
+
+/// `input` observed at `us`, in microseconds on the run's shared clock,
+/// with its milliseconds from the same reading.
+fn observed_at_micros(mut input: Input, us: u64) -> Input {
+    if let Input::Event {
+        observed_at_ms,
+        observed_at_us,
+        ..
+    } = &mut input
+    {
+        *observed_at_ms = us / 1_000;
+        *observed_at_us = us;
+    }
+    input
+}
+
+/// Two focuses from different applications stamped in one millisecond are
+/// ordered by their microseconds. In the Alt+Tab check (2026-10-24, switch
+/// 3) the focus listener read the switcher's pane and then the console's
+/// terminal in one millisecond, and the switcher's reached Core second.
+/// Without microseconds on both, a tie in the millisecond is no earlier, so
+/// the later arrival is applied.
+#[test]
+fn focuses_stamped_in_one_millisecond_are_ordered_by_their_microseconds() {
+    let explorer = Pid(6620);
+    let console = Pid(12284);
+    let switcher = WindowFacts {
+        topmost: true,
+        ..window(131_700)
+    };
+    let terminal = node(2, Role::Terminal, None, None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &observed_at_micros(
+            focus_in(console, foreground_window(9_373_252), terminal, vec![]),
+            27_736_400,
+        ),
+    );
+    let pane = node(1, Role::Pane, None, None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &observed_at_micros(
+            focus_in(explorer, switcher.clone(), pane.clone(), vec![]),
+            27_736_100,
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![],
+        "observed first, by its microseconds"
+    );
+
+    let (state, effects) = reduce(
+        &state,
+        &observed_at(focus_in(explorer, switcher, pane, vec![]), 27_736),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(outpost_of(explorer), 1, &[], None)),
+            Heard::Stop,
+            queued(vec![role(Role::Pane)]),
+        ],
+        "a tie in the millisecond is no earlier"
+    );
+    assert_eq!(
+        state.focused().map(|(source, node)| (source, node.id)),
+        Some((explorer, NodeId::in_outpost(outpost_of(explorer), 1)))
+    );
+}
+
 #[test]
 fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     // Escape closes Verbatim's menu: Notepad's foreground report, observed
@@ -2549,6 +2695,7 @@ fn a_foreground_report_that_changes_nothing_still_orders_later_arrivals() {
     let facts = foreground_window(30);
     let foreground = |ms| Input::Event {
         observed_at_ms: ms,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Msaa,
@@ -2621,6 +2768,7 @@ fn a_focus_in_the_foreground_window_from_another_application_is_not_stale() {
     let facts = foreground_window(40);
     let frame = Input::Event {
         observed_at_ms: 1_130,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source: Pid(10),
         backend: Backend::Uia,
@@ -4270,6 +4418,7 @@ fn focus_segments(snapshot: NodeSnapshot) -> Vec<UtteranceSegment> {
 fn value_changed(node_id: u64, value: &str) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source: Pid(1),
         backend: Backend::Uia,
@@ -4578,6 +4727,7 @@ fn losing_half_checked_says_not_checked() {
 fn controlled_selection(controller: u64, selected: NodeSnapshot) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source: Pid(1),
         backend: Backend::Uia,
@@ -4664,6 +4814,7 @@ fn a_controlled_selection_is_silent_once_the_controller_is_not_the_focus() {
 fn focus_event_with_unknown_ancestors(source: Pid, snapshot: NodeSnapshot) -> Input {
     Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: Backend::Uia,
@@ -5201,6 +5352,7 @@ fn a_submenu_items_speech_holds_when_its_submenu_takes_the_focus() {
     };
     let focus = |snapshot: NodeSnapshot, ancestors: Vec<NodeSnapshot>| Input::Event {
         observed_at_ms: 0,
+        observed_at_us: 0,
         trace_id: TraceId::mint(),
         source,
         backend: snapshot.backend,

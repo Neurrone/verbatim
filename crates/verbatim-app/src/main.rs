@@ -1433,6 +1433,7 @@ impl ReducerThread<'_> {
             OutpostToSupervisor::Event {
                 trace_id,
                 observed_at_ms,
+                observed_at_us,
                 backend,
                 window,
                 application,
@@ -1482,6 +1483,7 @@ impl ReducerThread<'_> {
                 self.apply(Input::Event {
                     trace_id,
                     observed_at_ms,
+                    observed_at_us,
                     source,
                     backend,
                     window,

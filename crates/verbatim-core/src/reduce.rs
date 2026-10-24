@@ -22,7 +22,8 @@ use verbatim_model::{
 use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity};
 
 use crate::state::{
-    Attention, FocusContext, Navigator, NavigatorRead, PendingNavigation, SrState, TextFollowUp,
+    Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation, SrState,
+    TextFollowUp,
 };
 use crate::{editing, review, review_text, say_all, shell, terminal, text};
 
@@ -56,6 +57,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         Input::Event {
             trace_id,
             observed_at_ms,
+            observed_at_us,
             source,
             window,
             event,
@@ -63,7 +65,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
         } => reduce_event(
             state,
             *trace_id,
-            *observed_at_ms,
+            (*observed_at_ms, *observed_at_us),
             *source,
             window.as_ref(),
             event,
@@ -316,13 +318,15 @@ fn classify(
     }
 }
 
-/// Whether a focus event from `outpost`, observed at `observed_at_ms`, was
-/// observed before the newest focus applied from another outpost. Events
-/// from one outpost arrive in order; across outposts they can arrive out of
-/// order, which NVDA's single event queue never does. An answer to a
-/// focus-now query carries the time the outpost began reading it, so it is
-/// ordered with the events by that; a report with no observation time
-/// (0) is never stale.
+/// Whether a focus event from `outpost`, observed at `observed`, its
+/// milliseconds and microseconds on the run's shared clock, was observed
+/// before the newest focus applied from another outpost. Events from one
+/// outpost arrive in order; across outposts they can arrive out of order,
+/// which NVDA's single event queue never does. Two focuses stamped in one
+/// millisecond are ordered by their microseconds when both carry them
+/// ([`LatestFocus::observed_after`]). An answer to a focus-now query carries
+/// the time the outpost began reading it, so it is ordered with the events
+/// by that; a report with no observation time (0) is never stale.
 ///
 /// A focus in the same top-level window as the newest focus is never stale:
 /// one window can hold several applications (a Settings page's content
@@ -332,15 +336,15 @@ fn classify(
 fn is_stale_focus(
     state: &SrState,
     outpost: OutpostId,
-    observed_at_ms: u64,
+    observed: (u64, u64),
     window: Option<&WindowFacts>,
 ) -> bool {
     let top_level = window.map(|window| window.top_level);
-    observed_at_ms != 0
-        && state.latest_focus.is_some_and(|(latest, at, latest_top)| {
-            latest != outpost
-                && observed_at_ms < at
-                && !(top_level.is_some() && top_level == latest_top)
+    observed.0 != 0
+        && state.latest_focus.is_some_and(|latest| {
+            latest.outpost != outpost
+                && latest.observed_after(observed)
+                && !(top_level.is_some() && top_level == latest.top_level)
         })
 }
 
@@ -544,7 +548,7 @@ fn reduce_activation_completed(
 /// unspoken, or a stale focus from another outpost.
 fn focus_dropped_first(
     state: &mut SrState,
-    observed_at_ms: u64,
+    observed: (u64, u64),
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> bool {
@@ -561,10 +565,10 @@ fn focus_dropped_first(
     if is_duplicate_focus(state, node) {
         keep_newer_reading(state, node, ancestors, *ancestors_unknown);
         sync_navigator_with_focus(state);
-        editing::keep_focus_caret(state, node.id, text.as_deref(), observed_at_ms);
+        editing::keep_focus_caret(state, node.id, text.as_deref(), observed.0);
         return true;
     }
-    is_stale_focus(state, node.id.outpost(), observed_at_ms, window)
+    is_stale_focus(state, node.id.outpost(), observed, window)
 }
 
 /// A caret report of `node`: keeps Core's caret current and speaks the
@@ -605,14 +609,15 @@ fn reduce_caret_moved(
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
-    observed_at_ms: u64,
+    observed: (u64, u64),
     source: Pid,
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if focus_dropped_first(state, observed_at_ms, window, event) {
+    if focus_dropped_first(state, observed, window, event) {
         return Vec::new();
     }
+    let observed_at_ms = observed.0;
     match classify(
         state.attention.as_ref(),
         state.focus_source(),
@@ -627,11 +632,12 @@ fn reduce_event(
     if let NormalizedEvent::FocusChanged { node, .. } = event
         && observed_at_ms != 0
     {
-        state.latest_focus = Some((
-            node.id.outpost(),
+        state.latest_focus = Some(LatestFocus {
+            outpost: node.id.outpost(),
             observed_at_ms,
-            window.map(|window| window.top_level),
-        ));
+            top_level: window.map(|window| window.top_level),
+            observed_at_us: observed.1,
+        });
     }
 
     let effects = match event {

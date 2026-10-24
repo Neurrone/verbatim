@@ -396,6 +396,7 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             QueryOutcome::Done(QueryResult::Focus(FocusNow {
                 focus,
                 observed_at_ms,
+                observed_at_us,
                 ..
             })) => focus_inputs(
                 source,
@@ -404,6 +405,7 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
                     window: None,
                     focus,
                     observed_at_ms,
+                    observed_at_us,
                 },
             ),
             other => {
@@ -439,6 +441,7 @@ fn focus_inputs(source: Pid, trace_id: TraceId, focus: FocusNow) -> Vec<Input> {
         Input::Event {
             trace_id,
             observed_at_ms: focus.observed_at_ms,
+            observed_at_us: focus.observed_at_us,
             source,
             backend: node.backend,
             window,
@@ -828,6 +831,7 @@ mod tests {
                 text: Some(Box::new(FocusText::NoText)),
             }),
             observed_at_ms: 1234,
+            observed_at_us: 0,
         };
         let inputs = table.finish(
             id,
@@ -839,6 +843,7 @@ mod tests {
             [Input::Event {
                 trace_id,
                 observed_at_ms: 1234,
+                observed_at_us: 0,
                 source: Pid(5),
                 backend: Backend::Uia,
                 window: Some(control_facts),
@@ -880,6 +885,7 @@ mod tests {
                 window: Some((window.clone(), facts.clone())),
                 focus: None,
                 observed_at_ms: 1234,
+                observed_at_us: 0,
             })),
         );
         assert_eq!(
@@ -887,6 +893,7 @@ mod tests {
             [Input::Event {
                 trace_id,
                 observed_at_ms: 1234,
+                observed_at_us: 0,
                 source: Pid(5),
                 backend: Backend::Uia,
                 window: Some(facts.clone()),
@@ -916,6 +923,7 @@ mod tests {
                     text: None,
                 }),
                 observed_at_ms: 1234,
+                observed_at_us: 0,
             })),
         );
         assert_eq!(
@@ -923,6 +931,7 @@ mod tests {
             [Input::Event {
                 trace_id,
                 observed_at_ms: 1234,
+                observed_at_us: 0,
                 source: Pid(5),
                 backend: Backend::Uia,
                 window: Some(facts),
@@ -960,6 +969,7 @@ mod tests {
                 text: None,
             }),
             observed_at_ms: 1234,
+            observed_at_us: 0,
         };
         let inputs = table.finish(
             id,
@@ -971,6 +981,7 @@ mod tests {
             [Input::Event {
                 trace_id,
                 observed_at_ms: 1234,
+                observed_at_us: 0,
                 source: Pid(5),
                 backend: Backend::Uia,
                 window: None,
@@ -1011,6 +1022,7 @@ mod tests {
                 text: None,
             }),
             observed_at_ms: 1234,
+            observed_at_us: 0,
         };
         let inputs = table.finish(
             id,
@@ -1022,6 +1034,7 @@ mod tests {
             [Input::Event {
                 trace_id,
                 observed_at_ms: 1234,
+                observed_at_us: 0,
                 source: Pid(5),
                 backend: Backend::Uia,
                 window: None,

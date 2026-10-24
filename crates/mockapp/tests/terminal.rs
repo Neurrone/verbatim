@@ -204,6 +204,7 @@ fn said(speech: TerminalSpeech, observed_at_ms: u64) -> Input {
     Input::Event {
         trace_id: TraceId::mint(),
         observed_at_ms,
+        observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
@@ -235,6 +236,7 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
         &Input::Event {
             trace_id: TraceId::mint(),
             observed_at_ms: 0,
+            observed_at_us: 0,
             source: Pid(1),
             backend: Backend::Uia,
             window: None,

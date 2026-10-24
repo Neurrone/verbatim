@@ -41,6 +41,7 @@ fn scripted_inputs() -> Vec<Input> {
     vec![
         Input::Event {
             observed_at_ms: 0,
+            observed_at_us: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
@@ -56,6 +57,7 @@ fn scripted_inputs() -> Vec<Input> {
         },
         Input::Event {
             observed_at_ms: 0,
+            observed_at_us: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,
@@ -67,6 +69,7 @@ fn scripted_inputs() -> Vec<Input> {
         },
         Input::Event {
             observed_at_ms: 0,
+            observed_at_us: 0,
             trace_id: TraceId::mint(),
             source,
             backend: Backend::Uia,

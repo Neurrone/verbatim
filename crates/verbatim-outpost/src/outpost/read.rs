@@ -23,13 +23,13 @@ use verbatim_uia_rops::{
 
 use crate::arbitration::{WindowClasses, time_limit, window_class_name};
 use crate::gates;
-use crate::protocol::{DumpedTree, FocusNow, FocusedControl};
+use crate::protocol::{DumpedTree, FocusNow, FocusedControl, now_us};
 
 use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
-    desktop_window, event_window_unreadable, foreground_window_of, main_window_of, now_ms,
-    served_by, top_level_of, top_level_windows, window_belongs_to_hidden_frame, window_facts,
+    desktop_window, event_window_unreadable, foreground_window_of, main_window_of, served_by,
+    top_level_of, top_level_windows, window_belongs_to_hidden_frame, window_facts,
     window_is_hidden_frame, window_text,
 };
 
@@ -990,7 +990,7 @@ fn console_text_area_in(node: &mut NodeSnapshot, window_class: impl FnOnce() -> 
 /// is its console window ([`foreground_window_of`]). Returned with the
 /// window whose focused element it read, the control's own window.
 pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Option<isize>) {
-    let observed_at_ms = now_ms();
+    let observed_at_us = now_us();
     let window = foreground_window_of(context.target_pid())
         .filter(|&hwnd| !window_is_hidden_frame(hwnd))
         .map(|hwnd| {
@@ -1004,7 +1004,8 @@ pub(super) fn focus_now(context: &Context, client: &mut Client) -> (FocusNow, Op
         FocusNow {
             window,
             focus,
-            observed_at_ms,
+            observed_at_ms: observed_at_us / 1_000,
+            observed_at_us,
         },
         control_window,
     )

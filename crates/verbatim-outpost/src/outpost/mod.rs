@@ -547,7 +547,7 @@ impl Context {
     /// Queues an event one of the outpost's own handlers took in, observed
     /// now, then tells the observer, if there is one, that it was heard.
     fn take_in(&self, item: Item, heard: Heard, timing: EventTiming) {
-        self.push(item, TraceId::mint(), now_ms(), timing);
+        self.push(item, TraceId::mint(), window::observed_ms(&timing), timing);
         self.tell_heard(heard);
     }
 
@@ -651,7 +651,7 @@ impl Context {
                 Entry {
                     item: Item::Fact(fact, Some(stamp)),
                     trace: TraceId::mint(),
-                    observed_at_ms: now_ms(),
+                    observed_at_ms: window::observed_ms(&timing),
                     timing,
                 }
             });
