@@ -174,7 +174,7 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                 unit: verbatim_text::terminal_reading::Unit::Word,
                 text: "word".to_owned(),
             },
-            Speech::Overflowed,
+            Speech::LostRead(verbatim_text::terminal_rows::Lost::About),
             Speech::Line {
                 row: 3,
                 text: "first".to_owned(),
@@ -199,9 +199,9 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                     unit: TerminalUnit::Word,
                     text: "word".to_owned(),
                 },
-                // After an overflow, its lines follow a "more than" count of
+                // After a lost read, its lines follow an "about" count of
                 // none; a line's growth is part of its line.
-                TerminalItem::Skipped(Skipped::MoreThan(0)),
+                TerminalItem::Skipped(Skipped::About(0)),
                 TerminalItem::Output("first".to_owned()),
                 TerminalItem::Growth("grown".to_owned()),
                 TerminalItem::Echo("x".to_owned()),
@@ -287,6 +287,32 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
     // Down from it, one row at a time, through the history.
     let (text, offset, _, moved) = landed(&watch.answer(&line_at(at, 1), &mut minted));
     assert_eq!((text.as_str(), offset, moved), ("three", 0, 1));
+}
+
+#[test]
+fn a_review_place_whose_line_left_its_search_keeps_its_place() {
+    // A full history on a three-row screen: the review position on a line
+    // in the history above the memory's rows, and then a flood that carries
+    // every row further up than a screen. Its line is nowhere from its
+    // place to a screen above it, so it keeps its place and reads the row
+    // there now ("The review anchor").
+    let mut watch = Watch::new(20, 3, 9);
+    let lines = (1..=12)
+        .map(|line| format!("line {line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let _ = watch.write(&lines);
+    let mut minted = 0;
+    let (text, _, anchor, _) = landed(&watch.answer(&line_at(TextPoint::Start, 2), &mut minted));
+    assert_eq!(text, "line 4");
+    let more = (13..=24)
+        .map(|line| format!("line {line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let _ = watch.write(&more);
+    let at = TextPoint::At(TextPosition { anchor, offset: 0 });
+    let (text, _, _, moved) = landed(&watch.answer(&line_at(at, 0), &mut minted));
+    assert_eq!((text.as_str(), moved), ("line 16", 0));
 }
 
 #[test]

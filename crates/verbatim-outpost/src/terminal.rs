@@ -31,7 +31,7 @@ use verbatim_model::{
 use verbatim_text::terminal_reading::{
     ColourRun, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
 };
-use verbatim_text::terminal_rows::Read;
+use verbatim_text::terminal_rows::{Lost, Read};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
     CaretAnswer, CaretLineQuery, Error as RopsError, Path, Snapshot, SnapshotQuery,
@@ -226,10 +226,12 @@ pub fn speech_of(step: &Step) -> TerminalSpeech {
             // What a line gained, without the space that parts it from the
             // text it follows, which says nothing.
             Speech::Growth { text, .. } => TerminalItem::Growth(text.trim_start().to_owned()),
-            // After an overflow, the read's lines, the lines the history
-            // holds, follow a "more than" count of none, to which each adds
-            // when Core skips it ("Core's flood policy").
-            Speech::Overflowed => TerminalItem::Skipped(Skipped::MoreThan(0)),
+            // After a lost read, its lines follow a count of none of how
+            // they are counted, to which each adds when Core skips it
+            // ("Core's flood policy").
+            Speech::LostRead(Lost::About) => TerminalItem::Skipped(Skipped::About(0)),
+            Speech::LostRead(Lost::MoreThan) => TerminalItem::Skipped(Skipped::MoreThan(0)),
+            Speech::LostRead(Lost::Uncounted) => TerminalItem::Skipped(Skipped::Uncounted),
             Speech::Echo { text, .. } => TerminalItem::Echo(text.clone()),
             Speech::Caret { unit, text, .. } => TerminalItem::Caret {
                 unit: match unit {
@@ -399,10 +401,14 @@ pub fn read<'a>(
             continue;
         }
         terminal.handled(&read, &step);
-        terminal.start = snapshot
-            .next_start
-            .take()
-            .and_then(|range| AgileReference::new(&range).ok());
+        // A read with no text leaves where the next read starts as the last
+        // read placed it ("A read with no text").
+        if !step.outcome.as_ref().is_some_and(|outcome| outcome.blank) {
+            terminal.start = snapshot
+                .next_start
+                .take()
+                .and_then(|range| AgileReference::new(&range).ok());
+        }
         if colours.is_some() {
             terminal.colours_due = false;
         }

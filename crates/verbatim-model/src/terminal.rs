@@ -183,6 +183,9 @@ pub enum Skipped {
     /// screen last read, so its oldest lines are gone, and this many are
     /// the lines the history holds that are not spoken.
     MoreThan(u32),
+    /// About this many: the reading lost track of the terminal and counted
+    /// these lines from text, which repeated text can put a little off.
+    About(u32),
 }
 
 impl Skipped {
@@ -195,8 +198,14 @@ impl Skipped {
         match (self, newer) {
             (Self::Count(a), Self::Count(b)) => Self::Count(a.saturating_add(b)),
             (_, Self::MoreThan(b)) => Self::MoreThan(b),
-            (Self::MoreThan(a), Self::Count(b)) => Self::MoreThan(a.saturating_add(b)),
-            (_, Self::Uncounted) | (Self::Uncounted, Self::Count(_)) => Self::Uncounted,
+            (Self::MoreThan(a), Self::Count(b) | Self::About(b)) => {
+                Self::MoreThan(a.saturating_add(b))
+            }
+            (Self::About(a) | Self::Count(a), Self::About(b))
+            | (Self::About(a), Self::Count(b)) => Self::About(a.saturating_add(b)),
+            (_, Self::Uncounted) | (Self::Uncounted, Self::Count(_) | Self::About(_)) => {
+                Self::Uncounted
+            }
         }
     }
 }
@@ -208,6 +217,7 @@ mod tests {
     #[test]
     fn skipped_counts_add_and_stay_exact_only_when_both_are() {
         assert_eq!(Skipped::Count(3).plus(Skipped::Count(4)), Skipped::Count(7));
+        assert_eq!(Skipped::About(0).plus(Skipped::Count(4)), Skipped::About(4));
         assert_eq!(
             Skipped::Count(3).plus(Skipped::Uncounted),
             Skipped::Uncounted

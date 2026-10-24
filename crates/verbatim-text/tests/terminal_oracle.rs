@@ -24,7 +24,7 @@ use verbatim_term_sim::oracle::{
 };
 use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
 use verbatim_text::terminal_reading::{self as rules, Settings, Speech, Step, TerminalReader};
-use verbatim_text::terminal_rows::{OldRow, Read};
+use verbatim_text::terminal_rows::{OldRow, Read, Switch};
 
 /// How long after the last chunk the stream's last read comes: past the
 /// quiet period and the time a row lingers.
@@ -99,7 +99,7 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
             Speech::Held { text } => heard.spoken.push(Spoken::Held { text: text.clone() }),
             // The lines after it are all new, and Core counts those it
             // skips.
-            Speech::Overflowed => {}
+            Speech::LostRead(_) => {}
             other => panic!("the oracle's streams press no keys, but the rules said {other:?}"),
         }
     }
@@ -118,6 +118,19 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
             },
         })
         .collect();
+    // The listed limits the read may meet ("Limits"), each accepted by the
+    // oracle only where its precondition holds.
+    if let Some(outcome) = &step.outcome {
+        if outcome.by_text {
+            heard.limits.push(Limit::RepeatedText);
+        }
+        if outcome.lost.is_some() {
+            heard.limits.push(Limit::LostRead);
+        }
+        if outcome.switch == Switch::New {
+            heard.limits.push(Limit::NewScreenFlood);
+        }
+    }
     if let Some(outcome) = step.outcome.as_ref().filter(|outcome| !outcome.first) {
         heard.moved = Some(
             outcome
@@ -195,8 +208,14 @@ impl Core {
             heard.limits.push(Limit::BlankScreen);
         }
         self.blank = blank;
+        // A read with no text leaves where the next read starts as the last
+        // read placed it ("A read with no text").
         self.query = Query {
-            start: Some(next_start),
+            start: if blank {
+                self.query.start
+            } else {
+                Some(next_start)
+            },
             screen_rows,
             whole: false,
             above: u32::try_from(memory.above()).unwrap_or(u32::MAX),

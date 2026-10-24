@@ -309,7 +309,8 @@ impl Indication {
             SegmentContent::Phrase(
                 Phrase::SkippedLines(_)
                 | Phrase::SkippedUncountedLines
-                | Phrase::SkippedMoreThanLines(_),
+                | Phrase::SkippedMoreThanLines(_)
+                | Phrase::SkippedAboutLines(_),
             ) => Self::SkippedLines,
             SegmentContent::Format(format) => match format {
                 TextFormat::SpellingError | TextFormat::NotSpellingError => Self::SpellingError,

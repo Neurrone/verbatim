@@ -1,8 +1,7 @@
 //! The alignment's computations (`docs/design/terminal-model.md`, "The
 //! alignment"): the longest common subsequence of rows with the tie-break
-//! of fewest blocks and then fewest rows moved, the histogram diff that
-//! aligns a whole document, and the pairing of the rows left between kept
-//! rows by likeness.
+//! of fewest blocks and then fewest rows moved, and the pairing of the
+//! rows left between kept rows by likeness.
 
 use std::collections::HashMap;
 
@@ -103,91 +102,8 @@ pub(super) fn keep(
     pairs
 }
 
-/// An alignment's worth, as [`keep`] weighs it: more kept rows first, then
-/// fewer blocks, then fewer rows moved from `fixed`.
-pub(super) fn score(pairs: &[(usize, usize)], fixed: isize) -> (usize, isize, isize) {
-    let shift = |&(old, new): &(usize, usize)| isize_of(new) - isize_of(old);
-    let mut blocks = 0;
-    let mut last = None;
-    for pair in pairs {
-        if last != Some(shift(pair)) {
-            blocks += 1;
-        }
-        last = Some(shift(pair));
-    }
-    let moved = pairs.iter().filter(|pair| shift(pair) != fixed).count();
-    (pairs.len(), -isize_of(blocks), -isize_of(moved))
-}
-
 fn isize_of(value: usize) -> isize {
     isize::try_from(value).unwrap_or(isize::MAX)
-}
-
-/// An order-keeping match of `new` against `old`, two documents' row
-/// hashes, by the histogram method: the row of `new` whose hash is rarest
-/// in `old` is matched at its last place in `old`, the match is extended
-/// above and below it while the rows agree, and the rows before and after
-/// that run are matched the same way. Each part costs its rows once, and
-/// the parts at one depth are apart, so a document that repeats the old
-/// rows but for a few costs about its rows once for each of those. A hash
-/// `none` never matches. Gives the pairs, an old row's index and a new
-/// row's, in order.
-pub(super) fn histogram(old: &[u64], new: &[u64], none: u64) -> Vec<(usize, usize)> {
-    let mut pairs = Vec::new();
-    let mut pending = vec![(0..new.len(), 0..old.len())];
-    while let Some((a, b)) = pending.pop() {
-        if a.is_empty() || b.is_empty() {
-            continue;
-        }
-        let mut counts: HashMap<u64, (usize, usize)> = HashMap::with_capacity(b.len());
-        for at in b.clone() {
-            if old[at] == none {
-                continue;
-            }
-            let entry = counts.entry(old[at]).or_insert((0, at));
-            entry.0 += 1;
-            entry.1 = at;
-        }
-        // A row is as rare as its text is on both sides: one that is on
-        // each side once anchors the part best.
-        let mut in_new: HashMap<u64, usize> = HashMap::with_capacity(a.len());
-        for at in a.clone() {
-            if counts.contains_key(&new[at]) {
-                *in_new.entry(new[at]).or_default() += 1;
-            }
-        }
-        let middle = a.start + a.len() / 2;
-        let rarest = a
-            .clone()
-            .filter_map(|at| {
-                counts
-                    .get(&new[at])
-                    .map(|&(count, last)| (count + in_new[&new[at]], at, last))
-            })
-            .min_by_key(|&(count, at, _)| (count, at.abs_diff(middle)));
-        let Some((_, at, last)) = rarest else {
-            continue;
-        };
-        let (mut first, mut first_old) = (at, last);
-        while first > a.start
-            && first_old > b.start
-            && new[first - 1] == old[first_old - 1]
-            && new[first - 1] != none
-        {
-            first -= 1;
-            first_old -= 1;
-        }
-        let (mut end, mut end_old) = (at + 1, last + 1);
-        while end < a.end && end_old < b.end && new[end] == old[end_old] && new[end] != none {
-            end += 1;
-            end_old += 1;
-        }
-        pairs.extend((first..end).map(|to| (first_old + to - first, to)));
-        pending.push((a.start..first, b.start..first_old));
-        pending.push((end..a.end, end_old..b.end));
-    }
-    pairs.sort_unstable_by_key(|&(_, to)| to);
-    pairs
 }
 
 /// One row's characters, prepared for comparing by likeness.

@@ -9,7 +9,7 @@ use verbatim_term_sim::{Flavor, Query, Terminal};
 use super::{
     ColourRun, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit, Withheld,
 };
-use crate::terminal_rows::{Anchor, Read, hash};
+use crate::terminal_rows::{Anchor, Lost, Read, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
 /// said, a screen above it, and the whole document is read when the reader
@@ -287,7 +287,7 @@ fn a_whole_document_read_leaves_only_the_screen_and_the_screen_above_held() {
     // Twenty lines through a buffer of thirteen: the whole document is read,
     // the rows "8" to "20", which keep no row of the last read: the history
     // overflowed, and every line is new, for Core's flood policy.
-    let mut expected = vec![Speech::Overflowed];
+    let mut expected = vec![Speech::LostRead(Lost::MoreThan)];
     expected.extend((8..=20).map(|number| line(number - 8, &number.to_string())));
     assert_eq!(term.write(&flood, 200), says(expected));
     let memory = term.reader.memory();
@@ -296,10 +296,6 @@ fn a_whole_document_read_leaves_only_the_screen_and_the_screen_above_held() {
     assert_eq!(rows.first_kept(), 7);
     let kept: Vec<&str> = rows.kept().iter().map(|row| &*row.text).collect();
     assert_eq!(kept, ["15", "16", "17", "18", "19", "20"]);
-    let above: Vec<u64> = (8..=14)
-        .map(|number| crate::terminal_rows::hash(&number.to_string()))
-        .collect();
-    assert_eq!(memory.known_history(), above);
     assert_eq!(term.reader.screen.rows.len(), 6);
     assert_eq!(term.reader.screen.skipped, 7);
 }
@@ -1033,20 +1029,23 @@ fn an_ink_region_drawn_again_speaks_only_its_changed_cost() {
 
 #[test]
 fn several_progress_lines_are_each_heard_when_they_settle() {
+    // docker pull's shape: progress rows below the command that started
+    // them, which is kept, so the rows beside it pair as rewritten ("The
+    // alignment").
     let mut term = Term::new(20, 4, 10);
-    term.write("a: 10%\r\nb: 10%", 100);
-    term.write("\x1b[1;1Ha: 20%\x1b[2;1Hb: 20%", 1100);
+    term.write("$ pull\r\na: 10%\r\nb: 10%", 100);
+    term.write("\x1b[2;1Ha: 20%\x1b[3;1Hb: 20%", 1100);
     assert_eq!(
-        term.write("\x1b[1;1Ha: 30%\x1b[2;1Hb: 30%", 2100),
+        term.write("\x1b[2;1Ha: 30%\x1b[3;1Hb: 30%", 2100),
         step(
             Vec::new(),
-            vec![withheld(0, Reason::Volatile), withheld(1, Reason::Volatile)],
+            vec![withheld(1, Reason::Volatile), withheld(2, Reason::Volatile)],
             Some(3600)
         )
     );
     assert_eq!(
         term.reader.timer(3600),
-        says(vec![changed(0, "30%"), changed(1, "30%")])
+        says(vec![changed(1, "30%"), changed(2, "30%")])
     );
 }
 

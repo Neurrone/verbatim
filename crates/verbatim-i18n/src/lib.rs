@@ -768,6 +768,14 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
             "phrase-skipped-more-than-lines",
             count = count.to_string()
         ),
+        Phrase::SkippedAboutLines(1) => {
+            i18n_embed_fl::fl!(loader, "phrase-skipped-about-line", count = "1")
+        }
+        Phrase::SkippedAboutLines(count) => i18n_embed_fl::fl!(
+            loader,
+            "phrase-skipped-about-lines",
+            count = count.to_string()
+        ),
         Phrase::Items(1) => i18n_embed_fl::fl!(loader, "phrase-item", count = "1"),
         Phrase::Items(count) => {
             i18n_embed_fl::fl!(loader, "phrase-items", count = count.to_string())
@@ -1781,6 +1789,10 @@ mod tests {
         assert_eq!(
             phrase_text(&Phrase::SkippedMoreThanLines(1)),
             "skipped more than 1 line"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::SkippedAboutLines(1941)),
+            "skipped about 1941 lines"
         );
         assert_eq!(phrase_text(&Phrase::Items(1)), "1 item");
         assert_eq!(phrase_text(&Phrase::Items(0)), "0 items");

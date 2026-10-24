@@ -627,7 +627,7 @@ fn decide(state: &mut SrState) {
     }
     let waiting = match skipped {
         Skipped::Count(count) => lines.saturating_add(usize::try_from(count).unwrap_or(usize::MAX)),
-        Skipped::Uncounted | Skipped::MoreThan(_) => usize::MAX,
+        Skipped::Uncounted | Skipped::MoreThan(_) | Skipped::About(_) => usize::MAX,
     };
     if waiting > full {
         skip_all_but(&mut terminal.waiting, 0, last);
@@ -657,8 +657,11 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
                 effects.extend(ask(state, true));
             }
         }
-        // A blank line counts, but is not spoken.
-        if matches!(&item, Waiting::Line(line, _) if text::is_blank(line)) {
+        // A blank line counts, but is not spoken; a lost read's mark with
+        // none of its lines skipped says nothing.
+        if matches!(&item, Waiting::Line(line, _) if text::is_blank(line))
+            || matches!(item, Waiting::Skipped(Skipped::About(0)))
+        {
             continue;
         }
         let mark = state.allocate_mark();
@@ -676,6 +679,12 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
             Waiting::Skipped(Skipped::Uncounted | Skipped::MoreThan(0)) => (
                 vec![UtteranceSegment::new(SegmentContent::Phrase(
                     Phrase::SkippedUncountedLines,
+                ))],
+                false,
+            ),
+            Waiting::Skipped(Skipped::About(count)) => (
+                vec![UtteranceSegment::new(SegmentContent::Phrase(
+                    Phrase::SkippedAboutLines(count),
                 ))],
                 false,
             ),

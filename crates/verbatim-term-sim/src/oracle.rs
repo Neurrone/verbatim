@@ -258,10 +258,32 @@ pub enum Limit {
     /// lines of the read, such as those a clear pushed into the history,
     /// need not be reported at it, and are judged as new at the first later
     /// read whose screen shows text.
-    /// The next read is judged against the read before the blank one.
+    /// The next read is judged against the read before the blank one, and a
+    /// hold that only blank reads follow is left to the reader's timer,
+    /// which reads do not run.
     /// Precondition: no row of the screen the read shows, main or
     /// alternate, shows text.
     BlankScreen,
+    /// With a full history, a read over repeated rows found the last
+    /// read's rows by their text and may miss, repeat or misplace a line
+    /// for that read ("Limits"). A missed or repeated line, a misplaced row
+    /// or a moved review position is accepted at the read only when the
+    /// buffer moved since the last read and the last read's rows with text
+    /// fit the main screen equally well at more than one place, or the
+    /// line's text is not unique on the main screen.
+    RepeatedText,
+    /// A lost read counted, rather than spoke, the new lines above the
+    /// visible screen ("A lost read"). Such a missed line is accepted only
+    /// when the buffer moved since the last read by more than the read
+    /// covered: at least a screen's rows left the buffer.
+    LostRead,
+    /// A read that keeps nothing of the last read, as after a flood larger
+    /// than the read covers following Windows Terminal's clear, is taken
+    /// for a new screen whose rows above the visible screen are silent
+    /// ("Limits"). Such a missed line is accepted only when no row with
+    /// text of the last read's screen and history block is still in the
+    /// buffer.
+    NewScreenFlood,
 }
 
 /// A line a reader withholds at a read, and why.
@@ -968,6 +990,17 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
         ..
     } = check;
     for hold in holds {
+        // Every read after the hold showing no text, none can resolve it:
+        // the reader's timer speaks it then, which reads do not run
+        // ([`Limit::BlankScreen`]).
+        let after = &reads[hold.read + 1..];
+        if !after.is_empty()
+            && after
+                .iter()
+                .all(|read| read.heard.limits.contains(&Limit::BlankScreen))
+        {
+            continue;
+        }
         violations.push(Violation::FalseReason {
             read: hold.read,
             row: hold.row,
@@ -975,7 +1008,112 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
             reason: hold.reason,
         });
     }
+    violations.retain(|violation| !excused(reads, violation));
     violations
+}
+
+/// Whether a listed limit the reader stated at the violation's read
+/// accepts it, its precondition holding in the ground truth.
+fn excused(reads: &[Observation], violation: &Violation) -> bool {
+    let (read, coordinate, text) = match violation {
+        Violation::Missed {
+            read,
+            coordinate,
+            text,
+        } => (*read, Some(*coordinate), Some(text.as_str())),
+        Violation::Repeated { read, text, .. } => (*read, None, Some(text.as_str())),
+        Violation::Mismapped { read, .. } | Violation::ReviewMoved { read, .. } => {
+            (*read, None, None)
+        }
+        _ => return false,
+    };
+    let observed = &reads[read];
+    let limits = &observed.heard.limits;
+    let above_screen = coordinate.is_some_and(|coordinate| coordinate < observed.screen_top);
+    if above_screen && limits.contains(&Limit::LostRead) && moved_beyond(reads, read) {
+        return true;
+    }
+    if above_screen
+        && limits.contains(&Limit::NewScreenFlood)
+        && last_main(reads, read).is_some_and(|last| nothing_survived(last, observed))
+    {
+        return true;
+    }
+    limits.contains(&Limit::RepeatedText)
+        && !observed.rotated.is_empty()
+        && (block_fits_twice(reads, read)
+            || text.is_some_and(|text| {
+                observed
+                    .main
+                    .iter()
+                    .filter(|seen| seen.text.trim_end() == text)
+                    .count()
+                    != 1
+            }))
+}
+
+/// The last read before read `index` on the main screen that a reader
+/// took: a read under [`Limit::BlankScreen`] leaves the one before it.
+fn last_main(reads: &[Observation], index: usize) -> Option<&Observation> {
+    reads[..index]
+        .iter()
+        .rev()
+        .find(|read| !read.alternate && !read.heard.limits.contains(&Limit::BlankScreen))
+}
+
+/// Whether no row with text of `last`'s screen and the history block above
+/// it is still in the main buffer at `read` with that text: each left it,
+/// or was written over, so nothing a reader could keep survived.
+fn nothing_survived(last: &Observation, read: &Observation) -> bool {
+    let height = last.main.len().saturating_sub(last.screen_top);
+    let from = last.screen_top.saturating_sub(height);
+    let now: HashSet<(RowId, &str)> = read
+        .main
+        .iter()
+        .filter(|seen| !seen.text.trim_end().is_empty())
+        .map(|seen| (seen.id, seen.text.trim_end()))
+        .collect();
+    last.main[from..]
+        .iter()
+        .filter(|seen| !seen.text.trim_end().is_empty())
+        .all(|seen| !now.contains(&(seen.id, seen.text.trim_end())))
+}
+
+/// Whether at least a screen's rows left the buffer since the last read,
+/// more than a read from a screen above the last read's screen covers.
+fn moved_beyond(reads: &[Observation], index: usize) -> bool {
+    let read = &reads[index];
+    let height = read.main.len().saturating_sub(read.screen_top).max(1);
+    read.rotated.len() + read.erased >= height
+}
+
+/// Whether the last read's rows with text, its screen and the history
+/// block above it, fit read `index`'s main screen equally well at more than
+/// one place: the shift that puts most of them on rows with their text is
+/// not the only one.
+fn block_fits_twice(reads: &[Observation], index: usize) -> bool {
+    let Some(last) = last_main(reads, index) else {
+        return false;
+    };
+    let height = last.main.len().saturating_sub(last.screen_top);
+    let old = &last.main[last.screen_top.saturating_sub(height)..];
+    let mut at: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (to, seen) in reads[index].main.iter().enumerate() {
+        let text = seen.text.trim_end();
+        if !text.is_empty() {
+            at.entry(text).or_default().push(to);
+        }
+    }
+    let mut votes: HashMap<isize, usize> = HashMap::new();
+    for (from, seen) in old.iter().enumerate() {
+        for &to in at.get(seen.text.trim_end()).into_iter().flatten() {
+            let shift = isize::try_from(to).unwrap_or(isize::MAX)
+                - isize::try_from(from).unwrap_or(isize::MAX);
+            *votes.entry(shift).or_default() += 1;
+        }
+    }
+    let best = votes.values().copied().max().unwrap_or(0);
+    best > 0 && votes.values().filter(|&&count| count == best).count() > 1
 }
 
 /// Checks read `index`.
@@ -1079,7 +1217,13 @@ fn check_read(check: &mut Check, index: usize) {
         }
         let unseen = check.last.is_none_or(|last| reads[last].screen_top == 0);
         if !(blank && shown.is_empty()) {
-            check.alternate = unseen.then(|| Rc::new(Lines::alternate(read)));
+            let lines = Lines::alternate(read);
+            // A reader that cannot tell the screens apart may take a line
+            // changed here for a row of the screen before that changed.
+            if unseen {
+                note_changes(check, &lines);
+            }
+            check.alternate = unseen.then(|| Rc::new(lines));
             if let Some(lines) = &check.alternate {
                 check.heard = lines.list.iter().map(|line| line.text.clone()).collect();
             }
@@ -1274,18 +1418,7 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
             .or_default()
             .extend(said.iter().cloned());
     }
-    // The texts that appeared while a line vanished: under some pairing,
-    // each is a row that changed.
-    if !vanished(check, &lines).is_empty() {
-        let last = check.last_lines();
-        let appeared: Vec<String> = lines
-            .texts
-            .iter()
-            .filter(|(text, numbers)| numbers.len() > last.map_or(0, |last| last.count(text)))
-            .map(|(text, _)| text.clone())
-            .collect();
-        check.changes.extend(appeared);
-    }
+    note_changes(check, &lines);
     check
         .shown
         .extend(lines.list.iter().map(|line| line.key.clone()));
@@ -1512,6 +1645,23 @@ fn vanished(check: &Check, lines: &Lines) -> Vec<String> {
             })
             .collect()
     })
+}
+
+/// Notes the texts of `lines` that appeared while a line of the lines
+/// judged against vanished: under some pairing, each is a row that changed
+/// (see [`Reason::Volatile`]).
+fn note_changes(check: &mut Check, lines: &Lines) {
+    if vanished(check, lines).is_empty() {
+        return;
+    }
+    let last = check.last_lines();
+    let appeared: Vec<String> = lines
+        .texts
+        .iter()
+        .filter(|(text, numbers)| numbers.len() > last.map_or(0, |last| last.count(text)))
+        .map(|(text, _)| text.clone())
+        .collect();
+    check.changes.extend(appeared);
 }
 
 /// Checks the redrawn rows' speech and what read `index` withheld, each

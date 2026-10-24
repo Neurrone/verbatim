@@ -5,7 +5,7 @@
 
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
-use super::{Anchor, NewRow, OldRow, Outcome, Read, Switch, TerminalMemory, hash};
+use super::{Anchor, Lost, NewRow, OldRow, Outcome, Read, Switch, TerminalMemory, hash};
 
 /// A terminal watched as the outpost watches it: each read starts where
 /// the last said, a screen above it, with the height the memory found, and
@@ -373,36 +373,23 @@ fn windows_terminals_last_row_cut_a_cell_short_keeps_the_width() {
 }
 
 #[test]
-fn a_clear_and_a_reprint_repeat_the_known_history() {
+fn a_clear_and_a_reprint_keep_the_last_reads_rows() {
     // Pi's regular mode after a change above the screen: the screen and
     // the history cleared and everything printed again in one frame, a
-    // line above the screen taken out, so the start is refused and the
-    // whole document is read. The rows the remembered history held are
-    // shown, not new, and the last read's rows are kept where most of them
-    // went ("The alignment").
+    // line above the screen taken out. The document shrank below the
+    // read's start, which is refused, so the read starts a screen above the
+    // screen, and the last read's rows are found by their text, all kept
+    // and silent ("The read", "Positions").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("h1\r\nh2\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9");
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jh1\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9");
-    assert_eq!(watch.taken, 2, "the whole document read");
-    assert_eq!(
-        watch.texts(),
-        ["h1", "h3", "h4", "h5", "h6", "h7", "h8", "h9"]
-    );
+    assert_eq!(watch.taken, 1, "one read");
+    assert_eq!(watch.texts(), ["h4", "h5", "h6", "h7", "h8", "h9"]);
     assert_eq!(
         outcome.rows,
-        [
-            NewRow::Shown,
-            NewRow::Shown,
-            kept(3),
-            kept(4),
-            kept(5),
-            kept(6),
-            kept(7),
-            kept(8)
-        ]
+        [kept(3), kept(4), kept(5), kept(6), kept(7), kept(8)]
     );
 }
-
 #[test]
 fn output_repeated_after_cls_is_not_a_reprint() {
     // The console host's cls pushes the screen into the history, so the
@@ -466,7 +453,7 @@ fn a_rotation_between_one_and_two_screens_is_settled_in_one_read() {
     let outcome = watch.write("\r\na\r\nb\r\nc\r\nd");
     assert_eq!(watch.taken, 1, "one read");
     assert_eq!(outcome.rotation, 4);
-    assert!(!outcome.overflowed, "the history did not overflow");
+    assert!(outcome.lost.is_none(), "the history did not overflow");
     assert_eq!(watch.texts(), ["8", "9", "a", "b", "c", "d"]);
     assert_eq!(outcome.rows, [kept(7), kept(8), NEW, NEW, NEW, NEW]);
     let mut old = vec![OldRow::Above; 7];
@@ -477,10 +464,10 @@ fn a_rotation_between_one_and_two_screens_is_settled_in_one_read() {
 #[test]
 fn a_footer_over_more_output_than_the_history_holds_overflows() {
     // The whole document keeps no row of the last read at or above the
-    // caret, and nothing of the remembered history, in a full buffer:
-    // output may have been lost ("Screens"). The footer below the caret
-    // stays kept and silent, and the caret's line, its first row where it
-    // was, counts as rewritten; the rest is new.
+    // caret, so the read is lost and the whole document is read; nothing
+    // the last read had at or above the caret is in it, so every row above
+    // the visible screen is new, counted as more than ("A lost read"); the
+    // footer below the caret stays kept and silent.
     let mut watch = Watch::console(10, 3, 6);
     watch.write("\x1b[3;1Hfooter\x1b[1;2r\x1b[1;1Ha\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng\r\nh");
     let outcome = watch.write("\r\nn\r\no\r\np\r\nq\r\nr\r\ns\r\nt\r\nu\r\nv\r\nw\r\nx\r\ny");
@@ -489,24 +476,13 @@ fn a_footer_over_more_output_than_the_history_holds_overflows() {
         watch.texts(),
         ["r", "s", "t", "u", "v", "w", "x", "y", "footer"]
     );
-    assert!(outcome.overflowed, "more went by than the history holds");
+    assert!(
+        outcome.lost == Some(Lost::MoreThan),
+        "more went by than the history holds"
+    );
     assert_eq!(
         outcome.rows,
-        [
-            NEW,
-            NEW,
-            NEW,
-            NEW,
-            NEW,
-            NEW,
-            NEW,
-            NewRow::Rewritten {
-                from: 7,
-                moved: false,
-                alone: false,
-            },
-            kept(8)
-        ]
+        [NEW, NEW, NEW, NEW, NEW, NEW, NEW, NEW, kept(8)]
     );
 }
 
@@ -530,12 +506,12 @@ fn a_history_erase_keeps_the_screens_rows() {
 #[test]
 fn a_pagers_first_page_is_a_new_screen_and_closing_it_speaks_the_shell() {
     // `conhost_pager`'s shape: the pager's first page keeps no row of the
-    // shell's screen, so it is a new screen; its second page pairs each row
-    // with the first page's by likeness, so it is no new screen; and the
-    // main screen back leaves the caret's line where the pager's status row
-    // was, so that row counts as rewritten and the rest of the shell's
-    // screen is new, spoken as NVDA speaks it (`nv-con-pager.txt`;
-    // "Screens").
+    // shell's screen, so it is a new screen; its second page keeps its
+    // caret's line, the status row, where it was, so that row counts as
+    // rewritten and the page is no new screen; and the main screen back
+    // leaves the caret's line where the pager's status row was, so that row
+    // counts as rewritten and the rest of the shell's screen is new, spoken
+    // as NVDA speaks it (`nv-con-pager.txt`; "Screens").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("PS>pager\r\n");
     let opened = watch.write("\x1b[?1049h\x1b[H\x1b[2Jp1\r\np2\r\n:");
@@ -548,7 +524,7 @@ fn a_pagers_first_page_is_a_new_screen_and_closing_it_speaks_the_shell() {
         moved: false,
         alone: false,
     };
-    assert_eq!(paged.rows, [rewritten(0), rewritten(1), rewritten(2)]);
+    assert_eq!(paged.rows, [NEW, NEW, rewritten(2)]);
     let closed = watch.write("\x1b[?1049lclosed\r\nPS>");
     assert_eq!(closed.switch, Switch::None);
     assert_eq!(watch.texts(), ["PS>pager", "closed", "PS>"]);
@@ -595,47 +571,6 @@ fn the_review_position_on_a_gone_row_goes_to_the_nearest_surviving_row_above() {
             line_hash: hash("x")
         })
     );
-}
-
-#[test]
-fn the_known_history_moves_up_with_the_rotation() {
-    // The remembered history is kept by coordinate and moved up as the
-    // history rotates ("The memory"). In a buffer of nine rows, read after
-    // each line, the memory keeps the screen and a screen above it, six
-    // rows, so the remembered history holds the three rows above them and
-    // no row that left.
-    let mut watch = Watch::console(10, 3, 6);
-    watch.write("1");
-    for number in 2..=30 {
-        watch.write(&format!("\r\n{number}"));
-    }
-    assert_eq!(watch.texts(), ["25", "26", "27", "28", "29", "30"]);
-    assert_eq!(
-        watch.memory.known_history(),
-        [hash("22"), hash("23"), hash("24")]
-    );
-}
-
-#[test]
-fn a_whole_document_read_takes_the_known_history_from_the_document() {
-    // Thirty lines read one at a time through a buffer of thirteen rows,
-    // then a flood of twenty, read whole: the remembered history is the
-    // rows the document holds above the memory's, 38 to 44, and none from
-    // before them.
-    let mut watch = Watch::console(10, 3, 10);
-    watch.write("1");
-    for number in 2..=30 {
-        watch.write(&format!("\r\n{number}"));
-    }
-    let flood: String = (31..=50)
-        .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
-        .collect();
-    watch.write(&flood);
-    assert_eq!(watch.taken, 2, "the flood read whole");
-    watch.memory.trim();
-    assert_eq!(watch.texts(), ["45", "46", "47", "48", "49", "50"]);
-    let above: Vec<u64> = (38..=44).map(|number| hash(&number.to_string())).collect();
-    assert_eq!(watch.memory.known_history(), above);
 }
 
 #[test]
@@ -714,7 +649,7 @@ fn a_footer_below_a_cleared_screen_pushed_into_the_history_does_not_overflow() {
         ]
     );
     assert_eq!(outcome.rotation, 0);
-    assert!(!outcome.overflowed, "the history is far from full");
+    assert!(outcome.lost.is_none(), "the history is far from full");
 }
 
 #[test]
@@ -796,24 +731,6 @@ fn a_screen_cleared_into_the_history_over_repeated_text_keeps_its_rows_in_order(
 }
 
 #[test]
-fn a_tie_between_rotations_is_settled_by_the_documents_first_row() {
-    // A full history of one repeated line under a first line "a": the rows
-    // the read shows allow every rotation, and the document's first row,
-    // "x" where the remembered history held "a" at the document's start and
-    // "x" a row below, settles the rotation of one ("The alignment").
-    let mut watch = Watch::console(10, 3, 6);
-    watch.write("a\r\nx\r\nx\r\nx\r\nx\r\nx\r\nx\r\nx\r\nx");
-    let outcome = watch.write("\r\nx");
-    assert_eq!(watch.taken, 1, "one read");
-    assert_eq!(outcome.rotation, 1);
-    assert_eq!(watch.texts(), ["x", "x", "x", "x", "x", "x"]);
-    assert_eq!(
-        outcome.rows,
-        [kept(4), kept(5), kept(6), kept(7), kept(8), NEW]
-    );
-}
-
-#[test]
 fn windows_terminals_clear_and_a_full_screen_program_are_each_a_new_screen() {
     // The clear refuses the read's start and keeps nothing: a new screen,
     // the prompt new. The full-screen program's screen and the screen after
@@ -842,7 +759,7 @@ fn the_alternate_screen_from_a_shell_as_long_as_it_is_a_new_screen_not_an_overfl
     watch.write("$ ls\r\nfile\r\n$ vim");
     let opened = watch.write("\x1b[?1049h\x1b[Hhello\r\n~\r\n:q\x1b[H");
     assert_eq!(opened.switch, Switch::New);
-    assert!(!opened.overflowed, "no overflow");
+    assert!(opened.lost.is_none(), "no overflow");
     assert_eq!(opened.rows, [NEW, NEW, NEW]);
     let closed = watch.write("\x1b[?1049l");
     assert_eq!(closed.switch, Switch::New);

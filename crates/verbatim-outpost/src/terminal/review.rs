@@ -31,11 +31,6 @@ use crate::text::TextError;
 /// How many places a terminal keeps beyond those whose anchors Core holds.
 const KEPT_PLACES: usize = crate::text::KEPT_ANCHORS;
 
-/// How far from where a history row's place says it is the row is looked
-/// for by its line's hash, in rows, when the history moved between the
-/// read and the history's own read.
-const SEARCH_ROWS: isize = 64;
-
 /// Reads the history above the rows a terminal's memory keeps.
 pub trait History {
     /// The text from `above` rows above the next read's start to the
@@ -367,29 +362,31 @@ impl Rows<'_> {
     }
 
     /// Where a place on row `row`, of a line with hash `line_hash`, is
-    /// now: the row itself where the memory keeps it, since its alignment
-    /// moved it; in the history, there when its line is, or else the
-    /// nearest row of a line with its hash, the history having moved
-    /// between the two reads.
+    /// now ("The review anchor"): the row itself where the memory keeps
+    /// it, since its alignment moved it; above the memory's rows, the
+    /// nearest row of a line with its hash from the place up to a screen
+    /// above it, since a full history only moves rows up, the rows read by
+    /// place in one read; with none, the place itself and the row there
+    /// now.
     fn found(&mut self, row: isize, line_hash: u64) -> Result<Option<isize>, TextError> {
         if row >= self.first_kept() {
             return Ok((row <= self.last()).then_some(row));
         }
-        if self.row(row)?.is_some_and(|line| line.hash == line_hash) {
-            return Ok(Some(row));
-        }
-        for distance in 1..=SEARCH_ROWS {
-            for candidate in [row - distance, row + distance] {
-                if candidate < self.first_kept()
-                    && self
-                        .row(candidate)?
-                        .is_some_and(|line| line.hash == line_hash)
-                {
-                    return Ok(Some(candidate));
-                }
+        let screen = isize_of(usize::try_from(self.terminal.screen_rows.max(1)).unwrap_or(1));
+        let top = self
+            .known_first()
+            .map_or(row - screen, |first| (row - screen).max(first));
+        // One read from a screen above the place down covers the search.
+        self.row(top)?;
+        for candidate in (top..=row).rev() {
+            if self
+                .row(candidate)?
+                .is_some_and(|line| line.hash == line_hash)
+            {
+                return Ok(Some(candidate));
             }
         }
-        Ok(None)
+        Ok(self.row(row)?.map(|_| row))
     }
 
     /// Whether `row` is the document's first row, as far as is known.

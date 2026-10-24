@@ -240,6 +240,10 @@ pub enum Phrase {
     /// so how many lines is known only to be more than this many: "skipped
     /// more than 9001 lines". Marked like [`Phrase::SkippedLines`].
     SkippedMoreThanLines(u32),
+    /// Terminal output was skipped after a read that lost track of it, its
+    /// count taken from text, so it may be off by a little: "skipped about
+    /// 1941 lines". Marked like [`Phrase::SkippedLines`].
+    SkippedAboutLines(u32),
     /// The number of items a tree view item holds, said once it has been
     /// expanded: NVDA's "1 item" and "52 items".
     Items(u32),

@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use crate::terminal_rows::{NewRow, OldRow, Outcome, Read, Row, TerminalMemory};
+use crate::terminal_rows::{Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory};
 use crate::{Segmenter, WordRules, graphemes, is_space};
 
 pub use crate::terminal_rows::LINGERING_MS;
@@ -186,10 +186,9 @@ pub enum Speech {
         /// row from the word that changed.
         text: String,
     },
-    /// More went by than the history holds ("Starting again"): the lines
-    /// that follow are the lines the history holds, all of them new, and
-    /// Core counts those it skips as more than the history holds.
-    Overflowed,
+    /// A lost read ("A lost read"): the lines that follow went by while the
+    /// reading lost track, and Core counts those it skips as this says.
+    LostRead(Lost),
     /// Typed characters the terminal showed ("Typing echo").
     Echo {
         /// The caret's line's first row.
@@ -1339,8 +1338,8 @@ impl TerminalReader {
         while fresh_lines.last().is_some_and(|(_, text)| text.is_none()) {
             fresh_lines.pop();
         }
-        if outcome.overflowed {
-            items.push((0, Speech::Overflowed));
+        if let Some(lost) = outcome.lost {
+            items.push((0, Speech::LostRead(lost)));
         }
         for (row, text) in &fresh_lines {
             items.push((*row, line_speech(*row, text.as_deref().unwrap_or_default())));
