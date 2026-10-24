@@ -171,9 +171,10 @@ between two console windows, four quick switches and two with Alt held
 (`target/e2e-evidence/switcher-pane-2026-10-24/NvdaSw/`), said nothing
 for the switcher's pane in any switch. This rule does not explain all of
 that silence: an independent observer in the same run saw no UI
-Automation focus on the `InputSite` pane, but a late one, in four
-switches, on the Task Switching window's own pane, of class
-`XamlExplorerHostIslandWindow`, which the rule does not refuse, and NVDA
+Automation focus on the `InputSite` pane, but one on the Task Switching
+window's own pane, of class `XamlExplorerHostIslandWindow`, in four
+switches: late in three, 0.66 to 0.77 seconds after the switch completed,
+and during the fourth, with Alt held, just before its list item's focus; which the rule does not refuse, and NVDA
 said nothing for it either; why is not established.
 
 Verbatim: a UI Automation focus's snapshot, from the focus listener's

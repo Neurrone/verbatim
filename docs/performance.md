@@ -1494,7 +1494,10 @@ class and the focus's application.
   Core: one allocation where the listener, or the outpost's own read,
   copies it from the cache, and one where the outpost copies the
   listener's snapshot's details; no other snapshot carries one, and every
-  snapshot is 24 bytes larger for the field. The
+  snapshot is 24 bytes larger for the field, and so is every window's
+  facts for the application's name, so every focus event value grows by
+  both (the focus change now passes Clippy's size limit for an enum
+  variant, allowed with its reason). The
   application's name is read once per application, with
   `QueryFullProcessImageNameW`, a local call that the outpost already
   made for its log when it was assigned and now remembers, and once per
