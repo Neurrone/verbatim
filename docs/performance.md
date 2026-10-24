@@ -1085,12 +1085,21 @@ an utterance with index marks that ends unheard.
   (`Input::UtteranceCancelled` or `Input::UtteranceFailed`): a key that
   cuts say-all or terminal output off causes two or three of them on top
   of its `Input::SpeechCancelled`, each a step that finds nothing waiting
-  but the first. Utterances with no marks cost nothing.
-- Today, off the speech path: a lock key's state, the time, the
+  but the first. Utterances with no marks cost no allocation: handing
+  one on checks whether it has marks, and a cut one waiting is scanned
+  for marks it does not have. A failed utterance's ending is copied once
+  to reach both its listener and the queue thread, its failure reason
+  with it.
+- Today, before their own speech: a lock key's state, the time, the
   clipboard's result, a shell item gone and the theme page's previews each
   take one more thread hop than before, from the thread that learns them
   to the reducer thread, and one recorded reducer step, before the speech
   queue; the start, exit and error sounds and "not responding" likewise.
+- Today, on the event path: a menu or the task switcher ending is a
+  recorded reducer step, which decides whether to ask for the focus, where
+  the shell decided it before: a trace id, the focus-queued check, the
+  latency ledger's update, three atomic stores, and the flight recorder's
+  lock and record, once per menu or switcher closed.
 - Target: none.
 
 Measured on 2026-10-24 on this machine (x64), debug build, with
