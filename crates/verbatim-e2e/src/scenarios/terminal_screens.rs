@@ -18,9 +18,10 @@
 //! at a time, changes row 3 and row 27 ("changed", from the word that
 //! changed), scrolls the rows above the status line down a line ("row 0",
 //! the new first row) and back up ("row 30", the new last), and closes the
-//! alternate screen: only "closed" and the prompt are new, the main screen
-//! being back as it was. The keys are read without being shown, so they
-//! echo nothing.
+//! alternate screen: the main screen comes back as a new screen, so its
+//! rows are spoken, the command, "closed" and the prompt
+//! (`docs/design/terminal-model.md`, "Screens", Dickson, 2026-10-24). The
+//! keys are read without being shown, so they echo nothing.
 
 use std::io;
 use std::time::Duration;
@@ -146,7 +147,11 @@ fn full_screen_steps(scenario: &mut Scenario) {
     key_hearing(scenario, "n", &["changed"]);
     key_hearing(scenario, "n", &["row 0"]);
     key_hearing(scenario, "n", &["row 30"]);
-    key_hearing(scenario, "n", &["closed", PROMPT]);
+    key_hearing(
+        scenario,
+        "n",
+        &[r"ready> .\altscreen.ps1", "closed", PROMPT],
+    );
 }
 
 /// `windows_terminal_long_lines`.

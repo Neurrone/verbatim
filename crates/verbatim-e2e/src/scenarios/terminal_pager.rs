@@ -11,7 +11,10 @@
 //! Up Arrow moves a line back: a line inserted at the top, pushing the
 //! prompt off the bottom, the earlier line written there, then the prompt
 //! on the last row again. Q closes the alternate screen and prints
-//! "closed". The text scrolls through rows that stay put, so the screen
+//! "closed"; the main screen comes back as a new screen, so its rows are
+//! spoken, the command, "closed" and the prompt, as NVDA speaks the shell's
+//! screen when a pager closes (`docs/design/terminal-model.md`, "Screens",
+//! Dickson, 2026-10-24). The text scrolls through rows that stay put, so the screen
 //! diff finds how far from the text (`docs/design/phase6-design.md`, "Terminal line
 //! keys as NVDA has them"), and each move speaks only the line it brought
 //! onto the screen. The caret stays after the prompt, so the keys
@@ -97,7 +100,9 @@ fn pager_steps(scenario: &mut Scenario) {
     scenario.speech().expect(&["page line 1"]);
     scenario.send_keys(&["q"]).expect("presses Q");
     scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
-    scenario.speech().expect(&["closed", PROMPT]);
+    scenario
+        .speech()
+        .expect(&[r"ready> .\pager.ps1", "closed", PROMPT]);
 }
 
 /// `windows_terminal_pager`.

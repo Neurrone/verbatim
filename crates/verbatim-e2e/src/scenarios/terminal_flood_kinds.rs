@@ -15,7 +15,10 @@
 //!   alternate screen and draws its 30 rows in one write, "screen row 1" to
 //!   "screen row 30", and Q closes it and prints "closed". The redraw is a
 //!   burst larger than the limit: rows 1 to 10, "skipped 10 lines", rows 21
-//!   to 30. NVDA, captured live, speaks all 30 rows.
+//!   to 30. NVDA, captured live, speaks all 30 rows. Closing it brings the
+//!   main screen back as a new screen, whose rows are spoken, the command,
+//!   "closed" and the prompt (`docs/design/terminal-model.md`, "Screens",
+//!   Dickson, 2026-10-24).
 
 use std::io;
 
@@ -170,7 +173,9 @@ fn redraw() -> Vec<String> {
 fn redraw_steps(scenario: &mut Scenario) {
     run_hearing(scenario, r".\screen.ps1", &redraw());
     scenario.send_keys(&["q"]).expect("presses Q");
-    scenario.speech().expect(&["closed", PROMPT]);
+    scenario
+        .speech()
+        .expect(&[r"ready> .\screen.ps1", "closed", PROMPT]);
 }
 
 /// `windows_terminal_redraw_limit`.

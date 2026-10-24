@@ -1333,12 +1333,13 @@ impl TerminalReader {
         }
         // New output, every line in order, blank ones included, for Core's
         // flood policy, which counts them ("New text"); a blank row is a
-        // line only once a row with text is below it. After an overflow,
-        // the lines follow its mark.
+        // line only once a row with text is below it. After a lost read,
+        // the lines follow its mark, which a read that reports nothing, as
+        // the focus's, does not give ("The focus").
         while fresh_lines.last().is_some_and(|(_, text)| text.is_none()) {
             fresh_lines.pop();
         }
-        if let Some(lost) = outcome.lost {
+        if report && let Some(lost) = outcome.lost {
             items.push((0, Speech::LostRead(lost)));
         }
         for (row, text) in &fresh_lines {

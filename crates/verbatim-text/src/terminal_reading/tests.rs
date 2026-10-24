@@ -1234,3 +1234,26 @@ fn a_scroll_up_in_a_region_with_the_cursor_parked_back_says_only_the_new_row() {
     );
     assert_eq!(term.write("\x1b[5;14H", 5020), quiet(None));
 }
+
+#[test]
+fn a_lost_read_taken_as_the_focus_arrives_says_nothing() {
+    // Output written while the focus was elsewhere moves a full history
+    // further than a read covers, so the focus's read is lost and read
+    // whole; it speaks nothing, not even the lost read's mark ("The
+    // focus"), and the reads after it find nothing new.
+    let mut term = Term::new(20, 5, 10);
+    let first = (1..=30)
+        .map(|line| format!("f{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let _ = term.write(&first, 100);
+    let _ = term.reader.blur();
+    let away = (31..=300)
+        .map(|line| format!("f{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    term.terminal.write(away.as_bytes());
+    let _ = term.reader.focus(5000);
+    assert_eq!(term.read(5100), quiet(None));
+    assert_eq!(term.read(5200), quiet(None));
+}

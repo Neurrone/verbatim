@@ -38,8 +38,8 @@
 //!
 //! `windows_terminal_full_history_flood` and `conhost_full_history_flood`
 //! flood a full history (`docs/design/terminal-model.md`, "A lost read"):
-//! with output reporting off, `fill.ps1` writes 9,100 lines in one write,
-//! more than either terminal's history holds, and nothing is said; output
+//! with output reporting off, `fill.ps1` writes 9,100 lines, more than
+//! either terminal's history holds, and nothing is said; output
 //! reporting back on, `echo back` is answered with "back" and the prompt;
 //! then the first flood is heard as above but with the count taken from
 //! text, "skipped about 1941 lines", since the read after the first group
@@ -95,10 +95,9 @@ pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<Scenario
     terminal::open_console_host(scenario, "flood", &[("flood.ps1", SCRIPT)])
 }
 
-/// 9,100 numbered lines in one write, more than either terminal's
-/// history holds.
-const FILL_SCRIPT: &str = "$lines = foreach ($line in 1..9100) { \"fill line $line\" }\r\n\
-[Console]::Out.Write(($lines -join \"`r`n\") + \"`r`n\")\r\n";
+/// 9,100 numbered lines as fast as the shell can, as the flood script
+/// writes, more than either terminal's history holds.
+const FILL_SCRIPT: &str = "for ($line = 1; $line -le 9100; $line++) { \"fill line $line\" }\r\n";
 
 pub(crate) fn setup_full_history_windows_terminal(
     scenario: &mut Scenario,
