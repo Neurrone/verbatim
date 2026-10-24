@@ -83,7 +83,7 @@ pub use ignored::{IGNORE_PIDS_ENV, IgnoredProcesses, parse_pids};
 pub use retire::ShutdownSummary;
 pub use writer::QueueError;
 
-pub(crate) use process::image_stem;
+pub(crate) use process::Target;
 
 /// How often every child is pinged.
 const PING_INTERVAL: Duration = Duration::from_secs(3);

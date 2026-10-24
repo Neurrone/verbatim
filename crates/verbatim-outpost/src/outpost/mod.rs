@@ -79,6 +79,7 @@ use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, OutpostToSupervisor, Query, QueryOutcome,
     SupervisorToOutpost, UiaSnapshotFact, WinEventStamp, decode_message, now_us,
 };
+use crate::supervisor::Target;
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, HeldAnchors};
 
@@ -110,6 +111,31 @@ impl CaretRead {
 }
 
 #[cfg(test)]
+mod application_names_tests {
+    use std::process::{Command, Stdio};
+
+    use super::ApplicationNames;
+
+    #[test]
+    fn a_name_does_not_outlive_its_process() {
+        // Waits on its standard input, which is never written.
+        let mut child = Command::new("cmd")
+            .args(["/d", "/c", "pause"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("cmd starts");
+        let pid = child.id();
+        let mut names = ApplicationNames::default();
+        assert_eq!(names.name(pid), "cmd");
+        child.kill().expect("cmd is ended");
+        child.wait().expect("the exit of cmd is seen");
+        assert_eq!(names.name(pid), "");
+        assert!(!names.0.contains_key(&pid), "the exited process is let go");
+    }
+}
+
+#[cfg(test)]
 mod caret_read_tests {
     use super::CaretRead;
 
@@ -128,6 +154,35 @@ mod caret_read_tests {
     }
 }
 
+/// Application names by process, each kept with its process held open, so
+/// that a name never outlives its process: Windows gives a process's id to
+/// no other process while a handle to it is open, and an entry whose
+/// process has exited is dropped and its id read afresh. A console's
+/// clients come and go while its host, the outpost's application, runs.
+#[derive(Default)]
+struct ApplicationNames(HashMap<u32, (Target, String)>);
+
+impl ApplicationNames {
+    /// The name of the application `pid`, empty when its process cannot be
+    /// opened or its name read: two local calls when it is kept, to ask
+    /// whether its process has exited.
+    fn name(&mut self, pid: u32) -> String {
+        if let Some((process, name)) = self.0.get(&pid)
+            && !process.has_exited()
+        {
+            return name.clone();
+        }
+        // Every exited process's entry goes, so none is held open after it.
+        self.0.retain(|_, (process, _)| !process.has_exited());
+        let Ok(process) = Target::open(Pid(pid)) else {
+            return String::new();
+        };
+        let name = process.image_stem().unwrap_or_default();
+        self.0.insert(pid, (process, name.clone()));
+        name
+    }
+}
+
 /// What the outpost's threads share.
 pub(crate) struct Context {
     /// The application, set once ([`Outpost::assign`]); 0 until then, a
@@ -138,7 +193,7 @@ pub(crate) struct Context {
     /// ([`verbatim_model::WindowFacts::application`]), by process: the
     /// application's own, read when it is assigned, and a console client's,
     /// read the first time a focus in its console window is reported.
-    application_names: Mutex<HashMap<u32, String>>,
+    application_names: Mutex<ApplicationNames>,
     outbound: Outbound,
     intake: Intake,
     watch: Watch,
@@ -325,14 +380,12 @@ impl Context {
     /// The name of the application `pid`, its executable's file name
     /// without the extension, lower-cased, as NVDA names an application
     /// module; empty when it cannot be read. Read once per process, then
-    /// remembered.
+    /// remembered while the process runs ([`ApplicationNames`]).
     fn application_name(&self, pid: u32) -> String {
         self.application_names
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .entry(pid)
-            .or_insert_with(|| crate::supervisor::image_stem(Pid(pid)).unwrap_or_default())
-            .clone()
+            .name(pid)
     }
 
     /// [`Outpost::failed_reads`].

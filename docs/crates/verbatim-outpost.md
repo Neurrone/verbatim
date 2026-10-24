@@ -406,6 +406,10 @@ host's window as its application's. The console host's
 outpost marks each event in a console window with the client as its
 `application` (`OutpostToSupervisor::Event`), which Core takes as the
 event's source, and answers a focus-now query for its console window.
+A focus change carries its application's name, the client's in a console
+window, read once per process and kept with that process held open
+(`outpost::ApplicationNames`), so a name is dropped when its process
+exits and never passes to a later process given the same id.
 An outpost's window filters (`window::served_by`, which
 `focus_window_of`, `foreground_window_of`, `main_window_of` and
 `top_level_windows` decide by) take a window as the application's when

@@ -146,15 +146,16 @@ pub(super) fn launch(
 /// has an outpost for it or remembers its crashes. Windows never gives a
 /// process's id to another process while a handle to it is open, so the
 /// pid the supervisor knows the target by, and passes to its outpost, names
-/// this process and no other for as long as this is held.
+/// this process and no other for as long as this is held. An outpost holds
+/// the processes it names applications by the same way.
 #[derive(Debug)]
-pub(super) struct Target {
+pub(crate) struct Target {
     process: OwnedHandle,
 }
 
 /// Why a target was not opened.
 #[derive(Debug)]
-pub(super) enum NotHeld {
+pub(crate) enum NotHeld {
     /// No process has that id, or the one that has it has exited.
     Exited,
     /// The process could not be opened, so it cannot be held, and an
@@ -175,7 +176,7 @@ impl Target {
     /// Opens the process `pid` names now, if it is running. It is opened to
     /// be waited on, or, when that is refused, for limited queries only;
     /// either right is enough to hold it and to tell whether it has exited.
-    pub(super) fn open(pid: Pid) -> Result<Self, NotHeld> {
+    pub(crate) fn open(pid: Pid) -> Result<Self, NotHeld> {
         let mut opened = Err(NotHeld::Exited);
         for rights in [
             PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
@@ -206,8 +207,14 @@ impl Target {
         Ok(target)
     }
 
+    /// The process's executable name without its extension, lower-cased,
+    /// as [`image_stem`] reads it. `None` when it cannot be read.
+    pub(crate) fn image_stem(&self) -> Option<String> {
+        stem_of(HANDLE(self.process.as_raw_handle()))
+    }
+
     /// Whether the process has exited.
-    pub(super) fn has_exited(&self) -> bool {
+    pub(crate) fn has_exited(&self) -> bool {
         let handle = HANDLE(self.process.as_raw_handle());
         let mut exit_code = 0u32;
         // SAFETY: the handle is open with at least limited query access;
@@ -239,25 +246,32 @@ pub(super) fn application_is_hung(pid: Pid) -> bool {
 
 /// `pid`'s executable name without its extension, lower-cased, to name its
 /// outpost's log: `notepad` for Notepad. `None` when it cannot be read.
-pub(crate) fn image_stem(pid: Pid) -> Option<String> {
-    let mut buffer = [0u16; 1024];
-    let mut length = u32::try_from(buffer.len()).ok()?;
+fn image_stem(pid: Pid) -> Option<String> {
     // SAFETY: OpenProcess with a query-only right fails safely; the handle
     // is closed below.
     let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid.0) }.ok()?;
+    let stem = stem_of(handle);
+    // SAFETY: the handle opened above, closed once.
+    let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
+    stem
+}
+
+/// The executable name without its extension, lower-cased, of the process
+/// `handle`, open with at least limited query access.
+fn stem_of(handle: HANDLE) -> Option<String> {
+    let mut buffer = [0u16; 1024];
+    let mut length = u32::try_from(buffer.len()).ok()?;
     // SAFETY: `handle` is open with query access; the buffer outlives the
     // call, which writes at most `length` units.
-    let read = unsafe {
+    unsafe {
         QueryFullProcessImageNameW(
             handle,
             PROCESS_NAME_WIN32,
             PWSTR(buffer.as_mut_ptr()),
             &raw mut length,
         )
-    };
-    // SAFETY: the handle opened above, closed once.
-    let _ = unsafe { windows::Win32::Foundation::CloseHandle(handle) };
-    read.ok()?;
+    }
+    .ok()?;
     let path = String::from_utf16_lossy(&buffer[..usize::try_from(length).ok()?]);
     Path::new(&path)
         .file_stem()
