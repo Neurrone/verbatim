@@ -743,9 +743,29 @@ fn up_arrow_and_a_character_at_once_speak_the_recalled_line_with_it_once() {
     term.write("$ ", 100);
     term.key(KeyKind::Caret(Unit::Line), 200);
     term.typed("x", 210);
+    // Section 5.5: the recalled line's change, with the character in it,
+    // once, and no echo of the character.
     assert_eq!(
         term.write("echo onex", 250),
-        says(vec![caret(0, Unit::Line, "$ echo onex")])
+        says(vec![Speech::Gained {
+            row: 0,
+            text: "echo onex".to_owned()
+        }])
+    );
+}
+
+#[test]
+fn up_arrow_alone_speaks_the_recalled_line_whole() {
+    // A command typed and entered just before, inside the Up Arrow's
+    // window, is not a character typed after it.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ ", 100);
+    term.typed("l", 120);
+    term.key(KeyKind::Forget, 150);
+    term.key(KeyKind::Caret(Unit::Line), 200);
+    assert_eq!(
+        term.write("echo one", 250),
+        says(vec![caret(0, Unit::Line, "$ echo one")])
     );
 }
 
@@ -1166,5 +1186,109 @@ fn with_output_unreported_the_review_position_goes_to_the_caret_when_a_clear_ref
             column: 1,
             line_hash: hash("x")
         })
+    );
+}
+
+#[test]
+fn a_volatile_rows_last_value_is_heard_once_it_settles_after_the_line_ends() {
+    // Section 5.4 and 5.14: steps under 2 seconds apart make the row
+    // volatile; its last step, written with the line's end and the prompt
+    // in one read, still waits for the quiet period and is then heard.
+    let mut term = Term::new(30, 5, 10);
+    term.write("Downloading 10%", 100);
+    assert_eq!(
+        term.write("\rDownloading 20%", 600),
+        says(vec![changed(0, "20%")])
+    );
+    assert_eq!(
+        term.write("\rDownloading 30%", 1100),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(2100))
+    );
+    assert_eq!(term.reader.timer(2100), says(vec![changed(0, "30%")]));
+    assert_eq!(
+        term.write("\rDownloading 100%", 2600),
+        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(4850))
+    );
+    // The prompt, in the next read, is new output and is spoken at once;
+    // the row still waits for its quiet period, 1.5 times the 1.5 seconds
+    // between its last two changes.
+    assert_eq!(
+        term.write("\r\nready>", 2610),
+        step(vec![line(1, "ready>")], Vec::new(), Some(4850))
+    );
+    assert_eq!(term.reader.timer(4850), says(vec![changed(0, "100%")]));
+}
+#[test]
+fn a_cursor_the_program_moves_while_it_draws_and_parks_back_says_nothing() {
+    // Section 5.5: a key the program reads unshown scrolls rows down a
+    // line; the program's cursor goes to the top as it resets the scroll
+    // region, to the end of the row it writes, and back to where the key
+    // found it. Read at each of those, only the new row is spoken. No read
+    // can tell the jump to the top from a key's move, so the review cursor
+    // follows it, and comes back with the caret.
+    let mut term = Term::new(20, 5, 10);
+    term.write(
+        "row 1\r\nrow 2\r\nrow 3\r\n\r\nstatus: ready\x1b[5;14H",
+        100,
+    );
+    term.typed("n", 1000);
+    assert_eq!(term.write("\x1b[1;4r\x1b[1T\x1b[r", 1010), quiet(None));
+    assert_eq!((term.review(), term.followed), (Some(0), true));
+    assert_eq!(term.write("row 0", 1020), says(vec![line(0, "row 0")]));
+    assert_eq!(term.write("\x1b[5;14H", 1030), quiet(None));
+    assert_eq!((term.review(), term.followed), (Some(4), true));
+}
+
+#[test]
+fn typing_onto_a_second_row_and_escape_on_it() {
+    // Section 5.5: typing that wraps past the right margin is echoed as
+    // typed, and Escape erasing the whole input says all it removed.
+    let mut term = Term::new(20, 5, 10);
+    term.write("$ ", 100);
+    let mut at = 1000;
+    for c in "echo aaaaaaaaaaaaa".chars() {
+        term.typed(&c.to_string(), at);
+        assert_eq!(
+            term.write(&c.to_string(), at + 10),
+            says(vec![echo(0, &c.to_string())]),
+            "{c} at {at}"
+        );
+        at += 80;
+    }
+    for c in ["x", "y", "z"] {
+        term.typed(c, at);
+        assert_eq!(term.write(c, at + 10), says(vec![echo(0, c)]), "{c}");
+        at += 80;
+    }
+    term.key(KeyKind::Forget, at);
+    assert_eq!(
+        term.write(&format!("\x1b[1;3H{}\x1b[1;3H", " ".repeat(21)), at + 10),
+        says(vec![Speech::Lost {
+            row: 0,
+            text: "echo aaaaaaaaaaaaaxyz".to_owned()
+        }])
+    );
+}
+#[test]
+fn a_read_inside_a_programs_redraw_speaks_the_change_not_the_line_its_cursor_passes() {
+    // Section 5.5: the landing rule is for a caret that moved with no text
+    // change. A key the program reads unshown rewrites row 2, and a read
+    // lands before the program parks its cursor back on the status row:
+    // the row's change is output: a growing line, whose word the cursor at
+    // its end holds, and the cursor leaving it speaks "changed".
+    let mut term = Term::new(20, 4, 10);
+    term.write("row 1\r\nrow 2\r\n\r\nstatus: ready\x1b[4;14H", 100);
+    term.typed("n", 5000);
+    assert_eq!(
+        term.write("\x1b[2;1H\x1b[2Krow 2 changed", 5010),
+        step(
+            Vec::new(),
+            vec![withheld(1, Reason::UnfinishedWord)],
+            Some(6010)
+        )
+    );
+    assert_eq!(
+        term.write("\x1b[4;14H", 5020),
+        says(vec![growth(1, " changed")])
     );
 }
