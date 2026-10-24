@@ -30,11 +30,11 @@ use verbatim_model::{
 use verbatim_text::terminal_reading::{
     ColourRun, Counted, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
 };
-use verbatim_text::terminal_rows::Read;
+use verbatim_text::terminal_rows::{Checked, Read, RowsAbove};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
-    CaretAnswer, CaretLineQuery, Error as RopsError, Path, Snapshot, SnapshotQuery,
-    terminal_snapshot,
+    CaretAnswer, CaretLineQuery, Error as RopsError, Path, RowsQuery, Snapshot, SnapshotQuery,
+    terminal_rows, terminal_snapshot,
 };
 
 use crate::text::TextError;
@@ -352,7 +352,9 @@ pub struct ReadAnswer {
 /// with the caret and its line read in the same round trip (`caret`), and
 /// the colours when a key reached the terminal since the last read. A read
 /// the rules want taken again, of the whole document or from further above,
-/// is taken at once. `waited` says whether the read waited for Core's
+/// is taken at once, and so are the rows they ask for by their place, read
+/// in one remote operation of their own (`verbatim_uia_rops::terminal_rows`)
+/// and given with the same read. `waited` says whether the read waited for Core's
 /// speech queue (section 5.2). `remote` tries the remote program first.
 ///
 /// # Errors
@@ -416,9 +418,24 @@ pub fn read<'a>(
             colours = snapshot.colours.is_some(),
             "terminal snapshot timing"
         );
-        let read = read_of(&snapshot, started_ms);
+        let mut read = read_of(&snapshot, started_ms);
         let read_colours = snapshot.colours.as_deref().map(colours_of);
-        let step = terminal.reader.read(&read, waited, read_colours.as_deref());
+        let mut step = terminal.reader.read(&read, waited, read_colours.as_deref());
+        // The rows a rotation's candidates predict above the read, read by
+        // their place from the same start, and the read given again with
+        // them (section 4.3, item 5).
+        if !step.check_rows.is_empty()
+            && let Some(kept) = start.as_ref().filter(|_| !whole)
+        {
+            read.checked = Some(check_rows(
+                uia,
+                (element, pattern),
+                kept,
+                &step.check_rows,
+                remote,
+            )?);
+            step = terminal.reader.read(&read, waited, read_colours.as_deref());
+        }
         if step.whole_document || !step.check_rows.is_empty() {
             whole = true;
             continue;
@@ -449,6 +466,64 @@ pub fn read<'a>(
     Err(TextError::Failed(
         "the reading rules asked for more reads than a history needs".to_owned(),
     ))
+}
+
+/// Reads the runs of rows `runs` asks for by their place, from `start`, the
+/// start the snapshot was asked for, in one remote operation
+/// (`verbatim_uia_rops::terminal_rows`).
+fn check_rows(
+    uia: &Uia,
+    (element, pattern): (&IUIAutomationElement, &IUIAutomationTextPattern),
+    start: &IUIAutomationTextRange,
+    runs: &[RowsAbove],
+    remote: bool,
+) -> Result<Checked, TextError> {
+    let runs: Vec<(u32, u32)> = runs
+        .iter()
+        .map(|run| {
+            (
+                u32::try_from(run.above).unwrap_or(u32::MAX),
+                u32::try_from(run.rows).unwrap_or(u32::MAX),
+            )
+        })
+        .collect();
+    let query = RowsQuery {
+        element,
+        pattern,
+        start,
+        runs: &runs,
+    };
+    let timer = std::time::Instant::now();
+    let result = terminal_rows(uia, &query, remote);
+    let elapsed_us = u64::try_from(timer.elapsed().as_micros()).unwrap_or(u64::MAX);
+    match result {
+        Ok((answer, path)) => {
+            // What each check costs (`docs/performance.md`, "A terminal
+            // flood").
+            tracing::debug!(
+                path = path.name(),
+                elapsed_us,
+                runs = runs.len(),
+                "terminal rows by their place timing"
+            );
+            Ok(Checked {
+                runs: answer
+                    .runs
+                    .iter()
+                    .map(|text| String::from_utf16_lossy(text))
+                    .collect(),
+                first_row: answer.first_row,
+            })
+        }
+        Err(error) => {
+            tracing::debug!(elapsed_us, %error, "terminal rows by their place failed");
+            Err(if is_gone(&error) {
+                TextError::Gone
+            } else {
+                TextError::Failed(error.to_string())
+            })
+        }
+    }
 }
 
 /// The text one message's terminal speech may take, well inside

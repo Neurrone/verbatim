@@ -8,7 +8,8 @@
 //! new, one with output written since, one whose start the text no longer
 //! reaches, one asked for fewer rows than the screen holds, a read of the
 //! whole text, and reads taking rows above their start, as many as asked
-//! and as far as the document's start. The colours a read takes after a key
+//! and as far as the document's start, and runs of rows read by their place
+//! from a kept start (`terminal_rows`). The colours a read takes after a key
 //! are pinned as exact runs, read at the width the last read found, at an
 //! unknown width and at a stale one, from a provider that answers colours
 //! over a range without its last character, as both terminals do.
@@ -21,7 +22,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use verbatim_uia::{Node, NodeIdRegistry, Shape, Uia};
 use verbatim_uia_rops::{
-    ColourRun, Snapshot, SnapshotQuery, terminal_snapshot_classic, terminal_snapshot_remote,
+    ColourRun, RowsAnswer, RowsQuery, Snapshot, SnapshotQuery, terminal_rows_classic,
+    terminal_rows_remote, terminal_snapshot_classic, terminal_snapshot_remote,
 };
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{IUIAutomationElement, IUIAutomationTextRange};
@@ -316,6 +318,46 @@ fn a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start
     );
 }
 
+fn rows_by_their_place_are_read_from_the_kept_start_both_ways() {
+    // `terminal_rows` (section 4.3, item 5): runs of rows counted up from
+    // the start a snapshot was asked for, a run whose first row lies above
+    // the document's start read as nothing, and the document's first row
+    // after them.
+    let (app, _, uia, terminal) = eight_line_terminal("mockapp-snapshot-rows");
+    let (pattern, _) = verbatim_uia::text::text_pattern(&terminal).expect("a text pattern");
+    let first = SnapshotQuery {
+        element: &terminal,
+        pattern: &pattern,
+        start: None,
+        screen_rows: 0,
+        whole: false,
+        above: 0,
+        caret: None,
+        colours: None,
+    };
+    let (_, next) = both(&uia, &first);
+    let runs = [(2, 2), (4, 1), (6, 1)];
+    let query = RowsQuery {
+        element: &terminal,
+        pattern: &pattern,
+        start: &next,
+        runs: &runs,
+    };
+    let remote = terminal_rows_remote(&uia, &query).expect("the remote program runs");
+    let classic = terminal_rows_classic(&uia, &query).expect("the classic reads run");
+    app.quit();
+    assert_eq!(remote, classic, "remote and classic differ");
+    assert_eq!(
+        remote,
+        RowsAnswer {
+            runs: ["line 003\nline 004\n", "line 001\n", ""]
+                .map(|text| text.encode_utf16().collect())
+                .to_vec(),
+            first_row: "line 000\n".to_owned(),
+        }
+    );
+}
+
 /// A run of `length` cells from `column`, its foreground and background as
 /// given.
 fn run(column: usize, length: usize, foreground: u32, background: u32) -> ColourRun {
@@ -388,6 +430,10 @@ fn main() {
         (
             "a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways",
             a_read_takes_the_rows_asked_for_above_its_start_as_far_as_the_documents_start_both_ways,
+        ),
+        (
+            "rows_by_their_place_are_read_from_the_kept_start_both_ways",
+            rows_by_their_place_are_read_from_the_kept_start_both_ways,
         ),
         (
             "colours_are_read_as_exact_runs_at_any_width_hint_both_ways",
