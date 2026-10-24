@@ -1053,8 +1053,8 @@ impl TerminalMemory {
         }
     }
 
-    /// Takes `read` as a first read, as when the whole document or a search
-    /// for the block was asked for and the caller will not read it, with
+    /// Takes `read` as a first read, as when the whole document was asked
+    /// for and the caller will not read it, with
     /// "report new output" off (section 4.2). The command marks and the
     /// review position are kept: each moved as the read's start moved,
     /// with no rotation, and kept when its line is there, or when it is

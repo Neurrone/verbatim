@@ -40,10 +40,10 @@ use verbatim_uia_rops::{
 use crate::text::TextError;
 use reading::Reading;
 
-/// The most snapshots one read takes: its own, a read of the whole
-/// document, and searches further above for the block, each four times as
-/// far as the one before, which reach any history a terminal holds well
-/// within this many (`docs/design/terminal-model.md`, section 4.3, item 5).
+/// The most snapshots one read takes: its own, a read again from further
+/// above and a read of the whole document (`docs/design/terminal-model.md`,
+/// section 4.3, item 5), and more only when the terminal keeps writing
+/// between them, which this bounds.
 const MAX_SNAPSHOTS: usize = 12;
 
 /// The reading rules' settings from Core's ([`TerminalSettings`]).
