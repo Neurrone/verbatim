@@ -304,6 +304,19 @@ times or tightly bounds such a read fails from load elsewhere in the
 session, not from its own code, so no test does (`docs/testing.md`,
 "Waits are for evidence").
 
+**Minimizing a console after a flood takes 30 to 45 seconds, and
+`conhost_leave_flood` fails at "brings the first window back".** On the
+development VM, which renders the desktop in software (WARP), the Desktop
+Window Manager works through a flooded console's repaints for about 40
+seconds after the flood, using up to two cores, and a minimize waits for
+it in `win32kfull!DwmSyncNotifyMinimizing`; the console's own window thread
+is idle meanwhile. It happens with no Verbatim running (27 to 45 s over
+four runs, measured on 2026-10-24 with a trace and with Verbatim stopped),
+so it is not Verbatim's to fix, and Dickson decided to leave the scenario's
+failure on this VM unaddressed. The same switch took 150 to 282 ms on
+2026-10-11, before a Windows update replaced the Desktop Window Manager's
+files; restarting it (signing out, or rebooting) is untried.
+
 **`cargo xtask trace scenario` and `cargo xtask measure` refuse to start
 while `VERBATIM_E2E_VERBATIM_EXE` is set.** Name the other build with
 `--verbatim-exe <path>` instead, because the commands once discarded the
