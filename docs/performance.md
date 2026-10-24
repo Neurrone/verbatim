@@ -1816,8 +1816,9 @@ text from the screen's top as last read, a few history rows above it, to
 the document's end in one `GetText`, with the screen, where the next read
 starts, the document's first row, the caret's distance to the end, and the
 caret and its line, all in one program. A read the rules ask for again, of
-the whole document or from further above to find how far a full history
-rotated, is a snapshot more. Measured against mockapp's text provider
+the whole document or from further above, is a snapshot more, and rows
+they ask for by their place, to check how far a full history rotated, a
+program more ("A terminal's rotation" below). Measured against mockapp's text provider
 (`tests/fixtures/terminal.json` with a three-row screen,
 `tests/terminal.rs`), whose `set-text` command rewrites the text as a
 terminal's buffer changes and whose `screen` command puts only its last
@@ -1936,6 +1937,52 @@ passed in Windows Terminal):
   line ends. In both terminals the skipped-lines announcement started
   within 1 millisecond of the 30th line finishing (the speech request
   came 0 to 1 milliseconds before).
+
+### A terminal's rotation
+
+How far a full history rotated between two reads is decided as comparing
+the whole buffer with the known history would decide it
+(`docs/design/terminal-model.md`, section 4.3, item 5): each candidate
+rotation is checked against the history rows the read holds, and one
+whose block lies above the read by reading the rows it predicts there by
+their place (`verbatim_uia_rops::terminal_rows`), or, when the old
+screen's top went above the read too, by reading again from the block's
+place; several candidates, or a known history that does not reach the
+document's start, read the whole document.
+
+Measured on 2026-10-24 on this machine (x64, release build), 120 by 30,
+a full history of 9,001 rows, numbered lines, each rotation written
+between two reads:
+
+- Live in the console host, through the outpost's `terminal::read`, the
+  time of the whole read and its UIA calls: a first read 0.5 to 1.0
+  milliseconds, 1 call; the second read, which completes the known
+  history by reading the whole document once, 31 to 38 milliseconds, 2
+  calls (the whole document's snapshot alone 25 to 26 milliseconds, 1.1
+  million UTF-16 units); nothing new, 0.9 to 1.1 milliseconds, 1 call; a
+  rotation of 1 or 3 rows, 1.0 to 1.3 milliseconds, 2 calls (the rows by
+  their place 0.19 to 0.23 milliseconds of it); 10 to 100 rows, 1.4 to
+  2.0 milliseconds, 2 calls, the read taken again from the block's place;
+  1,000 rows, 5.1 to 5.7 milliseconds, 2 calls, the read again holding
+  1,004 rows above its start (3.5 milliseconds).
+- The same in the simulated terminal, the memory's own time and its
+  reads, in both terminals alike: nothing new 0.4 milliseconds, 1
+  snapshot; a rotation of 1 or 3 rows 0.09 to 0.14 milliseconds, 1
+  snapshot and 1 read of rows by their place; 10 or 100 rows 0.08 to
+  0.12 milliseconds and 1,000 rows 0.46 to 0.61, 2 snapshots each.
+- The ambiguous case, a full history of one repeated line: every read
+  is a whole-document read, nothing new included, since every row of the
+  history is a candidate that holds. Live in the console host 31 to 51
+  milliseconds a read, 2 calls; in the simulated terminal the memory's
+  own time 4.1 to 4.7 milliseconds a read, the whole known history
+  compared for the smallest candidate, which holds. The same comes of a
+  history whose first row is blank and that holds more than 16 other
+  blank rows: each such read, until a rotation moves another row to the
+  top, reads the whole document, 33 milliseconds live, since more
+  candidates than one read of rows by their place takes need checking.
+- A clear and a reprint of 9,000 rows with the first 100 left out, read
+  whole after the document shrank: 4.3 to 4.8 milliseconds of the
+  memory's time, every row found again by the alignment.
 
 ### A terminal's upward search
 
@@ -2481,6 +2528,11 @@ share of the limit in brackets:
   above the start, 5 fewer. Without colours the program has no loop, so
   the count does not grow with the history, the rows above or the lines
   read.
+- A terminal's rows by their place (`terminal_rows`, "A terminal's
+  rotation" below): 172 (2 percent) at its largest input, 16 runs each
+  reaching its rows, and 22 for one run: ten a run and twelve besides. The
+  program has no loop, so the count does not grow with how far up a run
+  reads or how many rows it holds.
 - A terminal's colours, read with its snapshot on a 120 by 30 screen
   ("A terminal's colours" above): 1,349 for a plain screen, in the
   snapshot's own program; in the worst case, every cell's colours

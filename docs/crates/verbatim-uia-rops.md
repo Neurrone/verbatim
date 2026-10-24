@@ -14,7 +14,7 @@ The design of record is phase 6's "UIA remote operations" section.
 
 The crate has three layers: the instruction set and a typed builder,
 execution, and algorithms. The algorithms are the focus ancestry, for
-terminals `terminal_snapshot`, for caret reports `caret_read`,
+terminals `terminal_snapshot` and `terminal_rows`, for caret reports `caret_read`,
 for the text protocol's other requests `text_units`, `text_range`, and
 `text_location`, for object navigation `navigation_step`, and for a
 selection inside an element the focus controls `controlled_selection`
@@ -486,6 +486,28 @@ Without colours the program has no loop, so its cost does not grow with
 the text: 50 instructions for a first read and 90 with a start and the
 caret, each with four rows above its start, and 5 fewer without
 (`crates/mockapp/tests/instruction_limit.rs`).
+
+### Rows by their place
+
+`terminal_rows(uia, query, remote)`, with `terminal_rows_remote` and
+`terminal_rows_classic` sharing one signature (`TerminalRowsFn`), reads
+runs of a terminal's history rows by their place, which the terminal
+reading rules ask for to check the candidate rotations whose block lies
+above the snapshot just read (`docs/design/terminal-model.md`, section
+4.3, item 5). A `RowsQuery` gives the element and its text pattern, the
+start the snapshot was asked for (the last read's `next_start`), and the
+runs, each how many rows above that start it begins and how many rows it
+holds, at most `MOST_RUNS` (16). For each run the program collapses a copy
+of the start, moves it up by the run's rows and, when it moved that far,
+moves its end down by the run's rows and reads its text; a run whose first
+row the document's start came before is read as nothing. It then reads the
+document's first row, so the caller can tell whether the buffer moved
+between the snapshot and these rows. `RowsAnswer` holds each run's text,
+UTF-16 as given, and the first row. The console host's text of a run
+leaves out its last row's line break (measured 2026-10-24), which the
+reading rules allow for. The program has no loop: ten instructions a run
+and twelve besides, 172 at 16 runs, the program kept per thread for each
+list of runs.
 
 ### The colours
 
@@ -1055,6 +1077,9 @@ The terminal reading, audited call by call on 2026-10-24:
   inside it. Only a screen of many colours takes more, each further
   program reading as many rows as stay under its budget. Classic only as
   the per-call fallback.
+- Rows by their place (`terminal_rows`): one program for every run the
+  rotation's candidates ask for, and the document's first row. Classic
+  only as the per-call fallback.
 - The caret event's read in a terminal, and the caret read before a held
   key: the caret read's program (`caret_read`), one program each.
 - The outpost's terminal code (`crates/verbatim-outpost/src/terminal.rs`
@@ -1143,7 +1168,8 @@ selecting key's answer, remotely and classically;
 formatting and selection changes included, and that the two
 implementations of each text read agree; `crates/mockapp/tests/terminal.rs`
 pins a terminal's reads; `crates/mockapp/tests/terminal_snapshot.rs` pins
-the snapshot's fields both ways, and its colours as exact runs at the
+the snapshot's fields both ways, runs of rows by their place both ways,
+and its colours as exact runs at the
 width the last read found, at none and at a stale one, from a provider
 that leaves a range's last character out of its colour answer; and
 `crates/mockapp/tests/instruction_limit.rs` pins every program's

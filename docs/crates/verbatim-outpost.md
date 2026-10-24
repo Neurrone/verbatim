@@ -2571,8 +2571,11 @@ it.
   stamped with when the read began on the run's shared clock), the
   colours converted at the boundary from `verbatim_uia_rops::ColourRun` to
   the rules' own. When the rules ask for the whole document or for a read
-  from further above to find how far a full history rotated, that read is
-  taken at once, up to `MAX_SNAPSHOTS` (12) snapshots for one read. What
+  from further above, that read is taken at once, up to `MAX_SNAPSHOTS`
+  (12) snapshots for one read; when they ask for rows by their place, to
+  check how far a full history rotated, those rows are read in one remote
+  operation from the read's asked start (`verbatim_uia_rops::terminal_rows`)
+  and the same read is given again with them. What
   the rules say becomes Core's `TerminalSpeech` (`terminal::speech_of`):
   output (`TerminalItem::Output` for a new line, a redrawn row's change
   and a held line as last read; `TerminalItem::Growth` for what a growing
