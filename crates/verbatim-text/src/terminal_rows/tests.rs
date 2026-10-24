@@ -379,8 +379,7 @@ fn a_clear_and_a_reprint_repeat_the_known_history() {
     // went ("The alignment").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("h1\r\nh2\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9");
-    let outcome =
-        watch.write("\x1b[H\x1b[2J\x1b[3Jh1\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9");
+    let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jh1\r\nh3\r\nh4\r\nh5\r\nh6\r\nh7\r\nh8\r\nh9");
     assert_eq!(watch.taken, 2, "the whole document read");
     assert_eq!(
         watch.texts(),
@@ -766,10 +765,54 @@ fn a_screen_cleared_into_the_history_over_repeated_text_keeps_its_rows_in_order(
 }
 
 #[test]
-fn zz_debug_case() {
-    let mut watch = Watch::console(12, 5, 6);
-    let a = watch.write("\x1b7\x1b[1A\r\x1b[2K\x1b[1mwrapping-word\x1b[m\x1b8");
-    eprintln!("A texts {:?} {:?}", watch.texts(), a);
-    let b = watch.write("\x1b7\x1b[99;1H\x1b[2Kok\x1b8\x1b7\x1b[1;1H\x1b[2Kok\x1b8");
-    eprintln!("B texts {:?} {:?}", watch.texts(), b);
+fn a_tie_between_rotations_is_settled_by_the_documents_first_row() {
+    // A full history of one repeated line under a first line "a": the rows
+    // the read shows allow every rotation, and the document's first row,
+    // "x" where the remembered history held "a" at the document's start and
+    // "x" a row below, settles the rotation of one ("The alignment").
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("a\r\nx\r\nx\r\nx\r\nx\r\nx\r\nx\r\nx\r\nx");
+    let outcome = watch.write("\r\nx");
+    assert_eq!(watch.taken, 1, "one read");
+    assert_eq!(outcome.rotation, 1);
+    assert_eq!(watch.texts(), ["x", "x", "x", "x", "x", "x"]);
+    assert_eq!(
+        outcome.rows,
+        [kept(4), kept(5), kept(6), kept(7), kept(8), NEW]
+    );
+}
+
+#[test]
+fn windows_terminals_clear_and_a_full_screen_program_return_to_the_screen_after_the_clear() {
+    // The clear leaves a document one row tall: a new screen of another
+    // shape, so nothing is aside; the full-screen program's screen, one
+    // screen tall, sets the screen after the clear aside, and leaving it
+    // returns there ("Screens").
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
+    watch.write("a\r\nb\r\nc\r\nd\r\ne");
+    let cleared = watch.write("\x1b[H\x1b[2J\x1b[3Jp> ");
+    assert_eq!(cleared.switch, Switch::New);
+    assert_eq!(cleared.rows, [NEW]);
+    let opened = watch.write("\x1b[?1049h\x1b[Hvim\r\n~\r\n:q");
+    assert_eq!(opened.switch, Switch::Opened);
+    let closed = watch.write("\x1b[?1049l");
+    assert_eq!(closed.switch, Switch::Closed);
+    assert_eq!(watch.texts(), ["p>"]);
+    assert_eq!(closed.rows, [kept(0)]);
+}
+
+#[test]
+fn the_alternate_screen_from_a_shell_as_long_as_it_is_a_new_screen_not_an_overflow() {
+    // A fresh shell's document fills the screen, with no history, and the
+    // alternate screen is as long: one screen tall, a new screen, which
+    // comes before the overflow's test ("Screens").
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write("s1\r\ns2\r\ns3");
+    let opened = watch.write("\x1b[?1049h\x1b[Hv1\r\nv2\r\nv3");
+    assert_eq!(opened.switch, Switch::Opened);
+    assert!(!opened.overflowed, "no overflow");
+    assert_eq!(opened.rows, [NEW, NEW, NEW]);
+    let closed = watch.write("\x1b[?1049l");
+    assert_eq!(closed.switch, Switch::Closed);
+    assert_eq!(closed.rows, [kept(0), kept(1), kept(2)]);
 }

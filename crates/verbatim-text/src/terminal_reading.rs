@@ -50,34 +50,15 @@ pub fn quiet_period(interval_ms: Option<u64>) -> u64 {
     })
 }
 
-/// How many lines a flood's summary counts.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Counted {
-    /// This many, blank ones included.
-    Lines(usize),
-    /// More than this many: the history overflowed, more going by than it
-    /// holds, and this many are the lines it holds that are not spoken.
-    MoreThan(usize),
-    /// Some, but how many is not known: the history overflowed, and every
-    /// line it holds is spoken.
-    Unknown,
-}
-
-/// The reader's settings.
+/// The reader's settings. Floods are Core's to split ("Core's flood
+/// policy"), so the lines a flood speaks are not among them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
-    /// "Report new output": with it off, no output is spoken or counted,
-    /// and the whole document is never asked for (section 4.2); keys are
-    /// still answered.
+    /// "Report new output": with it off, no output is spoken, and the whole
+    /// document is never asked for ("The read"); keys are still answered.
     pub report_new_output: bool,
-    /// "Review follows caret" (section 5.6).
+    /// "Review follows caret" ("The review anchor and following").
     pub review_follows_caret: bool,
-    /// "Lines spoken in full": a read with more new lines than this and
-    /// [`Settings::last_lines`] together speaks this many first.
-    pub lines_in_full: usize,
-    /// "Last lines to speak": and this many last, the lines between them
-    /// counted in one summary.
-    pub last_lines: usize,
 }
 
 impl Default for Settings {
@@ -85,8 +66,6 @@ impl Default for Settings {
         Self {
             report_new_output: true,
             review_follows_caret: true,
-            lines_in_full: 30,
-            last_lines: 30,
         }
     }
 }
@@ -155,10 +134,6 @@ pub enum Reason {
     Spinner,
     /// A row that only lost text (sections 5.4 and 5.7).
     LostText,
-    /// The caret's row showing typing, which the echo speaks (5.5).
-    HeldTyping,
-    /// A key's answer, spoken as that answer (sections 5.5 and 5.7).
-    KeyAnswer,
     /// A row erased and written back within the time a gone row lingers:
     /// text heard before, silent wherever it comes back ("Lingering"; a
     /// limit, "Limits").
@@ -200,21 +175,18 @@ pub enum Speech {
         /// The line from the word that changed.
         text: String,
     },
-    /// A held line that left the read before it was spoken, as when a
-    /// flood pushed it out of a full history: what it held, as it was last
-    /// read, spoken before the read's other output (section 4.3, item 5).
+    /// A held line that the rotation carried above the read before it was
+    /// spoken: what it held, as it was last read, spoken before the read's
+    /// other output.
     Held {
         /// The held text: a growing line's unfinished word, or a volatile
         /// row from the word that changed.
         text: String,
     },
-    /// A flood's lines counted, not spoken (the flood policy).
-    Skipped {
-        /// The first rows of the lines counted that have text.
-        rows: Vec<usize>,
-        /// How many lines.
-        count: Counted,
-    },
+    /// More went by than the history holds ("Starting again"): the lines
+    /// that follow are the lines the history holds, all of them new, and
+    /// Core counts those it skips as more than the history holds.
+    Overflowed,
     /// Typed characters the terminal showed (section 5.5).
     Echo {
         /// The caret's line's first row.
@@ -1335,20 +1307,18 @@ impl TerminalReader {
             put(&mut screen, &line.rows, keep_from, state);
         }
         // Gained emphasis: a row whose colours changed while its text did
-        // not (section 5.7).
+        // not ("A key's answer").
         if first_colours
             && !silent
             && let Some(new_colours) = &new_colours
+            && let Some(row) = Self::emphasis(&emphasis_candidates, &screen, new_colours)
+            && let Some(line) = &mut screen.rows[row].line
         {
-            for row in Self::emphasis(&emphasis_candidates, &screen, new_colours, caret.as_ref()) {
-                if let Some(line) = &mut screen.rows[row].line {
-                    key_speech.push(Speech::Answer {
-                        row,
-                        text: line.text.to_string(),
-                    });
-                    line.said.clone_from(&line.text);
-                }
-            }
+            key_speech.push(Speech::Answer {
+                row,
+                text: line.text.to_string(),
+            });
+            line.said.clone_from(&line.text);
         }
         if let Some(new_colours) = &new_colours {
             for (row, colours) in new_colours.iter().enumerate() {
@@ -1360,66 +1330,18 @@ impl TerminalReader {
         if first_colours && let Some(keys) = &mut self.keys {
             keys.read = true;
         }
-        // New output, by the flood policy.
+        // New output, every line in order, blank ones included, for Core's
+        // flood policy, which counts them ("New text"); a blank row is a
+        // line only once a row with text is below it. After an overflow,
+        // the lines follow its mark.
         while fresh_lines.last().is_some_and(|(_, text)| text.is_none()) {
             fresh_lines.pop();
         }
-        let limit = self.settings.lines_in_full + self.settings.last_lines;
-        if fresh_lines.len() > limit || outcome.overflowed {
-            let head = self.settings.lines_in_full.min(fresh_lines.len());
-            let tail = fresh_lines
-                .len()
-                .saturating_sub(self.settings.last_lines)
-                .max(head);
-            for (row, text) in &fresh_lines[..head] {
-                if let Some(text) = text {
-                    items.push((*row, line_speech(*row, text)));
-                }
-            }
-            if tail > head || outcome.overflowed {
-                let counted = &fresh_lines[head..tail];
-                // The summary comes at the first line it counts, or, when
-                // it counts none, after the last line spoken.
-                let row = counted.first().map_or_else(
-                    || {
-                        fresh_lines.last().map_or(0, |&(last, _)| {
-                            outcome
-                                .lines
-                                .iter()
-                                .find(|line| line.rows.start == last)
-                                .map_or(last + 1, |line| line.rows.end)
-                        })
-                    },
-                    |&(row, _)| row,
-                );
-                let count = match (outcome.overflowed, counted.len()) {
-                    (false, lines) => Counted::Lines(lines),
-                    (true, 0) => Counted::Unknown,
-                    (true, lines) => Counted::MoreThan(lines),
-                };
-                items.push((
-                    row,
-                    Speech::Skipped {
-                        rows: counted
-                            .iter()
-                            .filter(|(_, text)| text.is_some())
-                            .map(|(row, _)| *row)
-                            .collect(),
-                        count,
-                    },
-                ));
-            }
-            for (row, text) in &fresh_lines[tail..] {
-                if let Some(text) = text {
-                    items.push((*row, line_speech(*row, text)));
-                }
-            }
-        } else {
-            for (row, text) in &fresh_lines {
-                if let Some(text) = text {
-                    items.push((*row, line_speech(*row, text)));
-                }
-            }
+        if outcome.overflowed {
+            items.push((0, Speech::Overflowed));
+        }
+        for (row, text) in &fresh_lines {
+            items.push((*row, line_speech(*row, text.as_deref().unwrap_or_default())));
         }
         items.sort_by_key(|(row, _)| *row);
         if resized && !outcome.first {
@@ -1436,9 +1358,10 @@ impl TerminalReader {
                 });
             }
         }
-        // A held line that left the read, above its start or out of a full
-        // history, with no line of the read carrying it, is spoken as it
-        // was last read, before the read's output (section 4.3, item 5).
+        // A held line the rotation carried above the read's start, with no
+        // line of the read carrying it, is spoken as it was last read,
+        // before the read's output. What an overflow pushed out while held
+        // is not heard ("Limits").
         let held: Vec<Speech> = if report {
             previous
                 .rows
@@ -1446,10 +1369,8 @@ impl TerminalReader {
                 .enumerate()
                 .map(|(index, row)| (index + previous.skipped, row))
                 .filter(|&(old, _)| previous.start(old) == Some(old) && !carried.contains(&old))
-                .filter(|&(old, _)| match outcome.old.get(old) {
-                    Some(OldRow::Above | OldRow::Left) => true,
-                    Some(OldRow::Gone { .. }) => outcome.overflowed,
-                    _ => false,
+                .filter(|&(old, _)| {
+                    matches!(outcome.old.get(old), Some(OldRow::Above | OldRow::Left))
                 })
                 .filter_map(|(_, row)| row.line.as_ref())
                 .filter_map(|line| self.held_text(line))
@@ -1563,28 +1484,8 @@ impl TerminalReader {
                 self.set_before(caret);
                 return None;
             }
-            // The landing rule is for a caret that moved with no text
-            // change (section 5.5): a key Verbatim knows no unit of that
-            // finds the caret on another line this read changed, as a
-            // program's cursor passing through a row it draws, leaves that
-            // change to the output rules.
-            let changed = outcome.rows[line_rows.clone()]
-                .iter()
-                .zip(&rows[line_rows.clone()])
-                .any(|(kind, row)| {
-                    !row.is_blank()
-                        && matches!(
-                            kind,
-                            NewRow::New
-                                | NewRow::Grown { .. }
-                                | NewRow::Rewritten { .. }
-                                | NewRow::Returned { .. }
-                        )
-                });
-            if unit.is_none() && changed {
-                self.set_before(caret);
-                return None;
-            }
+            // The caret ended on another line that was already there: that
+            // line is spoken whatever changed on it ("The caret's line").
             if before.is_some() || unit.is_some() {
                 let unit = unit.filter(|unit| *unit != Unit::Line && !line_key);
                 speech.push(self.unit_at(caret, unit.unwrap_or(Unit::Line)));
@@ -1813,17 +1714,15 @@ impl TerminalReader {
         held && between && (text == old.text || text == with_typing)
     }
 
-    /// The rows that gained emphasis among `candidates`, lines whose text
-    /// did not change (section 5.7): when two rows' colours swapped, the
-    /// one whose colours now differ from both its neighbours'; when one
-    /// row's changed, that row; when no earlier colours were read, the one
-    /// row whose colours differ from both its neighbours'.
+    /// The row that gained emphasis among `candidates`, lines whose text
+    /// did not change ("A key's answer"): of those whose colours changed,
+    /// or were read for the first time, the one whose colours now differ
+    /// from both its neighbours'.
     fn emphasis(
         candidates: &[usize],
         screen: &Screen,
         colours: &[Option<&Vec<ColourRun>>],
-        caret: Option<&Caret>,
-    ) -> Vec<usize> {
+    ) -> Option<usize> {
         let now = |row: usize| colours.get(row).copied().flatten();
         let stands_out = |row: usize| {
             let Some(own) = now(row) else {
@@ -1833,40 +1732,17 @@ impl TerminalReader {
                 && now(row - 1).is_some_and(|above| above != own)
                 && now(row + 1).is_some_and(|below| below != own)
         };
-        let changed: Vec<usize> = candidates
-            .iter()
-            .copied()
-            .filter(|&row| {
-                matches!((&screen.rows[row].colours, now(row)), (Some(old), Some(new)) if old != new)
-            })
-            .collect();
-        match changed.len() {
-            1 => changed,
-            2 => {
-                let picked: Vec<usize> = changed
-                    .iter()
-                    .copied()
-                    .filter(|&row| stands_out(row))
-                    .collect();
-                if picked.len() == 1 {
-                    picked
-                } else {
-                    Vec::new()
-                }
-            }
-            0 if screen.rows.iter().all(|row| row.colours.is_none()) => {
-                let picked: Vec<usize> = candidates
-                    .iter()
-                    .copied()
-                    .filter(|&row| caret.is_none_or(|caret| caret.line != row) && stands_out(row))
-                    .collect();
-                if picked.len() == 1 {
-                    picked
-                } else {
-                    Vec::new()
-                }
-            }
-            _ => Vec::new(),
+        let mut picked = candidates.iter().copied().filter(|&row| {
+            now(row).is_some_and(|new| {
+                screen.rows[row]
+                    .colours
+                    .as_ref()
+                    .is_none_or(|old| old != new)
+            }) && stands_out(row)
+        });
+        match (picked.next(), picked.next()) {
+            (Some(row), None) => Some(row),
+            _ => None,
         }
     }
 }
@@ -2091,7 +1967,7 @@ fn suggestion(caret: &Caret, rows: &[Row], colours: &[Option<&Vec<ColourRun>>]) 
         .last()?;
     let text: String = chars[column..=end].iter().collect();
     let text = text.trim_end().to_owned();
-    (!text.is_empty() && end + 1 >= chars.len()).then_some(text)
+    (!text.is_empty()).then_some(text)
 }
 
 #[cfg(test)]

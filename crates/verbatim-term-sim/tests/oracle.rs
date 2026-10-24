@@ -12,8 +12,8 @@ use std::collections::{HashMap, HashSet};
 use proptest::prelude::*;
 use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::oracle::{
-    Heard, Observation, Op, Reader, Reason, Reply, Seen, Size, Spoken, TINY_ALPHABET, Violation,
-    Withheld, every_stream, observe, random_config, random_steps, stream,
+    Heard, Limit, Observation, Op, Reader, Reason, Reply, Seen, Size, Spoken, TINY_ALPHABET,
+    Violation, Withheld, every_stream, observe, random_config, random_steps, stream,
 };
 use verbatim_term_sim::{Flavor, Query, Refused, Snapshot, screen_rows};
 
@@ -1607,17 +1607,112 @@ fn one_line_that_grew_justifies_one_unfinished_word_only() {
 }
 
 #[test]
-fn reasons_that_need_a_key_are_caught() {
-    for reason in [Reason::HeldForKeys, Reason::HeldTyping, Reason::KeyAnswer] {
-        assert_eq!(
-            violations(
-                &rewritten(&["cat", "dog"]),
-                &mut ClaimsEveryChange::new(reason)
-            ),
-            [false_reason(2, 0, "dog", reason)],
-            "{reason:?}"
-        );
+fn a_row_held_for_keys_with_no_key_pressed_is_caught() {
+    assert_eq!(
+        violations(
+            &rewritten(&["cat", "dog"]),
+            &mut ClaimsEveryChange::new(Reason::HeldForKeys)
+        ),
+        [false_reason(2, 0, "dog", Reason::HeldForKeys)]
+    );
+}
+
+/// "ok", then "hello" and a clear the console host pushes into the
+/// history before a read, which finds the screen blank, then "cat".
+fn hidden_by_a_blank_screen() -> Stream {
+    stream(&[
+        (Op::Write("ok"), true),
+        (Op::Write("\r\nhello"), false),
+        (Op::Clear, true),
+        (Op::Write("cat"), true),
+    ])
+}
+
+/// What a reader says of [`hidden_by_a_blank_screen`]: the blank screen
+/// stated at its read, and `then` once text appears.
+fn under_a_blank_screen(then: Heard) -> Scripted {
+    Scripted {
+        whole: true,
+        ..Scripted::new(vec![
+            Heard::default(),
+            says(vec![line(0, "ok")]),
+            Heard {
+                limits: vec![Limit::BlankScreen],
+                ..Heard::default()
+            },
+            then,
+        ])
     }
+}
+
+#[test]
+fn lines_a_blank_screen_hid_are_reported_once_text_appears() {
+    // "hello" went into the history with the screen blank: under the limit
+    // it is reported once the screen shows text again ("A read with no
+    // text"), and missed when it is not.
+    assert_eq!(
+        violations(
+            &hidden_by_a_blank_screen(),
+            &mut under_a_blank_screen(says(vec![line(1, "hello"), line(2, "cat")]))
+        ),
+        []
+    );
+    assert_eq!(
+        violations(
+            &hidden_by_a_blank_screen(),
+            &mut under_a_blank_screen(says(vec![line(2, "cat")]))
+        ),
+        [missed(2, 1, "hello")]
+    );
+}
+
+#[test]
+fn a_blank_screen_stated_where_the_screen_shows_text_is_caught() {
+    let mut reader = Scripted::new(vec![
+        Heard::default(),
+        Heard {
+            limits: vec![Limit::BlankScreen],
+            ..says(vec![line(0, "ok")])
+        },
+    ]);
+    assert_eq!(
+        violations(&stream(&[(Op::Write("ok"), true)]), &mut reader),
+        [Violation::FalseLimit {
+            read: 1,
+            limit: Limit::BlankScreen
+        }]
+    );
+}
+
+#[test]
+fn text_written_back_is_accepted_and_text_never_erased_is_not() {
+    // A wrapped line's last row erased and printed again as a line of its
+    // own: text heard before, silent under the limit ("Limits").
+    let written_back = stream(&[
+        (Op::Write("wrapping-word"), true),
+        (Op::EraseLine(2), true),
+        (Op::Write("\r\nd"), true),
+    ]);
+    let mut reader = Scripted::new(vec![
+        Heard::default(),
+        says(vec![line(0, "wrapping-word")]),
+        holds(vec![], &[(0, Reason::LostText)]),
+        holds(vec![], &[(2, Reason::WrittenBack)]),
+    ]);
+    assert_eq!(violations(&written_back, &mut reader), []);
+    // "d" never erased: the limit does not cover it.
+    let mut reader = Scripted::new(vec![
+        Heard::default(),
+        says(vec![line(0, "cat")]),
+        holds(vec![], &[(1, Reason::WrittenBack)]),
+    ]);
+    assert_eq!(
+        violations(
+            &stream(&[(Op::Write("cat"), true), (Op::Write("\r\nd"), true)]),
+            &mut reader
+        ),
+        [false_reason(2, 1, "d", Reason::WrittenBack)]
+    );
 }
 
 #[test]

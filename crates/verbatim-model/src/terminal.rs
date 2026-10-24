@@ -60,22 +60,19 @@ pub enum TerminalUnit {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TerminalItem {
     /// Output: a new line whole, a redrawn row from the word that changed,
-    /// or a held line as it was last read (sections 4.3, 5.3 and 5.4).
-    /// Spoken by the flood policy, one utterance each; an empty one is a
-    /// blank line, counted but not spoken.
+    /// or a held line as it was last read (`docs/design/terminal-model.md`,
+    /// "New text" and "Changed rows"). Spoken by the flood policy, one
+    /// utterance each; an empty one is a blank line, counted but not
+    /// spoken.
     Output(String),
-    /// What a growing line gained (section 5.3): output, spoken by the
-    /// flood policy as one utterance like a line, but not a terminal line
-    /// of its own, so a flood's summary does not count it (every terminal
-    /// line counts in the summary once, Dickson, 2026-10-09).
+    /// What a growing line gained ("Growing lines"): output, spoken by the
+    /// flood policy as one utterance like a line, but part of the line it
+    /// grew, with which it counts and is dropped as one ("Core's flood
+    /// policy").
     Growth(String),
-    /// A line the history still holds, which a read past a full history
-    /// speaks before its [`Skipped::MoreThan`]: output like any line, and
-    /// when the flood policy skips it, one more of the history's lines left
-    /// unspoken, so it adds to that count (`docs/design/terminal-model.md`,
-    /// section 1: N is the history's rows less the lines spoken).
-    HistoryLine(String),
-    /// Lines of output counted, not spoken: a read's own flood summary.
+    /// Lines of output that went by unread: after an overflow,
+    /// [`Skipped::MoreThan`] of none, before the lines the history holds,
+    /// each of which adds to it when the flood policy skips it.
     Skipped(Skipped),
     /// Typing the terminal showed at the caret, echoed by the typing echo
     /// settings (section 5.5).
@@ -106,10 +103,7 @@ impl TerminalItem {
     /// key's answer, which is spoken at once.
     #[must_use]
     pub fn is_output(&self) -> bool {
-        matches!(
-            self,
-            Self::Output(_) | Self::Growth(_) | Self::HistoryLine(_) | Self::Skipped(_)
-        )
+        matches!(self, Self::Output(_) | Self::Growth(_) | Self::Skipped(_))
     }
 
     /// The text it carries, for bounding a message's size; none for a
@@ -119,7 +113,6 @@ impl TerminalItem {
         match self {
             Self::Output(text)
             | Self::Growth(text)
-            | Self::HistoryLine(text)
             | Self::Echo(text)
             | Self::Caret { text, .. }
             | Self::Gained(text)

@@ -341,7 +341,7 @@ struct Screen {
     at_document_start: bool,
     caret: Option<usize>,
     /// Whether the last read's screen showed text.
-    screen_text: bool,
+    shows_text: bool,
     lingering: Vec<Lingering>,
     /// The remembered history: the hashes of the rows above `rows`, oldest
     /// first, [`UNREAD`] for a row no read showed.
@@ -427,7 +427,7 @@ impl Screen {
             height,
             at_document_start: read.at_document_start,
             caret,
-            screen_text: !crate::trim_padding(&read.screen).trim().is_empty(),
+            shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
             unknown_above: read.at_document_start.then_some(0),
             ..Self::default()
         }
@@ -661,13 +661,13 @@ impl TerminalMemory {
         // A changed width or height rewraps every row: the memory starts
         // again ("Starting again").
         if (width, height) != (current.width, current.height) {
-            return self.start_again(&current, rows, read, shape, Start::Resize);
+            return self.start_again(&current, rows, read, &shape, Start::Resize);
         }
         // A read whose screen shows no text where the last read's had text
         // is a read between a program's clear and its reprint: it changes
         // nothing ("A read with no text"), but where the next read starts,
         // which the caller takes from every read.
-        if current.screen_text && crate::trim_padding(&read.screen).trim().is_empty() {
+        if current.shows_text && crate::trim_padding(&read.screen).trim().is_empty() {
             let mut current = current;
             if read.from_start && !read.shrank && current.unplaced.is_none() {
                 // The read's row `above` is the last read's next start.
@@ -690,8 +690,9 @@ impl TerminalMemory {
         // is whole: the whole document asked for, or a refused start that
         // reached the document's start.
         let whole = read.at_document_start && !read.from_start;
-        let refused =
-            read.shrank || pending == Some(Pending::Refused) || current.unplaced == Some(Pending::Refused);
+        let refused = read.shrank
+            || pending == Some(Pending::Refused)
+            || current.unplaced == Some(Pending::Refused);
         if !whole && (!read.from_start || read.shrank || current.unplaced.is_some()) {
             self.pending = Some(if refused {
                 Pending::Refused
@@ -719,10 +720,10 @@ impl TerminalMemory {
                     ..shape
                 };
             }
-            return self.screens(current, rows, read, shape);
+            return self.screens(current, rows, read, &shape);
         }
         let next = remember(&current, rows, &aligned, read, (width, height), caret);
-        self.finish(&current, next, aligned, shape, Switch::None)
+        self.finish(&current, next, &aligned, &shape, Switch::None)
     }
 
     /// Takes `read`, for which [`TerminalMemory::read`] asked for the whole
@@ -741,19 +742,17 @@ impl TerminalMemory {
             height,
             ..Outcome::default()
         };
-        match self.screen.take() {
-            Some(current) => self.start_again(&current, rows, read, shape, Start::Restart),
-            None => {
-                let outcome = Outcome {
-                    first: true,
-                    rows: vec![NewRow::New; rows.len()],
-                    lines: lines(&rows),
-                    ..shape
-                };
-                self.screen = Some(Screen::fresh(rows, read, (width, height), 0));
-                outcome
-            }
+        if let Some(current) = self.screen.take() {
+            return self.start_again(&current, rows, read, &shape, Start::Restart);
         }
+        let outcome = Outcome {
+            first: true,
+            rows: vec![NewRow::New; rows.len()],
+            lines: lines(&rows),
+            ..shape
+        };
+        self.screen = Some(Screen::fresh(rows, read, (width, height), 0));
+        outcome
     }
 
     /// The memory after a read aligned with `current`, as `next`, and the
@@ -762,8 +761,8 @@ impl TerminalMemory {
         &mut self,
         current: &Screen,
         mut next: Screen,
-        aligned: Aligned,
-        shape: Outcome,
+        aligned: &Aligned,
+        shape: &Outcome,
         switch: Switch,
     ) -> Outcome {
         // The read's first row continues a line from above it when the old
@@ -809,7 +808,7 @@ impl TerminalMemory {
             rotation: aligned.rotation,
             switch,
             continued,
-            ..shape
+            ..*shape
         };
         self.screen = Some(next);
         outcome
@@ -823,7 +822,13 @@ impl TerminalMemory {
     /// the history overflowed; and any other is a new screen, dropping what
     /// is aside. On a new screen every row is new and the review position is
     /// at the caret.
-    fn screens(&mut self, current: Screen, rows: Vec<Row>, read: &Read, shape: Outcome) -> Outcome {
+    fn screens(
+        &mut self,
+        current: Screen,
+        rows: Vec<Row>,
+        read: &Read,
+        shape: &Outcome,
+    ) -> Outcome {
         let (width, height, caret) = (shape.width, shape.height, shape.caret);
         if let Some(aside) = self.aside.take() {
             let mut attempt = align_whole(&aside, (&rows, height), read, caret, false);
@@ -842,7 +847,7 @@ impl TerminalMemory {
                     }
                 }
                 let next = remember(&aside, rows, &attempt, read, (width, height), caret);
-                return self.finish(&aside, next, attempt, shape, Switch::Closed);
+                return self.finish(&aside, next, &attempt, shape, Switch::Closed);
             }
             self.aside = Some(aside);
         }
@@ -857,7 +862,7 @@ impl TerminalMemory {
                 old,
                 lines: lines(&next.rows),
                 switch: Switch::Opened,
-                ..shape
+                ..*shape
             };
             if self.aside.is_none() {
                 self.aside = Some(current);
@@ -876,7 +881,7 @@ impl TerminalMemory {
             old,
             lines: lines(&next.rows),
             switch: Switch::New,
-            ..shape
+            ..*shape
         };
         self.screen = Some(next);
         outcome
@@ -891,22 +896,17 @@ impl TerminalMemory {
         current: &Screen,
         rows: Vec<Row>,
         read: &Read,
-        shape: Outcome,
+        shape: &Outcome,
         start: Start,
     ) -> Outcome {
-        let mut next = Screen::fresh(
-            rows,
-            read,
-            (shape.width, shape.height),
-            current.height,
-        );
+        let mut next = Screen::fresh(rows, read, (shape.width, shape.height), current.height);
         let total = current.total();
         let found = |anchor: &Anchor| refind(*anchor, total, &next.rows);
-        next.review = current
-            .review
-            .as_ref()
-            .and_then(found)
-            .or_else(|| shape.caret.map(|row| anchor_at(&next.rows, row, read.caret_column)));
+        next.review = current.review.as_ref().and_then(found).or_else(|| {
+            shape
+                .caret
+                .map(|row| anchor_at(&next.rows, row, read.caret_column))
+        });
         next.marks = current.marks.iter().filter_map(found).collect();
         next.places = current
             .places
@@ -918,7 +918,7 @@ impl TerminalMemory {
             old: vec![OldRow::Gone { lingering: false }; total],
             lines: lines(&next.rows),
             overflowed: start == Start::Overflow,
-            ..shape
+            ..*shape
         };
         self.screen = Some(next);
         outcome
@@ -948,8 +948,15 @@ fn refind(anchor: Anchor, total: usize, rows: &[Row]) -> Option<Anchor> {
         .map(|(at, _)| anchor_at(rows, at, anchor.column))
 }
 
+/// A kept pair: an old row's index and the new row's it became.
+type Pair = (usize, usize);
+
 /// What aligning a read with one screen's memory gave. Old rows are counted
 /// as the memory's rows are, from its first kept row.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent findings of one alignment"
+)]
 struct Aligned {
     new: Vec<NewRow>,
     old: Vec<OldRow>,
@@ -1020,6 +1027,10 @@ struct How {
 /// rows allow, the rows above the last read's screen kept only where the
 /// rotation puts them. Ties go to the rotation that brings the remembered
 /// history's row to the document's first row, then to the smallest.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the rotations the history allows, then the alignment over each candidate"
+)]
 fn align_read(memory: &Screen, rows: &[Row], read: &Read, caret: Option<usize>) -> Aligned {
     let old = &memory.rows;
     let next = isize_of(memory.next.saturating_sub(memory.skipped));
@@ -1039,7 +1050,8 @@ fn align_read(memory: &Screen, rows: &[Row], read: &Read, caret: Option<usize>) 
         .filter(|&rotation| {
             (0..history).all(|from| {
                 let to = isize_of(from) + base - isize_of(rotation);
-                to < 0 || (to < total && rows[usize::try_from(to).unwrap_or(0)].hash == old[from].hash)
+                to < 0
+                    || (to < total && rows[usize::try_from(to).unwrap_or(0)].hash == old[from].hash)
             })
         })
         // The rotation is right only if the remembered history held the
@@ -1047,7 +1059,9 @@ fn align_read(memory: &Screen, rows: &[Row], read: &Read, caret: Option<usize>) 
         // start; a row it does not hold rules nothing out.
         .filter(|&rotation| first_row(memory, rows, read, rotation) != Some(false))
         .collect();
-    let old_text: Vec<usize> = (0..old.len()).filter(|&from| !old[from].is_blank()).collect();
+    let old_text: Vec<usize> = (0..old.len())
+        .filter(|&from| !old[from].is_blank())
+        .collect();
     let old_hashes: HashSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
     // A row whose text is once among the old rows and once in the read is
     // kept where that text went, so it does not grow elsewhere.
@@ -1200,7 +1214,9 @@ fn align_whole(
     // The last read's rows: the longest common subsequence of rows with
     // text, in the fewest blocks, as in a read from the kept start, over
     // the rows of the document that have a text of them.
-    let old_text: Vec<usize> = (0..old.len()).filter(|&from| !old[from].is_blank()).collect();
+    let old_text: Vec<usize> = (0..old.len())
+        .filter(|&from| !old[from].is_blank())
+        .collect();
     let hashes: HashSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
     let window: Vec<usize> = (0..rows.len())
         .filter(|&to| !rows[to].is_blank() && hashes.contains(&rows[to].hash))
@@ -1404,7 +1420,7 @@ fn classify(
     // The rows left between kept rows, paired by likeness; a blank row is
     // alike to none, and a history row is never rewritten.
     if !kept.is_empty() {
-        let mut bounds: Vec<(Option<(usize, usize)>, Option<(usize, usize)>)> = Vec::new();
+        let mut bounds: Vec<(Option<Pair>, Option<Pair>)> = Vec::new();
         let mut previous = None;
         for &pair in kept {
             bounds.push((previous, Some(pair)));
@@ -1506,7 +1522,8 @@ fn classify(
         !old[from].is_blank()
             && matches!(fates[from], OldRow::Kept(to) if !matches!(new[to], NewRow::Shown))
     });
-    let kept_text = (0..count).any(|from| !old[from].is_blank() && matches!(fates[from], OldRow::Kept(_)));
+    let kept_text =
+        (0..count).any(|from| !old[from].is_blank() && matches!(fates[from], OldRow::Kept(_)));
     Aligned {
         new,
         old: fates,
@@ -1585,7 +1602,7 @@ fn remember(
         height,
         at_document_start: read.at_document_start,
         caret,
-        screen_text: !crate::trim_padding(&read.screen).trim().is_empty(),
+        shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
         lingering,
         known,
         unknown_above,
@@ -1626,18 +1643,15 @@ fn known_after(memory: &Screen, aligned: &Aligned, read: &Read) -> (VecDeque<u64
     let mut known = memory.known.clone();
     let mut unknown_above = memory.unknown_above;
     // The read's first row is the memory's row `-fixed`.
-    match usize::try_from(-aligned.fixed) {
-        Ok(carried) => {
-            let carried = carried.min(memory.rows.len());
-            known.extend(memory.rows[..carried].iter().map(|row| row.hash));
-        }
-        Err(_) => {
-            let shown = usize::try_from(aligned.fixed).unwrap_or(0);
-            let taken = shown.min(known.len());
-            known.truncate(known.len() - taken);
-            if shown > taken {
-                unknown_above = unknown_above.map(|unknown| unknown.saturating_sub(shown - taken));
-            }
+    if let Ok(carried) = usize::try_from(-aligned.fixed) {
+        let carried = carried.min(memory.rows.len());
+        known.extend(memory.rows[..carried].iter().map(|row| row.hash));
+    } else {
+        let shown = usize::try_from(aligned.fixed).unwrap_or(0);
+        let taken = shown.min(known.len());
+        known.truncate(known.len() - taken);
+        if shown > taken {
+            unknown_above = unknown_above.map(|unknown| unknown.saturating_sub(shown - taken));
         }
     }
     let mut left = aligned.rotation;
@@ -1804,11 +1818,11 @@ fn line_text(rows: &[Row]) -> String {
 /// `kinds` count old rows as `memory`'s rows are.
 fn grew_from(line: &Line, kinds: &[NewRow], memory: &Screen, continued: bool) -> Option<usize> {
     let old = &memory.rows;
-    let from = match *kinds.get(line.rows.start)? {
-        NewRow::Kept { from, moved: false }
-        | NewRow::Grown { from }
-        | NewRow::Rewritten { from, moved: false } => from,
-        _ => return None,
+    let (NewRow::Kept { from, moved: false }
+    | NewRow::Grown { from }
+    | NewRow::Rewritten { from, moved: false }) = *kinds.get(line.rows.start)?
+    else {
+        return None;
     };
     let starts = if from == 0 {
         !memory.continued

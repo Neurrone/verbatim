@@ -12,16 +12,16 @@ use verbatim_model::{
     TextUnit,
 };
 use verbatim_term_sim::{Flavor, Query};
-use verbatim_text::terminal_reading::{Counted, Speech, Step};
-use verbatim_text::terminal_rows::{Checked, Read};
+use verbatim_text::terminal_reading::{Speech, Step};
+use verbatim_text::terminal_rows::Read;
 
 use super::review::{self, CaretAt, History};
 use super::{Terminal, rules_key, speech_of, split};
 use crate::text::TextError;
 
 /// A simulated terminal read as the worker reads it: each read starts where
-/// the last said, as many rows above as the memory asks, and a read the
-/// rules ask for again is taken at once.
+/// the last said, a screen above it, and the whole document is read at once
+/// when the rules ask for it.
 struct Watch {
     sim: verbatim_term_sim::Terminal,
     terminal: Terminal,
@@ -31,15 +31,10 @@ struct Watch {
 
 impl Watch {
     fn new(width: usize, height: usize, history: usize) -> Self {
-        let terminal = Terminal::new(TerminalSettings::default());
-        let above = u32::try_from(terminal.reader.memory().above()).expect("a few rows");
         let mut watch = Self {
             sim: verbatim_term_sim::Terminal::new(Flavor::ConsoleHost, width, height, history),
-            terminal,
-            query: Query {
-                above,
-                ..Query::default()
-            },
+            terminal: Terminal::new(TerminalSettings::default()),
+            query: Query::default(),
             at_ms: 0,
         };
         let _ = watch.read();
@@ -58,7 +53,7 @@ impl Watch {
         let mut query = self.query;
         loop {
             let snapshot = self.sim.snapshot(&query).expect("a simulated read");
-            let mut read = Read {
+            let read = Read {
                 text: snapshot.text,
                 screen: snapshot.screen,
                 from_start: snapshot.from_start,
@@ -71,44 +66,18 @@ impl Watch {
                 caret_column: snapshot.caret_column,
                 at_ms: self.at_ms,
                 above: usize::try_from(snapshot.above).expect("a few rows"),
-                checked: None,
             };
-            let mut step = self.terminal.reader.read(&read, false, None);
-            while !step.check_rows.is_empty() {
-                let runs: Vec<(u32, u32)> = step
-                    .check_rows
-                    .iter()
-                    .map(|run| {
-                        (
-                            u32::try_from(run.above).expect("a small buffer"),
-                            u32::try_from(run.rows).expect("a small buffer"),
-                        )
-                    })
-                    .collect();
-                let rows = self
-                    .sim
-                    .rows_above(query.start.expect("rows are read from a start"), &runs)
-                    .expect("a simulated read");
-                read.checked = Some(Checked {
-                    runs: rows.runs,
-                    first_row: rows.first_row,
-                });
-                step = self.terminal.reader.read(&read, false, None);
-            }
+            let step = self.terminal.reader.read(&read, false, None);
             let screen_rows = step.outcome.as_ref().map_or(0, |outcome| {
                 u32::try_from(outcome.height).expect("a small screen")
             });
-            if step.whole_document {
+            if step.whole_document && !query.whole {
                 query = Query {
                     start: None,
                     screen_rows,
                     whole: true,
                     above: 0,
                 };
-                continue;
-            }
-            if let Some(above) = step.read_above {
-                query.above = u32::try_from(above).expect("a small buffer");
                 continue;
             }
             self.terminal.handled(&read, &step);
@@ -205,13 +174,10 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                 unit: verbatim_text::terminal_reading::Unit::Word,
                 text: "word".to_owned(),
             },
+            Speech::Overflowed,
             Speech::Line {
                 row: 3,
                 text: "first".to_owned(),
-            },
-            Speech::Skipped {
-                rows: vec![4, 5],
-                count: Counted::MoreThan(9000),
             },
             Speech::Growth {
                 row: 6,
@@ -233,10 +199,10 @@ fn what_the_rules_say_is_cores_speech_in_order() {
                     unit: TerminalUnit::Word,
                     text: "word".to_owned(),
                 },
-                // A line before a read's "more than" summary is one the
-                // history still holds; a line's growth is not a line.
-                TerminalItem::HistoryLine("first".to_owned()),
-                TerminalItem::Skipped(Skipped::MoreThan(9000)),
+                // After an overflow, its lines follow a "more than" count of
+                // none; a line's growth is part of its line.
+                TerminalItem::Skipped(Skipped::MoreThan(0)),
+                TerminalItem::Output("first".to_owned()),
                 TerminalItem::Growth("grown".to_owned()),
                 TerminalItem::Echo("x".to_owned()),
             ],

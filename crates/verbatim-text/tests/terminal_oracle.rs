@@ -1,12 +1,14 @@
 //! The terminal reading rules (`verbatim_text::terminal_reading`, on the
 //! row memory of `verbatim_text::terminal_rows`) checked by the simulated
-//! terminal's oracle (`docs/design/terminal-model.md`, "Testing"). The reader under test is the real rules: every read is given to a
+//! terminal's oracle (`docs/design/terminal-model.md`, "Testing"). The
+//! reader under test is the real rules: every read is given to a
 //! `TerminalReader` at the stream's times (a recorded stream's, or 10
 //! milliseconds apart for one written by hand, the last read 10 seconds
 //! after the last chunk), its speech reported as the oracle takes it (a
-//! line, growth, a redrawn row's change, a flood's summary), its silences
-//! stated with the oracle's reasons, and where each row went and its
-//! review position taken from the memory. It is checked over the
+//! line, growth, a redrawn row's change; floods are Core's to split, so
+//! every new line is reported), its silences stated with the oracle's
+//! reasons, the listed limits it meets stated, and where each row went and
+//! its review position taken from the memory. It is checked over the
 //! conformance corpus in both terminals, the oracle's random streams, and
 //! every stream of up to four operations of the tiny alphabet.
 //!
@@ -17,7 +19,7 @@
 use proptest::prelude::*;
 use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::oracle::{
-    Heard, Limit, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation, Withheld,
+    Heard, Limit, Op, Reader, Reason, Reply, Size, Spoken, TINY_ALPHABET, Violation, Withheld,
     every_stream, observe, random_config, random_steps, stream,
 };
 use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
@@ -80,6 +82,8 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
     let mut heard = Heard::default();
     for speech in &step.speech {
         match speech {
+            // A blank line counts in Core's flood policy, and says nothing.
+            Speech::Line { text, .. } if text.is_empty() => {}
             Speech::Line { row, text } => heard.spoken.push(Spoken::Line {
                 row: *row,
                 text: text.clone(),
@@ -93,18 +97,9 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
                 text: text.clone(),
             }),
             Speech::Held { text } => heard.spoken.push(Spoken::Held { text: text.clone() }),
-            Speech::Skipped { rows, .. } => {
-                let mut runs: Vec<std::ops::Range<usize>> = Vec::new();
-                for &row in rows {
-                    match runs.last_mut() {
-                        Some(run) if run.end == row => run.end += 1,
-                        _ => runs.push(row..row + 1),
-                    }
-                }
-                heard
-                    .spoken
-                    .extend(runs.into_iter().map(|rows| Spoken::Summary { rows }));
-            }
+            // The lines after it are all new, and Core counts those it
+            // skips.
+            Speech::Overflowed => {}
             other => panic!("the oracle's streams press no keys, but the rules said {other:?}"),
         }
     }
@@ -119,8 +114,6 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
                 rules::Reason::HeldForKeys => Reason::HeldForKeys,
                 rules::Reason::Spinner => Reason::Spinner,
                 rules::Reason::LostText => Reason::LostText,
-                rules::Reason::HeldTyping => Reason::HeldTyping,
-                rules::Reason::KeyAnswer => Reason::KeyAnswer,
                 rules::Reason::WrittenBack => Reason::WrittenBack,
             },
         })
@@ -317,4 +310,31 @@ fn the_cores_violations_over_random_streams() {
         }
     }
     assert_eq!(found, []);
+}
+
+#[test]
+fn the_cores_reader_meets_each_listed_limit_it_states_on_its_smallest_stream() {
+    // A screen left blank by a clear the console host pushed into the
+    // history ("A read with no text"), and a wrapped line's last row erased
+    // and printed again as a line of its own ("Lingering"): each a case the
+    // design lists under "Limits", accepted only through its own reason.
+    let blank = stream(&[
+        (Op::Write("ok"), true),
+        (Op::Write("\r\nhello"), false),
+        (Op::Clear, true),
+        (Op::Write("cat"), true),
+    ]);
+    let written_back = stream(&[
+        (Op::Write("wrapping-word"), true),
+        (Op::EraseLine(2), true),
+        (Op::Write("\r\nd"), true),
+    ]);
+    for stream in [blank, written_back] {
+        assert_eq!(
+            violations(&stream, Flavor::ConsoleHost, Size::SMALL),
+            [],
+            "{}",
+            stream.about
+        );
+    }
 }

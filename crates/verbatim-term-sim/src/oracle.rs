@@ -238,16 +238,6 @@ pub enum Reason {
     /// says the line's new text when it says what the line gained beyond
     /// what was said of it.
     LostText,
-    /// The caret's row showing characters the user typed, which typing
-    /// echo speaks ("Typing echo"). Premise: a key was typed; the oracle's
-    /// streams type none, so this premise is never true yet.
-    HeldTyping,
-    /// The row's change is a key's answer, spoken as that key's answer or
-    /// silent by the rules for keys, such as the text Control+W erased
-    /// ("A key's answer"). Premise: a key reached the program within
-    /// the key's window before the read; the oracle's streams press none,
-    /// so this premise is never true yet.
-    KeyAnswer,
     /// A limit ("Limits"): text erased and written back within the time a
     /// gone row lingers is silent, wherever it comes back on the screen,
     /// as a wrapped line's last row printed again as a line of its own.
@@ -652,10 +642,7 @@ impl Lines {
         for (number, line) in lines.iter().enumerate() {
             texts.entry(line.text.clone()).or_default().push(number);
         }
-        Self {
-            list: lines,
-            texts,
-        }
+        Self { list: lines, texts }
     }
 
     /// The line holding the row at `coordinate`.
@@ -1194,8 +1181,7 @@ fn resolve_holds(check: &mut Check, index: usize, state: &ReadState) {
                     .iter()
                     .any(|before| before != line && covers_change(before, line, text))
         });
-        let resolved =
-            said.contains(hold.text.as_str()) || redrawn || lines.count(&hold.text) == 0;
+        let resolved = said.contains(hold.text.as_str()) || redrawn || lines.count(&hold.text) == 0;
         !resolved
     });
 }
@@ -1220,10 +1206,7 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
     // or its text was replaced.
     if screen_text {
         for (read, coordinate, text) in std::mem::take(&mut check.deferred) {
-            let reported = lines
-                .with(&text)
-                .iter()
-                .any(|&number| state.said[number]);
+            let reported = lines.with(&text).iter().any(|&number| state.said[number]);
             if lines.count(&text) > 0 && !reported {
                 check.violations.push(Violation::Missed {
                     read,
@@ -1307,6 +1290,10 @@ fn line_number(check: &Check, index: usize, row: usize) -> Option<usize> {
 }
 
 /// Checks one report of read `index`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "each kind of report's check, in turn"
+)]
 fn check_spoken(check: &mut Check, index: usize, spoken: &Spoken, state: &mut ReadState) {
     let rows = &check.reads[index].rows;
     let (row, text) = match spoken {
@@ -1612,8 +1599,8 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
 
 /// Whether the premise of `reason`, a reason judged without a vanished
 /// line matched to it, holds for `line`, a new line of read `index`'s
-/// `lines`: a row that lost text, or text written back; the reasons that
-/// need a key cannot, since the oracle's streams press none.
+/// `lines`: a row that lost text, or text written back; a row held for
+/// keys cannot, since the oracle's streams press none.
 fn premise(check: &Check, index: usize, lines: &Lines, line: &Line, reason: Reason) -> bool {
     match reason {
         Reason::LostText => !lost_from(check, lines, line).is_empty(),
@@ -1646,8 +1633,9 @@ fn lost_from(check: &Check, lines: &Lines, line: &Line) -> Vec<String> {
     let covering = last
         .covering(check.followed(line))
         .filter(|&number| shorter(&last.list[number].text));
-    let in_buffer =
-        |number: &usize| check.alternate.is_some() || last.list[*number].rows.start >= check.rotation;
+    let in_buffer = |number: &usize| {
+        check.alternate.is_some() || last.list[*number].rows.start >= check.rotation
+    };
     let vanished = last
         .texts
         .iter()
@@ -1747,7 +1735,9 @@ fn smallest_rotation(last: &Observation, read: &Observation) -> usize {
     let pattern: Vec<usize> = (0..history.min(read.main.len()))
         .map(|row| id(row_text(&read.main, row)))
         .collect();
-    let text: Vec<usize> = (0..history).map(|row| id(row_text(&last.main, row))).collect();
+    let text: Vec<usize> = (0..history)
+        .map(|row| id(row_text(&last.main, row)))
+        .collect();
     if pattern.is_empty() {
         return history;
     }

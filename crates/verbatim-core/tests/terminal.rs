@@ -412,35 +412,55 @@ fn lines_skipped_past_the_history_say_more_than_the_history_holds() {
     assert_eq!(playback.play_all(&mut state), expected);
 }
 
+/// Speech of a read past a full history: a "more than" count of none,
+/// then the lines the history holds.
+fn overflowed(lines: Vec<String>) -> TerminalSpeech {
+    speech_of(Some(Skipped::MoreThan(0)), lines)
+}
+
 #[test]
-fn history_lines_skipped_add_to_the_more_than_count_they_precede() {
-    // A read past a full history of 100 rows speaks its oldest 30 lines,
-    // "more than 40" and its newest 30. Once the group of lines 1 to 30 is
-    // heard, those oldest lines are skipped too: 70 of the history's lines
-    // are left unspoken.
+fn history_lines_skipped_add_to_the_more_than_count_they_follow() {
+    // A read past a full history of 100 rows gives its lines after a "more
+    // than" count of none. Once the group of lines 1 to 30 is heard, line
+    // 31 and the history's oldest 70 lines are skipped: 70 of the history's
+    // lines are left unspoken, more than went before them.
     let mut state = terminal();
     let mut playback = Playback::default();
     playback.feed(&mut state, &output(lines(1..=31)));
-    let mut items: Vec<TerminalItem> = lines(9001..=9030)
-        .into_iter()
-        .map(TerminalItem::HistoryLine)
-        .collect();
-    items.push(TerminalItem::Skipped(Skipped::MoreThan(40)));
-    items.extend(lines(9071..=9100).into_iter().map(TerminalItem::Output));
     playback.feed(
         &mut state,
-        &said(
-            TERMINAL,
-            0,
-            TerminalSpeech {
-                items,
-                followed: false,
-            },
-        ),
+        &said(TERMINAL, 0, overflowed(lines(9001..=9100))),
     );
     let mut expected = lines(1..=30);
     expected.push("skipped more than 70".to_owned());
     expected.extend(lines(9071..=9100));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_flood_past_the_history_is_counted_as_more_than() {
+    // A burst that starts past a full history of 100 rows: the history's
+    // first 30 lines are spoken whole after the note that lines went by
+    // unread, and of the rest all but the last 30 are skipped.
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &said(TERMINAL, 0, overflowed(lines(1..=100))));
+    let mut expected = vec!["skipped".to_owned()];
+    expected.extend(lines(1..=30));
+    expected.push("skipped 40".to_owned());
+    expected.extend(lines(71..=100));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_flood_past_the_history_with_every_line_spoken_is_counted_as_unknown() {
+    // A read past a full history of 40 rows: every line the history holds
+    // is spoken, so how many went by is not known.
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &said(TERMINAL, 0, overflowed(lines(1..=40))));
+    let mut expected = vec!["skipped".to_owned()];
+    expected.extend(lines(1..=40));
     assert_eq!(playback.play_all(&mut state), expected);
 }
 
@@ -485,6 +505,39 @@ fn a_lines_growth_skipped_is_not_counted_as_a_line() {
     let mut expected = lines(1..=30);
     expected.push("skipped 40".to_owned());
     expected.extend(lines(71..=100));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_growth_at_the_boundary_of_the_lines_a_skip_keeps_stays_with_its_line() {
+    // Line 70 was written in two parts, read apart, and is the oldest of the
+    // last 30 lines: its growth counts with it, so the skip keeps the line
+    // and its growth, and the lines kept never start with a bare growth.
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    let mut items: Vec<TerminalItem> = lines(1..=69)
+        .into_iter()
+        .map(TerminalItem::Output)
+        .collect();
+    items.push(TerminalItem::Output("line 7".to_owned()));
+    items.push(TerminalItem::Growth("0".to_owned()));
+    items.extend(lines(71..=99).into_iter().map(TerminalItem::Output));
+    playback.feed(
+        &mut state,
+        &said(
+            TERMINAL,
+            0,
+            TerminalSpeech {
+                items,
+                followed: false,
+            },
+        ),
+    );
+    let mut expected = lines(1..=30);
+    expected.push("skipped 39".to_owned());
+    expected.push("line 7".to_owned());
+    expected.push("0".to_owned());
+    expected.extend(lines(71..=99));
     assert_eq!(playback.play_all(&mut state), expected);
 }
 

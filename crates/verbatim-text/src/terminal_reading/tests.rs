@@ -7,8 +7,7 @@
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
 use super::{
-    ColourRun, Counted, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit,
-    Withheld,
+    ColourRun, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit, Withheld,
 };
 use crate::terminal_rows::{Anchor, Read, hash};
 
@@ -276,206 +275,33 @@ fn kept_rows_are_silent_as_output_scrolls() {
 }
 
 #[test]
-fn a_flood_speaks_its_first_and_last_lines_and_counts_the_rest() {
-    let settings = Settings {
-        lines_in_full: 2,
-        last_lines: 2,
-        ..Settings::default()
-    };
-    let mut term = Term::with(20, 10, 20, settings);
-    assert_eq!(
-        term.write("1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n", 100),
-        says(vec![
-            line(0, "1"),
-            line(1, "2"),
-            Speech::Skipped {
-                rows: vec![2, 3, 4],
-                count: Counted::Lines(3)
-            },
-            line(5, "6"),
-            line(6, "7"),
-        ])
-    );
-}
-
-#[test]
-fn a_flood_past_the_history_is_counted_as_more_than() {
-    let settings = Settings {
-        lines_in_full: 1,
-        last_lines: 1,
-        ..Settings::default()
-    };
-    let mut term = Term::with(20, 3, 4, settings);
-    term.write("a\r\nb\r\nc\r\nd", 100);
-    // Ten lines through a buffer of seven: the last screen is gone, the
-    // whole document is read and does not hold it.
-    assert_eq!(
-        term.write("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10", 200),
-        says(vec![
-            line(0, "4"),
-            Speech::Skipped {
-                rows: vec![1, 2, 3, 4, 5],
-                count: Counted::MoreThan(5)
-            },
-            line(6, "10"),
-        ])
-    );
-}
-
-#[test]
-fn a_flood_past_the_history_with_every_line_spoken_is_counted_as_unknown() {
-    // Ten lines through a buffer of seven rows, which holds five of them,
-    // two wrapped: every line the history holds is spoken, so how many
-    // went by is not known, said after the last of those lines.
-    let mut term = Term::with(20, 3, 4, Settings::default());
-    term.write("a\r\nb\r\nc\r\nd", 100);
-    assert_eq!(
-        term.write(
-            "\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\nseven is a wrapped line\r\n8\r\nnine is a wrapped line\r\n10",
-            200
-        ),
-        says(vec![
-            line(0, "6"),
-            line(1, "seven is a wrapped line"),
-            line(3, "8"),
-            line(4, "nine is a wrapped line"),
-            line(6, "10"),
-            Speech::Skipped {
-                rows: vec![],
-                count: Counted::Unknown
-            },
-        ])
-    );
-}
-
-#[test]
-fn a_flood_past_the_history_speaking_more_lines_than_the_first_is_counted_after_the_last() {
-    // Fifty lines through a buffer of forty-three rows: the forty-three
-    // lines the history holds are fewer than the first thirty and the last
-    // thirty together, so each is spoken, and how many went by, not known,
-    // is said after the last of them.
-    let mut term = Term::with(20, 3, 40, Settings::default());
-    term.write("a\r\nb\r\nc", 100);
-    let flood: String = (1..=50)
-        .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
-        .collect();
-    let mut expected: Vec<Speech> = (0..43)
-        .map(|row| line(row, &(row + 8).to_string()))
-        .collect();
-    expected.push(Speech::Skipped {
-        rows: vec![],
-        count: Counted::Unknown,
-    });
-    assert_eq!(term.write(&flood, 200), says(expected));
-}
-
-#[test]
-fn a_whole_document_read_leaves_only_the_screen_and_the_block_held() {
-    // Section 4.1: once a read of the whole document is handled, the memory
-    // and the rules keep its screen and the block of four rows above it,
-    // and the rows above the block only as hashes in the known history.
-    let settings = Settings {
-        lines_in_full: 1,
-        last_lines: 1,
-        ..Settings::default()
-    };
-    let mut term = Term::with(20, 3, 10, settings);
+fn a_whole_document_read_leaves_only_the_screen_and_the_screen_above_held() {
+    // Once a read of the whole document is handled, the memory and the
+    // rules keep its screen and a screen above it, and the rows above only
+    // as hashes in the remembered history ("The memory").
+    let mut term = Term::new(20, 3, 10);
     term.write("a\r\nb\r\nc\r\nd", 100);
     let flood: String = (1..=20)
         .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
         .collect();
     // Twenty lines through a buffer of thirteen: the whole document is read,
-    // the rows "8" to "20".
-    assert_eq!(
-        term.write(&flood, 200),
-        says(vec![
-            line(0, "8"),
-            Speech::Skipped {
-                rows: (1..=11).collect(),
-                count: Counted::MoreThan(11)
-            },
-            line(12, "20"),
-        ])
-    );
+    // the rows "8" to "20", which keep no row of the last read: the history
+    // overflowed, and every line is new, for Core's flood policy.
+    let mut expected = vec![Speech::Overflowed];
+    expected.extend((8..=20).map(|number| line(number - 8, &number.to_string())));
+    assert_eq!(term.write(&flood, 200), says(expected));
     let memory = term.reader.memory();
     let rows = memory.rows();
     assert_eq!(rows.len(), 13);
-    assert_eq!(rows.first_kept(), 6);
+    assert_eq!(rows.first_kept(), 7);
     let kept: Vec<&str> = rows.kept().iter().map(|row| &*row.text).collect();
-    assert_eq!(kept, ["14", "15", "16", "17", "18", "19", "20"]);
-    let above: Vec<u64> = (8..=13)
+    assert_eq!(kept, ["15", "16", "17", "18", "19", "20"]);
+    let above: Vec<u64> = (8..=14)
         .map(|number| crate::terminal_rows::hash(&number.to_string()))
         .collect();
     assert_eq!(memory.known_history(), above);
-    assert_eq!(term.reader.screen.rows.len(), 7);
-    assert_eq!(term.reader.screen.skipped, 6);
-}
-
-#[test]
-fn an_unfinished_word_pushed_out_of_a_full_history_is_spoken_before_the_count() {
-    let settings = Settings {
-        lines_in_full: 1,
-        last_lines: 1,
-        ..Settings::default()
-    };
-    let mut term = Term::with(20, 3, 4, settings);
-    term.write("abc", 100);
-    assert_eq!(
-        term.write("de", 200),
-        step(
-            Vec::new(),
-            vec![withheld(0, Reason::UnfinishedWord)],
-            Some(1200)
-        )
-    );
-    // Ten lines through a buffer of seven before the quiet period: the
-    // held word is spoken as it was last read, then the flood.
-    assert_eq!(
-        term.write("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10", 300),
-        says(vec![
-            Speech::Held {
-                text: "de".to_owned()
-            },
-            line(0, "4"),
-            Speech::Skipped {
-                rows: vec![1, 2, 3, 4, 5],
-                count: Counted::MoreThan(5)
-            },
-            line(6, "10"),
-        ])
-    );
-}
-
-#[test]
-fn a_volatile_row_pushed_out_of_a_full_history_is_spoken_before_the_count() {
-    let settings = Settings {
-        lines_in_full: 1,
-        last_lines: 1,
-        ..Settings::default()
-    };
-    let mut term = Term::with(20, 3, 4, settings);
-    term.write("Working 0s", 100);
-    term.write("\rWorking 1s", 1100);
-    assert_eq!(
-        term.write("\rWorking 2s", 2100),
-        step(Vec::new(), vec![withheld(0, Reason::Volatile)], Some(3600))
-    );
-    // Ten lines through a buffer of seven before it settles: its latest
-    // value is spoken as it was last read, then the flood.
-    assert_eq!(
-        term.write("\r\n1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10", 2200),
-        says(vec![
-            Speech::Held {
-                text: "2s".to_owned()
-            },
-            line(0, "4"),
-            Speech::Skipped {
-                rows: vec![1, 2, 3, 4, 5],
-                count: Counted::MoreThan(5)
-            },
-            line(6, "10"),
-        ])
-    );
+    assert_eq!(term.reader.screen.rows.len(), 6);
+    assert_eq!(term.reader.screen.skipped, 7);
 }
 
 #[test]
@@ -503,9 +329,16 @@ fn trailing_spaces_are_padding_and_never_spoken() {
 #[test]
 fn a_redrawn_row_speaks_the_word_that_changed() {
     let mut term = Term::new(20, 4, 10);
+    // The blank lines between count in Core's flood policy, and say
+    // nothing.
     assert_eq!(
         term.write("output\r\n\x1b[4;1Hstatus: busy", 100),
-        says(vec![line(0, "output"), line(3, "status: busy")])
+        says(vec![
+            line(0, "output"),
+            line(1, ""),
+            line(2, ""),
+            line(3, "status: busy")
+        ])
     );
     assert_eq!(
         term.write("\x1b[4;1H\x1b[2Kstatus: done", 5000),
@@ -813,6 +646,25 @@ fn the_row_that_gained_the_marker_is_the_keys_answer() {
 }
 
 #[test]
+fn a_key_moving_the_caret_to_another_line_that_also_gained_text_speaks_the_line() {
+    // A menu whose cursor follows its marker: a key moves the marker and
+    // the caret to the next entry, which gained the marker; the caret's new
+    // line is spoken whatever changed on it, and the old entry only lost
+    // text ("The caret's line").
+    let mut term = Term::new(20, 5, 10);
+    term.write("fruits:\r\n> apple\r\n  banana\x1b[2;1H", 100);
+    term.key(KeyKind::Other, 1000);
+    assert_eq!(
+        term.write("\x1b[2;1H  apple\x1b[3;1H> banana\x1b[3;1H", 1050),
+        step(
+            vec![caret(2, Unit::Line, "> banana")],
+            vec![withheld(1, Reason::LostText)],
+            None
+        )
+    );
+}
+
+#[test]
 fn a_row_that_changed_on_its_own_just_before_the_key_is_not_its_answer() {
     let mut term = Term::new(20, 5, 10);
     term.write("cpu 10%\r\n$ ", 100);
@@ -928,13 +780,30 @@ fn a_suggestion_is_spoken_when_it_appears_and_not_again_as_typing_follows_it() {
 
 #[test]
 fn the_alternate_screen_speaks_what_it_shows_and_closing_it_speaks_nothing_kept() {
+    // A pager fills the alternate screen, its prompt on the last row: a new
+    // screen, one screen tall, so the main screen is set aside, and closing
+    // it returns to the main screen, where nothing is new ("Screens").
     let mut term = Term::new(20, 3, 10);
     term.write("m1\r\nm2\r\nm3\r\n$ ", 100);
     assert_eq!(
-        term.write("\x1b[?1049h\x1b[Hfile one\r\nfile two", 200),
-        says(vec![line(0, "file one"), line(1, "file two")])
+        term.write("\x1b[?1049h\x1b[Hfile one\r\nfile two\r\n:", 200),
+        says(vec![line(0, "file one"), line(1, "file two"), line(2, ":")])
     );
     assert_eq!(term.write("\x1b[?1049l", 300), quiet(None));
+}
+
+#[test]
+fn windows_terminals_clear_leaving_a_shortened_copy_of_the_line_before_says_the_prompt() {
+    // Windows Terminal's clear erases the screen and the history and leaves
+    // the prompt, a shortened copy of the line the clear was typed on: no
+    // row of the last read is kept, so it is a new screen and the prompt is
+    // new ("Screens"; NVDA's capture in `*_typing`).
+    let mut term = Term::of(Flavor::WindowsTerminal, 20, 3, 10, Settings::default());
+    term.write("ready> one\r\nout\r\nready> cls", 100);
+    assert_eq!(
+        term.write("\x1b[H\x1b[2J\x1b[3Jready> ", 200),
+        says(vec![line(0, "ready>")])
+    );
 }
 
 // Section 5.9, resizing.
@@ -1000,19 +869,20 @@ fn with_report_new_output_off_output_is_silent_and_keys_are_answered() {
 }
 
 #[test]
-fn with_report_new_output_off_a_flood_through_a_full_history_keeps_marks_it_cannot_refute() {
+fn with_report_new_output_off_a_flood_through_a_full_history_drops_marks_whose_lines_it_does_not_find()
+ {
     // Ten lines rotate a full history of twenty past the last screen, which
     // would have the whole document read; with nothing reported the memory
-    // is taken from the read, keeping each command mark whose line is where
-    // it was, or that is above the read, where it cannot be checked
-    // (section 4.2).
+    // starts again from the read, and each command mark is looked for by its
+    // line's text, and dropped when the read does not show it ("Starting
+    // again").
     let settings = Settings {
         report_new_output: false,
         ..Settings::default()
     };
     let mut term = Term::with(20, 3, 20, settings);
-    // The memory keeps only the screen and the block above it, so each
-    // mark is set on its line while the line is on the screen.
+    // The memory keeps only the screen and a screen above it, so each mark
+    // is set on its line while the line is on the screen.
     let row_of = |term: &Term, text: &str| {
         let rows = term.reader.memory().rows();
         rows.first_kept()
@@ -1038,16 +908,9 @@ fn with_report_new_output_off_a_flood_through_a_full_history_keeps_marks_it_cann
         .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
         .collect();
     assert_eq!(term.write(&flood, 200), quiet(None));
-    // The read starts four rows above the last screen's top, where "f5"
-    // was sixteen rows above; "$ two"'s place holds other text now.
-    let marks: Vec<isize> = term
-        .reader
-        .memory()
-        .marks()
-        .iter()
-        .map(|mark| mark.row)
-        .collect();
-    assert_eq!(marks, [-12]);
+    // The read starts a screen above the last screen's top, and neither
+    // "f5" nor "$ two" is in it.
+    assert_eq!(term.reader.memory().marks(), []);
 }
 
 // Sections 7 and 8: programs.
@@ -1103,9 +966,9 @@ fn several_progress_lines_are_each_heard_when_they_settle() {
 
 #[test]
 fn with_output_unreported_the_review_position_stays_on_a_kept_row_through_a_flood() {
-    // Section 4.3, item 5, and 5.6: a flood under a footer, with "report
-    // new output" off, takes the memory from the read; the review position
-    // on the footer, which the read still shows where it was, stays on it.
+    // A flood under a footer, with "report new output" off, starts the
+    // memory again from the read; the review position on the footer is
+    // found again by its line, the read's last row ("Starting again").
     let settings = Settings {
         report_new_output: false,
         ..Settings::default()
@@ -1125,7 +988,7 @@ fn with_output_unreported_the_review_position_stays_on_a_kept_row_through_a_floo
     assert_eq!(
         term.reader.memory().review(),
         Some(Anchor {
-            row: 6,
+            row: 5,
             column: 2,
             line_hash: hash("footer")
         })
@@ -1133,12 +996,12 @@ fn with_output_unreported_the_review_position_stays_on_a_kept_row_through_a_floo
 }
 
 #[test]
-fn with_output_unreported_the_review_position_goes_to_the_caret_when_a_clear_refuses_the_start() {
-    // Section 5.6: Windows Terminal's clear moves the screen into the
-    // history, so the read's start is refused and the memory's rows cannot
-    // be placed in the read; with "report new output" off the memory is
-    // taken from the read (section 4.2), and the review position, whose
-    // line cannot be found, goes to the caret.
+fn with_output_unreported_the_review_position_is_found_by_its_line_when_a_clear_refuses_the_start()
+{
+    // Windows Terminal's clear moves the screen into the history, so the
+    // read's start is refused; with "report new output" off the memory
+    // starts again from the read, and the review position is found again
+    // by its line, which the read still shows ("Starting again").
     let settings = Settings {
         report_new_output: false,
         ..Settings::default()
@@ -1155,9 +1018,9 @@ fn with_output_unreported_the_review_position_goes_to_the_caret_when_a_clear_ref
     assert_eq!(
         term.reader.memory().review(),
         Some(Anchor {
-            row: 6,
-            column: 1,
-            line_hash: hash("x")
+            row: 3,
+            column: 2,
+            line_hash: hash("line 21")
         })
     );
 }
@@ -1191,6 +1054,7 @@ fn a_volatile_rows_last_value_is_heard_once_it_settles_after_the_line_ends() {
     );
     assert_eq!(term.reader.timer(4850), says(vec![changed(0, "100%")]));
 }
+
 #[test]
 fn a_cursor_the_program_moves_while_it_draws_and_parks_back_says_nothing() {
     // Section 5.5: a key the program reads unshown scrolls rows down a
@@ -1242,28 +1106,22 @@ fn typing_onto_a_second_row_and_escape_on_it() {
         }])
     );
 }
+
 #[test]
-fn a_read_inside_a_programs_redraw_speaks_the_change_not_the_line_its_cursor_passes() {
-    // Section 5.5: the landing rule is for a caret that moved with no text
-    // change. A key the program reads unshown rewrites row 2, and a read
-    // lands before the program parks its cursor back on the status row:
-    // the row's change is output: a growing line, whose word the cursor at
-    // its end holds, and the cursor leaving it speaks "changed".
+fn a_read_inside_a_programs_redraw_speaks_the_line_its_cursor_passes() {
+    // A key the program reads unshown rewrites row 2, and a read lands
+    // before the program parks its cursor back on the status row: within
+    // the key's window the caret ended on another line that was already
+    // there, which is spoken whatever changed on it; the cursor parked back
+    // where the key found it did not move ("The caret's line").
     let mut term = Term::new(20, 4, 10);
     term.write("row 1\r\nrow 2\r\n\r\nstatus: ready\x1b[4;14H", 100);
     term.typed("n", 5000);
     assert_eq!(
         term.write("\x1b[2;1H\x1b[2Krow 2 changed", 5010),
-        step(
-            Vec::new(),
-            vec![withheld(1, Reason::UnfinishedWord)],
-            Some(6010)
-        )
+        says(vec![caret(1, Unit::Line, "row 2 changed")])
     );
-    assert_eq!(
-        term.write("\x1b[4;14H", 5020),
-        says(vec![growth(1, " changed")])
-    );
+    assert_eq!(term.write("\x1b[4;14H", 5020), quiet(None));
 }
 
 #[test]

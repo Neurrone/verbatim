@@ -140,12 +140,9 @@ pub(crate) enum Waiting {
 pub(crate) enum LineKind {
     /// A terminal line, counted once.
     Line,
-    /// What a growing line gained ([`TerminalItem::Growth`]): not a line of
-    /// its own, so not counted.
+    /// What a growing line gained ([`TerminalItem::Growth`]): it belongs to
+    /// the line before it, with which it counts and is dropped as one.
     Growth,
-    /// A line the history still holds, before a read's "more than" count
-    /// ([`TerminalItem::HistoryLine`]): added to that count.
-    History,
 }
 
 /// The most bytes of terminal output waiting to be spoken (Dickson,
@@ -279,7 +276,6 @@ fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
         | TerminalItem::Suggestion(text) => text::text_segments(text, None),
         TerminalItem::Output(_)
         | TerminalItem::Growth(_)
-        | TerminalItem::HistoryLine(_)
         | TerminalItem::Skipped(_)
         | TerminalItem::Echo(_) => return None,
     })
@@ -331,12 +327,21 @@ fn take(
     effects
 }
 
+/// Whether `item` is a line that counts: a line and its growth count, and
+/// are dropped, as one ("Core's flood policy").
+fn is_line(item: &Waiting) -> bool {
+    matches!(item, Waiting::Line(_, kind) if *kind != LineKind::Growth)
+}
+
+/// Whether `item` belongs to the line before it: its growth, or the note
+/// that it was cut.
+fn belongs(item: &Waiting) -> bool {
+    matches!(item, Waiting::Line(_, LineKind::Growth) | Waiting::Cut)
+}
+
 /// The number of lines waiting.
 fn waiting_lines(waiting: &VecDeque<Waiting>) -> usize {
-    waiting
-        .iter()
-        .filter(|item| matches!(item, Waiting::Line(..)))
-        .count()
+    waiting.iter().filter(|item| is_line(item)).count()
 }
 
 /// A text request about the focused terminal.
@@ -438,9 +443,6 @@ fn queue(state: &mut SrState, speech: &TerminalSpeech) {
         match item {
             TerminalItem::Output(line) => push_line(&mut terminal.waiting, line, LineKind::Line),
             TerminalItem::Growth(line) => push_line(&mut terminal.waiting, line, LineKind::Growth),
-            TerminalItem::HistoryLine(line) => {
-                push_line(&mut terminal.waiting, line, LineKind::History);
-            }
             TerminalItem::Skipped(skipped) => push_skipped(&mut terminal.waiting, *skipped),
             _ => {}
         }
@@ -458,18 +460,24 @@ fn push_skipped(waiting: &mut VecDeque<Waiting>, skipped: Skipped) {
 }
 
 /// Where the backlog starts in `waiting`: past the lines the group being
-/// spoken still hands to speech, `group_left` of them, and anything among
-/// them.
+/// spoken still hands to speech, `group_left` of them, anything among them,
+/// and what belongs to the last of them.
 fn backlog_start(waiting: &VecDeque<Waiting>, group_left: usize) -> usize {
     if group_left == 0 {
         return 0;
     }
     let mut lines = 0;
     for (index, item) in waiting.iter().enumerate() {
-        if matches!(item, Waiting::Line(..)) {
+        if is_line(item) {
             lines += 1;
             if lines == group_left {
-                return index + 1;
+                return index
+                    + 1
+                    + waiting
+                        .iter()
+                        .skip(index + 1)
+                        .take_while(|item| belongs(item))
+                        .count();
             }
         }
     }
@@ -477,51 +485,46 @@ fn backlog_start(waiting: &VecDeque<Waiting>, group_left: usize) -> usize {
 }
 
 /// Replaces everything in `waiting` from `start` on but its newest `keep`
-/// lines with one skipped count, which then comes first among them.
+/// lines with one skipped count, which then comes first among them. A line
+/// is dropped with what belongs to it, so the lines kept never start with a
+/// bare growth.
 fn skip_all_but(waiting: &mut VecDeque<Waiting>, start: usize, keep: usize) {
     let lines = waiting
         .iter()
         .skip(start)
-        .filter(|item| matches!(item, Waiting::Line(..)))
+        .filter(|item| is_line(item))
         .count();
     let mut dropping = lines.saturating_sub(keep);
     let mut skipped: Option<Skipped> = None;
-    // Lines of the history dropped before a "more than" count, which adds
-    // them.
-    let mut history = 0u32;
     let index = start;
-    while index < waiting.len()
-        && (dropping > 0 || matches!(waiting.get(index), Some(Waiting::Skipped(_))))
-    {
+    // Whether the last item dropped was a line, whose growth goes with it.
+    let mut in_line = false;
+    while let Some(item) = waiting.get(index) {
+        let drop = match item {
+            Waiting::Skipped(_) => true,
+            item if belongs(item) => in_line || dropping > 0,
+            _ => dropping > 0,
+        };
+        if !drop {
+            break;
+        }
         match waiting.remove(index) {
-            Some(Waiting::Line(_, kind)) => {
-                match kind {
-                    LineKind::Line => {
-                        let one = Skipped::Count(1);
-                        skipped = Some(skipped.map_or(one, |s| s.plus(one)));
-                    }
-                    LineKind::Growth => {}
-                    LineKind::History => history += 1,
-                }
-                dropping -= 1;
+            // After an overflow's "more than" count, a line adds to it.
+            Some(Waiting::Line(_, LineKind::Line)) => {
+                let one = Skipped::Count(1);
+                skipped = Some(skipped.map_or(one, |s| s.plus(one)));
+                dropping = dropping.saturating_sub(1);
+                in_line = true;
             }
             Some(Waiting::Skipped(count)) => {
-                let count = match count {
-                    Skipped::MoreThan(lines) => {
-                        Skipped::MoreThan(lines.saturating_add(std::mem::take(&mut history)))
-                    }
-                    count => count,
-                };
                 skipped = Some(skipped.map_or(count, |s| s.plus(count)));
+                in_line = false;
             }
-            // A dropped line's note that it was cut goes with it.
-            Some(Waiting::Cut) => {}
+            // A dropped line's growth, and its note that it was cut, go with
+            // it.
+            Some(Waiting::Line(_, LineKind::Growth) | Waiting::Cut) => {}
             None => break,
         }
-    }
-    if history > 0 {
-        let lines = Skipped::Count(history);
-        skipped = Some(skipped.map_or(lines, |s| s.plus(lines)));
     }
     // A line's growth alone counts no line, and leaves no count.
     if let Some(skipped) = skipped.filter(|skipped| *skipped != Skipped::Count(0)) {
@@ -542,7 +545,7 @@ fn bound(state: &mut SrState) {
         .waiting
         .iter()
         .skip(start)
-        .filter(|item| matches!(item, Waiting::Line(..)))
+        .filter(|item| is_line(item))
         .count();
     if backlog > keep {
         skip_all_but(&mut terminal.waiting, start, keep);
@@ -575,19 +578,19 @@ fn bound(state: &mut SrState) {
         {
             *left = left.saturating_sub(1);
         }
-        let counted = match terminal.waiting.get(index) {
-            Some(Waiting::Line(line, kind)) => {
-                bytes -= line.len();
-                *kind != LineKind::Growth
-            }
-            _ => true,
-        };
+        let counted = terminal.waiting.get(index).is_some_and(is_line);
         let one = Skipped::Count(u32::from(counted));
         let merged =
             index > 0 && matches!(terminal.waiting.get(index - 1), Some(Waiting::Skipped(_)));
-        terminal.waiting.remove(index);
-        if matches!(terminal.waiting.get(index), Some(Waiting::Cut)) {
-            terminal.waiting.remove(index);
+        // The line goes with what belongs to it.
+        let mut first = true;
+        while let Some(item) = terminal.waiting.get(index)
+            && (first || (counted && belongs(item)))
+        {
+            if let Some(Waiting::Line(line, _)) = terminal.waiting.remove(index) {
+                bytes -= line.len();
+            }
+            first = false;
         }
         if merged {
             if let Some(Waiting::Skipped(count)) = terminal.waiting.get_mut(index - 1) {
@@ -616,9 +619,9 @@ fn decide(state: &mut SrState) {
     let mut skipped = Skipped::Count(0);
     for item in &terminal.waiting {
         match item {
-            Waiting::Line(..) => lines += 1,
             Waiting::Skipped(count) => skipped = skipped.plus(*count),
-            Waiting::Cut => {}
+            item if is_line(item) => lines += 1,
+            _ => {}
         }
     }
     let waiting = match skipped {
@@ -638,13 +641,14 @@ fn decide(state: &mut SrState) {
 fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let mut effects = Vec::new();
     while state.terminal.ahead.len() < AHEAD {
-        if state.terminal.group == Some(0) {
+        // A group ends after its last line and what belongs to it.
+        if state.terminal.group == Some(0) && !state.terminal.waiting.front().is_some_and(belongs) {
             break;
         }
         let Some(item) = state.terminal.waiting.pop_front() else {
             break;
         };
-        if matches!(item, Waiting::Line(..))
+        if is_line(&item)
             && let Some(left) = state.terminal.group.as_mut()
         {
             *left = left.saturating_sub(1);
@@ -657,15 +661,18 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
             continue;
         }
         let mark = state.allocate_mark();
+        let counts = is_line(&item);
         let (content, line) = match item {
-            Waiting::Line(line, _) => (text::text_segments(&line, None), true),
+            Waiting::Line(line, _) => (text::text_segments(&line, None), counts),
             Waiting::Skipped(Skipped::Count(count)) => (
                 vec![UtteranceSegment::new(SegmentContent::Phrase(
                     Phrase::SkippedLines(count),
                 ))],
                 false,
             ),
-            Waiting::Skipped(Skipped::Uncounted) => (
+            // An overflow none of whose lines were skipped: how many went
+            // by is not known.
+            Waiting::Skipped(Skipped::Uncounted | Skipped::MoreThan(0)) => (
                 vec![UtteranceSegment::new(SegmentContent::Phrase(
                     Phrase::SkippedUncountedLines,
                 ))],
