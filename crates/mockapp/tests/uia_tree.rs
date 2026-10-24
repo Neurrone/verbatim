@@ -2,8 +2,8 @@
 //!
 //! Spawns `mockapp --backend uia` over `tests/fixtures/tree.json`, then
 //! walks the tree through `verbatim-uia`'s real client (`Uia::window_element`
-//! and `Uia::children`, every node read as the `Node` shape with every
-//! detail) exactly as an outpost would, and asserts the
+//! and `Uia::children`, every node of the fixture read as the `Node` shape
+//! with every detail), and asserts the
 //! whole tree read back, every node's role, name, value, whole state set,
 //! and details, and every node's children in order, equals the fixture's. This is
 //! the "provider-level fake" promised by architecture section 13: COM
@@ -18,7 +18,8 @@ mod harness;
 
 use verbatim_model::{NodeDetails, Role, State, StateSet};
 use verbatim_uia::{
-    Cached, Fill, Live, NodeIdRegistry, PropertyEvent, Request, Shape, TextEvent, Uia, map,
+    Cached, DialogText, Fill, Live, NodeIdRegistry, PropertyEvent, Request, RoleCore, Shape,
+    TextEvent, Uia, map,
 };
 use verbatim_uia_rops::{NavigationDirection, Path, StepQuery, navigation_step};
 use windows::Win32::System::Variant::VARIANT;
@@ -174,26 +175,40 @@ fn expected_tree(title: &str) -> Node {
 }
 
 /// Reads `element`, filled as a node with every detail, and everything
-/// below it, each child read with `nodes`, but for the frame's title bar,
-/// read alone (see [`expected_tree`]).
+/// below it: its children are found by one read of their roles, and each
+/// is then read as a node, but for the frame's title bar, read alone and
+/// as a dialog's child is, every property but its location and whether it
+/// is off the screen (see [`expected_tree`]). Those two have UIA ask the
+/// window's thread (`WM_GETTITLEBARINFOEX`), whose answer waits on the
+/// Desktop Window Manager, seconds behind while the other tests make and
+/// destroy windows (`docs/tooling/troubleshooting.md`), so a read of them
+/// would outlast UIA's timeout under the full run.
 fn walk(
     uia: &Uia,
     element: &Cached<verbatim_uia::Node>,
-    nodes: &Request<verbatim_uia::Node>,
+    requests: (&Request<verbatim_uia::Node>, &Request<RoleCore>),
     registry: &NodeIdRegistry,
 ) -> Node {
+    let (nodes, roles) = requests;
     let snapshot = element.snapshot(registry);
     let mut details = snapshot.details;
     details.rect = None;
-    let children = if snapshot.role == Role::TitleBar {
-        Vec::new()
-    } else {
-        uia.children(element.live(), nodes)
-            .expect("the element's children")
-            .iter()
-            .map(|child| walk(uia, child, nodes, registry))
-            .collect()
-    };
+    let children = uia
+        .children(element.live(), roles)
+        .expect("the element's children")
+        .iter()
+        .map(|child| {
+            if child.read().role() == Role::TitleBar {
+                title_bar(uia, child.live())
+            } else {
+                let child = child
+                    .live()
+                    .refresh(nodes)
+                    .expect("a child, read as a node");
+                walk(uia, &child, requests, registry)
+            }
+        })
+        .collect();
     Node {
         name: snapshot.name,
         role: snapshot.role,
@@ -201,6 +216,25 @@ fn walk(
         states: snapshot.states,
         details,
         children,
+    }
+}
+
+/// The frame's title bar, read as a dialog's child is ([`DialogText`]),
+/// without its children, which are Windows' and named in the machine's
+/// language.
+fn title_bar(uia: &Uia, element: &Live) -> Node {
+    let request = uia
+        .request_fixed::<DialogText>()
+        .expect("a dialog child's request");
+    let read = element.refresh(&request).expect("the title bar");
+    let parts = read.read().parts(read.runtime_id());
+    Node {
+        name: parts.name,
+        role: parts.role,
+        value: parts.value,
+        states: parts.states,
+        details: parts.details,
+        children: Vec::new(),
     }
 }
 
@@ -216,8 +250,12 @@ fn uia_client_reads_the_scripted_tree() {
     let root = uia
         .window_element(hwnd.0 as isize, &nodes)
         .expect("mockapp's window element");
+    let roles = uia.request_fixed::<RoleCore>().expect("the role's request");
     let registry = NodeIdRegistry::new(std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1)));
-    assert_eq!(walk(&uia, &root, &nodes, &registry), expected_tree(&title));
+    assert_eq!(
+        walk(&uia, &root, (&nodes, &roles), &registry),
+        expected_tree(&title)
+    );
 
     app.quit();
 }
@@ -227,7 +265,12 @@ fn uia_client_reads_the_scripted_tree() {
 /// window handle that the full read of the element gives, as a
 /// `verbatim_uia::Node` with every detail, for the fields the shape
 /// carries: a property event's parts, which have no details, and its window
-/// handle; a text event's window handle.
+/// handle; a text event's window handle. The frame's title bar and its
+/// buttons, Windows' and not the fixture's, are left out: reading their
+/// location or whether they are off the screen has UIA ask the window's
+/// thread (`WM_GETTITLEBARINFOEX`), whose answer waits on the Desktop
+/// Window Manager, seconds behind while the other tests make and destroy
+/// windows (`docs/tooling/troubleshooting.md`).
 fn event_shapes_read_what_the_full_read_gives() {
     let title = common::unique_title("mockapp-uia-event-shapes");
     let app = common::spawn("tree.json", "uia", &title);
@@ -237,21 +280,31 @@ fn event_shapes_read_what_the_full_read_gives() {
     let nodes = uia
         .request::<verbatim_uia::Node>(verbatim_uia::Node::all_on())
         .expect("the node's request");
+    let roles = uia.request_fixed::<RoleCore>().expect("the role's request");
     let root = uia
         .window_live(hwnd.0 as isize)
         .expect("mockapp's window element");
     // SAFETY: a live client; the condition takes no arguments.
     let condition = unsafe { uia.client().CreateTrueCondition() }.expect("CreateTrueCondition");
-    // SAFETY: `root` is a live element on this client's own apartment
-    // thread; the search reads no cache.
-    let elements =
-        unsafe { root.element().FindAll(TreeScope_Subtree, &condition) }.expect("FindAll");
-    let elements = verbatim_uia::elements_of(&elements);
-    assert_eq!(
-        elements.len(),
-        30,
-        "every element of the scripted tree, with the frame's title bar and its buttons"
-    );
+    let mut elements = vec![root.element().clone()];
+    for child in uia
+        .children(&root, &roles)
+        .expect("the window's children")
+        .iter()
+        .filter(|child| child.read().role() != Role::TitleBar)
+    {
+        // SAFETY: `child` is a live element on this client's own apartment
+        // thread; the search reads no cache.
+        let found = unsafe {
+            child
+                .live()
+                .element()
+                .FindAll(TreeScope_Subtree, &condition)
+        }
+        .expect("FindAll");
+        elements.extend(verbatim_uia::elements_of(&found));
+    }
+    assert_eq!(elements.len(), 24, "every element of the scripted tree");
     let property_request = uia
         .request_fixed::<PropertyEvent>()
         .expect("the property event's request");
