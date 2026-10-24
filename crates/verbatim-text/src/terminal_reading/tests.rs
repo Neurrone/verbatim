@@ -1257,3 +1257,21 @@ fn a_lost_read_taken_as_the_focus_arrives_says_nothing() {
     assert_eq!(term.read(5100), quiet(None));
     assert_eq!(term.read(5200), quiet(None));
 }
+
+#[test]
+fn the_rows_above_a_first_reads_screen_are_history_at_the_next_read() {
+    // A terminal first read with output already in its history takes only
+    // the screen; the next read starts a screen above it, and with no rows
+    // of the first read there to compare, positions are trusted and those
+    // rows are history, not output ("Positions").
+    let mut term = Term::new(20, 5, 100);
+    let lines = (1..=40)
+        .map(|line| format!("line {line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    term.terminal.write(lines.as_bytes());
+    term.reader = TerminalReader::new(Settings::default());
+    term.query = Query::default();
+    assert_eq!(term.read(1000), quiet(None));
+    assert_eq!(term.read(1100), quiet(None));
+}

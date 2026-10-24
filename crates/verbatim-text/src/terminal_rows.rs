@@ -995,14 +995,14 @@ struct How {
 
 /// Whether positions are trusted ("Positions"): the read's rows above the
 /// last read's screen read exactly as the last read's history block did in
-/// the same places, and at least one of them has text. A read with no rows
-/// above the last read's screen, at the document's start, compares none.
+/// the same places, and at least one of them has text. When no row can be
+/// compared, because the read has none above the last read's screen or the
+/// last read had none there (a first read takes only the screen), they are
+/// trusted.
 fn positions(memory: &Screen, rows: &[Row], read: &Read) -> bool {
     let screen = isize_of(memory.next.saturating_sub(memory.skipped));
     let block = read.above.min(rows.len());
-    if block == 0 {
-        return true;
-    }
+    let mut compared = false;
     let mut text = false;
     for (to, row) in rows[..block].iter().enumerate() {
         let from = screen - isize_of(block) + isize_of(to);
@@ -1010,14 +1010,15 @@ fn positions(memory: &Screen, rows: &[Row], read: &Read) -> bool {
             .ok()
             .and_then(|from| memory.rows.get(from))
         else {
-            return false;
+            continue;
         };
         if old.hash != row.hash {
             return false;
         }
+        compared = true;
         text |= !row.is_blank();
     }
-    text
+    !compared || text
 }
 
 /// Whether the last read's rows with text at or above its caret fit `rows`
