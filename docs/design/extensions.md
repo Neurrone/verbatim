@@ -83,7 +83,7 @@ Not declared: capabilities (section 9), module settings and a key-value store (d
 
 Every match-based declaration is a rule with a `subject`, so the manifest has one shape for "match this, do that" (Dickson, 2026-10-22):
 
-- `window`: matched by window class, root window class and executable, before a backend is chosen. Actions: `backend` (NVDA's `isGoodUIAWindow` and `isBadUIAWindow`), `ignore` focus and foreground (Explorer's staging windows), `normalize-class` (NVDA's `windowClassMap`).
+- `window`: matched by window class, root window class and executable, before a backend is chosen. Actions: `backend` (NVDA's `isGoodUIAWindow` and `isBadUIAWindow`), `silent` focus and foreground, taken as any focus, cutting speech, with nothing said (Explorer's staging windows), `normalize-class` (NVDA's `windowClassMap`).
 - `event`: matched by kind, window class and activity id in the acceptance filter. Actions: `accept`, which speaks the event regardless of the focused application and makes the supervisor start an outpost for the sender when it has none, since an accepted event needs one and nothing else does (Explorer's snap results; NVDA's `requestEvents`); `drop`.
 - `node`: matched against the node's cached snapshot once the outpost has it, with a mandatory `backend`.
 
@@ -170,10 +170,10 @@ match = { root-class = ["Shell_TrayWnd", "Shell_InputSwitchTopLevelWindow",
 action = { backend = "uia" }
 
 [[rules]]
-id = "staging-windows-are-ignored"
+id = "staging-windows-are-silent"
 subject = "window"
 match = { class = ["ForegroundStaging", "LauncherTipWnd", "ApplicationManager_DesktopShellWindow"] }
-action = { ignore = ["focus", "foreground"] }
+action = { silent = ["focus", "foreground"] }
 
 [[rules]]
 id = "snap-results-are-spoken"

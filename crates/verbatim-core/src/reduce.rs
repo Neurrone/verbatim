@@ -610,9 +610,7 @@ fn reduce_event(
     window: Option<&WindowFacts>,
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
-    if crate::applications::is_shell_staging_focus(window, event)
-        || focus_dropped_first(state, observed_at_ms, window, event)
-    {
+    if focus_dropped_first(state, observed_at_ms, window, event) {
         return Vec::new();
     }
     match classify(
@@ -927,7 +925,11 @@ fn reduce_focus_changed(
     state.focus = Some(new_focus);
     state.focuses_queued += 1;
     state.navigator = Some(navigator);
-    if report.foreground && !has_text(report.node.name.as_deref()) {
+    // A nameless foreground window, and any focus in the shell's staging
+    // windows, cut speech but say nothing.
+    if report.foreground && !has_text(report.node.name.as_deref())
+        || crate::applications::is_shell_staging_window(window)
+    {
         return effects;
     }
 

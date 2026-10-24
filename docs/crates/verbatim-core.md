@@ -227,10 +227,11 @@ Implementation notes, `reduce`:
   modules, never in the listener or an outpost). A focus or foreground
   change on one of the shell's staging windows (`ForegroundStaging`,
   `LauncherTipWnd`, `ApplicationManager_DesktopShellWindow`, matched by
-  the window class its window facts carry) is dropped before anything
-  else judges it: nothing is said, speech is not cut, and the focus and
-  attention stay as they were (`docs/parity/windows-and-processes.md`,
-  "The shell's staging windows"). `tests/reduce.rs` checks it.
+  the window class its window facts carry) is taken like any other
+  focus, so the focus, the navigator and the foreground move to it and
+  speech is cut, but nothing is said for it
+  (`docs/parity/windows-and-processes.md`, "The shell's staging
+  windows"). `tests/reduce.rs` checks it.
 - Event acceptance (decision D14 as amended by the outpost redesign;
   `docs/parity/focus-events.md`, "Event acceptance"): the state keeps an attention
   record, the application and window facts of the most recent foreground

@@ -5457,14 +5457,19 @@ fn a_focus_read_after_its_item_was_selected_is_announced_without_the_selection()
 
 /// A focus or a foreground change on one of the shell's staging windows,
 /// which File Explorer gives the focus or the foreground to on Alt+Tab,
-/// Task View and Windows+X, is dropped whole: nothing is said, speech is
-/// not cut, and the focus and attention stay as they were
-/// (`docs/parity/windows-and-processes.md`, "The shell's staging
-/// windows"). A window of another class is announced as any is.
+/// Task View and Windows+X, is taken like any other focus, so it cuts
+/// speech and the focus and the navigator move to it, but nothing is said
+/// for it, even with a name (`docs/parity/windows-and-processes.md`, "The
+/// shell's staging windows"). A window of another class is announced as
+/// any is.
 #[test]
-fn a_focus_or_foreground_on_a_shell_staging_window_is_dropped_whole() {
+fn a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing() {
     let state = switch_to(&SrState::new(), Pid(1));
-    let pane = node(3, Role::Pane, None, None, StateSet::new());
+    let pane = node(3, Role::Pane, Some("Staging"), None, StateSet::new());
+    let staging_pane_reported = vec![queued(vec![
+        UtteranceSegment::label("Staging"),
+        role(Role::Pane),
+    ])];
     for class in [
         "ForegroundStaging",
         "LauncherTipWnd",
@@ -5474,17 +5479,44 @@ fn a_focus_or_foreground_on_a_shell_staging_window_is_dropped_whole() {
             class: class.to_owned(),
             ..foreground_window(50)
         };
-        let (after, effects) = reduce(
-            &state,
-            &focus_in(Pid(2), facts.clone(), pane.clone(), vec![]),
-        );
-        assert_eq!((effects, &after), (vec![], &state), "a focus in {class}");
-        let (after, effects) = reduce(&state, &foreground_in(Pid(2), facts, pane.clone()));
-        assert_eq!(
-            (effects, &after),
-            (vec![], &state),
-            "the foreground at {class}"
-        );
+        // A focus with no ancestry names no foreground object; a foreground
+        // report makes the staging window the foreground object.
+        for (input, foreground_object, foreground) in [
+            (
+                focus_in(Pid(2), facts.clone(), pane.clone(), vec![]),
+                None,
+                "a focus",
+            ),
+            (
+                foreground_in(Pid(2), facts, pane.clone()),
+                Some((OutpostId(2), 3)),
+                "the foreground",
+            ),
+        ] {
+            let (after, effects) = reduce(&state, &input);
+            assert_eq!(
+                heard(&effects),
+                vec![
+                    Heard::Expire(focus_now(OutpostId(2), 3, &[], foreground_object)),
+                    Heard::Stop,
+                ],
+                "{foreground} in {class}"
+            );
+            assert_eq!(
+                after.focused().map(|(source, focus)| (source, focus.id)),
+                Some((Pid(2), NodeId::in_outpost(OutpostId(2), 3))),
+                "{foreground} in {class}"
+            );
+            let (_, effects) = reduce(
+                &after,
+                &command(TraceId::mint(), ReviewCommand::ReportObject, 0),
+            );
+            assert_eq!(
+                heard(&effects),
+                staging_pane_reported,
+                "the navigator followed {foreground} in {class}"
+            );
+        }
     }
     let named = node(3, Role::Button, Some("OK"), None, StateSet::new());
     let facts = WindowFacts {

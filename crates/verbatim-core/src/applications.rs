@@ -3,7 +3,7 @@
 //! from its entry in the parity ledger, and none lives in the focus
 //! listener or an outpost.
 
-use verbatim_model::{NormalizedEvent, WindowFacts};
+use verbatim_model::WindowFacts;
 
 /// The classes of the shell's windows that take the focus or the foreground
 /// only while a switch is staged: the Alt+Tab switcher's and Task View's
@@ -16,17 +16,13 @@ const SHELL_STAGING_CLASSES: [&str; 3] = [
     "ApplicationManager_DesktopShellWindow",
 ];
 
-/// Whether `event`, in the window `window` describes, is a focus or a
-/// foreground change on one of the shell's staging windows, which Core
-/// drops whole: nothing is said for it, and the focus, attention and
-/// speech stay as they were (`docs/parity/windows-and-processes.md`, "The
-/// shell's staging windows", which records that speech is not cut there).
-/// On Alt+Tab, File Explorer's staging window takes the focus with no name,
-/// and was said as "pane" before the window switched to.
-pub(crate) fn is_shell_staging_focus(
-    window: Option<&WindowFacts>,
-    event: &NormalizedEvent,
-) -> bool {
-    matches!(event, NormalizedEvent::FocusChanged { .. })
-        && window.is_some_and(|window| SHELL_STAGING_CLASSES.contains(&window.class.as_str()))
+/// Whether `window` is one of the shell's staging windows. A focus or a
+/// foreground change there is taken like any other, so the focus, the
+/// navigator and the foreground move to it and speech is cut, but nothing
+/// is said for it (`docs/parity/windows-and-processes.md`, "The shell's
+/// staging windows"). On Alt+Tab, File Explorer's staging window takes the
+/// focus with no name, and was said as "pane" before the window switched
+/// to.
+pub(crate) fn is_shell_staging_window(window: Option<&WindowFacts>) -> bool {
+    window.is_some_and(|window| SHELL_STAGING_CLASSES.contains(&window.class.as_str()))
 }

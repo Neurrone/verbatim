@@ -122,11 +122,16 @@ mechanism](../nvda/app-modules-mechanism.md), "App modules").
 Verbatim: the outposts and the listener report a focus or foreground
 change on such a window (`ForegroundStaging`, `LauncherTipWnd`,
 `ApplicationManager_DesktopShellWindow`) like any other, with the
-window's class, and Core drops it whole (decision D6), so nothing is said
-for it. **matched (verified)** for what is said, by NVDA's capture of
-Alt+Tab of 2026-10-09; no scenario reaches a staging window since the
-two-window scenarios stopped switching with Alt+Tab, and Core's unit
-test pins the rule (`a_focus_or_foreground_on_a_shell_staging_window_is_dropped_whole`).
-Different: since the focus is dropped, speech is not cut at the staging
-window, only at the window switched to ([the roadmap](../roadmap.md),
-M4, "Follow-ups from M4.1").
+window's class, and Core takes it like any other focus (decision D6):
+the focus, the navigator and, for a foreground change, the foreground
+object move to the staging window, and speech is cut as for any new
+foreground window, but nothing is said for it, whatever its name. As in
+NVDA, the focus that follows, in the window switched to, is a new focus
+and is announced. **matched (verified)** for what is said, by NVDA's
+capture of Alt+Tab of 2026-10-09; no scenario reaches a staging window
+since the two-window scenarios stopped switching with Alt+Tab, and the
+Windows+X menu's host took neither the focus nor the foreground in the
+`quick_link_menu` scenario's runs, so Core's unit test pins the rule
+(`a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing`).
+Dickson decided on 2026-10-24 that speech is cut there as NVDA cuts it,
+replacing the earlier rule that dropped the change whole.

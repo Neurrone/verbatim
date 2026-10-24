@@ -210,11 +210,6 @@ deferred.
   late repeat of one step's item arriving after the next key would end
   that key's wait; renaming cannot remove it, since the targets are
   `explorer_folder_window`'s.
-- The staging windows' focus, which Verbatim drops, so speech is not cut
-  at the staging window where NVDA cuts it, is deferred until a capture
-  shows speech that should have been cut, since the spoken words already
-  match (the audits' item 11, Dickson, 2026-10-20;
-  `docs/parity/windows-and-processes.md`, "The shell's staging windows").
 - The classic .NET Framework Windows Forms combo box rule,
   element-selected events from the `ComboLBox` window reported as the
   combo box's value change (`NVDAObjects/UIA/__init__.py`, lines 2734 to
