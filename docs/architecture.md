@@ -774,7 +774,9 @@ the speech pipeline. Consequences:
   earcon is an `Effect` of `reduce`; the shell's other threads (the
   clipboard, the gesture router, the GUI, the watchdog) turn what they
   learn into `Input`s and never call the speech manager themselves, so all
-  speech is ordered, cancellable and recorded in one place. The speech
+  speech is ordered, cancellable and recorded in one place. A sound file
+  the user plays from the settings window to hear it is not speech the
+  reducer decides, and plays directly. The speech
   pipeline reports each utterance's end to the reducer as an `Input`,
   whether it finished or was cancelled, so nothing the reducer waits on is
   lost by a cut.
