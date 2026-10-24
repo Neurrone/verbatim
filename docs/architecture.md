@@ -93,8 +93,11 @@ screen reader in both rendered and source form.
   synthesizers run in a separate sandboxed native host process (D18).
   Rationale: replaces NVDA's unbounded Python add-on surface with a surface
   that is enumerable from the binary. The design is
-  [docs/design/extensions.md](design/extensions.md). Amended 2026-10-22
-  (Dickson: runtime decided, capabilities derived, rules before hooks).
+  [docs/design/extensions.md](design/extensions.md). Until the extension
+  host runs them, an application's own rules ported from NVDA's app modules
+  live in Core, never in the listener or an outpost. Amended 2026-10-22
+  (Dickson: runtime decided, capabilities derived, rules before hooks) and
+  2026-10-24 (Dickson: application rules in Core until modules run).
 - **D7 — Braille is designed for but implemented last.** Traits and pipeline
   seams exist from the start. Rationale: no hardware available for
   development.
@@ -766,6 +769,14 @@ the speech pipeline. Consequences:
 - Outposts have their own small, separately-tested state machine (translating
   raw backend events into normalized ones, maintaining the cache); the
   reducer never sees COM.
+- **Only the reducer speaks** (Dickson, 2026-10-24). Every utterance and
+  earcon is an `Effect` of `reduce`; the shell's other threads (the
+  clipboard, the gesture router, the GUI, the watchdog) turn what they
+  learn into `Input`s and never call the speech manager themselves, so all
+  speech is ordered, cancellable and recorded in one place. The speech
+  pipeline reports each utterance's end to the reducer as an `Input`,
+  whether it finished or was cancelled, so nothing the reducer waits on is
+  lost by a cut.
 
 ## 3. Normalized accessibility model
 
@@ -873,7 +884,12 @@ microseconds against a read-only, lock-free snapshot of the gesture map
 (rebuilt atomically when bindings change). The hook only decides and enqueues,
 plus one non-blocking send to the speech manager: every key-down but a few
 cancels speech, and Shift pauses and resumes it, as in NVDA, before the key's
-gesture is enqueued; gesture semantics run on the reducer thread. Gesture maps are user-remappable
+gesture is enqueued; gesture semantics run on the reducer thread. The hook
+thread holds no other subscription and sends nowhere else (Dickson,
+2026-10-24): what it needs to know of the foreground (whether to hold keys
+for an elevated window, a console's real thread for its keyboard layout) is
+learned by the focus listener, decided in Core, and read by the hook from
+Core's lock-free snapshot, so there is one view of the foreground. Gesture maps are user-remappable
 and per-app-module overridable, NVDA-style. Touch and mouse tracking come
 later but route through the same `Input` type.
 
