@@ -1421,9 +1421,51 @@ focus or the foreground to windows that only stage the switch
   own focus until after the focus of the window switched to had reached
   Core; the switcher's focus then replaced it, the window's announcement
   was cancelled, and Verbatim said "Task Switching window, pane" for a
-  switcher already closed (`watch2.txt`, run 2, switch 5). Core applies
-  focuses in the order they arrive, not the order they happened, so any
-  slow read can do this; the staging windows' reads made it happen here.
+  switcher already closed (`watch2.txt`, run 2, switch 5). Ordering
+  focuses by when they happened does not drop it: the focus listener
+  received the switcher's UI Automation focus 9 ms after the console's,
+  and an independent observer of the same check, run again, saw Windows
+  raise the switcher's own foreground and focus events after the
+  console's (the next section).
+- Target: the minimum.
+
+### Ordering focuses across processes
+
+Core drops a focus from another outpost observed before the focus it has
+applied (decision D14; `docs/parity/focus-events.md`, "Stale focus
+events"). Every process stamps its observations on the run's shared clock,
+the milliseconds and, for a focus, the microseconds of one clock read.
+
+- Minimum: one clock read per observation, in the callback that took it
+  in, and no wait: nothing is held back for a slower process.
+- Today: the minimum. Stamping reads the performance counter where it
+  read the system's clock, and takes a stamp's milliseconds from the
+  clock read its microseconds came from, where the listener's UI
+  Automation focus, its forwarded `WinEvent` facts and the outposts' own
+  hooks read the clock twice, so a stamp costs one read fewer. A focus's
+  message carries one more number, its microseconds; Core keeps it with
+  the newest focus and compares two numbers instead of one. No thread,
+  timer, message or wake-up is added. Measured on 2026-10-24 with three
+  traces each of `conhost_two_windows` (`cargo xtask trace scenario
+  conhost_two_windows --after 4 --seconds 8`, debug builds, info
+  logging), the build before against the build after: all of Verbatim's
+  processes were woken 2,658, 3,444 and 2,709 times for 471, 550 and
+  508 ms on a processor before, and 2,890, 3,014 and 3,165 times for 546,
+  539 and 542 ms after, within the runs' spread; the reducer 29, 41 and
+  37 times before, 20, 40 and 35 after.
+- What it changes: in the Alt+Tab check of 2026-10-24 (the scratchpad
+  observer run, switch 3) the listener read the switcher's pane and then
+  the console's terminal in one millisecond, the switcher's reached Core
+  second, and it was announced over the console; ordered by microseconds
+  it is dropped. In the same check after the change, with Alt held
+  (switch 4), Windows raised the switcher's foreground event 11 ms and
+  its focus event 15 ms after the console's, the listener received the
+  switcher's UI Automation focus after the console's, and the switcher
+  was still announced over the console: that focus did happen later, so
+  no ordering drops it. NVDA never announces it, by its File Explorer
+  module's refusal of the Windows 11 switcher pane's focus
+  (`docs/design/focus-pipeline.md`, section 18), which Verbatim
+  has not ported.
 - Target: the minimum.
 
 ### The system caret's events
