@@ -135,7 +135,9 @@ Windows+X menu's host took neither the focus nor the foreground in the
 `quick_link_menu` scenario's runs, so Core's unit test pins the rule
 (`a_focus_or_foreground_on_a_shell_staging_window_cuts_speech_and_says_nothing`),
 and a hand-run Alt+Tab check of 2026-10-24 found every switch completing
-as fast as with no Verbatim and nothing said for the staging window
-(`docs/performance.md`, "The shell's staging windows").
+and nothing said for the staging window, but in one switch with Alt held
+the switcher's late focus replaced the focus of the window switched to,
+which is a fault in Core's ordering of focuses (`docs/performance.md`,
+"The shell's staging windows").
 Dickson decided on 2026-10-24 that speech is cut there as NVDA cuts it,
 replacing the earlier rule that dropped the change whole.

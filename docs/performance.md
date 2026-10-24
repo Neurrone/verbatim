@@ -1414,11 +1414,16 @@ focus or the foreground to windows that only stage the switch
   which held the foreground until then, on this machine whose File
   Explorer was answering slowly. Explorer's outpost's reads of the
   staging windows took 1.5 to 14 ms, and three times 400 to 542 ms (one
-  of them a first UIA probe of 473 ms), each begun as its switch was
-  already completing. Verbatim said "<title> window", "terminal" and the
-  prompt's line for each quick switch and nothing for the staging
-  window, as in NVDA's capture of 2026-10-09; with Alt held it said the
-  switcher and its selected item, which that capture does not cover.
+  of them a first UIA probe of 473 ms). Verbatim said "<title> window",
+  "terminal" and the prompt's line for each quick switch and nothing for
+  the staging window, as in NVDA's capture of 2026-10-09. In one switch
+  with Alt held, a 400 ms read of a staging window delayed the switcher's
+  own focus until after the focus of the window switched to had reached
+  Core; the switcher's focus then replaced it, the window's announcement
+  was cancelled, and Verbatim said "Task Switching window, pane" for a
+  switcher already closed (`watch2.txt`, run 2, switch 5). Core applies
+  focuses in the order they arrive, not the order they happened, so any
+  slow read can do this; the staging windows' reads made it happen here.
 - Target: the minimum.
 
 ### The system caret's events
