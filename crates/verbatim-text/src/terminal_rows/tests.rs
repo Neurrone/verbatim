@@ -514,17 +514,24 @@ fn a_history_erase_keeps_the_screens_rows() {
 fn a_pagers_pages_are_new_screens_and_closing_it_returns_to_the_shell() {
     // `conhost_pager`'s shape: the pager's first page keeps no row of the
     // shell's screen and fills the screen, so it is a new screen and the
-    // shell's is set aside; its second page is a new screen too, the
-    // shell's staying aside; and the main screen back with the shell's
-    // rows returns to it, so only what follows is new ("Screens").
+    // shell's is set aside; its second page pairs each row with the first
+    // page's by likeness, and leaves the caret's line, the prompt row, where
+    // it was, so it is no new screen, the shell's staying aside; and the main screen
+    // back with the shell's rows returns to it, so only what follows is new
+    // ("Screens").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("PS>pager\r\n");
     let opened = watch.write("\x1b[?1049h\x1b[H\x1b[2Jp1\r\np2\r\n:");
     assert_eq!(opened.switch, Switch::Opened);
     assert_eq!(opened.rows, [NEW, NEW, NEW]);
     let paged = watch.write("\x1b[H\x1b[2Jq1\r\nq2\r\n(END)");
-    assert_eq!(paged.switch, Switch::Opened);
-    assert_eq!(paged.rows, [NEW, NEW, NEW]);
+    assert_eq!(paged.switch, Switch::None);
+    let rewritten = |from| NewRow::Rewritten {
+        from,
+        moved: false,
+        alone: false,
+    };
+    assert_eq!(paged.rows, [rewritten(0), rewritten(1), rewritten(2)]);
     let closed = watch.write("\x1b[?1049lclosed\r\nPS>");
     assert_eq!(closed.switch, Switch::Closed);
     assert_eq!(watch.texts(), ["PS>pager", "closed", "PS>"]);
@@ -809,11 +816,13 @@ fn windows_terminals_clear_and_a_full_screen_program_return_to_the_screen_after_
 #[test]
 fn the_alternate_screen_from_a_shell_as_long_as_it_is_a_new_screen_not_an_overflow() {
     // A fresh shell's document fills the screen, with no history, and the
-    // alternate screen is as long: one screen tall, a new screen, which
-    // comes before the overflow's test ("Screens").
+    // alternate screen is as long, its cursor homed as a full-screen
+    // program's is: nothing of the shell's screen survives, so it is a new
+    // screen, one screen tall, and the document did not move, so it is no
+    // overflow ("Screens").
     let mut watch = Watch::console(10, 3, 20);
-    watch.write("s1\r\ns2\r\ns3");
-    let opened = watch.write("\x1b[?1049h\x1b[Hv1\r\nv2\r\nv3");
+    watch.write("$ ls\r\nfile\r\n$ vim");
+    let opened = watch.write("\x1b[?1049h\x1b[Hhello\r\n~\r\n:q\x1b[H");
     assert_eq!(opened.switch, Switch::Opened);
     assert!(!opened.overflowed, "no overflow");
     assert_eq!(opened.rows, [NEW, NEW, NEW]);

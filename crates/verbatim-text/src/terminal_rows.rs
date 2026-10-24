@@ -403,12 +403,6 @@ impl Screen {
         self.rows.len().saturating_sub(self.height)
     }
 
-    /// How many rows the document held at the last read, at least: the
-    /// remembered history and the rows, and the rows above them when known.
-    fn document_rows(&self) -> usize {
-        self.unknown_above.unwrap_or(0) + self.known.len() + self.rows.len()
-    }
-
     /// Keeps only a screen above the next read's start and the rows below
     /// it, the hashes of those above going to the remembered history.
     /// Returns how many rows it dropped.
@@ -736,20 +730,31 @@ impl TerminalMemory {
         } else {
             align_read(&current, &rows, read, caret)
         };
-        // A document that did not move holds the last read's screen inside
-        // the read, so a read that keeps nothing there is aligned like any
-        // other ("The read").
-        if aligned.lost() && (whole || went_by(&current, &rows, read)) {
-            // A read that reached the document's start is whole already.
-            if !whole && !read.at_document_start {
-                self.pending = Some(Pending::Lost);
-                self.screen = Some(current);
-                return Outcome {
-                    whole_document: true,
-                    ..shape
-                };
-            }
-            return self.screens(current, rows, read, &shape);
+        // Whether the read missed text: a document that did not move holds
+        // the last read's screen inside the read, so a read that keeps
+        // nothing there is aligned like any other ("The read").
+        let moved = !whole && went_by(&current, &rows, read);
+        if aligned.lost() && moved && !read.at_document_start {
+            self.pending = Some(Pending::Lost);
+            self.screen = Some(current);
+            return Outcome {
+                whole_document: true,
+                ..shape
+            };
+        }
+        // A whole document read because the document moved, or a read that
+        // reached the document's start after it moved, which is whole
+        // already, that keeps nothing the last read had at or above the
+        // caret: the history overflowed ("Screens").
+        let overflowed = aligned.lost() && ((whole && !refused) || moved);
+        // Whether this is a different screen: nothing of the last read
+        // survives, rows below the caret included ("Screens").
+        let had_text = current.rows.iter().any(|row| !row.is_blank());
+        if had_text && !aligned.kept_text && !aligned.paired {
+            return self.screens(current, rows, read, &shape, overflowed);
+        }
+        if overflowed {
+            return self.start_again(&current, rows, read, &shape, Start::Overflow);
         }
         let next = remember(&current, rows, &aligned, read, (width, height), caret);
         self.finish(&current, next, &aligned, &shape, Switch::None)
@@ -858,6 +863,7 @@ impl TerminalMemory {
         rows: Vec<Row>,
         read: &Read,
         shape: &Outcome,
+        overflowed: bool,
     ) -> Outcome {
         let (width, height, caret) = (shape.width, shape.height, shape.caret);
         if let Some(aside) = self.aside.take() {
@@ -900,7 +906,7 @@ impl TerminalMemory {
             self.screen = Some(next);
             return outcome;
         }
-        if rows.len() > height && rows.len() >= current.document_rows() {
+        if overflowed {
             return self.start_again(&current, rows, read, shape, Start::Overflow);
         }
         self.aside = None;
@@ -1030,6 +1036,8 @@ struct Aligned {
     kept_caret: bool,
     /// Whether a row with text of the memory was kept.
     kept_text: bool,
+    /// Whether a row of the memory was paired as rewritten.
+    paired: bool,
     /// Whether the read started at the document's start, so a row the
     /// rotation carried above it left the buffer.
     left: bool,
@@ -1477,9 +1485,13 @@ fn classify(
             *kind = NewRow::Shown;
         }
     }
-    // The rows left between kept rows, paired by likeness; a blank row is
-    // alike to none, and a history row is never rewritten.
-    {
+    // The rows left between two kept rows, or a kept row and the read's
+    // edge, paired by likeness ("The alignment"); a blank row is alike to
+    // none, and a history row is never rewritten. A read from the kept
+    // start with no kept row is aligned like any other ("The read"); a
+    // whole document with none, where the old rows' places are not known,
+    // pairs nothing.
+    if !kept.is_empty() || whole.is_none() {
         let mut bounds: Vec<(Option<Pair>, Option<Pair>)> = Vec::new();
         let mut previous = None;
         for &pair in kept {
@@ -1522,6 +1534,33 @@ fn classify(
                 };
                 fates[from] = OldRow::Rewritten(to);
             }
+        }
+    }
+    // The caret's line is identified by its first row ("Keys"): when the
+    // caret's line now starts where the last read's caret line, which had
+    // text, started, and that row is otherwise new, it is that line
+    // rewritten.
+    if let (Some(old_row), Some(caret)) = (
+        memory
+            .caret
+            .and_then(|row| row.checked_sub(memory.skipped))
+            .filter(|&row| row < count),
+        caret,
+    ) {
+        let first = line_start(old, old_row);
+        let to = line_start(rows, caret);
+        if (whole.is_none() || !kept.is_empty())
+            && isize_of(to) == place(first)
+            && !old[first].is_blank()
+            && fates[first] == (OldRow::Gone { lingering: false })
+            && new[to] == NewRow::New
+        {
+            new[to] = NewRow::Rewritten {
+                from: first,
+                moved: false,
+                alone: false,
+            };
+            fates[first] = OldRow::Rewritten(to);
         }
     }
     // A row rewritten elsewhere than its place moved with its neighbours
@@ -1610,6 +1649,9 @@ fn classify(
     });
     let kept_text =
         (0..count).any(|from| !old[from].is_blank() && matches!(fates[from], OldRow::Kept(_)));
+    let paired = fates
+        .iter()
+        .any(|fate| matches!(fate, OldRow::Rewritten(_)));
     Aligned {
         new,
         old: fates,
@@ -1618,6 +1660,7 @@ fn classify(
         had_caret_text,
         kept_caret,
         kept_text,
+        paired,
         left: read.at_document_start,
     }
 }
