@@ -311,8 +311,10 @@ screen reader in both rendered and source form.
   processes, and a slow read in one can deliver an earlier focus after a
   later one; Core orders them by when they happened, on the shared clock,
   so a focus that happened before the focus Core has applied never
-  replaces it (found live: Alt+Tab's switcher announced after the window
-  switched to, 2026-10-24). Ratified 2026-09-02; amended
+  replaces it, to the microsecond, since focus events arrive in bursts
+  within one millisecond (found live on 2026-10-24: Alt+Tab's switcher pane
+  read in the same millisecond as the window switched to, but reaching Core
+  after it). Ratified 2026-09-02; amended
   2026-10-01 (the outpost redesign: the attention model), 2026-10-05
   (acceptance against the real foreground) and 2026-10-24 (Dickson: each
   rule defined once, judged against Core's focus, only pre-read judgments
