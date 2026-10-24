@@ -816,6 +816,15 @@ M13) for Java applications.
   `IUIAutomationCacheRequest`s so events arrive with name/role/states/patterns
   prefetched in the same round trip — the single biggest lever against
   blocking on slow apps.
+- **Bulk reads carry only cheap properties** (Dickson, 2026-10-24). A read
+  of many elements (a tree walk, a list of children, an event
+  registration's cache) never asks for an element's location or whether it
+  is off screen; those are read only for the one element that needs them.
+  For a classic window's title bar and its buttons, either one makes the
+  application's UI thread send itself `WM_GETTITLEBARINFOEX`, measured at
+  about 6 ms alone and seconds under load while that thread waits. NVDA
+  does the same: its base cache request holds neither. Children are listed
+  in one call, as NVDA's are, so a child gone before it is simply absent.
 - **Threading.** Per UIA guidance, event callbacks arrive on dedicated MTA
   threads separate from threads that make UIA calls; each outpost owns both.
   Multiple UIA client threads are a supported, intended part of the design.
