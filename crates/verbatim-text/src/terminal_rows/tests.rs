@@ -188,6 +188,7 @@ fn a_footer_redrawn_in_place_is_rewritten() {
             NewRow::Rewritten {
                 from: 3,
                 moved: false,
+                alone: false,
             }
         ]
     );
@@ -221,6 +222,7 @@ fn a_status_row_moved_down_a_row_pairs_with_its_old_self() {
             NewRow::Rewritten {
                 from: 1,
                 moved: true,
+                alone: false,
             },
             moved(2),
             moved(3)
@@ -287,7 +289,8 @@ fn a_read_whose_screen_shows_no_text_changes_nothing_and_the_screen_comes_back()
             kept(1),
             NewRow::Rewritten {
                 from: 2,
-                moved: false
+                moved: false,
+                alone: false,
             },
             kept(3),
         ]
@@ -689,11 +692,12 @@ fn a_footer_below_a_cleared_screen_pushed_into_the_history_does_not_overflow() {
 }
 
 #[test]
-fn a_row_paired_alone_by_likeness_elsewhere_keeps_its_change_history() {
+fn a_row_paired_alone_by_likeness_elsewhere_starts_its_change_history_afresh() {
     // A status row below a kept row ticks twice, then is written over in
     // place with a line of output and the next tick is printed a row
     // lower: the alignment pairs the tick with the old status row, which
-    // moved alone, and its history moves with it ("The alignment").
+    // moved alone, with no neighbour kept in the same move, so its change
+    // history starts afresh ("The alignment").
     let mut watch = Watch::console(12, 5, 10);
     watch.write("x\r\n1s");
     watch.write("\r2s");
@@ -708,6 +712,7 @@ fn a_row_paired_alone_by_likeness_elsewhere_keeps_its_change_history() {
             NewRow::Rewritten {
                 from: 1,
                 moved: true,
+                alone: true,
             }
         ]
     );

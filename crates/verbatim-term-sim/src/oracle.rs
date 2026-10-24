@@ -48,9 +48,9 @@
 //! redrawn row's speech, a spinner, an unfinished word or a volatile row,
 //! matched one to one with the most claims justified. A line's place is
 //! its first row's row on the screen, counted from the screen's top
-//! (negative in the history). A row's text is its text with the padding
-//! after a line's end left out, so a row that wraps onto the next keeps the
-//! spaces at its end ("Rows").
+//! (negative in the history). A row's text is its text with the padding,
+//! the spaces after its line's last character, left out, so a row that
+//! wraps onto a row with text keeps the spaces at its end ("Rows").
 //!
 //! The invariants, as checked:
 //!
@@ -256,9 +256,11 @@ pub enum Limit {
     /// clear and its reprint, so a screen a program really left blank is not
     /// noticed until text appears on it ("A read with no text"). The new
     /// lines of the read, such as those a clear pushed into the history,
-    /// need not be reported at it, but are reported at the first later read
-    /// whose screen shows text, unless their text was replaced by then.
-    /// Precondition: no row of the read's main screen shows text.
+    /// need not be reported at it, and are judged as new at the first later
+    /// read whose screen shows text.
+    /// The next read is judged against the read before the blank one.
+    /// Precondition: no row of the screen the read shows, main or
+    /// alternate, shows text.
     BlankScreen,
 }
 
@@ -729,6 +731,9 @@ struct Check<'a> {
     /// The texts of the lines that vanished at a read on the main screen
     /// checked so far, without spaces (see [`Reason::WrittenBack`]).
     erased: HashSet<String>,
+    /// The same texts as they were, for a redrawn row's speech of a line
+    /// written back with a change.
+    written: HashSet<String>,
     /// The rows the main buffer rotated out up to the read checked.
     rotated: HashSet<RowId>,
     holds: Vec<Hold>,
@@ -946,6 +951,7 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
         rotation: 0,
         lost: HashMap::new(),
         erased: HashSet::new(),
+        written: HashSet::new(),
         rotated: HashSet::new(),
         deferred: Vec::new(),
         aside: false,
@@ -973,6 +979,10 @@ pub fn check(reads: &[Observation]) -> Vec<Violation> {
 }
 
 /// Checks read `index`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "a read on the main screen, then on the alternate screen, then the mapping"
+)]
 fn check_read(check: &mut Check, index: usize) {
     let reads = check.reads;
     let read = &reads[index];
@@ -993,8 +1003,14 @@ fn check_read(check: &mut Check, index: usize) {
             _ => 0,
         };
         let lines = check.shared(index);
+        // The first read whose screen shows text after a blank screen
+        // judges what the blank screen hid as new here.
+        let shows = read.main[read.screen_top.min(read.main.len())..]
+            .iter()
+            .any(|seen| !seen.text.trim_end().is_empty());
         for line in &lines.list {
-            let new = check.is_new(line);
+            let hidden = shows && check.deferred.iter().any(|(_, _, text)| *text == line.text);
+            let new = check.is_new(line) || hidden;
             state.new.push(new);
             state.heard.push(if new {
                 check.grown_from(line)
@@ -1052,10 +1068,21 @@ fn check_read(check: &mut Check, index: usize) {
         // With no history on the main screen no read shows the switch, so
         // what this read showed is what the next is judged against, as if
         // all of it was heard.
+        // A blank screen is not noticed ("A read with no text"), on either
+        // screen: the next read is judged against the read before it.
+        let blank = read.heard.limits.contains(&Limit::BlankScreen);
+        if blank && !shown.is_empty() {
+            check.violations.push(Violation::FalseLimit {
+                read: index,
+                limit: Limit::BlankScreen,
+            });
+        }
         let unseen = check.last.is_none_or(|last| reads[last].screen_top == 0);
-        check.alternate = unseen.then(|| Rc::new(Lines::alternate(read)));
-        if let Some(lines) = &check.alternate {
-            check.heard = lines.list.iter().map(|line| line.text.clone()).collect();
+        if !(blank && shown.is_empty()) {
+            check.alternate = unseen.then(|| Rc::new(Lines::alternate(read)));
+            if let Some(lines) = &check.alternate {
+                check.heard = lines.list.iter().map(|line| line.text.clone()).collect();
+            }
         }
         // Nothing on the alternate screen must be accounted for; only
         // what is reported is checked against the read.
@@ -1201,20 +1228,11 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
             limit: Limit::BlankScreen,
         });
     }
-    // The first read whose screen shows text after a blank screen notices
-    // what the blank screen hid: each line left unreported is reported now,
-    // or its text was replaced.
+    // The first read whose screen shows text after a blank screen judged
+    // what the blank screen hid as new, so each line left unreported is
+    // accounted for there, or its text was replaced.
     if screen_text {
-        for (read, coordinate, text) in std::mem::take(&mut check.deferred) {
-            let reported = lines.with(&text).iter().any(|&number| state.said[number]);
-            if lines.count(&text) > 0 && !reported {
-                check.violations.push(Violation::Missed {
-                    read,
-                    coordinate,
-                    text,
-                });
-            }
-        }
+        check.deferred.clear();
     }
     for (number, line) in lines.list.iter().enumerate() {
         if state.new[number] && !state.accounted[number] {
@@ -1241,11 +1259,11 @@ fn finish_main(check: &mut Check, index: usize, state: &ReadState) {
         return;
     }
     // The lines that vanished, whose text may be written back.
-    let erased: Vec<String> = vanished(check, &lines)
-        .iter()
-        .map(|text| without_spaces(text))
-        .collect();
-    check.erased.extend(erased);
+    let gone = vanished(check, &lines);
+    check
+        .erased
+        .extend(gone.iter().map(|text| without_spaces(text)));
+    check.written.extend(gone);
     // What was said of a line that lost text is kept while a line with its
     // text is shown.
     check.lost.retain(|text, _| lines.count(text) > 0);
@@ -1399,7 +1417,14 @@ fn check_spoken(check: &mut Check, index: usize, spoken: &Spoken, state: &mut Re
                 check.say(index, row, number, false, state);
             }
         }
-        Spoken::Redrawn { .. } => state.redrawn.push((number, row, text.clone())),
+        Spoken::Redrawn { .. } => {
+            // A redrawn row's speech of the whole line says it, as a line
+            // left unreported under a blank screen must be.
+            if *text == line.text {
+                state.said[number] = true;
+            }
+            state.redrawn.push((number, row, text.clone()));
+        }
         Spoken::Summary { .. } | Spoken::Held { .. } => {}
     }
 }
@@ -1560,8 +1585,18 @@ fn check_changes(check: &mut Check, index: usize, state: &mut ReadState) {
         let matched = matching(&edges, vanished.len());
         for ((claim, matched), slots) in claims.into_iter().zip(matched).zip(&edges) {
             match claim {
-                Claim::Redrawn(number, row, _) => {
-                    if matched.is_some() {
+                Claim::Redrawn(number, row, said) => {
+                    // Text erased and written back is text heard before
+                    // ("Limits"), so a redrawn row's speech of its change
+                    // from a line that vanished at an earlier read says it.
+                    let text = &lines.list[number].text;
+                    let written_back = || {
+                        check
+                            .written
+                            .iter()
+                            .any(|old| covers_change(old, text, &said))
+                    };
+                    if matched.is_some() || written_back() {
                         check.say(index, row, number, false, state);
                     }
                 }
@@ -1768,14 +1803,24 @@ fn smallest_rotation(last: &Observation, read: &Observation) -> usize {
     history - matched
 }
 
-/// The text of row `row` of `rows`: padding left out, which only a line's
-/// last row has, so a row that wraps onto the next keeps the spaces at its
-/// end (`docs/design/terminal-model.md`, "Rows"); empty for a row
-/// that shows nothing.
+/// The text of row `row` of `rows`: padding, the spaces after its line's
+/// last character, left out, so a row that wraps onto a row with text
+/// keeps the spaces at its end (`docs/design/terminal-model.md`, "Rows");
+/// empty for a row that shows nothing.
 fn row_text(rows: &[Seen], row: usize) -> &str {
     let seen = &rows[row];
     let trimmed = seen.text.trim_end();
-    if seen.wraps && row + 1 < rows.len() && !trimmed.is_empty() {
+    // Whether a row the line wraps onto shows text.
+    let mut more = false;
+    let mut next = row;
+    while rows[next].wraps && next + 1 < rows.len() {
+        next += 1;
+        if !rows[next].text.trim_end().is_empty() {
+            more = true;
+            break;
+        }
+    }
+    if more && !trimmed.is_empty() {
         &seen.text
     } else {
         trimmed

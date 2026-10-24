@@ -158,6 +158,9 @@ pub enum NewRow {
         /// Whether it moved other than with the history, as a status row
         /// drawn a row lower with its spinner changed.
         moved: bool,
+        /// Whether it moved alone, with no neighbour kept in the same move,
+        /// so its change history starts afresh ("The alignment").
+        alone: bool,
     },
     /// A lingering row taken back: a row a read found gone, back with its
     /// text ("Lingering").
@@ -322,6 +325,10 @@ struct Lingering {
 /// the next read's start, the caret, lingering rows and the anchors are
 /// counted as the last read's rows are.
 #[derive(Clone, Debug, Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of the last read"
+)]
 struct Screen {
     rows: Vec<Row>,
     /// How many of the last read's rows lie above `rows`, trimmed once the
@@ -342,6 +349,11 @@ struct Screen {
     caret: Option<usize>,
     /// Whether the last read's screen showed text.
     shows_text: bool,
+    /// The hash of the document's first row at the last read.
+    first_row: u64,
+    /// Whether the last read's screen started at the document's start, so
+    /// that its first row was a row of the screen, not of the history.
+    no_history: bool,
     lingering: Vec<Lingering>,
     /// The remembered history: the hashes of the rows above `rows`, oldest
     /// first, [`UNREAD`] for a row no read showed.
@@ -428,10 +440,24 @@ impl Screen {
             at_document_start: read.at_document_start,
             caret,
             shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
+            first_row: hash(&read.first_row),
+            no_history: read.alternate,
             unknown_above: read.at_document_start.then_some(0),
             ..Self::default()
         }
     }
+}
+
+/// Whether the document shows that more went by than `read`, from the kept
+/// start, covers ("The read"): it grew by more than the screen above, or
+/// its first row changed while it was a row of the history, which no
+/// program writes, as a full history's does when it rotates. With no
+/// history the first row is a row of the screen, which programs rewrite.
+fn went_by(current: &Screen, rows: &[Row], read: &Read) -> bool {
+    let old = current.total().saturating_sub(current.next);
+    let new = rows.len().saturating_sub(read.above);
+    new > old + current.height
+        || (!current.no_history && hash(&read.first_row) != current.first_row)
 }
 
 /// The last read's row at which the next read starts, for a read of `rows`
@@ -710,7 +736,10 @@ impl TerminalMemory {
         } else {
             align_read(&current, &rows, read, caret)
         };
-        if aligned.lost() {
+        // A document that did not move holds the last read's screen inside
+        // the read, so a read that keeps nothing there is aligned like any
+        // other ("The read").
+        if aligned.lost() && (whole || went_by(&current, &rows, read)) {
             // A read that reached the document's start is whole already.
             if !whole && !read.at_document_start {
                 self.pending = Some(Pending::Lost);
@@ -787,9 +816,10 @@ impl TerminalMemory {
                     moved,
                 },
                 NewRow::Grown { from } => NewRow::Grown { from: from + skip },
-                NewRow::Rewritten { from, moved } => NewRow::Rewritten {
+                NewRow::Rewritten { from, moved, alone } => NewRow::Rewritten {
                     from: from + skip,
                     moved,
+                    alone,
                 },
                 other => other,
             })
@@ -901,7 +931,8 @@ impl TerminalMemory {
     ) -> Outcome {
         let mut next = Screen::fresh(rows, read, (shape.width, shape.height), current.height);
         let total = current.total();
-        let found = |anchor: &Anchor| refind(*anchor, total, &next.rows);
+        let found =
+            |anchor: &Anchor| refind(*anchor, total, line_offset(current, anchor), &next.rows);
         next.review = current.review.as_ref().and_then(found).or_else(|| {
             shape
                 .caret
@@ -936,16 +967,45 @@ enum Start {
     Restart,
 }
 
-/// An anchor found again by its line's hash, on the row starting a line
-/// with it nearest its old place, counted from the end of a read of `total`
-/// rows, in `rows`.
-fn refind(anchor: Anchor, total: usize, rows: &[Row]) -> Option<Anchor> {
+/// An anchor found again by its line's hash, on the line with it whose
+/// first row is nearest its old place, counted from the end of a read of
+/// `total` rows, in `rows`, at `offset`, its character position within its
+/// line, which a resize keeps ("Starting again").
+fn refind(anchor: Anchor, total: usize, offset: usize, rows: &[Row]) -> Option<Anchor> {
     let from_end = isize_of(total) - anchor.row;
-    rows.iter()
+    let (mut row, _) = rows
+        .iter()
         .enumerate()
         .filter(|(at, row)| row.line_hash == anchor.line_hash && line_start(rows, *at) == *at)
-        .min_by_key(|(at, _)| (isize_of(rows.len()) - isize_of(*at) - from_end).abs())
-        .map(|(at, _)| anchor_at(rows, at, anchor.column))
+        .min_by_key(|(at, _)| (isize_of(rows.len()) - isize_of(*at) - from_end).abs())?;
+    let mut column = offset;
+    while rows[row].wraps && row + 1 < rows.len() {
+        let length = rows[row].text.chars().count();
+        if column < length {
+            break;
+        }
+        column -= length;
+        row += 1;
+    }
+    Some(anchor_at(rows, row, column))
+}
+
+/// The character position of `anchor` within its line in `memory`: the
+/// characters of its line's rows above its row and its column; its column
+/// alone when its row is not kept.
+fn line_offset(memory: &Screen, anchor: &Anchor) -> usize {
+    let Some(index) = usize::try_from(anchor.row)
+        .ok()
+        .and_then(|row| memory.index(row))
+    else {
+        return anchor.column;
+    };
+    let first = line_start(&memory.rows, index);
+    memory.rows[first..index]
+        .iter()
+        .map(|row| row.text.chars().count())
+        .sum::<usize>()
+        + anchor.column
 }
 
 /// A kept pair: an old row's index and the new row's it became.
@@ -1419,7 +1479,7 @@ fn classify(
     }
     // The rows left between kept rows, paired by likeness; a blank row is
     // alike to none, and a history row is never rewritten.
-    if !kept.is_empty() {
+    {
         let mut bounds: Vec<(Option<Pair>, Option<Pair>)> = Vec::new();
         let mut previous = None;
         for &pair in kept {
@@ -1458,10 +1518,36 @@ fn classify(
                 new[to] = NewRow::Rewritten {
                     from,
                     moved: isize_of(to) != place(from),
+                    alone: false,
                 };
                 fates[from] = OldRow::Rewritten(to);
             }
         }
+    }
+    // A row rewritten elsewhere than its place moved with its neighbours
+    // when a row next to it was kept in the same move.
+    for to in 0..new.len() {
+        let NewRow::Rewritten {
+            from, moved: true, ..
+        } = new[to]
+        else {
+            continue;
+        };
+        let distance = isize_of(to) - place(from);
+        let with_neighbour = [to.checked_sub(1), Some(to + 1)]
+            .into_iter()
+            .flatten()
+            .any(|next| match new.get(next) {
+                Some(NewRow::Kept { from: kept, .. } | NewRow::Grown { from: kept }) => {
+                    isize_of(next) - place(*kept) == distance
+                }
+                _ => false,
+            });
+        new[to] = NewRow::Rewritten {
+            from,
+            moved: true,
+            alone: !with_neighbour,
+        };
     }
     // Gone rows that linger, and lingering rows taken back.
     let old_caret = memory.caret.and_then(|row| row.checked_sub(memory.skipped));
@@ -1603,6 +1689,8 @@ fn remember(
         at_document_start: read.at_document_start,
         caret,
         shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
+        first_row: hash(&read.first_row),
+        no_history: read.alternate,
         lingering,
         known,
         unknown_above,
@@ -1820,7 +1908,9 @@ fn grew_from(line: &Line, kinds: &[NewRow], memory: &Screen, continued: bool) ->
     let old = &memory.rows;
     let (NewRow::Kept { from, moved: false }
     | NewRow::Grown { from }
-    | NewRow::Rewritten { from, moved: false }) = *kinds.get(line.rows.start)?
+    | NewRow::Rewritten {
+        from, moved: false, ..
+    }) = *kinds.get(line.rows.start)?
     else {
         return None;
     };
@@ -1904,12 +1994,19 @@ fn split_rows(text: &str, width: usize) -> Vec<Row> {
     for line in text.split("\r\n") {
         let pieces = row_pieces(line, width);
         let last = pieces.len() - 1;
-        let line_hash = hash(crate::trim_padding(line));
+        // Padding is the spaces after the line's last character ("Rows"):
+        // a wrapped row keeps the spaces where it wrapped, but not those
+        // after the line's last character.
+        let end = crate::trim_padding(line).len();
+        let line_hash = hash(&line[..end]);
+        let mut offset = 0;
         for (at, piece) in pieces.into_iter().enumerate() {
+            let start = offset;
+            offset += piece.len();
             let piece = if at == last {
                 crate::trim_padding(piece)
             } else {
-                piece
+                &piece[..piece.len().min(end.saturating_sub(start))]
             };
             rows.push(Row {
                 hash: hash(piece),

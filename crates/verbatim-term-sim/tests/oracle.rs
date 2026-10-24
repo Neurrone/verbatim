@@ -319,8 +319,20 @@ fn texts(rows: &[Seen]) -> Vec<String> {
     rows.iter()
         .enumerate()
         .map(|(row, seen)| {
+            // Padding is the spaces after the line's last character, so a
+            // row keeps the spaces at its end only when its line wraps onto
+            // a row with text.
             let trimmed = seen.text.trim_end();
-            if seen.wraps && row + 1 < rows.len() && !trimmed.is_empty() {
+            let mut next = row;
+            let mut more = false;
+            while rows[next].wraps && next + 1 < rows.len() {
+                next += 1;
+                if !rows[next].text.trim_end().is_empty() {
+                    more = true;
+                    break;
+                }
+            }
+            if more && !trimmed.is_empty() {
                 seen.text.clone()
             } else {
                 trimmed.to_owned()
@@ -1662,7 +1674,7 @@ fn lines_a_blank_screen_hid_are_reported_once_text_appears() {
             &hidden_by_a_blank_screen(),
             &mut under_a_blank_screen(says(vec![line(2, "cat")]))
         ),
-        [missed(2, 1, "hello")]
+        [missed(3, 1, "hello")]
     );
 }
 

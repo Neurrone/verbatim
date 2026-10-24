@@ -827,11 +827,12 @@ fn the_alternate_screen_speaks_what_it_shows_and_closing_it_speaks_nothing_kept(
 #[test]
 fn windows_terminals_clear_leaving_a_shortened_copy_of_the_line_before_says_the_prompt() {
     // Windows Terminal's clear erases the screen and the history and leaves
-    // the prompt, a shortened copy of the line the clear was typed on: no
-    // row of the last read is kept, so it is a new screen and the prompt is
-    // new ("Screens"; NVDA's capture in `*_typing`).
+    // the prompt, a shortened copy of the line the clear was typed on: the
+    // document shrank, so the read's start is refused, no row of the last
+    // read is kept, and a new screen pairs nothing, so the prompt is new
+    // ("Screens"; NVDA's capture in `*_typing`).
     let mut term = Term::of(Flavor::WindowsTerminal, 20, 3, 10, Settings::default());
-    term.write("ready> one\r\nout\r\nready> cls", 100);
+    term.write("a\r\nb\r\nready> one\r\nout\r\nready> cls", 100);
     assert_eq!(
         term.write("\x1b[H\x1b[2J\x1b[3Jready> ", 200),
         says(vec![line(0, "ready>")])
@@ -842,6 +843,24 @@ fn windows_terminals_clear_leaving_a_shortened_copy_of_the_line_before_says_the_
 
 /// A read of a screen of `lines`, `width` cells wide, with nothing above
 /// it, the caret on `caret` at `column`.
+/// A read's text set to `text`, as the screen and from the document's
+/// start, its caret on the last row.
+trait WithText {
+    fn with_text(self, text: &str) -> Self;
+}
+
+impl WithText for Read {
+    fn with_text(self, text: &str) -> Self {
+        Read {
+            text: text.to_owned(),
+            screen: text.to_owned(),
+            first_row: text.split("\r\n").next().unwrap_or_default().to_owned(),
+            caret_rows_to_end: 1,
+            ..self
+        }
+    }
+}
+
 fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms: u64) -> Read {
     let padded: Vec<String> = lines.iter().map(|line| format!("{line:width$}")).collect();
     let text = padded.join("\r\n");
@@ -871,6 +890,38 @@ fn a_resize_speaks_nothing_but_the_caret_line_when_it_changed() {
     let mut spoken = reader.read(&screen_read(&["abc", "$ y"], 30, 1, 3, 200), false, None);
     spoken.outcome = None;
     assert_eq!(spoken, says(vec![caret(1, Unit::Line, "$ y")]));
+}
+
+#[test]
+fn a_resize_keeps_the_review_cursors_character_within_its_line() {
+    // The review cursor on "m", on a wrapped line's second row: the line
+    // rewrapped onto one row keeps it on "m" ("Starting again").
+    let read = |rows: [&str; 3], width: usize, at_ms: u64| {
+        let lines: Vec<String> = rows
+            .iter()
+            .map(|line| {
+                let cells = line.len().div_ceil(width).max(1) * width;
+                format!("{line:cells$}")
+            })
+            .collect();
+        Read {
+            caret_line: lines[2].clone(),
+            ..screen_read(&["x"], width, 0, 3, at_ms)
+        }
+        .with_text(&lines.join("\r\n"))
+    };
+    let mut reader = TerminalReader::new(Settings::default());
+    reader.read(&read(["abcdefghijklmn", "zz", "$ x"], 10, 0), false, None);
+    reader.memory_mut().set_review(1, 2);
+    reader.read(&read(["abcdefghijklmn", "zz", "$ x"], 20, 100), false, None);
+    assert_eq!(
+        reader.memory().review(),
+        Some(Anchor {
+            row: 0,
+            column: 12,
+            line_hash: hash("abcdefghijklmn")
+        })
+    );
 }
 
 // "The focus": focus.

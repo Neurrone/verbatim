@@ -120,7 +120,8 @@ speak: the reading rules (`terminal_reading`, below) are built on its
 - `Outcome`: for each row of the read a `NewRow` (`New`; `Kept`, from
   which old row and whether it moved other than with the history;
   `Grown`, an old row whose text grew where it was, which counts as kept;
-  `Rewritten`, from which old row and whether it moved; `Returned`, a
+  `Rewritten`, from which old row, whether it moved, and whether it moved
+  alone, with no neighbour kept in the same move; `Returned`, a
   lingering row taken back, and whether elsewhere; or `Shown`, a row whose
   text was shown before but that carries no row of the last read: history
   above the last read, a row the remembered history held, or, returning to
@@ -196,17 +197,23 @@ bit-parallel longest common subsequence of their characters. The pairing
 keeps their order and makes as many pairs as it can, and then the most
 whose shift is that of the kept row below them, so Pi's status row drawn
 a row lower with its spinner changed pairs with its old self. A read with
-no kept row pairs nothing. Rows above the topmost kept row and the screen
+no kept row pairs its rows the same way, between the read's edges; only a
+new screen pairs nothing. Rows above the topmost kept row and the screen
 that the remembered history or the last read showed are `Shown`.
 
 An old row left over is gone, and lingers for 2 seconds when a program
 had rewritten it or it was at or below the caret. A new row with a
 lingering row's text is that row back (`Returned`), wherever it comes back.
 
-When the read keeps no row with text that the last read had at or above
-the caret, or the read's start was refused, and the read does not start
-at the document's start, the memory asks for the whole document and
-changes nothing until it comes. The whole document is aligned with the
+When the document shows that more went by than the read covers (it grew
+by more than the screen above, or its first row, a row of the history at
+the last read, changed) and the read keeps no row with text that the last
+read had at or above the caret, or when the read's start was refused, and
+the read does not start at the document's start, the memory asks for the
+whole document and changes nothing until it comes. A document that did not
+move holds the last read's screen inside the read, so a read keeping
+nothing there, as a prompt rewritten in place with nothing above it, is
+aligned like any other. The whole document is aligned with the
 last read's rows by the same longest common subsequence, and the rows
 above the topmost row kept with the remembered history by a histogram
 diff over the hashes (the rarest shared row first, the match extended
@@ -232,7 +239,9 @@ that is at least as long as the last read's is an overflow, and the
 memory starts again from the read, every row new; any other is a new
 screen of another shape, as Windows Terminal's clear leaving a prompt,
 and drops what is aside (`New`). Starting again finds each anchor by its
-line's hash nearest its old place, from the read's end; the review
+line's hash nearest its old place, from the read's end, at its character
+position within its line, so a resize keeps the review cursor on its
+character however the line rewraps; the review
 position not found goes to the caret, and a mark or a place not found is
 dropped.
 
@@ -384,7 +393,8 @@ changed outside a key's window, when it last grew, what it waits for, and
 whether a key changed it since it appeared. That history moves with the
 alignment as the memory's does: from the old line a kept, grown or
 rewritten first row started, or that the read's first row continues; a
-lingering line taken back brings its history with it. A line the read's
+row rewritten alone keeps what it last said but starts its change history
+afresh; a lingering line taken back brings its history with it. A line the read's
 first row continues keeps the part above the read in its text, and speech
 quotes only the part the read shows. The history kept aside with a screen
 is restored with it.

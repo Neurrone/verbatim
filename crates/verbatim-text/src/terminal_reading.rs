@@ -1009,6 +1009,19 @@ impl TerminalReader {
                     .map(|at| *self.lingering.remove(at).line),
                 _ => None,
             };
+            // A row rewritten alone, away from its neighbours, keeps what it
+            // last said and starts its change history afresh ("The
+            // alignment").
+            let base = match outcome.rows[first] {
+                NewRow::Rewritten { alone: true, .. } => base.map(|old| LineState {
+                    text: old.text,
+                    said: old.said,
+                    input: old.input,
+                    cut: old.cut,
+                    ..LineState::default()
+                }),
+                _ => base,
+            };
             // The text of the old line a row split off a line was in.
             let split = match outcome.rows[first] {
                 NewRow::Kept { from, .. } if base.is_none() => previous
@@ -1348,8 +1361,8 @@ impl TerminalReader {
         }
         items.sort_by_key(|(row, _)| *row);
         if resized && !outcome.first {
-            // Resizing speaks nothing but the caret's line if it changed,
-            // and finds the review position again by its line ("Starting again").
+            // Resizing speaks nothing but the caret's line if it changed;
+            // the memory finds the review position again ("Starting again").
             if let Some(caret) = &caret
                 && old_caret.as_ref().is_none_or(|old| old.text != caret.text)
                 && self.focused
@@ -1398,12 +1411,6 @@ impl TerminalReader {
             self.keys = None;
         }
         for (row, column) in reviews {
-            memory.set_review(row, column);
-        }
-        if resized
-            && !outcome.first
-            && let Some((row, column)) = refound_review(memory)
-        {
             memory.set_review(row, column);
         }
         // Of the read, only what "The memory" needs is kept.
@@ -1758,19 +1765,6 @@ impl TerminalReader {
             _ => None,
         }
     }
-}
-
-/// After a resize, the review position found again by its line's hash near
-/// its old place, counted from the read's end ("Starting again"), in `memory`
-/// before it is trimmed: its row and column.
-fn refound_review(memory: &TerminalMemory) -> Option<(usize, usize)> {
-    let review = memory.review()?;
-    let rows = memory.rows().kept();
-    rows.iter()
-        .enumerate()
-        .filter(|(at, row)| row.line_hash == review.line_hash && (*at == 0 || !rows[at - 1].wraps))
-        .min_by_key(|(at, _)| (isize::try_from(*at).unwrap_or(isize::MAX) - review.row).abs())
-        .map(|(at, _)| (at, review.column))
 }
 
 /// The start of the line holding row `from` of `previous`, counted from
