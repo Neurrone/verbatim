@@ -750,7 +750,9 @@ Public API:
     `refresh(request)` (`BuildUpdatedCache` into a shape),
     `find_first(scope, condition, request)`, `walk(walker, direction,
     request)` (one tree walker step, `Direction` naming the neighbour,
-    into a shape) and `normalize(walker, request)`.
+    into a shape), `step(walker, direction)` (the same step with no
+    cache, for a walk that compares runtime ids alone, so an element it
+    passes is asked for no property) and `normalize(walker, request)`.
   - `Fill<S>`, the token `verbatim-uia-rops` fills a remote program's
     caches with: `properties()` and `patterns()` for the program's cache
     requests, `request()` for its classic fallback, and `claim(element,

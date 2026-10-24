@@ -604,6 +604,39 @@ impl Live {
         Ok(Cached::filled(found, request.gates))
     }
 
+    /// The neighbour `direction` names in `walker`'s view, with no cache:
+    /// for a walk that compares the runtime ids of the elements it passes,
+    /// which UIA keeps with every element, and reads nothing else of them.
+    /// One cross-process call that asks for no property, so a step over an
+    /// element whose properties are costly to answer costs no more than any
+    /// other: a top-level window's title bar, for one, has UIA ask the
+    /// window's thread for its location (`WM_GETTITLEBARINFOEX`), which that
+    /// thread can take seconds to answer.
+    ///
+    /// # Errors
+    ///
+    /// The COM error, or, for no such neighbour, the error carrying no
+    /// failure code that `windows` reports for a null element.
+    pub fn step(
+        &self,
+        walker: &IUIAutomationTreeWalker,
+        direction: Direction,
+    ) -> windows::core::Result<Self> {
+        crate::calls::count(verbatim_model::CallKind::Uia);
+        let element = &self.element;
+        let found = match direction {
+            // SAFETY: the walker and the element are live COM objects.
+            Direction::Parent => unsafe { walker.GetParentElement(element) },
+            // SAFETY: as above.
+            Direction::NextSibling => unsafe { walker.GetNextSiblingElement(element) },
+            // SAFETY: as above.
+            Direction::PreviousSibling => unsafe { walker.GetPreviousSiblingElement(element) },
+            // SAFETY: as above.
+            Direction::FirstChild => unsafe { walker.GetFirstChildElement(element) },
+        }?;
+        Ok(Self::new(found))
+    }
+
     /// The element itself if `walker`'s condition matches it, else its
     /// nearest ancestor that matches, with its cache filled by `request`
     /// (`NormalizeElementBuildCache`): one cross-process call.

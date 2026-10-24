@@ -309,8 +309,15 @@ keyboard focus or nearest window again, having read both in its checks.
 The outpost makes no UIA call before it reports the focus; after the
 report it finds its own copy of the element, one `ElementFromHandle` and
 one remote operation or a classic walk, which the worker's count does not
-reach. The provider hits include the listener's read, the outpost's walk
-to its own element, and both moves of the focus-following subscriptions.
+reach. The classic walk compares each child it passes by its runtime id
+alone and fills only the element found, as the program does; when it
+filled every child it passed, a focus cost mockapp 75 to 164 provider
+calls more, and the fill of the window's title bar had UIA ask the
+window's thread for the title bar's location (`WM_GETTITLEBARINFOEX`),
+which Windows answers for one window at a time across the desktop
+(2026-10-24). The provider hits include the listener's read, the
+outpost's walk to its own element, and both moves of the focus-following
+subscriptions.
 The `WM_GETOBJECT` count, 10 in the steady state, comes from the
 outpost's `ElementFromHandle` and the listener's and the outpost's
 separate clients each connecting; this is recorded as a follow-up for
@@ -399,7 +406,7 @@ verdict for the focus's window rather than asking the window again.
   same design).
 - Today: 5 UIA calls, all the listener's, whichever way the outpost walks
   to its own copy of the element. 303 provider calls in all with the
-  outpost's remote walk, 416 with its classic walk, the subscriptions'
+  outpost's remote walk, 297 with its classic walk, the subscriptions'
   moves included; one of them is the `GetPropertyValue` that the
   provider description cached with the outpost's lookup of the route's
   window costs, for the proxy rule (`docs/design/listener-without-connections.md`,
@@ -562,7 +569,7 @@ focus waits behind the events queued before it as NVDA's does.
   sender's nearest window, its plain keyboard focus read, its refreshed
   cache, and three steps, to the group, to the window, and to the
   desktop's root, where the walk stops; and the raw probe. 346 provider
-  calls in all with the outpost's remote walk, 412 with its classic walk.
+  calls in all with the outpost's remote walk, 337 with its classic walk.
   The raw probe costs mockapp one `WM_GETOBJECT`, with wParam 0, where
   `UiaHasServerSideProvider` cost it two, first with a nonzero wParam and
   then with wParam 0, and seven more provider calls as UIA connected (five
@@ -621,7 +628,7 @@ The focus lands on the list itself, and its selected item is read with it.
   `FirstSelectedItem`, fetched with the `Selection` pattern, and
   `BuildUpdatedCache` on it).
 - Today: 7 UIA calls, all the listener's. 339 provider calls in all with
-  the outpost's remote walk, 409 with its classic walk. The listener's
+  the outpost's remote walk, 334 with its classic walk. The listener's
   one remote operation made 4 calls, 343 provider calls.
 - Target: the minimum.
 
@@ -669,7 +676,7 @@ The focus moves from one list item to the next.
   windowless element.
 - Today: 5 UIA calls, the same as a steady-state focus change; the walk
   stops at the list, which the previous chain holds. 318 provider calls
-  in all with the outpost's remote walk, 479 with its classic walk. The
+  in all with the outpost's remote walk, 315 with its classic walk. The
   listener's one remote operation made 4 calls, 346 provider calls.
 - Target: the minimum.
 

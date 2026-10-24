@@ -827,9 +827,16 @@ are looked at in order until one has the path's next runtime id, and the
 walk goes down to it; a level with no such child answers that nothing was
 found. The program does the whole path in one round trip and fills the
 found element's cache inside the provider; the classic walk takes one
-call per child it looks at (`GetFirstChildElementBuildCache`, then
-`GetNextSiblingElementBuildCache`) and makes the query's out-of-time check
-(`out_of_time`) between calls. The outpost uses it, since stage A step 6 of phase 6, to find its
+call per child it looks at (`GetFirstChildElement`, then
+`GetNextSiblingElement`, through `verbatim_uia::Live::step`) and one more
+that fills the element found (`BuildUpdatedCache`), and makes the query's
+out-of-time check (`out_of_time`) between calls. Both compare a child by
+its runtime id alone and fill no other element's cache: filling every
+child passed would read each of its properties, and a top-level window's
+first child is its title bar, whose location UIA asks of the window's
+thread (`WM_GETTITLEBARINFOEX`). Windows answers that request for one
+window at a time across the desktop, so on a busy machine it held
+mockapp's window thread for seconds. The outpost uses it, since stage A step 6 of phase 6, to find its
 own copy of an element the focus listener read
 (`docs/design/focus-pipeline.md`, section 12.5): the focus, from the
 nearest element of its chain with a window of its own, after the focus is

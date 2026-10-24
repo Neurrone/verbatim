@@ -137,8 +137,13 @@ pub fn element_by_path_remote(
 /// The element at the end of a path the classic way, the fallback and the
 /// reference: for each runtime id of the path, the current element's first
 /// raw-view child and then its next siblings, each one call
-/// (`GetFirstChildElementBuildCache` and `GetNextSiblingElementBuildCache`),
-/// until one has it. Stops with nothing found at a level with no such
+/// (`GetFirstChildElement` and `GetNextSiblingElement`, [`Live::step`]),
+/// until one has it, and then one call that fills the element found
+/// (`BuildUpdatedCache`). As in the program, a child is compared by its
+/// runtime id alone and no other element's cache is filled: filling each
+/// child's would read every property of every element passed over, a
+/// top-level window's title bar among them, whose location UIA asks of the
+/// window's thread. Stops with nothing found at a level with no such
 /// child, and when the query's time is up, checked between calls.
 ///
 /// # Errors
@@ -154,14 +159,14 @@ pub fn element_by_path_classic(
     let out_of_time = || query.out_of_time.is_some_and(|out_of_time| out_of_time());
     // A step that reaches no element comes back as an error with no
     // failure code (`WalkerExt`).
-    let step = |found: windows::core::Result<Cached<Node>>| match found {
+    let step = |found: windows::core::Result<Live>| match found {
         Ok(element) => Ok(Some(element)),
         Err(error) if error.code().is_ok() => Ok(None),
         Err(error) => Err(Error::Uia(error)),
     };
-    let mut current = query.root.refresh(request)?;
+    let mut current = query.root.clone();
     for runtime_id in query.path {
-        let mut child = step(current.live().walk(&walker, Direction::FirstChild, request))?;
+        let mut child = step(current.step(&walker, Direction::FirstChild))?;
         loop {
             if out_of_time() {
                 return Ok(None);
@@ -173,12 +178,8 @@ pub fn element_by_path_classic(
                 current = element;
                 break;
             }
-            child = step(
-                element
-                    .live()
-                    .walk(&walker, Direction::NextSibling, request),
-            )?;
+            child = step(element.step(&walker, Direction::NextSibling))?;
         }
     }
-    Ok(Some(current))
+    Ok(Some(current.refresh(request)?))
 }

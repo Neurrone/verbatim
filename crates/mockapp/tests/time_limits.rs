@@ -32,7 +32,11 @@ use verbatim_uia::{
     BoundedClient, CONNECTION_TIMEOUT, ElementExt as _, Node, NodeIdRegistry, Part, PropertyEvent,
     Registration, Scope, Shape, Subscription, TRANSACTION_TIMEOUT, Uia, Unanswered,
 };
-use windows::Win32::UI::Accessibility::{UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId};
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{
+    TreeScope_Children, UIA_AutomationPropertyChangedEventId, UIA_NamePropertyId,
+};
+use windows::core::BSTR;
 
 /// How long a search may take in the test: well under UIA's transaction timeout,
 /// so the search's end is its deadline's, not UIA's.
@@ -266,28 +270,25 @@ fn a_tree_walk_held_at_a_child_step_fails_with_the_timeout() {
         .request::<Node>(Node::all_on())
         .expect("a cache request");
     let registry = NodeIdRegistry::new(Arc::new(AtomicU64::new(1)));
-    // The list, a child of the window, found by a walk before the hold, so
-    // the held call is the held walk's first step.
-    let window = uia
-        .window_element(hwnd, &nodes)
-        .expect("mockapp's window element");
-    let (tree, _) = uia
-        .tree(&window, &nodes, &registry, 8, 64)
-        .expect("mockapp's tree");
-    let list = tree
-        .children
-        .iter()
-        .find(|child| child.snapshot.name.as_deref() == Some("Options"))
+    // The list, a child of the window, found and walked before the hold, so
+    // the held call is the held walk's first step. It is found by a search
+    // of the window's children, not by a walk of the window's tree, which
+    // would read the window's title bar: UIA asks the window's thread for
+    // the title bar's location (`WM_GETTITLEBARINFOEX`), and Windows answers
+    // that request for one window at a time across the desktop, so on a
+    // busy machine the read can outlast the transaction timeout.
+    let window = uia.window_live(hwnd).expect("mockapp's window element");
+    let condition = uia
+        .property_condition(UIA_NamePropertyId, &VARIANT::from(BSTR::from("Options")))
+        .expect("a condition");
+    let list = window
+        .find_first(TreeScope_Children, &condition, &nodes)
+        .expect("the search")
         .expect("the window's list");
-    assert_eq!(list.children.len(), 2, "the list's two items, unheld");
-    let list = registry
-        .element_of(list.snapshot.id)
-        .expect("the list's element")
-        .resolve()
-        .expect("the list's element, resolved")
-        .live()
-        .refresh(&nodes)
-        .expect("the list, read as a node");
+    let (unheld, _) = uia
+        .tree(&list, &nodes, &registry, 8, 64)
+        .expect("the list's tree");
+    assert_eq!(unheld.children.len(), 2, "the list's two items, unheld");
 
     app.hold();
     let walked = uia.tree(&list, &nodes, &registry, 8, 64);
