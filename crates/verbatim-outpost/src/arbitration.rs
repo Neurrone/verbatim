@@ -25,8 +25,12 @@
 //! handle does not inherit a verdict when its destroy event was lost. A probe
 //! that finds none is trusted for only [`NEGATIVE_VERDICT_LIFETIME`], NVDA's
 //! cache period, and then probed again. The probe asks once, as NVDA does,
-//! so a window too busy to answer the probe in time is read through MSAA
-//! until that verdict runs out ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]).
+//! so a window too busy to answer the probe in time
+//! ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]) is read through MSAA by the
+//! call that probed it, but that "no" is not kept, and the next call
+//! probes again: NVDA times its cached verdict from before the probe, so a
+//! "no" that took the probe's whole wait is already out of date when it is
+//! stored.
 //!
 //! The renewal is by time because nothing else can drive it: an
 //! application that starts answering the probe raises no event, as a
@@ -416,11 +420,12 @@ pub(crate) fn uses_uia_keeping(
         return (verdict, false);
     }
     let started = std::time::Instant::now();
-    let is_uia = verbatim_uia::raw_probe(hwnd).has_provider();
+    let probed = verbatim_uia::raw_probe(hwnd);
+    let is_uia = probed.has_provider();
     tracing::debug!(
         hwnd,
         class = classes.raw,
-        is_uia,
+        ?probed,
         elapsed_ms = started.elapsed().as_millis(),
         "arbitration probed"
     );
@@ -441,8 +446,21 @@ pub(crate) fn uses_uia_keeping(
             None => (false, false),
         };
     }
-    lock(arbitrator).record_probe(hwnd, is_uia);
+    if let Some(kept) = kept_probe(probed) {
+        lock(arbitrator).record_probe(hwnd, kept);
+    }
     (is_uia, is_uia)
+}
+
+/// The verdict a probe's outcome leaves to keep: whether the window has a
+/// provider, or `None` for a window that did not answer in time, which is
+/// asked again next time rather than kept, as NVDA's verdict, timed from
+/// before its probe, is out of date by the time a probe that took the
+/// whole wait returns. A starting console kept so was read through MSAA at
+/// the next foreground change, after the worker renewed the verdict for
+/// its slow entry ([`Arbitrator::renew_probes_since`]).
+fn kept_probe(probed: verbatim_uia::RawProbe) -> Option<bool> {
+    (probed != verbatim_uia::RawProbe::TimedOut).then_some(probed.has_provider())
 }
 
 /// What an outpost's event thread knows of each window it takes in
@@ -769,6 +787,14 @@ mod tests {
             None,
             "a probe from before the entry is not renewed"
         );
+    }
+
+    #[test]
+    fn a_probe_that_timed_out_leaves_no_verdict() {
+        use verbatim_uia::RawProbe;
+        assert_eq!(kept_probe(RawProbe::TimedOut), None);
+        assert_eq!(kept_probe(RawProbe::Answered(0)), Some(false));
+        assert_eq!(kept_probe(RawProbe::Provider), Some(true));
     }
 
     #[test]

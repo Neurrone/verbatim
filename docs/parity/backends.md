@@ -22,8 +22,10 @@ kept for the window's lifetime, one that finds none for 500 ms, NVDA's
 cache period; no window's answer was seen to change from a provider to
 none during its life, across about 65 windows of Explorer, Settings,
 Start, and the desktop. The window is asked once, and a "no" given because
-the window did not answer the probe within its 3 seconds is kept like any
-other, as NVDA keeps the "no" it is given (`docs/design/focus-pipeline.md`, section 8).
+the window did not answer the probe within its 3 seconds is the answer for
+the call that probed it but is not kept, so the next call probes again:
+NVDA times its cached verdict from before the probe, so a "no" that took
+the whole wait is out of date when stored (`docs/design/focus-pipeline.md`, section 8).
 
 Different: the focus listener and the outposts ask the same question
 with one raw `WM_GETOBJECT` for `UiaRootObjectId`, counting only the

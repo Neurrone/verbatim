@@ -46,7 +46,8 @@ pub enum RawProbe {
 
 impl RawProbe {
     /// Whether the window has a server-side UIA provider. Every outcome but
-    /// [`RawProbe::Provider`] is a "no", kept as any "no" is.
+    /// [`RawProbe::Provider`] is a "no"; the arbitrator keeps none for
+    /// [`RawProbe::TimedOut`].
     #[must_use]
     pub fn has_provider(self) -> bool {
         self == Self::Provider
@@ -81,7 +82,7 @@ pub fn raw_probe_verdict(sent: bool, answer: isize, last_error: u32) -> RawProbe
 /// and the focus listener on the windows of the focuses it reads. The
 /// window is asked once and its answer is the answer, as NVDA asks
 /// (`docs/parity/backends.md`); a window too busy to answer in time is a
-/// "no", kept as any "no" is.
+/// "no" for this call, which the arbitrator does not keep.
 /// `UiaHasServerSideProvider`, which NVDA calls, sends two `WM_GETOBJECT`s, first with a
 /// nonzero wParam and then with wParam 0, and then connects (experiment
 /// `e39`; `docs/design/listener-without-connections.md`, the raw probe

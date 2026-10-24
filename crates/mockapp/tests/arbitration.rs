@@ -43,11 +43,10 @@ fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
     app.quit();
 }
 
-fn a_busy_uia_window_is_asked_once_and_its_no_kept() {
+fn a_busy_uia_window_is_asked_once_and_its_no_taken() {
     let title = common::unique_title("mockapp-arb-busy");
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title).0 as isize;
-    let classes = WindowClasses::of(hwnd);
 
     // Blocked past the point where the raw probe gives up
     // (`RAW_PROBE_TIMEOUT_MS`) and reports no provider: that "no" is the
@@ -64,7 +63,6 @@ fn a_busy_uia_window_is_asked_once_and_its_no_kept() {
         RawProbe::TimedOut,
         "a window too busy to answer has no provider, for now"
     );
-    let has = probed.has_provider();
     assert_eq!(
         calls,
         CallCounts {
@@ -78,13 +76,6 @@ fn a_busy_uia_window_is_asked_once_and_its_no_kept() {
     assert!(
         returned_at < stall_ended_at,
         "the answer came while the window was busy, {returned_at} after {stall_ended_at}"
-    );
-    let mut arbitrator = Arbitrator::new(&[]);
-    arbitrator.record_probe(hwnd, has);
-    assert_eq!(
-        arbitrator.verdict(hwnd, &classes),
-        Some(false),
-        "the slow no is kept, as any no is, for its lifetime"
     );
 
     app.quit();
@@ -162,8 +153,8 @@ fn main() {
             uia_backend_has_a_server_side_provider_and_arbitrates_to_uia,
         ),
         (
-            "a_busy_uia_window_is_asked_once_and_its_no_kept",
-            a_busy_uia_window_is_asked_once_and_its_no_kept,
+            "a_busy_uia_window_is_asked_once_and_its_no_taken",
+            a_busy_uia_window_is_asked_once_and_its_no_taken,
         ),
         (
             "a_busy_uia_window_is_read_once_it_answers",

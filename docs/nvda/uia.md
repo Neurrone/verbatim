@@ -159,8 +159,10 @@ treats a window through UIA or leaves it to MSAA/IA2:
 The verdict is cached for 500 ms. `UiaHasServerSideProvider` reports no
 provider when the window does not answer in time (three seconds for
 Windows 11 Notepad's text control while Notepad was starting, measured
-on 2026-10-03). From the source, NVDA takes a no as the answer for 0.5 s,
-so it would read the focus through MSAA ("edit") until it moves; the
+on 2026-10-03). From the source, NVDA takes that no as the answer for
+the call that asked, and, as the cache entry is timed from before the
+call, asks again at the next, so it would read the focus through MSAA
+("edit") until it moves; the
 spoken "edit" was inferred from the source and never captured, because
 the NVDA captures of 2026-10-16 (60 Notepad and 60 Windows Terminal
 openings) never produced a slow probe. NVDA leaves UIA's own provider
