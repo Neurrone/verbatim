@@ -547,6 +547,12 @@ pub struct TerminalMemory {
     /// The main screen's memory, kept aside while the alternate screen is
     /// up.
     aside: Option<Screen>,
+    /// Whether the memory kept aside was kept by a read that replaced every
+    /// row with text while the main screen had no history, rather than by
+    /// the document's shape (section 5.8): it is restored by a read whose
+    /// rows match it where they were, counted from the document's start,
+    /// whatever the document's shape.
+    aside_replaced: bool,
     /// What was asked for, until it is read.
     pending: Option<Pending>,
     /// The number the next place gets ([`TerminalMemory::add_place`]).
@@ -807,13 +813,21 @@ impl TerminalMemory {
             self.screen = Some(screen);
             return outcome;
         };
-        let opened = read.alternate && !self.alternate;
         let asked = Asked {
             whole,
             checked,
             settling,
         };
         let own = align(&current, &rows, read, (width, height), caret, asked);
+        // With no history on the main screen no read shows a switch by the
+        // document's shape, so a read that replaces every row with text is
+        // taken as one, unless a memory is already kept aside, as when a
+        // full-screen program draws a new page (section 5.8).
+        let replaced = self.aside.is_none()
+            && self.alternate
+            && read.alternate
+            && matches!(&own, Aligned::Done(classified) if classified.replaced);
+        let opened = read.alternate && !self.alternate || replaced;
         // A memory kept aside is not restored when the read shows, where
         // they were, rows read since the switch: the screen never changed,
         // as when the history was erased (section 5.8).
@@ -829,23 +843,41 @@ impl TerminalMemory {
         let restored = self
             .aside
             .as_ref()
-            .filter(|_| !read.alternate && !shows_read_since)
-            .map(|aside| {
-                // The read started where the alternate screen's memory said,
-                // so where the kept memory's rows would be is not known.
+            .filter(|_| (!read.alternate || self.aside_replaced) && !shows_read_since)
+            .and_then(|aside| {
+                // A memory kept aside by a read that replaced every row was
+                // read from the document's start, with no history, so its
+                // rows match only where they were, counted from that start:
+                // the same text elsewhere is other output.
+                let anchored = self.aside_replaced.then_some(aside.skipped);
+                if anchored.is_some() && !(read.at_document_start && aside.at_document_start) {
+                    return None;
+                }
+                // Otherwise the read started where the alternate screen's
+                // memory said, so where the kept memory's rows would be is
+                // not known.
                 let unanchored = Read {
                     from_start: false,
                     ..read.clone()
                 };
                 let how = How {
-                    base: None,
-                    rotation: None,
+                    base: anchored.map(isize_of),
+                    rotation: anchored.map(|_| 0),
                     whole,
                     restoring: true,
                 };
-                classify(aside, &rows, &unanchored, height, caret, how)
-            })
-            .filter(|attempt| attempt.restores);
+                let attempt = classify(aside, &rows, &unanchored, height, caret, how);
+                let in_place = attempt.new.iter().all(|kind| match kind {
+                    NewRow::Kept { from, moved } => {
+                        !moved
+                            || aside
+                                .index(*from)
+                                .is_none_or(|index| index < aside.screen_start())
+                    }
+                    _ => true,
+                });
+                (attempt.restores && (anchored.is_none() || in_place)).then_some(attempt)
+            });
         let switch = if restored.is_some() {
             Switch::Closed
         } else if opened {
@@ -910,6 +942,7 @@ impl TerminalMemory {
         // the alternate screen's rewritten.
         let unrestored = switch == Switch::None && !read.alternate && self.aside.is_some();
         let mut reference = if switch == Switch::Closed {
+            self.aside_replaced = false;
             self.aside.take().unwrap_or(current)
         } else {
             if !read.alternate {
@@ -1030,6 +1063,7 @@ impl TerminalMemory {
             // on the new screen the review position is at the caret, and
             // every row not kept from before the switch was read since it.
             self.aside = Some(reference);
+            self.aside_replaced = replaced;
             next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
             next.marks.clear();
             next.places.clear();
@@ -1624,6 +1658,10 @@ struct Classified {
     /// Whether every row with text of the old screen was kept, so a memory
     /// kept aside matches the read.
     restores: bool,
+    /// Whether the old screen had text and the read has text, and no row
+    /// with text of the old screen was kept or rewritten: every one was
+    /// replaced by rows unlike it.
+    replaced: bool,
     overflowed: bool,
     /// Whether the rotation was measured from the topmost kept row and
     /// that row is trustworthy: it moved up, and its text is on no other
@@ -1962,6 +2000,11 @@ fn classify(
         .iter()
         .enumerate()
         .all(|(at, row)| row.is_blank() || matches!(fates[start + at], OldRow::Kept(_)));
+    let replaced = old_had_text
+        && Screen::has_text(rows)
+        && old_screen.iter().enumerate().all(|(at, row)| {
+            row.is_blank() || !matches!(fates[start + at], OldRow::Kept(_) | OldRow::Rewritten(_))
+        });
     // Rows with text that no old row became, above the topmost kept row
     // (every row, when none was kept): history the memory never covered,
     // or rows the known history held, which a whole-document read finds
@@ -2122,6 +2165,7 @@ fn classify(
         old_had_text,
         kept_text,
         restores,
+        replaced,
         overflowed,
         trusted,
     }

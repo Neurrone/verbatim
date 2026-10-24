@@ -511,6 +511,26 @@ fn a_history_erase_is_not_restored_when_rows_read_since_are_shown() {
 }
 
 #[test]
+fn a_read_replacing_every_row_with_no_history_is_a_switch_restored_when_it_matches() {
+    // `conhost_pager`'s shape: with no history on the main screen no read
+    // shows the switch by its shape, so the read that replaced every row
+    // keeps the memory aside (section 5.8); a page drawn over every row of
+    // the alternate screen keeps it there, and the main screen back with its
+    // rows restores it, so only what follows is new.
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write("PS>pager\r\n");
+    let opened = watch.write("\x1b[?1049h\x1b[H\x1b[2Jp1\r\np2\r\n:");
+    assert_eq!(opened.switch, Switch::Opened);
+    assert_eq!(opened.rows, [NEW, NEW, NEW]);
+    let paged = watch.write("\x1b[H\x1b[2Jq1\r\nq2\r\n(END)");
+    assert_eq!(paged.switch, Switch::None);
+    let closed = watch.write("\x1b[?1049lclosed\r\nPS>");
+    assert_eq!(closed.switch, Switch::Closed);
+    assert_eq!(watch.texts(), ["PS>pager", "closed", "PS>"]);
+    assert_eq!(closed.rows, [kept(0), NEW, NEW]);
+}
+
+#[test]
 fn a_scroll_on_the_alternate_screen_is_no_rotation() {
     // The alternate screen has no history (section 5.8), so a scroll
     // rotates nothing: the rows it moved up are kept, moved, and the row

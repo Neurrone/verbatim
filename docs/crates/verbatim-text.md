@@ -302,6 +302,17 @@ program erased the history, and restoring would speak those rows again.
 Otherwise it is dropped, and the rows of the alternate screen's memory are
 not taken as rewritten into the main screen's rows.
 
+With no history on the main screen no read shows a switch by the
+document's shape, so a read after one with no history, itself with none,
+that has text and in which no row with text of the old screen is kept or
+rewritten, every one replaced by rows unlike it, is taken as a switch too,
+unless a memory is already kept aside (a full-screen program drawing a new
+page keeps it there). That memory was read from the document's start, so it
+is restored only by a read from the document's start that keeps every row
+with text of its old screen in place, counted from that start, whether or
+not the document has a history by then, under the same exception for rows
+read since the switch; it is dropped as the other is.
+
 Anchors move with the alignment: a kept or rewritten row carries its
 anchor to its new place, the column clamped to the text, and so does a
 blank row written over in place, which the alignment, pairing no blank
