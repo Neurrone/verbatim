@@ -1424,7 +1424,8 @@ focus or the foreground to windows that only stage the switch
   switcher already closed (`watch2.txt`, run 2, switch 5). Ordering
   focuses by when they happened does not drop it: the focus listener
   received the switcher's UI Automation focus 9 ms after the console's,
-  and an independent observer of the same check, run again, saw Windows
+  and an independent observer of the same check, run again
+  (`target/e2e-evidence/focus-order-2026-10-24/`), saw Windows
   raise the switcher's own foreground and focus events after the
   console's (the next section).
 - Target: the minimum.
@@ -1448,17 +1449,20 @@ the milliseconds and, for a focus, the microseconds of one clock read.
   timer, message or wake-up is added. Measured on 2026-10-24 with three
   traces each of `conhost_two_windows` (`cargo xtask trace scenario
   conhost_two_windows --after 4 --seconds 8`, debug builds, info
-  logging), the build before against the build after: all of Verbatim's
+  logging; `target/e2e-evidence/focus-order-2026-10-24/traces/`), the
+  build before against the build after: all of Verbatim's
   processes were woken 2,658, 3,444 and 2,709 times for 471, 550 and
   508 ms on a processor before, and 2,890, 3,014 and 3,165 times for 546,
   539 and 542 ms after, within the runs' spread; the reducer 29, 41 and
   37 times before, 20, 40 and 35 after.
-- What it changes: in the Alt+Tab check of 2026-10-24 (the scratchpad
-  observer run, switch 3) the listener read the switcher's pane and then
+- What it changes: in the Alt+Tab check of 2026-10-24, run with an
+  independent observer of `WinEvent` and UI Automation focus events
+  (`target/e2e-evidence/focus-order-2026-10-24/before-observed/`, switch
+  3), the listener read the switcher's pane and then
   the console's terminal in one millisecond, the switcher's reached Core
   second, and it was announced over the console; ordered by microseconds
-  it is dropped. In the same check after the change, with Alt held
-  (switch 4), Windows raised the switcher's foreground event 11 ms and
+  it is dropped. In the same check after the change
+  (`after-observed/`), with Alt held (switch 4), Windows raised the switcher's foreground event 11 ms and
   its focus event 15 ms after the console's, the listener received the
   switcher's UI Automation focus after the console's, and the switcher
   was still announced over the console: that focus did happen later, so
