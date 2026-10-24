@@ -551,10 +551,13 @@ failed). A caret key's watch that ends with no evidence is answered
   milliseconds on the clock outposts stamp events with; say-all stops, and
   terminal output read before then is not spoken.
 - `Input::UtteranceCancelled { marks, at_ms }`: an utterance the reducer
-  placed marks in ended before playback reached them all, however it was
-  cut or if it failed, with every mark it carried, as the speech
-  pipeline's `marks_cancelled` reports it; say-all waiting on one stops,
-  and terminal output waiting on one is dropped as at any cut.
+  placed marks in was cut off before playback reached them all, however
+  it was cut, with every mark it carried, as the speech pipeline's
+  `marks_cancelled` reports it; say-all waiting on one stops, and terminal
+  output waiting on one is dropped as at any cut.
+- `Input::UtteranceFailed { marks }`: such an utterance failed instead, as
+  `marks_failed` reports it; it counts as heard, so say-all and terminal
+  output carry on past it.
 - `Input::Settings(ReaderSettings)`: the reader settings, at startup and
   whenever they change.
 - `Input::Fetches(Fetches)`: the details the active theme wants fetched

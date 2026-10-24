@@ -144,6 +144,15 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             effects.extend(say_all::utterance_cancelled(state, marks));
             effects
         }
+        // A failed utterance counts as heard: its marks are taken as
+        // reached, though say-all moves no cursor to what was not heard.
+        Input::UtteranceFailed { marks } => {
+            let mut effects = say_all::utterance_failed(state, marks);
+            for mark in marks {
+                effects.extend(terminal::mark_reached(state, *mark));
+            }
+            effects
+        }
         // What the shell's threads learn; `Tick` is reserved vocabulary with
         // no policy yet, which `shell::reduce` leaves alone, as it does any
         // other input.

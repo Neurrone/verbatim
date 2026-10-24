@@ -389,6 +389,24 @@ fn pieces(
 /// before that key's watch starts, and the outpost, having moved the
 /// caret, judges the key from Core's caret.
 pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect> {
+    passed(state, mark, true)
+}
+
+/// An utterance failed before playback reached `marks`: it counts as
+/// heard, so say-all goes on past its last mark as if playback had reached
+/// it, handing on and reading on, but moves neither the caret nor the
+/// review cursor, since none of it was heard.
+pub(crate) fn utterance_failed(state: &mut SrState, marks: &[SpeechMark]) -> Vec<Effect> {
+    match marks.iter().max() {
+        Some(&last) => passed(state, last, false),
+        None => Vec::new(),
+    }
+}
+
+/// Playback has gone past `mark`: the marks up to it are taken off, the
+/// cursor moved to the start of the last unit among them when `moves`,
+/// and the next utterance handed on.
+fn passed(state: &mut SrState, mark: SpeechMark, moves: bool) -> Vec<Effect> {
     let Some(say_all) = state.say_all.as_mut() else {
         return Vec::new();
     };
@@ -408,7 +426,7 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
     let node = say_all.node;
     let moves_caret = say_all.moves_caret;
     let mut effects = Vec::new();
-    if let Some(unit) = reached {
+    if let Some(unit) = reached.filter(|_| moves) {
         let position = unit.position();
         if moves_caret {
             let query_id = state.allocate_query_id();

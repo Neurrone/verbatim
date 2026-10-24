@@ -2687,6 +2687,61 @@ fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
     assert_eq!(reduce(&mut state, &reached(pieces[1].0)), vec![]);
 }
 
+/// An utterance the synthesizer failed on counts as heard: say-all carries
+/// on past it, as NVDA's speech manager does when a later index arrives,
+/// leaving the caret where the last heard unit put it, and moves it again
+/// when playback reaches the next utterance.
+#[test]
+fn say_all_carries_on_past_an_utterance_that_failed() {
+    let mut state = editing(
+        "x
+", 0,
+    );
+    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::Chunks {
+                moved: 0,
+                chunks: vec![
+                    line(
+                        "One.
+", 100, 0,
+                    ),
+                    line(
+                        "Two.
+", 101, 0,
+                    ),
+                    line(
+                        "Three.
+", 102, 0,
+                    ),
+                ],
+            },
+        ),
+    );
+    let pieces = say_all_pieces(&effects);
+    assert_eq!(pieces.len(), 2, "{pieces:?}");
+    // The first fails: nothing moves, and the third is handed on.
+    let effects = reduce(
+        &mut state,
+        &Input::UtteranceFailed {
+            marks: vec![pieces[0].0],
+        },
+    );
+    let third = say_all_pieces(&effects);
+    assert_eq!(third.len(), 1, "{effects:?}");
+    assert_eq!(third[0].1, "Three.");
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    // Playback reaches the second: the caret moves there.
+    let effects = reduce(&mut state, &reached(pieces[1].0));
+    assert_eq!(
+        request(&effects).op,
+        TextOp::MoveCaret(TextPoint::At(TextPosition::at(TextAnchor(101))))
+    );
+}
+
 #[test]
 fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
     // From `notepad_say_all`: Notepad last reported the caret on the first

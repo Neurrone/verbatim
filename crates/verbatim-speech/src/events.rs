@@ -76,16 +76,33 @@ pub trait SpeechEvents: Send + Sync {
         let _ = (paused, at);
     }
 
-    /// An utterance carrying index marks ended before playback reached all
-    /// of them: it was cancelled, by any cancel, an interrupting
-    /// utterance, a synthesizer switch, the focus moving on or a later key
-    /// press's fence, or it failed. `marks` are all the marks it carried,
-    /// in order; those playback had reached were reported by
+    /// An utterance carrying index marks was cut off before playback
+    /// reached all of them: by any cancel, an interrupting utterance, a
+    /// synthesizer switch, the focus moving on or a later key press's
+    /// fence. `marks` are all the marks it carried, in order; those
+    /// playback had reached were reported by
     /// [`mark_reached`](Self::mark_reached) before. Called once per such
-    /// utterance, on the queue thread, after its
-    /// [`utterance_ended`](Self::utterance_ended); never for one that
-    /// completed, nor for one with no marks.
+    /// utterance, on the queue thread: after its
+    /// [`utterance_ended`](Self::utterance_ended) for one cut before it was
+    /// handed to the synthesizer, and in no fixed order with it for one the
+    /// mixer ended, whose ending the mixer's thread reports. Never for one
+    /// that completed or failed, nor for one with no marks.
     fn marks_cancelled(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        marks: &[IndexMark],
+        at: Instant,
+    ) {
+        let _ = (utterance, trace_id, marks, at);
+    }
+
+    /// An utterance carrying index marks failed in synthesis or audio
+    /// output before playback reached all of them, reported as
+    /// [`marks_cancelled`](Self::marks_cancelled) reports a cut one, on the
+    /// same thread and terms. A failed utterance counts as heard, so
+    /// whatever waited on its marks carries on past it.
+    fn marks_failed(
         &self,
         utterance: UtteranceId,
         trace_id: TraceId,

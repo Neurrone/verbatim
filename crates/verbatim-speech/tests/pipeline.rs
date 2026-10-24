@@ -42,9 +42,14 @@ struct Recorder {
     paused: Condvar,
     /// Where the control synth hears how far playback has got.
     progress: Option<Sender<Progress>>,
-    /// Where each utterance cut off with its marks is reported.
-    cut: Option<Sender<(UtteranceId, Vec<IndexMark>)>>,
+    /// Where each utterance with marks cut off, or failed, is reported
+    /// with its marks and whether it failed.
+    cut: Option<Sender<Unheard>>,
 }
+
+/// An utterance with marks that ended unheard: its id, its marks, and
+/// whether it failed (rather than being cut off).
+type Unheard = (UtteranceId, Vec<IndexMark>, bool);
 
 /// How far playback has got, as the control synth paces itself by it.
 enum Progress {
@@ -73,7 +78,13 @@ impl SpeechEvents for Recorder {
 
     fn marks_cancelled(&self, utterance: UtteranceId, _: TraceId, marks: &[IndexMark], _: Instant) {
         if let Some(cut) = &self.cut {
-            let _ = cut.send((utterance, marks.to_vec()));
+            let _ = cut.send((utterance, marks.to_vec(), false));
+        }
+    }
+
+    fn marks_failed(&self, utterance: UtteranceId, _: TraceId, marks: &[IndexMark], _: Instant) {
+        if let Some(cut) = &self.cut {
+            let _ = cut.send((utterance, marks.to_vec(), true));
         }
     }
 
@@ -301,7 +312,7 @@ fn control_manager() -> ControlHarness {
 
 /// [`control_manager`], reporting each utterance cut off with its marks to
 /// `cut`.
-fn control_manager_reporting(cut: Option<Sender<(UtteranceId, Vec<IndexMark>)>>) -> ControlHarness {
+fn control_manager_reporting(cut: Option<Sender<Unheard>>) -> ControlHarness {
     let (started_tx, started_rx) = unbounded::<String>();
     let (finish_tx, finish_rx) = unbounded::<()>();
     let (returned_tx, returned_rx) = unbounded::<String>();
@@ -501,12 +512,12 @@ fn utterances_with_marks_cut_off_are_reported_with_their_marks() {
             .recv_timeout(STEP_TIMEOUT)
             .expect("a second cut reported"),
     ];
-    reported.sort_by_key(|(utterance, _)| *utterance);
+    reported.sort_by_key(|(utterance, _, _)| *utterance);
     assert_eq!(
         reported,
         vec![
-            (current, vec![IndexMark(1), IndexMark(2)]),
-            (waiting, vec![IndexMark(3), IndexMark(4)]),
+            (current, vec![IndexMark(1), IndexMark(2)], false),
+            (waiting, vec![IndexMark(3), IndexMark(4)], false),
         ]
     );
     assert_eq!(recv_started(&harness.started), "urgent");
@@ -528,6 +539,22 @@ fn utterances_with_marks_cut_off_are_reported_with_their_marks() {
         .recv_timeout(STEP_TIMEOUT)
         .expect("the queue thread answers");
     assert_eq!(cut_rx.try_recv().ok(), None);
+}
+
+/// An utterance with marks that fails is reported as failed, not cut, so
+/// what waited on its marks carries on past it.
+#[test]
+fn an_utterance_with_marks_that_fails_is_reported_as_failed() {
+    let (cut_tx, cut_rx) = unbounded();
+    let harness = control_manager_reporting(Some(cut_tx));
+    let failing = harness.manager.speak(marked("fail", [1, 2]));
+    assert_eq!(recv_started(&harness.started), "fail");
+    assert_eq!(
+        cut_rx
+            .recv_timeout(STEP_TIMEOUT)
+            .expect("the failure reported"),
+        (failing, vec![IndexMark(1), IndexMark(2)], true)
+    );
 }
 
 #[test]

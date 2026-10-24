@@ -3,7 +3,9 @@
 //! advances as playback reaches each piece (`docs/crates/verbatim-core.md`,
 //! "Say-all"), and each utterance with marks cut off before playback
 //! reached them all, which re-enters as `Input::UtteranceCancelled` so
-//! nothing the reducer waits on is lost by a cut.
+//! nothing the reducer waits on is lost by a cut, or failed, which
+//! re-enters as `Input::UtteranceFailed`, so what waited carries on past
+//! it.
 //!
 //! Every synthesizer reports its marks: `OneCore` places them itself from its
 //! bookmarks, and eSpeak NG from its mark events
@@ -83,6 +85,19 @@ impl SpeechEvents for ShellSpeechEvents {
             .is_err()
         {
             tracing::debug!("the reducer thread is gone; a cut utterance is not reported");
+        }
+    }
+
+    fn marks_failed(&self, _: UtteranceId, _: TraceId, marks: &[IndexMark], _: Instant) {
+        let input = Input::UtteranceFailed {
+            marks: marks.iter().map(|mark| SpeechMark(mark.0)).collect(),
+        };
+        if self
+            .commands
+            .send(ShellCommand::Input(Box::new(input)))
+            .is_err()
+        {
+            tracing::debug!("the reducer thread is gone; a failed utterance is not reported");
         }
     }
 

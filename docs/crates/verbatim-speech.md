@@ -136,12 +136,15 @@ Public API:
   no-op, called on the thread that asked for the earcon), and
   `speech_paused` (speech paused, or resumed, once the mixer has been
   told; a default no-op, called on the queue thread once per change, for
-  a toggle and for a cancel that ends a pause), and `marks_cancelled` (an
-  utterance carrying index marks ended other than completed, cut off by
-  any cancel, an interrupting utterance, a synthesizer switch, expired
-  focus speech or a later key press's fence, or failed, with every mark it
-  carried; a default no-op, called on the queue thread after its ending,
-  once per such utterance and never for one with no marks: the queue
+  a toggle and for a cancel that ends a pause), `marks_cancelled` (an
+  utterance carrying index marks cut off before playback reached them all,
+  by any cancel, an interrupting utterance, a synthesizer switch, expired
+  focus speech or a later key press's fence, with every mark it carried)
+  and `marks_failed` (the same for one that failed); both default no-ops,
+  called on the queue thread once per such utterance and never for one
+  with no marks, after its `utterance_ended` for one cut before it reached
+  the synthesizer and in no fixed order with it for one the mixer ended,
+  whose ending the mixer's thread reports: the queue
   thread keeps the marks of each utterance with marks it has handed on
   until the mixer reports its ending, so that utterance costs one small
   list, and no other speech costs anything). `utterance_queued`, and the ending of an utterance

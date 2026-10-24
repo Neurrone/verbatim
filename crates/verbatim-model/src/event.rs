@@ -687,11 +687,11 @@ pub enum Input {
     /// The details the active theme wants fetched ([`crate::Fetches`]), at
     /// startup and whenever the theme in use changes.
     Fetches(crate::Fetches),
-    /// An utterance the reducer placed index marks in ended before playback
-    /// reached all of them: something cut it off (a key, an interrupting
-    /// utterance, the focus moving on, a synthesizer switch), or it failed.
-    /// Reported by the speech pipeline for every such utterance, however it
-    /// was cut, so nothing the reducer waits on is lost by a cut.
+    /// An utterance the reducer placed index marks in was cut off before
+    /// playback reached all of them (a key, an interrupting utterance, the
+    /// focus moving on, a synthesizer switch). Reported by the speech
+    /// pipeline for every such utterance, however it was cut, so nothing
+    /// the reducer waits on is lost by a cut: what waited on it stops.
     UtteranceCancelled {
         /// The marks the utterance carried, in order; those playback had
         /// already reached were reported as [`Input::MarkReached`] first.
@@ -700,6 +700,15 @@ pub enum Input {
         /// outposts stamp events with; 0 when unknown.
         #[serde(default)]
         at_ms: u64,
+    },
+    /// An utterance the reducer placed index marks in failed in synthesis
+    /// or audio output before playback reached all of them. It counts as
+    /// heard: what waited on its marks carries on past it, as NVDA's speech
+    /// manager does when a later index arrives (Dickson, 2026-10-24).
+    UtteranceFailed {
+        /// The marks the utterance carried, in order; those playback had
+        /// already reached were reported as [`Input::MarkReached`] first.
+        marks: Vec<SpeechMark>,
     },
     /// Verbatim has started: its speech pipeline is up and the keyboard
     /// hook installed.

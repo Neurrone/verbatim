@@ -674,6 +674,22 @@ fn turning_report_new_output_off_in_the_settings_drops_what_is_waiting() {
     );
 }
 
+/// An utterance of output the synthesizer failed on counts as heard:
+/// output carries on past it, nothing waiting is dropped.
+#[test]
+fn output_carries_on_past_an_utterance_that_failed() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=4)));
+    // The first line fails, reported with its marks.
+    let (marks, _) = playback.queued.pop_front().expect("line 1 handed on");
+    playback.feed(&mut state, &Input::UtteranceFailed { marks });
+    assert_eq!(
+        playback.play_all(&mut state),
+        ["line 2", "line 3", "line 4"]
+    );
+}
+
 #[test]
 fn speech_cut_off_drops_the_output_still_waiting() {
     let mut state = terminal();

@@ -755,7 +755,10 @@ move on, and stops on any command, caret key, typed text, cancelled speech
 however it was cut (`Input::UtteranceCancelled`, which the speech
 pipeline reports with the utterance's marks), a focus change (which also cuts
 its speech off), or the end of its outpost, dropping the buffer and leaving
-the cursor where reading got to.
+the cursor where reading got to. An utterance that failed
+(`Input::UtteranceFailed`) counts as heard: say-all goes on past it as if
+playback had reached its last mark, handing on and reading on, but moves
+no cursor to what was not heard.
 
 ## What the shell learns
 
@@ -878,7 +881,10 @@ anything but the focus is ignored.
   speech or speak an interrupting utterance (`reduce` checks every step's
   effects), and an utterance of output cut off any other way, which the
   speech pipeline reports with its marks (`Input::UtteranceCancelled`), so
-  Core never waits for marks playback will not reach. A focus moving to another node forgets the terminal's output;
+  Core never waits for marks playback will not reach. An utterance of
+  output that failed counts as heard (`Input::UtteranceFailed`, its marks
+  taken as reached), so output carries on past it, as NVDA's speech
+  manager does when a later index arrives. A focus moving to another node forgets the terminal's output;
   utterances of output carry the terminal's focus validity, so the speech
   pipeline drops them once the focus leaves.
 - Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new

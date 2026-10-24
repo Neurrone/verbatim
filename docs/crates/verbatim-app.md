@@ -161,6 +161,7 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   `Input::MarkReached` posted to the same port, so say-all advances, and
   every utterance with marks that ended before playback reached them all
   (`SpeechEvents::marks_cancelled`) becomes `Input::UtteranceCancelled`,
+  and every one that failed (`marks_failed`) `Input::UtteranceFailed`,
   so say-all and terminal output never wait on marks a cut has taken away.
   Every synthesizer reports marks: `OneCore` from its own bookmarks, and
   eSpeak NG from its mark events

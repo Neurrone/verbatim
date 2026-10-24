@@ -1069,6 +1069,43 @@ Stopping speech when a key is pressed.
   count.
 - Target: none.
 
+### Speech only the reducer makes
+
+What it costs that every utterance and earcon comes from the reducer
+(`docs/architecture.md`, section 2), and that the speech pipeline reports
+an utterance with index marks that ends unheard.
+
+- Minimum: none: nothing about any application is read.
+- Today, on the speech path: each utterance with index marks (say-all's
+  and terminal output's) costs the speech queue thread one list of its
+  marks and one table insert as it is handed to the synthesizer, and one
+  table remove when the mixer ends it. An utterance that completes costs
+  nothing more. Each one cut off, or failed, costs one post to the
+  reducer thread's port and one recorded reducer step
+  (`Input::UtteranceCancelled` or `Input::UtteranceFailed`): a key that
+  cuts say-all or terminal output off causes two or three of them on top
+  of its `Input::SpeechCancelled`, each a step that finds nothing waiting
+  but the first. Utterances with no marks cost nothing.
+- Today, off the speech path: a lock key's state, the time, the
+  clipboard's result, a shell item gone and the theme page's previews each
+  take one more thread hop than before, from the thread that learns them
+  to the reducer thread, and one recorded reducer step, before the speech
+  queue; the start, exit and error sounds and "not responding" likewise.
+- Target: none.
+
+Measured on 2026-10-24 on this machine (x64), debug build, with
+`cargo xtask trace scenario notepad_say_all --after 9 --seconds 5` at info
+level, a window of steady say-all, in four pairs alternating with a build
+of the commit before the change. In each pair, first the build with the
+change, then the one before: the reducer thread woke 36 and 15 times,
+using 45.2 and 4.1 ms; 10 and 21 times, 3.7 and 5.3 ms; 26 and 24 times,
+6.7 and 4.8 ms; 25 and 22 times, 5.4 and 6.6 ms. The speech queue thread
+woke 20 and 17 times, 2.0 and 1.7 ms; 11 and 22, 1.5 and 1.9 ms; 26 and
+20, 2.4 and 2.1 ms; 19 and 23, 2.1 and 2.4 ms. The spread between runs,
+which depends on where the window falls, is larger than any difference
+between the builds; the first pair's 45.2 ms was not repeated, and a
+sampled run that could have shown where it went read no data.
+
 ### A caret move, UIA
 
 A caret key the application has already handled (Right Arrow, the caret

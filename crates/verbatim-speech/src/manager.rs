@@ -156,9 +156,8 @@ pub(crate) enum QueueEvent {
     TogglePause,
     /// The focus moved: drop focus speech that no longer holds.
     DropExpired(FocusNow),
-    /// The mixer ended an utterance it had been handed; `completed` when
-    /// it played to its end.
-    Ended(UtteranceId, bool),
+    /// The mixer ended an utterance it had been handed, as `ending` says.
+    Ended(UtteranceId, UtteranceEnding),
     /// Run this once every event sent before it has been handled.
     AfterQueued(Box<dyn FnOnce() + Send>),
     Shutdown,
@@ -757,6 +756,18 @@ impl SpeechEvents for Observer {
             inner.marks_cancelled(utterance, trace_id, marks, at);
         }
     }
+
+    fn marks_failed(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        marks: &[IndexMark],
+        at: Instant,
+    ) {
+        if let Some(inner) = &self.inner {
+            inner.marks_failed(utterance, trace_id, marks, at);
+        }
+    }
 }
 
 impl Drop for SpeechManager {
@@ -814,8 +825,7 @@ fn playback_listener(
                 ending,
             } => {
                 trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, ?ending, "utterance_ended");
-                let completed = ending == UtteranceEnding::Completed;
-                let _ = queue_tx.send(QueueEvent::Ended(utterance, completed));
+                let _ = queue_tx.send(QueueEvent::Ended(utterance, ending.clone()));
                 if let Some(events) = &events {
                     events.utterance_ended(utterance, trace_id, &ending, now);
                 }
@@ -920,12 +930,20 @@ impl QueueThread {
                     self.report_pause();
                 }
                 QueueEvent::DropExpired(now) => self.drop_expired(now),
-                QueueEvent::Ended(id, completed) => {
+                QueueEvent::Ended(id, ending) => {
                     self.handed_on.retain(|(handed, _)| *handed != id);
-                    if let Some((trace_id, marks)) = self.marked.remove(&id)
-                        && !completed
-                    {
-                        self.report_marks_cancelled(id, trace_id, &marks, Instant::now());
+                    if let Some((trace_id, marks)) = self.marked.remove(&id) {
+                        match ending {
+                            UtteranceEnding::Completed => {}
+                            UtteranceEnding::Cancelled => {
+                                self.report_marks_cancelled(id, trace_id, &marks, Instant::now());
+                            }
+                            UtteranceEnding::Failed(_) => {
+                                if let Some(events) = &self.events {
+                                    events.marks_failed(id, trace_id, &marks, Instant::now());
+                                }
+                            }
+                        }
                     }
                 }
                 QueueEvent::AfterQueued(done) => done(),
