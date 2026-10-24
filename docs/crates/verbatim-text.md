@@ -168,8 +168,10 @@ above the screen instead. The memory holds only the last read.
 
 Positions are trusted when the read's rows above the last read's screen
 read exactly as the last read's history block did in the same places and
-at least one of them has text, or when the read holds no rows above the
-last read's screen to compare, since with no history nothing moved. The
+at least one of them has text, or when no row can be compared: the read
+holds no rows above the last read's screen, or the last read held none
+there, as a first read takes only the screen. Rows only one of the two
+reads holds are not compared. The
 last read's rows are then where they were: the history block is kept in
 place and every row below the end of the last read is new. Otherwise, as
 once the history is full and the buffer moves under fixed places, the last
