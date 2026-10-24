@@ -436,8 +436,10 @@ text pattern, where the last read said to start (`start`, a range; none
 for a first read), the screen's height in rows as the last read found it
 (`screen_rows`, 0 when not known), whether to read the whole text instead
 (`whole`), how many rows above the start to begin the read (`above`, the
-history rows whose place shows how far a full history rotated,
-`docs/design/terminal-model.md` section 4.3 item 5; ignored with `whole`),
+screen of rows above the last read's screen that every read holds, its
+history block, which the next read's positions compare,
+`docs/design/terminal-model.md`, "The read" and "Positions"; ignored with
+`whole`),
 and, with `caret` (a `CaretLineQuery`), the caret and its line,
 read in the same program or, classically, after the text, and back as
 `Snapshot::caret`; and, with `colours`, the screen's colours (below),

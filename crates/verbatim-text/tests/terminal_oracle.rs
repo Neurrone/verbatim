@@ -240,6 +240,42 @@ fn violations(stream: &Stream, flavor: Flavor, size: Size) -> Vec<Violation> {
     observe(&mut terminal, stream, &mut Core::new(stream)).violations()
 }
 
+/// The core's reader with one listed limit never stated, to show that a
+/// stream's limit is what the oracle accepts it through.
+struct Without {
+    core: Core,
+    limit: Limit,
+}
+
+impl Reader for Without {
+    fn query(&self) -> Query {
+        self.core.query()
+    }
+
+    fn read(&mut self, read: &Result<Snapshot, Refused>) -> Reply {
+        let mut reply = self.core.read(read);
+        if let Reply::Heard(heard) = &mut reply {
+            heard.limits.retain(|limit| *limit != self.limit);
+        }
+        reply
+    }
+
+    fn quiet(&mut self) {
+        self.core.quiet();
+    }
+}
+
+/// The violations of the core's reader over `stream` in a terminal of
+/// `size`, with `limit` never stated.
+fn violations_without(stream: &Stream, flavor: Flavor, size: Size, limit: Limit) -> Vec<Violation> {
+    let mut terminal = size.terminal(flavor);
+    let mut reader = Without {
+        core: Core::new(stream),
+        limit,
+    };
+    observe(&mut terminal, stream, &mut reader).violations()
+}
+
 /// A corpus stream's violations in one terminal, counted by kind.
 type StreamTally = (String, Flavor, Vec<(String, usize)>);
 
@@ -465,12 +501,29 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
         ),
         (Op::Clear, false),
     ]);
-    for stream in [repeated, lost, new_screen, held] {
+    meet_only_through_their_limits(&[
+        (repeated, Limit::RepeatedText),
+        (lost, Limit::LostRead),
+        (new_screen, Limit::NewScreenFlood),
+        (held, Limit::BlankScreen),
+    ]);
+}
+
+/// Asserts that each stream shows no violation in either terminal, and
+/// some once its limit is never stated.
+fn meet_only_through_their_limits(streams: &[(Stream, Limit)]) {
+    for (stream, limit) in streams {
         for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
             assert_eq!(
-                violations(&stream, flavor, Size::SMALL),
+                violations(stream, flavor, Size::SMALL),
                 [],
                 "{} {flavor:?}",
+                stream.about
+            );
+            assert_ne!(
+                violations_without(stream, flavor, Size::SMALL, *limit),
+                [],
+                "{} {flavor:?} without {limit:?}",
                 stream.about
             );
         }

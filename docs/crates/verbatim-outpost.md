@@ -2660,8 +2660,8 @@ window handle for the window; the classic walk to the nearest window finds
 it.
 
 - The worker keeps, per terminal node, a `Terminal`: the reading rules
-  (`TerminalReader`, whose memory holds the terminal's rows, lingering rows,
-  known history, review position and command marks), where the next read
+  (`TerminalReader`, whose memory holds the last read's rows, lingering
+  rows, review position and command marks), where the next read
   starts (`Snapshot::next_start`), the screen's height and width as the
   last read found them, whether the next read takes the colours, its
   on-demand reading state (`terminal::reading`), when the quiet-period

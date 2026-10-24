@@ -3,7 +3,7 @@
 //! alignment"): what each row of a read is (new, kept and from where, grown,
 //! rewritten and from which row, a lingering row returned, or a row shown
 //! before that carries no history), where each row of the last read went,
-//! how far the history rotated, and where the anchors (the review position
+//! how far its rows moved up, and where the anchors (the review position
 //! and the command marks) are now. This is classification, not speech: the
 //! reading rules are built on [`Outcome`].
 //!
@@ -154,10 +154,11 @@ pub enum NewRow {
         /// Whether it came back elsewhere than where it was.
         moved: bool,
     },
-    /// A row whose text was shown before but that carries no row of the
-    /// last read: a row of the history above the last read, a row the
-    /// remembered history held, or, on a new screen, a row above the
-    /// visible screen, which is history ("Screens").
+    /// A row that is history and carries no row of the last read: a row of
+    /// the history above where the last read's rows are now; after a lost
+    /// read, a row above the topmost row found, or above the visible screen
+    /// when only it was aligned ("A lost read"); or, on a new screen, a row
+    /// above the visible screen ("Screens").
     Shown,
 }
 
@@ -210,7 +211,7 @@ pub struct Line {
 
 /// The rows of the last read ([`TerminalMemory::rows`]), counted from its
 /// first row: those from [`Rows::first_kept`] on are kept, and those above
-/// it are held only as hashes in the remembered history.
+/// it were trimmed and are not held ([`TerminalMemory::trim`]).
 #[derive(Clone, Copy, Debug)]
 pub struct Rows<'a> {
     above: usize,
@@ -256,10 +257,11 @@ impl<'a> Rows<'a> {
     reason = "independent findings of one read"
 )]
 pub struct Outcome {
-    /// The read keeps no row with text that the last read had at or above
-    /// the caret, or its start was refused, so the caller reads the whole
-    /// document and gives that read instead ("The read"). Nothing else is
-    /// set, and the memory is unchanged.
+    /// The read is lost: positions not trusted, its start not refused, and
+    /// no row with text that the last read had at or above the caret kept,
+    /// or kept equally well at more than one place, so the caller reads the
+    /// whole document and gives that read instead ("A lost read"). Nothing
+    /// else is set, and the memory is unchanged.
     pub whole_document: bool,
     /// The memory's first read holds no rows above its screen though the
     /// document goes on above it, so the caller reads again from a screen
@@ -683,7 +685,6 @@ impl TerminalMemory {
                 ..shape
             };
         }
-        let had_text = current.rows.iter().any(|row| !row.is_blank());
         // The whole document a lost read asked for ("A lost read").
         if asked_whole && read.at_document_start && !read.from_start {
             let (aligned, lost) = align_whole(&current, (&rows, height), read, caret);
@@ -692,12 +693,10 @@ impl TerminalMemory {
                 by_text: true,
                 ..shape
             };
-            if had_text && !aligned.kept_text && !aligned.paired && lost == Lost::About {
-                return self.screens(&current, rows, read, &shape);
-            }
             let next = remember(&current, rows, &aligned, read, (width, height), caret);
             return self.finish(&current, next, &aligned, &shape, Switch::None);
         }
+        let had_text = current.rows.iter().any(|row| !row.is_blank());
         let refused = read.shrank || !read.from_start;
         let trusted = !refused && positions(&current, &rows, read);
         let aligned = align_read(&current, &rows, read, caret, trusted);

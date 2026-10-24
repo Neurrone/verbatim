@@ -51,6 +51,8 @@ impl Watch {
     fn read(&mut self) -> TerminalSpeech {
         self.at_ms += 100;
         let mut query = self.query;
+        // A first read read again with its history block, as in production.
+        let mut history_block = false;
         loop {
             let snapshot = self.sim.snapshot(&query).expect("a simulated read");
             let read = Read {
@@ -80,7 +82,8 @@ impl Watch {
                 };
                 continue;
             }
-            if step.history_block && query.start.is_none() && query.above == 0 {
+            if step.history_block && !history_block {
+                history_block = true;
                 query = Query {
                     start: None,
                     screen_rows,

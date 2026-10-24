@@ -270,7 +270,7 @@ pub enum Limit {
     /// or a moved review position is accepted at the read only when the
     /// buffer moved since the last read and the last read's rows with text
     /// fit the main screen equally well at more than one place, or the
-    /// line's text is not unique on the main screen.
+    /// line's text is not unique in the main buffer, its history included.
     RepeatedText,
     /// A lost read counted, rather than spoke, the new lines above the
     /// visible screen ("A lost read"). Such a missed line is accepted only
