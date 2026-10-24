@@ -5,8 +5,9 @@
 //! others join later) and the parts name keys or actions joined by plus
 //! signs. Identifiers are normalized so binding lookups are order- and
 //! case-insensitive: the whole identifier is lowercased and the parts are
-//! sorted, exactly as NVDA's `normalizeGestureIdentifier` does — so
-//! `kb:Verbatim+V` and `kb:v+verbatim` are the same gesture.
+//! sorted, exactly as NVDA normalizes them (`docs/nvda/input.md`,
+//! "Gestures and mapping") — so `kb:Verbatim+V` and `kb:v+verbatim` are
+//! the same gesture.
 
 use std::fmt;
 use std::str::FromStr;

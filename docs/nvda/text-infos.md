@@ -18,7 +18,10 @@ mints one), with:
 - Range surgery: `collapse(end=False)`, `expand(unit)`,
   `move(unit, direction, endPoint=None)`,
   `setEndPoint(other, which)`, `compareEndPoints(other, which)`,
-  `copy()`. Units (`UNIT_*`): character, word, line, sentence,
+  `copy()`. A `move` with no endpoint collapses the range to its start
+  and moves it by whole units, landing on a unit's start, and returns
+  how many units it went, zero when it could not move. Units (`UNIT_*`):
+  character, word, line, sentence,
   paragraph, page, table/row/column/cell, screen, story (the whole
   document), readingChunk (say-all's step, which resolves to sentence,
   paragraph, or line by the `speech.sayAllReadingUnit` setting through

@@ -268,7 +268,7 @@ pub enum NormalizedEvent {
     /// (for example Windows 11's snap-layout hints) carried through
     /// verbatim. The reducer speaks its display string, if any, interrupting
     /// for `MostRecent`/`ImportantMostRecent` processing and queuing
-    /// otherwise (NVDA's `event_UIA_notification`).
+    /// otherwise (`docs/parity/alerts.md`, "UIA notification events").
     Notification {
         /// The node the notification concerns.
         node_id: NodeId,

@@ -1306,8 +1306,8 @@ fn reduce_alert(trace_id: TraceId, node: &NodeSnapshot) -> Vec<Effect> {
     ))]
 }
 
-/// Handles a UIA `AutomationNotification` event (NVDA's
-/// `event_UIA_notification`) from the focus's application: announce the
+/// Handles a UIA `AutomationNotification` event (`docs/parity/alerts.md`,
+/// "UIA notification events") from the focus's application: announce the
 /// application-supplied display string, if any, and nothing when there is
 /// none — a notification with no text has nothing to say. The processing
 /// hint sets the priority: `MostRecent` and `ImportantMostRecent` supersede

@@ -44,7 +44,12 @@ hook is silently removed by the OS.
 braille display keys, touch); `GlobalGestureMap` holds user and
 default bindings (gesture identifier to (module, class, script
 name)), loaded from `gestures.ini` and add-ons; the Input Gestures
-dialog edits it. `executeGesture` also implements *input help mode*
+dialog edits it. A gesture identifier is `source:parts`, such as
+`kb:shift+alt+downArrow`, and `normalizeGestureIdentifier` makes two
+identifiers for the same gesture equal: it lowercases the whole
+identifier and sorts the plus-separated parts after the source, so the
+order and case in which keys are written do not matter.
+`executeGesture` also implements *input help mode*
 (announce the gesture and its script instead of running it) and each
 gesture's effect on speech (`speechEffectWhenExecuted`; see the next
 section).

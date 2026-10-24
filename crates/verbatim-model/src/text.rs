@@ -107,7 +107,8 @@ pub enum TextPoint {
     At(TextPosition),
 }
 
-/// A text unit, NVDA's `UNIT_*` vocabulary as far as M4 uses it.
+/// A text unit, of the units NVDA's text ranges move and expand by
+/// (`docs/nvda/text-infos.md`, "The contract"), as far as M4 uses them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum TextUnit {
@@ -528,7 +529,8 @@ pub struct TextMovement {
 /// Read one unit: start at `at`, move by `movement` when there is one,
 /// expand to the `unit` containing the point reached, and reply with it.
 /// The reply's chunk has its `offset` at the point reached. Moving by a
-/// unit lands on that unit's start, as NVDA's `move` does.
+/// unit lands on that unit's start, as NVDA's text ranges move
+/// (`docs/nvda/text-infos.md`, "The contract").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextRead {
     /// Where to start.

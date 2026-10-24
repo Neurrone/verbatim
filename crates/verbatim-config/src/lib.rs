@@ -32,7 +32,8 @@ pub use verbatim_model::{ReaderSettings, SayAllUnit, ThemeOptions, TypingEcho};
 mod package;
 pub mod themes;
 
-/// Which keys act as the Verbatim modifier (NVDA's `NVDAModifierKeys`). The
+/// Which keys act as the Verbatim modifier, as NVDA's setting of its
+/// modifier keys does. The
 /// default adds Caps Lock to NVDA's two Insert keys, a deliberate
 /// difference (`docs/parity/input.md`, "NVDA-modifier semantics").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -45,7 +45,8 @@ pub trait Presenter: Send {
 }
 
 /// How far the pitch setting is raised for a capital letter spelled out:
-/// NVDA's default `capPitchChange`, which is not yet configurable here.
+/// NVDA's default capital pitch change (`docs/nvda/speech.md`, "Capitals
+/// when spelling"), which is not yet configurable here.
 pub const CAPITAL_PITCH_OFFSET: i32 = 30;
 
 /// A theme ready to present with: every indication's setting resolved

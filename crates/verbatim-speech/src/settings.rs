@@ -1,5 +1,6 @@
 //! Data-driven synthesizer settings, mirroring NVDA's driver-setting model
-//! (`nvda/source/autoSettingsUtils/driverSetting.py`) so the settings GUI
+//! (`docs/nvda/gui-and-settings.md`, "Driver settings: GUI from
+//! descriptors") so the settings GUI
 //! generates its controls from descriptors and future synths get controls
 //! for free.
 
