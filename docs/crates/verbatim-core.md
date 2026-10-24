@@ -735,9 +735,32 @@ Blank pieces are not spoken. The display is kept on while it reads
 (`Effect::KeepDisplayOn`, by the setting). It ends after the last piece of
 the text, known from a chunk marked as the last or a read that could not
 move on, and stops on any command, caret key, typed text, cancelled speech
-(`Input::SpeechCancelled`, from any key), a focus change (which also cuts
+(`Input::SpeechCancelled`, from any key), one of its utterances cut off
+however it was cut (`Input::UtteranceCancelled`, which the speech
+pipeline reports with the utterance's marks), a focus change (which also cuts
 its speech off), or the end of its outpost, dropping the buffer and leaving
 the cursor where reading got to.
+
+## What the shell learns
+
+Only the reducer speaks (`docs/architecture.md`, section 2), so what the
+shell's threads learn comes in as inputs and the reducer decides what is
+said (`shell.rs`): `Input::Started` plays the start sound, `Exiting` the
+exit sound unless a new instance replaces this one, `ErrorLogged` the
+error sound, and `ApplicationNotResponding` the not-responding sound;
+`LockKeyToggled` says "caps lock on" (`Phrase::LockKeyState`), `ClockRead`
+the time on a first press and the date on a quick second, as the
+operating system formatted them, `ClipboardCopied` "Copied to clipboard:"
+with the text (`Phrase::CopiedToClipboard`) or "Unable to copy"
+(`Message::UnableToCopy`), and the theme page's `PreviewSpeech` its
+sample, all interrupting; `ShellItemGone` says the list dialog's item is
+no longer there, queued, and `PreviewEarcon` plays its event. Each speaks
+under the trace its input carries, so a copy's confirmation is fenced off
+by a later key press, as that key's other speech is.
+`MenuOrSwitchEnded` asks for the application in front's focus
+(`Effect::ReadForegroundFocus`, NVDA's fake focus) unless a focus
+observed since the close has been applied
+(`docs/parity/backends.md`). `tests/shell.rs` checks each rule.
 
 ## Terminals
 
@@ -834,9 +857,11 @@ anything but the focus is ignored.
   sends ahead of the cancel's: its read may be the one that saw the typing
   the key that cut speech typed.
 - Anything that cuts speech off drops the output waiting and handed to
-  speech: `Input::SpeechCancelled` (a key), and any step whose effects stop
+  speech: `Input::SpeechCancelled` (a key), any step whose effects stop
   speech or speak an interrupting utterance (`reduce` checks every step's
-  effects). A focus moving to another node forgets the terminal's output;
+  effects), and an utterance of output cut off any other way, which the
+  speech pipeline reports with its marks (`Input::UtteranceCancelled`), so
+  Core never waits for marks playback will not reach. A focus moving to another node forgets the terminal's output;
   utterances of output carry the terminal's focus validity, so the speech
   pipeline drops them once the focus leaves.
 - Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new
@@ -851,6 +876,7 @@ utterance's opening mark as it starts and its closing mark once heard,
 and a simulated outpost that holds and answers Core's requests as the
 real one does, and checks the answers to keys spoken at once, typing
 echoed by its settings, every kind of key told to the outpost, the review
-cursor reading at the caret once it followed it, and the answers alone
-spoken of what a read before a cut said; `tests/alloc.rs` checks that a terminal line allocates the
+cursor reading at the caret once it followed it, the answers alone
+spoken of what a read before a cut said, and output cut off outside the
+reducer released by the pipeline's report of each cut utterance; `tests/alloc.rs` checks that a terminal line allocates the
 same whatever the size of the state.

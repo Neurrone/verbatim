@@ -811,6 +811,20 @@ fn cancel(state: &mut SrState) -> Vec<Effect> {
     vec![effect]
 }
 
+/// An utterance cut off at `at_ms` before playback reached `marks`: when
+/// output handed to speech waits for one of them, speech was cut off, and
+/// the output still waiting is dropped, as a key's cut drops it.
+pub(crate) fn utterance_cancelled(
+    state: &mut SrState,
+    marks: &[SpeechMark],
+    at_ms: u64,
+) -> Vec<Effect> {
+    let terminal = &state.terminal;
+    let waits = terminal.sounding.is_some_and(|mark| marks.contains(&mark))
+        || terminal.ahead.iter().any(|(mark, _)| marks.contains(mark));
+    if waits { cut(state, at_ms) } else { Vec::new() }
+}
+
 /// The focus moved to `node`: another node's output is forgotten.
 pub(crate) fn focus_moved(state: &mut SrState, node: NodeId) {
     if state.terminal.node.is_some_and(|terminal| terminal != node) {

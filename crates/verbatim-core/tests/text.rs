@@ -2623,6 +2623,70 @@ fn say_all_splits_a_paragraph_into_sentences_and_stops_on_a_key() {
     assert_eq!(reduce(&mut state, &reached(third[0].0)), vec![]);
 }
 
+/// Speech the reducer did not cut off itself cuts say-all's utterances
+/// off: once the pipeline reports them, say-all stops, as on a key, rather
+/// than waiting for marks playback will never reach.
+#[test]
+fn say_all_stops_when_its_utterance_is_cut_off_elsewhere() {
+    let mut state = editing(
+        "x
+", 0,
+    );
+    let effects = reduce(&mut state, &command(ReviewCommand::SayAllFromCaret, 0));
+    let effects = reduce(
+        &mut state,
+        &completed(
+            request_of(&effects),
+            TextReply::Chunks {
+                moved: 0,
+                chunks: vec![
+                    line(
+                        "One.
+", 100, 0,
+                    ),
+                    line(
+                        "Two.
+", 101, 0,
+                    ),
+                ],
+            },
+        ),
+    );
+    let pieces = say_all_pieces(&effects);
+    assert_eq!(pieces.len(), 2, "{pieces:?}");
+    // An utterance with no mark of say-all's changes nothing.
+    assert_eq!(
+        reduce(
+            &mut state,
+            &Input::UtteranceCancelled {
+                marks: vec![SpeechMark(9_999)],
+                at_ms: 0
+            }
+        ),
+        vec![]
+    );
+    let effects = reduce(
+        &mut state,
+        &Input::UtteranceCancelled {
+            marks: vec![pieces[0].0],
+            at_ms: 0,
+        },
+    );
+    assert_eq!(effects, vec![Effect::KeepDisplayOn(false)]);
+    // Its other utterance's report, and a late mark, find nothing waiting.
+    assert_eq!(
+        reduce(
+            &mut state,
+            &Input::UtteranceCancelled {
+                marks: vec![pieces[1].0],
+                at_ms: 0
+            }
+        ),
+        vec![]
+    );
+    assert_eq!(reduce(&mut state, &reached(pieces[1].0)), vec![]);
+}
+
 #[test]
 fn a_caret_key_after_say_all_starts_from_where_say_all_moved_the_caret() {
     // From `notepad_say_all`: Notepad last reported the caret on the first

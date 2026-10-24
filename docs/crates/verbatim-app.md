@@ -1,11 +1,18 @@
 # verbatim-app
 
-The composition root: `verbatim.exe`. Its `clipboard` module is the one
+The composition root: `verbatim.exe`. Only the reducer speaks
+(`docs/architecture.md`, section 2): every utterance and earcon is an
+`Effect` of `reduce`, and the shell's threads turn what they learn into
+`Input`s, posted to the reducer thread's port, never calling the speech
+manager to speak; the keyboard hook's cancel, pause and resume are its one
+speech send. Its `clipboard` module is the one
 shared copy-to-clipboard path (NVDA's `api.copyToClip` analog): it owns the
-Win32 clipboard interaction and the localized spoken confirmation (NVDA's
-"Copied to clipboard:" with the text, after reading the clipboard back, or
-"Unable to copy"), and every copying gesture routes through it — the
-report-object triple-press is the first caller. It writes on a thread of
+Win32 clipboard interaction and reads the clipboard back, and tells the
+reducer how the copy went (`Input::ClipboardCopied`, with the trace of the
+input that asked for it), which confirms it (NVDA's "Copied to clipboard:"
+with the text, or "Unable to copy") under that key's fence, so a later key
+press drops it as it drops any earlier key's speech. Every copying gesture
+routes through it — the report-object triple-press is the first caller. It writes on a thread of
 its own (`Clipboard`, since 2026-10-08; it had written on the reducer
 thread), because emptying the clipboard sends the previous owner, a window
 of whichever application copied last, `WM_DESTROYCLIPBOARD` and waits for
@@ -17,9 +24,10 @@ message-only window made for that one write and destroyed after it
 a window kept on a thread that pumps no messages would leave another
 application's `EmptyClipboard` waiting), and frees its global memory
 whenever the clipboard did not take it. The gesture router also
-announces a lock key's new state ("caps lock on") 30 ms after the keyboard
-hook reports it reached the operating system, waiting for its channel
-with a deadline rather than starting a thread per key. The reducer thread
+reads a lock key's new state 30 ms after the keyboard hook reports it
+reached the operating system, waiting for its channel with a deadline
+rather than starting a thread per key, and tells the reducer
+(`Input::LockKeyToggled`), which says it ("caps lock on"). The reducer thread
 waits only on its own I/O completion port
 (`verbatim_process::port_queue`; `docs/design/communication.md`, section
 6.2) and takes everything posted to it, one packet per input, in the
@@ -147,7 +155,10 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   outpost is gone, and `Unanswered` for any failure.
 - The speech pipeline's observer (`speech_events`) is the latency ledger
   plus the marks: every index mark playback reaches becomes
-  `Input::MarkReached` posted to the same port, so say-all advances.
+  `Input::MarkReached` posted to the same port, so say-all advances, and
+  every utterance with marks that ended before playback reached them all
+  (`SpeechEvents::marks_cancelled`) becomes `Input::UtteranceCancelled`,
+  so say-all and terminal output never wait on marks a cut has taken away.
   Every synthesizer reports marks: `OneCore` from its own bookmarks, and
   eSpeak NG from its mark events
   ([verbatim-synth-espeak](verbatim-synth-espeak.md), "Index marks"), so
@@ -188,16 +199,21 @@ Milestone M4's themes and earcons are wired here too (`docs/design/phase6-design
   `ThemeHost`, over the configuration store (the themes and sounds
   folders, the configured theme, and saving the choice in the base
   settings' `[theme]`) and the speech manager (activating a theme, its
-  options alone through the theme handle, and playing and speaking
-  previews). A sound that is missing (a run
+  options alone through the theme handle, playing a sound as the sound
+  choice shows it, and previews, which go to the reducer as
+  `Input::PreviewSpeech` and `Input::PreviewEarcon`). A sound that is missing (a run
   without the `sounds` folder) is spoken instead, so nothing is lost.
 - `Effect::PlayEarcon` plays through `SpeechManager::play_earcon`. The
-  shell produces three events of its own: the start sound with the
-  startup announcement; the exit sound once the GUI loop has ended, played
-  with `play_earcon_to_end` so it is heard before the process exits, for
-  at most two seconds, except in an instance being replaced, which plays
-  none and stops at once; and "application not responding" when the
-  outpost's watchdog abandons a query that passed its deadline
+  shell tells the reducer of three events whose sounds it plays: the
+  start (`Input::Started`, posted once the keyboard hook is installed,
+  before the foreground's focus is asked for); the exit, once the GUI
+  loop has ended (`ShellCommand::Exiting`, which the reducer thread
+  applies as `Input::Exiting` with whether a new instance is replacing
+  this one, which plays no sound); the reducer thread plays the exit sound
+  with `play_earcon_heard` and hands its `EarconHeard` back, on which the
+  main thread waits until it has been heard, for at most two seconds; and
+  an application not responding (`Input::ApplicationNotResponding`) when
+  the outpost's watchdog abandons a query that passed its deadline
   (`QueryOutcome::Abandoned`), once per stall: `LiveOutposts` marks the
   outpost stalled and clears the mark when it answers a query or reports
   an event.
@@ -206,9 +222,8 @@ Milestone M4's themes and earcons are wired here too (`docs/design/phase6-design
   everything a run needs, and the end-to-end staging and the VM deploy
   copy it from there.
 - `error_sound` is a tracing layer: every event logged at error level, on
-  any thread, sends `ShellCommand::PlayEarcon(Earcon::Error)` to the
-  reducer thread, which plays the error sound, as NVDA plays one for a
-  logged error. It only sends, so logging from inside the speech pipeline
+  any thread, posts `Input::ErrorLogged` to the reducer thread, whose
+  reducer plays the error sound, as NVDA plays one for a logged error. It only sends, so logging from inside the speech pipeline
   or the mixer can never reenter them.
 
 Public surface: none — this is the binary. Internal structure worth
@@ -340,9 +355,11 @@ knowing for review:
   status entry that was only waiting for its outpost, so nothing, the idle
   barrier included, waits for an outpost that will never come. When the supervisor reports
   `OutpostMessage::MenuOrSwitchEnded` (a menu or the Alt+Tab switcher
-  closed, told 50 ms later with the time it ended), the reducer thread,
-  unless the reducer has applied a focus observed since that time
-  (`SrState::latest_focus_observed_at`), asks the foreground application's ready outpost for
+  closed, told 50 ms later with the time it ended), the reducer is given
+  `Input::MenuOrSwitchEnded`, and unless it has applied a focus observed
+  since that time (`SrState::latest_focus_observed_at`) it emits
+  `Effect::ReadForegroundFocus`, for which the reducer thread asks the
+  foreground application's ready outpost for
   its focus as `Asker::FakeFocus`, whose answer re-enters the reducer as
   the focus on the control alone, NVDA's fake focus; an application with
   no ready outpost gets an ordinary focus-now query.
@@ -455,8 +472,7 @@ knowing for review:
   runs its own foreground hook; a foreground change reaches the reducer as a
   focus on the window, which moves its attention), the reducer thread
   (`ReducerThread`, described below), the gesture router (bound gestures to
-  imperative commands — `GuiCommand`s or direct speech — or, for review and
-  object navigation, reducer commands), the control server with its
+  `GuiCommand`s or reducer inputs), the control server with its
   injected handlers (`dump_tree` hands a `ShellCommand::DumpTree` with a
   `DumpTicket` and a one-answer reply channel to the reducer thread and
   waits five seconds for the answer, then sends
@@ -474,15 +490,17 @@ knowing for review:
   is numbered as a key press is), the startup announcement, and
   finally the GUI loop on the main thread. The gesture router handles
   Verbatim+V, which pops the menu, the lock keys, whose new state it
-  announces, and every gesture in the active layout's bindings table:
+  reads for the reducer, and every gesture in the active layout's bindings table:
   review and object-navigation scripts become `Input::Command`s for the
-  reducer thread, while Verbatim+F12 speaks the time
-  (an Interrupt-priority text-span utterance with no source node), and
+  reducer thread, while Verbatim+F12 reads the time and date, as
+  `GetTimeFormatEx` and `GetDateFormatEx` word them, into
+  `Input::ClockRead`, whose reducer speaks the time on a first press and
+  the date on a quick second, interrupting, and
   Verbatim+F11 opens the system tray list via
   `GuiCommand::OpenShellItemList`. A quick second press speaks the date or
   lists the taskbar instead: `verbatim-input` counts quick presses on each
   emitted gesture, and the router passes that count to
-  `speak_time_or_date` and to `shell_list_kind`, which maps it to the
+  `Input::ClockRead` and to `shell_list_kind`, which maps it to the
   listed surface. The list dialog's items come through
   `AppShellItemsHost`, which posts `ShellCommand::ShellItems` to the
   reducer thread: it finds the taskbar's process (`Shell_TrayWnd`'s
@@ -504,8 +522,9 @@ knowing for review:
   command only until the earliest such deadline (`recv_timeout`), and
   waits without one when none is outstanding; only the queue's end
   (`Received::Closed`) ends it, since a system wait can run out a clock
-  tick before the deadline. The GUI event thread speaks `GuiEvent::ShellItemGone`
-  as queued text, when the list dialog finds its chosen item gone. When the loop exits — Exit item,
+  tick before the deadline. The GUI event thread tells the reducer of `GuiEvent::ShellItemGone`
+  (`Input::ShellItemGone`), which says it queued, when the list dialog
+  finds its chosen item gone. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and shuts the outposts and the listener down cleanly through
   `Supervisor::shutdown`, killing through its job only a child that has

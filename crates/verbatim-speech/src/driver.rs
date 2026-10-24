@@ -134,6 +134,18 @@ impl SpeechSequence {
             .any(|item| matches!(item, SpeechItem::Mark(_)))
     }
 
+    /// The sequence's index marks, in order.
+    #[must_use]
+    pub fn marks(&self) -> Vec<IndexMark> {
+        self.items
+            .iter()
+            .filter_map(|item| match item {
+                SpeechItem::Mark(mark) => Some(*mark),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The sequence with its pitch changes left out.
     #[must_use]
     pub fn without_pitch_changes(&self) -> Self {

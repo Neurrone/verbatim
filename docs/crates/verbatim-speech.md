@@ -80,12 +80,14 @@ Public API:
   source, mixed over speech and never cancelled by it (a progress tone
   rising with the percentage), and its words, when the theme speaks it or
   its sound is unavailable, are queued as an utterance.
-  `play_earcon_to_end(earcon, timeout)` does the same and waits, at most
-  `timeout`, until the event has been heard: its sound plays over an
-  utterance of silence as long as it is on the events' source, whose
-  ending says the sound has played to its end, and its words, if any, are
-  spoken to their end; Verbatim plays its exit sound this way before it
-  exits. Every ending passes the manager's own waiters on its way to the
+  `play_earcon_heard(earcon)` does the same and returns at once with an
+  `EarconHeard`, whose `wait_until(deadline)` waits until the event has
+  been heard: its sound plays over an utterance of silence as long as it
+  is on the events' source, whose ending says the sound has played to its
+  end, and its words, if any, are spoken to their end. Verbatim plays its
+  exit sound this way, on the reducer thread, while the main thread waits
+  before it exits. `play_earcon_to_end(earcon, timeout)` plays and waits
+  in one call. Every ending passes the manager's own waiters on its way to the
   configured observer.
   `play_sound(sound, gain)` plays any sound at once on the same source,
   for the settings dialog to let a sound be heard.
@@ -134,7 +136,15 @@ Public API:
   no-op, called on the thread that asked for the earcon), and
   `speech_paused` (speech paused, or resumed, once the mixer has been
   told; a default no-op, called on the queue thread once per change, for
-  a toggle and for a cancel that ends a pause). `utterance_queued`, and the ending of an utterance
+  a toggle and for a cancel that ends a pause), and `marks_cancelled` (an
+  utterance carrying index marks ended other than completed, cut off by
+  any cancel, an interrupting utterance, a synthesizer switch, expired
+  focus speech or a later key press's fence, or failed, with every mark it
+  carried; a default no-op, called on the queue thread after its ending,
+  once per such utterance and never for one with no marks: the queue
+  thread keeps the marks of each utterance with marks it has handed on
+  until the mixer reports its ending, so that utterance costs one small
+  list, and no other speech costs anything). `utterance_queued`, and the ending of an utterance
   cancelled before synthesis, are called on the queue thread; the rest on
   the mixer's audio thread, so every implementation must be cheap and
   non-blocking.

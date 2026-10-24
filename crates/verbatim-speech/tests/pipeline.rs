@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use verbatim_audio::{Mixer, PcmFormat, PlaybackEvent, SilentDevice};
 use verbatim_model::{
-    FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechPriority, Theme, ThemeOptions,
-    TraceId, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
+    FocusNow, FocusValidity, NodeId, Role, SegmentContent, SpeechMark, SpeechPriority, Theme,
+    ThemeOptions, TraceId, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,
 };
 use verbatim_speech::{
     ActiveTheme, IndexMark, Presenter, SettingDescriptor, SettingId, SettingValue, SpeechEvents,
@@ -42,6 +42,8 @@ struct Recorder {
     paused: Condvar,
     /// Where the control synth hears how far playback has got.
     progress: Option<Sender<Progress>>,
+    /// Where each utterance cut off with its marks is reported.
+    cut: Option<Sender<(UtteranceId, Vec<IndexMark>)>>,
 }
 
 /// How far playback has got, as the control synth paces itself by it.
@@ -66,6 +68,12 @@ impl SpeechEvents for Recorder {
         self.marks.lock().unwrap().push((utterance, mark));
         if let Some(progress) = &self.progress {
             let _ = progress.send(Progress::Mark(utterance, mark));
+        }
+    }
+
+    fn marks_cancelled(&self, utterance: UtteranceId, _: TraceId, marks: &[IndexMark], _: Instant) {
+        if let Some(cut) = &self.cut {
+            let _ = cut.send((utterance, marks.to_vec()));
         }
     }
 
@@ -288,6 +296,12 @@ struct ControlHarness {
 }
 
 fn control_manager() -> ControlHarness {
+    control_manager_reporting(None)
+}
+
+/// [`control_manager`], reporting each utterance cut off with its marks to
+/// `cut`.
+fn control_manager_reporting(cut: Option<Sender<(UtteranceId, Vec<IndexMark>)>>) -> ControlHarness {
     let (started_tx, started_rx) = unbounded::<String>();
     let (finish_tx, finish_rx) = unbounded::<()>();
     let (returned_tx, returned_rx) = unbounded::<String>();
@@ -310,6 +324,7 @@ fn control_manager() -> ControlHarness {
 
     let recorder = Arc::new(Recorder {
         progress: Some(progress_tx),
+        cut,
         ..Recorder::default()
     });
     let manager = SpeechManager::new(SpeechManagerConfig {
@@ -451,6 +466,68 @@ fn interrupt_cancels_current_and_queued_each_exactly_once() {
             (urgent, UtteranceEnding::Completed),
         ]
     );
+}
+
+/// An utterance of `text` between index marks `marks`, queued.
+fn marked(text: &str, marks: [u64; 2]) -> Utterance {
+    Utterance {
+        segments: vec![
+            UtteranceSegment::new(SegmentContent::Mark(SpeechMark(marks[0]))),
+            UtteranceSegment::text(text),
+            UtteranceSegment::new(SegmentContent::Mark(SpeechMark(marks[1]))),
+        ],
+        ..queued(text)
+    }
+}
+
+/// Every utterance with marks that is cut off, the one being spoken and
+/// one still waiting, is reported once with all its marks, so the reducer
+/// waiting on them hears of the cut; an utterance with marks that plays to
+/// its end, or one with none, is not.
+#[test]
+fn utterances_with_marks_cut_off_are_reported_with_their_marks() {
+    let (cut_tx, cut_rx) = unbounded();
+    let harness = control_manager_reporting(Some(cut_tx));
+    let current = harness.manager.speak(marked("current", [1, 2]));
+    assert_eq!(recv_started(&harness.started), "current");
+    let waiting = harness.manager.speak(marked("waiting", [3, 4]));
+    let _plain = harness.manager.speak(queued("plain"));
+    let urgent = harness
+        .manager
+        .speak(utterance("urgent", SpeechPriority::Interrupt));
+    let mut reported = vec![
+        cut_rx.recv_timeout(STEP_TIMEOUT).expect("a cut reported"),
+        cut_rx
+            .recv_timeout(STEP_TIMEOUT)
+            .expect("a second cut reported"),
+    ];
+    reported.sort_by_key(|(utterance, _)| *utterance);
+    assert_eq!(
+        reported,
+        vec![
+            (current, vec![IndexMark(1), IndexMark(2)]),
+            (waiting, vec![IndexMark(3), IndexMark(4)]),
+        ]
+    );
+    assert_eq!(recv_started(&harness.started), "urgent");
+    harness.finish.send(()).unwrap();
+    // One with marks played to its end.
+    let heard = harness.manager.speak(marked("heard", [5, 6]));
+    assert_eq!(recv_started(&harness.started), "heard");
+    harness.finish.send(()).unwrap();
+    let endings = harness.recorder.endings_through(heard);
+    assert_eq!(endings.last(), Some(&(heard, UtteranceEnding::Completed)));
+    assert!(endings.contains(&(urgent, UtteranceEnding::Completed)));
+    // The mixer hands the queue thread an ending before it reports it, so
+    // everything the queue thread could report of "heard" is before this.
+    let (done_tx, done_rx) = unbounded();
+    harness.manager.after_queued(move || {
+        let _ = done_tx.send(());
+    });
+    done_rx
+        .recv_timeout(STEP_TIMEOUT)
+        .expect("the queue thread answers");
+    assert_eq!(cut_rx.try_recv().ok(), None);
 }
 
 #[test]

@@ -972,3 +972,27 @@ fn of_what_a_read_before_a_cut_said_only_the_answers_to_keys_are_spoken() {
     let effects = reduce(&mut state, &said(TERMINAL, 4_999, speech));
     assert_eq!(spoken(&effects), ["a"]);
 }
+
+/// Speech the reducer did not cut off itself (a synthesizer switch, focus
+/// speech whose focus moved on, or, before every utterance came from the
+/// reducer, the clipboard's confirmation spoken interrupting) cuts off the
+/// output handed to speech. Without the pipeline's report of each cut
+/// utterance, the reducer kept waiting for its marks and spoke no output
+/// until the next key; with it, what waited is dropped, as on any cut, and
+/// output after it is spoken.
+#[test]
+fn output_cut_off_outside_the_reducer_is_released_by_the_pipelines_report() {
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=10)));
+    assert!(playback.play_one(&mut state));
+    // Both utterances handed on are cut off, each reported with its marks.
+    let cut: Vec<(Vec<SpeechMark>, String)> = playback.queued.drain(..).collect();
+    assert_eq!(cut.len(), 2, "{cut:?}");
+    for (marks, _) in cut {
+        playback.feed(&mut state, &Input::UtteranceCancelled { marks, at_ms: 0 });
+    }
+    assert_eq!(playback.play_all(&mut state), ["line 1"]);
+    playback.feed(&mut state, &output(lines(11..=11)));
+    assert_eq!(playback.play_all(&mut state), ["line 11"]);
+}

@@ -102,9 +102,19 @@ Public API:
   browse and focus mode, suggestions opened and closed, and progress with
   its percentage; the active theme decides whether it plays a sound, is
   spoken, both, or neither, see "Themes" below), `Activate` (invoke or default-action a
-  node), and `CopyToClipboard` (routed through the shell's shared clipboard
-  helper, so the reducer never touches the clipboard); menu and quit
-  concerns never appear here. Milestone M4 adds the text protocol's
+  node), `CopyToClipboard` (routed through the shell's shared clipboard
+  helper, so the reducer never touches the clipboard; its result comes
+  back as `Input::ClipboardCopied`), and `ReadForegroundFocus` (ask the
+  application in front for its focus, NVDA's fake focus); menu and quit
+  concerns never appear here. What the shell's threads learn reaches the
+  reducer as inputs, since only the reducer speaks: `Started`,
+  `Exiting { replaced }`, `ErrorLogged`, `ApplicationNotResponding`
+  (once per stall, as the shell judges it), `LockKeyToggled` (a
+  `LockKey` and its new state), `ClockRead` (the press count and the time
+  and date the system formatted), `ClipboardCopied` (the text and whether
+  the clipboard holds it), `ShellItemGone`, the theme page's
+  `PreviewSpeech` and `PreviewEarcon`, and `MenuOrSwitchEnded` (when a
+  menu or the Alt+Tab switcher closed). Milestone M4 adds the text protocol's
   inputs and effects, described under "The text protocol" below.
 - `ActionName` — the name of the action an activation performed, carried
   in `Input::ActivationCompleted`: `Invoke` (UIA, spoken "invoke") or
@@ -133,7 +143,9 @@ Public API:
   reaches it), and `Phrase` (a reader message with values in it: `Selected`
   and `Unselected` with a `SelectionText` that is text, one character, or a
   count of characters, and `SelectedInstead`, "hello selected instead",
-  for a selection that replaced another after the text changed; `Positioned` with screen coordinates; and the new
+  for a selection that replaced another after the text changed; `Positioned` with screen coordinates;
+  `LockKeyState`, "caps lock on"; `CopiedToClipboard` with the text;
+  `ShellItemGone` with the item's name; and the new
   values of the typing echo toggles, and `SkippedLines` with a count, for
   terminal output too much to read, or `SkippedUncountedLines`, "skipped
   lines", when the count is not known, or `SkippedMoreThanLines` with a
@@ -529,6 +541,11 @@ failed). A caret key's watch that ends with no evidence is answered
   the reducer (the hook's `KeySpeechEffect::Cancel`), at `at_ms`, Unix
   milliseconds on the clock outposts stamp events with; say-all stops, and
   terminal output read before then is not spoken.
+- `Input::UtteranceCancelled { marks, at_ms }`: an utterance the reducer
+  placed marks in ended before playback reached them all, however it was
+  cut or if it failed, with every mark it carried, as the speech
+  pipeline's `marks_cancelled` reports it; say-all waiting on one stops,
+  and terminal output waiting on one is dropped as at any cut.
 - `Input::Settings(ReaderSettings)`: the reader settings, at startup and
   whenever they change.
 - `Input::Fetches(Fetches)`: the details the active theme wants fetched

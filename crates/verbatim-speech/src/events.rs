@@ -76,6 +76,25 @@ pub trait SpeechEvents: Send + Sync {
         let _ = (paused, at);
     }
 
+    /// An utterance carrying index marks ended before playback reached all
+    /// of them: it was cancelled, by any cancel, an interrupting
+    /// utterance, a synthesizer switch, the focus moving on or a later key
+    /// press's fence, or it failed. `marks` are all the marks it carried,
+    /// in order; those playback had reached were reported by
+    /// [`mark_reached`](Self::mark_reached) before. Called once per such
+    /// utterance, on the queue thread, after its
+    /// [`utterance_ended`](Self::utterance_ended); never for one that
+    /// completed, nor for one with no marks.
+    fn marks_cancelled(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        marks: &[IndexMark],
+        at: Instant,
+    ) {
+        let _ = (utterance, trace_id, marks, at);
+    }
+
     /// The utterance has ended, once, as `ending` says.
     fn utterance_ended(
         &self,

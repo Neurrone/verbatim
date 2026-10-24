@@ -435,6 +435,19 @@ pub(crate) fn mark_reached(state: &mut SrState, mark: SpeechMark) -> Vec<Effect>
     effects
 }
 
+/// An utterance cut off before playback reached `marks`: when say-all
+/// still waits for one of them, it stops, as on any cut, leaving the cursor
+/// where reading got to.
+pub(crate) fn utterance_cancelled(state: &mut SrState, marks: &[SpeechMark]) -> Vec<Effect> {
+    let waits = state.say_all.as_ref().is_some_and(|say_all| {
+        say_all
+            .queued
+            .iter()
+            .any(|queued| marks.contains(&queued.mark))
+    });
+    if waits { stop(state) } else { Vec::new() }
+}
+
 /// Ends say-all once the document's end has been read and every piece has
 /// been handed out and reached.
 fn end_if_done(state: &mut SrState) -> Vec<Effect> {

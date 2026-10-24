@@ -156,8 +156,9 @@ pub(crate) enum QueueEvent {
     TogglePause,
     /// The focus moved: drop focus speech that no longer holds.
     DropExpired(FocusNow),
-    /// The mixer ended an utterance it had been handed.
-    Ended(UtteranceId),
+    /// The mixer ended an utterance it had been handed; `completed` when
+    /// it played to its end.
+    Ended(UtteranceId, bool),
     /// Run this once every event sent before it has been handled.
     AfterQueued(Box<dyn FnOnce() + Send>),
     Shutdown,
@@ -451,12 +452,24 @@ impl SpeechManager {
 
     /// Reports an event as [`play_earcon`](Self::play_earcon) does, and
     /// waits until it has been heard: its sound has played to its end and
-    /// its words, if the theme speaks it, have been spoken. For the exit
-    /// sound, which must be heard before Verbatim exits. Returns `false`
+    /// its words, if the theme speaks it, have been spoken. Returns `false`
     /// when `timeout` passed first, which bounds the wait however the audio
     /// device behaves.
+    #[must_use]
     pub fn play_earcon_to_end(&self, earcon: Earcon, timeout: Duration) -> bool {
         let deadline = Instant::now() + timeout;
+        self.play_earcon_heard(earcon).wait_until(deadline)
+    }
+
+    /// Reports an event as [`play_earcon`](Self::play_earcon) does, and
+    /// returns at once with an [`EarconHeard`] to wait on until it has been
+    /// heard: its sound played over an utterance of silence as long as it
+    /// is, whose ending says the sound has played to its end, and its
+    /// words, if the theme speaks it, spoken to their end. For the exit
+    /// sound, which must be heard before Verbatim exits, played by the
+    /// thread that executes the reducer's effects while another waits.
+    #[must_use]
+    pub fn play_earcon_heard(&self, earcon: Earcon) -> EarconHeard {
         let (sound, words) = self.themes.get().earcon(earcon);
         let (ended_tx, ended_rx) = unbounded::<UtteranceId>();
         let mut waiting = Vec::new();
@@ -493,17 +506,11 @@ impl SpeechManager {
             waiting.push(id);
             self.speak_as(id, earcon_words(words));
         }
-        let mut heard = true;
-        for _ in 0..waiting.len() {
-            if ended_rx.recv_deadline(deadline).is_err() {
-                heard = false;
-                break;
-            }
+        EarconHeard {
+            ended: ended_rx,
+            waiting,
+            waiters: Arc::clone(&self.waiters),
         }
-        for id in waiting {
-            self.waiters.forget(id);
-        }
-        heard
     }
 
     /// Plays `sound` at once at `gain` (1.0 for as recorded), on the
@@ -585,6 +592,35 @@ fn earcon_words(words: String) -> Utterance {
         source: None,
         say_all: false,
         validity: None,
+    }
+}
+
+/// An event reported by [`SpeechManager::play_earcon_heard`], to wait on
+/// until it has been heard. Sendable, so one thread can play it and another
+/// wait.
+pub struct EarconHeard {
+    ended: Receiver<UtteranceId>,
+    waiting: Vec<UtteranceId>,
+    waiters: Arc<Waiters>,
+}
+
+impl EarconHeard {
+    /// Waits until the event's sound has played to its end and its words,
+    /// if any, have been spoken, or until `deadline`. Returns `false` when
+    /// the deadline passed first.
+    #[must_use]
+    pub fn wait_until(self, deadline: Instant) -> bool {
+        let mut heard = true;
+        for _ in 0..self.waiting.len() {
+            if self.ended.recv_deadline(deadline).is_err() {
+                heard = false;
+                break;
+            }
+        }
+        for id in &self.waiting {
+            self.waiters.forget(*id);
+        }
+        heard
     }
 }
 
@@ -709,6 +745,18 @@ impl SpeechEvents for Observer {
         }
         self.waiters.ended(utterance);
     }
+
+    fn marks_cancelled(
+        &self,
+        utterance: UtteranceId,
+        trace_id: TraceId,
+        marks: &[IndexMark],
+        at: Instant,
+    ) {
+        if let Some(inner) = &self.inner {
+            inner.marks_cancelled(utterance, trace_id, marks, at);
+        }
+    }
 }
 
 impl Drop for SpeechManager {
@@ -766,7 +814,8 @@ fn playback_listener(
                 ending,
             } => {
                 trace!(target: "verbatim::speech", %utterance, trace_id = %trace_id, ?ending, "utterance_ended");
-                let _ = queue_tx.send(QueueEvent::Ended(utterance));
+                let completed = ending == UtteranceEnding::Completed;
+                let _ = queue_tx.send(QueueEvent::Ended(utterance, completed));
                 if let Some(events) = &events {
                     events.utterance_ended(utterance, trace_id, &ending, now);
                 }
@@ -800,6 +849,10 @@ struct QueueThread {
     /// The number of the latest key press that cancelled speech: speech
     /// an earlier key press caused is dropped when it arrives.
     cancelled_through: u64,
+    /// Utterances with index marks handed to the synth thread and the
+    /// mixer whose ending has not come yet, with their trace and marks, so
+    /// a cut one is reported ([`SpeechEvents::marks_cancelled`]).
+    marked: HashMap<UtteranceId, (TraceId, Vec<IndexMark>)>,
 }
 
 impl QueueThread {
@@ -825,6 +878,7 @@ impl QueueThread {
             paused_flag,
             focus_now: None,
             cancelled_through: 0,
+            marked: HashMap::new(),
         }
     }
 
@@ -866,7 +920,14 @@ impl QueueThread {
                     self.report_pause();
                 }
                 QueueEvent::DropExpired(now) => self.drop_expired(now),
-                QueueEvent::Ended(id) => self.handed_on.retain(|(handed, _)| *handed != id),
+                QueueEvent::Ended(id, completed) => {
+                    self.handed_on.retain(|(handed, _)| *handed != id);
+                    if let Some((trace_id, marks)) = self.marked.remove(&id)
+                        && !completed
+                    {
+                        self.report_marks_cancelled(id, trace_id, &marks, Instant::now());
+                    }
+                }
                 QueueEvent::AfterQueued(done) => done(),
                 QueueEvent::Shutdown => {
                     self.cancel_everything();
@@ -958,6 +1019,7 @@ impl QueueThread {
             let now = Instant::now();
             events.utterance_queued(id, sequence.trace_id, &sequence.text(), now);
             events.utterance_ended(id, sequence.trace_id, &UtteranceEnding::Cancelled, now);
+            self.report_marks_cancelled(id, sequence.trace_id, &sequence.marks(), now);
         }
     }
 
@@ -972,6 +1034,29 @@ impl QueueThread {
                     now,
                 );
             }
+            self.report_marks_cancelled(
+                waiting.sequence.utterance,
+                waiting.sequence.trace_id,
+                &waiting.sequence.marks(),
+                now,
+            );
+        }
+    }
+
+    /// Reports an utterance cut off before playback reached all its
+    /// `marks`, when it has any.
+    fn report_marks_cancelled(
+        &self,
+        id: UtteranceId,
+        trace_id: TraceId,
+        marks: &[IndexMark],
+        at: Instant,
+    ) {
+        if marks.is_empty() {
+            return;
+        }
+        if let Some(events) = &self.events {
+            events.marks_cancelled(id, trace_id, marks, at);
         }
     }
 
@@ -1019,6 +1104,10 @@ impl QueueThread {
             self.end_waiting([waiting]);
         };
         self.handed_on.push_back((sequence.utterance, validity));
+        if sequence.has_marks() {
+            self.marked
+                .insert(sequence.utterance, (sequence.trace_id, sequence.marks()));
+        }
         self.source.register(sequence.utterance, sequence.trace_id);
         let cancel = Arc::new(CancelToken::new());
         self.in_flight = Some(Arc::clone(&cancel));

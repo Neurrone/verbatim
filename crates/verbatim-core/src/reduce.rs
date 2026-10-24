@@ -24,7 +24,7 @@ use verbatim_model::{Backend, FocusNow, FocusText, FocusValidity};
 use crate::state::{
     Attention, FocusContext, Navigator, NavigatorRead, PendingNavigation, SrState, TextFollowUp,
 };
-use crate::{editing, review, review_text, say_all, terminal, text};
+use crate::{editing, review, review_text, say_all, shell, terminal, text};
 
 /// The activity id of the shell's window-snap results notification, the one
 /// UIA notification spoken from any application (`docs/parity/focus-events.md`, "Event
@@ -129,11 +129,18 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             state.fetches = *fetches;
             Vec::new()
         }
-        // `Tick` is reserved vocabulary with no policy yet; `Input` is also
-        // `#[non_exhaustive]`, so this arm doubles as the catch-all for
-        // variants added by later milestones, until each grows a real
-        // policy.
-        _ => Vec::new(),
+        // Playback will reach none of a cut utterance's marks it had not
+        // reached: say-all stops, as on any cut, and terminal output drops
+        // what waits, as anything that cuts speech off does.
+        Input::UtteranceCancelled { marks, at_ms } => {
+            let mut effects = terminal::utterance_cancelled(state, marks, *at_ms);
+            effects.extend(say_all::utterance_cancelled(state, marks));
+            effects
+        }
+        // What the shell's threads learn; `Tick` is reserved vocabulary with
+        // no policy yet, which `shell::reduce` leaves alone, as it does any
+        // other input.
+        _ => shell::reduce(state, input),
     }
 }
 

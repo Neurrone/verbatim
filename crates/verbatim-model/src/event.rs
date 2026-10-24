@@ -636,6 +636,109 @@ pub enum Input {
     /// The details the active theme wants fetched ([`crate::Fetches`]), at
     /// startup and whenever the theme in use changes.
     Fetches(crate::Fetches),
+    /// An utterance the reducer placed index marks in ended before playback
+    /// reached all of them: something cut it off (a key, an interrupting
+    /// utterance, the focus moving on, a synthesizer switch), or it failed.
+    /// Reported by the speech pipeline for every such utterance, however it
+    /// was cut, so nothing the reducer waits on is lost by a cut.
+    UtteranceCancelled {
+        /// The marks the utterance carried, in order; those playback had
+        /// already reached were reported as [`Input::MarkReached`] first.
+        marks: Vec<SpeechMark>,
+        /// When it ended, in milliseconds since the Unix epoch, the clock
+        /// outposts stamp events with; 0 when unknown.
+        #[serde(default)]
+        at_ms: u64,
+    },
+    /// Verbatim has started: its speech pipeline is up and the keyboard
+    /// hook installed.
+    Started,
+    /// Verbatim is exiting, its GUI loop ended; `replaced` when a new
+    /// instance is replacing it.
+    Exiting {
+        /// Whether a new instance is replacing this one.
+        replaced: bool,
+    },
+    /// An error was logged, on any thread.
+    ErrorLogged,
+    /// An application stopped responding: its outpost's watchdog abandoned
+    /// a query that passed its deadline, the first in this stall (the shell
+    /// tells of each stall once, until the outpost answers again).
+    ApplicationNotResponding {
+        /// The outpost whose application stopped responding.
+        outpost: OutpostId,
+    },
+    /// A lock key's state changed: read once the key had reached Windows
+    /// and Windows had changed it.
+    LockKeyToggled {
+        /// Trace ID minted when the state was read.
+        trace_id: TraceId,
+        /// Which key.
+        key: LockKey,
+        /// Whether it is now on.
+        on: bool,
+    },
+    /// The report-time gesture was pressed: the current time and date, as
+    /// the operating system formats them for the user's locale, read as
+    /// the gesture arrived; `None` for one that could not be formatted.
+    ClockRead {
+        /// Trace ID minted when the key was observed.
+        trace_id: TraceId,
+        /// How many times the gesture was pressed in quick succession, zero
+        /// for the first press.
+        repeat: u8,
+        /// The time, without seconds.
+        time: Option<String>,
+        /// The long date.
+        date: Option<String>,
+    },
+    /// A copy to the clipboard the reducer asked for
+    /// ([`Effect::CopyToClipboard`]) was made, or failed.
+    ClipboardCopied {
+        /// Trace ID of the input that asked for the copy.
+        trace_id: TraceId,
+        /// The text copied.
+        text: String,
+        /// Whether the clipboard holds the text, as read back.
+        copied: bool,
+    },
+    /// The shell item list dialog's chosen item was gone when it would have
+    /// been clicked.
+    ShellItemGone {
+        /// Trace ID minted when the dialog found it gone.
+        trace_id: TraceId,
+        /// The item's name, as the list showed it.
+        name: String,
+    },
+    /// The settings dialog's theme page previews an indication spoken: a
+    /// sample, in the theme's words.
+    PreviewSpeech {
+        /// Trace ID minted when the preview was asked for.
+        trace_id: TraceId,
+        /// The sample.
+        segments: Vec<crate::UtteranceSegment>,
+    },
+    /// The settings dialog's theme page previews an event, as the theme
+    /// reports it.
+    PreviewEarcon(Earcon),
+    /// A menu or the Alt+Tab switcher closed, at `ended_at_ms`, as the focus
+    /// listener tells it, 50 ms later.
+    MenuOrSwitchEnded {
+        /// When it closed, in milliseconds since the Unix epoch, the clock
+        /// events' `observed_at_ms` use.
+        ended_at_ms: u64,
+    },
+}
+
+/// A lock key whose state Verbatim announces.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LockKey {
+    /// Caps Lock.
+    CapsLock,
+    /// Num Lock.
+    NumLock,
+    /// Scroll Lock.
+    ScrollLock,
 }
 
 /// The name of an action an activation performed, which NVDA speaks after
@@ -794,9 +897,10 @@ pub enum Effect {
         node_id: NodeId,
     },
     /// Copy text to the system clipboard through the shell's shared
-    /// clipboard helper, which owns the spoken confirmation. The reducer
-    /// stays pure — it never touches the clipboard itself — so the
-    /// report-object triple-press emits this rather than doing the copy.
+    /// clipboard helper, whose result comes back as
+    /// [`Input::ClipboardCopied`], which the reducer confirms in speech.
+    /// The reducer stays pure — it never touches the clipboard itself — so
+    /// the report-object triple-press emits this rather than doing the copy.
     CopyToClipboard(String),
     /// Ask an outpost to read or act on a node's text; the answer re-enters
     /// as [`Input::TextCompleted`] (milestone M4).
@@ -829,4 +933,9 @@ pub enum Effect {
     /// a later key's own effects), and its requests and speech must carry
     /// its own key's trace, so that its answers and speech are that key's.
     ForKey(TraceId, Box<Effect>),
+    /// Ask the application in front for its focus, reported as a focus on
+    /// the control alone, as NVDA's fake focus after a menu or the Alt+Tab
+    /// switcher closes; an application whose outpost is not ready is asked
+    /// for its focus as at a foreground change.
+    ReadForegroundFocus,
 }

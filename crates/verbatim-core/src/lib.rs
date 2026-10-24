@@ -21,6 +21,7 @@ mod reduce;
 mod review;
 mod review_text;
 mod say_all;
+mod shell;
 mod state;
 mod terminal;
 mod text;

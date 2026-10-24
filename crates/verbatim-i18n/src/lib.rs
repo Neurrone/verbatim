@@ -706,6 +706,7 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         }
         Message::TerminalLineCut => i18n_embed_fl::fl!(loader, "message-terminal-line-cut"),
         Message::SelectionRemoved => i18n_embed_fl::fl!(loader, "message-selection-removed"),
+        Message::UnableToCopy => i18n_embed_fl::fl!(loader, "clipboard-copy-failed"),
         // `Message` is non_exhaustive; an unmapped future message speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -771,6 +772,16 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         Phrase::Items(count) => {
             i18n_embed_fl::fl!(loader, "phrase-items", count = count.to_string())
         }
+        Phrase::LockKeyState { key, on } => messages::toggle_key_state(
+            match key {
+                verbatim_model::LockKey::CapsLock => "toggle-caps-lock",
+                verbatim_model::LockKey::NumLock => "toggle-num-lock",
+                verbatim_model::LockKey::ScrollLock => "toggle-scroll-lock",
+            },
+            *on,
+        ),
+        Phrase::CopiedToClipboard(text) => messages::clipboard_copied(text),
+        Phrase::ShellItemGone(name) => messages::tray_list_gone(name),
         // `Phrase` is non_exhaustive; an unmapped future phrase speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -1718,6 +1729,43 @@ mod tests {
         for (format, words) in worded {
             assert_eq!(format_text(&format), words, "{format:?}");
         }
+    }
+
+    /// The words of what the reducer says of what the shell learns, the
+    /// same as the shell spoke them before.
+    #[test]
+    fn shell_phrases_are_worded() {
+        use verbatim_model::{LockKey, Message, Phrase};
+        assert_eq!(
+            phrase_text(&Phrase::LockKeyState {
+                key: LockKey::CapsLock,
+                on: true
+            }),
+            "caps lock on"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::LockKeyState {
+                key: LockKey::ScrollLock,
+                on: false
+            }),
+            "scroll lock off"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::LockKeyState {
+                key: LockKey::NumLock,
+                on: true
+            }),
+            "num lock on"
+        );
+        assert_eq!(
+            phrase_text(&Phrase::CopiedToClipboard("Name".to_owned())),
+            "Copied to clipboard: Name"
+        );
+        assert_eq!(message_text(Message::UnableToCopy), "Unable to copy");
+        assert_eq!(
+            phrase_text(&Phrase::ShellItemGone("Clock".to_owned())),
+            "Clock is no longer there"
+        );
     }
 
     #[test]

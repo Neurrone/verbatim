@@ -1,9 +1,11 @@
 //! The one shared clipboard-copy path (NVDA's `api.copyToClip` analog).
 //!
 //! Every gesture that copies text routes through [`Clipboard::copy`], so
-//! the Win32 clipboard interaction and the spoken confirmation are
-//! implemented once and stay consistent. The report-object triple-press is
-//! the first caller; later copying gestures use this same path rather than
+//! the Win32 clipboard interaction is implemented once. Its result goes
+//! back to the reducer as `Input::ClipboardCopied`, which the reducer
+//! confirms in speech, so the confirmation is ordered and cancellable with
+//! the rest of Verbatim's speech. The report-object triple-press is the
+//! first caller; later copying gestures use this same path rather than
 //! rolling their own.
 //!
 //! The copy runs on a thread of its own, never on the reducer thread that
@@ -13,13 +15,13 @@
 //! answering would otherwise hold every event and every command behind the
 //! copy.
 
-use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::{Sender, unbounded};
 
-use verbatim_model::{SpeechPriority, TraceId, Utterance, UtteranceSegment};
-use verbatim_speech::SpeechManager;
+use verbatim_model::{Input, TraceId};
+
+use crate::{Commands, ShellCommand};
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
@@ -32,54 +34,61 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{PCWSTR, w};
 
 /// The clipboard thread: copies handed to it are made in order, each
-/// confirmed in speech, while whoever asked goes on.
+/// result told to the reducer, while whoever asked goes on.
 pub struct Clipboard {
-    copies: Sender<String>,
+    copies: Sender<(TraceId, String)>,
 }
 
 impl Clipboard {
-    /// Starts the clipboard thread, which speaks through `manager`.
+    /// Starts the clipboard thread, which tells the reducer thread, through
+    /// `commands`, how each copy went.
     ///
     /// # Errors
     ///
     /// The error spawning the thread.
-    pub fn start(manager: Arc<SpeechManager>) -> std::io::Result<Self> {
-        let (copies, waiting) = unbounded::<String>();
+    pub fn start(commands: Commands) -> std::io::Result<Self> {
+        let (copies, waiting) = unbounded::<(TraceId, String)>();
         thread::Builder::new()
             .name("verbatim-clipboard".to_owned())
             .spawn(move || {
-                while let Ok(text) = waiting.recv() {
-                    copy(&manager, &text);
+                while let Ok((trace_id, text)) = waiting.recv() {
+                    copy(&commands, trace_id, text);
                 }
             })?;
         Ok(Self { copies })
     }
 
-    /// Copies `text` to the system clipboard on the clipboard thread and
-    /// returns at once; the thread speaks whether it worked.
-    pub fn copy(&self, text: String) {
+    /// Copies `text` to the system clipboard on the clipboard thread, for
+    /// the input with trace `trace_id`, and returns at once; the thread
+    /// tells the reducer whether it worked.
+    pub fn copy(&self, trace_id: TraceId, text: String) {
         // An unbounded send never waits; it fails only once the thread has
         // gone, with the process.
-        let _ = self.copies.send(text);
+        let _ = self.copies.send((trace_id, text));
     }
 }
 
-/// Copies `text` to the system clipboard and speaks a localized
-/// confirmation. A failure to reach the clipboard is logged and announced
-/// as such rather than silently swallowed, so a user who pressed copy
-/// always hears whether it worked. Runs on the clipboard thread.
-fn copy(manager: &Arc<SpeechManager>, text: &str) {
+/// Copies `text` to the system clipboard and tells the reducer whether it
+/// worked, which it confirms in speech. A failure to reach the clipboard is
+/// logged and reported as such rather than silently swallowed, so a user
+/// who pressed copy always hears whether it worked. Runs on the clipboard
+/// thread.
+fn copy(commands: &Commands, trace_id: TraceId, text: String) {
     // As NVDA does, the copy is confirmed by reading the clipboard back.
-    let copied = set_clipboard_text(text).and_then(|()| match clipboard_text() {
+    let copied = set_clipboard_text(&text).and_then(|()| match clipboard_text() {
         Some(read) if read == text => Ok(()),
         _ => Err("the clipboard does not hold the copied text".to_owned()),
     });
-    match copied {
-        Ok(()) => speak(manager, verbatim_i18n::messages::clipboard_copied(text)),
-        Err(error) => {
-            tracing::warn!(%error, "failed to copy to the clipboard");
-            speak(manager, verbatim_i18n::messages::clipboard_copy_failed());
-        }
+    if let Err(error) = &copied {
+        tracing::warn!(%error, "failed to copy to the clipboard");
+    }
+    let input = Input::ClipboardCopied {
+        trace_id,
+        text,
+        copied: copied.is_ok(),
+    };
+    if commands.send(ShellCommand::Input(Box::new(input))).is_err() {
+        tracing::debug!("the reducer thread is gone; a copy is not confirmed");
     }
 }
 
@@ -117,19 +126,6 @@ fn clipboard_text() -> Option<String> {
     // SAFETY: closes the clipboard this thread opened above.
     let _ = unsafe { CloseClipboard() };
     read
-}
-
-/// Speaks one line of confirmation text at Interrupt priority, with no
-/// source node (this is Core-originated speech, not an object announcement).
-fn speak(manager: &Arc<SpeechManager>, text: String) {
-    manager.speak(Utterance {
-        trace_id: TraceId::mint(),
-        priority: SpeechPriority::Interrupt,
-        segments: vec![UtteranceSegment::text(text)],
-        source: None,
-        say_all: false,
-        validity: None,
-    });
 }
 
 /// Places `text` on the clipboard as `CF_UNICODETEXT`, the standard Win32

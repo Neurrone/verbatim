@@ -243,6 +243,19 @@ pub enum Phrase {
     /// The number of items a tree view item holds, said once it has been
     /// expanded: NVDA's "1 item" and "52 items".
     Items(u32),
+    /// A lock key's new state: NVDA's "caps lock on".
+    LockKeyState {
+        /// Which key.
+        key: crate::LockKey,
+        /// Whether it is now on.
+        on: bool,
+    },
+    /// Text copied to the clipboard: NVDA's "Copied to clipboard: hello",
+    /// or the number of characters for 1,024 or more.
+    CopiedToClipboard(String),
+    /// The shell item list dialog's chosen item was gone: "Clock is no
+    /// longer there".
+    ShellItemGone(String),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.
@@ -319,6 +332,8 @@ pub enum Message {
     /// The selection went when the text changed under it — NVDA's
     /// "selection removed".
     SelectionRemoved,
+    /// A copy to the clipboard failed — NVDA's "Unable to copy".
+    UnableToCopy,
 }
 
 /// One segment of an utterance, with an optional language override.

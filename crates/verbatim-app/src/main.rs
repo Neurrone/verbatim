@@ -46,8 +46,8 @@ use verbatim_input::{
 };
 use verbatim_input_windows::{InputHook, KeyHolding, KeyReport, Routed};
 use verbatim_model::{
-    CaretKey, Earcon, Effect, GestureId, Input, OutpostId, Pid, ReaderSettings, SpeechPriority,
-    TextRequest, TraceId, Utterance, UtteranceSegment,
+    CaretKey, Earcon, Effect, GestureId, Input, LockKey, OutpostId, Pid, ReaderSettings,
+    TextRequest, TraceId,
 };
 use verbatim_outpost::protocol::{
     EventTiming, OutpostToSupervisor, Query, QueryOutcome, SupervisorToOutpost,
@@ -311,7 +311,7 @@ fn run(
         let context = ReducerContext {
             holding: Arc::clone(&holding),
             terminal_outpost: Arc::clone(&terminal_outpost),
-            clipboard: clipboard::Clipboard::start(Arc::clone(&manager))?,
+            clipboard: clipboard::Clipboard::start(command_tx.clone())?,
             manager: Arc::clone(&manager),
             supervisor: Arc::clone(&supervisor),
             ledger: Arc::clone(&ledger),
@@ -329,26 +329,18 @@ fn run(
             .spawn(move || reducer_loop(command_rx, &context, reader_settings))?;
     }
 
-    // The gesture router: bound gestures become GUI commands, direct speech,
-    // or — for review and object navigation — reducer commands sent over
-    // `command_tx`. The GUI handle arrives once the GUI thread is up. The
+    // The gesture router: bound gestures become GUI commands or reducer
+    // inputs sent over `command_tx`. The GUI handle arrives once the GUI thread is up. The
     // channel is unbounded, as the keyboard hook requires, so the hook
     // never waits and never drops a key.
     let (gesture_tx, gesture_rx) = unbounded::<Routed>();
     {
         let gui_handle = Arc::clone(&gui_handle);
-        let manager = Arc::clone(&manager);
         let command_tx = command_tx.clone();
         thread::Builder::new()
             .name("verbatim-router".to_owned())
             .spawn(move || {
-                router_loop(
-                    &gesture_rx,
-                    &gui_handle,
-                    &manager,
-                    &command_tx,
-                    keyboard_layout,
-                );
+                router_loop(&gesture_rx, &gui_handle, &command_tx, keyboard_layout);
             })?;
     }
 
@@ -356,10 +348,10 @@ fn run(
     let (gui_event_tx, gui_event_rx) = unbounded::<GuiEvent>();
     {
         let gui_handle = Arc::clone(&gui_handle);
-        let manager = Arc::clone(&manager);
+        let command_tx = command_tx.clone();
         thread::Builder::new()
             .name("verbatim-gui-events".to_owned())
-            .spawn(move || gui_event_loop(&gui_event_rx, &gui_handle, &manager))?;
+            .spawn(move || gui_event_loop(&gui_event_rx, &gui_handle, &command_tx))?;
     }
 
     // The gesture map shared by the hook and the control plane's validation.
@@ -551,11 +543,10 @@ fn run(
         holding,
     )?;
 
-    // The start sound, and the initial outpost target (the focus listener
-    // only reports foreground changes after this point). No start message
-    // is spoken, as NVDA speaks none (`docs/parity/system.md`, "Starting"): the
-    // first speech is the foreground's announcement.
-    manager.play_earcon(Earcon::Start);
+    // The start, which the reducer reports with the start sound, and the
+    // initial outpost target (the focus listener only reports foreground
+    // changes after this point).
+    let _ = command_tx.send(ShellCommand::Input(Box::new(Input::Started)));
     // Ask the foreground application for its current focus: its outpost is
     // started if needed, and the answer is spoken like a switch to it.
     if let Some(pid) = foreground_pid() {
@@ -611,9 +602,23 @@ fn run(
             .name("verbatim-shutdown".to_owned())
             .spawn(move || supervisor.shutdown())?
     };
-    if instance.being_replaced() {
+    // The reducer decides what is heard of the exit; this thread waits
+    // until it has been.
+    let deadline = Instant::now() + EXIT_SOUND_TIMEOUT;
+    let replaced = instance.being_replaced();
+    let (heard_tx, heard_rx) = crossbeam_channel::bounded(1);
+    let _ = command_tx.send(ShellCommand::Exiting {
+        replaced,
+        heard: heard_tx,
+    });
+    let heard = match heard_rx.recv_deadline(deadline) {
+        Ok(Some(exit_sound)) => exit_sound.wait_until(deadline),
+        Ok(None) => true,
+        Err(_) => false,
+    };
+    if replaced {
         tracing::info!("being replaced by a new instance; no exit sound");
-    } else if !manager.play_earcon_to_end(Earcon::Exit, EXIT_SOUND_TIMEOUT) {
+    } else if !heard {
         tracing::warn!(
             timeout = ?EXIT_SOUND_TIMEOUT,
             "the exit sound was not heard in time; exiting anyway"
@@ -1119,9 +1124,13 @@ pub(crate) enum ShellCommand {
     /// Ask this application for its current focus: at startup, for the
     /// foreground application.
     FocusNow(Pid),
-    /// Report an event as the theme says, such as the error sound for an
-    /// error logged on another thread.
-    PlayEarcon(Earcon),
+    /// Verbatim is exiting: the reducer is told, and whatever it plays to
+    /// be heard before Verbatim exits (the exit sound) is handed back on
+    /// `heard`, for the main thread to wait on; `None` when nothing is.
+    Exiting {
+        replaced: bool,
+        heard: Sender<Option<verbatim_speech::EarconHeard>>,
+    },
     /// The settings dialog's Terminal page applied a change: merge it into
     /// the reducer's reader settings, give it them, and save them.
     TerminalSettings(verbatim_gui::TerminalChange),
@@ -1186,6 +1195,11 @@ struct ReducerThread<'a> {
     /// incarnation ([`OutpostMessage::Reincarnated`]), so their end asks
     /// for no focus.
     reincarnated: HashSet<OutpostId>,
+    /// Whether Verbatim is exiting, so the exit sound is played to be
+    /// waited on, and the exit sound the reducer played then, for the main
+    /// thread to wait on until it has been heard ([`ShellCommand::Exiting`]).
+    exiting: bool,
+    exit_sound: Option<verbatim_speech::EarconHeard>,
 }
 
 impl ReducerThread<'_> {
@@ -1253,7 +1267,9 @@ impl ReducerThread<'_> {
                     self.want_focus_now(pid);
                 }
             }
-            OutpostMessage::MenuOrSwitchEnded { ended_at_ms } => self.fake_focus(ended_at_ms),
+            OutpostMessage::MenuOrSwitchEnded { ended_at_ms } => {
+                self.apply(Input::MenuOrSwitchEnded { ended_at_ms });
+            }
             OutpostMessage::IdleQueried { round, outposts } => {
                 self.barrier.queried(round, outposts);
             }
@@ -1277,22 +1293,13 @@ impl ReducerThread<'_> {
         }
     }
 
-    /// A menu or the Alt+Tab switcher closed at `ended_at_ms`: unless a
-    /// focus observed since then has been applied, reads the focus of
-    /// whichever application is in front, usually not the one that owned the
-    /// menu, as NVDA's fake focus does when no focus event was validly
-    /// processed with the end. Only the control is reported, as NVDA queues
-    /// a focus on it and nothing for its window. An application with no
-    /// ready outpost is asked for its window too, since attention may be
-    /// moving to it.
-    fn fake_focus(&mut self, ended_at_ms: u64) {
-        if self
-            .state
-            .latest_focus_observed_at()
-            .is_some_and(|observed| observed >= ended_at_ms)
-        {
-            return;
-        }
+    /// The reducer asked for the focus of whichever application is in
+    /// front (`Effect::ReadForegroundFocus`), after a menu or the Alt+Tab
+    /// switcher closed: usually not the one that owned the menu, as NVDA's
+    /// fake focus. Only the control is reported, as NVDA queues a focus on
+    /// it and nothing for its window. An application with no ready outpost
+    /// is asked for its window too, since attention may be moving to it.
+    fn fake_focus(&mut self, trace_id: TraceId) {
         let Some(pid) = foreground_pid().filter(|&pid| !self.context.supervisor.is_ignored(pid))
         else {
             return;
@@ -1301,7 +1308,6 @@ impl ReducerThread<'_> {
             self.want_focus_now(pid);
             return;
         };
-        let trace_id = TraceId::mint();
         let id = self.requests.begin(
             outpost,
             Asker::FakeFocus {
@@ -1561,7 +1567,11 @@ impl ReducerThread<'_> {
             ShellCommand::ShellItems(kind, deliver) => self.shell_items(kind, deliver),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
-            ShellCommand::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
+            ShellCommand::Exiting { replaced, heard } => {
+                self.exiting = true;
+                self.apply(Input::Exiting { replaced });
+                let _ = heard.send(self.exit_sound.take());
+            }
             ShellCommand::TerminalSettings(change) => self.change_terminal_settings(change),
             ShellCommand::InputHandled(input) => {
                 self.handled_input = self.handled_input.max(input);
@@ -1674,7 +1684,7 @@ impl ReducerThread<'_> {
         match outcome {
             QueryOutcome::Abandoned => {
                 if self.live.query_abandoned(outpost) {
-                    self.context.manager.play_earcon(Earcon::AppNotResponding);
+                    self.apply(Input::ApplicationNotResponding { outpost });
                 }
             }
             QueryOutcome::Done(_) | QueryOutcome::Gone => self.live.answered(outpost),
@@ -1696,7 +1706,12 @@ impl ReducerThread<'_> {
             | Input::CaretKey { trace_id, .. }
             | Input::HeldKey { trace_id, .. }
             | Input::CharacterTyped { trace_id, .. }
-            | Input::ClearingKey { trace_id, .. } => *trace_id,
+            | Input::ClearingKey { trace_id, .. }
+            | Input::LockKeyToggled { trace_id, .. }
+            | Input::ClockRead { trace_id, .. }
+            | Input::ClipboardCopied { trace_id, .. }
+            | Input::ShellItemGone { trace_id, .. }
+            | Input::PreviewSpeech { trace_id, .. } => *trace_id,
             _ => TraceId::mint(),
         };
         let queued = self.state.focuses_queued();
@@ -1878,13 +1893,20 @@ impl ReducerThread<'_> {
                 };
                 self.send(outpost, id, command);
             }
-            Effect::CopyToClipboard(text) => self.context.clipboard.copy(text),
+            Effect::CopyToClipboard(text) => self.context.clipboard.copy(trace_id, text),
             Effect::Text(request) => self.text_request(trace_id, request),
             Effect::KeepDisplayOn(on) => keep_display_on(on),
             Effect::SettingsChanged(settings) => {
                 save_reader_settings(&self.context.store, settings);
             }
+            // The exit sound is heard before Verbatim exits: the main thread
+            // waits for it ([`ShellCommand::Exiting`]). A preview of it is
+            // played as any other earcon.
+            Effect::PlayEarcon(Earcon::Exit) if self.exiting => {
+                self.exit_sound = Some(self.context.manager.play_earcon_heard(Earcon::Exit));
+            }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
+            Effect::ReadForegroundFocus => self.fake_focus(trace_id),
             Effect::PassHeldKey(held) => {
                 let supervisor = &self.context.supervisor;
                 let outpost = self.state.terminal_outpost();
@@ -2165,6 +2187,8 @@ fn reducer_loop(
         decoded: Vec::new(),
         barrier: idle::IdleBarrier::default(),
         reincarnated: HashSet::new(),
+        exiting: false,
+        exit_sound: None,
         held_keys: held_keys::HeldKeys::default(),
         held_wait: None,
     };
@@ -2225,9 +2249,9 @@ fn next_of(received: Received<ShellCommand>) -> Next {
     }
 }
 
-/// The router thread body: bound gestures become GUI commands, direct speech,
-/// or, for review and object navigation, [`Input::Command`]s sent to the
-/// reducer thread.
+/// The router thread body: bound gestures become GUI commands or reducer
+/// inputs: [`Input::Command`]s for review and object navigation, and what
+/// the time gesture and the lock keys read, for the reducer to speak.
 ///
 /// Multi-press: the double-press variants (Verbatim+F12 twice quickly
 /// speaks the date, Verbatim+F11 twice quickly lists the taskbar) take the
@@ -2235,7 +2259,6 @@ fn next_of(received: Received<ShellCommand>) -> Next {
 fn router_loop(
     gesture_rx: &Receiver<Routed>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,
-    manager: &Arc<SpeechManager>,
     command_tx: &Commands,
     layout: KeyboardLayout,
 ) {
@@ -2261,7 +2284,7 @@ fn router_loop(
             && due <= now
         {
             toggles.pop_front();
-            report_toggle_key(manager, key);
+            report_toggle_key(command_tx, key);
         }
         if toggles.is_empty() {
             for command in behind_toggles.drain(..) {
@@ -2303,10 +2326,11 @@ fn router_loop(
         let Some(action) = scripts.get(&emitted.gesture) else {
             continue;
         };
-        // Time and the shell list are imperative shell concerns; everything
-        // else is a review or object-navigation command for the reducer.
+        // The shell list is the GUI's; the time is read here and spoken by
+        // the reducer; everything else is a review or object-navigation
+        // command for the reducer.
         match action {
-            ScriptAction::SpeakTime => speak_time_or_date(manager, emitted.repeat),
+            ScriptAction::SpeakTime => report_time_or_date(command_tx, &emitted),
             ScriptAction::ShowTrayList => send_gui_command(
                 gui_handle,
                 GuiCommand::OpenShellItemList(shell_list_kind(&emitted)),
@@ -2385,58 +2409,63 @@ fn send_gui_command(gui_handle: &Arc<OnceLock<GuiHandle>>, command: GuiCommand) 
 /// read and announced, as NVDA does: Windows has changed the state by then.
 const TOGGLE_KEY_DELAY: Duration = Duration::from_millis(30);
 
-/// Announces a lock key's new state ("caps lock on"), once
-/// [`TOGGLE_KEY_DELAY`] has passed; the router waits for it.
-fn report_toggle_key(manager: &SpeechManager, key: verbatim_input::ToggleKey) {
+/// Reads a lock key's new state once [`TOGGLE_KEY_DELAY`] has passed, for
+/// the reducer to announce ("caps lock on"); the router waits for it.
+fn report_toggle_key(command_tx: &Commands, key: verbatim_input::ToggleKey) {
     // SAFETY: GetKeyState takes a virtual-key code and reads key state.
     let on =
         unsafe { windows::Win32::UI::Input::KeyboardAndMouse::GetKeyState(i32::from(key.vk())) }
             & 1
             != 0;
-    let id = match key {
-        verbatim_input::ToggleKey::CapsLock => "toggle-caps-lock",
-        verbatim_input::ToggleKey::NumLock => "toggle-num-lock",
-        verbatim_input::ToggleKey::ScrollLock => "toggle-scroll-lock",
+    let key = match key {
+        verbatim_input::ToggleKey::CapsLock => LockKey::CapsLock,
+        verbatim_input::ToggleKey::NumLock => LockKey::NumLock,
+        verbatim_input::ToggleKey::ScrollLock => LockKey::ScrollLock,
     };
-    manager.speak(Utterance {
+    let input = Input::LockKeyToggled {
         trace_id: TraceId::mint(),
-        priority: SpeechPriority::Interrupt,
-        segments: vec![UtteranceSegment::text(
-            verbatim_i18n::messages::toggle_key_state(id, on),
-        )],
-        source: None,
-        say_all: false,
-        validity: None,
-    });
+        key,
+        on,
+    };
+    if command_tx
+        .send(ShellCommand::Input(Box::new(input)))
+        .is_err()
+    {
+        tracing::debug!("the reducer thread is gone; a lock key's state is not announced");
+    }
 }
 
-/// Speaks the localized current time (`repeat` 0) or date (any higher
-/// count) at Interrupt priority, as a plain text span with no source node.
-/// `repeat` is the number of extra quick presses, which `verbatim-input`
-/// counts on each emitted gesture (see [`router_loop`]).
-fn speak_time_or_date(manager: &SpeechManager, repeat: u8) {
-    let formatted = if repeat == 0 {
-        datetime::local_time()
-    } else {
-        datetime::local_date()
+/// Reads the localized current time and date for the time gesture, for the
+/// reducer to speak the time on a first press and the date on a quick
+/// second (`emitted.repeat`, the number of extra quick presses, which
+/// `verbatim-input` counts on each emitted gesture; see [`router_loop`]).
+fn report_time_or_date(command_tx: &Commands, emitted: &EmittedGesture) {
+    let time = datetime::local_time();
+    let date = datetime::local_date();
+    if time.is_none() || date.is_none() {
+        tracing::warn!(
+            time = time.is_some(),
+            date = date.is_some(),
+            "the system time or date could not be formatted"
+        );
+    }
+    let input = Input::ClockRead {
+        trace_id: emitted.trace_id,
+        repeat: emitted.repeat,
+        time,
+        date,
     };
-    let Some(text) = formatted else {
-        tracing::warn!(repeat, "the system time or date could not be formatted");
-        return;
-    };
-    manager.speak(Utterance {
-        trace_id: TraceId::mint(),
-        priority: SpeechPriority::Interrupt,
-        segments: vec![UtteranceSegment::text(text)],
-        source: None,
-        say_all: false,
-        validity: None,
-    });
+    if command_tx
+        .send(ShellCommand::Input(Box::new(input)))
+        .is_err()
+    {
+        tracing::warn!("the reducer thread is gone; dropping gesture");
+    }
 }
 
 /// The shell surface Verbatim+F11 lists for the press the router received:
 /// the system tray on a single press (`repeat` 0), the taskbar on a double
-/// press, counted as for [`speak_time_or_date`]. Pure, and unit tested below.
+/// press, counted as for [`report_time_or_date`]. Pure, and unit tested below.
 fn shell_list_kind(emitted: &EmittedGesture) -> ShellItemKind {
     if emitted.repeat == 0 {
         ShellItemKind::SystemTray
@@ -2448,11 +2477,11 @@ fn shell_list_kind(emitted: &EmittedGesture) -> ShellItemKind {
 /// The GUI event thread body: the Exit item asks the app to shut down; the
 /// app tells the GUI to tear down, which ends the main thread's loop. A
 /// shell item that was gone when the list dialog would have clicked it is
-/// spoken.
+/// told to the reducer, which says so.
 fn gui_event_loop(
     gui_event_rx: &Receiver<GuiEvent>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,
-    manager: &SpeechManager,
+    command_tx: &Commands,
 ) {
     while let Ok(event) = gui_event_rx.recv() {
         match event {
@@ -2461,16 +2490,11 @@ fn gui_event_loop(
                 request_shutdown(gui_handle);
             }
             GuiEvent::ShellItemGone(name) => {
-                manager.speak(Utterance {
+                let input = Input::ShellItemGone {
                     trace_id: TraceId::mint(),
-                    priority: SpeechPriority::Queued,
-                    segments: vec![UtteranceSegment::text(
-                        verbatim_i18n::messages::tray_list_gone(&name),
-                    )],
-                    source: None,
-                    say_all: false,
-                    validity: None,
-                });
+                    name,
+                };
+                let _ = command_tx.send(ShellCommand::Input(Box::new(input)));
             }
         }
     }

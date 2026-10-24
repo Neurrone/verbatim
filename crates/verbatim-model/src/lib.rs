@@ -23,7 +23,7 @@ mod tree;
 
 pub use calls::{CallCounts, CallKind};
 pub use event::{
-    ActionName, Earcon, Effect, FetchResult, Input, NormalizedEvent, Notification,
+    ActionName, Earcon, Effect, FetchResult, Input, LockKey, NormalizedEvent, Notification,
     NotificationKind, NotificationProcessing, Pid, ProgressReading, PropertyChange, Query, QueryId,
     QueryKind, ReviewCommand, WindowFacts, WindowHandle,
 };

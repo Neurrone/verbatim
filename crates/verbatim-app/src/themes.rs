@@ -79,12 +79,20 @@ impl ThemeHost for AppThemeHost {
         }
     }
 
+    /// A preview spoken, through the reducer, which speaks it
+    /// interrupting.
     fn speak(&self, utterance: Utterance) {
-        self.manager.speak(utterance);
+        let input = Input::PreviewSpeech {
+            trace_id: utterance.trace_id,
+            segments: utterance.segments,
+        };
+        let _ = self.commands.send(ShellCommand::Input(Box::new(input)));
     }
 
+    /// A preview of an event, through the reducer.
     fn play_earcon(&self, earcon: Earcon) {
-        self.manager.play_earcon(earcon);
+        let input = Input::PreviewEarcon(earcon);
+        let _ = self.commands.send(ShellCommand::Input(Box::new(input)));
     }
 }
 
