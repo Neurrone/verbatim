@@ -263,8 +263,8 @@ pub fn read_dump<R: BufRead>(reader: &mut R) -> Result<DumpContents, DumpReadErr
 mod tests {
     use super::*;
     use verbatim_model::{
-        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Pid, Role, StateSet,
-        TraceId,
+        Backend, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, OutpostId, Pid, Role,
+        StateSet, TraceId, WindowHandle,
     };
 
     fn sample_inputs() -> Vec<RecordedInput> {
@@ -327,6 +327,41 @@ mod tests {
         assert_eq!(contents.base, base);
         assert_eq!(contents.inputs, inputs);
         assert!(!contents.truncated);
+    }
+
+    /// A dump written before focuses carried microseconds holds the latest
+    /// focus as the tuple of its outpost, its milliseconds and its
+    /// top-level window, and still loads, with no microseconds.
+    #[test]
+    fn a_dump_with_the_latest_focus_as_a_tuple_loads() {
+        let mut base = sample_base();
+        base.latest_focus = Some(crate::state::LatestFocus {
+            outpost: OutpostId(3),
+            observed_at_ms: 6_543,
+            top_level: Some(WindowHandle(0x10)),
+            observed_at_us: 0,
+        });
+        let mut written = serde_json::to_value(&base).expect("serializes");
+        written["latest_focus"] = serde_json::json!([
+            serde_json::to_value(OutpostId(3)).expect("serializes"),
+            6_543,
+            serde_json::to_value(WindowHandle(0x10)).expect("serializes"),
+        ]);
+        let mut buffer = Vec::new();
+        write_line(
+            &mut buffer,
+            &DumpHeader {
+                format_version: DUMP_FORMAT_VERSION,
+                crate_version: "9.9.9".to_owned(),
+                timestamp: "2026-07-14T00:00:00Z".to_owned(),
+            },
+        )
+        .expect("writes header");
+        write_line(&mut buffer, &written).expect("writes the base state");
+
+        let mut reader = buffer.as_slice();
+        let contents = read_dump(&mut reader).expect("reads");
+        assert_eq!(contents.base, base);
     }
 
     #[test]

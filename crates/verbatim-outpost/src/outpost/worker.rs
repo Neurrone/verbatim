@@ -53,7 +53,7 @@ use windows::Win32::UI::WindowsAndMessaging::{OBJID_CLIENT, OBJID_WINDOW};
 
 use crate::protocol::{
     DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
-    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us,
+    QueryResult, UiaFocusRead, UiaSnapshotFact, WALK_DEADLINE, now_us, observed_no_earlier,
 };
 
 use super::Context;
@@ -307,12 +307,14 @@ pub(super) struct Tracking {
     /// repeats it is not a duplicate.
     foreground_since_focus: bool,
     /// When the last focus this outpost reported was observed, in
-    /// milliseconds since the Unix epoch, or when it was reported, for a
+    /// milliseconds and microseconds on the run's shared clock
+    /// (microseconds 0 when not known), or when it was reported, for a
     /// focus with no observation time.
-    focus_observed_at_ms: u64,
+    focus_observed: (u64, u64),
     /// The newest observation time of the focuses Core queued from another
-    /// application after this outpost's ([`Tracking::focus_queued_elsewhere`]).
-    queued_elsewhere_at_ms: u64,
+    /// application after this outpost's, in milliseconds and microseconds
+    /// ([`Tracking::focus_queued_elsewhere`]).
+    queued_elsewhere: (u64, u64),
     /// Whether the last MSAA focus reported was a simple child, by the
     /// child id its object was acquired with: a child id can be reused, so
     /// a focus event at its address is never a duplicate of it.
@@ -344,9 +346,9 @@ struct AnsweredFocus {
     ancestors: Option<Vec<NodeSnapshot>>,
     /// What its caret read found ([`Worker::read_focus_text`]).
     text: Option<FocusText>,
-    /// When the answer began to be read, in milliseconds since the Unix
-    /// epoch.
-    observed_at_ms: u64,
+    /// When the answer began to be read, in milliseconds and microseconds
+    /// on the run's shared clock.
+    observed: (u64, u64),
     /// The window whose focused element the answer read.
     window: Option<isize>,
 }
@@ -374,7 +376,7 @@ struct QueuedFocus {
     node: NodeId,
     window: isize,
     event: Option<(isize, i32, i32)>,
-    observed_at_ms: u64,
+    observed: (u64, u64),
 }
 
 /// The event address a foreground change has: the system raises its
@@ -414,7 +416,7 @@ fn foreground_repeats_focus(
 }
 
 /// The last focus queued once a focus-now answer for `node`, read in
-/// window `window` and observed at `observed_at_ms`, is sent, given
+/// window `window` and observed at `observed`, is sent, given
 /// `last`, the last focus queued before it: NVDA queues its fake focus as
 /// a focus event, which makes it the last focus queued. An answer for the
 /// node already queued refreshes only its observation time, keeping the
@@ -425,18 +427,15 @@ fn queue_answer(
     last: Option<QueuedFocus>,
     node: NodeId,
     window: Option<isize>,
-    observed_at_ms: u64,
+    observed: (u64, u64),
 ) -> Option<QueuedFocus> {
     match (last, window) {
-        (Some(last), _) if last.node == node => Some(QueuedFocus {
-            observed_at_ms,
-            ..last
-        }),
+        (Some(last), _) if last.node == node => Some(QueuedFocus { observed, ..last }),
         (_, Some(window)) => Some(QueuedFocus {
             node,
             window,
             event: None,
-            observed_at_ms,
+            observed,
         }),
         (last, None) => last,
     }
@@ -449,26 +448,25 @@ impl Tracking {
     }
 
     /// Core queued a focus from another application, observed at
-    /// `observed_at_ms` (0 for a focus Core asked for, taken as now), after
-    /// the last focus this outpost reported
+    /// `observed`, its milliseconds and microseconds (0 for a focus Core
+    /// asked for, taken as now), after the last focus this outpost reported
     /// ([`SupervisorToOutpost::FocusQueued`]).
-    pub(super) fn focus_queued_elsewhere(&mut self, observed_at_ms: u64) {
-        let observed_at_ms = if observed_at_ms == 0 {
-            now_ms()
-        } else {
-            observed_at_ms
-        };
-        self.queued_elsewhere_at_ms = self.queued_elsewhere_at_ms.max(observed_at_ms);
+    pub(super) fn focus_queued_elsewhere(&mut self, observed: (u64, u64)) {
+        let observed = stamp_or_now(observed);
+        if observed_no_earlier(observed, self.queued_elsewhere) {
+            self.queued_elsewhere = observed;
+        }
     }
 
     /// Whether a focus Core queued from another application was observed
-    /// no earlier than the last focus this outpost reported, so that focus
-    /// is no longer the last focus queued, as NVDA's
-    /// `lastQueuedFocusObject` is replaced by a focus from any application.
-    /// A focus from elsewhere observed before it is one Core took before
-    /// this outpost's, or dropped as stale.
+    /// no earlier than the last focus this outpost reported, ordered as
+    /// Core orders them ([`observed_no_earlier`]), so that focus is no
+    /// longer the last focus queued, as NVDA's `lastQueuedFocusObject` is
+    /// replaced by a focus from any application. A focus from elsewhere
+    /// observed before it is one Core took before this outpost's, or
+    /// dropped as stale.
     fn focus_superseded(&self) -> bool {
-        self.queued_elsewhere_at_ms >= self.focus_observed_at_ms
+        observed_no_earlier(self.queued_elsewhere, self.focus_observed)
     }
 }
 
@@ -1376,7 +1374,7 @@ impl Worker<'_> {
         if !self.gap.is_open() {
             return;
         }
-        let elsewhere = self.context.tracking().queued_elsewhere_at_ms;
+        let elsewhere = self.context.tracking().queued_elsewhere.0;
         if elsewhere > 0 {
             self.gap.focus_after(elsewhere);
         }
@@ -2389,13 +2387,7 @@ impl Worker<'_> {
                 // has answered yet answers it; a foreground change says
                 // nothing of the focus inside its window, and does not.
                 self.gap.focus_after(observed_at_ms);
-                self.adopt_focus(
-                    (node_id, role, states),
-                    object,
-                    window,
-                    chain,
-                    observed_at_ms,
-                );
+                self.adopt_focus((node_id, role, states), object, window, chain, stamp);
             }
             let mut tracking = self.context.tracking();
             tracking.batch = Some(self.batch);
@@ -2408,11 +2400,7 @@ impl Worker<'_> {
                 node: node_id,
                 window,
                 event: foreground.then(|| foreground_event(window)),
-                observed_at_ms: if observed_at_ms == 0 {
-                    now_ms()
-                } else {
-                    observed_at_ms
-                },
+                observed: stamp_or_now(stamp),
             });
             drop(tracking);
             // Move the focus-following subscription to the new focus,
@@ -2426,11 +2414,12 @@ impl Worker<'_> {
 
     /// Makes `node_id`, of `role` with `states`, the outpost's focus: the
     /// object `object` in `window`, with `chain`, its ancestors and itself,
-    /// or `None` when its ancestors are unknown, observed at
-    /// `observed_at_ms` (0 for now). A caret key's watch on another node
-    /// ends, the intake is told ([`note_focused`](Self::note_focused)), and
-    /// the tracking takes it, so its caret events, a terminal's output and
-    /// the menu rules follow it. A reported focus becomes the focus this
+    /// or `None` when its ancestors are unknown, observed at `observed`,
+    /// its milliseconds and microseconds (0 for now). A caret key's watch on
+    /// another node ends, the intake is told
+    /// ([`note_focused`](Self::note_focused)), and the tracking takes it, so
+    /// its caret events, a terminal's output and the menu rules follow it.
+    /// A reported focus becomes the focus this
     /// way ([`emit_focus`](Self::emit_focus)), and so does a focus-now
     /// answer's control, which Core takes as its focus
     /// ([`follow_answer`](Self::follow_answer)). What a focus event's report
@@ -2450,18 +2439,14 @@ impl Worker<'_> {
         object: Option<Object>,
         window: Option<isize>,
         chain: Option<Vec<NodeSnapshot>>,
-        observed_at_ms: u64,
+        observed: (u64, u64),
     ) {
         self.end_watch_elsewhere(node_id);
         self.blur_terminal_elsewhere(node_id);
         self.note_focused(object, role, window);
         let mut tracking = self.context.tracking();
         tracking.role = Some(role);
-        tracking.focus_observed_at_ms = if observed_at_ms == 0 {
-            now_ms()
-        } else {
-            observed_at_ms
-        };
+        tracking.focus_observed = stamp_or_now(observed);
         tracking.focus = Some(node_id);
         tracking.focus_states = Some(states);
         tracking.focus_role = Some(role);
@@ -3622,7 +3607,7 @@ impl Worker<'_> {
             let tracking = self.context.tracking();
             let superseded = tracking
                 .queued
-                .is_some_and(|last| tracking.queued_elsewhere_at_ms >= last.observed_at_ms);
+                .is_some_and(|last| observed_no_earlier(tracking.queued_elsewhere, last.observed));
             foreground_repeats_focus(tracking.queued, superseded, hwnd, is_descendant_window)
         };
         if let Some(reason) = repeats {
@@ -4217,7 +4202,7 @@ impl Worker<'_> {
                 node: node.clone(),
                 ancestors: control.ancestors.clone(),
                 text,
-                observed_at_ms: answer.observed_at_ms,
+                observed: (answer.observed_at_ms, answer.observed_at_us),
                 window,
             }
         });
@@ -4239,7 +4224,7 @@ impl Worker<'_> {
             node,
             ancestors,
             text,
-            observed_at_ms,
+            observed,
             window,
         } = answered;
         let same_node = self.context.tracking().focus == Some(node.id);
@@ -4256,20 +4241,15 @@ impl Worker<'_> {
                 object,
                 window,
                 chain,
-                observed_at_ms,
+                observed,
             );
         }
         // The answer becomes the last focus queued, so a later foreground
         // change of its window is dropped by the foreground tests.
-        let queued_at_ms = if observed_at_ms == 0 {
-            now_ms()
-        } else {
-            observed_at_ms
-        };
         let mut tracking = self.context.tracking();
-        tracking.queued = queue_answer(tracking.queued, node.id, window, queued_at_ms);
+        tracking.queued = queue_answer(tracking.queued, node.id, window, stamp_or_now(observed));
         drop(tracking);
-        self.follow_text((node.id, node.role), text.as_ref(), (trace, observed_at_ms));
+        self.follow_text((node.id, node.role), text.as_ref(), (trace, observed.0));
     }
 
     /// Publishes the reply to the query in hand, ending its entry.
@@ -4302,6 +4282,17 @@ fn event_window_facts(mut facts: WindowFacts, event: &NormalizedEvent) -> Window
     facts
 }
 
+/// `stamp`, an observation's milliseconds and microseconds, or now from
+/// one clock read when it has no observation time (0).
+fn stamp_or_now(stamp: (u64, u64)) -> (u64, u64) {
+    if stamp.0 == 0 {
+        let now = now_us();
+        (now / 1_000, now)
+    } else {
+        stamp
+    }
+}
+
 /// A stamp of `ms` milliseconds with the microseconds of the observation
 /// `micros` when that is the same observation, read with the same clock
 /// read, and with none (0) otherwise.
@@ -4325,6 +4316,21 @@ mod tests {
         assert_eq!(stamp_with_micros(6_543, 6_543_210), (6_543, 6_543_210));
         assert_eq!(stamp_with_micros(6_544, 6_543_210), (6_544, 0));
         assert_eq!(stamp_with_micros(6_543, 0), (6_543, 0));
+    }
+
+    /// Another application's focus Core queued in the same millisecond as
+    /// this outpost's last focus supersedes it only when it was observed no
+    /// earlier, to the microsecond, as Core orders the two.
+    #[test]
+    fn a_focus_queued_elsewhere_in_the_same_millisecond_is_ordered_by_microseconds() {
+        let mut tracking = Tracking {
+            focus_observed: (6_543, 6_543_500),
+            ..Tracking::default()
+        };
+        tracking.focus_queued_elsewhere((6_543, 6_543_200));
+        assert!(!tracking.focus_superseded());
+        tracking.focus_queued_elsewhere((6_543, 6_543_800));
+        assert!(tracking.focus_superseded());
     }
 
     /// A focus change's window facts keep the window's class, which Core's
@@ -4375,7 +4381,7 @@ mod tests {
             node: NodeId::new(1),
             window,
             event,
-            observed_at_ms: 1,
+            observed: (1, 0),
         }
     }
 
@@ -4445,25 +4451,25 @@ mod tests {
         let event = Some((5, OBJID_CLIENT.0, CHILDID_SELF));
         let last = Some(last_focus(8, event));
         assert_eq!(
-            queue_answer(last, NodeId::new(1), Some(9), 20),
+            queue_answer(last, NodeId::new(1), Some(9), (20, 0)),
             Some(QueuedFocus {
                 node: NodeId::new(1),
                 window: 8,
                 event,
-                observed_at_ms: 20,
+                observed: (20, 0),
             })
         );
         assert_eq!(
-            queue_answer(last, NodeId::new(2), Some(9), 20),
+            queue_answer(last, NodeId::new(2), Some(9), (20, 0)),
             Some(QueuedFocus {
                 node: NodeId::new(2),
                 window: 9,
                 event: None,
-                observed_at_ms: 20,
+                observed: (20, 0),
             })
         );
-        assert_eq!(queue_answer(last, NodeId::new(2), None, 20), last);
-        assert_eq!(queue_answer(None, NodeId::new(2), None, 20), None);
+        assert_eq!(queue_answer(last, NodeId::new(2), None, (20, 0)), last);
+        assert_eq!(queue_answer(None, NodeId::new(2), None, (20, 0)), None);
     }
 
     /// The idle barrier's answer never waits on the terminals' lock, which

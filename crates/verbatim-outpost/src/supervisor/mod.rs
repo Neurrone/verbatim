@@ -609,7 +609,8 @@ impl Supervisor {
     }
 
     /// Tells the focus listener that Core took the event traced
-    /// `trace_id`, observed at `observed_at_ms`, as the focus
+    /// `trace_id`, observed at `observed`, its milliseconds and
+    /// microseconds (0 when not known), as the focus
     /// ([`SupervisorToOutpost::FocusQueued`]), and tells `superseded`, the
     /// outpost that reported the focus Core queued before it, when that
     /// was another application's, so its MSAA duplicate test no longer
@@ -617,12 +618,12 @@ impl Supervisor {
     pub fn focus_queued(
         &self,
         trace_id: TraceId,
-        observed_at_ms: u64,
+        observed: (u64, u64),
         superseded: Option<OutpostId>,
     ) {
         let _ = self.owner.send(owner::OwnerEvent::FocusQueued {
             trace_id,
-            observed_at_ms,
+            observed,
             superseded,
         });
     }

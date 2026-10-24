@@ -2554,68 +2554,6 @@ fn a_focus_observed_before_the_latest_from_another_outpost_is_stale() {
     );
 }
 
-/// Alt+Tab, as found live (2026-10-24): the window switched to, a console,
-/// has its terminal's focus applied first; the switcher's own pane focus,
-/// which happened before it, reaches Core after it, from another
-/// application's outpost. It never replaces the console's focus, so the
-/// console's announcement is neither cut off nor expired.
-#[test]
-fn a_switchers_focus_that_happened_before_the_window_switched_to_is_dropped() {
-    let explorer = Pid(6620);
-    let console = Pid(12284);
-    let switcher = WindowFacts {
-        topmost: true,
-        ..window(131_700)
-    };
-    let item = node(2, Role::ListItem, Some("AltTabDbA"), None, StateSet::new());
-    let (state, _) = reduce(
-        &SrState::new(),
-        &observed_at(focus_in(explorer, switcher.clone(), item, vec![]), 45_485),
-    );
-    let console_window = node(1, Role::Window, Some("AltTabDbA"), None, StateSet::new());
-    let terminal = node(2, Role::Terminal, None, None, StateSet::new());
-    let (state, effects) = reduce(
-        &state,
-        &observed_at(
-            focus_in(
-                console,
-                foreground_window(9_373_252),
-                terminal.clone(),
-                vec![console_window],
-            ),
-            46_905,
-        ),
-    );
-    assert_eq!(
-        heard(&effects),
-        vec![
-            Heard::Expire(focus_now(
-                outpost_of(console),
-                2,
-                &[1],
-                Some((outpost_of(console), 1))
-            )),
-            Heard::Stop,
-            queued(vec![
-                UtteranceSegment::label("AltTabDbA"),
-                role(Role::Window)
-            ]),
-            queued(vec![role(Role::Terminal)]),
-        ],
-        "the console is announced"
-    );
-    let pane = node(1, Role::Pane, None, None, StateSet::new());
-    let (state, effects) = reduce(
-        &state,
-        &observed_at(focus_in(explorer, switcher, pane, vec![]), 46_491),
-    );
-    assert_eq!(heard(&effects), vec![], "the switcher's focus is dropped");
-    assert_eq!(
-        state.focused().map(|(source, node)| (source, node.id)),
-        Some((console, NodeId::in_outpost(outpost_of(console), 2)))
-    );
-}
-
 /// `input` observed at `us`, in microseconds on the run's shared clock,
 /// with its milliseconds from the same reading.
 fn observed_at_micros(mut input: Input, us: u64) -> Input {
@@ -2683,6 +2621,37 @@ fn focuses_stamped_in_one_millisecond_are_ordered_by_their_microseconds() {
     assert_eq!(
         state.focused().map(|(source, node)| (source, node.id)),
         Some((explorer, NodeId::in_outpost(outpost_of(explorer), 1)))
+    );
+}
+
+/// A focus stamped to the microsecond is ordered by its milliseconds
+/// against a newest focus stamped in milliseconds only: one from an
+/// earlier millisecond is stale.
+#[test]
+fn a_focus_with_microseconds_is_ordered_by_milliseconds_against_one_without() {
+    let terminal = node(2, Role::Terminal, None, None, StateSet::new());
+    let (state, _) = reduce(
+        &SrState::new(),
+        &observed_at(
+            focus_in(Pid(2), foreground_window(30), terminal, vec![]),
+            27_737,
+        ),
+    );
+    // A topmost window, as the Alt+Tab switcher's is, whose focus is
+    // applied though it is not the foreground window.
+    let topmost = WindowFacts {
+        topmost: true,
+        ..window(40)
+    };
+    let pane = node(1, Role::Pane, None, None, StateSet::new());
+    let (_, effects) = reduce(
+        &state,
+        &observed_at_micros(focus_in(Pid(3), topmost, pane, vec![]), 27_736_900),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![],
+        "observed in an earlier millisecond"
     );
 }
 

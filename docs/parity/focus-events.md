@@ -136,6 +136,12 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
   window was confirmed (below); a focus read on request, when the read
   began; and the end of a menu or of the switcher, when the listener's
   callback observed it.
+- The focus listener and the outposts, told of each focus Core queued
+  with its milliseconds and microseconds
+  (`SupervisorToOutpost::FocusQueued`), order it against their own last
+  focus as Core orders two focuses (`protocol::observed_no_earlier`), so
+  a focus Core queued in the same millisecond replaces their last focus
+  exactly when Core took it as the newer.
 - A UIA focus fact whose element is not the focused element is dropped
   when the focus is in another application by then, and otherwise
   reported from the fact with its window: its own, or for a windowless

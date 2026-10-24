@@ -124,7 +124,7 @@ use crate::outpost::text_reads::CONSOLE_WINDOW_CLASS;
 use crate::outpost::window::{front_is_another_thread_of_its_application, window_is_hung};
 use crate::protocol::{
     DeliveredFact, DropEvidence, EventTiming, UiaAncestorFact, UiaFocusRead, UiaSnapshotFact,
-    now_us,
+    now_us, observed_no_earlier,
 };
 
 /// The most ancestors read for a focus, as many as the outpost walks.
@@ -566,13 +566,15 @@ struct Accepted {
 }
 
 /// The UIA event a focus came in: its trace, and when the listener
-/// received it, in milliseconds since the Unix epoch.
+/// received it, on the run's shared clock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Arrival {
     /// The trace minted for the event.
     pub trace: TraceId,
-    /// When the event was received.
+    /// When the event was received, in milliseconds.
     pub observed_at_ms: u64,
+    /// The same time in microseconds, from the same clock read.
+    pub observed_at_us: u64,
 }
 
 impl LastAccepted {
@@ -636,21 +638,31 @@ impl LastAccepted {
         }
     }
 
-    /// Core took the event traced `trace`, observed at `observed_at_ms`
-    /// (0 for a focus it asked for), as the focus. Unless that is the last
-    /// focus accepted, or was observed before it, so that the accepted one
-    /// is the newer and Core takes it next, the last focus accepted is no
-    /// longer the last focus queued, and is no repeat's evidence.
-    pub fn queued(&self, trace: TraceId, observed_at_ms: u64) {
+    /// Core took the event traced `trace`, observed at `observed`, its
+    /// milliseconds and microseconds (0 when not known; both 0 for a focus
+    /// it asked for), as the focus. Unless that is the last focus accepted,
+    /// or was observed before it, ordered as Core orders them
+    /// ([`observed_no_earlier`]), so that the accepted one is the newer and
+    /// Core takes it next, the last focus accepted is no longer the last
+    /// focus queued, and is no repeat's evidence.
+    pub fn queued(&self, trace: TraceId, observed: (u64, u64)) {
         let mut slot = self.lock();
         if let Some(accepted) = slot.as_mut()
             && !accepted.superseded
             && accepted.arrival.trace != trace
-            && (observed_at_ms == 0 || observed_at_ms >= accepted.arrival.observed_at_ms)
+            && (observed.0 == 0
+                || observed_no_earlier(
+                    observed,
+                    (
+                        accepted.arrival.observed_at_ms,
+                        accepted.arrival.observed_at_us,
+                    ),
+                ))
         {
             tracing::debug!(
                 ?trace,
-                observed_at_ms,
+                observed_at_ms = observed.0,
+                observed_at_us = observed.1,
                 "another focus was queued; the last focus accepted is no repeat's evidence"
             );
             accepted.superseded = true;
@@ -3182,6 +3194,29 @@ mod tests {
         assert_eq!(read, [1, 2], "events 3, 4 and 5 were never read");
     }
 
+    /// A focus Core queued in the same millisecond as the last focus
+    /// accepted ends it as the current focus only when it was observed no
+    /// earlier, to the microsecond, as Core orders the two.
+    #[test]
+    fn a_focus_queued_in_the_same_millisecond_is_ordered_by_microseconds() {
+        let uia = Uia::new().expect("a UIA client");
+        let element = uia.root_element().expect("the desktop's root element");
+        let last_accepted = LastAccepted::default();
+        let arrival = Arrival {
+            trace: TraceId::mint(),
+            observed_at_ms: 6_543,
+            observed_at_us: 6_543_500,
+        };
+        last_accepted.accept(1, &element, (WINDOW, arrival), &WatchedRead::default());
+        last_accepted.queued(TraceId::mint(), (6_543, 6_543_200));
+        assert_eq!(
+            last_accepted.current().map(|(_, window)| window),
+            Some(WINDOW)
+        );
+        last_accepted.queued(TraceId::mint(), (6_543, 6_543_800));
+        assert!(last_accepted.current().is_none());
+    }
+
     /// A focus a read accepted just before the watchdog abandoned it is no
     /// current focus once the watchdog has, since Core was told the event
     /// was dropped; and a read that returns after it was abandoned does not
@@ -3198,6 +3233,7 @@ mod tests {
         let arrival = Arrival {
             trace: first.trace,
             observed_at_ms: 0,
+            observed_at_us: 0,
         };
         let (open, gate) = mpsc::channel();
         fixture
@@ -3236,6 +3272,7 @@ mod tests {
         let newer = Arrival {
             trace: TraceId::mint(),
             observed_at_ms: 0,
+            observed_at_us: 0,
         };
         last_accepted.accept(
             2,

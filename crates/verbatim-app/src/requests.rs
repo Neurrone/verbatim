@@ -1049,4 +1049,55 @@ mod tests {
             }]
         );
     }
+
+    /// A focus-now answer, asked for at the start or for a fake focus,
+    /// reaches Core with its stamp in milliseconds and microseconds, by
+    /// which Core orders it against another application's focus.
+    #[test]
+    fn a_focus_now_answer_reaches_core_with_its_microseconds() {
+        let mut table = RequestTable::default();
+        let trace_id = TraceId::mint();
+        let control = node(Role::Button, "OK");
+        for asker in [
+            Asker::FocusNow {
+                source: Pid(5),
+                trace_id,
+            },
+            Asker::FakeFocus {
+                source: Pid(5),
+                trace_id,
+            },
+        ] {
+            let id = table.begin(OutpostId(1), asker);
+            let answer = FocusNow {
+                window: None,
+                focus: Some(FocusedControl {
+                    node: control.clone(),
+                    ancestors: Some(Vec::new()),
+                    selected_child: None,
+                    window: None,
+                    text: None,
+                }),
+                observed_at_ms: 1234,
+                observed_at_us: 1_234_567,
+            };
+            let inputs = table.finish(
+                id,
+                OutpostId(1),
+                QueryOutcome::Done(QueryResult::Focus(answer)),
+            );
+            let stamps: Vec<_> = inputs
+                .iter()
+                .map(|input| match input {
+                    Input::Event {
+                        observed_at_ms,
+                        observed_at_us,
+                        ..
+                    } => (*observed_at_ms, *observed_at_us),
+                    other => panic!("not a focus: {other:?}"),
+                })
+                .collect();
+            assert_eq!(stamps, [(1234, 1_234_567)]);
+        }
+    }
 }

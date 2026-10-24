@@ -526,6 +526,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
 ### The protocol
 
 - `protocol` — the wire vocabulary the supervisor and each outpost speak.
+  `observed_no_earlier` orders two observations stamped in milliseconds
+  and microseconds as Core orders two focuses, to the microsecond when
+  both carry microseconds, else to the millisecond; the listener and the
+  outposts order a focus Core queued against their own last focus by it.
   `EventTiming` records, in microseconds from `now_us`, when an event was
   observed, relayed to the outpost by Core, taken from the outpost's queue,
   and published to Core, and for a WinEvent how long before it was observed
@@ -575,8 +579,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `EventTiming`, and for a `WinEvent`'s fact its `WinEventStamp`),
   `HookInstalled` and `HookRemoved` (to the listener, the hand-over above),
   `FocusQueued` (to the listener: the trace and observation time of each
-  focus Core queued, after which the last focus the listener accepted is
-  no repeat's evidence unless it is that focus or newer, as NVDA's last
+  focus Core queued, in milliseconds and microseconds, after which the
+  last focus the listener accepted is no repeat's evidence unless it is
+  that focus or newer, ordered as Core orders focuses
+  (`observed_no_earlier`), as NVDA's last
   queued focus is replaced by every focus it queues; and, when the focus
   is another application's, to the outpost that reported the focus
   before, whose MSAA duplicate test then no longer compares with its last
@@ -1150,7 +1156,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   incarnation without waiting, failing at once with a `QueueError` when that
   incarnation has ended or its queue is full; `note_views(attention,
   holding)` passes the views the app derives from the reducer state;
-  `focus_queued(trace_id, observed_at_ms, superseded)` sends
+  `focus_queued(trace_id, observed, superseded)`, `observed` the focus's
+  milliseconds and microseconds, sends
   `FocusQueued` to the listener, and to the outpost `superseded` when the
   app names one, the outpost that reported the focus Core queued before,
   when that was another application's; and

@@ -643,6 +643,24 @@ impl Outgoing {
         self.markers.fetch_add(1, Ordering::Relaxed) + 1
     }
 
+    /// A UIA event of kind `kind` the listener's callback received now: a
+    /// new marker and trace, and its observation, whose milliseconds and
+    /// microseconds one clock read stamps, so the focus it becomes is
+    /// ordered to the microsecond.
+    fn received(&self, kind: FocusEvent) -> Meta {
+        let observed_at_us = self.now();
+        Meta {
+            marker: self.next_marker(),
+            kind,
+            trace: TraceId::mint(),
+            observed_at_ms: observed_at_us / 1_000,
+            timing: EventTiming {
+                observed_at_us,
+                ..EventTiming::default()
+            },
+        }
+    }
+
     /// Sends `fact` with its trace, the time it was observed, and its
     /// timing, under the rules [`fact`](Self::fact) states. A fact no
     /// reading thread finished with is stamped as handled now, as it is
@@ -810,6 +828,7 @@ impl Reading for UiaFocusReading {
                     Arrival {
                         trace: meta.trace,
                         observed_at_ms: meta.observed_at_ms,
+                        observed_at_us: meta.timing.observed_at_us,
                     },
                     watched.clone(),
                 ),
@@ -1074,8 +1093,11 @@ impl Listener {
             SupervisorToOutpost::FocusQueued {
                 trace_id,
                 observed_at_ms,
+                observed_at_us,
                 ..
-            } => self.last_accepted.queued(*trace_id, *observed_at_ms),
+            } => self
+                .last_accepted
+                .queued(*trace_id, (*observed_at_ms, *observed_at_us)),
             SupervisorToOutpost::IdleQuery { round } => self.idle_query(*round),
             _ => {}
         }
@@ -1201,19 +1223,7 @@ fn queue_for_reading(
     let Some(pid) = outgoing.uia_event_process(fields.process_id) else {
         return;
     };
-    // One clock read stamps the event, so its milliseconds and
-    // microseconds are the same observation.
-    let observed_at_us = now_us();
-    let meta = Meta {
-        marker: outgoing.next_marker(),
-        kind,
-        trace: TraceId::mint(),
-        observed_at_ms: observed_at_us / 1_000,
-        timing: EventTiming {
-            observed_at_us,
-            ..EventTiming::default()
-        },
-    };
+    let meta = outgoing.received(kind);
     let runtime_id = sender.runtime_id();
     // Every event's arrival, by its marker, whatever its read makes of it,
     // so a delay before the listener received it shows.
@@ -2123,6 +2133,38 @@ mod tests {
             panic!("one fact is sent: {sent:?}");
         };
         assert_eq!((*observed_at_ms, timing.observed_at_us), (6_543, 6_543_210));
+    }
+
+    /// A UIA event is stamped, in milliseconds and microseconds, from one
+    /// clock read as the callback received it, and its facts carry that
+    /// stamp, so the focus it becomes is ordered to the microsecond.
+    #[test]
+    fn a_uia_events_facts_carry_one_clock_reads_stamp() {
+        static CLOCK: AtomicU64 = AtomicU64::new(6_543_900);
+        let (mut outgoing, mut reader) = outgoing();
+        // Each read of the clock is 200 microseconds after the last, so a
+        // second read would be in another millisecond.
+        outgoing.clock = Clock(|| CLOCK.fetch_add(200, Ordering::Relaxed));
+        let meta = outgoing.received(FocusEvent::Focus);
+        outgoing.focus_read(
+            Pid(5),
+            DeliveredFact::UiaFocusMarker {
+                marker: meta.marker,
+            },
+            meta,
+        );
+        let sent = sent(&outgoing, &mut reader);
+        let [
+            OutpostToSupervisor::FocusFact {
+                observed_at_ms,
+                timing,
+                ..
+            },
+        ] = sent.as_slice()
+        else {
+            panic!("one fact is sent: {sent:?}");
+        };
+        assert_eq!((*observed_at_ms, timing.observed_at_us), (6_543, 6_543_900));
     }
 
     #[test]

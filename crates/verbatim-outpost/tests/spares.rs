@@ -787,7 +787,7 @@ fn a_fact_that_may_not_start_an_outpost_or_an_ignored_processs_takes_no_spare() 
     let run = Run::start(&[ignored_pid]);
     run.keep_spares();
 
-    run.supervisor.focus_queued(TraceId::mint(), 0, None);
+    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
     // Neither the ignored process's focus nor the other's drop took the
     // oldest spare.
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
@@ -871,7 +871,7 @@ fn a_spare_that_fails_after_it_is_given_hands_the_held_facts_to_the_next() {
     let run = Run::start(&[]);
     run.keep_spares();
 
-    run.supervisor.focus_queued(TraceId::mint(), 0, None);
+    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
     assert_eq!(run.expect_started(first_pid), OutpostId(3));
     run.expect_spare(5, 2);
     failing.fail(1);
@@ -963,7 +963,7 @@ fn an_outpost_that_crashes_after_its_ready_is_replaced_by_a_spare_at_once() {
     );
     run.expect_ready(OutpostId(4), first_pid);
     run.expect_spare(6, 2);
-    run.supervisor.focus_queued(TraceId::mint(), 0, None);
+    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
     run.expect_report(OutpostId(4), "fact 7");
 
     run.finish(ShutdownSummary {
@@ -1111,7 +1111,7 @@ fn a_queued_focus_is_told_to_the_outpost_it_supersedes_and_no_other() {
     run.expect_spare(6, 2);
 
     run.supervisor
-        .focus_queued(TraceId::mint(), 42, Some(OutpostId(3)));
+        .focus_queued(TraceId::mint(), (42, 0), Some(OutpostId(3)));
     assert_eq!(
         reports(&run, 3),
         [
@@ -1154,7 +1154,7 @@ fn a_queued_focus_is_not_told_to_a_superseded_outpost_that_ended() {
     run.expect_spare(6, 2);
 
     run.supervisor
-        .focus_queued(TraceId::mint(), 42, Some(OutpostId(3)));
+        .focus_queued(TraceId::mint(), (42, 0), Some(OutpostId(3)));
     assert_eq!(
         reports(&run, 1),
         [(OutpostId(4), vec!["fact 9".to_owned()])]
@@ -1207,7 +1207,7 @@ fn repeated_failures_are_spaced_by_the_backoff_until_a_foreground_change() {
     // change, held meanwhile, reaches the next outpost.
     kill(process);
     run.expect_ended(outpost, first_pid, EndReason::Exited);
-    run.supervisor.focus_queued(TraceId::mint(), 0, None);
+    run.supervisor.focus_queued(TraceId::mint(), (0, 0), None);
     [(outpost, process)] = served(&run, [first_pid]);
     run.expect_report(outpost, "fact 7");
 

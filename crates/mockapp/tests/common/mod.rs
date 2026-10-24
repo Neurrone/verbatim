@@ -321,9 +321,10 @@ impl MockApp {
     }
 }
 
-/// Microseconds since the Unix epoch, the clock mockapp's `stall ended`
-/// acknowledgement and the outpost's event timings use, so a time read here
-/// orders against theirs.
+/// Microseconds since the Unix epoch on the system's clock, the clock
+/// mockapp's `stall ended` acknowledgement uses, so a time read here orders
+/// against it. The outpost's timings use the run's shared clock
+/// (`verbatim_process::clock`) instead.
 #[must_use]
 pub fn now_us() -> u64 {
     u64::try_from(

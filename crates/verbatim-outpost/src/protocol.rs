@@ -102,6 +102,22 @@ pub fn hop_us(from_us: u64, to_us: u64) -> Option<u64> {
 pub fn now_us() -> u64 {
     verbatim_process::clock::now_us()
 }
+
+/// Whether an observation stamped `later`, its milliseconds and
+/// microseconds on the run's shared clock (microseconds 0 when not known),
+/// was no earlier than one stamped `earlier`: to the microsecond when both
+/// carry microseconds, else to the millisecond. Core orders two focuses
+/// from different outposts the same way (`docs/parity/focus-events.md`,
+/// "Stale focus events"), so the listener and the outposts take a focus
+/// Core queued as newer exactly when Core does.
+#[must_use]
+pub fn observed_no_earlier(later: (u64, u64), earlier: (u64, u64)) -> bool {
+    if later.1 != 0 && earlier.1 != 0 {
+        later.1 >= earlier.1
+    } else {
+        later.0 >= earlier.0
+    }
+}
 use verbatim_model::{
     Backend, CallCounts, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent, Notification,
     NotificationKind, NotificationProcessing, OutpostId, Pid, QueryKind, Role, StateSet, TextOp,
@@ -703,13 +719,18 @@ pub enum SupervisorToOutpost {
     /// last focus it accepted when a newer, other focus was queued
     /// (`focus_read::LastAccepted`), and the outpost's MSAA duplicate test
     /// stops comparing with its last focus when that was observed no later
-    /// than this one.
+    /// than this one. Both order the two as Core does
+    /// ([`observed_no_earlier`]).
     FocusQueued {
         /// The trace of the event Core took.
         trace_id: TraceId,
-        /// When that event was observed, in milliseconds since the Unix
-        /// epoch.
+        /// When that event was observed, in milliseconds on the run's
+        /// shared clock.
         observed_at_ms: u64,
+        /// The same stamp in microseconds, from the same clock read; 0
+        /// when its source gave milliseconds only, and from an older peer.
+        #[serde(default)]
+        observed_at_us: u64,
         /// When verbatim.exe began writing this command to the listener's
         /// pipe, in microseconds since the Unix epoch; 0 from an older peer
         /// ([`SupervisorToOutpost::stamp_sent`]).

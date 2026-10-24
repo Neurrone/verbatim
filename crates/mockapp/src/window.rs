@@ -521,8 +521,9 @@ pub(crate) fn acknowledge(line: &str) {
     let _ = stdout.flush();
 }
 
-/// Microseconds since the Unix epoch: the clock a test compares with its
-/// own, and with the outpost's event timings, across processes.
+/// Microseconds since the Unix epoch on the system's clock, which a test
+/// reads too (`tests/common/mod.rs`, `now_us`) to compare with it across
+/// processes.
 fn unix_micros() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

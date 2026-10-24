@@ -276,7 +276,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     supervisor.ensure_spawned(first_pid);
     let first = started(&events, first_pid);
     make_ready(&supervisor, &events, first, first_pid);
-    supervisor.focus_queued(TraceId::mint(), u64::from(first_pid.0), None);
+    supervisor.focus_queued(TraceId::mint(), (u64::from(first_pid.0), 0), None);
     supervisor.query_idle(2);
     queried(&events, 2, &[first]);
     from_outpost(&events, first, &facts_before(1, 2));
@@ -291,7 +291,7 @@ fn a_round_asks_the_listener_then_every_outpost_behind_the_facts_before_it() {
     // outposts once the launch has reported; the new one is asked once it
     // is ready, behind the fact.
     let (second_app, second_pid) = application();
-    supervisor.focus_queued(TraceId::mint(), u64::from(second_pid.0), None);
+    supervisor.focus_queued(TraceId::mint(), (u64::from(second_pid.0), 0), None);
     supervisor.query_idle(3);
     let second = started(&events, second_pid);
     queried(&events, 3, &[first, second]);

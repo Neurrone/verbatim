@@ -2309,9 +2309,73 @@ fn a_protected_fields_focus_comes_with_its_caret_and_selected_text() {
     app.quit();
 }
 
+/// A UIA focus the listener read is reported with the listener's stamp,
+/// its milliseconds and microseconds from the one clock read the
+/// listener's callback took, so Core orders it to the microsecond against
+/// another application's focus (`docs/parity/focus-events.md`, "Stale
+/// focus events").
+fn a_listener_read_focus_is_reported_with_the_listeners_stamp() {
+    let title = common::unique_title("mockapp-uia-focus-stamp");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let client = Client::new(common::find_window(&title));
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let fact = outpost.listener_fact(&client.focused());
+    let received_at_us = verbatim_process::clock::now_us();
+    outpost.deliver_stamped(fact, received_at_us);
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            observed_at_ms,
+            observed_at_us,
+            event: NormalizedEvent::FocusChanged { .. },
+            ..
+        } => assert_eq!(
+            (observed_at_ms, observed_at_us),
+            (received_at_us / 1_000, received_at_us)
+        ),
+        other => panic!("the outpost said {other:?}, not the focus"),
+    }
+    outpost.settled();
+
+    drop(outpost);
+    app.quit();
+}
+
+/// A focus-now answer is stamped when its read began, in milliseconds and
+/// microseconds from one clock read, so Core orders the focus it becomes
+/// to the microsecond.
+fn a_focus_now_answer_is_stamped_to_the_microsecond() {
+    let title = common::unique_title("mockapp-focus-now-stamp");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let mut outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus btn1");
+    let asked_at_us = verbatim_process::clock::now_us();
+    let (answer, _) = outpost.focus_now_answer();
+    let answered_at_us = verbatim_process::clock::now_us();
+    assert!(
+        (asked_at_us..=answered_at_us).contains(&answer.observed_at_us),
+        "the read began at {} us, not between the question at {asked_at_us} us and its answer at {answered_at_us} us",
+        answer.observed_at_us
+    );
+    assert_eq!(answer.observed_at_ms, answer.observed_at_us / 1_000);
+
+    drop(outpost);
+    app.quit();
+}
+
 #[expect(clippy::too_many_lines, reason = "one entry per test")]
 fn main() {
     harness::run_isolated(&[
+        (
+            "a_listener_read_focus_is_reported_with_the_listeners_stamp",
+            a_listener_read_focus_is_reported_with_the_listeners_stamp,
+        ),
+        (
+            "a_focus_now_answer_is_stamped_to_the_microsecond",
+            a_focus_now_answer_is_stamped_to_the_microsecond,
+        ),
         (
             "a_protected_fields_focus_comes_with_its_caret_and_selected_text",
             a_protected_fields_focus_comes_with_its_caret_and_selected_text,

@@ -58,7 +58,7 @@ use verbatim_model::{
 };
 use verbatim_outpost::focus_read::{Arrival, FocusEvent, FocusReader, Judged, LastAccepted};
 use verbatim_outpost::protocol::{
-    DeliveredFact, EventTiming, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
+    DeliveredFact, EventTiming, FocusNow, FocusedControl, OutpostToSupervisor, Query, QueryOutcome,
     QueryResult, SupervisorToOutpost, WinEventStamp, read_message,
 };
 use verbatim_outpost::{Heard, Outpost, OutpostOptions};
@@ -585,6 +585,24 @@ impl OutpostUnderTest {
         }
     }
 
+    /// Hands the outpost `fact`, as the supervisor relays the listener's
+    /// fact for a UIA event its callback received at `observed_at_us` on
+    /// the run's shared clock: stamped in milliseconds and microseconds
+    /// from that one reading. Returns at once.
+    pub fn deliver_stamped(&self, fact: DeliveredFact, observed_at_us: u64) {
+        self.outpost
+            .handle_command(&SupervisorToOutpost::DeliverFact {
+                trace_id: TraceId::mint(),
+                observed_at_ms: observed_at_us / 1_000,
+                timing: EventTiming {
+                    observed_at_us,
+                    ..EventTiming::default()
+                },
+                fact,
+                win_event: None,
+            });
+    }
+
     /// Hands the outpost `fact`, as the listener would, and returns at
     /// once.
     pub fn deliver(&self, fact: DeliveredFact) {
@@ -631,17 +649,11 @@ impl OutpostUnderTest {
             .handle_command(&SupervisorToOutpost::ForwardingEnded { through });
     }
 
-    /// Hands the outpost `fact`, as the listener would, stamped with the
-    /// time it is handed over as the time it was observed, and returns at
-    /// once.
+    /// Hands the outpost `fact`, as the listener would, stamped in
+    /// milliseconds on the run's shared clock with the time it is handed
+    /// over as the time it was observed, and returns at once.
     pub fn deliver_observed_now(&self, fact: DeliveredFact) {
-        let observed_at_ms = u64::try_from(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis(),
-        )
-        .unwrap_or(u64::MAX);
+        let observed_at_ms = now_ms();
         self.outpost
             .handle_command(&SupervisorToOutpost::DeliverFact {
                 trace_id: TraceId::mint(),
@@ -683,30 +695,35 @@ impl OutpostUnderTest {
     ) -> (Judged, CallCounts) {
         let _ = verbatim_uia::calls::take();
         let _ = verbatim_uia::calls::take_failed_reads();
+        let observed_at_us = verbatim_process::clock::now_us();
         let arrival = Arrival {
             trace: TraceId::mint(),
-            observed_at_ms: now_ms(),
+            observed_at_ms: observed_at_us / 1_000,
+            observed_at_us,
         };
         let judged = self.reader.borrow_mut().read(element, kind, arrival);
         (judged, verbatim_uia::calls::take())
     }
 
     /// Tells the listener's reader that Core took another event, observed
-    /// at `observed_at_ms`, as the focus, as the supervisor tells the
-    /// listener ([`SupervisorToOutpost::FocusQueued`]).
+    /// at `observed_at_ms` with no microseconds, as the focus, as the
+    /// supervisor tells the listener
+    /// ([`SupervisorToOutpost::FocusQueued`]).
     pub fn listener_focus_queued(&self, observed_at_ms: u64) {
-        self.last_accepted.queued(TraceId::mint(), observed_at_ms);
+        self.last_accepted
+            .queued(TraceId::mint(), (observed_at_ms, 0));
     }
 
     /// Tells the outpost that Core took another application's focus,
-    /// observed at `observed_at_ms`, after the last focus the outpost
-    /// reported, as the supervisor tells it
+    /// observed at `observed_at_ms` with no microseconds, after the last
+    /// focus the outpost reported, as the supervisor tells it
     /// ([`SupervisorToOutpost::FocusQueued`]).
     pub fn focus_queued_elsewhere(&self, observed_at_ms: u64) {
         self.outpost
             .handle_command(&SupervisorToOutpost::FocusQueued {
                 trace_id: TraceId::mint(),
                 observed_at_ms,
+                observed_at_us: 0,
                 sent_at_us: 0,
             });
     }
@@ -871,6 +888,13 @@ impl OutpostUnderTest {
 
     /// [`focus_now`](Self::focus_now) with the calls its read made.
     pub fn focus_now_with_calls(&mut self) -> (Option<FocusedControl>, CallCounts) {
+        let (now, calls) = self.focus_now_answer();
+        (now.focus, calls)
+    }
+
+    /// [`focus_now`](Self::focus_now)'s whole answer, with the calls its
+    /// read made.
+    pub fn focus_now_answer(&mut self) -> (FocusNow, CallCounts) {
         let request_id = self.ask(Query::FocusNow);
         let answer = match self.next() {
             OutpostToSupervisor::Reply {
@@ -878,7 +902,7 @@ impl OutpostUnderTest {
                 outcome: QueryOutcome::Done(QueryResult::Focus(now)),
                 timing,
                 ..
-            } if answered == request_id => (now.focus, timing.calls),
+            } if answered == request_id => (now, timing.calls),
             other => panic!("the outpost said {other:?}, not the focus now"),
         };
         self.settled();
@@ -904,12 +928,8 @@ impl OutpostUnderTest {
     }
 }
 
-/// Milliseconds since the Unix epoch, as the listener stamps an event's
-/// arrival.
+/// Milliseconds since the Unix epoch on the run's shared clock, as the
+/// listener stamps an event's arrival.
 pub fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| {
-            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
-        })
+    verbatim_process::clock::now_us() / 1_000
 }

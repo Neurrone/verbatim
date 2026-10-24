@@ -1444,8 +1444,9 @@ the milliseconds and, for a focus, the microseconds of one clock read.
   clock read its microseconds came from, where the listener's UI
   Automation focus, its forwarded `WinEvent` facts and the outposts' own
   hooks read the clock twice, so a stamp costs one read fewer. A focus's
-  message carries one more number, its microseconds; Core keeps it with
-  the newest focus and compares two numbers instead of one. No thread,
+  message carries one more number, its microseconds, and so does Core's
+  notice of a focus it queued (`FocusQueued`); Core, the listener and the
+  outposts compare two numbers instead of one. No thread,
   timer, message or wake-up is added. Measured on 2026-10-24 with three
   traces each of `conhost_two_windows` (`cargo xtask trace scenario
   conhost_two_windows --after 4 --seconds 8`, debug builds, info

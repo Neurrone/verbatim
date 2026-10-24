@@ -975,26 +975,30 @@ impl Outpost {
             EventHandlers {
                 win_event: Box::new(move |event: WinEvent| {
                     let mut state = state.borrow_mut();
-                    if event.kind == WinEventKind::Destroy {
-                        if event.id_object
+                    // A destroy is queued only for a window.
+                    if event.kind == WinEventKind::Destroy
+                        && (event.id_object
                             != windows::Win32::UI::WindowsAndMessaging::OBJID_WINDOW.0
-                            || event.id_child != verbatim_ia2::CHILDID_SELF
-                        {
-                            return;
-                        }
-                        state.windows.forget(event.hwnd);
+                            || event.id_child != verbatim_ia2::CHILDID_SELF)
+                    {
+                        return;
                     }
-                    // Before the event is queued, so a focus moving into a
-                    // window read through MSAA hooks its kinds again at once.
-                    state.note_win_event(&event, &context);
-                    context.take_in_win_event(
+                    take_in_hooked(
                         event,
-                        EventTiming {
-                            raised_ms_ago: Some(event.raised_ms_ago),
-                            observed_at_us: now_us(),
-                            ..EventTiming::default()
+                        &mut *state,
+                        now_us,
+                        |state, event| {
+                            if event.kind == WinEventKind::Destroy {
+                                state.windows.forget(event.hwnd);
+                            }
+                            // Before the event is queued, so a focus moving
+                            // into a window read through MSAA hooks its
+                            // kinds again at once.
+                            state.note_win_event(event, &context);
                         },
-                        &mut state.windows,
+                        |state, event, timing| {
+                            context.take_in_win_event(event, timing, &mut state.windows);
+                        },
                     );
                 }),
                 nudge: Some(Box::new(move |word, hwnd| {
@@ -1342,8 +1346,14 @@ impl Outpost {
             | SupervisorToOutpost::HookInstalled { .. }
             | SupervisorToOutpost::HookRemoved { .. } => {}
             // Core queued a focus from another application after this one's.
-            SupervisorToOutpost::FocusQueued { observed_at_ms, .. } => {
-                context.tracking().focus_queued_elsewhere(*observed_at_ms);
+            SupervisorToOutpost::FocusQueued {
+                observed_at_ms,
+                observed_at_us,
+                ..
+            } => {
+                context
+                    .tracking()
+                    .focus_queued_elsewhere((*observed_at_ms, *observed_at_us));
             }
             SupervisorToOutpost::NodesHeld {
                 nodes,
@@ -1367,6 +1377,68 @@ impl Outpost {
                 );
             }
         }
+    }
+}
+
+/// Handles `event`, a `WinEvent` the outpost's own hook delivered: stamps
+/// its observation from `clock` as the callback begins, before `note`, the
+/// event thread's own bookkeeping, which can take the arbitrator's lock and
+/// hook or unhook kinds when the narrowing changes, as it does when the
+/// user switches applications; then takes it in with that stamp, as the
+/// listener stamps its forwarded copy before its own reads.
+fn take_in_hooked<S>(
+    event: WinEvent,
+    state: &mut S,
+    clock: impl FnOnce() -> u64,
+    note: impl FnOnce(&mut S, &WinEvent),
+    take_in: impl FnOnce(&mut S, WinEvent, EventTiming),
+) {
+    let timing = EventTiming {
+        raised_ms_ago: Some(event.raised_ms_ago),
+        observed_at_us: clock(),
+        ..EventTiming::default()
+    };
+    note(state, &event);
+    take_in(state, event, timing);
+}
+
+#[cfg(test)]
+mod hook_stamp_tests {
+    use std::cell::Cell;
+
+    use verbatim_ia2::{WinEvent, WinEventKind};
+
+    use super::take_in_hooked;
+    use crate::protocol::EventTiming;
+
+    /// A hooked event is stamped when its callback began, not after the
+    /// event thread's bookkeeping, however long that took.
+    #[test]
+    fn a_hooked_event_is_stamped_before_its_bookkeeping() {
+        let clock = Cell::new(7_000_000);
+        let event = WinEvent {
+            kind: WinEventKind::Focus,
+            hwnd: 0x10,
+            id_object: -4,
+            id_child: 0,
+            thread: 1,
+            time: 2,
+            raised_ms_ago: 3,
+        };
+        let mut taken = None::<EventTiming>;
+        take_in_hooked(
+            event,
+            &mut taken,
+            || clock.get(),
+            // The bookkeeping takes 2 ms: hooking kinds again, say.
+            |_, _| clock.set(7_002_000),
+            |taken, _, timing| *taken = Some(timing),
+        );
+        let timing = taken.expect("the event is taken in");
+        assert_eq!(
+            (timing.observed_at_us, timing.raised_ms_ago),
+            (7_000_000, Some(3))
+        );
     }
 }
 

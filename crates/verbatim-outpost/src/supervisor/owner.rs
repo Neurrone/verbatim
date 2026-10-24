@@ -75,7 +75,8 @@ pub(super) enum OwnerEvent {
     /// outpost's.
     FocusQueued {
         trace_id: TraceId,
-        observed_at_ms: u64,
+        /// When it was observed, in milliseconds and microseconds.
+        observed: (u64, u64),
         superseded: Option<OutpostId>,
     },
     /// Read from the listener's pipe: a focus fact to route.
@@ -777,13 +778,14 @@ impl Owner {
             }
             OwnerEvent::FocusQueued {
                 trace_id,
-                observed_at_ms,
+                observed,
                 superseded,
             } => {
                 let notice = || {
                     Outgoing::HandOver(SupervisorToOutpost::FocusQueued {
                         trace_id,
-                        observed_at_ms,
+                        observed_at_ms: observed.0,
+                        observed_at_us: observed.1,
                         sent_at_us: 0,
                     })
                 };
