@@ -2270,6 +2270,16 @@ passed in Windows Terminal):
   within 1 millisecond of the 30th line finishing (the speech request
   came 0 to 1 milliseconds before).
 
+Core's flood policy keeps a lost read's kind ("about" or "more than") on
+each of its waiting lines, a tag in the line's entry, so handing a line
+to speech or skipping it costs what it did before, with no walk of the
+queue per line. A lost read's "more than" count of none walks the waiting
+queue once, when it reaches speech, to decide whether the skip after it
+will say "more than": at most the group's lines and the backlog's, no
+more than "Lines spoken in full" and the larger of the two limits (60
+lines by default), and a lost read comes at most once
+per group of spoken output. It adds no wake-up and no allocation.
+
 ### A terminal's rotation
 
 How far a full history rotated between two reads is settled by the read

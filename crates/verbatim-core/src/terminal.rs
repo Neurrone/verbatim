@@ -138,11 +138,48 @@ pub(crate) enum Waiting {
 /// What a waiting line is to a skipped count.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum LineKind {
-    /// A terminal line, counted once.
-    Line,
+    /// A terminal line, counted once, as `Counted` says.
+    Line(Counted),
     /// What a growing line gained ([`TerminalItem::Growth`]): it belongs to
     /// the line before it, with which it counts and is dropped as one.
     Growth,
+}
+
+/// How a skipped count that takes a line counts it. A lost read's lines
+/// keep the read's kind, so that any count that skips one of them says so
+/// ("skipped about N lines", "skipped more than N lines"), however many
+/// reads later the skip comes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Counted {
+    /// Counted exactly.
+    Exactly,
+    /// Read after a lost read that found the last read's rows by their
+    /// text, so counted from text ([`Skipped::About`]).
+    About,
+    /// Read after a lost read that found none of the last read's rows: the
+    /// lines a full history held, after lines that went by unread
+    /// ([`Skipped::MoreThan`]).
+    MoreThan,
+}
+
+/// `skipped`, the count so far of lines being skipped, with one more line
+/// that counts as `counted`. After a "more than" count every line adds to
+/// it; a line past a full history makes the count "more than", standing
+/// for what went before it, as [`Skipped::plus`] does; a line counted from
+/// text makes it "about".
+fn with_line(skipped: Option<Skipped>, counted: Counted) -> Skipped {
+    match (skipped, counted) {
+        (Some(more @ Skipped::MoreThan(_)), _) => more.plus(Skipped::Count(1)),
+        (skipped, Counted::MoreThan) => skipped
+            .unwrap_or(Skipped::Count(0))
+            .plus(Skipped::MoreThan(1)),
+        (skipped, Counted::About) => {
+            skipped.map_or(Skipped::About(1), |skipped| skipped.plus(Skipped::About(1)))
+        }
+        (skipped, Counted::Exactly) => {
+            skipped.map_or(Skipped::Count(1), |skipped| skipped.plus(Skipped::Count(1)))
+        }
+    }
 }
 
 /// The most bytes of terminal output waiting to be spoken (Dickson,
@@ -331,7 +368,7 @@ fn take(
 /// Whether `item` is a line that counts: a line and its growth count, and
 /// are dropped, as one ("Core's flood policy").
 fn is_line(item: &Waiting) -> bool {
-    matches!(item, Waiting::Line(_, kind) if *kind != LineKind::Growth)
+    matches!(item, Waiting::Line(_, LineKind::Line(_)))
 }
 
 /// Whether `item` belongs to the line before it: its growth, or the note
@@ -440,11 +477,25 @@ fn queue(state: &mut SrState, speech: &TerminalSpeech) {
     // Every line counts, blank ones included (Dickson, 2026-10-07, and the
     // coherence review of 2026-10-09): a blank line waits like any other
     // and is counted when skipped, but is never spoken ([`pump`]).
+    // A lost read puts a count of none ahead of its lines, and they keep
+    // its kind ([`Counted`]). An "about" count of none says nothing itself,
+    // so only its lines carry it; a "more than" count of none waits ahead
+    // of its lines, and says "skipped lines" unless a skip after it will
+    // say "more than" ([`pump`]).
+    let mut counted = Counted::Exactly;
     for item in &speech.items {
         match item {
-            TerminalItem::Output(line) => push_line(&mut terminal.waiting, line, LineKind::Line),
+            TerminalItem::Output(line) => {
+                push_line(&mut terminal.waiting, line, LineKind::Line(counted));
+            }
             TerminalItem::Growth(line) => push_line(&mut terminal.waiting, line, LineKind::Growth),
-            TerminalItem::Skipped(skipped) => push_skipped(&mut terminal.waiting, *skipped),
+            TerminalItem::Skipped(Skipped::About(0)) => counted = Counted::About,
+            TerminalItem::Skipped(skipped) => {
+                if *skipped == Skipped::MoreThan(0) {
+                    counted = Counted::MoreThan;
+                }
+                push_skipped(&mut terminal.waiting, *skipped);
+            }
             _ => {}
         }
     }
@@ -510,10 +561,8 @@ fn skip_all_but(waiting: &mut VecDeque<Waiting>, start: usize, keep: usize) {
             break;
         }
         match waiting.remove(index) {
-            // After an overflow's "more than" count, a line adds to it.
-            Some(Waiting::Line(_, LineKind::Line)) => {
-                let one = Skipped::Count(1);
-                skipped = Some(skipped.map_or(one, |s| s.plus(one)));
+            Some(Waiting::Line(_, LineKind::Line(counted))) => {
+                skipped = Some(with_line(skipped, counted));
                 dropping = dropping.saturating_sub(1);
                 in_line = true;
             }
@@ -579,26 +628,34 @@ fn bound(state: &mut SrState) {
         {
             *left = left.saturating_sub(1);
         }
-        let counted = terminal.waiting.get(index).is_some_and(is_line);
-        let one = Skipped::Count(u32::from(counted));
-        let merged =
-            index > 0 && matches!(terminal.waiting.get(index - 1), Some(Waiting::Skipped(_)));
+        let counted = match terminal.waiting.get(index) {
+            Some(Waiting::Line(_, LineKind::Line(counted))) => Some(*counted),
+            _ => None,
+        };
+        // The count just before it, which a skipped line joins.
+        let before = index
+            .checked_sub(1)
+            .and_then(|before| match terminal.waiting.get(before) {
+                Some(Waiting::Skipped(count)) => Some(*count),
+                _ => None,
+            });
         // The line goes with what belongs to it.
         let mut first = true;
         while let Some(item) = terminal.waiting.get(index)
-            && (first || (counted && belongs(item)))
+            && (first || (counted.is_some() && belongs(item)))
         {
             if let Some(Waiting::Line(line, _)) = terminal.waiting.remove(index) {
                 bytes -= line.len();
             }
             first = false;
         }
-        if merged {
-            if let Some(Waiting::Skipped(count)) = terminal.waiting.get_mut(index - 1) {
-                *count = count.plus(one);
+        if let Some(counted) = counted {
+            let count = Waiting::Skipped(with_line(before, counted));
+            if before.is_some() {
+                terminal.waiting[index - 1] = count;
+            } else {
+                terminal.waiting.insert(index, count);
             }
-        } else if counted {
-            terminal.waiting.insert(index, Waiting::Skipped(one));
         }
     }
 }
@@ -626,8 +683,8 @@ fn decide(state: &mut SrState) {
 
 /// Whether the flood policy skips what waits in `waiting` from `start` on
 /// once it is looked at: more lines than "Lines spoken in full" (`full`),
-/// those skipped already included. A lost read's mark with none of its
-/// lines skipped yet ([`is_mark`]) counts no line.
+/// those skipped already included. A lost read's "more than" count of none
+/// ([`is_mark`]) counts no line.
 fn skips(waiting: &VecDeque<Waiting>, start: usize, full: usize) -> bool {
     let mut lines = 0usize;
     let mut skipped = Skipped::Count(0);
@@ -647,26 +704,40 @@ fn skips(waiting: &VecDeque<Waiting>, start: usize, full: usize) -> bool {
     }
 }
 
-/// Whether `item` is a lost read's mark with none of its lines skipped yet:
-/// the lines after it were counted from text ("about") or went by past a
-/// full history ("more than"), and a count that skips them says so.
+/// Whether `item` is a lost read's "more than" count of none: the lines
+/// after it are what a full history held, and how many went by before
+/// them is not known.
 fn is_mark(item: &Waiting) -> bool {
-    matches!(
-        item,
-        Waiting::Skipped(Skipped::About(0) | Skipped::MoreThan(0))
-    )
+    matches!(item, Waiting::Skipped(Skipped::MoreThan(0)))
 }
 
-/// Where [`pump`] takes the next item from `waiting`: past a lost read's
-/// mark at the front when the flood policy will skip lines behind it once
-/// this group is heard, so that the mark stays ahead of them and the count
-/// that skips them carries it ("skipped about N lines", "skipped more than
-/// N lines"); otherwise the front.
-fn next_index(waiting: &VecDeque<Waiting>, group_left: usize, full: usize) -> usize {
-    usize::from(
-        waiting.front().is_some_and(is_mark)
-            && skips(waiting, backlog_start(waiting, group_left), full),
-    )
+/// Whether, once the group being spoken (`group_left` more lines of
+/// `waiting`) is heard, the flood policy, with what waits now, skips the
+/// backlog's first item and that item says "more than": a line read past
+/// a full history, or a "more than" count. A lost read's "more than" count
+/// of none reaching speech is then silent, the skip saying it instead.
+fn skip_says_more_than(
+    waiting: &VecDeque<Waiting>,
+    group_left: usize,
+    full: usize,
+    last: usize,
+) -> bool {
+    let start = backlog_start(waiting, group_left);
+    match waiting.get(start) {
+        Some(Waiting::Skipped(Skipped::MoreThan(_))) => skips(waiting, start, full),
+        // The policy keeps the newest "Last lines to speak": the first line
+        // is skipped only when more wait.
+        Some(Waiting::Line(_, LineKind::Line(Counted::MoreThan))) => {
+            skips(waiting, start, full)
+                && waiting
+                    .iter()
+                    .skip(start)
+                    .filter(|item| is_line(item))
+                    .count()
+                    > last
+        }
+        _ => false,
+    }
 }
 
 /// Hands waiting output to speech until enough is ahead of playback, as
@@ -674,15 +745,13 @@ fn next_index(waiting: &VecDeque<Waiting>, group_left: usize, full: usize) -> us
 /// speech while the outpost holds asks it for what is new.
 fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
     let mut effects = Vec::new();
-    let full = state.settings.full_lines();
     while state.terminal.ahead.len() < AHEAD {
         let terminal = &state.terminal;
-        let index = next_index(&terminal.waiting, terminal.group.unwrap_or(0), full);
         // A group ends after its last line and what belongs to it.
-        if terminal.group == Some(0) && !terminal.waiting.get(index).is_some_and(belongs) {
+        if terminal.group == Some(0) && !terminal.waiting.front().is_some_and(belongs) {
             break;
         }
-        let Some(item) = state.terminal.waiting.remove(index) else {
+        let Some(item) = state.terminal.waiting.pop_front() else {
             break;
         };
         if is_line(&item)
@@ -693,10 +762,17 @@ fn pump(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
                 effects.extend(ask(state, true));
             }
         }
-        // A blank line counts, but is not spoken; a lost read's mark found
-        // by text with none of its lines skipped says nothing.
+        // A blank line counts, but is not spoken; a lost read's "more than"
+        // count of none says nothing when a skip after it will say "more
+        // than", which is decided once, as it reaches speech.
         if matches!(&item, Waiting::Line(line, _) if text::is_blank(line))
-            || matches!(item, Waiting::Skipped(Skipped::About(0)))
+            || (is_mark(&item)
+                && skip_says_more_than(
+                    &state.terminal.waiting,
+                    state.terminal.group.unwrap_or(0),
+                    state.settings.full_lines(),
+                    state.settings.last_lines(),
+                ))
         {
             continue;
         }

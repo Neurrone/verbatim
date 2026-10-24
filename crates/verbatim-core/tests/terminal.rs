@@ -498,10 +498,99 @@ fn a_flood_that_starts_with_a_lost_read_is_counted_as_about() {
     assert_eq!(playback.play_all(&mut state), expected);
 }
 
+/// A terminal state whose "Lines spoken in full" is `full`.
+fn terminal_with_full_lines(full: u16) -> SrState {
+    let mut state = terminal();
+    let mut settings = state.settings();
+    settings.terminal_full_lines = full;
+    let _ = reduce(&mut state, &Input::Settings(settings));
+    state
+}
+
+#[test]
+fn a_later_read_that_skips_a_lost_read_s_lines_is_counted_as_about() {
+    // With 100 lines spoken in full, a lost read found by text brings 150
+    // lines with nothing playing, all but 50 of them the first group. When
+    // line 100 is handed to speech Core asks for what is new, and a read
+    // brings 400 more; once line 100 is heard, lines 101 to 150 of the lost
+    // read and 370 of the next read are skipped, so the count is "about".
+    let mut state = terminal_with_full_lines(100);
+    let mut playback = Playback::default();
+    playback.feed(
+        &mut state,
+        &said(
+            TERMINAL,
+            0,
+            speech_of(Some(Skipped::About(0)), lines(1..=150)),
+        ),
+    );
+    assert_eq!(playback.requests, [TextOp::TerminalHold]);
+    playback.feed(&mut state, &output(lines(151..=550)));
+    let mut expected = lines(1..=100);
+    expected.push("skipped about 420".to_owned());
+    expected.extend(lines(521..=550));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_later_read_that_skips_lines_past_the_history_is_counted_as_more_than() {
+    // As above, but the 150 lines went by past a full history. When the
+    // lost read is spoken none of its lines is to be skipped, so it says
+    // "skipped" for the lines that went by; the read that follows makes the
+    // flood policy skip lines 101 to 150, so the skip says "more than".
+    let mut state = terminal_with_full_lines(100);
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &said(TERMINAL, 0, overflowed(lines(1..=150))));
+    playback.feed(&mut state, &output(lines(151..=550)));
+    let mut expected = vec!["skipped".to_owned()];
+    expected.extend(lines(1..=100));
+    expected.push("skipped more than 420".to_owned());
+    expected.extend(lines(521..=550));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn lines_past_the_history_that_the_last_lines_keep_say_skipped_first() {
+    // With 10 lines spoken in full and the last 30 kept, a read past a full
+    // history brings 25 lines: once the first 10 are heard, the 15 waiting
+    // are more than 10 but all among the last 30, so none is skipped, and
+    // the read's own count says that lines went by.
+    let mut state = terminal_with_full_lines(10);
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &said(TERMINAL, 0, overflowed(lines(1..=25))));
+    let mut expected = vec!["skipped".to_owned()];
+    expected.extend(lines(1..=25));
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
+#[test]
+fn a_lost_read_s_lines_past_ten_megabytes_are_skipped_as_about() {
+    // Three lines of four megabytes each, read after a lost read found by
+    // text, behind three lines: line 3 and the first big line join the
+    // skipped count, which is "about" since one of them was counted from
+    // text.
+    let mut state = terminal();
+    let mut playback = Playback::default();
+    playback.feed(&mut state, &output(lines(1..=3)));
+    let big = |c: char| c.to_string().repeat(4 * 1024 * 1024);
+    playback.feed(
+        &mut state,
+        &said(
+            TERMINAL,
+            0,
+            speech_of(Some(Skipped::About(0)), vec![big('a'), big('b'), big('c')]),
+        ),
+    );
+    let mut expected = lines(1..=2);
+    expected.extend(["skipped about 2".to_owned(), big('b'), big('c')]);
+    assert_eq!(playback.play_all(&mut state), expected);
+}
+
 #[test]
 fn a_lost_read_with_none_of_its_lines_skipped_says_only_its_lines() {
     // A lost read found by text whose 20 lines are all spoken: nothing is
-    // skipped, so its "about" says nothing.
+    // skipped, so its "about" says nothing, reading goes live again once
+    // they are heard, and the next burst is counted exactly.
     let mut state = terminal();
     let mut playback = Playback::default();
     playback.feed(
@@ -513,6 +602,21 @@ fn a_lost_read_with_none_of_its_lines_skipped_says_only_its_lines() {
         ),
     );
     assert_eq!(playback.play_all(&mut state), lines(1..=20));
+    assert_eq!(playback.requests, []);
+    playback.feed(&mut state, &output(lines(21..=120)));
+    let mut expected = lines(21..=50);
+    expected.push("skipped 40".to_owned());
+    expected.extend(lines(91..=120));
+    assert_eq!(playback.play_all(&mut state), expected);
+    assert_eq!(
+        playback.requests,
+        [
+            TextOp::TerminalHold,
+            TextOp::TerminalRead { hold: true },
+            TextOp::TerminalRead { hold: true },
+            TextOp::TerminalRead { hold: false }
+        ]
+    );
 }
 
 #[test]
