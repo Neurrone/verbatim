@@ -4,7 +4,8 @@
 //! `WM_GETOBJECT` the outposts and the focus listener make, and that
 //! `verbatim-outpost`'s real `Arbitrator`, given that probe's answer,
 //! resolves each to the matching backend, and that a window too busy to
-//! answer is asked once and its "no" taken, as NVDA takes it.
+//! answer is asked once and its "no" taken, as NVDA takes it, once for
+//! the whole of the outpost's entry that asked.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -12,8 +13,9 @@ mod harness;
 
 use std::time::Duration;
 
-use verbatim_model::CallCounts;
+use verbatim_model::{CallCounts, NormalizedEvent};
 use verbatim_outpost::arbitration::{Arbitrator, WindowClasses};
+use verbatim_outpost::protocol::{DeliveredFact, OutpostToSupervisor};
 use verbatim_uia::{RAW_PROBE_TIMEOUT_MS, RawProbe, raw_probe};
 
 fn uia_backend_has_a_server_side_provider_and_arbitrates_to_uia() {
@@ -78,6 +80,52 @@ fn a_busy_uia_window_is_asked_once_and_its_no_taken() {
         "the answer came while the window was busy, {returned_at} after {stall_ended_at}"
     );
 
+    app.quit();
+}
+
+/// An outpost's foreground entry for a window that does not answer its
+/// probe in time takes the timed-out "no" for the whole entry: the
+/// foreground test's probe decides, and the read of the window that
+/// follows asks nothing again, so the entry sends the window one message.
+/// The stall outlasts the probe's wait but ends before a second probe's
+/// would, so a second probe would find the provider and the entry would
+/// read the window through UIA after deciding on MSAA. The time is the
+/// system's, so that the stall spends it.
+fn a_probe_that_timed_out_is_made_once_in_its_entry() {
+    let title = common::unique_title("mockapp-arb-once-per-entry");
+    let mut app = common::spawn("small.json", "uia", &title);
+    let hwnd = common::find_window(&title).0 as isize;
+    let outpost = common::outpost::OutpostUnderTest::new(&app);
+    outpost.follow_the_system_clock();
+
+    let stall = Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS) + 1_000);
+    app.stall(stall);
+    outpost.deliver(DeliveredFact::Foreground { hwnd });
+    let message = outpost
+        .messages
+        .recv_timeout(stall + common::WAIT_TIMEOUT)
+        .expect("the outpost reports the foreground window");
+    let _ = app.stall_ended(stall);
+    let OutpostToSupervisor::Event {
+        event: NormalizedEvent::FocusChanged { node, .. },
+        timing,
+        ..
+    } = message
+    else {
+        panic!("the outpost said {message:?}, not the foreground window");
+    };
+    assert_eq!(
+        timing.calls.window_messages, 1,
+        "the window is probed once in the entry: {:?}",
+        timing.calls
+    );
+    assert_eq!(
+        node.name.as_deref(),
+        Some(title.as_str()),
+        "the window is read through MSAA, which names it by its title, as the entry decided"
+    );
+
+    drop(outpost);
     app.quit();
 }
 
@@ -155,6 +203,10 @@ fn main() {
         (
             "a_busy_uia_window_is_asked_once_and_its_no_taken",
             a_busy_uia_window_is_asked_once_and_its_no_taken,
+        ),
+        (
+            "a_probe_that_timed_out_is_made_once_in_its_entry",
+            a_probe_that_timed_out_is_made_once_in_its_entry,
         ),
         (
             "a_busy_uia_window_is_read_once_it_answers",

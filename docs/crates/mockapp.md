@@ -563,7 +563,8 @@ the outposts' and the listener's, answers `0x10000` for a `uia`-backend
 window and the default window procedure's 0 for a `msaa`-backend one,
 that `verbatim_outpost::arbitration::Arbitrator` resolves each to the matching backend,
 and that a window too busy to answer is asked once, with one window
-message and no connection, its "no" taken. `events.rs` asserts that
+message and no connection, its "no" taken, and once in an outpost's
+entry for a foreground change, which reads it through MSAA. `events.rs` asserts that
 `set-name`/`set-value` commands are observed by a property
 `verbatim_uia::Registration` and `verbatim_ia2::WinEventHook`,
 that `select` is observed by a selection `verbatim_uia::Registration` (with

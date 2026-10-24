@@ -885,7 +885,13 @@ that time from the test, which holds it still and moves it on only where
 it pins a renewal, so no count depends on how long the test took. A
 steady-state focus whose window's verdict has run out costs the probe
 again, 1 window message and 1 `WM_GETOBJECT` more than the next focus,
-which finds the verdict renewed. (Both are arrows between list items whose
+which finds the verdict renewed. A probe that times out after its 3
+seconds is kept as a "no" for the rest of the worker's entry that made it
+and never renewed, so the entry sends the window one message, and the
+next entry probes again: an entry costs no more than before, the list of
+such windows is cleared as each entry begins and ends under the lock the
+worker already takes there, and a verdict looks in that list, empty but
+for a window whose probe timed out, before the kept verdicts. (Both are arrows between list items whose
 previous focus was itself reached by an arrow, 31 MSAA calls each, the
 `accFocus` probe included: one `accRole` more than the arrow above, whose previous focus was reached from
 the list. Why is not yet known.)
@@ -1569,9 +1575,17 @@ class and the focus's application.
   application's name is read once per application, with
   `QueryFullProcessImageNameW`, a local call that the outpost already
   made for its log when it was assigned and now remembers, and once per
-  console client; each focus change's window facts carry a copy of it,
-  one allocation and one map lookup under a lock per focus change in the
-  outpost, and no other event's facts carry it. For each UI Automation
+  console client. Each name is kept with its process held open, so that a
+  name never outlives its process. Each focus change's window facts carry
+  a copy of it, and no other event's facts carry it: per focus change in
+  the outpost, one map lookup under a lock, two local calls to ask whether
+  the kept process has exited (`GetExitCodeProcess`, then
+  `WaitForSingleObject` with no wait), and one allocation. A name not
+  kept, the first for each application and console client and the next
+  after its process exits, costs more: the same two calls for every kept
+  entry, to drop those whose process has exited, up to two `OpenProcess`
+  calls and the two calls again for the new process, and
+  `QueryFullProcessImageNameW`. For each UI Automation
   focus that is not a foreground change, Core compares the application's
   name, and for File Explorer's the element's class, with constants.
 - Target: the minimum.

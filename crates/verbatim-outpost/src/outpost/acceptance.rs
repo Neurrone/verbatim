@@ -156,8 +156,11 @@ fn is_descendant(windows: &impl WindowQueries, parent: isize, child: isize) -> b
 }
 
 /// Whether an event named `event` from `window` is accepted: NVDA's
-/// `shouldAcceptEvent`, its rules in its order. `window` 0 means the event
-/// has no window, which cannot be filtered.
+/// `shouldAcceptEvent`, its rules in its order. One difference: with no
+/// window in the foreground, an event from an invalid window is refused,
+/// where NVDA's comparison of the two root owners, both 0, accepts it;
+/// nothing is spoken differently, since such a window cannot be read.
+/// `window` 0 means the event has no window, which cannot be filtered.
 pub(crate) fn accepts_event(
     event: EventName,
     window: isize,

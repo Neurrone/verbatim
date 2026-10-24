@@ -801,7 +801,7 @@ fn run_entry(
     let description = tracing::enabled!(tracing::Level::DEBUG).then(|| describe(&entry.item));
     let trace = entry.trace;
     let started = Instant::now();
-    let arbitration_started = context.arbitrator().now();
+    let arbitration_started = context.arbitrator().begin_entry();
     gap.set_clock_now(arbitration_started);
     let handled = catch_unwind(AssertUnwindSafe(|| {
         let mut worker = Worker {

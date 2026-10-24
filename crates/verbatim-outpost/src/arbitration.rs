@@ -26,11 +26,12 @@
 //! that finds none is trusted for only [`NEGATIVE_VERDICT_LIFETIME`], NVDA's
 //! cache period, and then probed again. The probe asks once, as NVDA does,
 //! so a window too busy to answer the probe in time
-//! ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]) is read through MSAA by the
-//! call that probed it, but that "no" is not kept, and the next call
-//! probes again: NVDA times its cached verdict from before the probe, so a
-//! "no" that took the probe's whole wait is already out of date when it is
-//! stored.
+//! ([`verbatim_uia::RAW_PROBE_TIMEOUT_MS`]) is read through MSAA for the
+//! rest of the outpost's entry that probed it, and by the focus listener
+//! for the read that probed it, but that "no" is kept no longer, and the
+//! next entry or read probes again: NVDA times its cached verdict from
+//! before the probe, so a "no" that took the probe's whole wait is already
+//! out of date when it is stored.
 //!
 //! The renewal is by time because nothing else can drive it: an
 //! application that starts answering the probe raises no event, as a
@@ -102,6 +103,10 @@ pub struct Arbitrator {
     /// was recorded: a UIA verdict until the window is destroyed, a non-UIA
     /// verdict for [`NEGATIVE_VERDICT_LIFETIME`].
     cache: HashMap<isize, (u32, Probed)>,
+    /// The windows whose probe timed out in the worker's entry under way,
+    /// each a "no" until that entry ends
+    /// ([`record_timed_out`](Self::record_timed_out)).
+    timed_out: Vec<isize>,
     /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
     /// `Some(false)` for MSAA, `None` for normal arbitration.
     forced: Option<bool>,
@@ -130,6 +135,7 @@ impl Arbitrator {
             good_classes,
             bad_classes,
             cache: HashMap::new(),
+            timed_out: Vec::new(),
             forced: None,
             clock: Arc::new(Instant::now),
         }
@@ -180,13 +186,35 @@ impl Arbitrator {
         self.cache.insert(hwnd, (window_thread(hwnd), probed));
     }
 
+    /// Records that `hwnd` did not answer its probe in time: no provider,
+    /// for the rest of the worker's entry that probed it, so that the entry
+    /// probes the window once, and from its next entry on the window is
+    /// asked again ([`begin_entry`](Self::begin_entry),
+    /// [`renew_probes_since`](Self::renew_probes_since)).
+    pub fn record_timed_out(&mut self, hwnd: isize) {
+        if !self.timed_out.contains(&hwnd) {
+            self.timed_out.push(hwnd);
+        }
+    }
+
+    /// The time, by [`now`](Self::now), that a worker's entry begins at,
+    /// which the worker hands [`renew_probes_since`](Self::renew_probes_since)
+    /// as the entry ends. Forgets every probe that timed out before it,
+    /// including one from the entry of a worker abandoned meanwhile.
+    pub fn begin_entry(&mut self) -> Instant {
+        self.timed_out.clear();
+        self.now()
+    }
+
     /// Restarts, from `now`, the lifetime of every non-UIA verdict probed at
-    /// or after `since`, both read with [`now`](Self::now): the worker calls
-    /// this when it finishes an entry that started at `since`. A slow read can outlast the lifetime of the
-    /// verdict it relied on, and the MSAA and UIA facts for one focus must
-    /// both see the same verdict, or a re-probe between them lets both
-    /// backends announce it.
+    /// or after `since`, both read with [`now`](Self::now), and forgets
+    /// every probe that timed out, which is never renewed: the worker calls
+    /// this when it finishes an entry that started at `since`. A slow read
+    /// can outlast the lifetime of the verdict it relied on, and the MSAA
+    /// and UIA facts for one focus must both see the same verdict, or a
+    /// re-probe between them lets both backends announce it.
     pub fn renew_probes_since(&mut self, since: Instant, now: Instant) {
+        self.timed_out.clear();
         for (_, probed) in self.cache.values_mut() {
             if let Probed::NotUia(at) = probed
                 && *at >= since
@@ -200,6 +228,7 @@ impl Arbitrator {
     /// handle may be reused by an unrelated window.
     pub fn forget(&mut self, hwnd: isize) {
         self.cache.remove(&hwnd);
+        self.timed_out.retain(|&window| window != hwnd);
     }
 
     /// Records that `hwnd` has a UIA provider NVDA does not use
@@ -221,8 +250,10 @@ impl Arbitrator {
 
     /// The verdict without probing: `Some(true)` for a UIA window,
     /// `Some(false)` for a non-UIA window, and `None` when only the blocking
-    /// probe can decide: the window has not been probed yet, or its last
-    /// probe found no provider longer ago than [`NEGATIVE_VERDICT_LIFETIME`].
+    /// probe can decide: the window has not been probed yet, its last probe
+    /// found no provider longer ago than [`NEGATIVE_VERDICT_LIFETIME`], or
+    /// its probe timed out in an entry that has ended
+    /// ([`record_timed_out`](Self::record_timed_out)).
     #[must_use]
     pub fn verdict(&self, hwnd: isize, classes: &WindowClasses) -> Option<bool> {
         self.verdict_at(hwnd, classes, self.now())
@@ -235,6 +266,7 @@ impl Arbitrator {
         match self.classify(classes) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
+            ClassVerdict::Unknown if self.timed_out.contains(&hwnd) => Some(false),
             ClassVerdict::Unknown => match self.kept(hwnd)? {
                 Probed::Uia => Some(true),
                 Probed::Excluded => Some(false),
@@ -382,7 +414,8 @@ fn provider_usable(
 /// `isUIAWindow` decides it, for an outpost's events and for the focus
 /// listener's UIA focus judgement alike: the class lists and kept verdicts first, then
 /// the provider probe, whose answer the arbitrator keeps (a provider for the
-/// window's lifetime, none for a short while). Returns `true` for UIA. The
+/// window's lifetime, none for a short while, and nothing for a probe that
+/// timed out). Returns `true` for UIA. The
 /// probe is the raw probe ([`verbatim_uia::raw_probe`]), for the listener
 /// and the outposts alike, and no connection follows it. A console window
 /// with a provider is used only when `console` answers that its text
@@ -396,7 +429,7 @@ pub(crate) fn uses_uia(
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
 ) -> bool {
-    uses_uia_keeping(arbitrator, hwnd, console).0
+    decide(arbitrator, hwnd, console, false).0
 }
 
 /// Window `hwnd`'s backend as [`uses_uia`] would decide it without a call
@@ -407,13 +440,28 @@ pub(crate) fn known_verdict(arbitrator: &Mutex<Arbitrator>, hwnd: isize) -> Opti
     lock(arbitrator).verdict(hwnd, &classes)
 }
 
-/// [`uses_uia`], and whether this call probed the window and kept a verdict
-/// of UIA for its lifetime: an outpost's event thread may then narrow its
-/// hook (`outpost::narrowing`).
+/// [`uses_uia`] for an outpost's worker, which keeps a probe that timed out
+/// as a "no" until its entry ends ([`Arbitrator::record_timed_out`]), so
+/// that one entry probes a window once and decides its backend once; and
+/// whether this call probed the window and kept a verdict of UIA for
+/// its lifetime: an outpost's event thread may then narrow its hook
+/// (`outpost::narrowing`).
 pub(crate) fn uses_uia_keeping(
     arbitrator: &Mutex<Arbitrator>,
     hwnd: isize,
     console: impl FnOnce() -> Option<bool>,
+) -> (bool, bool) {
+    decide(arbitrator, hwnd, console, true)
+}
+
+/// [`uses_uia_keeping`], keeping a probe that timed out for the entry only
+/// when `keep_timed_out`: the focus listener's reader, which has no entries
+/// and probes once for each read, keeps nothing of it.
+fn decide(
+    arbitrator: &Mutex<Arbitrator>,
+    hwnd: isize,
+    console: impl FnOnce() -> Option<bool>,
+    keep_timed_out: bool,
 ) -> (bool, bool) {
     let classes = WindowClasses::of(hwnd);
     if let Some(verdict) = lock(arbitrator).verdict(hwnd, &classes) {
@@ -446,21 +494,19 @@ pub(crate) fn uses_uia_keeping(
             None => (false, false),
         };
     }
-    if let Some(kept) = kept_probe(probed) {
-        lock(arbitrator).record_probe(hwnd, kept);
+    if probed == verbatim_uia::RawProbe::TimedOut {
+        // Kept for the entry only: NVDA's verdict, timed from before its
+        // probe, is out of date by the time a probe that took the whole
+        // wait returns, and a starting console whose slow "no" was kept
+        // past its entry was read through MSAA at the next foreground
+        // change.
+        if keep_timed_out {
+            lock(arbitrator).record_timed_out(hwnd);
+        }
+    } else {
+        lock(arbitrator).record_probe(hwnd, is_uia);
     }
     (is_uia, is_uia)
-}
-
-/// The verdict a probe's outcome leaves to keep: whether the window has a
-/// provider, or `None` for a window that did not answer in time, which is
-/// asked again next time rather than kept, as NVDA's verdict, timed from
-/// before its probe, is out of date by the time a probe that took the
-/// whole wait returns. A starting console kept so was read through MSAA at
-/// the next foreground change, after the worker renewed the verdict for
-/// its slow entry ([`Arbitrator::renew_probes_since`]).
-fn kept_probe(probed: verbatim_uia::RawProbe) -> Option<bool> {
-    (probed != verbatim_uia::RawProbe::TimedOut).then_some(probed.has_provider())
 }
 
 /// What an outpost's event thread knows of each window it takes in
@@ -790,11 +836,31 @@ mod tests {
     }
 
     #[test]
-    fn a_probe_that_timed_out_leaves_no_verdict() {
-        use verbatim_uia::RawProbe;
-        assert_eq!(kept_probe(RawProbe::TimedOut), None);
-        assert_eq!(kept_probe(RawProbe::Answered(0)), Some(false));
-        assert_eq!(kept_probe(RawProbe::Provider), Some(true));
+    fn a_probe_that_timed_out_leaves_no_verdict_past_its_entry() {
+        let mut arb = Arbitrator::new(&[]);
+        let classes = top("SomeUnknownClass");
+        let started = Instant::now();
+        arb.record_timed_out(7);
+        let finished = started + NEGATIVE_VERDICT_LIFETIME * 4;
+        assert_eq!(
+            arb.verdict_at(7, &classes, finished),
+            Some(false),
+            "the slow no holds for the rest of the entry that probed"
+        );
+        arb.renew_probes_since(started, finished);
+        assert_eq!(
+            arb.verdict_at(7, &classes, finished),
+            None,
+            "the next entry probes the window again"
+        );
+    }
+
+    #[test]
+    fn an_entry_begins_with_no_probe_that_timed_out() {
+        let mut arb = Arbitrator::new(&[]);
+        arb.record_timed_out(7);
+        let started = arb.begin_entry();
+        assert_eq!(arb.verdict_at(7, &top("SomeUnknownClass"), started), None);
     }
 
     #[test]

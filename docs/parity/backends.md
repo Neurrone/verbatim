@@ -23,7 +23,8 @@ cache period; no window's answer was seen to change from a provider to
 none during its life, across about 65 windows of Explorer, Settings,
 Start, and the desktop. The window is asked once, and a "no" given because
 the window did not answer the probe within its 3 seconds is the answer for
-the call that probed it but is not kept, so the next call probes again:
+the rest of the outpost's entry, or the listener's read, that probed it,
+and is kept no longer, so the next one probes again:
 NVDA times its cached verdict from before the probe, so a "no" that took
 the whole wait is out of date when stored (`docs/design/focus-pipeline.md`, section 8).
 

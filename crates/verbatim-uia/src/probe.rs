@@ -46,8 +46,9 @@ pub enum RawProbe {
 
 impl RawProbe {
     /// Whether the window has a server-side UIA provider. Every outcome but
-    /// [`RawProbe::Provider`] is a "no"; the arbitrator keeps none for
-    /// [`RawProbe::TimedOut`].
+    /// [`RawProbe::Provider`] is a "no"; the arbitrator keeps one for
+    /// [`RawProbe::TimedOut`] only until the outpost's entry that probed
+    /// ends.
     #[must_use]
     pub fn has_provider(self) -> bool {
         self == Self::Provider

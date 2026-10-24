@@ -233,6 +233,10 @@ cases listed last are not implemented.
   (`verbatim_core::focus_rules::ForegroundRelation::related`). Outside the test, as in NVDA's callback: an
   object destroyed, and Verbatim's own events, the text selection of edit
   controls, and the console host's updates and caret.
+- Different: with no window in the foreground, an event from an invalid
+  window is refused, where NVDA's comparison of the two root owners, both
+  0, accepts it; nothing is spoken differently, since such a window
+  cannot be read.
 - MSAA, after acceptance and in NVDA's order: an event is dropped when
   its own window is no window, has a ghost window standing in for it, or
   belongs to an application the system reports hung, then when its

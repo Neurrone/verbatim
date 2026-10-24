@@ -700,9 +700,14 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   none is trusted for only `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's
   cache period) and then repeated: a busy or starting application answers
   the probe late or not at all, and the probe then reports no provider for
-  a window that has one. A probe that times out keeps no verdict, so the
-  next call probes again, as NVDA's verdict, timed from before its probe,
-  is out of date when a probe that took the whole wait returns. The renewal is by time because no event says a
+  a window that has one. A probe that times out is kept as a "no" only
+  for the rest of the worker's entry that made it
+  (`Arbitrator::record_timed_out`), so that the entry probes the window
+  once, and is forgotten as the next entry begins
+  (`Arbitrator::begin_entry`) and when its own ends, never renewed; the
+  focus listener's reader keeps nothing of it. The next entry probes
+  again, as NVDA's verdict, timed from before its probe, is out of date
+  when a probe that took the whole wait returns. The renewal is by time because no event says a
   window has begun to answer the probe. The time is the arbitrator's
   `Clock`, the system's unless `Arbitrator::set_clock` sets another, and
   `Arbitrator::now` reads it, for the worker's renewal of the verdicts an
