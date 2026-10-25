@@ -1,0 +1,12 @@
+{
+  "about": "cargo check of verbatim-model from an empty target folder, offline: about a hundred \"Checking\" and \"Compiling\" lines flooding past while cargo's progress bar is redrawn on the row below them, and its last line.",
+  "command": "cmd.exe /c \"(if exist target\recording-cargo rmdir /s /q target\recording-cargo) & cargo check -p verbatim-model --offline --target-dir target\recording-cargo & rmdir /s /q target\recording-cargo\"",
+  "steps": [
+    {
+      "wait": 40000
+    },
+    {
+      "quiet": 1500
+    }
+  ]
+}
