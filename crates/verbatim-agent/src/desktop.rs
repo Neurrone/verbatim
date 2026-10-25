@@ -381,6 +381,8 @@ pub(crate) fn window_info(window: HWND) -> WindowInfo {
         // SAFETY: tolerates any handle.
         hung: unsafe { IsHungAppWindow(window) }.as_bool(),
         no_activate: no_activate(window),
+        // SAFETY: tolerates any handle.
+        hidden: !unsafe { IsWindowVisible(window) }.as_bool(),
     }
 }
 
@@ -654,6 +656,7 @@ mod tests {
                         minimized: false,
                         hung: false,
                         no_activate: false,
+                        hidden: false,
                     },
                     WindowInfo {
                         window: listed,
@@ -665,6 +668,7 @@ mod tests {
                         minimized: false,
                         hung: false,
                         no_activate: false,
+                        hidden: false,
                     },
                 ],
             }

@@ -314,8 +314,27 @@ is idle meanwhile. It happens with no Verbatim running (27 to 45 s over
 four runs, measured on 2026-10-24 with a trace and with Verbatim stopped),
 so it is not Verbatim's to fix, and Dickson decided to leave the scenario's
 failure on this VM unaddressed. The same switch took 150 to 282 ms on
-2026-10-11, before a Windows update replaced the Desktop Window Manager's
-files; restarting it (signing out, or rebooting) is untried.
+2026-10-11, before a Windows update (installed 2026-10-13 and 14) replaced
+the Desktop Window Manager's files; the VM has rebooted since, on
+2026-10-20, and the backlog remains, so a restart does not clear it.
+
+**A scenario run soon after a flood fails its setup with "no window
+titled ... opened within 30s", the foreground being that very window.**
+It is the same backlog: a new window waits for the Desktop Window Manager
+before it is shown. The console host makes its window hidden and already
+titled, and its window thread then waits on the manager's API port
+(`\Sessions\<n>\Windows\DwmApiPort`, seen with the wait chain API) before
+its first `ShowWindow`, for more than 30 seconds while the manager keeps
+two cores busy for 40 seconds and more after a flood; Windows Terminal's
+window does not appear in that time either. The hidden window can hold
+the foreground, so the failure names it as the foreground window, marked
+"hidden, not responding": the harness waits for a shown window, and none
+was shown. Measured 2026-10-25: in chains of scenarios run after
+`conhost_leave_flood`, 15 of 28 `conhost_` and `windows_terminal_` runs
+failed their setup so, while 12 of 12 alternating runs of
+`conhost_same_flood` and `windows_terminal_commands` started on an idle
+manager passed. The manager stays as busy with the recording off
+(`VERBATIM_E2E_RECORD=0`), so the recording is not the cause.
 
 **`cargo xtask trace scenario` and `cargo xtask measure` refuse to start
 while `VERBATIM_E2E_VERBATIM_EXE` is set.** Name the other build with

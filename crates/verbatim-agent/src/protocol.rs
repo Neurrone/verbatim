@@ -61,11 +61,12 @@ use serde::{Deserialize, Serialize};
 /// which no client sent; version 23 added [`Request::RepeatKey`], for the
 /// measurement of a caret key held with auto-repeat; version 24 launches
 /// the agent's own executable for [`AGENT_SELF`], which the recordings'
-/// desktop capture runs as. A test
+/// desktop capture runs as; version 25 added [`WindowInfo::hidden`], so
+/// a failure names a foreground window that is not yet shown. A test
 /// run against an older agent is refused at `Hello`
 /// instead of losing its connection mid-run, or running without the
 /// exclusion.
-pub const AGENT_PROTOCOL_VERSION: u32 = 24;
+pub const AGENT_PROTOCOL_VERSION: u32 = 25;
 
 /// The command of a [`Request::LaunchProcess`] that names the agent's own
 /// executable, wherever it was deployed: the recordings launch
@@ -853,6 +854,13 @@ pub struct WindowInfo {
     /// Widgets board's window has.
     #[serde(default)]
     pub no_activate: bool,
+    /// Whether the window is hidden (`IsWindowVisible` is false). Every
+    /// listed window is shown; the foreground window can be hidden, as a
+    /// console window is between its creation and the console host's first
+    /// `ShowWindow`, which can wait tens of seconds on the Desktop Window
+    /// Manager (`docs/tooling/troubleshooting.md`).
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 /// What [`Request::WaitForWindow`] waits for. Titles are matched as
@@ -1121,6 +1129,7 @@ mod tests {
             minimized: false,
             hung: false,
             no_activate: false,
+            hidden: false,
         };
         let messages = [
             Frame::Reply {

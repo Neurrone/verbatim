@@ -984,6 +984,7 @@ mod tests {
             minimized: false,
             hung,
             no_activate: false,
+            hidden: false,
         }
     }
 

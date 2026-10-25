@@ -3076,13 +3076,15 @@ fn settings_prelaunch(windows: &[WindowInfo]) -> Vec<u32> {
 fn describe_foreground(info: &ForegroundInfo) -> String {
     let describe = |window: &WindowInfo| {
         format!(
-            "{:?} ({} pid {}, class {}{}{}{})",
+            "{:?} ({} pid {}, class {}{}{}{}{}{})",
             window.title,
             window.image,
             window.pid,
             window.class,
+            if window.hidden { ", hidden" } else { "" },
             if window.cloaked { ", cloaked" } else { "" },
             if window.minimized { ", minimized" } else { "" },
+            if window.hung { ", not responding" } else { "" },
             if window.no_activate {
                 ", no-activate"
             } else {
@@ -3203,6 +3205,7 @@ mod minimize_tests {
             minimized: true,
             hung: false,
             no_activate: false,
+            hidden: false,
         }
     }
 
@@ -3251,6 +3254,27 @@ mod minimize_tests {
                 .starts_with("not every window was minimized")
         );
         assert_eq!(minimize_failure(true, true, &desktop), None);
+    }
+
+    /// A console window the console host has made but not yet shown, its
+    /// thread waiting on the Desktop Window Manager, can hold the foreground
+    /// while no shown window has its title; the report says it is hidden
+    /// and not responding, so it does not read as a window that opened.
+    #[test]
+    fn a_hidden_foreground_window_not_responding_is_described_so() {
+        let mut console = window("verbatim-e2e-console-flood", "powershell.exe", 14224);
+        console.class = "ConsoleWindowClass".to_owned();
+        console.minimized = false;
+        console.hidden = true;
+        console.hung = true;
+        let desktop = ForegroundInfo {
+            foreground: Some(console),
+            windows: vec![window("Untitled - Notepad", "Notepad.exe", 11016)],
+        };
+        assert_eq!(
+            describe_foreground(&desktop),
+            "foreground window \"verbatim-e2e-console-flood\" (powershell.exe pid 14224, class ConsoleWindowClass, hidden, not responding); visible windows: \"Untitled - Notepad\" (Notepad.exe pid 11016, class Class, minimized)"
+        );
     }
 
     /// A message box Show Desktop cannot minimize, as the paging-file one
