@@ -197,9 +197,10 @@ higher, since its rows only move up: its place is where the read's start
 puts it, or, with the start refused, where the document's start puts it
 when both reads began there; a screen row is not limited, since a footer
 moves down. The shift most kept rows share is the one that did not move,
-and gives the rotation. A row whose text is once among the old rows and
-once in the read is kept where that text went, whatever else moved, and no
-other row grows into it; a row whose text grew where it was, its new text
+and gives the rotation. A row the subsequence leaves gone is kept at the
+nearest new row with its text, whatever else moved and whether or not the
+text is unique, except a row of the history block, and no other row grows
+into it; a row whose text grew where it was, its new text
 starting with its old, is kept as grown beside kept rows. A blank row is
 kept only where a kept row beside it puts it.
 

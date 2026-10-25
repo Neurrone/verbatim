@@ -344,6 +344,50 @@ fn a_row_moved_past_others_is_kept_where_its_text_went() {
 }
 
 #[test]
+fn a_box_of_two_equal_borders_redrawn_lower_past_a_row_keeps_both_borders() {
+    // An input box sent: its line printed above it as it was, and the box
+    // drawn again lower. The subsequence keeps one border, after the line;
+    // the other, which crossed the line, is kept at the nearest new row
+    // with its text, though the text is on two rows ("The alignment").
+    let mut watch = Watch::console(10, 8, 10);
+    watch.write("x\r\n====\r\n> a\r\n  b\r\n====\x1b[3;4H");
+    let outcome = watch.write("\x1b[2;1H\x1b[J> a\r\n  b\r\n* y\r\n====\r\n>\r\n====\x1b[6;2H");
+    assert_eq!(
+        watch.texts(),
+        ["x", "> a", "  b", "* y", "====", ">", "===="]
+    );
+    assert_eq!(
+        outcome.rows,
+        [kept(0), moved(2), moved(3), NEW, kept(4), NEW, moved(1)]
+    );
+    assert_eq!(
+        outcome.old,
+        [
+            kept_row(0),
+            kept_row(6),
+            kept_row(1),
+            kept_row(2),
+            kept_row(4)
+        ]
+    );
+}
+
+#[test]
+fn a_row_kept_by_its_text_goes_to_the_nearest_copy() {
+    // The rule moved past the two rows below it, and a copy of it printed
+    // further down: the subsequence keeps the rows it crossed, and the rule
+    // is kept at the copy nearer its place.
+    let mut watch = Watch::console(10, 8, 10);
+    watch.write("x\r\n-\r\na\r\nb");
+    let outcome = watch.write("\x1b[2;1H\x1b[Ja\r\nb\r\n-\r\ny\r\n-");
+    assert_eq!(watch.texts(), ["x", "a", "b", "-", "y", "-"]);
+    assert_eq!(
+        outcome.rows,
+        [kept(0), moved(2), moved(3), moved(1), NEW, NEW]
+    );
+}
+
+#[test]
 fn a_wrapped_line_split_across_the_reads_top_grows() {
     // A line of seven rows on a screen of two: the read starts at its
     // sixth row, less a screen above it, so at its fourth row, which

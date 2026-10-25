@@ -1,0 +1,48 @@
+{
+  "about": "Claude Code 2.1.309 with its screen reader mode off, no tools and Haiku, run outside another Claude Code session: one question typed and sent, its spinner turning and its count of tokens rising while the reply is written, the reply in Markdown (a heading, a list and paragraphs) drawn at once above its input box, and leaving with Control+C twice.",
+  "command": "cmd.exe /c claude --tools \"\" --model haiku --settings {\\\"axScreenReader\\\":false}",
+  "steps": [
+    {
+      "quiet": 6000
+    },
+    {
+      "type": {
+        "text": "Without tools, explain in about 250 words how a lighthouse works: a heading, a list of its three main parts, and two paragraphs.",
+        "each": 20
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\r",
+        "each": 0
+      }
+    },
+    {
+      "wait": 30000
+    },
+    {
+      "quiet": 1500
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 200
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1500
+    }
+  ]
+}

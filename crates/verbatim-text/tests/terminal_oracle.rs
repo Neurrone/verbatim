@@ -586,3 +586,23 @@ fn a_flood_repeating_the_last_reads_text_lower_down_is_not_taken_for_its_rows() 
         assert_eq!(violations(&flood, flavor, Size::SMALL), [], "{flavor:?}");
     }
 }
+
+#[test]
+fn an_input_box_sent_and_drawn_again_lower_keeps_both_its_borders() {
+    // Claude Code's input box sent with a short question: the question's
+    // one row stays where it was, unchanged, and the box is drawn again
+    // lower, past it. The box's two borders read the same; the subsequence
+    // keeps the question and one border, and the other border is kept at
+    // the nearest new row with its text, so neither is spoken ("The
+    // alignment"; the claude-code-reply recording).
+    let sent = stream(&[
+        (Op::Write("x\r\n====\r\n> a\r\n====\x1b[3;4H"), true),
+        (
+            Op::Write("\x1b[2;1H\x1b[J\r\n> a\r\n\r\n* y\r\n====\r\n>\r\n====\x1b[A"),
+            true,
+        ),
+    ]);
+    for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+        assert_eq!(violations(&sent, flavor, Size::SMALL), [], "{flavor:?}");
+    }
+}

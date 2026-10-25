@@ -1321,12 +1321,12 @@ fn align_whole(
 }
 
 /// Finishes the alignment of `rows` with `memory` from its kept pairs
-/// `kept` ("The alignment"): a row whose text is once among the old rows
-/// and once in the read is kept where it went; a row whose text grew where
-/// it was is kept; a blank row is kept where a kept row beside it puts it;
-/// the rows left between two kept rows, or a kept row and the read's edge,
-/// are paired as rewritten when they share half the longer row's
-/// characters in order, and a read with no kept row pairs nothing; a gone
+/// `kept` ("The alignment"): a row left gone is kept at the nearest new
+/// row with its text; a row whose text grew where it was is kept; a blank
+/// row is kept where a kept row beside it puts it; the rows left between
+/// two kept rows, or a kept row and the read's edge, are paired as
+/// rewritten when they share half the longer row's characters in order,
+/// and a read with no kept row pairs nothing; a gone
 /// row that a program had rewritten, or that was at or below the caret,
 /// lingers; and a new row with a lingering row's text is that row back.
 #[expect(
@@ -1371,36 +1371,19 @@ fn classify(
             new[to] = NewRow::Shown;
         }
     }
-    // A row whose text is on no other row of the old rows or of the read is
-    // kept where that text went, even across rows the subsequence kept, as
-    // a list entry moved past others.
-    let mut once_new: HashMap<u64, Option<usize>> = HashMap::new();
-    for (to, row) in rows.iter().enumerate() {
-        if !row.is_blank() {
-            once_new
-                .entry(row.hash)
-                .and_modify(|at| *at = None)
-                .or_insert(Some(to));
-        }
-    }
-    let mut once_old: HashMap<u64, Option<usize>> = HashMap::new();
-    for (from, row) in old.iter().enumerate() {
-        if !row.is_blank() {
-            once_old
-                .entry(row.hash)
-                .and_modify(|at| *at = None)
-                .or_insert(Some(from));
-        }
-    }
+    // A row the subsequence left gone is kept at the nearest new row with
+    // its text, even across rows the subsequence kept, as a list entry
+    // moved past others or a box of two equal borders redrawn lower
+    // (claude-code-reply recording); a history row is not looked for, so
+    // it is found only at its place or higher.
     for from in history..count {
-        if fates[from] != (OldRow::Gone { lingering: false })
-            || once_old.get(&old[from].hash) != Some(&Some(from))
-        {
+        if fates[from] != (OldRow::Gone { lingering: false }) || old[from].is_blank() {
             continue;
         }
-        if let Some(&Some(to)) = once_new.get(&old[from].hash)
-            && new[to] == NewRow::New
-        {
+        let found = (0..total)
+            .filter(|&to| new[to] == NewRow::New && rows[to].hash == old[from].hash)
+            .min_by_key(|&to| (isize_of(to) - place(from)).abs());
+        if let Some(to) = found {
             new[to] = NewRow::Kept {
                 from,
                 moved: isize_of(to) != place(from),

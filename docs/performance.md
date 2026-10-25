@@ -2379,6 +2379,15 @@ between two reads:
   every rotation, and the last read's screen inside the read settles it.
 - A clear and a reprint of 8,905 rows of the 9,005, read whole: 5.3 to
   8.3 milliseconds of the memory's and rules' time.
+- A row the subsequence leaves gone is looked for at the nearest new row
+  with its text, one pass over the read's rows for each gone row of the
+  last read's screen, with no allocation. Measured on 2026-10-25 (release
+  build, simulated terminal, 120 by 30, 9,001 rows of history): a lost
+  read whose whole document of about 9,300 rows keeps none of the last
+  screen's 29 rows, so the pass compares about 270,000 hashes, takes 7.3
+  to 12.8 milliseconds in all, the same as without the pass within the
+  noise, and an ordinary read of one new line 77 microseconds at the
+  median in both terminals.
 
 A terminal's first read knows no screen's height and takes only the
 screen; when the document goes on above it, the read is taken again at
