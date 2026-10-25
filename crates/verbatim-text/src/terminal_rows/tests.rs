@@ -620,18 +620,21 @@ fn the_review_position_on_a_gone_row_goes_to_the_nearest_surviving_row_above() {
 #[test]
 fn output_repeated_after_a_clear_that_lost_the_old_screen_is_new() {
     // Windows Terminal: `type f.txt`, then `cls` and other output within
-    // one read. The clear takes the history too, so the whole document is
-    // read, and it keeps no row of the last read: a new screen, its
-    // visible rows new; the row above the screen repeats the remembered
-    // history from the document's first row, so it is taken for history, a
-    // listed limit ("Limits": output repeated after a clear).
+    // one read. The clear takes the history too and shrinks the document,
+    // refusing the read's start; the read keeps no row of the last read,
+    // its screen does not start at the document's start and the aside
+    // screen is not in it, so it is lost and the whole document read, which
+    // holds nothing of the last read: every row is new, counted as about
+    // ("Screens", "A lost read").
     let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
     watch.write("alpha\r\nbravo\r\ncharlie\r\ndelta\r\n");
     watch.write("1111\r\n2222\r\n3333\r\n4444");
     let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jalpha\r\nbravo\r\nzulu\r\n");
+    assert_eq!(watch.taken, 2, "the whole document read");
     assert_eq!(watch.texts(), ["alpha", "bravo", "zulu", ""]);
-    assert_eq!(outcome.switch, Switch::New);
-    assert_eq!(outcome.rows, [NewRow::Shown, NEW, NEW, NEW]);
+    assert_eq!(outcome.switch, Switch::None);
+    assert_eq!(outcome.lost, Some(Lost::About));
+    assert_eq!(outcome.rows, [NEW; 4]);
 }
 
 #[test]
@@ -1080,4 +1083,137 @@ fn a_page_that_keeps_no_row_sets_the_page_before_it_aside() {
     assert_eq!(watch.taken, 2, "the whole document read");
     assert_eq!(closed.switch, Switch::None);
     assert_eq!(closed.lost, Some(Lost::MoreThan));
+}
+
+#[test]
+fn a_history_printed_again_longer_is_found_lower_with_its_screen() {
+    // A program erases the screen and the history and prints them again
+    // with two lines added at the top, as Pi's regular mode does on
+    // Control+O. The kept start still lies above the new screen, so it is
+    // accepted, but the rows there are other text: found by text, the
+    // screen's rows went two rows lower, and the history block's rows are
+    // found at that one shift too, kept and silent; the rows above where
+    // the last read's first row went are history ("The alignment").
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write("a\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng");
+    let outcome = watch.write("\x1b[2J\x1b[3J\x1b[Hx\r\ny\r\na\r\nb\r\nc\r\nd\r\ne\r\nf\r\ng");
+    assert_eq!(watch.taken, 1, "one read");
+    assert!(outcome.by_text, "found by text");
+    assert!(outcome.rewritten, "rows found lower than their places");
+    assert_eq!(watch.texts(), ["y", "a", "b", "c", "d", "e", "f", "g"]);
+    assert_eq!(
+        outcome.rows,
+        [
+            NewRow::Shown,
+            NewRow::Shown,
+            kept(1),
+            kept(2),
+            kept(3),
+            kept(4),
+            kept(5),
+            kept(6)
+        ]
+    );
+}
+
+#[test]
+fn the_history_blocks_text_printed_lower_while_the_screen_went_up_is_new() {
+    // The history block's lines printed again in a full history: the
+    // screen's row went up two rows with the buffer, and the history block's
+    // text is printed again lower, which is new output, not the history
+    // block moved down, though it would keep more rows ("The alignment").
+    let mut watch = Watch::console(10, 3, 3);
+    watch.write("h1\r\nh2\r\nh3\r\ns1\r\n\r\n");
+    let outcome = watch.write("h1\r\nh2\r\nh3");
+    assert_eq!(watch.taken, 1, "one read");
+    assert!(outcome.by_text, "found by text");
+    assert!(!outcome.rewritten, "no row found lower");
+    assert_eq!(watch.texts(), ["h3", "s1", "", "h1", "h2", "h3"]);
+    assert_eq!(outcome.rows, [kept(2), kept(3), kept(4), NEW, NEW, NEW]);
+}
+
+#[test]
+fn more_than_a_screen_of_output_after_windows_terminals_clear_is_a_lost_read_all_new() {
+    // `clear; dir` typed as one line: the clear erases the screen and the
+    // history and the output that follows fills more than a screen before
+    // the next read, the document shorter than before. The read's start is
+    // refused and it keeps nothing, its screen does not start at the
+    // document's start and no screen is aside, so it is lost; the whole
+    // document holds nothing of the last read, and after a refused start
+    // every row of it is new, counted as about ("Screens", "A lost read").
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 20);
+    watch.write("p1\r\np2\r\np3\r\np4\r\np5\r\np6\r\n$ clear");
+    let outcome = watch.write("\x1b[H\x1b[2J\x1b[3Jo1\r\no2\r\no3\r\no4\r\no5\r\n$ ");
+    assert_eq!(watch.taken, 2, "the whole document read");
+    assert_eq!(outcome.switch, Switch::None);
+    assert_eq!(outcome.lost, Some(Lost::About));
+    assert_eq!(watch.texts(), ["o1", "o2", "o3", "o4", "o5", "$"]);
+    assert_eq!(outcome.rows, [NEW; 6]);
+}
+
+#[test]
+fn the_review_position_above_a_refused_start_is_found_by_its_text_or_goes_to_the_caret() {
+    // A program erases the screen and the history and prints them again
+    // shorter, refusing the read's start, as Pi's regular mode does on its
+    // second Control+O. The rows above the read are gone, the document
+    // having shrunk beneath them: the review position there is found again
+    // by its line's text, or, with no row of that text, goes to the caret
+    // ("The review cursor").
+    for (line, row, column, found) in [("a2", 1, 0, "a2"), ("a3", 5, 2, "a9")] {
+        let mut watch = Watch::console(10, 3, 20);
+        watch.write("a1\r\na2\r\na3\r\na4\r\na5\r\na6\r\na7\r\na8\r\na9");
+        let first = isize::try_from(watch.memory.first_kept()).expect("a few rows");
+        watch.memory.set_review_anchor(Anchor {
+            row: first - 2,
+            column: 0,
+            line_hash: hash(line),
+        });
+        let outcome = watch.write("\x1b[2J\x1b[3J\x1b[Ha1\r\na2\r\nnew\r\na7\r\na8\r\na9");
+        assert_eq!(watch.taken, 1, "one read");
+        assert_eq!(watch.texts(), ["a1", "a2", "new", "a7", "a8", "a9"]);
+        assert_eq!(outcome.rows[3..], [kept(6), kept(7), kept(8)]);
+        assert_eq!(
+            watch.memory.review(),
+            Some(Anchor {
+                row,
+                column,
+                line_hash: hash(found)
+            }),
+            "{line}"
+        );
+    }
+}
+
+#[test]
+fn the_review_position_on_a_gone_row_after_a_refused_start_never_moves_above_the_read() {
+    // A program prints its history again shorter, below the document's
+    // start, and the review position's row, in the last read's history
+    // block, is gone with every row above it in the read: the rows above
+    // the read are gone too, the document having shrunk beneath them, so
+    // it goes to the caret ("The review cursor").
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write(numbered("a", 20).trim_end());
+    let first = watch.memory.first_kept();
+    let kept_first = watch
+        .memory
+        .rows()
+        .get(first)
+        .map(|row| row.text.to_string());
+    assert_eq!(kept_first.as_deref(), Some("a15"));
+    watch.memory.set_review(first + 2, 0);
+    let outcome = watch.write("\x1b[2J\x1b[3J\x1b[Hb1\r\nb2\r\nb3\r\nb4\r\na18\r\na19\r\na20");
+    assert_eq!(watch.taken, 1, "one read");
+    assert_eq!(watch.texts(), ["b2", "b3", "b4", "a18", "a19", "a20"]);
+    assert_eq!(
+        outcome.rows[3..],
+        [kept(first + 3), kept(first + 4), kept(first + 5)]
+    );
+    assert_eq!(
+        watch.memory.review(),
+        Some(Anchor {
+            row: 5,
+            column: 3,
+            line_hash: hash("a20")
+        })
+    );
 }

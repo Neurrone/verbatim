@@ -24,7 +24,7 @@ use verbatim_term_sim::oracle::{
 };
 use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
 use verbatim_text::terminal_reading::{self as rules, Settings, Speech, Step, TerminalReader};
-use verbatim_text::terminal_rows::{OldRow, Read, Switch};
+use verbatim_text::terminal_rows::{OldRow, Read};
 
 /// How long after the last chunk the stream's last read comes: past the
 /// quiet period and the time a row lingers.
@@ -127,6 +127,9 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
         if outcome.lost.is_some() {
             heard.limits.push(Limit::LostRead);
         }
+        if outcome.rewritten {
+            heard.limits.push(Limit::Rewritten);
+        }
     }
     if let Some(outcome) = step.outcome.as_ref().filter(|outcome| !outcome.first) {
         heard.moved = Some(
@@ -205,15 +208,6 @@ impl Core {
         // nor at the read after it.
         let blank = step.outcome.as_ref().is_some_and(|outcome| outcome.blank);
         let mut heard = heard(&step, memory.review().map(|anchor| anchor.row));
-        // A new screen whose start was refused ("Limits").
-        if step
-            .outcome
-            .as_ref()
-            .is_some_and(|outcome| outcome.switch == Switch::New)
-            && (read.shrank || !read.from_start)
-        {
-            heard.limits.push(Limit::RefusedScreen);
-        }
         if blank || self.blank {
             heard.moved = None;
         }
@@ -503,13 +497,13 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
 }
 
 #[test]
-fn the_cores_reader_meets_the_refused_screens_limit_on_its_smallest_stream() {
-    // A limit ("Limits"), accepted only through its own reason and failing
-    // without it: in Windows Terminal, a flood and a repaint, which erases
-    // the screen and shrinks the document, before the next read refuse its
-    // start, a new screen whose rows above the visible screen, the flood's
-    // newest lines, are silent. The console host's erase pushes the screen
-    // into the history, refusing nothing, so the stream is Windows
+fn a_flood_and_a_repaint_that_refuse_the_start_are_a_lost_read_with_every_line_reported() {
+    // In Windows Terminal, a flood and a repaint, which erases the screen
+    // and shrinks the document, before the next read refuse its start and
+    // keep nothing: a lost read, whose whole document has nothing of the
+    // last read, so every line is new and reported, with no limit needed
+    // ("Screens", "A lost read"). The console host's erase pushes the
+    // screen into the history, refusing nothing, so the stream is Windows
     // Terminal's alone.
     let refused = stream(&[
         (
@@ -529,11 +523,107 @@ fn the_cores_reader_meets_the_refused_screens_limit_on_its_smallest_stream() {
         (Op::Repaint("cat"), true),
     ]);
     let flavor = Flavor::WindowsTerminal;
-    assert_eq!(violations(&refused, flavor, Size::SMALL), []);
-    assert_ne!(
-        violations_without(&refused, flavor, Size::SMALL, Limit::RefusedScreen),
+    assert_eq!(
+        violations_without(&refused, flavor, Size::SMALL, Limit::LostRead),
         []
     );
+}
+
+#[test]
+fn the_cores_reader_meets_the_rewritten_history_limit_on_its_smallest_stream() {
+    // A limit ("Limits"), accepted only through its own reason and failing
+    // without it: twenty lines in a 12 by 5 terminal with 30 rows of
+    // history, then the screen and the history erased and printed again
+    // with "new" near the top and lines 3 to 9 left out, as Pi's regular
+    // mode prints its transcript again on Control+O. The read keeps the
+    // last read's rows, and "new", above the read's first row, is not
+    // heard.
+    let rewritten = stream(&[
+        (
+            Op::Write(
+                "l1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6\r\nl7\r\nl8\r\nl9\r\nl10\r\n\
+                 l11\r\nl12\r\nl13\r\nl14\r\nl15\r\nl16\r\nl17\r\nl18\r\nl19\r\nl20",
+            ),
+            true,
+        ),
+        (
+            Op::Write(
+                "\x1b[2J\x1b[3J\x1b[Hl1\r\nl2\r\nnew\r\nl10\r\nl11\r\nl12\r\nl13\r\n\
+                 l14\r\nl15\r\nl16\r\nl17\r\nl18\r\nl19\r\nl20",
+            ),
+            true,
+        ),
+    ]);
+    let size = Size {
+        width: 12,
+        height: 5,
+        history: 30,
+    };
+    for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+        assert_eq!(violations(&rewritten, flavor, size), [], "{flavor:?}");
+        assert_ne!(
+            violations_without(&rewritten, flavor, size, Limit::Rewritten),
+            [],
+            "{flavor:?}"
+        );
+    }
+}
+
+#[test]
+fn the_cores_reader_meets_the_rewritten_history_limit_for_text_printed_again_lower() {
+    // The same limit's other case: ten lines and "hello", then eight lines
+    // of the same text from the end of "hello", in a full 6-row history.
+    // Most of the first copy left the buffer, and the second puts the text
+    // of the last read's rows two rows lower than they were, its screen's
+    // rows with them, which reads exactly as a program printing its history
+    // again longer: the history block is found there, and the line above
+    // it, "hellook1", is not heard.
+    let again = stream(&[
+        (
+            Op::Flood {
+                lines: 10,
+                word: "ok",
+            },
+            true,
+        ),
+        (Op::Write("hello"), true),
+        (
+            Op::Flood {
+                lines: 8,
+                word: "ok",
+            },
+            true,
+        ),
+    ]);
+    meet_only_through_their_limits(&[(again, Limit::Rewritten)]);
+}
+
+#[test]
+fn pis_transcript_printed_again_on_control_o_needs_only_the_rewritten_history_limit() {
+    // Pi 1.4.0's regular mode erases the screen and the history on
+    // Control+O and prints its transcript again, longer and then shorter,
+    // with lines added above the screen (pi-changed-above recording). The
+    // reader speaks what changed within the last read's reach, and the
+    // lines added above the read are accepted only through the limit for a
+    // rewritten history (Dickson, 2026-10-25).
+    let corpus = streams();
+    let (_, recorded) = corpus
+        .iter()
+        .find(|(name, _)| name == "pi-changed-above")
+        .expect("the pi-changed-above recording");
+    for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+        let size = Size {
+            width: 120,
+            height: 30,
+            history: history(flavor),
+        };
+        assert_eq!(violations(recorded, flavor, size), [], "{flavor:?}");
+        assert_ne!(
+            violations_without(recorded, flavor, size, Limit::Rewritten),
+            [],
+            "{flavor:?}"
+        );
+    }
 }
 
 /// Asserts that each stream shows no violation in either terminal, and

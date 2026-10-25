@@ -1,0 +1,90 @@
+{
+  "about": "Pi 1.4.0 in its regular mode, with no model configured: /hotkeys printing its table past the screen's top, \"hello\" typed in its editor, Control+O expanding the startup help above the screen and again collapsing it, each answered by Pi clearing and printing everything again, \" world\" typed, and leaving.",
+  "command": "cmd.exe /c \"%LOCALAPPDATA%\\Programs\\node-v24.22.1-win-x64\\pi.cmd --tui-mode regular\"",
+  "steps": [
+    {
+      "quiet": 6000
+    },
+    {
+      "type": {
+        "text": "/hotkeys\r",
+        "each": 120
+      }
+    },
+    {
+      "quiet": 2000
+    },
+    {
+      "type": {
+        "text": "hello",
+        "each": 100
+      }
+    },
+    {
+      "quiet": 1000
+    },
+    {
+      "type": {
+        "text": "\u000f",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 2000
+    },
+    {
+      "type": {
+        "text": "\u000f",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 2000
+    },
+    {
+      "type": {
+        "text": " world",
+        "each": 100
+      }
+    },
+    {
+      "quiet": 1000
+    },
+    {
+      "type": {
+        "text": "\u0015",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 600
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0003",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 800
+    },
+    {
+      "type": {
+        "text": "\u0004",
+        "each": 0
+      }
+    },
+    {
+      "quiet": 1500
+    }
+  ]
+}

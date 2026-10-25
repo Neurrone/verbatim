@@ -122,7 +122,8 @@ use crate::{Flavor, Query, Refused, RowId, Snapshot, Terminal};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Seen {
     /// The row's identity, which the oracle uses only to know whether a
-    /// held row left the buffer.
+    /// held row left the buffer, and whether a row a reader kept is a copy
+    /// of its text ([`Limit::Rewritten`]).
     pub id: RowId,
     /// Its cells' characters as the read's text gives them.
     pub text: String,
@@ -277,14 +278,16 @@ pub enum Limit {
     /// when the buffer moved since the last read by more than the read
     /// covered: at least a screen's rows left the buffer.
     LostRead,
-    /// A new screen whose start was refused, as after Windows Terminal's
-    /// clear followed by more than a screen of output before the next
-    /// read, leaves its rows above the visible screen silent ("Limits"):
-    /// after a clear they are new, after a screen switch they are history,
-    /// and no text tells which. Such a missed line is accepted only when no
-    /// row with text of the last read's screen and history block is still
-    /// in the buffer.
-    RefusedScreen,
+    /// A program that erases the history and prints it again, as Pi's
+    /// regular mode on Control+O, is heard only within the last read's
+    /// reach: what it printed above the read is not heard ("Limits"). Such
+    /// a missed line is accepted only above the read's first row when rows
+    /// were erased from the buffer's front with the history since the last
+    /// read; or above a row the reader took for a row of the last read
+    /// that left the buffer since, the row taken being a copy of its text:
+    /// output repeating the last read's text lower down, its screen's rows
+    /// included, reads exactly as a history printed again longer.
+    Rewritten,
 }
 
 /// A line a reader withholds at a read, and why.
@@ -1035,9 +1038,10 @@ fn excused(reads: &[Observation], violation: &Violation) -> bool {
     if above_screen && limits.contains(&Limit::LostRead) && moved_beyond(reads, read) {
         return true;
     }
-    if above_screen
-        && limits.contains(&Limit::RefusedScreen)
-        && last_main(reads, read).is_some_and(|last| nothing_survived(last, observed))
+    if let Some(coordinate) = coordinate
+        && limits.contains(&Limit::Rewritten)
+        && ((coordinate < observed.start && erased_since_last(reads, read))
+            || kept_on_a_copy(reads, read).is_some_and(|copy| coordinate < copy))
     {
         return true;
     }
@@ -1054,6 +1058,31 @@ fn excused(reads: &[Observation], violation: &Violation) -> bool {
             }))
 }
 
+/// The coordinate of the topmost row of read `index` that the reader took
+/// for a row of the read before it with text, when that row is a copy of
+/// its text and the row itself left the buffer since: the last read's rows
+/// found by their text fit where repeated text sits.
+fn kept_on_a_copy(reads: &[Observation], index: usize) -> Option<usize> {
+    let previous = &reads[index.checked_sub(1)?];
+    let read = &reads[index];
+    let left: HashSet<RowId> = read.rotated.iter().copied().collect();
+    read.heard
+        .moved
+        .as_ref()?
+        .iter()
+        .enumerate()
+        .filter_map(|(from, to)| Some((previous.rows.get(from)?, *to)))
+        .filter_map(|(old, to)| Some((old, to?, read.rows.get(to?)?)))
+        .filter(|(old, _, new)| {
+            left.contains(&old.id)
+                && old.id != new.id
+                && !old.text.trim_end().is_empty()
+                && old.text.trim_end() == new.text.trim_end()
+        })
+        .map(|(_, to, _)| read.start + to)
+        .min()
+}
+
 /// The last read before read `index` on the main screen that a reader
 /// took: a read under [`Limit::BlankScreen`] leaves the one before it.
 fn last_main(reads: &[Observation], index: usize) -> Option<&Observation> {
@@ -1063,22 +1092,14 @@ fn last_main(reads: &[Observation], index: usize) -> Option<&Observation> {
         .find(|read| !read.alternate && !read.heard.limits.contains(&Limit::BlankScreen))
 }
 
-/// Whether no row with text of `last`'s screen and the history block above
-/// it is still in the main buffer at `read` with that text: each left it,
-/// or was written over, so nothing a reader could keep survived.
-fn nothing_survived(last: &Observation, read: &Observation) -> bool {
-    let height = last.main.len().saturating_sub(last.screen_top);
-    let from = last.screen_top.saturating_sub(height);
-    let now: HashSet<(RowId, &str)> = read
-        .main
+/// Whether the main buffer erased rows from its front with the history
+/// since the last read before read `index` that a reader took.
+fn erased_since_last(reads: &[Observation], index: usize) -> bool {
+    let after = reads[..index]
         .iter()
-        .filter(|seen| !seen.text.trim_end().is_empty())
-        .map(|seen| (seen.id, seen.text.trim_end()))
-        .collect();
-    last.main[from..]
-        .iter()
-        .filter(|seen| !seen.text.trim_end().is_empty())
-        .all(|seen| !now.contains(&(seen.id, seen.text.trim_end())))
+        .rposition(|read| !read.alternate && !read.heard.limits.contains(&Limit::BlankScreen))
+        .map_or(0, |last| last + 1);
+    reads[after..=index].iter().any(|read| read.erased > 0)
 }
 
 /// Whether at least a screen's rows left the buffer since the last read,
