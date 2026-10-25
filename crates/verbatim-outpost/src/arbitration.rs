@@ -31,7 +31,9 @@
 //! for the read that probed it, but that "no" is kept no longer, and the
 //! next entry or read probes again: NVDA times its cached verdict from
 //! before the probe, so a "no" that took the probe's whole wait is already
-//! out of date when it is stored.
+//! out of date when it is stored. The "no" belongs to the worker thread
+//! whose entry probed: no other thread sees it, and no other worker's
+//! entry, such as an abandoned worker's finishing late, forgets it.
 //!
 //! The renewal is by time because nothing else can drive it: an
 //! application that starts answering the probe raises no event, as a
@@ -47,6 +49,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::HWND;
@@ -103,10 +106,10 @@ pub struct Arbitrator {
     /// was recorded: a UIA verdict until the window is destroyed, a non-UIA
     /// verdict for [`NEGATIVE_VERDICT_LIFETIME`].
     cache: HashMap<isize, (u32, Probed)>,
-    /// The windows whose probe timed out in the worker's entry under way,
-    /// each a "no" until that entry ends
+    /// The windows whose probe timed out in the entry under way on each
+    /// worker thread, each a "no" for that thread until its entry ends
     /// ([`record_timed_out`](Self::record_timed_out)).
-    timed_out: Vec<isize>,
+    timed_out: HashMap<ThreadId, Vec<isize>>,
     /// A `SetBackendOverride` forcing every window: `Some(true)` for UIA,
     /// `Some(false)` for MSAA, `None` for normal arbitration.
     forced: Option<bool>,
@@ -135,7 +138,7 @@ impl Arbitrator {
             good_classes,
             bad_classes,
             cache: HashMap::new(),
-            timed_out: Vec::new(),
+            timed_out: HashMap::new(),
             forced: None,
             clock: Arc::new(Instant::now),
         }
@@ -187,34 +190,47 @@ impl Arbitrator {
     }
 
     /// Records that `hwnd` did not answer its probe in time: no provider,
-    /// for the rest of the worker's entry that probed it, so that the entry
-    /// probes the window once, and from its next entry on the window is
-    /// asked again ([`begin_entry`](Self::begin_entry),
-    /// [`renew_probes_since`](Self::renew_probes_since)).
+    /// for the rest of the calling worker thread's entry that probed it, so
+    /// that the entry probes the window once, and from its next entry on the
+    /// window is asked again ([`begin_entry`](Self::begin_entry),
+    /// [`renew_probes_since`](Self::renew_probes_since)). No other thread
+    /// sees it.
     pub fn record_timed_out(&mut self, hwnd: isize) {
-        if !self.timed_out.contains(&hwnd) {
-            self.timed_out.push(hwnd);
+        let windows = self.timed_out.entry(thread::current().id()).or_default();
+        if !windows.contains(&hwnd) {
+            windows.push(hwnd);
         }
     }
 
-    /// The time, by [`now`](Self::now), that a worker's entry begins at,
-    /// which the worker hands [`renew_probes_since`](Self::renew_probes_since)
-    /// as the entry ends. Forgets every probe that timed out before it,
-    /// including one from the entry of a worker abandoned meanwhile.
+    /// Whether `hwnd`'s probe timed out in the calling thread's entry under
+    /// way.
+    fn timed_out_here(&self, hwnd: isize) -> bool {
+        !self.timed_out.is_empty()
+            && self
+                .timed_out
+                .get(&thread::current().id())
+                .is_some_and(|windows| windows.contains(&hwnd))
+    }
+
+    /// The time, by [`now`](Self::now), that the calling worker thread's
+    /// entry begins at, which the worker hands
+    /// [`renew_probes_since`](Self::renew_probes_since) as the entry ends.
+    /// Forgets every probe that timed out on this thread before it.
     pub fn begin_entry(&mut self) -> Instant {
-        self.timed_out.clear();
+        self.timed_out.remove(&thread::current().id());
         self.now()
     }
 
     /// Restarts, from `now`, the lifetime of every non-UIA verdict probed at
     /// or after `since`, both read with [`now`](Self::now), and forgets
-    /// every probe that timed out, which is never renewed: the worker calls
-    /// this when it finishes an entry that started at `since`. A slow read
-    /// can outlast the lifetime of the verdict it relied on, and the MSAA
-    /// and UIA facts for one focus must both see the same verdict, or a
-    /// re-probe between them lets both backends announce it.
+    /// every probe that timed out in the calling thread's entry, which is
+    /// never renewed: the worker calls this when it finishes an entry that
+    /// started at `since`. A slow read can outlast the lifetime of the
+    /// verdict it relied on, and the MSAA and UIA facts for one focus must
+    /// both see the same verdict, or a re-probe between them lets both
+    /// backends announce it.
     pub fn renew_probes_since(&mut self, since: Instant, now: Instant) {
-        self.timed_out.clear();
+        self.timed_out.remove(&thread::current().id());
         for (_, probed) in self.cache.values_mut() {
             if let Probed::NotUia(at) = probed
                 && *at >= since
@@ -228,7 +244,9 @@ impl Arbitrator {
     /// handle may be reused by an unrelated window.
     pub fn forget(&mut self, hwnd: isize) {
         self.cache.remove(&hwnd);
-        self.timed_out.retain(|&window| window != hwnd);
+        for windows in self.timed_out.values_mut() {
+            windows.retain(|&window| window != hwnd);
+        }
     }
 
     /// Records that `hwnd` has a UIA provider NVDA does not use
@@ -252,7 +270,9 @@ impl Arbitrator {
     /// `Some(false)` for a non-UIA window, and `None` when only the blocking
     /// probe can decide: the window has not been probed yet, its last probe
     /// found no provider longer ago than [`NEGATIVE_VERDICT_LIFETIME`], or
-    /// its probe timed out in an entry that has ended
+    /// its probe timed out in an entry that has ended. A probe that timed
+    /// out in the calling thread's entry under way is a "no", ahead of any
+    /// verdict kept meanwhile
     /// ([`record_timed_out`](Self::record_timed_out)).
     #[must_use]
     pub fn verdict(&self, hwnd: isize, classes: &WindowClasses) -> Option<bool> {
@@ -266,7 +286,7 @@ impl Arbitrator {
         match self.classify(classes) {
             ClassVerdict::Uia => Some(true),
             ClassVerdict::NonUia => Some(false),
-            ClassVerdict::Unknown if self.timed_out.contains(&hwnd) => Some(false),
+            ClassVerdict::Unknown if self.timed_out_here(hwnd) => Some(false),
             ClassVerdict::Unknown => match self.kept(hwnd)? {
                 Probed::Uia => Some(true),
                 Probed::Excluded => Some(false),
@@ -280,13 +300,16 @@ impl Arbitrator {
     /// The verdict [`verdict`](Self::verdict) gives, and whether it holds
     /// for the window's lifetime until the override changes: a forced one,
     /// one from the class lists, or a kept probe that found a provider, or
-    /// one NVDA does not use. A probe that found none is renewed by time,
-    /// and a window not yet probed has no verdict, so neither lasts.
+    /// one NVDA does not use. A probe that found none is renewed by time, a
+    /// window not yet probed has no verdict, and a probe that timed out in
+    /// the calling thread's entry holds for that entry only, so none of
+    /// these lasts.
     #[must_use]
     pub fn lasting_verdict(&self, hwnd: isize, classes: &WindowClasses) -> (Option<bool>, bool) {
         let lasting = self.forced.is_some()
             || self.classify(classes) != ClassVerdict::Unknown
-            || matches!(self.kept(hwnd), Some(Probed::Uia | Probed::Excluded));
+            || (!self.timed_out_here(hwnd)
+                && matches!(self.kept(hwnd), Some(Probed::Uia | Probed::Excluded)));
         (self.verdict(hwnd, classes), lasting)
     }
 
@@ -861,6 +884,61 @@ mod tests {
         arb.record_timed_out(7);
         let started = arb.begin_entry();
         assert_eq!(arb.verdict_at(7, &top("SomeUnknownClass"), started), None);
+    }
+
+    #[test]
+    fn a_probe_that_timed_out_belongs_to_the_worker_whose_entry_made_it() {
+        let arb = Mutex::new(Arbitrator::new(&[]));
+        let classes = top("SomeUnknownClass");
+        // This thread is the worker in charge, its entry under way; the
+        // scoped thread is an abandoned worker, whose entry is under way
+        // alongside and then finishes.
+        lock(&arb).begin_entry();
+        lock(&arb).record_timed_out(7);
+        let (probed, probed_seen) = std::sync::mpsc::channel();
+        let (checked, checked_seen) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            // Dropped if an assertion fails, so the other worker is not left
+            // waiting.
+            let checked = checked;
+            let shared = &arb;
+            scope.spawn(move || {
+                let started = lock(shared).begin_entry();
+                lock(shared).record_timed_out(8);
+                lock(shared).record_probe(7, true);
+                probed.send(()).unwrap();
+                checked_seen.recv().unwrap();
+                let mut abandoned = lock(shared);
+                let finished = abandoned.now();
+                abandoned.renew_probes_since(started, finished);
+            });
+            probed_seen.recv().unwrap();
+            assert_eq!(
+                lock(&arb).verdict(8, &classes),
+                None,
+                "another worker's slow no is not this entry's"
+            );
+            checked.send(()).unwrap();
+        });
+        assert_eq!(
+            lock(&arb).verdict(7, &classes),
+            Some(false),
+            "another worker's entry ending does not end this entry's slow no"
+        );
+        assert_eq!(
+            lock(&arb).lasting_verdict(7, &classes),
+            (Some(false), false),
+            "this entry's slow no does not last"
+        );
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                assert_eq!(
+                    lock(&arb).lasting_verdict(7, &classes),
+                    (Some(true), true),
+                    "the event thread sees the kept verdict, not the entry's slow no"
+                );
+            });
+        });
     }
 
     #[test]

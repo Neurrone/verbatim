@@ -90,7 +90,8 @@ fn a_busy_uia_window_is_asked_once_and_its_no_taken() {
 /// The stall outlasts the probe's wait but ends before a second probe's
 /// would, so a second probe would find the provider and the entry would
 /// read the window through UIA after deciding on MSAA. The time is the
-/// system's, so that the stall spends it.
+/// system's, so that the stall spends it, and the worker's reads of it show
+/// when the probe returned.
 fn a_probe_that_timed_out_is_made_once_in_its_entry() {
     let title = common::unique_title("mockapp-arb-once-per-entry");
     let mut app = common::spawn("small.json", "uia", &title);
@@ -98,14 +99,28 @@ fn a_probe_that_timed_out_is_made_once_in_its_entry() {
     let outpost = common::outpost::OutpostUnderTest::new(&app);
     outpost.follow_the_system_clock();
 
-    let stall = Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS) + 1_000);
+    let stall = Duration::from_millis(u64::from(RAW_PROBE_TIMEOUT_MS) + 1_500);
     app.stall(stall);
     outpost.deliver(DeliveredFact::Foreground { hwnd });
     let message = outpost
         .messages
         .recv_timeout(stall + common::WAIT_TIMEOUT)
         .expect("the outpost reports the foreground window");
-    let _ = app.stall_ended(stall);
+    let stall_ended_at = app.stall_ended(stall);
+    // The worker reads no time while it waits in the probe, and the probe
+    // is the entry's first call that waits, so its first read of the time
+    // after a gap as long as the probe's wait is the one it made once the
+    // probe returned.
+    let probe_wait_us = u64::from(RAW_PROBE_TIMEOUT_MS) * 1_000;
+    let reads = outpost.worker_time_reads();
+    let probe_returned_at = reads
+        .windows(2)
+        .find(|pair| pair[1] - pair[0] >= probe_wait_us)
+        .unwrap_or_else(|| panic!("no read of the time followed the probe: {reads:?}"))[1];
+    assert!(
+        probe_returned_at < stall_ended_at,
+        "the probe returned while the window was busy, {probe_returned_at} after {stall_ended_at}"
+    );
     let OutpostToSupervisor::Event {
         event: NormalizedEvent::FocusChanged { node, .. },
         timing,

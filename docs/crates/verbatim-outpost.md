@@ -705,7 +705,11 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   (`Arbitrator::record_timed_out`), so that the entry probes the window
   once, and is forgotten as the next entry begins
   (`Arbitrator::begin_entry`) and when its own ends, never renewed; the
-  focus listener's reader keeps nothing of it. The next entry probes
+  focus listener's reader keeps nothing of it. The "no" is kept for the
+  worker thread that probed: no other thread sees it, so it never gives
+  the event thread a lasting verdict, and an abandoned worker that
+  finishes its entry late neither forgets the "no" of the worker in
+  charge nor adds its own to that worker's entry. The next entry probes
   again, as NVDA's verdict, timed from before its probe, is out of date
   when a probe that took the whole wait returns. The renewal is by time because no event says a
   window has begun to answer the probe. The time is the arbitrator's
