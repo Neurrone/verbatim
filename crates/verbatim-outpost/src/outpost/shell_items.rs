@@ -1,5 +1,6 @@
 //! The shell's tray icons and taskbar buttons, for Core's system tray list
-//! dialog: the answer to [`Query::ShellItems`](crate::protocol::Query::ShellItems),
+//! dialog: the answers to [`Query::ShellItems`](crate::protocol::Query::ShellItems)
+//! and [`Query::ShellItemPosition`](crate::protocol::Query::ShellItemPosition),
 //! read by File Explorer's outpost within its own application, so Core
 //! makes no UIA connection into the shell's windows
 //! (`docs/design/listener-without-connections.md`, decision 9).
@@ -8,8 +9,14 @@
 //! with the overflow flyout window when it is visible; the taskbar is
 //! `Shell_TrayWnd` with the notification area's subtree left out. Each
 //! window is walked in the control view, each element read as
-//! `verbatim_uia::ShellButton`, and every named, on-screen button with a
-//! rectangle becomes a [`ShellItem`]. A window the outpost's application
+//! `verbatim_uia::ShellButton`, and every named, on-screen button becomes
+//! a [`ShellItem`]. The walk reads whether each button is off the screen
+//! but never where it is (`docs/architecture.md`, "Bulk reads carry only
+//! cheap properties"): a click asks for one button's position, which the
+//! outpost answers by walking the same surface again, finding the chosen
+//! item there by its runtime id, or else by a name no other item has
+//! ([`refind`]), and reading that one button's `verbatim_uia::Place`, so a
+//! click lands where the button is then. A window the outpost's application
 //! does not serve is not read: the outpost connects only to its own
 //! application's windows (section 4.3 of the same design). `Shell_TrayWnd`
 //! and `TrayNotifyWnd` are read through UIA whatever their provider, so
@@ -19,7 +26,8 @@
 //! shell busy past the connection timeout is, reads none of its items.
 //!
 //! The walk has a time budget, [`WALK_BUDGET`], asked before each of its
-//! calls after the first: once it has passed, the walk makes no more and
+//! calls after the first, a position's read included: once it has passed,
+//! the walk makes no more and
 //! the list holds the items read by then, rather than the worker's
 //! deadline for the query abandoning the walk with none.
 
@@ -31,7 +39,7 @@ use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, IsWind
 use windows::core::{HSTRING, PCWSTR};
 
 use verbatim_model::{Rect, ShellItem, ShellItemKind};
-use verbatim_uia::{Cached, Direction, Request, ShellButton, Uia};
+use verbatim_uia::{Cached, Direction, Place, Request, ShellButton, Uia, element_is_gone};
 
 use super::Context;
 use super::read::{Client, ReadError, serves};
@@ -62,6 +70,74 @@ pub(super) fn shell_items(
     let uia = client
         .uia()
         .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
+    let clock = context.clock();
+    let out_of_time = time_limit(&clock, WALK_BUDGET);
+    Ok(walk_surface(context, uia, kind, &out_of_time)?
+        .into_iter()
+        .map(|found| found.item)
+        .collect())
+}
+
+/// Where `chosen`, an item of `kind` the user picked from an earlier list,
+/// is on the screen now: the surface walked again, the item found there
+/// ([`refind`]), and that one button's place read. `None` when it is gone,
+/// when its name alone cannot tell it from another item's, when it is now
+/// off the screen or has an empty rectangle, which leaves a click no point
+/// to target, or when the walk's budget passed before the read.
+pub(super) fn shell_item_position(
+    context: &Context,
+    client: &mut Client,
+    kind: ShellItemKind,
+    chosen: &ShellItem,
+) -> Result<Option<Rect>, ReadError> {
+    let uia = client
+        .uia()
+        .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
+    let place = uia
+        .request_fixed::<Place>()
+        .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
+    let clock = context.clock();
+    let out_of_time = time_limit(&clock, WALK_BUDGET);
+    let found = walk_surface(context, uia, kind, &out_of_time)?;
+    let items: Vec<&ShellItem> = found.iter().map(|found| &found.item).collect();
+    let Some(index) = refind(chosen, &items) else {
+        tracing::info!(name = chosen.name, "the chosen shell item is not there");
+        return Ok(None);
+    };
+    if out_of_time() {
+        tracing::debug!(
+            name = chosen.name,
+            "the shell walk ran out of time before the item's position was read"
+        );
+        return Ok(None);
+    }
+    let place = match found[index].element.live().refresh(&place) {
+        Ok(element) => element.read(),
+        Err(error) if element_is_gone(&error) => return Ok(None),
+        Err(error) => {
+            return Err(ReadError::Failed(format!(
+                "could not read the shell item's position: {error}"
+            )));
+        }
+    };
+    Ok(usable_position(place.offscreen, place.rect))
+}
+
+/// One walked button: the item it becomes, and its element, for its
+/// position when it is the one clicked.
+struct Found {
+    item: ShellItem,
+    element: Cached<ShellButton>,
+}
+
+/// The buttons of `kind`, walked in the outpost's application under the
+/// budget `out_of_time` keeps.
+fn walk_surface(
+    context: &Context,
+    uia: &Uia,
+    kind: ShellItemKind,
+    out_of_time: &dyn Fn() -> bool,
+) -> Result<Vec<Found>, ReadError> {
     let request = uia
         .request_fixed::<ShellButton>()
         .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
@@ -75,14 +151,12 @@ pub(super) fn shell_items(
             "the taskbar window is another application's".to_owned(),
         ));
     }
-    let clock = context.clock();
-    let out_of_time = time_limit(&clock, WALK_BUDGET);
     let walk = Walk {
         context,
         uia,
         walker: &walker,
         request: &request,
-        out_of_time: &out_of_time,
+        out_of_time,
     };
     let mut items = Vec::new();
     match kind {
@@ -189,7 +263,7 @@ impl Walk<'_> {
         hwnd: HWND,
         exclude: Option<HWND>,
         lookup: Lookup,
-        items: &mut Vec<ShellItem>,
+        items: &mut Vec<Found>,
     ) {
         let window = hwnd.0 as isize;
         if !serves(self.context, window) {
@@ -224,7 +298,7 @@ impl Walk<'_> {
         exclude: Option<HWND>,
         depth: u32,
         visited: &mut usize,
-        items: &mut Vec<ShellItem>,
+        items: &mut Vec<Found>,
     ) {
         let button = element.read();
         if let Some(exclude) = exclude
@@ -233,10 +307,15 @@ impl Walk<'_> {
             return;
         }
         if button.control_type == Some(UIA_ButtonControlTypeId.0) {
-            if let Some(mut item) = item_from_parts(button.name, button.offscreen, button.rect) {
-                // Local: UIA keeps the runtime id with the element.
-                item.runtime_id = element.runtime_id();
-                items.push(item);
+            if let Some(name) = listed_name(button.name, button.offscreen) {
+                items.push(Found {
+                    item: ShellItem {
+                        name,
+                        // Local: UIA keeps the runtime id with the element.
+                        runtime_id: element.runtime_id(),
+                    },
+                    element: element.clone(),
+                });
             }
             // Tray and taskbar buttons carry no nested items worth walking.
             return;
@@ -284,21 +363,47 @@ fn step(found: windows::core::Result<Cached<ShellButton>>) -> Option<Cached<Shel
     }
 }
 
-/// Whether one walked button becomes a [`ShellItem`]: it must have a
-/// non-blank name (the list shows nothing else), be on screen, and have a
-/// non-empty rectangle (click actions target its center, so a degenerate
-/// rectangle is unusable).
-fn item_from_parts(name: Option<String>, offscreen: bool, rect: Option<Rect>) -> Option<ShellItem> {
+/// The name one walked button is listed under, if it is listed: it must
+/// have a non-blank name (the list shows nothing else) and be on screen.
+fn listed_name(name: Option<String>, offscreen: bool) -> Option<String> {
     if offscreen {
         return None;
     }
-    let name = name.filter(|name| !name.trim().is_empty())?;
-    let rect = rect.filter(|rect| rect.width > 0 && rect.height > 0)?;
-    Some(ShellItem {
-        name,
-        rect,
-        runtime_id: Vec::new(),
-    })
+    name.filter(|name| !name.trim().is_empty())
+}
+
+/// The index of the item in a fresh walk, `fresh`, that is `chosen`, an
+/// item the user picked from an earlier one, wherever it is now: the item
+/// with the same runtime id, or else the only item with the same name.
+/// `None` when it is gone, or when its name alone cannot tell it from
+/// another item's, so a click never lands on an icon that merely took its
+/// place.
+fn refind(chosen: &ShellItem, fresh: &[&ShellItem]) -> Option<usize> {
+    if !chosen.runtime_id.is_empty()
+        && let Some(index) = fresh
+            .iter()
+            .position(|item| item.runtime_id == chosen.runtime_id)
+    {
+        return Some(index);
+    }
+    let mut named = fresh
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.name == chosen.name);
+    match (named.next(), named.next()) {
+        (Some((index, _)), None) => Some(index),
+        _ => None,
+    }
+}
+
+/// The rectangle a click targets, read for the one button clicked: none
+/// when the button is now off the screen or its rectangle is empty, since
+/// a click targets its center.
+fn usable_position(offscreen: bool, rect: Option<Rect>) -> Option<Rect> {
+    if offscreen {
+        return None;
+    }
+    rect.filter(|rect| rect.width > 0 && rect.height > 0)
 }
 
 #[cfg(test)]
@@ -314,47 +419,85 @@ mod tests {
         }
     }
 
+    fn item(name: &str, runtime_id: &[i32]) -> ShellItem {
+        ShellItem {
+            name: name.into(),
+            runtime_id: runtime_id.to_vec(),
+        }
+    }
+
     #[test]
-    fn named_onscreen_button_becomes_an_item() {
-        let item = item_from_parts(Some("Volume".into()), false, Some(rect(24, 24)));
+    fn a_named_onscreen_button_is_listed() {
         assert_eq!(
-            item,
-            Some(ShellItem {
-                name: "Volume".into(),
-                rect: rect(24, 24),
-                runtime_id: Vec::new(),
-            })
+            listed_name(Some("Volume".into()), false),
+            Some("Volume".to_owned())
         );
     }
 
     #[test]
-    fn unnamed_or_blank_named_buttons_are_dropped() {
-        assert_eq!(item_from_parts(None, false, Some(rect(24, 24))), None);
+    fn unnamed_or_blank_named_buttons_are_not_listed() {
+        assert_eq!(listed_name(None, false), None);
         assert_eq!(
-            item_from_parts(Some("   ".into()), false, Some(rect(24, 24))),
+            listed_name(Some("   ".into()), false),
             None,
             "a whitespace-only name shows as an empty row and is dropped"
         );
     }
 
     #[test]
-    fn offscreen_buttons_are_dropped() {
+    fn offscreen_buttons_are_not_listed() {
+        assert_eq!(listed_name(Some("Clock".into()), true), None);
+    }
+
+    #[test]
+    fn a_moved_item_is_found_by_its_runtime_id() {
+        let chosen = item("Volume", &[42, 1]);
+        let fresh = [item("Network", &[42, 2]), item("Volume", &[42, 1])];
+        assert_eq!(refind(&chosen, &[&fresh[0], &fresh[1]]), Some(1));
+    }
+
+    #[test]
+    fn an_item_with_a_new_runtime_id_is_found_by_its_unique_name() {
+        let chosen = item("Volume", &[42, 1]);
+        let fresh = [item("Network", &[42, 2]), item("Volume", &[42, 7])];
+        assert_eq!(refind(&chosen, &[&fresh[0], &fresh[1]]), Some(1));
+    }
+
+    #[test]
+    fn a_gone_or_ambiguous_item_is_not_found() {
+        let chosen = item("Volume", &[42, 1]);
+        assert_eq!(refind(&chosen, &[&item("Network", &[42, 1, 9])]), None);
+        let twins = [item("Volume", &[42, 3]), item("Volume", &[42, 4])];
         assert_eq!(
-            item_from_parts(Some("Clock".into()), true, Some(rect(24, 24))),
-            None
+            refind(&chosen, &[&twins[0], &twins[1]]),
+            None,
+            "two items of that name, neither of them the one chosen"
         );
     }
 
     #[test]
-    fn degenerate_rectangles_are_dropped() {
-        assert_eq!(item_from_parts(Some("Clock".into()), false, None), None);
+    fn an_onscreen_rectangle_is_the_position() {
         assert_eq!(
-            item_from_parts(Some("Clock".into()), false, Some(rect(0, 24))),
+            usable_position(false, Some(rect(24, 24))),
+            Some(rect(24, 24))
+        );
+    }
+
+    #[test]
+    fn an_offscreen_button_has_no_position() {
+        assert_eq!(usable_position(true, Some(rect(24, 24))), None);
+    }
+
+    #[test]
+    fn a_degenerate_rectangle_is_no_position() {
+        assert_eq!(usable_position(false, None), None);
+        assert_eq!(
+            usable_position(false, Some(rect(0, 24))),
             None,
             "a zero-width rectangle has no clickable center"
         );
         assert_eq!(
-            item_from_parts(Some("Clock".into()), false, Some(rect(24, 0))),
+            usable_position(false, Some(rect(24, 0))),
             None,
             "a zero-height rectangle has no clickable center"
         );

@@ -737,8 +737,10 @@ Public API:
     a `ControllerFor` change read; `WindowLookup` (native window handle), one property;
     `TextAreaPattern` (the Text pattern of an event's sender, which
     `ListenerEvent` covers), the held console check's;
-    and `ShellButton`, what `verbatim-gui`'s list of the shell's buttons
-    reads. A rectangle that does not fit reads as `None` rather than
+    and `ShellButton` (native window handle, control type, name, and
+    whether it is off the screen, but not its rectangle), what File
+    Explorer's outpost reads of each element for Core's list of the
+    shell's buttons, which reads the clicked button's `Place`. A rectangle that does not fit reads as `None` rather than
     overflowing.
   - `Request<S>`, a shape's cache request, keeping the gates it was built
     with (`gates()`).

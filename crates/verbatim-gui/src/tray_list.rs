@@ -1,22 +1,23 @@
 //! The system tray and taskbar items dialog, replicating NVDA's systrayList
 //! add-on (roadmap, milestone M3): a label over a single-selection list of
 //! item names with four buttons — Left Click, Left Double Click, Right
-//! Click, and Cancel — where each click action closes the dialog, finds the
-//! selected item again, moves the pointer to the center of its screen
-//! rectangle, and injects the matching mouse events.
+//! Click, and Cancel — where each click action closes the dialog, asks
+//! where the selected item is now, moves the pointer to the center of its
+//! screen rectangle, and injects the matching mouse events.
 //!
-//! Finding the item again is where Verbatim differs from the add-on, which
-//! clicks the rectangle recorded when the list was made: icons that moved
-//! since then, as tray icons do when one is added or removed, would put a
-//! different icon under that point. The shell is enumerated afresh and the
-//! item found by its runtime id, or else by a name no other item has
-//! ([`refind`]); when it is gone, nothing is clicked and `gone` is called
-//! with its name, for Verbatim to say so.
+//! Asking where the item is at the click is where Verbatim differs from the
+//! add-on, which clicks the rectangle recorded when the list was made: icons
+//! that moved since then, as tray icons do when one is added or removed,
+//! would put a different icon under that point. The list carries no
+//! positions; the outpost walks the shell again, finds the item by its
+//! runtime id, or else by a name no other item has, and reads that one
+//! button's position ([`ShellAsk::Position`]); when it is gone, nothing is
+//! clicked and `gone` is called with its name, for Verbatim to say so.
 //!
 //! Presentation goes through the reusable [`crate::list_dialog`] component;
 //! this module only supplies the titles and labels for the two dialog
 //! flavors, the payload table of enumerated [`ShellItem`]s, and the click
-//! injection. The button callbacks run on the GUI thread; the enumeration
+//! injection. The button callbacks run on the GUI thread; the position
 //! is an outpost's query, asked through the [`ShellItemsHost`], whose
 //! outcome arrives on another thread, and the injection (`SetCursorPos` plus `SendInput`, which work
 //! from any thread) is made on the thread that receives its outcome.
@@ -35,11 +36,11 @@ use verbatim_i18n::messages;
 use verbatim_model::Rect;
 
 use crate::list_dialog::{ButtonVerdict, ListDialogButton, ListDialogSpec};
-use crate::shell_items::{ShellItem, ShellItemKind, ShellItemsHost, center_of, refind};
+use crate::shell_items::{ShellAsk, ShellItem, ShellItemKind, ShellItemsHost, center_of};
 
 /// Called with an item's name when the item chosen is gone by the time it
 /// would be clicked. Called on Core's reducer thread, which delivers the
-/// fresh enumeration's outcome.
+/// position query's outcome.
 pub(crate) type OnGone = Arc<dyn Fn(String) + Send + Sync>;
 
 /// The mouse action one of the dialog's click buttons injects.
@@ -57,7 +58,7 @@ enum ClickAction {
 ///
 /// Each click button's callback asks for the dialog to close and has the
 /// selected item (by its index into `items`, the list dialog's opaque
-/// payload key) found again and clicked ([`click_when_found`]), or `gone`
+/// payload key) clicked where it is now ([`click_when_found`]), or `gone`
 /// called when it is not there.
 pub(crate) fn shell_list_dialog(
     kind: ShellItemKind,
@@ -104,9 +105,10 @@ pub(crate) fn shell_list_dialog(
     }
 }
 
-/// Enumerates `kind` afresh through `host` and clicks `chosen` where it is
-/// now, or calls `gone` with its name when it cannot be found: it was
-/// removed, its name no longer tells it apart, or the enumeration failed.
+/// Asks `host` where `chosen`, an item of `kind`, is now and clicks it
+/// there, or calls `gone` with its name when it cannot be found: it was
+/// removed, its name no longer tells it apart, it has no point to click,
+/// or the request failed.
 fn click_when_found(
     host: &dyn ShellItemsHost,
     kind: ShellItemKind,
@@ -114,23 +116,24 @@ fn click_when_found(
     action: ClickAction,
     gone: OnGone,
 ) {
+    let name = chosen.name.clone();
     let started = host.request(
         kind,
-        Box::new(move |fresh| {
-            if let Some(item) = fresh.as_deref().and_then(|fresh| refind(&chosen, fresh)) {
-                click(action, item.rect);
-            } else {
-                tracing::info!(
-                    name = chosen.name,
-                    "the chosen shell item is gone; not clicked"
-                );
-                gone(chosen.name);
-            }
-        }),
+        ShellAsk::Position(
+            chosen,
+            Box::new(move |position| {
+                if let Some(rect) = position {
+                    click(action, rect);
+                } else {
+                    tracing::info!(name, "the chosen shell item is gone; not clicked");
+                    gone(name);
+                }
+            }),
+        ),
     );
     if !started {
         // Logged by the host; nothing is clicked.
-        tracing::warn!("the shell item could not be found again; not clicked");
+        tracing::warn!("the shell item's position could not be asked for; not clicked");
     }
 }
 

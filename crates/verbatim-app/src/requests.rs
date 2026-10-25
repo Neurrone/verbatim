@@ -86,6 +86,13 @@ pub(crate) enum Asker {
         /// Where the outcome goes.
         deliver: verbatim_gui::DeliverShellItems,
     },
+    /// The list dialog's request for where the item clicked is now, whose
+    /// outcome goes to `deliver`: its rectangle, or `None` when it is not
+    /// there or for any failure.
+    ShellItemPosition {
+        /// Where the outcome goes.
+        deliver: verbatim_gui::DeliverShellItemPosition,
+    },
     /// The reducer's text request (`Effect::Text`): its outcome re-enters
     /// the reducer as `Input::TextCompleted` under the reducer's own query
     /// id, a failure of any kind as the protocol's "unanswered".
@@ -292,10 +299,32 @@ fn describe(outcome: &QueryOutcome) -> String {
     }
 }
 
-/// Hands one outcome to its asker.
+/// Hands a shell item position query's outcome to the list dialog's
+/// `deliver`: the rectangle, or `None` when the item is not there or for
+/// any failure. Nothing re-enters the reducer.
+fn deliver_shell_item_position(
+    deliver: verbatim_gui::DeliverShellItemPosition,
+    outcome: QueryOutcome,
+) -> Vec<Input> {
+    match outcome {
+        QueryOutcome::Done(QueryResult::ShellItemPosition(position)) => deliver(position),
+        other => {
+            tracing::warn!(
+                reason = describe(&other),
+                "the shell item's position was not read"
+            );
+            deliver(None);
+        }
+    }
+    Vec::new()
+}
+
 /// Hands a shell items query's outcome to the list dialog's `deliver`:
-/// the items, or `None` for any failure.
-fn deliver_shell_items(deliver: verbatim_gui::DeliverShellItems, outcome: QueryOutcome) {
+/// the items, or `None` for any failure. Nothing re-enters the reducer.
+fn deliver_shell_items(
+    deliver: verbatim_gui::DeliverShellItems,
+    outcome: QueryOutcome,
+) -> Vec<Input> {
     match outcome {
         QueryOutcome::Done(QueryResult::ShellItems(items)) => deliver(Some(items)),
         other => {
@@ -306,8 +335,10 @@ fn deliver_shell_items(deliver: verbatim_gui::DeliverShellItems, outcome: QueryO
             deliver(None);
         }
     }
+    Vec::new()
 }
 
+/// Hands one outcome to its asker.
 fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
     match asker {
         Asker::Reducer {
@@ -366,10 +397,8 @@ fn deliver(asker: Asker, outcome: QueryOutcome) -> Vec<Input> {
             let _ = reply.try_send(answer);
             Vec::new()
         }
-        Asker::ShellItems { deliver } => {
-            deliver_shell_items(deliver, outcome);
-            Vec::new()
-        }
+        Asker::ShellItems { deliver } => deliver_shell_items(deliver, outcome),
+        Asker::ShellItemPosition { deliver } => deliver_shell_item_position(deliver, outcome),
         Asker::FocusNow { source, trace_id } => match outcome {
             QueryOutcome::Done(QueryResult::Focus(focus)) => focus_inputs(source, trace_id, focus),
             other => {
@@ -755,6 +784,40 @@ mod tests {
         );
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
         assert_eq!(table.len(), 1, "a request without a deadline is kept");
+    }
+
+    #[test]
+    fn a_shell_item_position_answer_reaches_the_dialog_and_a_failure_gives_none() {
+        let outcomes: std::sync::Arc<std::sync::Mutex<Vec<Option<verbatim_model::Rect>>>> =
+            std::sync::Arc::default();
+        let mut table = RequestTable::default();
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let asker = |outcomes: &std::sync::Arc<std::sync::Mutex<Vec<_>>>| {
+            let kept = std::sync::Arc::clone(outcomes);
+            Asker::ShellItemPosition {
+                deliver: Box::new(move |position| kept.lock().expect("outcomes").push(position)),
+            }
+        };
+        let rect = verbatim_model::Rect {
+            left: 1162,
+            top: 752,
+            width: 24,
+            height: 48,
+        };
+        let found = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
+        let failed = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
+        table.finish(
+            found,
+            OutpostId(1),
+            QueryOutcome::Done(QueryResult::ShellItemPosition(Some(rect))),
+        );
+        table.finish(
+            failed,
+            OutpostId(1),
+            QueryOutcome::Failed("no client".into()),
+        );
+        assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(rect), None]);
+        assert_eq!(table.next_deadline(), None);
     }
 
     #[test]

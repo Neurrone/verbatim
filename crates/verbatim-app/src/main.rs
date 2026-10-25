@@ -981,20 +981,21 @@ fn window_pid(hwnd: isize) -> Option<Pid> {
     (pid != 0).then_some(Pid(pid))
 }
 
-/// The list dialogs' way to the shell's items: a request on the reducer
-/// thread's port, answered by the taskbar process's outpost.
+/// The list dialogs' way to the shell's items and a clicked item's
+/// position: a request on the reducer thread's port, answered by the
+/// taskbar process's outpost.
 struct AppShellItemsHost {
     commands: Commands,
 }
 
 impl verbatim_gui::ShellItemsHost for AppShellItemsHost {
-    fn request(&self, kind: ShellItemKind, deliver: verbatim_gui::DeliverShellItems) -> bool {
+    fn request(&self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) -> bool {
         let sent = self
             .commands
-            .send(ShellCommand::ShellItems(kind, deliver))
+            .send(ShellCommand::ShellItems(kind, ask))
             .is_ok();
         if !sent {
-            tracing::debug!("the reducer thread is gone; the shell's items are not listed");
+            tracing::debug!("the reducer thread is gone; the shell's items are not read");
         }
         sent
     }
@@ -1153,10 +1154,10 @@ pub(crate) enum ShellCommand {
     AwaitIdle(u64),
     /// Answer the control plane's `DumpFocus` on the channel.
     DumpFocus(Sender<FocusReport>),
-    /// The tray or taskbar list dialog wants the shell's items: ask the
-    /// outpost of the process that owns the taskbar, and hand the outcome
-    /// to the delivery callback.
-    ShellItems(ShellItemKind, verbatim_gui::DeliverShellItems),
+    /// The tray or taskbar list dialog wants the shell's items, or where a
+    /// clicked item is: ask the outpost of the process that owns the
+    /// taskbar, and hand the outcome to the delivery callback.
+    ShellItems(ShellItemKind, verbatim_gui::ShellAsk),
 }
 
 /// What the reducer thread owns: the reducer state, the request table, and
@@ -1523,7 +1524,7 @@ impl ReducerThread<'_> {
                     self.focus_now(outpost, application);
                 }
                 for wanted in self.shell_items_wanted.take(target_pid) {
-                    self.ask_shell_items(outpost, wanted.kind, wanted.deliver);
+                    self.ask_shell_items(outpost, wanted.kind, wanted.ask);
                 }
                 self.context.outposts.lock().expect("outposts lock").insert(
                     target_pid,
@@ -1599,7 +1600,7 @@ impl ReducerThread<'_> {
             ShellCommand::DumpTree(ticket, locations, reply) => {
                 self.dump_tree(ticket, locations, reply);
             }
-            ShellCommand::ShellItems(kind, deliver) => self.shell_items(kind, deliver),
+            ShellCommand::ShellItems(kind, ask) => self.shell_items(kind, ask),
             ShellCommand::DumpTreeGivenUp(ticket) => self.dump_tree_given_up(ticket),
             ShellCommand::FocusNow(pid) => self.want_focus_now(pid),
             ShellCommand::Exiting { replaced, heard } => {
@@ -2056,46 +2057,55 @@ impl ReducerThread<'_> {
         self.send(outpost, id, command);
     }
 
-    /// Asks the outpost of the process that owns the taskbar for the
-    /// shell's items of `kind`, starting one when there is none, so
-    /// verbatim.exe makes no UIA connection into the shell's windows
+    /// Asks the outpost of the process that owns the taskbar `ask` of the
+    /// shell's surface `kind`, its items or where a clicked item is,
+    /// starting one when there is none, so verbatim.exe makes no UIA
+    /// connection into the shell's windows
     /// (`docs/design/listener-without-connections.md`, decision 9). The
-    /// outcome goes to `deliver`, exactly once; `None` when there is no
+    /// outcome goes to `ask`'s callback, exactly once; `None` when there is no
     /// taskbar, when its process gets no outpost or none is ready by
     /// [`shell_requests::SHELL_ITEMS_DEADLINE`] from now, or when no answer
     /// has come by that long after the query was sent.
-    fn shell_items(&mut self, kind: ShellItemKind, deliver: verbatim_gui::DeliverShellItems) {
+    fn shell_items(&mut self, kind: ShellItemKind, ask: verbatim_gui::ShellAsk) {
         let Some(pid) = taskbar_process() else {
             tracing::warn!(?kind, "the taskbar window was not found");
-            deliver(None);
+            ask.answer_nothing();
             return;
         };
         let deadline = Instant::now() + shell_requests::SHELL_ITEMS_DEADLINE;
         if let Some(outpost) = self.live.ready(pid) {
-            self.ask_shell_items(outpost, kind, deliver);
+            self.ask_shell_items(outpost, kind, ask);
         } else {
-            self.shell_items_wanted.push(pid, kind, deliver, deadline);
+            self.shell_items_wanted.push(pid, kind, ask, deadline);
             self.context.supervisor.ensure_spawned(pid);
         }
     }
 
-    /// Sends `outpost` the shell items query, answered with nothing by Core
-    /// if no outcome has come [`shell_requests::SHELL_ITEMS_DEADLINE`] from
-    /// now, after the outpost's own deadline for the walk has run out.
+    /// Sends `outpost` the shell items query or the position query `ask`
+    /// says, answered with nothing by Core if no outcome has come
+    /// [`shell_requests::SHELL_ITEMS_DEADLINE`] from now, after the
+    /// outpost's own deadline for the walk has run out.
     fn ask_shell_items(
         &mut self,
         outpost: OutpostId,
         kind: ShellItemKind,
-        deliver: verbatim_gui::DeliverShellItems,
+        ask: verbatim_gui::ShellAsk,
     ) {
         let deadline = Instant::now() + shell_requests::SHELL_ITEMS_DEADLINE;
-        let id = self
-            .requests
-            .begin_until(outpost, Asker::ShellItems { deliver }, deadline);
+        let (asker, query) = match ask {
+            verbatim_gui::ShellAsk::Items(deliver) => {
+                (Asker::ShellItems { deliver }, Query::ShellItems { kind })
+            }
+            verbatim_gui::ShellAsk::Position(item, deliver) => (
+                Asker::ShellItemPosition { deliver },
+                Query::ShellItemPosition { kind, item },
+            ),
+        };
+        let id = self.requests.begin_until(outpost, asker, deadline);
         let command = SupervisorToOutpost::Query {
             trace_id: TraceId::mint(),
             request_id: id.0,
-            query: Query::ShellItems { kind },
+            query,
             timing: EventTiming::default(),
         };
         self.send(outpost, id, command);

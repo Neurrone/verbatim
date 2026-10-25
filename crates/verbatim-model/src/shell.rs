@@ -5,8 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Rect;
-
 /// Which shell surface to enumerate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShellItemKind {
@@ -18,14 +16,13 @@ pub enum ShellItemKind {
     Taskbar,
 }
 
-/// One enumerated tray icon or taskbar button.
+/// One enumerated tray icon or taskbar button. It carries no position: a
+/// list read never asks for one, and a click asks the outpost where the
+/// item is then, finding it again first.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellItem {
     /// The item's accessible name, shown in the list dialog.
     pub name: String,
-    /// The item's screen rectangle when it was enumerated; a click finds
-    /// the item again first and targets the center of its rectangle then.
-    pub rect: Rect,
     /// The item's UIA runtime id, which identifies its element for as long
     /// as the element exists; empty when the shell gave none.
     pub runtime_id: Vec<i32>,

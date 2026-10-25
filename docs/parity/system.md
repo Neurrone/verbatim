@@ -136,10 +136,12 @@ recorded for the chosen icon when it made the list, so an icon that
 moved since, as tray icons do when another is added or removed, leaves
 a different icon, or none, under the click. Verbatim: **different**
 (`docs/design/safety-audit-2026-10-06.md`, "D4. A shell item click goes
-to a rectangle captured when the list was built"): a click enumerates
-the tray or taskbar again, finds the chosen item by its UIA runtime id,
-or else by a name no other item has, and clicks it where it is now; an
-item that cannot be found is not clicked, and Verbatim says "is no
+to a rectangle captured when the list was built"): the list records no
+rectangles; a click has the outpost walk the tray or taskbar again, find
+the chosen item by its UIA runtime id, or else by a name no other item
+has, and read that one button's rectangle, and clicks its center there,
+as the add-on clicks the center; an item that cannot be found is not
+clicked, and Verbatim says "is no
 longer there" after its name (`verbatim-gui`'s `tray_list` and
 `shell_items`). The items are read by the outpost of File Explorer's
 taskbar process within its own application, where the add-on reads them

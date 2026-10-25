@@ -942,14 +942,26 @@ pub enum Query {
         /// Which shell surface.
         kind: verbatim_model::ShellItemKind,
     },
+    /// Where one item of a list [`Query::ShellItems`] answered is on the
+    /// screen now, for a click on it: the outpost walks the surface again,
+    /// finds the item by its runtime id, or else by a name no other item
+    /// has, and reads that one button's position, which no list read
+    /// fetches. Answered [`QueryResult::ShellItemPosition`].
+    ShellItemPosition {
+        /// Which shell surface the item was listed from.
+        kind: verbatim_model::ShellItemKind,
+        /// The item chosen.
+        item: verbatim_model::ShellItem,
+    },
 }
 
 /// How long an outpost's worker may take over a walk query,
 /// [`Query::Ancestors`] (up to 64 hops), [`Query::DumpTree`] (up to 4096
-/// nodes) or [`Query::ShellItems`], from when it begins it: by then it has
-/// answered, or it is abandoned and the query answered
-/// [`QueryOutcome::Abandoned`]. Core waits for a shell items answer longer
-/// than this, so that whichever comes reaches it before it gives up.
+/// nodes), [`Query::ShellItems`] or [`Query::ShellItemPosition`], from
+/// when it begins it: by then it has answered, or it is abandoned and the
+/// query answered [`QueryOutcome::Abandoned`]. Core waits for a shell
+/// items or position answer longer than this, so that whichever comes
+/// reaches it before it gives up.
 pub const WALK_DEADLINE: Duration = Duration::from_secs(5);
 
 /// The one outcome of a query.
@@ -1000,6 +1012,10 @@ pub enum QueryResult {
     Text(TextReply),
     /// The answer to [`Query::ShellItems`], in the shell's order.
     ShellItems(Vec<verbatim_model::ShellItem>),
+    /// The answer to [`Query::ShellItemPosition`]: the item's screen
+    /// rectangle, or `None` when it is gone, cannot be told apart by its
+    /// name, is off the screen, or has an empty rectangle.
+    ShellItemPosition(Option<verbatim_model::Rect>),
 }
 
 /// The answer to [`Query::FocusNow`].

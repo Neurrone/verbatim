@@ -1,5 +1,6 @@
-//! The tray and taskbar list dialogs' requests for the shell's items that
-//! wait for the taskbar's process to have a ready outpost.
+//! The tray and taskbar list dialogs' requests for the shell's items, or
+//! for where a clicked item is, that wait for the taskbar's process to have
+//! a ready outpost.
 //!
 //! Each request waits for an outpost at most [`SHELL_ITEMS_DEADLINE`] from
 //! the moment the dialog asked, and gets exactly one outcome: the query it
@@ -11,12 +12,12 @@
 
 use std::time::{Duration, Instant};
 
-use verbatim_gui::{DeliverShellItems, ShellItemKind};
+use verbatim_gui::{ShellAsk, ShellItemKind};
 use verbatim_model::Pid;
 use verbatim_outpost::protocol::WALK_DEADLINE;
 
-/// How long Core waits for the answer to a shell items query from when it
-/// sends it, 6 seconds: the outpost's own deadline for the walk
+/// How long Core waits for the answer to a shell items or position query
+/// from when it sends it, 6 seconds: the outpost's own deadline for the walk
 /// ([`WALK_DEADLINE`], 5 seconds from when its worker begins the query),
 /// by which it has answered the items read, in part once the walk's time
 /// budget has passed, or the walk abandoned, and a second for the query's
@@ -37,10 +38,10 @@ pub(crate) const SHELL_ITEMS_DEADLINE: Duration =
 pub(crate) struct Waiting {
     /// The process whose outpost it waits for.
     pid: Pid,
-    /// The items asked for.
+    /// The surface asked about.
     pub(crate) kind: ShellItemKind,
-    /// Where the outcome goes.
-    pub(crate) deliver: DeliverShellItems,
+    /// What is asked, and where the outcome goes.
+    pub(crate) ask: ShellAsk,
     /// When it is answered with nothing if it is still waiting.
     pub(crate) deadline: Instant,
 }
@@ -52,19 +53,13 @@ pub(crate) struct ShellItemsWanted {
 }
 
 impl ShellItemsWanted {
-    /// Records a request for `kind`, waiting for the outpost of `pid`,
-    /// answered with nothing at `deadline` if it is still waiting.
-    pub(crate) fn push(
-        &mut self,
-        pid: Pid,
-        kind: ShellItemKind,
-        deliver: DeliverShellItems,
-        deadline: Instant,
-    ) {
+    /// Records `ask` of `kind`'s surface, waiting for the outpost of
+    /// `pid`, answered with nothing at `deadline` if it is still waiting.
+    pub(crate) fn push(&mut self, pid: Pid, kind: ShellItemKind, ask: ShellAsk, deadline: Instant) {
         self.waiting.push(Waiting {
             pid,
             kind,
-            deliver,
+            ask,
             deadline,
         });
     }
@@ -86,9 +81,9 @@ impl ShellItemsWanted {
             tracing::warn!(
                 kind = ?waiting.kind,
                 %pid,
-                "the taskbar's process has no outpost; the shell's items are not listed"
+                "the taskbar's process has no outpost; the shell's items are not read"
             );
-            (waiting.deliver)(None);
+            waiting.ask.answer_nothing();
         }
     }
 
@@ -106,9 +101,9 @@ impl ShellItemsWanted {
             tracing::warn!(
                 kind = ?waiting.kind,
                 pid = %waiting.pid,
-                "the taskbar's outpost was not ready by the request's deadline; the shell's items are not listed"
+                "the taskbar's outpost was not ready by the request's deadline; the shell's items are not read"
             );
-            (waiting.deliver)(None);
+            waiting.ask.answer_nothing();
         }
     }
 
@@ -129,20 +124,21 @@ mod tests {
     /// The outcomes a request's `deliver` was given, in order.
     type Outcomes = Arc<Mutex<Vec<Option<Vec<ShellItem>>>>>;
 
-    fn recorder() -> (Outcomes, DeliverShellItems) {
+    fn recorder() -> (Outcomes, ShellAsk) {
         let outcomes = Outcomes::default();
         let kept = Arc::clone(&outcomes);
-        let deliver: DeliverShellItems =
-            Box::new(move |items| kept.lock().expect("outcomes").push(items));
-        (outcomes, deliver)
+        let ask = ShellAsk::Items(Box::new(move |items| {
+            kept.lock().expect("outcomes").push(items);
+        }));
+        (outcomes, ask)
     }
 
     #[test]
     fn a_request_is_taken_when_its_outpost_is_ready_and_not_answered_here() {
         let mut wanted = ShellItemsWanted::default();
-        let (outcomes, deliver) = recorder();
+        let (outcomes, ask) = recorder();
         let deadline = Instant::now() + SHELL_ITEMS_DEADLINE;
-        wanted.push(Pid(7), ShellItemKind::Taskbar, deliver, deadline);
+        wanted.push(Pid(7), ShellItemKind::Taskbar, ask, deadline);
         let taken = wanted.take(Pid(7));
         assert_eq!(
             taken
@@ -159,9 +155,9 @@ mod tests {
     #[test]
     fn a_request_for_a_process_with_no_outpost_is_answered_with_nothing_once() {
         let mut wanted = ShellItemsWanted::default();
-        let (outcomes, deliver) = recorder();
+        let (outcomes, ask) = recorder();
         let deadline = Instant::now() + SHELL_ITEMS_DEADLINE;
-        wanted.push(Pid(7), ShellItemKind::SystemTray, deliver, deadline);
+        wanted.push(Pid(7), ShellItemKind::SystemTray, ask, deadline);
         wanted.refuse(Pid(7));
         wanted.expire(deadline);
         assert_eq!(*outcomes.lock().expect("outcomes"), vec![None]);
@@ -170,9 +166,9 @@ mod tests {
     #[test]
     fn a_request_for_another_process_is_not_refused() {
         let mut wanted = ShellItemsWanted::default();
-        let (outcomes, deliver) = recorder();
+        let (outcomes, ask) = recorder();
         let deadline = Instant::now() + SHELL_ITEMS_DEADLINE;
-        wanted.push(Pid(7), ShellItemKind::SystemTray, deliver, deadline);
+        wanted.push(Pid(7), ShellItemKind::SystemTray, ask, deadline);
         wanted.refuse(Pid(8));
         assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
         assert_eq!(wanted.next_deadline(), Some(deadline));
@@ -181,10 +177,10 @@ mod tests {
     #[test]
     fn a_request_still_waiting_at_its_deadline_is_answered_with_nothing_once() {
         let mut wanted = ShellItemsWanted::default();
-        let (outcomes, deliver) = recorder();
+        let (outcomes, ask) = recorder();
         let now = Instant::now();
         let deadline = now + SHELL_ITEMS_DEADLINE;
-        wanted.push(Pid(7), ShellItemKind::SystemTray, deliver, deadline);
+        wanted.push(Pid(7), ShellItemKind::SystemTray, ask, deadline);
         wanted.expire(now);
         assert_eq!(*outcomes.lock().expect("outcomes"), Vec::new());
         wanted.expire(deadline);

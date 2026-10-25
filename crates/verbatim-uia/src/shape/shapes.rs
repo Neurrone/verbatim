@@ -882,6 +882,9 @@ uia_shape! {
 uia_shape! {
     /// An element of the shell's notification area or taskbar, as File
     /// Explorer's outpost reads it for Core's list of the shell's buttons.
+    /// It holds whether the element is off the screen, which the list
+    /// reads for every button (Dickson, 2026-10-24), but not where it is:
+    /// a click reads the one chosen button's [`Place`].
     pub struct ShellButton {
         gates: none;
         groups {}
@@ -894,8 +897,6 @@ uia_shape! {
             name: UIA_NamePropertyId => string,
             /// Whether it is off the screen.
             offscreen: UIA_IsOffscreenPropertyId => bool,
-            /// Where it is on the screen.
-            rect: UIA_BoundingRectanglePropertyId => rect,
         }
         prefetch {}
         covers {}

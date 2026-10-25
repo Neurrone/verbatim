@@ -616,8 +616,9 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `ForwardingEnded` (to an outpost, the hand-over's end), `Query` (a
   request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
   `Activate`, `Ancestors`, `DumpTree`, `Text`, a node and a model
-  `TextOp`, milestone M4's text protocol, or `ShellItems`, the shell's
-  tray icons or taskbar buttons for Core's list dialog), `Cancel` (withdraws a query that
+  `TextOp`, milestone M4's text protocol, `ShellItems`, the shell's
+  tray icons or taskbar buttons for Core's list dialog, or
+  `ShellItemPosition`, where one of them is now, for a click), `Cancel` (withdraws a query that
   has not started), `Ping`, `IdleQuery` (the harness's idle barrier's
   round, under "The idle barrier" below), `Shutdown` (shut down
   cleanly and exit, under "Shutting down" below), and `Assign` (to a
@@ -2360,17 +2361,23 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   notification area (`TrayNotifyWnd` under `Shell_TrayWnd`, with the
   overflow flyout while visible) or the taskbar (`Shell_TrayWnd` without
   the notification area's subtree) in the control view, each element as
-  the `ShellButton` shape, and answers every named, on-screen button with
-  a rectangle as a `ShellItem`; it reads no window its application does
+  the `ShellButton` shape, which holds whether a button is off the screen
+  but not where it is, and answers every named, on-screen button as a
+  `ShellItem`, a name and a runtime id. `ShellItemPosition { kind, item }`
+  walks the same surface the same way, finds the item by its runtime id,
+  or else by a name no other item has (`refind`), and reads that one
+  button's `Place`, answering its rectangle, or `None` when the item is
+  not there, is now off the screen, has an empty rectangle, or the time
+  budget passed before the read. Either reads no window its application does
   not serve, looks `Shell_TrayWnd` and `TrayNotifyWnd` up without the
   proxy rule (`any_window_element`) and the overflow flyout's window
   under it (`window_element`), and asks its time budget (`WALK_BUDGET`,
   2 seconds) before each call after the first, answering the items read
-  by then once it has passed; a walk step that fails is read as no more
+  by then once it has passed, a position's read included; a walk step that fails is read as no more
   items there, as NVDA reads a failed UIA step, and logged as a warning
   naming its error; all within the worker's deadline for the query
   (`protocol::WALK_DEADLINE`, 5 seconds, public so that Core's deadline
-  for the shell items can outlast it).
+  for the shell items and a position can outlast it).
   `DumpTree { locations }` walks the target's foreground window (or
   its first visible top-level window) through its backend — UIA via
   `verbatim_uia_rops::tree_dump`, each element's children read in one

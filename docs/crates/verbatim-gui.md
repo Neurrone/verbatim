@@ -27,20 +27,25 @@ Public API:
   second call fails, since wxWidgets cannot start again after it ends.
 - `shell_items` — the system tray and taskbar items the systrayList
   replica lists. `ShellItemsHost` (trait) is how the GUI gets them: its
-  `request(kind, deliver)` returns at once and calls `deliver`
-  (`DeliverShellItems`) once, on another thread, with the items or `None`
-  for a failure; the app implements it by asking the outpost of the
-  process that owns the taskbar, which reads the items within its own
-  application, so the GUI makes no UIA connection into the shell's
-  windows (`docs/design/listener-without-connections.md`, decision 9),
-  and the GUI sends the outcome down its channel to the GUI thread.
-  `run_gui` takes the host. `ShellItemKind` picks the surface (the
-  notification area plus the overflow flyout window while visible, or
-  the taskbar with the notification area's subtree excluded) and
-  `ShellItem` is a name, a screen rectangle, and a UIA runtime id, both
-  re-exported from `verbatim-model`; `center_of` is the click target, and
-  `refind` finds a chosen item in a fresh enumeration by its runtime id,
-  or else by a name no other item has.
+  `request(kind, ask)` returns at once and calls the callback `ask`
+  carries once, on another thread. `ShellAsk::Items` (`DeliverShellItems`)
+  asks for the surface's items, delivered as the items or `None` for a
+  failure; `ShellAsk::Position` (`DeliverShellItemPosition`) asks where an
+  item chosen from an earlier list is now, delivered as its screen
+  rectangle or `None` when it is gone, cannot be told apart, has no point
+  to click, or the request failed; `answer_nothing` hands either `None`.
+  The app implements the host by asking the outpost of the process that
+  owns the taskbar, which reads the items, or finds the chosen item again
+  by its runtime id, or else by a name no other item has, and reads that
+  one button's position, within its own application, so the GUI makes no
+  UIA connection into the shell's windows
+  (`docs/design/listener-without-connections.md`, decision 9), and the GUI
+  sends a list's outcome down its channel to the GUI thread. `run_gui`
+  takes the host. `ShellItemKind` picks the surface (the notification
+  area plus the overflow flyout window while visible, or the taskbar with
+  the notification area's subtree excluded) and `ShellItem` is a name and
+  a UIA runtime id, with no position, both re-exported from
+  `verbatim-model`; `center_of` is the click target.
 - `ControlPlan` — re-exported from the pure `plan` module described below.
 - `ThemeHost` (trait) — what the Theme page needs from the app: the themes
   and sounds folders, the theme the configuration names with its options
@@ -280,14 +285,14 @@ in flight, and otherwise starts one; when the results arrive on the GUI
 thread, presentation performs the same prePopup dance as settings and
 builds the dialog through `list_dialog` — a label over the item names with
 Left Click, Left Double Click, Right Click, and Cancel, where each click
-action closes the dialog and asks the host for the same surface again,
-finds the selected item there (`refind`), and on the thread that receives
-the answer moves the pointer to the center of its rectangle as it is now
-(`SetCursorPos`) and injects the matching mouse events (`SendInput`; left
-down and up, twice for the double click, right down and up). Icons move
-when another is added or removed, so the rectangle recorded when the list
-was made can lie under a different icon by then. An item that cannot be
-found, or an enumeration that fails, clicks nothing and raises
+action closes the dialog and asks the host where the selected item is
+now (`ShellAsk::Position`), and on the thread that receives the answer
+moves the pointer to the center of that rectangle (`SetCursorPos`) and
+injects the matching mouse events (`SendInput`; left down and up, twice
+for the double click, right down and up). Icons move when another is
+added or removed, so a rectangle recorded when the list was made could
+lie under a different icon by then, and the list carries none. An item
+that cannot be found, or a request that fails, clicks nothing and raises
 `GuiEvent::ShellItemGone`, which the app speaks ("Volume is no longer
 there"). Each dialog closes through one path in C++, which
 destroys it and tells `GuiCore`, and the deferred postPopup frame hide

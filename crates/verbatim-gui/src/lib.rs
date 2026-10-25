@@ -43,7 +43,9 @@ use verbatim_i18n::messages;
 use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
 pub use plan::ControlPlan;
-pub use shell_items::{DeliverShellItems, ShellItem, ShellItemKind, ShellItemsHost};
+pub use shell_items::{
+    DeliverShellItemPosition, DeliverShellItems, ShellAsk, ShellItem, ShellItemKind, ShellItemsHost,
+};
 pub use terminal_panel::{TerminalChange, TerminalHost};
 pub use theme_panel::ThemeHost;
 
@@ -383,7 +385,9 @@ impl GuiCore {
                 let handle = self.handle.clone();
                 let started = self.shell_host.request(
                     kind,
-                    Box::new(move |items| handle.post(GuiMessage::ShellItems(kind, items))),
+                    ShellAsk::Items(Box::new(move |items| {
+                        handle.post(GuiMessage::ShellItems(kind, items));
+                    })),
                 );
                 if !started {
                     // No outcome will ever arrive: end the enumeration now,

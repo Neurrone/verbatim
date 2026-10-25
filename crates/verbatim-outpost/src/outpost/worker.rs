@@ -878,9 +878,10 @@ fn budget(entry: &Entry) -> (Duration, Option<(u64, TraceId)>) {
         Item::Query { request_id, query } => {
             let deadline = match query {
                 Query::FocusNow => HANDLING_DEADLINE,
-                Query::Ancestors { .. } | Query::DumpTree { .. } | Query::ShellItems { .. } => {
-                    WALK_DEADLINE
-                }
+                Query::Ancestors { .. }
+                | Query::DumpTree { .. }
+                | Query::ShellItems { .. }
+                | Query::ShellItemPosition { .. } => WALK_DEADLINE,
                 Query::Text { .. } => TEXT_DEADLINE,
                 _ => STEP_DEADLINE,
             };
@@ -4185,6 +4186,10 @@ impl Worker<'_> {
             }
             Query::ShellItems { kind } => {
                 super::shell_items::shell_items(context, client, *kind).map(QueryResult::ShellItems)
+            }
+            Query::ShellItemPosition { kind, item } => {
+                super::shell_items::shell_item_position(context, client, *kind, item)
+                    .map(QueryResult::ShellItemPosition)
             }
         };
         let outcome = match result {
