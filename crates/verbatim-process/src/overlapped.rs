@@ -525,6 +525,12 @@ pub enum Started {
     Failed(io::Error),
 }
 
+/// The most bytes a slot's buffer keeps once a write is done: a large
+/// write, such as a terminal's whole document of about 1 MB, gives the rest
+/// back, while every ordinary message, a few kilobytes at most, reuses the
+/// buffer it was written from.
+pub const WRITE_KEPT_BYTES: usize = 64 * 1024;
+
 /// An operation's `OVERLAPPED` and buffer, at one fixed address for as long
 /// as the slot lives. `repr(C)` with the `OVERLAPPED` first, so a
 /// completion's `OVERLAPPED` pointer is the operation's address.
@@ -811,11 +817,15 @@ impl PipeIo {
         let result = unsafe { GetOverlappedResult(file, overlapped, &raw mut moved, false) };
         result.map_err(win32_error)?;
         let moved = moved as usize;
+        // SAFETY: nothing is in flight, so the operation is only this
+        // slot's.
+        let operation = unsafe { self.operation.as_mut() };
         if read {
-            // SAFETY: nothing is in flight, so the operation is only this
-            // slot's.
-            let operation = unsafe { self.operation.as_mut() };
             operation.filled = moved.min(operation.buffer.len());
+        } else if operation.buffer.capacity() > WRITE_KEPT_BYTES {
+            // A large write's bytes are not kept once it is done.
+            operation.buffer.clear();
+            operation.buffer.shrink_to(WRITE_KEPT_BYTES);
         }
         Ok(moved)
     }

@@ -271,7 +271,12 @@ impl Backlog for Pending {
         // queue's time from the pipe's, taken as the write begins, whichever
         // thread writes.
         message.written(now_us());
-        put_message(buffer, &message)
+        let written = put_message(buffer, &message);
+        // A terminal's read, written, gives its buffers back for the next.
+        if let Some(snapshot) = terminal_read(message) {
+            crate::terminal::recycle(snapshot);
+        }
+        written
     }
 }
 
@@ -375,6 +380,24 @@ fn carries_selection_changes(message: &OutpostToSupervisor) -> bool {
             ..
         } if !selection_changes.is_empty()
     )
+}
+
+/// The terminal's read `message` carries, as an event or an answer.
+fn terminal_read(message: OutpostToSupervisor) -> Option<verbatim_model::TerminalSnapshot> {
+    match message {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
+            ..
+        }
+        | OutpostToSupervisor::Reply {
+            outcome:
+                crate::protocol::QueryOutcome::Done(crate::protocol::QueryResult::Text(
+                    verbatim_model::TextReply::TerminalSnapshot(snapshot),
+                )),
+            ..
+        } => Some(*snapshot),
+        _ => None,
+    }
 }
 
 /// Whether `message` is a caret report whose selection changes are said in

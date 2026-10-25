@@ -2692,7 +2692,11 @@ it.
   again with no start, the screen counted up from the document's end by
   the height Core names and as many rows above it. It becomes Core's
   `TerminalSnapshot` (`terminal::snapshot_of`): every text as UTF-8
-  without its lines' padding, with each line's padded length, the caret's
+  without its lines' padding, with each line's padded length (the text
+  and the screen converted from the provider's UTF-16 in one pass,
+  `terminal::unpadded_utf16`, into spare buffers that a read written to
+  Core gives back, `terminal::recycle`, each kept to `SPARE_KEPT_BYTES`,
+  64 KiB), the caret's
   row and its column in characters from the caret read with it, the
   colours converted from `verbatim_uia_rops::ColourRun`, and when the read
   began on the run's shared clock, so output read before a key's cut is

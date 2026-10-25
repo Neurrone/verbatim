@@ -86,7 +86,11 @@ Public API:
   (`write`, or `write_with`, which puts the bytes in the slot's buffer
   and, when it puts none, writes nothing and is done at once) at a
   time, whose `OVERLAPPED` and buffer stay put, untouched
-  and not freed, while its operation is in flight. A slot runs its
+  and not freed, while its operation is in flight. The buffer is reused
+  from one operation to the next; once a write is done, a buffer larger
+  than `WRITE_KEPT_BYTES` (64 KiB) is given back down to it, so a large
+  message, such as a terminal's whole document, is not held until the
+  next. A slot runs its
   operations on any `OverlappedFile`: a `PortFile`, whose operations that
   wait finish through its port (`complete`), or an `EventFile`
   (`EventFile::new(handle)`), whose operations set its event as they
