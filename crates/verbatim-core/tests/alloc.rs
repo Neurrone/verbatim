@@ -14,6 +14,8 @@
 //! 10,000 ancestors and the small one has 10. Each step's input is the same
 //! in both cases, so only the state varies.
 
+mod terminal_support;
+
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 
@@ -302,21 +304,28 @@ fn a_terminal_line_allocates_the_same_whatever_the_ancestor_chain() {
     };
     let mut small = terminal_with_chain(SMALL_CHAIN);
     let mut large = terminal_with_chain(LARGE_CHAIN);
-    let output = Input::Event {
+    // The simulated terminal read as its outpost reads it: a first read,
+    // then a line of output and a read of it.
+    let mut outpost =
+        terminal_support::Outpost::new(verbatim_term_sim::Flavor::ConsoleHost, 40, 5, 20);
+    let snapshot = |outpost: &mut terminal_support::Outpost, at_ms: u64| Input::Event {
         trace_id: TraceId::mint(),
-        observed_at_ms: 0,
+        observed_at_ms: at_ms,
         observed_at_us: 0,
         source: Pid(1),
         backend: Backend::Uia,
         window: None,
-        event: NormalizedEvent::TerminalSpeech {
+        event: NormalizedEvent::TerminalSnapshot {
             node_id: NodeId::new(1),
-            speech: verbatim_model::TerminalSpeech {
-                items: vec![verbatim_model::TerminalItem::Output("total 42".to_owned())],
-                followed: false,
-            },
+            snapshot: Box::new(outpost.read(None, at_ms).1),
         },
     };
+    outpost.sim.write(b"PS> ");
+    let first = snapshot(&mut outpost, 100);
+    let _ = reduce(&mut small, &first);
+    let _ = reduce(&mut large, &first);
+    outpost.sim.write(b"\r\ntotal 42\r\nPS> ");
+    let output = snapshot(&mut outpost, 200);
     let (small_effects, small_bytes) = allocated_by(|| reduce(&mut small, &output));
     let (large_effects, large_bytes) = allocated_by(|| reduce(&mut large, &output));
     assert_eq!(small_effects, large_effects);

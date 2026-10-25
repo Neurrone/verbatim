@@ -1435,6 +1435,7 @@ fn a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_wi
         matches!(**text, FocusText::Caret { .. }),
         "the focus came with {text:?}"
     );
+    outpost.first_terminal_read(node.id);
     outpost.settled();
 
     let mut state = SrState::new();
@@ -2132,6 +2133,7 @@ fn a_console_text_areas_focus_is_checked_from_the_text_area() {
             .collect::<Vec<_>>(),
         [Some("Mockapp Console Window Fixture")]
     );
+    outpost.first_terminal_read(node.id);
     outpost.settled();
 
     drop(outpost);

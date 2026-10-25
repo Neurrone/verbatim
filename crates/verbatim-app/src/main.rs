@@ -1686,20 +1686,27 @@ impl ReducerThread<'_> {
             .outstanding
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = format!(
-            "handled input {}, {standing}, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications",
-            self.handled_input
+            "handled input {}, {standing}, {requests} outpost requests outstanding, {starting} outposts starting, focus wanted from {focus_wanted} applications, terminal timer {}",
+            self.handled_input,
+            if self.terminal_timer.is_some() {
+                "armed"
+            } else {
+                "not armed"
+            }
         );
     }
 
     /// The reducer's own conditions for the idle barrier: no request to an
     /// outpost is outstanding, no outpost is starting (one still starting
     /// has facts or a focus query waiting for it, as a replacement for a
-    /// crashed one does), no application's focus is wanted, and no key the
+    /// crashed one does), no application's focus is wanted, no key the
     /// hook held back is still waiting to reach its application
-    /// (`docs/design/key-holding.md`).
+    /// (`docs/design/key-holding.md`), and no terminal's quiet-period timer
+    /// is armed, since what waits for it is spoken when it ends.
     fn idle_conditions_clear(&self) -> bool {
         self.requests.outstanding() == 0
             && self.held_keys.is_empty()
+            && self.terminal_timer.is_none()
             && self.live.starting() == 0
             && self.focus_now_wanted.is_empty()
             && !self.frames.parsing()

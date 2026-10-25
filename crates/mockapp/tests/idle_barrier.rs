@@ -188,7 +188,8 @@ fn the_answer_waits_for_an_open_caret_watch() {
 }
 
 /// mockapp's terminal fixture in its UIA backend, with an outpost watching
-/// it, the terminal focused, its focus and caret said, and nothing else;
+/// it, the terminal focused, its focus and caret said, and its first read
+/// sent, and nothing else;
 /// then held, as Core holds it for a flood, and written to, so that its
 /// caret events are only noted. The noted caret is read once nothing else
 /// waits, and finds the caret Core has: nothing is said.
@@ -216,6 +217,13 @@ fn held_terminal(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId) {
         } if matches!(*text, FocusText::Caret { .. }) => node.id,
         other => panic!("the outpost said {other:?}, not the terminal's focus with its caret"),
     };
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event: NormalizedEvent::TerminalSnapshot { node_id, .. },
+            ..
+        } if node_id == term => {}
+        other => panic!("the outpost said {other:?}, not the terminal's first read"),
+    }
     outpost.settled();
     let hold = outpost.ask(Query::Text {
         node_id: term,
@@ -271,21 +279,14 @@ fn a_noted_caret_holds_the_answer_back_only_for_its_own_read() {
     // The read reads the caret with the text, and answers with the line
     // written while the terminal was held.
     match outpost.next() {
-        OutpostToSupervisor::Event {
-            event: NormalizedEvent::CaretMoved { node_id, .. },
-            ..
-        } if node_id == term => {}
-        other => panic!("the outpost said {other:?}, not the terminal's caret"),
-    }
-    match outpost.next() {
         OutpostToSupervisor::Reply {
             request_id,
-            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::Terminal(output))),
+            outcome: QueryOutcome::Done(QueryResult::Text(TextReply::TerminalSnapshot(snapshot))),
             ..
-        } if request_id == read => assert_eq!(
-            output.items,
-            [verbatim_model::TerminalItem::Output("three".to_owned())]
-        ),
+        } if request_id == read => {
+            assert_eq!(snapshot.text.text, "one\r\ntwo\r\nready>\r\nthree\r\n");
+            assert!(snapshot.caret.is_some());
+        }
         other => panic!("the outpost said {other:?}, not the answer to the read"),
     }
     outpost.settled();

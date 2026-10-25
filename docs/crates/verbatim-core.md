@@ -842,12 +842,11 @@ for `SrState::hook_foreground`. `tests/shell.rs` checks each rule.
 
 ## Terminals
 
-The reducer's side of what a terminal says (`terminal.rs`;
-`docs/design/terminal-model.md`, "Reading rules"). The focused terminal's
-outpost reads it, applies the reading rules, and sends what they say as
-`NormalizedEvent::TerminalSpeech` ([verbatim-model](verbatim-model.md)),
-or as the answer to Core's request (`TextReply::Terminal`); speech from
-anything but the focus is ignored.
+What a terminal says (`terminal.rs`; `docs/design/terminal-model.md`,
+"Core's flood policy"). The focused terminal's outpost reads it and sends
+each read; Core's terminal model (below) gives the read to the reading
+rules, and what they say (`Said`, `TerminalItem`s and the rules' own new
+lines) is spoken here; speech of anything but the focus is ignored.
 
 - The answers to keys are spoken at once, in order, ahead of the output
   the same speech carries: typing the terminal showed (`TerminalItem::Echo`)
@@ -855,25 +854,19 @@ anything but the focus is ignored.
   caret in its unit (a character by its name or "blank", a word, or the
   line), text the caret's line gained or lost, a row away from the caret
   that is a key's answer, and a suggestion. With "speak passwords" on,
-  typing is echoed as it is typed instead, and an echo the terminal's
-  speech carries says nothing more. A caret key's watch's answer in a
-  terminal keeps Core's caret current and says nothing, the reading rules
-  having answered the key.
-- A key Core held is told to the focused terminal's outpost as Core
-  passes it on (`TextOp::TerminalKey`, not waited for), before its watch is
-  asked for, taken as reaching the program just after the read before it;
-  the keyboard hook's thread tells the outpost of every other key it
-  passes itself, and the reducer thread of a key deferred behind a held
-  one as it sends it on (`verbatim-app`), with what a key is to the reading rules worked
-  out here (`caret_key_kind`: the arrows left and right, Home and End a
-  character; Control with them a word; the arrows up and down, the page
-  keys, Control with Home and End or the arrows up and down a line; any
-  other `Other`; `typed_kind`: text typed, `Enter` for Enter, `Forget` for Tab,
-  `Other` for a control character), and from `SrState::terminal_outpost`,
-  the focused terminal's outpost.
+  typing is echoed as it is typed instead, and an echo the rules say
+  says nothing more. A caret key's watch's answer in a terminal keeps
+  Core's caret current and says nothing, the reading rules having answered
+  the key.
+- What a key is to the reading rules is worked out here
+  (`caret_key_kind`: the arrows left and right, Home and End a character;
+  Control with them a word; the arrows up and down, the page keys,
+  Control with Home and End or the arrows up and down a line; Delete as
+  Delete; any other `Other`; `typed_kind`: text typed, `Enter` for Enter,
+  `Forget` for Tab, `Other` for a control character).
 - The review cursor in a terminal follows the caret only when the
-  outpost's reading rules say a key moved it within its window
-  (`TerminalSpeech::followed`): the next review command then reads at the
+  reading rules say a key moved it within its window (`Said::followed`):
+  the next review command then reads at the
   caret. A caret report alone, or a caret key's press, never moves it
   there, since a program moves its cursor as it draws
   (`docs/design/terminal-model.md`, "The review anchor and following").
@@ -930,9 +923,9 @@ anything but the focus is ignored.
   count stays exact: a line and its growth (`TerminalItem::Growth`) are
   one unit, counted once and dropped together, so a group never ends
   between them and a growth is never spoken without its line; a line after
-  a "more than" or "about" count adds to it. Core alone applies the
-  policy: the outpost sends every new line, and after a lost read marks
-  it with a count of none of the lost read's kind (`Skipped::About(0)`,
+  a "more than" or "about" count adds to it. The policy is the only one:
+  the reading rules hand it every new line, and after a lost read a count
+  of none of the lost read's kind (`Skipped::About(0)`,
   `Skipped::MoreThan(0)` or `Skipped::Uncounted`) ahead of its lines
   ("Core's flood policy").
 - On-demand reading. Once a group's worth of lines waits or is queued for
@@ -965,28 +958,28 @@ anything but the focus is ignored.
 - Verbatim+5 (`ReviewCommand::ToggleReportNewOutput`) toggles "Report new
   output", says "report new output on" or "off", and emits
   `Effect::SettingsChanged`; off drops what is waiting (and cancels a hold)
-  and speaks no output, while the answers to keys are still spoken. The
-  shell sends the outposts the terminal reading rules' settings
-  (`SrState::terminal_settings`) whenever they change.
+  and speaks no output, while the answers to keys are still spoken.
 
-`tests/terminal.rs` drives these with simulated playback, reaching each
-utterance's opening mark as it starts and its closing mark once heard,
-and a simulated outpost that holds and answers Core's requests as the
-real one does, and checks the answers to keys spoken at once, typing
-echoed by its settings, every kind of key told to the outpost, the review
-cursor reading at the caret once it followed it, the answers alone
-spoken of what a read before a cut said, and output cut off outside the
-reducer released by the pipeline's report of each cut utterance; `tests/alloc.rs` checks that a terminal line allocates the
-same whatever the size of the state.
+The unit tests in `terminal/tests.rs` give the flood policy what the
+reading rules said of each read, as the terminal model gives it, and drive
+the rest of the reducer with its inputs, with simulated playback, reaching
+each utterance's opening mark as it starts and its closing mark once
+heard, and a simulated outpost that holds and answers Core's requests as
+the real one does. They check the flood policy's groups and counts, the
+answers to keys spoken at once, typing echoed by its settings, what a key
+is to the rules, the review cursor reading at the caret once it followed
+it, the answers alone spoken of what a read before a cut said, and output
+cut off outside the reducer released by the pipeline's report of each cut
+utterance; `tests/alloc.rs` checks that a read of a terminal showing a
+line allocates the same whatever the size of the state.
 
 ### Core's terminal model
 
-The reading rules move into Core (`docs/design/terminal-model.md`, "Where
-it runs"; Dickson, 2026-10-24). Core's side is built (`terminal_model.rs`
-and `terminal_model/review.rs`); no outpost sends it a snapshot yet, so
-Core holds no model in use and the outpost's own reading above still
-speaks. Everything below acts only on `NormalizedEvent::TerminalSnapshot`
-and on the answers to the requests it makes.
+The reading rules run in Core (`docs/design/terminal-model.md`, "Where it
+runs"; Dickson, 2026-10-24): `terminal_model.rs` and
+`terminal_model/review.rs` take each read a terminal's outpost sends
+(`NormalizedEvent::TerminalSnapshot`) and the answers to the requests
+they make.
 
 - Public: `read_of(&TerminalSnapshot)`, the reading rules' `Read` of a
   snapshot: its text as it came, without its lines' padding (the rules'
@@ -1042,6 +1035,11 @@ and on the answers to the requests it makes.
   `TextReply::TerminalUnchanged` says nothing. A snapshot answering a
   colours request is taken as a live read. The read's caret report, when
   it carries one, becomes Core's caret, stamped with the read's start.
+- The read before a held key (`TextOp::ReadCaret`) is answered in a
+  terminal with a snapshot (`before_key`): it is aligned as a live read
+  is, and its caret answers the read as `editing::held_read` takes it, as
+  read when the read began, so the key is taken as pressed a millisecond
+  after the read's start.
   A new screen height or width is told to the outpost
   (`TextOp::TerminalShape`), and the timer the rules ask for is armed or
   disarmed for the focused terminal (`Effect::TerminalTimer`), which the

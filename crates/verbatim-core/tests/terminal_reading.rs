@@ -427,3 +427,49 @@ fn a_terminal_session_survives_a_flight_recorders_dump_and_replay() {
         .collect();
     assert_eq!(replay(&contents.base, &inputs), effects);
 }
+
+#[test]
+fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
+    let mut session = showing(20, 4, 10, "$ ls");
+    session.input(&Input::HeldKey {
+        trace_id: TraceId::mint(),
+        key: CaretKey {
+            motion: CaretMotion::PreviousLine,
+            select: false,
+        },
+        pressed_at_ms: 200,
+    });
+    assert_eq!(session.requests(), [TextOp::ReadCaret]);
+    // Output the program wrote before the read: the read is aligned as any
+    // read, and its output spoken.
+    session.outpost.sim.write(b"\r\nfile\r\n$ ");
+    let line = verbatim_model::TextChunk {
+        unit: verbatim_model::TextUnit::Line,
+        text: "$ ".to_owned(),
+        start: verbatim_model::TextAnchor(7),
+        offset: 2,
+        languages: Vec::new(),
+        first: false,
+        last: true,
+        truncated: false,
+        formats: Vec::new(),
+    };
+    session.answer_caret_read(
+        300,
+        verbatim_model::CaretReport {
+            line,
+            selection: None,
+            selection_line: None,
+        },
+    );
+    assert_eq!(session.heard(), plain(&["file", "$"]));
+    // The key is passed on as pressed just after the read began, its
+    // colours asked for from then and its watch opened from then.
+    let requests = session.requests();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests[0], TextOp::TerminalColours { since_ms: 301 });
+    assert!(
+        matches!(&requests[1], TextOp::AwaitCaret(watch) if watch.pressed_at_ms == 301),
+        "{requests:?}"
+    );
+}

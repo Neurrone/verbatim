@@ -9,12 +9,15 @@
 //! pattern, since the worker finds a UIA focus by reading the system's
 //! keyboard focus, which a test must not take from the desktop it runs on.
 //!
-//! What is checked: a read's reading rules say the new output, line by
-//! line, and the read costs one call remotely; and a terminal whose text
-//! changes with no caret event, as the console host's does while typing,
-//! has the reading rules echo the typing and say what Backspace deleted,
-//! Core speaking it, with the keys told to the terminal as the keyboard
-//! hook's thread tells its outpost.
+//! Each read is given to Core's reducer as the outpost sends it, and Core's
+//! requests of the terminal (the screen's shape, a read at once, the
+//! colours after a key) are answered as the worker answers them.
+//!
+//! What is checked: Core says the new output a read shows, line by line,
+//! and the read costs one call remotely; and a terminal whose text changes
+//! with no caret event, as the console host's does while typing, has
+//! Core's reading rules echo the typing and say what Backspace deleted,
+//! the keys reaching them through Core.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -23,8 +26,8 @@ mod harness;
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CallCounts, CaretKey, CaretMotion, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Pid, Role, SegmentContent, StateSet, TerminalItem, TerminalSpeech,
-    TextOp, TextReply, TraceId,
+    NormalizedEvent, OutpostId, Pid, Role, SegmentContent, StateSet, TerminalScope,
+    TerminalSnapshot, TextOp, TextReply, TraceId,
 };
 use verbatim_outpost::protocol::now_us;
 use verbatim_outpost::terminal::{Terminal, read};
@@ -68,14 +71,14 @@ fn show(app: &mut common::MockApp, hwnd: HWND, rows: &[&str]) {
     common::apply(app, hwnd, &format!("caret term {caret} {caret}"));
 }
 
-/// One read of the terminal, as the worker makes it on a change of its
-/// text, and what its reading rules said.
+/// One read of the terminal of `scope` (a live read for `None`), as the
+/// worker makes it, and the snapshot it sends Core.
 fn read_terminal(
     uia: &Uia,
     source: &UiaText,
     terminal: &mut Terminal,
-    remote: bool,
-) -> TerminalSpeech {
+    (scope, remote): (Option<TerminalScope>, bool),
+) -> TerminalSnapshot {
     let caret = CaretLineQuery {
         element: source.element(),
         pattern: source.pattern(),
@@ -88,10 +91,172 @@ fn read_terminal(
         (source.element(), source.pattern()),
         caret,
         terminal,
-        (remote, false),
+        (scope, remote, false),
     )
     .expect("the terminal reads")
-    .speech
+    .snapshot
+}
+
+/// mockapp's terminal read by the outpost's terminal module, and Core's
+/// reducer it sends its reads to.
+struct Session<'a> {
+    uia: &'a Uia,
+    source: UiaText,
+    terminal: Terminal,
+    remote: bool,
+    state: SrState,
+    /// What Core said, each utterance's segments but its index marks.
+    spoken: Vec<Vec<SegmentContent>>,
+}
+
+impl Session<'_> {
+    /// A live read, sent to Core as the outpost sends it.
+    fn live(&mut self) {
+        let snapshot = read_terminal(
+            self.uia,
+            &self.source,
+            &mut self.terminal,
+            (None, self.remote),
+        );
+        let input = Input::Event {
+            trace_id: TraceId::mint(),
+            observed_at_ms: snapshot.started_ms,
+            observed_at_us: 0,
+            source: Pid(1),
+            backend: Backend::Uia,
+            window: None,
+            event: NormalizedEvent::TerminalSnapshot {
+                node_id: terminal_node(),
+                snapshot: Box::new(snapshot),
+            },
+        };
+        self.input(&input);
+    }
+
+    /// Gives Core `input`, and handles what it does.
+    fn input(&mut self, input: &Input) {
+        let effects = reduce(&mut self.state, input);
+        self.handle(effects);
+    }
+
+    /// Keeps what Core spoke of `effects` and answers its requests as the
+    /// worker does; a caret key's watch is answered as ended, with nothing
+    /// Core speaks.
+    fn handle(&mut self, effects: Vec<Effect>) {
+        let mut pending = effects;
+        while !pending.is_empty() {
+            let mut inputs = Vec::new();
+            for effect in pending {
+                match effect {
+                    Effect::ForKey(_, effect) => {
+                        if let Some(input) = self.effect(*effect) {
+                            inputs.push(input);
+                        }
+                    }
+                    effect => {
+                        if let Some(input) = self.effect(effect) {
+                            inputs.push(input);
+                        }
+                    }
+                }
+            }
+            pending = inputs
+                .iter()
+                .flat_map(|input| reduce(&mut self.state, input))
+                .collect();
+        }
+    }
+
+    /// One effect of Core's: speech kept, a request answered.
+    fn effect(&mut self, effect: Effect) -> Option<Input> {
+        let reply = match effect {
+            Effect::Text(request) => match &request.op {
+                TextOp::AwaitCaret(_) => TextReply::WatchEnded,
+                TextOp::TerminalShape { height, width } => {
+                    self.terminal.shape(*height, *width);
+                    TextReply::Done
+                }
+                TextOp::TerminalReadNow(scope) => {
+                    TextReply::TerminalSnapshot(Box::new(read_terminal(
+                        self.uia,
+                        &self.source,
+                        &mut self.terminal,
+                        (Some(*scope), self.remote),
+                    )))
+                }
+                TextOp::TerminalColours { since_ms } => {
+                    if self.terminal.colours(*since_ms) {
+                        TextReply::TerminalSnapshot(Box::new(read_terminal(
+                            self.uia,
+                            &self.source,
+                            &mut self.terminal,
+                            (None, self.remote),
+                        )))
+                    } else {
+                        TextReply::Done
+                    }
+                }
+                op => panic!("Core asked the terminal {op:?}"),
+            }
+            .into_input(request.query_id),
+            Effect::Speak(utterance) => {
+                self.spoken.push(
+                    utterance
+                        .segments
+                        .iter()
+                        .map(|segment| segment.content.clone())
+                        .filter(|content| !matches!(content, SegmentContent::Mark(_)))
+                        .collect(),
+                );
+                return None;
+            }
+            _ => return None,
+        };
+        Some(reply)
+    }
+}
+
+/// An answer as the input that brings it to Core.
+trait IntoInput {
+    fn into_input(self, query_id: verbatim_model::QueryId) -> Input;
+}
+
+impl IntoInput for TextReply {
+    fn into_input(self, query_id: verbatim_model::QueryId) -> Input {
+        Input::TextCompleted {
+            trace_id: TraceId::mint(),
+            query_id,
+            reply: self,
+        }
+    }
+}
+
+/// The focus on mockapp's terminal, as Core takes it.
+fn focus() -> Input {
+    Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms: 0,
+        observed_at_us: 0,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::FocusChanged {
+            node: NodeSnapshot {
+                id: terminal_node(),
+                backend: Backend::Uia,
+                role: Role::Terminal,
+                name: Some("Terminal".to_owned()),
+                value: None,
+                states: StateSet::new(),
+                details: NodeDetails::default(),
+            },
+            foreground: false,
+            ancestors: Vec::new(),
+            ancestors_unknown: false,
+            selected_child: None,
+            text: None,
+        },
+    }
 }
 
 fn uia_calls(uia: u32) -> CallCounts {
@@ -121,27 +286,43 @@ fn new_output_is_said_line_by_line(remote: bool) {
     // The screen: three rows, and the empty last line.
     common::apply(&mut app, hwnd, "screen term 4");
     show(&mut app, hwnd, &["one", "two", "ready>"]);
-    let source = source(&uia, hwnd, remote);
-    let mut terminal = Terminal::new(verbatim_model::TerminalSettings::default());
+    let mut session = Session {
+        uia: &uia,
+        source: source(&uia, hwnd, remote),
+        terminal: Terminal::new(),
+        remote,
+        state: SrState::new(),
+        spoken: Vec::new(),
+    };
+    session.input(&focus());
+    session.spoken.clear();
+    session.live();
     assert_eq!(
-        read_terminal(&uia, &source, &mut terminal, remote),
-        TerminalSpeech::default(),
+        session.spoken,
+        Vec::<Vec<SegmentContent>>::new(),
         "the first read says nothing"
     );
     show(&mut app, hwnd, &["one", "two", "three", "four", "ready>"]);
     let _ = verbatim_uia::calls::take();
-    let speech = read_terminal(&uia, &source, &mut terminal, remote);
+    let snapshot = read_terminal(&uia, &session.source, &mut session.terminal, (None, remote));
     let calls = verbatim_uia::calls::take();
-    assert_eq!(
-        speech.items,
-        vec![
-            TerminalItem::Output("three".to_owned()),
-            TerminalItem::Output("four".to_owned()),
-        ]
-    );
     if remote {
         assert_eq!(calls, uia_calls(1), "one program, one call");
     }
+    session.input(&Input::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms: snapshot.started_ms,
+        observed_at_us: 0,
+        source: Pid(1),
+        backend: Backend::Uia,
+        window: None,
+        event: NormalizedEvent::TerminalSnapshot {
+            node_id: terminal_node(),
+            snapshot: Box::new(snapshot),
+        },
+    });
+    let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
+    assert_eq!(session.spoken, [text("three"), text("four")]);
     app.quit();
 }
 
@@ -158,63 +339,6 @@ fn terminal_node() -> NodeId {
     NodeId::in_outpost(OutpostId(1), 1)
 }
 
-/// What Core spoke of `effects`; a caret key's watch is answered, as the
-/// outpost answers one when the reading rules answer the key, with nothing
-/// Core speaks.
-fn handle(state: &mut SrState, effects: Vec<Effect>, spoken: &mut Vec<Vec<SegmentContent>>) {
-    let mut pending = effects;
-    while !pending.is_empty() {
-        let mut inputs = Vec::new();
-        for effect in pending {
-            match effect {
-                Effect::Text(request) => match &request.op {
-                    TextOp::AwaitCaret(_) => inputs.push(Input::TextCompleted {
-                        trace_id: TraceId::mint(),
-                        query_id: request.query_id,
-                        reply: TextReply::WatchEnded,
-                    }),
-                    op => panic!("Core asked the terminal {op:?}"),
-                },
-                Effect::Speak(utterance) => spoken.push(
-                    utterance
-                        .segments
-                        .iter()
-                        .map(|segment| segment.content.clone())
-                        .collect(),
-                ),
-                _ => {}
-            }
-        }
-        pending = inputs
-            .iter()
-            .flat_map(|input| reduce(state, input))
-            .collect();
-    }
-}
-
-/// Tells the terminal of a key that reached it at `at_ms`, as the keyboard
-/// hook's thread tells its outpost of a key it passes on.
-fn tell(terminal: &mut Terminal, kind: verbatim_model::TerminalKeyKind, at_ms: u64) {
-    let speech = terminal.key(&verbatim_model::TerminalKey { kind, at_ms });
-    assert!(speech.is_empty(), "a key alone says nothing");
-}
-
-/// What the terminal said, given to Core.
-fn said(speech: TerminalSpeech, observed_at_ms: u64) -> Input {
-    Input::Event {
-        trace_id: TraceId::mint(),
-        observed_at_ms,
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::TerminalSpeech {
-            node_id: terminal_node(),
-            speech,
-        },
-    }
-}
-
 /// The console host raises no caret event for every character typed, only
 /// its text's change: typing "helo" after the prompt is echoed character
 /// by character as the terminal shows it, and Backspace says exactly "o".
@@ -227,84 +351,42 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
     // The screen: three rows, and the empty last line.
     common::apply(&mut app, hwnd, "screen term 4");
     show(&mut app, hwnd, &["one", "two", "ready>"]);
-    let source = source(&uia, hwnd, remote);
-    let mut terminal = Terminal::new(verbatim_model::TerminalSettings::default());
-    let _ = read_terminal(&uia, &source, &mut terminal, remote);
-    let mut state = SrState::new();
-    let _ = reduce(
-        &mut state,
-        &Input::Event {
-            trace_id: TraceId::mint(),
-            observed_at_ms: 0,
-            observed_at_us: 0,
-            source: Pid(1),
-            backend: Backend::Uia,
-            window: None,
-            event: NormalizedEvent::FocusChanged {
-                node: NodeSnapshot {
-                    id: terminal_node(),
-                    backend: Backend::Uia,
-                    role: Role::Terminal,
-                    name: Some("Terminal".to_owned()),
-                    value: None,
-                    states: StateSet::new(),
-                    details: NodeDetails::default(),
-                },
-                foreground: false,
-                ancestors: Vec::new(),
-                ancestors_unknown: false,
-                selected_child: None,
-                text: None,
-            },
-        },
-    );
-    let mut spoken = Vec::new();
+    let mut session = Session {
+        uia: &uia,
+        source: source(&uia, hwnd, remote),
+        terminal: Terminal::new(),
+        remote,
+        state: SrState::new(),
+        spoken: Vec::new(),
+    };
+    session.input(&focus());
+    session.live();
+    session.spoken.clear();
     let mut prompt = "ready>".to_owned();
     for character in ["h", "e", "l", "o"] {
-        let at_ms = now_us() / 1_000;
-        tell(&mut terminal, verbatim_core::typed_kind(character), at_ms);
-        let effects = reduce(
-            &mut state,
-            &Input::CharacterTyped {
-                trace_id: TraceId::mint(),
-                text: character.to_owned(),
-                at_ms,
-            },
-        );
-        handle(&mut state, effects, &mut spoken);
+        session.input(&Input::CharacterTyped {
+            trace_id: TraceId::mint(),
+            text: character.to_owned(),
+            at_ms: now_us() / 1_000,
+        });
         prompt.push_str(character);
         show(&mut app, hwnd, &["one", "two", &prompt]);
-        let speech = read_terminal(&uia, &source, &mut terminal, remote);
-        let effects = reduce(&mut state, &said(speech, now_us() / 1_000));
-        handle(&mut state, effects, &mut spoken);
+        session.live();
     }
-    let at_ms = now_us() / 1_000;
-    let backspace = CaretKey {
-        motion: CaretMotion::Backspace,
-        select: false,
-    };
-    tell(
-        &mut terminal,
-        verbatim_core::caret_key_kind(backspace),
-        at_ms,
-    );
-    let effects = reduce(
-        &mut state,
-        &Input::CaretKey {
-            trace_id: TraceId::mint(),
-            key: backspace,
-            pressed_at_ms: at_ms,
+    session.input(&Input::CaretKey {
+        trace_id: TraceId::mint(),
+        key: CaretKey {
+            motion: CaretMotion::Backspace,
+            select: false,
         },
-    );
-    handle(&mut state, effects, &mut spoken);
+        pressed_at_ms: now_us() / 1_000,
+    });
     prompt.pop();
     show(&mut app, hwnd, &["one", "two", &prompt]);
-    let speech = read_terminal(&uia, &source, &mut terminal, remote);
-    let effects = reduce(&mut state, &said(speech, now_us() / 1_000));
-    handle(&mut state, effects, &mut spoken);
+    session.live();
     let character = |text: &str| vec![SegmentContent::Character(text.to_owned())];
     assert_eq!(
-        spoken,
+        session.spoken,
         [
             character("h"),
             character("e"),

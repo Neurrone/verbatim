@@ -2472,13 +2472,8 @@ abandon a hung worker.
   each is written, and the nodes each may have reported are recorded at
   its number then (`Pending`, the backlog, sees every message, written at
   once or after waiting).
-- What a terminal says too large for one message is split as it is
-  written (`terminal::split`), each part a frame of its own, numbered as
-  Core counts it.
-- A terminal read that reports the caret and its speech both sends them
-  together (`Outbound::publish_all`, the transport's `Sender::send_all`):
-  two frames, each with its own header, in one write when none is in
-  flight, so Core's relay wakes once for both; either alone is sent alone.
+- A terminal's read carries its caret report in itself, one message
+  whatever its size, a whole document's included.
 - Every message is stamped as its write begins, by whichever thread
   writes it (`written_at_us`, under `EventTiming` above).
 
@@ -2661,11 +2656,13 @@ listener as above.
 ## Terminals
 
 The `terminal` module (public, so mockapp's tests drive it as the worker
-does) reads a focused terminal and gives each read to the terminal's
-reading rules (`docs/design/terminal-model.md`, sections 3 to 5;
-`verbatim_text::terminal_reading`), which say what is new and what the
-keys did. Terminal behavior is generic, keyed by the control, never the
-window's title: a UIA element of class `TermControl` (Windows Terminal) or
+does) reads a focused terminal and sends each read to Core, whose terminal
+model aligns it and applies the reading rules
+(`docs/design/terminal-model.md`, "Where it runs";
+[verbatim-core](verbatim-core.md), "Core's terminal model"): the outpost
+makes the accessibility calls and judges nothing a read says. Terminal
+behavior is generic, keyed by the control, never the window's title: a
+UIA element of class `TermControl` (Windows Terminal) or
 `WPFTermControl` (the terminal embedded in Visual Studio), or a focus in a
 `ConsoleWindowClass` window (the console host), is `Role::Terminal`. The
 console host's text area is read through UIA, as NVDA reads it on current
@@ -2676,162 +2673,117 @@ owner, and inside a remote operation the host's provider gives no native
 window handle for the window; the classic walk to the nearest window finds
 it.
 
-- The worker keeps, per terminal node, a `Terminal`: the reading rules
-  (`TerminalReader`, whose memory holds the last read's rows, lingering
-  rows, review position and command marks), where the next read
-  starts (`Snapshot::next_start`), the screen's height and width as the
-  last read found them, whether the next read takes the colours, its
-  on-demand reading state (`terminal::reading`), when the quiet-period
-  timer is due, the places its review answers minted, and the caret last
-  sent to Core. It is kept while the node is, across focus changes
-  ("The focus"): the focus arriving tells the rules (`Terminal::focus`),
-  whose next read speaks nothing, and the focus leaving does too
-  (`Terminal::blur`, from `Worker::blur_terminal_elsewhere`), which drops
-  what waited for the quiet period.
-- Every read is one snapshot (`verbatim_uia_rops::terminal_snapshot`, with
-  the classic fallback behind the same entry point): the text from where
-  the last read said to start, a screen above it as the memory asks
-  (`TerminalMemory::above`), to the document's end, in one `GetText`, with
-  the screen, the caret and its line, and, in the first read after a key,
-  the screen's colours, all in one remote operation (`terminal::read`). It
-  becomes the rules' `Read` (`terminal::read_of`: the text as UTF-8, the
-  caret's row and its column in characters from the caret read with it,
-  stamped with when the read began on the run's shared clock), the
-  colours converted at the boundary from `verbatim_uia_rops::ColourRun` to
-  the rules' own. When the rules ask for the whole document, that read is
-  taken at once, so a read costs at most two snapshots; so is a first
-  read's history block, when the document goes on above the screen: the
-  read again with no start, the screen counted up from the document's end
-  by the height the first found and a screen of rows above it. What
-  the rules say becomes Core's `TerminalSpeech` (`terminal::speech_of`):
-  output (`TerminalItem::Output` for a new line, a redrawn row's change
-  and a held line as last read; `TerminalItem::Growth` for what a growing
-  line gained; and `TerminalItem::Skipped`, a count of none of the lost
-  read's kind, "about", "more than" or uncounted, ahead of a lost read's
-  lines) and the answers
-  to keys (`Echo`, `Caret` in its unit, `Gained`, `Lost`, `Answer`,
-  `Suggestion`), and whether the review cursor followed the caret. It is
-  sent as `NormalizedEvent::TerminalSpeech` when it says anything, after
-  the caret read with it (`text_reads::terminal_read`, `CaretMoved`), since
-  a terminal raises no caret event for every character typed; a caret at
-  the same place, with the same line read the same way
-  (`text::same_caret`), is not sent again, unless the read answers Core's
-  request. The read is stamped with when it began, so output read before a
-  key's cut is never spoken after it.
-- Keys. The outpost is told of every key that reaches a focused terminal:
-  a typed character, a caret key Verbatim knows with its unit, a key that
-  forgets typing not yet shown, or any other, with when it reached the
-  program. The keyboard hook's thread in `verbatim.exe` tells it of each
-  key it passes itself, as it reports the key and before passing it on
-  (`SupervisorToOutpost::TerminalKey`, queued as `Item::TerminalKey`), so
-  the key arrives ahead of what the terminal shows of it; the reducer
-  thread tells it of a key deferred behind a held key just before sending
-  it on, and Core of a key it held, as it passes the key on
-  (`TextOp::TerminalKey`, answered `Done`). A read about to begin first takes every key still waiting in the
-  intake (`Intake::take_terminal_keys`). The rules open the
-  key's window, 300 milliseconds in which reads can carry its effects
-  ("Keys and their window"), and the next read takes the colours. A typed character
-  the terminal does not show within 300 milliseconds is dropped at the next
-  read. A held caret key's read before it is passed on (`TextOp::ReadCaret`)
-  is, in a focused terminal, a snapshot given to the rules
-  (`Worker::terminal_before_key`), whose caret answers the request and
-  joins the node's caret reports, so the key's watch takes it as the caret
-  before the key; the watch's evidence, a caret event or a text change,
-  then reads the terminal, and the rules' answer to the key is the key's
-  speech. The watch's own answer keeps Core's caret current and says
-  nothing in a terminal. A key that is not held still races its report:
-  the report is written to the outpost's pipe by the supervisor's writer
-  thread just as the program receives the key, so a read that began after
-  the program showed the key but was handled before the report arrived
-  would take the echo for the line's growth, the same text spoken as
-  output once the quiet period passes.
-- The quiet-period timer ("Every time limit"): the rules say when what waits for
-  the quiet period is due (a volatile row to settle, a growing line's
-  unfinished word, rows a key changed waiting for the keys to pause); the
-  worker keeps the focused terminal's due time apart from the terminals'
-  lock (`Context::terminal_due`) and asks the intake for one wake-up then
-  (`Intake::terminal_timer_at`, `Item::TerminalTimer`), whose speech it
-  sends. The idle barrier's answer waits while the timer is armed, so a
-  scenario hears everything the rules hold before it is asked to be quiet.
+- The worker keeps, per terminal node, a `Terminal`: where the next read
+  starts (`Snapshot::next_start`) and whether the screen of the read that
+  placed it showed text, the screen's height and width as Core last told
+  them (`TextOp::TerminalShape`, `Terminal::shape`), whether the next read
+  takes the colours, its on-demand reading state (`terminal::reading`),
+  when the last read began and whether it took the colours, the caret last
+  sent to Core, and a hash of the last read sent. It is kept while the
+  node is, across focus changes.
+- Every read is one snapshot (`terminal::read`, through
+  `verbatim_uia_rops::terminal_snapshot`, with the classic fallback behind
+  the same entry point): the text from a screen above where the last read
+  said to start, a screen being the height Core told, to the document's
+  end, in one `GetText`, with the screen, the caret and its line, and,
+  when colours are due, the screen's colours, all in one remote operation.
+  Core may ask for two other reads (`TextOp::TerminalReadNow`): the whole
+  document, after a lost read, and a first read's history block, the read
+  again with no start, the screen counted up from the document's end by
+  the height Core names and as many rows above it. It becomes Core's
+  `TerminalSnapshot` (`terminal::snapshot_of`): every text as UTF-8
+  without its lines' padding, with each line's padded length, the caret's
+  row and its column in characters from the caret read with it, the
+  colours converted from `verbatim_uia_rops::ColourRun`, and when the read
+  began on the run's shared clock, so output read before a key's cut is
+  never spoken after it. Where the next read starts is kept from the read
+  unless its screen shows no text where the screen of the last read kept
+  did ("A read with no text", `verbatim_text::terminal_rows::shows_text`).
+  The caret read with it becomes a caret report carried in the snapshot
+  (`text_reads::terminal_read`), since a terminal raises no caret event
+  for every character typed.
+- Sending. A live read is sent as `NormalizedEvent::TerminalSnapshot`
+  unless it is identical, field for field, to the last read sent but for
+  when it began and its caret report (`Terminal::sends`), a read that
+  waited for Core's speech queue excepted, since the reading rules count
+  reads in a row of which the second waited ("Volatile rows"). An answer
+  to Core's request is always sent, as `TextReply::TerminalSnapshot`.
+- Colours ("Colours"). Core asks for the colours with every key that
+  reaches the terminal (`TextOp::TerminalColours { since_ms }`): when the
+  last read began at or after the key without them, a read is taken at
+  once with them and answers the request; otherwise the next read takes
+  them, and the request is answered `Done` (`Terminal::colours`).
+- Keys. The keyboard hook's thread still tells the outpost of each key it
+  passes (`SupervisorToOutpost::TerminalKey`), as do the shell the
+  reading rules' settings (`SupervisorToOutpost::TerminalSettings`); the
+  outpost drops both, Core's terminal model taking the keys and the
+  settings. A held caret key's read before it is passed on
+  (`TextOp::ReadCaret`) is, in a focused terminal, a read answered as a
+  snapshot whose caret answers the request in Core; the key's watch's
+  evidence, a caret event or a text change, then reads the terminal, and
+  the watch's own answer keeps Core's caret current and says nothing in a
+  terminal.
 - When to read. In the console host the console's own `WinEvents`
   (`EVENT_CONSOLE_UPDATE_REGION`, `_SIMPLE`, `_SCROLL` and
   `EVENT_CONSOLE_LAYOUT`, merged into one per window while they wait) are
   its terminal's text changes, and UIA's text changes are not subscribed
   for it; in Windows Terminal UIA's text changes are, and its caret
   events read the terminal too, since it sometimes moves its caret with
-  no text change (section 5.1); the read takes the caret, so it is not
-  read again on its own. The console host's caret event
-  (`EVENT_CONSOLE_CARET`), raised on its cursor's blink timer when the
-  cursor has moved, has the caret read and reported, and reads the
-  terminal when it is a caret key's evidence. A change observed before
-  the last read began is covered by it and reads nothing
-  (`Terminal::covers`). Reads made on Windows Terminal's events never wait
-  for a frame; the read before a held key, prompted by no event, can cost
-  that key one software-rendered frame (section 2.1). Windows Terminal
-  raises no text change for writes made only of blank lines, so such a
-  scroll is read at the next event, its caret's move among them.
+  no text change; the read takes the caret, so it is not read again on its
+  own. The console host's caret event (`EVENT_CONSOLE_CARET`), raised on
+  its cursor's blink timer when the cursor has moved, has the caret read
+  and reported, and reads the terminal when it is a caret key's evidence.
+  A change observed before the last read began is covered by it and reads
+  nothing (`Terminal::covers`), compared in microseconds when the entry
+  carries them, so a change in the read's own millisecond but before it
+  is covered too. Reads made on Windows Terminal's events never wait for a
+  frame; the read before a held key, prompted by no event, can cost that
+  key one software-rendered frame. Windows Terminal raises no text change
+  for writes made only of blank lines, so such a scroll is read at the
+  next event, its caret's move among them.
 - Taking the focus. Once a terminal's focus is reported with its caret,
   the focus-following subscription is moved to it and the worker waits
   for the move (`Registration::settle`) before the first read, so output
-  written after that read began raises a change that reads it (section
-  5.10). That first read speaks nothing.
-- On-demand reading (`terminal::reading`, section 5.1), a pure transition
-  function the worker drives. Live, the default, a text change of the
-  focused terminal is read at once and what it says sent. Core's text
-  requests change it: `TextOp::TerminalHold` (Core's queue is full: changes
-  are only noted, answered `Done`), `TextOp::TerminalRead { hold }`
-  (answered with what the read says, read only if the text changed since
-  the last read, the read taken as one that waited for Core's queue, then
-  holding or live again), and `TextOp::TerminalCancel` (speech was cut
-  off: live again, and, when the text changed while held, read and
+  written after that read began raises a change that reads it. That first
+  read is sent as any live read; Core's rules, told of the focus, speak
+  nothing of it.
+- On-demand reading (`terminal::reading`), a pure transition function the
+  worker drives. Live, the default, a text change of the focused terminal
+  is read at once and sent. Core's text requests change it:
+  `TextOp::TerminalHold` (Core's queue is full: changes are only noted,
+  answered `Done`), `TextOp::TerminalRead { hold }` (answered with a read
+  taken as one that waited for Core's queue when the text changed since
+  the last read, otherwise `TextReply::TerminalUnchanged` without reading,
+  then holding or live again), and `TextOp::TerminalCancel` (speech was
+  cut off: live again, and, when the text changed while held, read and
   answered, Core speaking only its answers to keys; otherwise answered
-  empty without reading). A read is one snapshot, which the terminal
-  answers from one locked state of its buffer, so no read is disturbed by
-  the terminal writing to it. While reading is held with the text changed,
-  a caret event is noted, not read, and its caret is read once the outpost
-  has nothing else waiting; and while such a terminal is the console
-  host's and no caret key's watch is open, the intake drops the window's
-  console updates without waking the worker (`docs/design/wake-ups.md`).
-- The review cursor (`terminal::review`, section 5.6). A review command's
-  request in a focused terminal (a line read at a point after a movement,
-  rows read ahead for say-all, a range for a copy) is answered from the
-  memory, never from a live provider range: the worker first takes a read
-  (`Worker::terminal_review`), so the memory's alignment has moved every
-  place onto its text as it is now, and the request is then answered
-  within that read. A line is a row, without its padding (section 5.12).
-  Each row it answers with gets a text anchor, from the counter the anchor
-  stores share, whose place the memory keeps
-  (`TerminalMemory::add_place`): it moves with its row as output scrolls
-  it, into the history included, and is dropped when its row cannot be
-  followed;
-  the oldest places beyond 64 whose anchors Core does not hold are
-  forgotten. A read lands the memory's review position where it lands.
-  Rows above those the memory keeps are read from the provider in a
-  snapshot of their own, from as many rows above where the next read
-  starts, or the whole document for its start (`review::History`), split
-  into rows as the memory splits a read (`verbatim_text::terminal_rows::rows_of`);
-  a place there is found again as the nearest row of its line's hash from
-  a screen above the place to a screen below it, the higher first at one
-  distance, since a full history moves rows up and a program printing its
-  history again longer moves them down, and otherwise keeps its place and
-  reads the row there now. A request
-  naming an anchor the terminal did not mint, such as a caret report's, is
-  answered as any text's; a terminal's text is not selected, nor its caret
-  moved, by Verbatim, and a place's screen position is not read
-  (`Unsupported`).
-- What the terminal says too large for one message is split as it is
-  written (`terminal::split`), and what it says while an earlier message
-  of the same terminal still waits follows it in one message.
+  `TerminalUnchanged` without reading). Core's fresh read before a review
+  command (`TerminalReadNow(Fresh)`) is read whatever the state, and clears
+  a held state's mark that the text changed. A read is one snapshot,
+  which the terminal answers from one locked state of its buffer, so no
+  read is disturbed by the terminal writing to it. While reading is held
+  with the text changed, a caret event is noted, not read, and its caret
+  is read once the outpost has nothing else waiting and sent as a caret
+  report; and while such a terminal is the console host's and no caret
+  key's watch is open, the intake drops the window's console updates
+  without waking the worker (`docs/design/wake-ups.md`).
+- The review cursor is Core's. Rows above those Core's memory keeps are
+  read when Core asks (`TextOp::TerminalHistory { above, whole }`), in a
+  snapshot of their own from as many rows above where the next read
+  starts, or the whole document, padding kept, answered
+  `TextReply::TerminalHistory` with how many rows the read holds above
+  that start (`terminal::history`). A request naming an anchor of the
+  outpost's own, such as a caret report's, is answered as any text's.
+- A read waiting in the outbound queue is never merged with a newer one:
+  each read starts where the one before it said to start, so a read
+  dropped for a newer one would leave the rows between them unread by
+  Core. A whole document's read, about 1 MB of JSON with a full history,
+  goes as one message.
 - Each snapshot logs its cost at debug (`terminal snapshot timing`: the
   path, microseconds, calls, whether it read the whole document, the rows
   above its start, its text's length, and its flags), as does the
   worker's handling of each read (`terminal read timing`, with its wait in
-  the queue and what the rules said).
-- The rules' settings ("report new output" and "review follows caret")
-  come from Core,
-  `SupervisorToOutpost::TerminalSettings`, sent when an outpost starts and
-  whenever they change, and given to each terminal's rules at its next
-  input.
+  the queue).
 - Every UIA notification from a terminal control or the console host's
   text area is ignored by the focus listener
   (`verbatim_uia::map::ignores_notifications`, from the class name and

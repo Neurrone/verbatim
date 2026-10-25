@@ -983,8 +983,9 @@ impl OutpostUnderTest {
     }
 
     /// The focus the outpost reports next, which must be the next thing it
-    /// says, and the only thing: one handed over, or one its own hook took
-    /// in from a focus event mockapp's control raised.
+    /// says, and the only thing but a terminal's first read: one handed
+    /// over, or one its own hook took in from a focus event mockapp's
+    /// control raised.
     pub fn reported_focus(&self) -> Reported {
         let reported = match self.next() {
             OutpostToSupervisor::Event {
@@ -1011,10 +1012,26 @@ impl OutpostUnderTest {
             },
             other => panic!("the outpost said {other:?}, not a focus with its ancestors"),
         };
+        // A terminal is read once it has the focus, and the read sent.
+        if reported.node.role == verbatim_model::Role::Terminal {
+            self.first_terminal_read(reported.node.id);
+        }
         self.settled();
         Reported {
             failed_reads: self.take_failed_reads(),
             ..reported
+        }
+    }
+
+    /// Takes the read of terminal `node` the outpost sends once the
+    /// terminal has the focus, which must be the next thing it says.
+    pub fn first_terminal_read(&self, node: NodeId) {
+        match self.next() {
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::TerminalSnapshot { node_id, .. },
+                ..
+            } if node_id == node => {}
+            other => panic!("the outpost said {other:?}, not the terminal's first read"),
         }
     }
 

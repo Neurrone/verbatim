@@ -1,49 +1,21 @@
-//! What a terminal says (`docs/design/terminal-model.md`, "Reading rules"): the
-//! outpost reads a focused terminal's text, aligns each read with its memory
-//! of the terminal's rows, and applies the reading rules
-//! (`verbatim_text::terminal_reading`); what they say is sent to Core as
-//! [`NormalizedEvent::TerminalSpeech`](crate::NormalizedEvent::TerminalSpeech),
-//! in the order it is spoken.
+//! A terminal's reads and what its reading rules say
+//! (`docs/design/terminal-model.md`, "Where it runs"): the outpost reads a
+//! focused terminal and sends each read to Core as a [`TerminalSnapshot`];
+//! Core's terminal model aligns it and applies the reading rules, whose
+//! speech its flood policy takes as [`TerminalItem`]s.
 //!
 //! Output (new lines, what a growing line gained, a redrawn row's change, a
 //! held line spoken as it was last read) goes through Core's flood policy,
 //! one utterance each, and a summary counts each but a line's growth as a
-//! line; a read's own flood summary arrives as
-//! [`TerminalItem::Skipped`]. The answers to keys (typing shown, the key's
-//! unit at the caret, text the caret's line gained or lost, a row away from
-//! the caret that is a key's answer, a suggestion) are spoken at once, ahead
-//! of any output. Text is sent without padding, and a line whole, however
-//! long (Dickson, 2026-10-07); Core bounds what it keeps waiting.
+//! line; a read's own flood summary is [`TerminalItem::Skipped`]. The
+//! answers to keys (typing shown, the key's unit at the caret, text the
+//! caret's line gained or lost, a row away from the caret that is a key's
+//! answer, a suggestion) are spoken at once, ahead of any output.
 //!
-//! The outpost is told of every key that reaches a focused terminal
-//! ([`TerminalKey`]), with when it reached the program, since the rules
-//! judge which read a key's effects can be in by that time ("Keys and their window"):
-//! by the keyboard hook's thread for a key it passes itself, by the reducer
-//! thread for a key deferred behind a held one as it sends it on, and by
-//! Core, in [`crate::TextOp::TerminalKey`], for a key it held.
+//! The keyboard hook's thread still tells the focused terminal's outpost of
+//! each key it passes ([`TerminalKey`]), which the outpost no longer takes.
 
 use serde::{Deserialize, Serialize};
-
-/// What one read, key or quiet period of a terminal said, in order.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TerminalSpeech {
-    /// What to say, in the order it is spoken.
-    pub items: Vec<TerminalItem>,
-    /// Whether the review cursor followed the caret: a key moved the caret
-    /// within its window with "review follows caret" on ("The review anchor and following"), so
-    /// the next review command reads at the caret.
-    #[serde(default)]
-    pub followed: bool,
-}
-
-impl TerminalSpeech {
-    /// Whether there is nothing to say and the review cursor did not
-    /// follow the caret.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.items.is_empty() && !self.followed
-    }
-}
 
 /// The unit a key's answer at the caret is spoken in ("Keys and their window").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -104,23 +76,6 @@ impl TerminalItem {
     #[must_use]
     pub fn is_output(&self) -> bool {
         matches!(self, Self::Output(_) | Self::Growth(_) | Self::Skipped(_))
-    }
-
-    /// The text it carries, for bounding a message's size; none for a
-    /// count.
-    #[must_use]
-    pub fn text(&self) -> &str {
-        match self {
-            Self::Output(text)
-            | Self::Growth(text)
-            | Self::Echo(text)
-            | Self::Caret { text, .. }
-            | Self::Gained(text)
-            | Self::Lost(text)
-            | Self::Answer(text)
-            | Self::Suggestion(text) => text,
-            Self::Skipped(_) => "",
-        }
     }
 }
 
@@ -436,6 +391,5 @@ mod tests {
         assert!(TerminalItem::Output("a".to_owned()).is_output());
         assert!(TerminalItem::Skipped(Skipped::Count(2)).is_output());
         assert!(!TerminalItem::Echo("a".to_owned()).is_output());
-        assert!(TerminalSpeech::default().is_empty());
     }
 }

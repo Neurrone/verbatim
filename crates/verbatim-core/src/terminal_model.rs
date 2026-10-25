@@ -41,9 +41,12 @@
 //!   rows it answers with carry text anchors from a range reserved for Core
 //!   ([`TERMINAL_ANCHORS`]), which no outpost mints.
 //!
-//! Nothing here acts until an outpost sends a terminal snapshot: until
-//! then Core holds no model, and the outpost's own reading
-//! (`crate::terminal`, `NormalizedEvent::TerminalSpeech`) is what speaks.
+//! - The read before a held key. A terminal's outpost answers Core's read
+//!   of the caret before a held key ([`TextOp::ReadCaret`]) with a
+//!   snapshot, which is aligned as a live read is and whose caret answers
+//!   the read ([`before_key`]).
+//!
+//! A terminal's model is made with its first snapshot.
 
 mod review;
 
@@ -52,9 +55,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    Effect, Input, NodeId, OutpostId, QueryId, Skipped, TerminalColourRun, TerminalItem,
-    TerminalKeyKind, TerminalScope, TerminalSnapshot, TerminalText, TerminalUnit, TextOp,
-    TextReply, TextRequest, TraceId,
+    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, Skipped, TerminalColourRun,
+    TerminalItem, TerminalKeyKind, TerminalScope, TerminalSnapshot, TerminalText, TerminalUnit,
+    TextOp, TextReply, TextRequest, TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
@@ -671,6 +674,35 @@ pub(crate) fn answered_read(
         TextReply::TerminalUnchanged => Some((Said::default(), None, Vec::new())),
         _ => None,
     }
+}
+
+/// The read before a held key in terminal `node`
+/// (`docs/design/key-holding.md`), a snapshot: aligned as a live read is,
+/// and its caret given as the answer [`crate::editing::held_read`] takes, as
+/// read when the read began, since Core takes a read's caret as of its
+/// start. Without a caret, the read is unanswered.
+pub(crate) fn before_key(
+    state: &mut SrState,
+    trace_id: TraceId,
+    node: NodeId,
+    snapshot: &TerminalSnapshot,
+) -> (Vec<Effect>, TextReply) {
+    let effects = snapshot_event(state, trace_id, node, snapshot);
+    let reply = match &snapshot.caret {
+        Some(caret) => TextReply::Caret(Box::new(CaretReply {
+            moved: false,
+            caret: caret.clone(),
+            read_at_ms: snapshot.started_ms,
+            unit: None,
+            selection_changes: Vec::new(),
+            content_changed: false,
+            new_selection: None,
+            same_line: None,
+            removed: None,
+        })),
+        None => TextReply::Unanswered,
+    };
+    (effects, reply)
 }
 
 /// Whether `query_id` is a request of a terminal model Core waits on.

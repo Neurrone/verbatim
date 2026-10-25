@@ -336,23 +336,11 @@ pub enum NormalizedEvent {
         /// The node whose text changed.
         node_id: NodeId,
     },
-    /// What a focused terminal said (`docs/design/terminal-model.md`,
-    /// section 5): its new output and the answers to keys, which the
-    /// outpost's reading rules found in a read, or once the quiet period
-    /// passed. Sent in place of [`TextChanged`](Self::TextChanged) for a
-    /// terminal, and only when there is something to say. Core speaks the
-    /// answers to keys at once and the output by the flood policy.
-    TerminalSpeech {
-        /// The terminal.
-        node_id: NodeId,
-        /// What it said.
-        speech: crate::TerminalSpeech,
-    },
     /// One read of a focused terminal (`docs/design/terminal-model.md`,
     /// "Where it runs"): its text, screen and caret, which Core's terminal
     /// model aligns and its reading rules judge. Sent in place of
-    /// [`TerminalSpeech`](Self::TerminalSpeech) once the outpost reads for
-    /// Core; until then no outpost sends it.
+    /// [`TextChanged`](Self::TextChanged) for a terminal the outpost reads
+    /// live, unless it is identical to the last read sent.
     TerminalSnapshot {
         /// The terminal.
         node_id: NodeId,
@@ -407,7 +395,6 @@ impl NormalizedEvent {
             | NormalizedEvent::Notification { node_id, .. }
             | NormalizedEvent::CaretMoved { node_id, .. }
             | NormalizedEvent::TextChanged { node_id }
-            | NormalizedEvent::TerminalSpeech { node_id, .. }
             | NormalizedEvent::TerminalSnapshot { node_id, .. }
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
                 *node_id = node_id.with_outpost(outpost);

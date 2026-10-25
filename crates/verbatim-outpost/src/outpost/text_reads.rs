@@ -749,10 +749,6 @@ fn value_change_waiting(context: &Context, node_id: NodeId) -> bool {
 pub(super) struct TerminalCaret {
     /// The caret.
     pub(super) report: CaretReport,
-    /// Whether it is the caret last sent to Core for the terminal
-    /// ([`crate::terminal::Terminal::sent_caret`]): at the same place, the
-    /// read says, with the same line.
-    pub(super) unchanged: bool,
 }
 
 /// The caret last sent to Core for terminal `node_id`, with where it was,
@@ -776,20 +772,19 @@ fn sent_caret_point(
     Some((sent, point))
 }
 
-/// Reads the focused terminal `node_id` and gives the read to its reading
-/// rules (`crate::terminal`), with the caret and its line read in the same
-/// round trip and returned as a caret report: a terminal raises no caret
-/// event for every character typed (the console host's come on a schedule
-/// of their own), so Core's copy of the caret would lag behind typing. The
-/// same round trip says whether the caret is still where the caret last
-/// sent to Core was. `waited` says whether the read waited for Core's
-/// speech queue. `None` when the terminal has no text pattern, is gone, or
-/// could not be read.
+/// Reads the focused terminal `node_id` (`crate::terminal::read`), the read
+/// of `scope`, with the caret and its line read in the same round trip and
+/// returned as a caret report: a terminal raises no caret event for every
+/// character typed (the console host's come on a schedule of their own), so
+/// Core's copy of the caret would lag behind typing. The same round trip
+/// says whether the caret is still where the caret last sent to Core was.
+/// `waited` says whether the read waited for Core's speech queue. `None`
+/// when the terminal has no text pattern, is gone, or could not be read.
 pub(super) fn terminal_read(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
-    waited: bool,
+    (scope, waited): (Option<verbatim_model::TerminalScope>, bool),
 ) -> Option<(crate::terminal::ReadAnswer, Option<TerminalCaret>)> {
     let Ok(mut source) = uia_source(context, node_id) else {
         return None;
@@ -813,12 +808,8 @@ pub(super) fn terminal_read(
                 endpoint: *endpoint,
             }),
     };
-    let settings = context.terminal_settings();
     let mut terminals = context.terminals();
-    let terminal = terminals
-        .entry(node_id.number())
-        .or_insert_with(|| crate::terminal::Terminal::new(settings));
-    terminal.update_settings(settings);
+    let terminal = terminals.entry(node_id.number()).or_default();
     // The caret is stamped as read when the round trip began: a caret event
     // observed while it was in flight may report a move it did not see.
     let started_us = crate::protocol::now_us();
@@ -827,25 +818,21 @@ pub(super) fn terminal_read(
         (source.element(), source.pattern()),
         caret,
         terminal,
-        (remote, waited),
+        (scope, remote, waited),
     );
-    let due = terminal.due_ms();
     drop(terminals);
-    *context.terminal_due() = due.map(|due| (node_id.number(), due));
     match read {
         Ok(mut answer) => {
-            if let Some(Path::Fallback(error)) = &answer.path {
+            if let Path::Fallback(error) = &answer.path {
                 tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
                 if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
                     context.read_classically(window);
                 }
             }
-            let compared = since.is_some();
             let caret = answer.caret.take().and_then(|answer| {
                 context.caret_read_from(node_id, started_us);
                 let read_at_ms = super::now_ms();
                 let read = source.caret_read_from(answer).ok()?;
-                let moved = read.moved;
                 let mut anchors = context.uia_anchors();
                 let report = crate::text::caret_report_from(
                     &mut source,
@@ -854,12 +841,7 @@ pub(super) fn terminal_read(
                     read_at_ms,
                 )
                 .ok()?;
-                let unchanged = compared
-                    && !moved
-                    && sent
-                        .as_ref()
-                        .is_some_and(|(sent, _)| crate::text::same_caret(sent, &report));
-                Some(TerminalCaret { report, unchanged })
+                Some(TerminalCaret { report })
             });
             Some((answer, caret))
         }
@@ -871,86 +853,37 @@ pub(super) fn terminal_read(
     }
 }
 
-/// The history of the focused terminal `node_id` above the rows its memory
-/// keeps, read from where its next read starts ([`crate::terminal::review`]).
-struct TerminalHistory<'a> {
-    uia: &'a verbatim_uia::Uia,
-    source: UiaText,
-    start: Option<windows::Win32::UI::Accessibility::IUIAutomationTextRange>,
-    screen_rows: u32,
-    remote: bool,
-}
-
-impl crate::terminal::review::History for TerminalHistory<'_> {
-    fn read(&mut self, above: u32, whole: bool) -> Result<(String, usize), TextError> {
-        let query = verbatim_uia_rops::SnapshotQuery {
-            element: self.source.element(),
-            pattern: self.source.pattern(),
-            start: if whole { None } else { self.start.as_ref() },
-            screen_rows: self.screen_rows,
-            whole,
-            above: if whole { 0 } else { above },
-            caret: None,
-            colours: None,
-        };
-        let (snapshot, _) = verbatim_uia_rops::terminal_snapshot(self.uia, &query, self.remote)
-            .map_err(|error| TextError::Failed(error.to_string()))?;
-        Ok((
-            String::from_utf16_lossy(&snapshot.text),
-            usize::try_from(snapshot.above).unwrap_or(0),
-        ))
-    }
-}
-
-/// Answers a review request `op` in the focused terminal `node_id` from its
-/// memory, read just before (`crate::terminal::review`); `None` when the
-/// terminal's review does not answer it, as for a request naming an anchor
-/// it did not mint, which is answered as any text's.
-pub(super) fn terminal_review(
+/// Reads the history of the focused terminal `node_id` above where its
+/// next read starts, for a review command Core answers from its memory
+/// ([`verbatim_model::TextOp::TerminalHistory`]): from `above` rows above
+/// that start to the document's end, or the whole document when `whole`.
+pub(super) fn terminal_history(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
-    op: &TextOp,
-) -> Option<TextReply> {
-    let source = uia_source(context, node_id).ok()?;
-    let remote = context.tries_remote(context.tracking().window());
-    let held: std::collections::HashSet<u64> = context
-        .held_anchors
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone();
-    let mut terminals = context.terminals();
-    let terminal = terminals.get_mut(&node_id.number())?;
-    if !crate::terminal::review::answers(terminal, op) {
-        return None;
-    }
-    let mut history = TerminalHistory {
-        uia,
-        start: terminal.start_range(),
-        screen_rows: terminal.screen_rows(),
-        source,
-        remote,
+    (above, whole): (u32, bool),
+) -> TextReply {
+    let Ok(source) = uia_source(context, node_id) else {
+        return TextReply::Unanswered;
     };
-    let caret = terminal.caret();
-    let mut mint = || context.mint_anchor();
-    let answered = crate::terminal::review::answer(
+    let remote = context.tries_remote(context.tracking().window());
+    let terminals = context.terminals();
+    let Some(terminal) = terminals.get(&node_id.number()) else {
+        return TextReply::Unanswered;
+    };
+    match crate::terminal::history(
+        uia,
+        (source.element(), source.pattern()),
         terminal,
-        op,
-        crate::terminal::review::Context {
-            history: &mut history,
-            caret,
-            mint: &mut mint,
-            held: &held,
-        },
-    );
-    Some(match answered {
-        Ok(reply) => reply,
+        (above, whole, remote),
+    ) {
+        Ok((text, above)) => TextReply::TerminalHistory { text, above },
         Err(TextError::Gone) => TextReply::Gone,
         Err(TextError::Failed(reason)) => {
             tracing::debug!(reason, "a terminal's history could not be read");
             TextReply::Unanswered
         }
-    })
+    }
 }
 
 /// The position in `node_id`'s text where `range`, the range an active text
@@ -979,15 +912,11 @@ pub(super) fn forget(context: &Context, released: impl IntoIterator<Item = u64>)
     let mut uia = context.uia_anchors();
     let mut edit = context.edit_anchors();
     let mut terminals = context.terminals();
-    let mut due = context.terminal_due();
     for node in released {
         patterns.remove(&node);
         support.remove(&node);
         uia.forget_node(node);
         edit.forget_node(node);
         terminals.remove(&node);
-        if due.is_some_and(|(terminal, _)| terminal == node) {
-            *due = None;
-        }
     }
 }

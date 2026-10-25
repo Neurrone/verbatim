@@ -39,7 +39,7 @@ pub use speech::{
 };
 pub use terminal::{
     Skipped, TerminalColourRun, TerminalItem, TerminalKey, TerminalKeyKind, TerminalScope,
-    TerminalSettings, TerminalSnapshot, TerminalSpeech, TerminalText, TerminalUnit,
+    TerminalSettings, TerminalSnapshot, TerminalText, TerminalUnit,
 };
 pub use text::{
     BulletStyle, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, FocusText, FormatRun,

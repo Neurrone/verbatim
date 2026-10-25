@@ -504,6 +504,14 @@ pub(crate) fn text_completed(
         .reading
         .take_if(|reading| reading.query_id == query_id)
     {
+        // In a terminal Core reads, the read before the key is a read of
+        // the terminal, aligned first, whose caret answers it.
+        if let verbatim_model::TextReply::TerminalSnapshot(snapshot) = &reply {
+            let (mut effects, caret) =
+                terminal_model::before_key(state, trace_id, reading.node, snapshot);
+            effects.extend(editing::held_read(state, reading, caret));
+            return effects;
+        }
         return editing::held_read(state, reading, reply);
     }
     if let Some(pending) = state
@@ -537,7 +545,7 @@ pub(crate) fn text_completed(
         return terminal_model::reply(state, trace_id, query_id, reply);
     }
     if terminal::is_pending(state, query_id) {
-        return terminal::reply(state, trace_id, query_id, reply);
+        return terminal::reply(state, trace_id, query_id, &reply);
     }
     Vec::new()
 }
@@ -653,29 +661,6 @@ fn reduce_caret_moved(
     effects
 }
 
-/// What a focused terminal said, or one read of it, which Core's terminal
-/// model aligns.
-fn terminal_event(
-    state: &mut SrState,
-    trace_id: TraceId,
-    observed_at_ms: u64,
-    event: &NormalizedEvent,
-) -> Vec<Effect> {
-    match event {
-        NormalizedEvent::TerminalSpeech { node_id, speech } => terminal::speech(
-            state,
-            trace_id,
-            observed_at_ms,
-            *node_id,
-            terminal::Said::from(speech.clone()),
-        ),
-        NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
-            terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)
-        }
-        _ => Vec::new(),
-    }
-}
-
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
@@ -756,8 +741,8 @@ fn reduce_event(
         moved @ NormalizedEvent::CaretMoved { .. } => {
             reduce_caret_moved(state, (trace_id, observed_at_ms), moved)
         }
-        NormalizedEvent::TerminalSpeech { .. } | NormalizedEvent::TerminalSnapshot { .. } => {
-            terminal_event(state, trace_id, observed_at_ms, event)
+        NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
+            terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)
         }
         NormalizedEvent::PropertyChanged {
             node_id,

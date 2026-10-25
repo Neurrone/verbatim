@@ -13,9 +13,11 @@
 //! - While messages wait, they are merged by object and kind, as the intake
 //!   and the supervisor merge what reaches the outpost and as NVDA's
 //!   limiters do: an event replaces a waiting event of the same kind for
-//!   the same node and goes to the back, and what a terminal says follows
-//!   what it said still waiting, in one message. Answers to Core's requests,
-//!   notifications, and faults are never merged, and keep their order. The
+//!   the same node and goes to the back. A terminal's read is never
+//!   merged: where each read starts is where the one before it said to
+//!   start, so a read dropped for a newer one would leave the rows between
+//!   them unread by Core. Answers to Core's requests, notifications, and
+//!   faults are never merged, and keep their order. The
 //!   idle barrier's answer is never merged either, and no event is merged
 //!   across it, so it never overtakes what was sent before it.
 //!   What waits is therefore bounded by the nodes and kinds there are, by
@@ -77,7 +79,6 @@ fn key(message: &OutpostToSupervisor) -> Option<Key> {
         NormalizedEvent::ValueChanged { node_id, .. }
         | NormalizedEvent::CaretMoved { node_id, .. }
         | NormalizedEvent::TextChanged { node_id }
-        | NormalizedEvent::TerminalSpeech { node_id, .. }
         | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => (*node_id, Detail::None),
         // A notification, and any kind of event added later, is never
         // merged.
@@ -238,24 +239,13 @@ impl Backlog for Pending {
         Ok(())
     }
 
-    /// The next item: an urgent message, or the ordinary queue's first. A
-    /// terminal's output larger than one message may carry is split here,
-    /// as it is written ([`within_limit`]): its first part is taken, and
-    /// the rest go first in the queue, merged with nothing.
+    /// The next item: an urgent message, or the ordinary queue's first.
     fn pop(&mut self) -> Option<Outgoing> {
         if let Some(message) = self.urgent.pop_front() {
             return Some(Outgoing::Urgent(message));
         }
         Some(match self.ordinary.pop_front()? {
-            Waiting::Message(_, message, touched) => {
-                let mut parts = within_limit(*message).into_iter();
-                let first = parts.next()?;
-                for (index, part) in parts.enumerate() {
-                    self.ordinary
-                        .insert(index, Waiting::Message(None, Box::new(part), Vec::new()));
-                }
-                Outgoing::Message(first, touched)
-            }
+            Waiting::Message(_, message, touched) => Outgoing::Message(*message, touched),
             Waiting::Flushed(done) => Outgoing::Flushed(done),
         })
     }
@@ -335,23 +325,6 @@ impl Outbound {
         sent(&self.sender.send(Outgoing::Message(message, touched)));
     }
 
-    /// Sends `messages`, ordinary messages, together: in one write when
-    /// none is in flight ([`Sender::send_all`]), recording each of
-    /// `touched` as reported by the last of them.
-    pub(crate) fn publish_all(&self, messages: Vec<OutpostToSupervisor>, touched: Vec<u64>) {
-        let last = messages.len().saturating_sub(1);
-        let mut touched = Some(touched);
-        let items = messages.into_iter().enumerate().map(|(index, message)| {
-            let touched = if index == last {
-                touched.take().unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-            Outgoing::Message(message, touched)
-        });
-        sent(&self.sender.send_all(items));
-    }
-
     /// Takes the nodes to release for Core's held list `held`, which
     /// acknowledges position `acknowledged`, and runs `forget` on them
     /// before any message sent afterwards can record them again. `None`
@@ -419,8 +392,8 @@ fn content_changed(message: &OutpostToSupervisor) -> bool {
     )
 }
 
-/// `newer` in place of `older`, the waiting message with the same key:
-/// what a terminal says after what it said still waiting, a caret report
+/// `newer` in place of `older`, the waiting message with the same key: a
+/// caret report
 /// carrying the waiting one's selection changes before its own, each
 /// change being from the report before, and anything else replacing it.
 /// Two caret reports merged are never both in general terms, nor is the
@@ -428,41 +401,6 @@ fn content_changed(message: &OutpostToSupervisor) -> bool {
 /// newer's general terms are kept.
 fn merged(older: OutpostToSupervisor, newer: OutpostToSupervisor) -> OutpostToSupervisor {
     match (older, newer) {
-        (
-            OutpostToSupervisor::Event {
-                event:
-                    NormalizedEvent::TerminalSpeech {
-                        speech: mut waiting,
-                        ..
-                    },
-                ..
-            },
-            OutpostToSupervisor::Event {
-                trace_id,
-                observed_at_ms,
-                observed_at_us,
-                backend,
-                window,
-                application,
-                timing,
-                event: NormalizedEvent::TerminalSpeech { node_id, speech },
-            },
-        ) => {
-            waiting.items.extend(speech.items);
-            OutpostToSupervisor::Event {
-                trace_id,
-                observed_at_ms,
-                observed_at_us,
-                backend,
-                window,
-                application,
-                timing,
-                event: NormalizedEvent::TerminalSpeech {
-                    node_id,
-                    speech: waiting,
-                },
-            }
-        }
         (
             OutpostToSupervisor::Event {
                 event:
@@ -512,39 +450,6 @@ fn merged(older: OutpostToSupervisor, newer: OutpostToSupervisor) -> OutpostToSu
     }
 }
 
-/// `message` as messages that each stay within the limit on outpost
-/// messages: what a terminal says beyond
-/// [`crate::terminal::MESSAGE_TEXT_BUDGET`] is split
-/// ([`crate::terminal::split`]) into messages sent one after another;
-/// anything else as it is.
-fn within_limit(message: OutpostToSupervisor) -> Vec<OutpostToSupervisor> {
-    match message {
-        OutpostToSupervisor::Event {
-            trace_id,
-            observed_at_ms,
-            observed_at_us,
-            backend,
-            window,
-            application,
-            timing,
-            event: NormalizedEvent::TerminalSpeech { node_id, speech },
-        } => crate::terminal::split(speech, crate::terminal::MESSAGE_TEXT_BUDGET)
-            .into_iter()
-            .map(|speech| OutpostToSupervisor::Event {
-                trace_id,
-                observed_at_ms,
-                observed_at_us,
-                backend,
-                window: window.clone(),
-                application,
-                timing,
-                event: NormalizedEvent::TerminalSpeech { node_id, speech },
-            })
-            .collect(),
-        other => vec![other],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs::File;
@@ -552,7 +457,7 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    use verbatim_model::{Backend, TerminalItem, TerminalSpeech, TraceId};
+    use verbatim_model::{Backend, TerminalColourRun, TerminalSnapshot, TerminalText, TraceId};
     use verbatim_process::overlapped::{End, Flow, pipe};
 
     use super::*;
@@ -597,24 +502,53 @@ mod tests {
         }
     }
 
-    fn terminal(lines: &[&str]) -> OutpostToSupervisor {
-        event(NormalizedEvent::TerminalSpeech {
+    /// A read of a terminal whose text is `text`, with colours when
+    /// `coloured`.
+    fn terminal(text: &str, coloured: bool) -> OutpostToSupervisor {
+        event(NormalizedEvent::TerminalSnapshot {
             node_id: node(9),
-            speech: TerminalSpeech {
-                items: lines
-                    .iter()
-                    .map(|&line| TerminalItem::Output(line.to_owned()))
-                    .collect(),
-                followed: false,
-            },
+            snapshot: Box::new(TerminalSnapshot {
+                text: TerminalText::unpadded(text),
+                screen: TerminalText::unpadded(text),
+                from_start: true,
+                shrank: false,
+                at_document_start: false,
+                alternate: false,
+                first_row: TerminalText::default(),
+                caret_rows_to_end: 1,
+                caret_line: TerminalText::default(),
+                caret_column: 0,
+                above: 0,
+                started_ms: 0,
+                waited: false,
+                colours: coloured.then(|| {
+                    vec![vec![TerminalColourRun {
+                        column: 0,
+                        length: 3,
+                        foreground: 7,
+                        background: 0,
+                    }]]
+                }),
+                caret: None,
+            }),
         })
     }
 
-    /// A terminal's output larger than a pipe's 4 KiB buffer, so the write
+    /// The text of a terminal's read written.
+    fn text_of(message: &OutpostToSupervisor) -> &str {
+        match message {
+            OutpostToSupervisor::Event {
+                event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
+                ..
+            } => &snapshot.text.text,
+            other => panic!("not a terminal's read: {other:?}"),
+        }
+    }
+
+    /// A terminal's read larger than a pipe's 4 KiB buffer, so the write
     /// that carries it pends until the test reads.
     fn large() -> OutpostToSupervisor {
-        let line = "x".repeat(20_000);
-        terminal(&[line.as_str()])
+        terminal(&"x".repeat(20_000), false)
     }
 
     fn pending() -> Pending {
@@ -695,30 +629,32 @@ mod tests {
     }
 
     #[test]
-    fn what_a_terminal_says_follows_what_it_said_still_waiting() {
+    fn a_terminals_reads_are_never_merged() {
         let mut pending = pending();
-        push(&mut pending, terminal(&["one", "two"]), &[]);
-        push(&mut pending, terminal(&["three", "four"]), &[]);
+        push(&mut pending, terminal("one", false), &[]);
+        push(&mut pending, terminal("two", true), &[]);
+        push(&mut pending, terminal("three", false), &[]);
         let written = write(&mut pending);
-        let [
-            OutpostToSupervisor::Event {
-                event: NormalizedEvent::TerminalSpeech { speech, .. },
-                ..
-            },
-        ] = written.as_slice()
-        else {
-            panic!("one combined message, not {written:?}");
-        };
-        assert_eq!(
-            speech.items,
-            ["one", "two", "three", "four"]
-                .map(|line| TerminalItem::Output(line.to_owned()))
-                .to_vec()
-        );
+        let texts: Vec<&str> = written.iter().map(text_of).collect();
+        assert_eq!(texts, ["one", "two", "three"]);
     }
 
-    /// A caret report of node 1 at `offset`, carrying `changes`, each of
-    /// five characters.
+    /// The whole document of a full history, 9,001 rows of 120 columns
+    /// each holding text to its last column, goes to Core as one message.
+    #[test]
+    fn a_whole_documents_read_of_a_full_history_is_written_whole() {
+        let row = "y".repeat(120);
+        let text = vec![row.as_str(); 9_001].join(
+            "
+",
+        );
+        let mut pending = pending();
+        push(&mut pending, terminal(&text, false), &[]);
+        let written = write(&mut pending);
+        assert_eq!(written.len(), 1);
+        assert_eq!(text_of(&written[0]), text);
+    }
+
     fn caret_moved(offset: u32, changes: &[(bool, &str)]) -> OutpostToSupervisor {
         event(NormalizedEvent::CaretMoved {
             node_id: node(1),

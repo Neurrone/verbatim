@@ -255,23 +255,10 @@ pub(crate) struct Context {
     /// their cache requests; MSAA reads skip their calls, through the MSAA
     /// registry, which holds the same.
     fetches: Mutex<Fetches>,
-    /// Each focused terminal's reading rules and memory, by node, kept
-    /// while the node is (`docs/design/terminal-model.md`, section 5.10).
+    /// What the outpost keeps of each focused terminal between its reads,
+    /// by node, kept while the node is (`docs/design/terminal-model.md`,
+    /// "Where it runs").
     terminals: Mutex<HashMap<u64, crate::terminal::Terminal>>,
-    /// The terminal reading rules' settings, from Core
-    /// ([`SupervisorToOutpost::TerminalSettings`]).
-    terminal_settings: Mutex<verbatim_model::TerminalSettings>,
-    /// The focused terminal's node and when its quiet-period timer is due,
-    /// in milliseconds on the shared clock, while something waits for it.
-    /// Kept apart from [`Context::terminals`], whose lock a terminal read
-    /// holds across its calls into the application, under a lock never
-    /// held across one, so the idle barrier's answer, which waits for the
-    /// timer, never waits on the application (`worker::answer_idle`).
-    terminal_due: Mutex<Option<(u64, u64)>>,
-    /// Numbers the text anchors a terminal's review answers mint, from the
-    /// counter the anchor stores share, so no two anchors in an outpost
-    /// have the same number.
-    anchor_counter: Arc<AtomicU64>,
     /// How the worker reads the element that has the keyboard focus, for a
     /// focus-now query: a UIA focus event's element comes from the focus
     /// listener's read instead.
@@ -482,26 +469,6 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The terminal reading rules' settings.
-    fn terminal_settings(&self) -> verbatim_model::TerminalSettings {
-        *self
-            .terminal_settings
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The focused terminal's node and when its quiet-period timer is due.
-    fn terminal_due(&self) -> MutexGuard<'_, Option<(u64, u64)>> {
-        self.terminal_due
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// A new text anchor's number.
-    fn mint_anchor(&self) -> u64 {
-        self.anchor_counter.fetch_add(1, Ordering::Relaxed) + 1
-    }
-
     /// The request a node is fetched with, for the details the active
     /// theme wants.
     fn node_request(&self, uia: &Uia) -> windows::core::Result<Request<Node>> {
@@ -609,7 +576,6 @@ impl Context {
         self.patterns().clear();
         self.text_support().clear();
         self.terminals().clear();
-        *self.terminal_due() = None;
         *self.caret_watch() = None;
         drop(objects);
         nodes.len()
@@ -1012,14 +978,11 @@ impl Outpost {
                 Arc::clone(&held_anchors),
             )),
             edit_anchors: Mutex::new(Anchors::sharing(Arc::clone(&anchor_counter), held_anchors)),
-            anchor_counter,
             patterns: Mutex::new(HashMap::new()),
             text_support: Mutex::new(HashMap::new()),
             caret_read: Mutex::new(CaretRead::default()),
             fetches: Mutex::new(Fetches::default()),
             terminals: Mutex::new(HashMap::new()),
-            terminal_settings: Mutex::new(verbatim_model::TerminalSettings::default()),
-            terminal_due: Mutex::new(None),
             focused_element,
             foreground: Mutex::new(Arc::new(window::foreground_window_handle)),
             focus_window: Mutex::new(Arc::new(window::focus_window)),
@@ -1403,25 +1366,14 @@ impl Outpost {
                     .unwrap_or_else(PoisonError::into_inner) = *fetches;
                 context.msaa_registry.set_fetches(*fetches);
             }
-            SupervisorToOutpost::TerminalKey(key) => context.push(
-                Item::TerminalKey(key.clone()),
-                TraceId::mint(),
-                now_ms(),
-                EventTiming::default(),
-            ),
-            SupervisorToOutpost::TerminalSettings(settings) => {
-                *context
-                    .terminal_settings
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner) = *settings;
-                // The reading rules take them at their next input
-                // (`worker::Worker::terminal_rules`).
-            }
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
             // which takes the outpost, and handles `Assign`, which ends the
             // outpost when it fails; the hand-over's news of hooks is for
-            // the listener alone.
-            SupervisorToOutpost::Shutdown
+            // the listener alone. Core's terminal model takes the keys and
+            // the settings; the keyboard hook and the shell still send them.
+            SupervisorToOutpost::TerminalKey(_)
+            | SupervisorToOutpost::TerminalSettings(_)
+            | SupervisorToOutpost::Shutdown
             | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
             | SupervisorToOutpost::HookRemoved { .. } => {}

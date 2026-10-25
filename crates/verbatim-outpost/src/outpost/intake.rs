@@ -286,13 +286,6 @@ pub(super) enum Item {
     /// The time [`Intake::wake_at`] named has come with nothing else to do:
     /// a caret key's watch may have reached the bound on its age.
     Wake,
-    /// The time [`Intake::terminal_timer_at`] named has come with nothing
-    /// else to do: the focused terminal's quiet period has passed for what
-    /// waited for it (`docs/design/terminal-model.md`, section 5.14).
-    TerminalTimer,
-    /// A key reached the focused application
-    /// ([`crate::protocol::SupervisorToOutpost::TerminalKey`]).
-    TerminalKey(verbatim_model::TerminalKey),
 }
 
 /// An item with its trace and observation time.
@@ -464,9 +457,6 @@ struct State {
     /// When the worker asked to be given [`Item::Wake`] if nothing else
     /// comes first.
     wake: Option<Instant>,
-    /// When the worker asked to be given [`Item::TerminalTimer`] if
-    /// nothing else comes first.
-    terminal_timer: Option<Instant>,
     /// The console window whose updates are dropped as they are pushed
     /// ([`Intake::absorb_console_updates`]).
     absorbed: Option<isize>,
@@ -644,21 +634,6 @@ impl State {
             }
             _ => false,
         }
-    }
-
-    /// The focused terminal's timer [`Intake::terminal_timer_at`] asked
-    /// for, when its time has come.
-    fn terminal_timer_due(&mut self, now: Instant) -> Option<Entry> {
-        if self.terminal_timer.is_none_or(|due| now < due) {
-            return None;
-        }
-        self.terminal_timer = None;
-        Some(Entry {
-            item: Item::TerminalTimer,
-            trace: TraceId::mint(),
-            observed_at_ms: super::now_ms(),
-            timing: crate::protocol::EventTiming::default(),
-        })
     }
 
     /// An [`Item::Wake`] entry.
@@ -881,10 +856,6 @@ impl Intake {
                 let news = std::mem::take(&mut state.marker_news);
                 return Some((Planned::Run(entry), state.batch_number, news));
             }
-            if let Some(entry) = state.terminal_timer_due(now) {
-                let news = std::mem::take(&mut state.marker_news);
-                return Some((Planned::Run(entry), state.batch_number, news));
-            }
             let gap = match state.gap_wake(gap, now) {
                 GapWake::Now => {
                     let news = std::mem::take(&mut state.marker_news);
@@ -893,10 +864,7 @@ impl Intake {
                 GapWake::At(at) => Some(at),
                 GapWake::Not => None,
             };
-            let wake = [state.wake, gap, state.terminal_timer]
-                .into_iter()
-                .flatten()
-                .min();
+            let wake = [state.wake, gap].into_iter().flatten().min();
             state = match wake {
                 Some(wake) => {
                     self.ready
@@ -921,7 +889,6 @@ impl Intake {
         let mut state = self.lock();
         state.closed = true;
         state.wake = None;
-        state.terminal_timer = None;
         let mut dropped: Vec<Entry> = state
             .waiting
             .drain(..)
@@ -953,42 +920,6 @@ impl Intake {
     pub(super) fn wake_at(&self, at: Option<Instant>) {
         self.lock().wake = at;
         self.ready.notify_one();
-    }
-
-    /// Asks [`next`](Self::next) for an [`Item::TerminalTimer`] at `at` if
-    /// nothing else is to be done then, or for none: the reading rules'
-    /// quiet-period timer, armed only while something waits for it, one
-    /// wake-up when it ends (`docs/design/terminal-model.md`, section
-    /// 5.14).
-    pub(super) fn terminal_timer_at(&self, at: Option<Instant>) {
-        self.lock().terminal_timer = at;
-        self.ready.notify_one();
-    }
-
-    /// Takes out the keys waiting ([`Item::TerminalKey`]), oldest first,
-    /// planned or not: a terminal's read about to begin takes them first,
-    /// since each reached the application before the read began.
-    pub(super) fn take_terminal_keys(&self) -> Vec<verbatim_model::TerminalKey> {
-        let mut state = self.lock();
-        let mut keys = Vec::new();
-        state.batch.retain(|planned| match planned {
-            Planned::Run(Entry {
-                item: Item::TerminalKey(key),
-                ..
-            }) => {
-                keys.push(key.clone());
-                false
-            }
-            _ => true,
-        });
-        state.waiting.retain(|waiting| match &waiting.entry.item {
-            Item::TerminalKey(key) => {
-                keys.push(key.clone());
-                false
-            }
-            _ => true,
-        });
-        keys
     }
 
     /// Withdraws query `request_id` if it has not started. Returns whether it
@@ -1355,9 +1286,7 @@ fn classify(item: &Item) -> (Option<Key>, Category, isize) {
         | Item::NotedCaret { .. }
         | Item::Settle(_)
         | Item::IdleQuery { .. }
-        | Item::Wake
-        | Item::TerminalTimer
-        | Item::TerminalKey(_) => (None, Category::Exempt, 0),
+        | Item::Wake => (None, Category::Exempt, 0),
     }
 }
 

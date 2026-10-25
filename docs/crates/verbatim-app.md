@@ -83,8 +83,9 @@ The end-to-end harness's hooks (private `harness` module):
   on its port and checks its own conditions: no outpost request
   outstanding, no outpost still starting, no focus wanted from an outpost
   being started (a crashed outpost's replacement), no large frame
-  still being parsed, and no key the hook held back still waiting to be
-  passed on. If they hold, the waiters are answered once
+  still being parsed, no key the hook held back still waiting to be
+  passed on, and no terminal's quiet-period timer armed, since what waits
+  for it is spoken when it ends. If they hold, the waiters are answered once
   everything queued so far has reached the speech manager; if not, the
   round runs again once they clear. A wait that runs out answers with
   what was still outstanding.

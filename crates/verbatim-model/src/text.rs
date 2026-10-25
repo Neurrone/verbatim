@@ -634,22 +634,19 @@ pub enum TextOp {
     TerminalHold,
     /// Read what is new in a focused terminal now, if its text changed
     /// since the last read, and then hold (`hold`) or read each change at
-    /// once again. Answered [`TextReply::Terminal`].
+    /// once again. Answered [`TextReply::TerminalSnapshot`], or
+    /// [`TextReply::TerminalUnchanged`] when nothing changed since the last
+    /// read.
     TerminalRead {
         /// Whether to go on holding after this read.
         hold: bool,
     },
     /// Speech was cut off: read the terminal to its end without speaking
     /// what is new, as NVDA drops what was pending, and read each change at
-    /// once again. Answered [`TextReply::Terminal`], whose answers to keys
-    /// Core speaks and whose output it drops.
+    /// once again. Answered [`TextReply::TerminalSnapshot`], of whose
+    /// speech Core says only the answers to keys, or
+    /// [`TextReply::TerminalUnchanged`] when nothing changed while held.
     TerminalCancel,
-    /// A key Core held reached the focused terminal as Core passed it on
-    /// (`docs/design/terminal-model.md`, section 5.5): the outpost's
-    /// reading rules open the key's window and read the colours with the
-    /// next read. The keyboard hook's thread tells the outpost of the keys
-    /// it passes itself. Answered [`TextReply::Done`].
-    TerminalKey(crate::TerminalKey),
     /// Read the focused terminal at once, whatever its on-demand state, and
     /// answer with the read ([`TextReply::TerminalSnapshot`]): a fresh read
     /// before a review command, the whole document after a lost read, or a
@@ -730,20 +727,19 @@ pub enum TextReply {
         /// The text was cut.
         truncated: bool,
     },
-    /// A [`TextOp::MoveCaret`], [`TextOp::TerminalHold`] or
-    /// [`TextOp::TerminalKey`] was done.
+    /// A [`TextOp::MoveCaret`], [`TextOp::TerminalHold`],
+    /// [`TextOp::TerminalColours`] or [`TextOp::TerminalShape`] was done.
     Done,
     /// The answer to [`TextOp::Select`]: how the selection changed from
     /// the one the outpost read just before selecting (collapsed at the
     /// caret when nothing was selected) to the one it read just after, by
     /// the rule [`CaretReply`] describes for its `selection_changes`.
     Selected(Vec<SelectionChange>),
-    /// The answer to [`TextOp::TerminalRead`] and
-    /// [`TextOp::TerminalCancel`]: what the read said, empty when nothing.
-    Terminal(Box<crate::TerminalSpeech>),
-    /// A read of a terminal: the answer to [`TextOp::TerminalReadNow`], and
-    /// to [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`] once the
-    /// outpost reads for Core.
+    /// A read of a terminal: the answer to [`TextOp::TerminalReadNow`], to
+    /// [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`], to
+    /// [`TextOp::TerminalColours`] when it reads at once, and to
+    /// [`TextOp::ReadCaret`] in a terminal, the read before a held key,
+    /// whose caret answers it.
     TerminalSnapshot(Box<crate::TerminalSnapshot>),
     /// [`TextOp::TerminalRead`] or [`TextOp::TerminalCancel`] found nothing
     /// changed since the last read.

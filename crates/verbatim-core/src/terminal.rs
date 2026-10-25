@@ -1,6 +1,7 @@
-//! What a focused terminal says (`docs/design/terminal-model.md`, section
-//! 5): the terminal's outpost reads it, applies the reading rules, and sends
-//! what they say as `NormalizedEvent::TerminalSpeech`. Here it is spoken:
+//! What a focused terminal says (`docs/design/terminal-model.md`, "Core's
+//! flood policy"): the terminal's outpost reads it, Core's terminal model
+//! (`crate::terminal_model`) gives each read to the reading rules, and what
+//! they say is spoken here:
 //!
 //! - The answers to keys (typing the terminal showed, a caret key's unit or
 //!   the landing rule's, text the caret's line gained or lost, a row away
@@ -43,21 +44,14 @@
 //!   while holding tells the outpost to read to the end without speaking
 //!   ([`TextOp::TerminalCancel`]); of what was read before a cut, still on
 //!   its way, only the answers to keys are spoken.
-//! - Every key that reaches a focused terminal is told to its outpost, with
-//!   when it reached the program, since the reading rules judge by that
-//!   time which reads a key's effects can be in ("Keys and their window"): the keyboard
-//!   hook's thread tells it of each key it passes itself, before passing
-//!   it on, and Core of a key it held, as it passes it on
-//!   ([`TextOp::TerminalKey`]).
 
 use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
     CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, Phrase, QueryId, SegmentContent,
-    Skipped, SpeechMark, SpeechPriority, TerminalItem, TerminalKey, TerminalKeyKind,
-    TerminalSpeech, TerminalUnit, TextOp, TextReply, TextRequest, TraceId, Utterance,
-    UtteranceSegment,
+    Skipped, SpeechMark, SpeechPriority, TerminalItem, TerminalKeyKind, TerminalUnit, TextOp,
+    TextReply, TextRequest, TraceId, Utterance, UtteranceSegment,
 };
 
 use verbatim_text::terminal_rows::Text;
@@ -206,23 +200,24 @@ fn within_bound(mut line: String) -> (String, bool) {
     (line, true)
 }
 
-/// What a terminal said, as the flood policy takes it in ([`speech`]): the
-/// outpost's speech, or the reading rules' in Core, whose new lines keep
-/// the rules' text, shared with the read, until they wait, so a line the
-/// backlog's bound skips is never copied ([`queue`]).
+/// What a terminal's reading rules said, as the flood policy takes it in
+/// ([`speech`]): new lines keep the rules' text, shared with the read, until
+/// they wait, so a line the backlog's bound skips is never copied
+/// ([`queue`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Said {
     /// What to say, in the order it is spoken.
     pub(crate) items: Vec<SaidItem>,
-    /// Whether the review cursor followed the caret
-    /// ([`TerminalSpeech::followed`]).
+    /// Whether the review cursor followed the caret: a key moved the caret
+    /// within its window with "review follows caret" on, so the next review
+    /// command reads at the caret.
     pub(crate) followed: bool,
 }
 
 /// One thing a terminal said.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SaidItem {
-    /// As the outpost sends it.
+    /// Anything but a new line.
     Item(TerminalItem),
     /// A new line of output, as [`TerminalItem::Output`] is, its text the
     /// reading rules'.
@@ -239,15 +234,6 @@ impl SaidItem {
     }
 }
 
-impl From<TerminalSpeech> for Said {
-    fn from(speech: TerminalSpeech) -> Self {
-        Self {
-            items: speech.items.into_iter().map(SaidItem::Item).collect(),
-            followed: speech.followed,
-        }
-    }
-}
-
 /// Whether the focus is a live terminal.
 pub(crate) fn terminal_focus(state: &SrState) -> Option<NodeId> {
     state
@@ -255,21 +241,6 @@ pub(crate) fn terminal_focus(state: &SrState) -> Option<NodeId> {
         .as_ref()
         .filter(|focus| focus.alive && focus.snapshot.role == verbatim_model::Role::Terminal)
         .map(|focus| focus.snapshot.id)
-}
-
-/// Tells the focused terminal's outpost of a key of `kind` that reached it
-/// at `at_ms` (milliseconds on the shared clock): nothing when the focus is
-/// not a terminal. The answer is not waited for.
-pub(crate) fn key(state: &mut SrState, kind: TerminalKeyKind, at_ms: u64) -> Vec<Effect> {
-    let Some(node) = terminal_focus(state) else {
-        return Vec::new();
-    };
-    let query_id = state.allocate_query_id();
-    vec![Effect::Text(TextRequest {
-        query_id,
-        node_id: node,
-        op: TextOp::TerminalKey(TerminalKey { kind, at_ms }),
-    })]
 }
 
 /// What a caret key is to the reading rules: one Verbatim knows, by the
@@ -485,14 +456,26 @@ pub(crate) fn reply(
     state: &mut SrState,
     trace_id: TraceId,
     query_id: QueryId,
-    reply: TextReply,
+    reply: &TextReply,
 ) -> Vec<Effect> {
-    // Once the outpost reads for Core, its answer is a read Core's
-    // terminal model aligns, spoken under the read's speech key.
-    let (output, key, mut effects) = match reply {
-        TextReply::Terminal(speech) => (Said::from(*speech), None, Vec::new()),
-        other => crate::terminal_model::answered_read(state, &other).unwrap_or_default(),
-    };
+    // The answer is a read Core's terminal model aligns, spoken under the
+    // read's speech key.
+    let (output, key, mut effects) =
+        crate::terminal_model::answered_read(state, reply).unwrap_or_default();
+    effects.extend(answered(state, trace_id, query_id, output, key));
+    effects
+}
+
+/// Takes in what the read answering terminal request `query_id` said,
+/// `output`, spoken under the read's speech key `key` when it has one: see
+/// [`reply`].
+pub(crate) fn answered(
+    state: &mut SrState,
+    trace_id: TraceId,
+    query_id: QueryId,
+    output: Said,
+    key: Option<TraceId>,
+) -> Vec<Effect> {
     let trace_id = key.unwrap_or(trace_id);
     let spoken = if state.terminal.cancel == Some(query_id) {
         state.terminal.cancel = None;
@@ -508,8 +491,7 @@ pub(crate) fn reply(
         }
         spoken
     };
-    effects.extend(crate::terminal_model::under(key, spoken));
-    effects
+    crate::terminal_model::under(key, spoken)
 }
 
 /// Adds the output among `items` to the waiting queue, in the order it is
@@ -1238,35 +1220,4 @@ pub(crate) fn toggle(state: &mut SrState, trace_id: TraceId) -> Vec<Effect> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{caret_key_kind, typed_kind};
-    use verbatim_model::{CaretKey, CaretMotion, TerminalKeyKind, TerminalUnit};
-
-    #[test]
-    fn keys_are_told_to_the_reading_rules_by_their_unit() {
-        let key = |motion| CaretKey {
-            motion,
-            select: false,
-        };
-        assert_eq!(
-            caret_key_kind(key(CaretMotion::NextCharacter)),
-            TerminalKeyKind::Caret(TerminalUnit::Character)
-        );
-        assert_eq!(
-            caret_key_kind(key(CaretMotion::PreviousWord)),
-            TerminalKeyKind::Caret(TerminalUnit::Word)
-        );
-        assert_eq!(
-            caret_key_kind(key(CaretMotion::PreviousLine)),
-            TerminalKeyKind::Caret(TerminalUnit::Line)
-        );
-        assert_eq!(
-            caret_key_kind(key(CaretMotion::Backspace)),
-            TerminalKeyKind::Other
-        );
-        assert_eq!(typed_kind("a"), TerminalKeyKind::Typed("a".to_owned()));
-        assert_eq!(typed_kind("\r"), TerminalKeyKind::Enter);
-        assert_eq!(typed_kind("\t"), TerminalKeyKind::Forget);
-        assert_eq!(typed_kind("\u{1}"), TerminalKeyKind::Other);
-    }
-}
+mod tests;

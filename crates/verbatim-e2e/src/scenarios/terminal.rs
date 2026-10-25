@@ -433,7 +433,8 @@ pub(crate) fn open_windows_terminal_tab(
 
 /// Waits until `events`, a subscription to the events Core receives,
 /// carries a caret report whose line, trailing white space aside, is
-/// `line`.
+/// `line`: alone, or in a terminal's read, which carries the caret the
+/// read found.
 ///
 /// # Errors
 ///
@@ -451,6 +452,16 @@ pub(crate) fn wait_for_caret_on(
                 event: NormalizedEvent::CaretMoved { caret, .. },
                 ..
             }) if caret.line.text.trim_end() == line => return Ok(()),
+            Ok(Frame::Event {
+                event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
+                ..
+            }) if snapshot
+                .caret
+                .as_ref()
+                .is_some_and(|caret| caret.line.text.trim_end() == line) =>
+            {
+                return Ok(());
+            }
             Ok(_) => {}
             Err(error)
                 if matches!(

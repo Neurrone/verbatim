@@ -1,23 +1,26 @@
-//! Scripted-input tests for what a terminal says in the reducer
-//! (`docs/design/terminal-model.md`, "Reading rules"): the flood policy over the
-//! backlog of output not yet spoken (a burst's first 30 lines in full, then
-//! the last 30 of what waits), output arriving in several batches, the
-//! answers to keys spoken at once and typing echoed by its settings, the
-//! keys told to the terminal's outpost, the review cursor following the
-//! caret when the reading rules say it did, "Report new output"
-//! (Verbatim+5), and speech being cut off. Playback is simulated by
-//! reaching each utterance's index mark in turn.
+//! Scripted-input tests for what a terminal says (`docs/design/terminal-model.md`,
+//! "Core's flood policy"): the flood policy over the backlog of output not
+//! yet spoken (a burst's first 30 lines in full, then the last 30 of what
+//! waits), output arriving in several batches, the answers to keys spoken
+//! at once and typing echoed by its settings, the review cursor following
+//! the caret when the reading rules say it did, "Report new output"
+//! (Verbatim+5), and speech being cut off. What the reading rules said of
+//! each read is given to the flood policy as the terminal model gives it
+//! ([`super::speech`]); the rest of the reducer is driven with its inputs.
+//! Playback is simulated by reaching each utterance's index mark in turn.
 
 use std::collections::VecDeque;
 
-use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, Effect, Input, Message, NodeDetails, NodeId, NodeSnapshot,
     NormalizedEvent, OutpostId, Phrase, Pid, QueryId, ReaderSettings, ReviewCommand, Role,
-    SegmentContent, Skipped, SpeechMark, SpeechPriority, StateSet, TerminalItem, TerminalKey,
-    TerminalKeyKind, TerminalSpeech, TerminalUnit, TextOp, TextPoint, TextReply, TextRequest,
-    TraceId,
+    SegmentContent, Skipped, SpeechMark, SpeechPriority, StateSet, TerminalItem, TerminalKeyKind,
+    TerminalUnit, TextOp, TextPoint, TextReply, TextRequest, TraceId,
 };
+
+use super::{Said, SaidItem, caret_key_kind, typed_kind};
+use crate::reduce::reduce;
+use crate::state::SrState;
 
 const OUTPOST: OutpostId = OutpostId(1);
 const TERMINAL: u64 = 12;
@@ -69,8 +72,72 @@ fn lines(range: std::ops::RangeInclusive<u32>) -> Vec<String> {
     range.map(|n| format!("line {n}")).collect()
 }
 
-fn output(lines: Vec<String>) -> Input {
+fn output(lines: Vec<String>) -> Out {
     output_from(TERMINAL, None, lines)
+}
+
+/// What the reading rules said of one read, as the terminal model hands
+/// it to the flood policy.
+#[derive(Clone, Debug, Default)]
+struct TerminalSpeech {
+    items: Vec<TerminalItem>,
+    followed: bool,
+}
+
+/// What terminal `node` said in a read that began at `observed_at_ms`.
+struct Out {
+    node: u64,
+    observed_at_ms: u64,
+    speech: TerminalSpeech,
+}
+
+/// `speech` as the flood policy takes it.
+fn said_of(speech: TerminalSpeech) -> Said {
+    Said {
+        items: speech.items.into_iter().map(SaidItem::Item).collect(),
+        followed: speech.followed,
+    }
+}
+
+/// Gives the flood policy what `out` said, as the terminal model does
+/// with a read's speech, and cuts speech off when that does, as the
+/// reducer does after each input.
+fn say(state: &mut SrState, out: &Out) -> Vec<Effect> {
+    let mut effects = super::speech(
+        state,
+        TraceId::mint(),
+        out.observed_at_ms,
+        id(out.node),
+        said_of(out.speech.clone()),
+    );
+    if effects.iter().any(super::cuts_speech) {
+        effects.extend(super::cut(state, 0));
+    }
+    effects
+}
+
+/// Something the test feeds: an input to the reducer, or what a terminal
+/// said.
+trait Fed {
+    /// Feeds it to `state`, or keeps it in `playback` when the outpost
+    /// holds what a terminal says.
+    fn fed(&self, state: &mut SrState, playback: &mut Playback) -> Vec<Effect>;
+}
+
+impl Fed for Input {
+    fn fed(&self, state: &mut SrState, _: &mut Playback) -> Vec<Effect> {
+        reduce(state, self)
+    }
+}
+
+impl Fed for Out {
+    fn fed(&self, state: &mut SrState, playback: &mut Playback) -> Vec<Effect> {
+        if playback.held {
+            playback.unread.push(self.speech.clone());
+            return Vec::new();
+        }
+        say(state, self)
+    }
 }
 
 /// Speech of output: lines, after a count of lines skipped when given.
@@ -85,23 +152,16 @@ fn speech_of(skipped: Option<Skipped>, lines: Vec<String>) -> TerminalSpeech {
     }
 }
 
-fn output_from(node: u64, skipped: Option<Skipped>, lines: Vec<String>) -> Input {
+fn output_from(node: u64, skipped: Option<Skipped>, lines: Vec<String>) -> Out {
     said(node, 0, speech_of(skipped, lines))
 }
 
 /// What terminal `node` said in a read that began at `observed_at_ms`.
-fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Input {
-    Input::Event {
-        trace_id: TraceId::mint(),
+fn said(node: u64, observed_at_ms: u64, speech: TerminalSpeech) -> Out {
+    Out {
+        node,
         observed_at_ms,
-        observed_at_us: 0,
-        source: Pid(1),
-        backend: Backend::Uia,
-        window: None,
-        event: NormalizedEvent::TerminalSpeech {
-            node_id: id(node),
-            speech,
-        },
+        speech,
     }
 }
 
@@ -205,7 +265,7 @@ impl Playback {
                                 self.late = Some(query_id);
                             } else {
                                 let output = self.take_unread();
-                                self.reply(state, query_id, TextReply::Terminal(Box::new(output)));
+                                self.answer_with(state, query_id, output);
                             }
                         }
                         TextOp::TerminalCancel => {
@@ -214,11 +274,9 @@ impl Playback {
                             if self.late.is_some() {
                                 self.late_cancel = Some(query_id);
                             } else {
-                                self.reply(state, query_id, TextReply::Terminal(Box::default()));
+                                self.answer_with(state, query_id, TerminalSpeech::default());
                             }
                         }
-                        // Told, and not waited for.
-                        TextOp::TerminalKey(_) => {}
                         other => panic!("unexpected text request: {other:?}"),
                     }
                 }
@@ -254,22 +312,24 @@ impl Playback {
     fn answer(&mut self, state: &mut SrState) {
         let query_id = self.late.take().expect("a read request held back");
         let output = self.take_unread();
-        self.reply(state, query_id, TextReply::Terminal(Box::new(output)));
+        self.answer_with(state, query_id, output);
     }
 
-    /// Feeds `input` and takes in its effects. Terminal output the outpost
-    /// holds waits in it instead.
-    fn feed(&mut self, state: &mut SrState, input: &Input) {
-        if self.held
-            && let Input::Event {
-                event: NormalizedEvent::TerminalSpeech { speech, .. },
-                ..
-            } = input
-        {
-            self.unread.push(speech.clone());
-            return;
+    /// Answers the terminal read request `query_id` with what the read
+    /// said, as the terminal model hands an answer's speech to the flood
+    /// policy.
+    fn answer_with(&mut self, state: &mut SrState, query_id: QueryId, output: TerminalSpeech) {
+        let mut effects = super::answered(state, TraceId::mint(), query_id, said_of(output), None);
+        if effects.iter().any(super::cuts_speech) {
+            effects.extend(super::cut(state, 0));
         }
-        let effects = reduce(state, input);
+        self.take(state, effects);
+    }
+
+    /// Feeds `input` and takes in its effects. What a terminal says while
+    /// the outpost holds waits in it instead.
+    fn feed<T: Fed>(&mut self, state: &mut SrState, input: &T) {
+        let effects = input.fed(state, self);
         self.take(state, effects);
     }
 
@@ -1018,7 +1078,7 @@ fn the_answers_to_keys_are_spoken_at_once_ahead_of_output() {
         ],
         followed: false,
     };
-    let effects = reduce(&mut state, &said(TERMINAL, 0, speech));
+    let effects = say(&mut state, &said(TERMINAL, 0, speech));
     // The answers, in order, then the output's first line handed to
     // speech with its marks.
     assert_eq!(
@@ -1042,7 +1102,7 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
         items: vec![TerminalItem::Echo("ls".to_owned())],
         followed: false,
     };
-    let effects = reduce(&mut state, &said(TERMINAL, 0, echo.clone()));
+    let effects = say(&mut state, &said(TERMINAL, 0, echo.clone()));
     assert_eq!(spoken(&effects), ["l", "s"]);
     // With passwords spoken, typing is echoed as it is typed, and the
     // terminal showing it says nothing more.
@@ -1055,74 +1115,8 @@ fn typing_the_terminal_showed_is_echoed_by_the_typing_echo_settings() {
         ["p"],
         "the character is echoed as it is typed"
     );
-    let effects = reduce(&mut state, &said(TERMINAL, 0, echo));
+    let effects = say(&mut state, &said(TERMINAL, 0, echo));
     assert_eq!(spoken(&effects), Vec::<String>::new());
-}
-
-/// `effect`, or the effect it carries on a key's behalf.
-fn own(effect: &Effect) -> &Effect {
-    match effect {
-        Effect::ForKey(_, effect) => effect,
-        effect => effect,
-    }
-}
-
-/// The keys the hook passes itself are told to the terminal's outpost by
-/// the hook's thread (`verbatim-app`); Core tells it of a key it held, as it
-/// passes the key on, taken as reaching the program just after the read
-/// before it.
-#[test]
-fn a_held_key_is_told_to_the_terminals_outpost_as_it_is_passed_on() {
-    let mut state = terminal();
-    let told = |effects: &[Effect]| -> Vec<TerminalKey> {
-        effects
-            .iter()
-            .map(own)
-            .filter_map(|effect| match effect {
-                Effect::Text(TextRequest {
-                    op: TextOp::TerminalKey(key),
-                    node_id,
-                    ..
-                }) if *node_id == id(TERMINAL) => Some(key.clone()),
-                _ => None,
-            })
-            .collect()
-    };
-    assert_eq!(told(&reduce(&mut state, &typed("a"))), []);
-    let effects = reduce(
-        &mut state,
-        &Input::HeldKey {
-            trace_id: TraceId::mint(),
-            key: CaretKey {
-                motion: CaretMotion::PreviousLine,
-                select: false,
-            },
-            pressed_at_ms: 2_000,
-        },
-    );
-    let Some(Effect::Text(TextRequest {
-        query_id,
-        op: TextOp::ReadCaret,
-        ..
-    })) = effects.first().map(own)
-    else {
-        panic!("the caret is read before the held key, not {effects:?}");
-    };
-    let effects = reduce(
-        &mut state,
-        &Input::TextCompleted {
-            trace_id: TraceId::mint(),
-            query_id: *query_id,
-            reply: TextReply::Unanswered,
-        },
-    );
-    assert_eq!(
-        told(&effects),
-        [TerminalKey {
-            kind: TerminalKeyKind::Caret(TerminalUnit::Line),
-            at_ms: 2_000,
-        }]
-    );
 }
 
 #[test]
@@ -1192,7 +1186,7 @@ fn the_review_cursor_reads_at_the_caret_once_it_followed_it() {
         items: Vec::new(),
         followed: true,
     };
-    let _ = reduce(&mut state, &said(TERMINAL, 0, followed));
+    let _ = say(&mut state, &said(TERMINAL, 0, followed));
     assert_eq!(at(&review(&mut state)), [TextPoint::Caret]);
 }
 
@@ -1207,7 +1201,7 @@ fn of_what_a_read_before_a_cut_said_only_the_answers_to_keys_are_spoken() {
         ],
         followed: false,
     };
-    let effects = reduce(&mut state, &said(TERMINAL, 4_999, speech));
+    let effects = say(&mut state, &said(TERMINAL, 4_999, speech));
     assert_eq!(spoken(&effects), ["a"]);
 }
 
@@ -1233,4 +1227,32 @@ fn output_cut_off_outside_the_reducer_is_released_by_the_pipelines_report() {
     assert_eq!(playback.play_all(&mut state), ["line 1"]);
     playback.feed(&mut state, &output(lines(11..=11)));
     assert_eq!(playback.play_all(&mut state), ["line 11"]);
+}
+
+#[test]
+fn keys_are_told_to_the_reading_rules_by_their_unit() {
+    let key = |motion| CaretKey {
+        motion,
+        select: false,
+    };
+    assert_eq!(
+        caret_key_kind(key(CaretMotion::NextCharacter)),
+        TerminalKeyKind::Caret(TerminalUnit::Character)
+    );
+    assert_eq!(
+        caret_key_kind(key(CaretMotion::PreviousWord)),
+        TerminalKeyKind::Caret(TerminalUnit::Word)
+    );
+    assert_eq!(
+        caret_key_kind(key(CaretMotion::PreviousLine)),
+        TerminalKeyKind::Caret(TerminalUnit::Line)
+    );
+    assert_eq!(
+        caret_key_kind(key(CaretMotion::Backspace)),
+        TerminalKeyKind::Other
+    );
+    assert_eq!(typed_kind("a"), TerminalKeyKind::Typed("a".to_owned()));
+    assert_eq!(typed_kind("\r"), TerminalKeyKind::Enter);
+    assert_eq!(typed_kind("\t"), TerminalKeyKind::Forget);
+    assert_eq!(typed_kind("\u{1}"), TerminalKeyKind::Other);
 }

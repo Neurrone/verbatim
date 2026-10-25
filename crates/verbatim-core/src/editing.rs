@@ -348,20 +348,10 @@ fn start_held(state: &mut SrState, held: HeldKey) -> Vec<Effect> {
 /// without holding.
 fn pass_held(state: &mut SrState, held: HeldKey, at_ms: u64) -> Vec<Effect> {
     state.held_keys.passed_at_ms = at_ms;
-    // A terminal's reading rules answer the key from the reads its window
-    // holds: told before the key reaches the application, since the hook
-    // held it, which tells the rules of every key it passes itself
-    // (`crate::terminal::key`).
-    let kind = crate::terminal::caret_key_kind(held.key);
-    let mut effects = crate::terminal::key(state, kind.clone(), at_ms);
     // A terminal Core reads keeps it for its reading rules, and asks for
     // the colours from its time, before the key reaches the program.
-    effects.extend(crate::terminal_model::key(
-        state,
-        kind,
-        at_ms,
-        held.trace_id,
-    ));
+    let kind = crate::terminal::caret_key_kind(held.key);
+    let mut effects = crate::terminal_model::key(state, kind, at_ms, held.trace_id);
     effects.extend(caret_key(state, held.key, at_ms));
     state.held_keys.awaiting_watch = effects.iter().find_map(|effect| match effect {
         Effect::Text(TextRequest {

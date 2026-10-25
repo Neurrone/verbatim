@@ -218,9 +218,9 @@ Public API:
   limits, "Lines spoken in full" and "Last lines to speak" (30 each,
   `DEFAULT_TERMINAL_LINES`), read through `full_lines` and `last_lines`,
   which keep them between 1 and `MAX_TERMINAL_LINES`.
-  `TerminalSettings` is what an outpost's terminal reading rules take of
-  them: "report new output" and "review follows caret"; the two limits
-  are Core's flood policy's alone.
+  `TerminalSettings`, "report new output" and "review follows caret", is
+  still sent to each outpost, which no longer takes it: the reading rules
+  run in Core and take the reader settings there.
   `TypingEcho::next` is the toggle key's cycle. `verbatim-config` stores
   them; the shell hands them to the reducer as `Input::Settings`.
 - The theme model, described under "Themes" below: `Indication`,
@@ -351,35 +351,29 @@ the contract the Windows side implements.
   arrived.
 - `NormalizedEvent::TextChanged { node_id }`: the node's text changed;
   Core says nothing of it.
-- `NormalizedEvent::TerminalSpeech { node_id, speech }`: sent for a
-  focused terminal in place of `TextChanged`, and only when there is
-  something to say: what the outpost's reading rules said of a read, of a
-  key, or once the quiet period passed (`docs/design/terminal-model.md`,
-  "Reading rules"). A `TerminalSpeech` (`terminal.rs`) holds its `items` in the
-  order they are spoken, each a `TerminalItem`: output, which Core queues
-  by the flood policy (`Output`, a new line whole, a redrawn row from the
-  word that changed, or a held line as it was last read, an empty one a
-  blank line; `Growth`, what a growing line gained, spoken like a line and
+- `TerminalItem` (`terminal.rs`) is one thing a terminal's reading rules
+  said, as Core's flood policy takes it: output, which Core queues by the
+  flood policy (`Output`, a new line whole, a redrawn row from the word
+  that changed, or a held line as it was last read, an empty one a blank
+  line; `Growth`, what a growing line gained, spoken like a line and
   counted and dropped with its line; `Skipped`, a count of lines:
   `Skipped::Count`, `Skipped::Uncounted` when the count is not known, or
   `Skipped::MoreThan` when lines went by past the terminal's history, or
-  `Skipped::About` when a lost read counted them from text, which the
-  outpost sends with a count of none ahead of the lost read's lines;
-  `plus` adds an older and a newer count, a newer `MoreThan` standing for
-  everything before it, and an `About` making the sum about); and
-  the answers to keys, which Core speaks at once (`Echo`, typing the
-  terminal showed; `Caret`, a key's answer at the caret in a
-  `TerminalUnit`, character, word or line; `Gained` and `Lost`, text the
-  caret's line gained or lost; `Answer`, a row away from the caret that is
-  a key's answer; `Suggestion`, text after the caret in other colours).
-  `followed` says the review cursor followed the caret a key moved
-  (`serde(default)`). Text is sent without padding, a line whole however
-  long ([verbatim-core](verbatim-core.md), "Terminals").
+  `Skipped::About` when a lost read counted them from text, a count of
+  none ahead of the lost read's lines; `plus` adds an older and a newer
+  count, a newer `MoreThan` standing for everything before it, and an
+  `About` making the sum about); and the answers to keys, which Core
+  speaks at once (`Echo`, typing the terminal showed; `Caret`, a key's
+  answer at the caret in a `TerminalUnit`, character, word or line;
+  `Gained` and `Lost`, text the caret's line gained or lost; `Answer`, a
+  row away from the caret that is a key's answer; `Suggestion`, text
+  after the caret in other colours). It no longer crosses a pipe.
 - `NormalizedEvent::TerminalSnapshot { node_id, snapshot }`: one read of a
   focused terminal, for Core's terminal model, which aligns it and runs
   the reading rules on it ([verbatim-core](verbatim-core.md), "Core's
-  terminal model"; `docs/design/terminal-model.md`, "Where it runs"). No
-  outpost sends it yet. A `TerminalSnapshot` is the wire form of the
+  terminal model"; `docs/design/terminal-model.md`, "Where it runs"),
+  sent in place of `TextChanged` unless it is identical to the last read
+  sent. A `TerminalSnapshot` is the wire form of the
   rules' read, whole by itself and naming nothing of an earlier read: its
   `text` from the read's start to the document's end, the `screen`, the
   document's `first_row` and the `caret_line`, each a `TerminalText`; the
@@ -543,18 +537,12 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   5.1). Hold: Core's output queue is full, so the outpost only notes
   changes (answer `Done`). Read: what the terminal says now, read only
   when the text changed since the last read, then holding or reading each
-  change at once again (answer `Terminal(speech)`). Cancel: speech was cut
-  off, so read to the end, live again (answer `Terminal(speech)`, of which
-  Core speaks only the answers to keys).
-- `TerminalKey(TerminalKey)`: a key Core held reached the focused
-  terminal (the keyboard hook's thread tells the outpost of the keys it
-  passes itself, in the outpost's own protocol): its
-  `TerminalKeyKind` (`Typed` text, a `Caret` key Verbatim knows with its
-  `TerminalUnit`, `Enter`, answered only by output, `Forget` for Tab,
-  Escape, Control+C, Control+D and Control+Break, or `Other`) and `at_ms`, when it reached the program on
-  the run's shared clock, since the reading rules judge by that time which
-  reads can carry its effects (answer `Done`, which Core does not wait
-  for).
+  change at once again (answer `TerminalSnapshot`, the read, or
+  `TerminalUnchanged` when nothing changed). Cancel: speech was cut off,
+  so read to the end, live again (answer `TerminalSnapshot`, of whose
+  speech Core says only the answers to keys, or `TerminalUnchanged`).
+- `ReadCaret` in a focused terminal is answered with a read
+  (`TerminalSnapshot`), whose caret report answers it.
 - `TerminalReadNow(TerminalScope)`: read the focused terminal at once,
   whatever its on-demand state, and answer with the read
   (`TerminalSnapshot`): `Fresh`, a read as any other before a review

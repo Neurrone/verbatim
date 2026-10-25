@@ -356,6 +356,18 @@ impl Session {
         self.play();
     }
 
+    /// Answers the caret read before a held key as a terminal's outpost
+    /// does, with a read begun at `at_ms` that carries `caret`.
+    pub fn answer_caret_read(&mut self, at_ms: u64, caret: verbatim_model::CaretReport) {
+        let query_id = self.caret_read.take().expect("a caret read held back");
+        self.at_ms = at_ms;
+        let (_, mut snapshot) = self.outpost.read(None, at_ms);
+        snapshot.caret = Some(caret);
+        let effects = self.completed(query_id, TextReply::TerminalSnapshot(Box::new(snapshot)));
+        self.run(effects);
+        self.play();
+    }
+
     fn completed(&mut self, query_id: QueryId, reply: TextReply) -> Vec<Effect> {
         self.step(Input::TextCompleted {
             trace_id: TraceId::mint(),
