@@ -2713,11 +2713,9 @@ it.
   last read began at or after the key without them, a read is taken at
   once with them and answers the request; otherwise the next read takes
   them, and the request is answered `Done` (`Terminal::colours`).
-- Keys. The keyboard hook's thread still tells the outpost of each key it
-  passes (`SupervisorToOutpost::TerminalKey`), as do the shell the
-  reading rules' settings (`SupervisorToOutpost::TerminalSettings`); the
-  outpost drops both, Core's terminal model taking the keys and the
-  settings. A held caret key's read before it is passed on
+- Keys. A terminal's keys and the reading rules' settings are Core's
+  alone; the outpost is told of neither. A held caret key's read before
+  it is passed on
   (`TextOp::ReadCaret`) is, in a focused terminal, a read answered as a
   snapshot whose caret answers the request in Core; the key's watch's
   evidence, a caret event or a text change, then reads the terminal, and

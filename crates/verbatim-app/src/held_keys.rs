@@ -10,10 +10,7 @@
 //! transition is never read, and goes as soon as it reaches the front.
 //! Whatever reaches the front is sent with one `SendInput`, each key
 //! tagged with its place in line (`passed_on_info`) so the hook lets it
-//! through and knows it has gone. What a deferred key is to a terminal's
-//! reading rules goes with it, and is told to the focused terminal's
-//! outpost just before the send, since that is when the key reaches the
-//! terminal (`docs/design/terminal-model.md`, section 3.3).
+//! through and knows it has gone.
 //!
 //! A held key is sent as NVDA's `KeyboardInputGesture.send`
 //! (`nvda/source/keyboardHandler.py`) sends a gesture: the gesture's
@@ -26,7 +23,7 @@
 use std::collections::VecDeque;
 
 use verbatim_input_windows::{HeldStroke, passed_on_info};
-use verbatim_model::{GestureId, TerminalKeyKind, TraceId};
+use verbatim_model::{GestureId, TraceId};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY,
@@ -50,13 +47,8 @@ enum Waiting {
         /// Whether Core has passed it on.
         passed: bool,
     },
-    /// A transition deferred behind a held key, with what it is to a
-    /// terminal's reading rules.
-    Deferred {
-        stroke: HeldStroke,
-        pressed: bool,
-        told: Vec<TerminalKeyKind>,
-    },
+    /// A transition deferred behind a held key.
+    Deferred { stroke: HeldStroke, pressed: bool },
 }
 
 /// The keys held back, in the order the hook reported them. Core passes on
@@ -91,30 +83,17 @@ impl HeldKeys {
         self.line.is_empty()
     }
 
-    /// Puts a deferred transition in line, with what it is to a terminal's
-    /// reading rules (`told`), and sends it at once if nothing waits ahead
-    /// of it; `tell` tells the focused terminal's outpost of each key as it
-    /// is sent.
-    pub(crate) fn deferred(
-        &mut self,
-        stroke: HeldStroke,
-        pressed: bool,
-        told: Vec<TerminalKeyKind>,
-        tell: &mut dyn FnMut(TerminalKeyKind),
-    ) {
-        self.line.push_back(Waiting::Deferred {
-            stroke,
-            pressed,
-            told,
-        });
-        self.send_ready(tell);
+    /// Puts a deferred transition in line, and sends it at once if nothing
+    /// waits ahead of it.
+    pub(crate) fn deferred(&mut self, stroke: HeldStroke, pressed: bool) {
+        self.line.push_back(Waiting::Deferred { stroke, pressed });
+        self.send_ready();
     }
 
     /// Passes on the key held under `trace_id`, with every deferred key
     /// behind it up to the next held key still waiting, and logs how long
-    /// it was held, from the hook's press to the send; `tell` as for
-    /// [`deferred`](Self::deferred).
-    pub(crate) fn pass_on(&mut self, trace_id: TraceId, tell: &mut dyn FnMut(TerminalKeyKind)) {
+    /// it was held, from the hook's press to the send.
+    pub(crate) fn pass_on(&mut self, trace_id: TraceId) {
         let Some(passed) = self.line.iter_mut().find_map(|waiting| match waiting {
             Waiting::Held {
                 trace_id: held,
@@ -127,15 +106,13 @@ impl HeldKeys {
             return;
         };
         *passed = true;
-        self.send_ready(tell);
+        self.send_ready();
     }
 
     /// Sends, with one `SendInput`, every key at the front of the line that
-    /// may go: deferred transitions, and held keys Core has passed on. The
-    /// deferred keys are told to the terminal's outpost first.
-    fn send_ready(&mut self, tell: &mut dyn FnMut(TerminalKeyKind)) {
+    /// may go: deferred transitions, and held keys Core has passed on.
+    fn send_ready(&mut self) {
         let mut inputs = Vec::new();
-        let mut told_keys = Vec::new();
         while let Some(front) = self.line.front() {
             match front {
                 Waiting::Held { passed: false, .. } => break,
@@ -156,21 +133,14 @@ impl HeldKeys {
                         "held key passed on"
                     );
                 }
-                Waiting::Deferred {
-                    stroke, pressed, ..
-                } => {
+                Waiting::Deferred { stroke, pressed } => {
                     inputs.push(key(*stroke, !*pressed, stroke.sequence));
                 }
             }
-            if let Some(Waiting::Deferred { told, .. }) = self.line.pop_front() {
-                told_keys.extend(told);
-            }
+            self.line.pop_front();
         }
         if inputs.is_empty() {
             return;
-        }
-        for kind in told_keys {
-            tell(kind);
         }
         let size = i32::try_from(size_of::<INPUT>()).unwrap_or(i32::MAX);
         // SAFETY: `inputs` is a valid slice of initialized INPUT values whose

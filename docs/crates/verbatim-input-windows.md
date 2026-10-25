@@ -111,11 +111,10 @@ Keys behind a held key: while any key held back has not yet come back
 through the hook, every later transition the hook would pass, typed
 characters, modifiers and releases included, is swallowed too and
 reported as `KeyReport::Deferred` (its stroke and whether it is a press),
-after the reports it makes as before, which say it was deferred
-(`deferred` on `Observed`, `Passed` and `Typed`; a typed character is
-still reported `Typed`, translated with the deferred modifiers ahead of
-it taken as made), so the app sends it on after the held key, in the
-order pressed, and tells a terminal of it as it does. Each key held or deferred gets a place in line
+after the reports it makes as before (a typed character is still
+reported `Typed`, translated with the deferred modifiers ahead of it
+taken as made), so the app sends it on after the held key, in the order
+pressed. Each key held or deferred gets a place in line
 (`HeldStroke::sequence`), kept by the hook (`HookState::outstanding`)
 until the key comes back carrying it: `dwExtraInfo` holds
 `PASSED_ON_TAG` in its high half and the place in its low half

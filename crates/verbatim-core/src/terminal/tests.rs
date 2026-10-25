@@ -14,11 +14,14 @@ use std::collections::VecDeque;
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, Effect, Input, Message, NodeDetails, NodeId, NodeSnapshot,
     NormalizedEvent, OutpostId, Phrase, Pid, QueryId, ReaderSettings, ReviewCommand, Role,
-    SegmentContent, Skipped, SpeechMark, SpeechPriority, StateSet, TerminalItem, TerminalKeyKind,
-    TerminalUnit, TextOp, TextPoint, TextReply, TextRequest, TraceId,
+    SegmentContent, SpeechMark, SpeechPriority, StateSet, TextOp, TextPoint, TextReply,
+    TextRequest, TraceId,
 };
 
-use super::{Said, SaidItem, caret_key_kind, typed_kind};
+use super::{
+    Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit, caret_key_kind,
+    typed_kind,
+};
 use crate::reduce::reduce;
 use crate::state::SrState;
 

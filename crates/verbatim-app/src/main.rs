@@ -27,7 +27,7 @@ mod themes;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -305,18 +305,12 @@ fn run(
     // published by the reducer thread (architecture section 5).
     let foreground = Arc::new(ForegroundView::new());
 
-    // The outpost of Core's focus when it is a terminal, as its number plus
-    // one, 0 for none: the keyboard hook's thread tells it of each key it
-    // passes on (`docs/design/terminal-model.md`, section 5.5).
-    let terminal_outpost = Arc::new(AtomicU64::new(0));
-
     // The reducer thread: normalized events and review commands in, speech,
     // fetches, text requests, activations, and clipboard copies out.
     {
         let context = ReducerContext {
             holding: Arc::clone(&holding),
             foreground: Arc::clone(&foreground),
-            terminal_outpost: Arc::clone(&terminal_outpost),
             clipboard: clipboard::Clipboard::start(command_tx.clone())?,
             manager: Arc::clone(&manager),
             supervisor: Arc::clone(&supervisor),
@@ -394,24 +388,6 @@ fn run(
     let caret_keys: HashMap<GestureId, CaretKey> =
         verbatim_input::caret_bindings().into_iter().collect();
     let clearing_keys: HashSet<GestureId> = verbatim_input::clearing_keys().into_iter().collect();
-    // Tells the focused terminal's outpost of a key the hook passes, as the
-    // hook reports it and before the key is passed on, so it reaches the
-    // outpost ahead of what the terminal shows of it. A key deferred behind
-    // a held one is kept with its deferred transition and told as the
-    // reducer thread sends it on (`held_keys`); a key held back is told by
-    // Core as it passes it on.
-    let deferred_kinds = std::cell::RefCell::new(Vec::new());
-    let tell_now = {
-        let supervisor = Arc::clone(&supervisor);
-        let terminal_outpost = Arc::clone(&terminal_outpost);
-        move |kind: verbatim_model::TerminalKeyKind, pressed_at_us: u64| {
-            let outpost = terminal_outpost
-                .load(Ordering::Relaxed)
-                .checked_sub(1)
-                .map(verbatim_model::OutpostId);
-            tell_terminal_key(&supervisor, outpost, kind, pressed_at_us / 1_000);
-        }
-    };
     let hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
@@ -426,42 +402,20 @@ fn run(
             KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
         }),
         Box::new(move |report| {
-            let terminal_key =
-                |kind: verbatim_model::TerminalKeyKind, pressed_at_us: u64, deferred: bool| {
-                    if deferred {
-                        deferred_kinds.borrow_mut().push(kind);
-                    } else {
-                        tell_now(kind, pressed_at_us);
-                    }
-                };
             let command = match report {
                 KeyReport::Observed {
                     gesture,
                     pressed_at_us,
-                    deferred,
                 } => match caret_keys.get(&gesture.gesture) {
-                    Some(&key) => {
-                        terminal_key(verbatim_core::caret_key_kind(key), pressed_at_us, deferred);
-                        ShellCommand::CaretKey {
-                            input: Box::new(Input::CaretKey {
-                                trace_id: gesture.trace_id,
-                                key,
-                                pressed_at_ms: pressed_at_us / 1_000,
-                            }),
-                            pressed_at_us,
-                        }
-                    }
+                    Some(&key) => ShellCommand::CaretKey {
+                        input: Box::new(Input::CaretKey {
+                            trace_id: gesture.trace_id,
+                            key,
+                            pressed_at_ms: pressed_at_us / 1_000,
+                        }),
+                        pressed_at_us,
+                    },
                     None if clearing_keys.contains(&gesture.gesture) => {
-                        terminal_key(
-                            verbatim_model::TerminalKeyKind::Forget,
-                            pressed_at_us,
-                            deferred,
-                        );
-                        terminal_key(
-                            verbatim_model::TerminalKeyKind::Other,
-                            pressed_at_us,
-                            deferred,
-                        );
                         // The typing held is forgotten first; then the key
                         // is judged like any other (Escape clearing a line
                         // speaks what it removed).
@@ -503,46 +457,32 @@ fn run(
                     pressed_at_us,
                     stroke,
                 },
-                KeyReport::Deferred { stroke, pressed } => ShellCommand::DeferredKey {
-                    stroke,
-                    pressed,
-                    told: deferred_kinds.take(),
-                },
+                KeyReport::Deferred { stroke, pressed } => {
+                    ShellCommand::DeferredKey { stroke, pressed }
+                }
                 KeyReport::Passed {
                     trace_id,
                     pressed_at_us,
-                    deferred,
-                } => {
-                    terminal_key(
-                        verbatim_model::TerminalKeyKind::Other,
-                        pressed_at_us,
-                        deferred,
-                    );
-                    ShellCommand::CaretKey {
-                        input: Box::new(Input::CaretKey {
-                            trace_id,
-                            key: CaretKey {
-                                motion: verbatim_model::CaretMotion::Other,
-                                select: false,
-                            },
-                            pressed_at_ms: pressed_at_us / 1_000,
-                        }),
-                        pressed_at_us,
-                    }
-                }
+                } => ShellCommand::CaretKey {
+                    input: Box::new(Input::CaretKey {
+                        trace_id,
+                        key: CaretKey {
+                            motion: verbatim_model::CaretMotion::Other,
+                            select: false,
+                        },
+                        pressed_at_ms: pressed_at_us / 1_000,
+                    }),
+                    pressed_at_us,
+                },
                 KeyReport::Typed {
                     trace_id,
                     text,
                     pressed_at_us,
-                    deferred,
-                } => {
-                    terminal_key(verbatim_core::typed_kind(&text), pressed_at_us, deferred);
-                    ShellCommand::Input(Box::new(Input::CharacterTyped {
-                        trace_id,
-                        text,
-                        at_ms: pressed_at_us / 1_000,
-                    }))
-                }
+                } => ShellCommand::Input(Box::new(Input::CharacterTyped {
+                    trace_id,
+                    text,
+                    at_ms: pressed_at_us / 1_000,
+                })),
             };
             let _ = reports_tx.send(command);
         }),
@@ -871,24 +811,6 @@ fn persist_fn(store: Arc<Mutex<ConfigStore>>) -> verbatim_speech::PersistFn {
     })
 }
 
-/// Tells the focused terminal's outpost, if a terminal has the focus, of a
-/// key that reached it at `at_ms` on the run's shared clock
-/// (`docs/design/terminal-model.md`, section 3.3).
-fn tell_terminal_key(
-    supervisor: &Supervisor,
-    outpost: Option<verbatim_model::OutpostId>,
-    kind: verbatim_model::TerminalKeyKind,
-    at_ms: u64,
-) {
-    let Some(outpost) = outpost else {
-        return;
-    };
-    let key = verbatim_model::TerminalKey { kind, at_ms };
-    if let Err(error) = supervisor.send_to_outpost(outpost, SupervisorToOutpost::TerminalKey(key)) {
-        tracing::debug!(%error, outpost = outpost.0, "a key was not told to the terminal's outpost");
-    }
-}
-
 /// The hook configuration from global settings: the Verbatim modifier keys
 /// and NVDA's two speech interrupt settings.
 fn decision_config(store: &Arc<Mutex<ConfigStore>>) -> DecisionConfig {
@@ -1064,9 +986,6 @@ struct ReducerContext {
     /// Core's view of the window in front for the keyboard hook, set after
     /// each input.
     foreground: Arc<ForegroundView>,
-    /// The outpost of Core's focus when it is a terminal, its number plus
-    /// one, 0 for none, set after each input.
-    terminal_outpost: Arc<AtomicU64>,
     manager: Arc<SpeechManager>,
     /// Where copies to the clipboard are made, off the reducer thread.
     clipboard: clipboard::Clipboard,
@@ -1121,12 +1040,10 @@ pub(crate) enum ShellCommand {
         stroke: verbatim_input_windows::HeldStroke,
     },
     /// A key transition the hook deferred behind a held key, sent on in
-    /// its turn, with what the key is to a terminal's reading rules, told
-    /// to the focused terminal's outpost as it is sent.
+    /// its turn.
     DeferredKey {
         stroke: verbatim_input_windows::HeldStroke,
         pressed: bool,
-        told: Vec<verbatim_model::TerminalKeyKind>,
     },
     /// A control-plane tree dump, reading locations when the flag says.
     DumpTree(DumpTicket, bool, Sender<DumpTreeResult>),
@@ -1583,23 +1500,11 @@ impl ReducerThread<'_> {
                     self.context.ledger.key_pressed(trace_id, pressed_at_us);
                     self.apply(*input);
                 } else {
-                    let supervisor = &self.context.supervisor;
-                    let outpost = self.state.terminal_outpost();
-                    self.held_keys.pass_on(trace_id, &mut |kind| {
-                        tell_terminal_key(supervisor, outpost, kind, latency::now_ms());
-                    });
+                    self.held_keys.pass_on(trace_id);
                 }
             }
-            ShellCommand::DeferredKey {
-                stroke,
-                pressed,
-                told,
-            } => {
-                let supervisor = &self.context.supervisor;
-                let outpost = self.state.terminal_outpost();
-                self.held_keys.deferred(stroke, pressed, told, &mut |kind| {
-                    tell_terminal_key(supervisor, outpost, kind, latency::now_ms());
-                });
+            ShellCommand::DeferredKey { stroke, pressed } => {
+                self.held_keys.deferred(stroke, pressed);
             }
             ShellCommand::DumpTree(ticket, locations, reply) => {
                 self.dump_tree(ticket, locations, reply);
@@ -1782,12 +1687,6 @@ impl ReducerThread<'_> {
         self.context.ledger.reduced(trace_id);
         self.context.holding.set(self.state.holds_caret_keys());
         self.context.foreground.set(self.state.hook_foreground());
-        self.context.terminal_outpost.store(
-            self.state
-                .terminal_outpost()
-                .map_or(0, |outpost| outpost.0 + 1),
-            Ordering::Relaxed,
-        );
         {
             let mut recorder = self
                 .context
@@ -1893,12 +1792,10 @@ impl ReducerThread<'_> {
 
     /// Tells each live outpost the details the active theme wants read
     /// (`SrState::fetches`), when they differ from what it was last told:
-    /// a detail whose indication is off is not read at all; and the
-    /// terminal reading rules' settings (`SrState::terminal_settings`). A
-    /// new outpost is told at once, before it reports anything.
+    /// a detail whose indication is off is not read at all. A new outpost
+    /// is told at once, before it reports anything.
     fn send_fetches(&mut self) {
         let fetches = self.state.fetches();
-        let terminal_settings = self.state.terminal_settings();
         for (outpost, live) in self.live.iter_mut() {
             if live.fetches_sent != Some(fetches) {
                 match self
@@ -1911,18 +1808,6 @@ impl ReducerThread<'_> {
                     // one belongs to an outpost that is ending.
                     Err(error) => {
                         tracing::debug!(%error, %outpost, "the fetches were not sent yet");
-                    }
-                }
-            }
-            // Likewise the terminal reading rules' settings.
-            if live.terminal_settings_sent != Some(terminal_settings) {
-                match self.context.supervisor.send_to_outpost(
-                    *outpost,
-                    SupervisorToOutpost::TerminalSettings(terminal_settings),
-                ) {
-                    Ok(()) => live.terminal_settings_sent = Some(terminal_settings),
-                    Err(error) => {
-                        tracing::debug!(%error, %outpost, "the terminal settings were not sent yet");
                     }
                 }
             }
@@ -1988,13 +1873,7 @@ impl ReducerThread<'_> {
             }
             Effect::PlayEarcon(earcon) => self.context.manager.play_earcon(earcon),
             Effect::ReadForegroundFocus => self.fake_focus(trace_id),
-            Effect::PassHeldKey(held) => {
-                let supervisor = &self.context.supervisor;
-                let outpost = self.state.terminal_outpost();
-                self.held_keys.pass_on(held, &mut |kind| {
-                    tell_terminal_key(supervisor, outpost, kind, latency::now_ms());
-                });
-            }
+            Effect::PassHeldKey(held) => self.held_keys.pass_on(held),
             Effect::BoundHeldKeyWait { key, within_ms } => {
                 self.held_wait = Some((key, Instant::now() + Duration::from_millis(within_ms)));
             }

@@ -3,13 +3,14 @@
 
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Pid, Role, Skipped, StateSet, TerminalItem, TerminalKeyKind, TerminalUnit, TraceId,
+    OutpostId, Pid, Role, StateSet, TraceId,
 };
 use verbatim_text::terminal_reading::{Settings, Speech, Step};
 use verbatim_text::terminal_rows::Lost;
 
 use super::{Said, SaidItem, TerminalModel, rules_key, speech_of};
 use crate::state::SrState;
+use crate::terminal::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 #[test]
 fn what_the_rules_say_is_cores_speech_in_order() {

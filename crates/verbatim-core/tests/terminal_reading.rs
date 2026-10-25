@@ -473,3 +473,49 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
         "{requests:?}"
     );
 }
+
+#[test]
+fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
+    // "x" typed at 210 while Up, pressed at 200, waits for the read before
+    // it; the read began at 300, so Up is passed on at 301, and "x", sent
+    // with it, reached the program then too.
+    let mut session = showing(20, 4, 10, "$ ");
+    session.input(&Input::HeldKey {
+        trace_id: TraceId::mint(),
+        key: CaretKey {
+            motion: CaretMotion::PreviousLine,
+            select: false,
+        },
+        pressed_at_ms: 200,
+    });
+    let (_, x) = typed("x", 210);
+    session.input(&x);
+    assert_eq!(session.requests(), [TextOp::ReadCaret]);
+    let line = verbatim_model::TextChunk {
+        unit: verbatim_model::TextUnit::Line,
+        text: "$ ".to_owned(),
+        start: verbatim_model::TextAnchor(7),
+        offset: 2,
+        languages: Vec::new(),
+        first: false,
+        last: true,
+        truncated: false,
+        formats: Vec::new(),
+    };
+    session.answer_caret_read(
+        300,
+        verbatim_model::CaretReport {
+            line,
+            selection: None,
+            selection_line: None,
+        },
+    );
+    let requests = session.requests();
+    assert_eq!(requests.len(), 3, "{requests:?}");
+    assert_eq!(requests[0], TextOp::TerminalColours { since_ms: 301 });
+    assert!(
+        matches!(&requests[1], TextOp::AwaitCaret(watch) if watch.pressed_at_ms == 301),
+        "{requests:?}"
+    );
+    assert_eq!(requests[2], TextOp::TerminalColours { since_ms: 301 });
+}

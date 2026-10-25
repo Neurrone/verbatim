@@ -37,5 +37,4 @@ pub use focus_rules::is_selection_container;
 pub use recorder::{RecordedInput, ReducerRecorder, replay};
 pub use reduce::{SNAP_RESULTS_ACTIVITY, reduce};
 pub use state::SrState;
-pub use terminal::{caret_key_kind, typed_kind};
 pub use terminal_model::{read_of, snapshot_of};

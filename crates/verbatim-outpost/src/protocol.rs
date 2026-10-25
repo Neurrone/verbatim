@@ -797,15 +797,6 @@ pub enum SupervisorToOutpost {
     /// outpost starts and whenever the theme in use changes; everything is
     /// read until the first arrives.
     Fetches(verbatim_model::Fetches),
-    /// A key reached the focused application, sent by the keyboard hook's
-    /// thread as the hook reports it. Ignored: the reading rules run in
-    /// Core, which takes the keys itself (`docs/design/terminal-model.md`,
-    /// "Where it runs").
-    TerminalKey(verbatim_model::TerminalKey),
-    /// The terminal reading rules' settings ("report new output" and
-    /// "review follows caret"), sent when an outpost starts and whenever
-    /// they change. Ignored: the reading rules run in Core.
-    TerminalSettings(verbatim_model::TerminalSettings),
     /// The nodes from this outpost that Core still holds (outpost redesign,
     /// "Held objects"), as the numbers the outpost issued, and the position
     /// of the last message from this outpost that Core has handled

@@ -298,10 +298,6 @@ pub enum KeyReport {
         /// about 16 ms: converted to this clock it could fall after the
         /// application handled the key.
         pressed_at_us: u64,
-        /// Whether the key was deferred behind a held key: it reaches the
-        /// application once the keys ahead of it are passed on, and its
-        /// [`KeyReport::Deferred`] follows this report.
-        deferred: bool,
     },
     /// A caret key the hook held back from the application, because
     /// holding is on ([`KeyHolding`]): the reducer has the caret read, then
@@ -320,8 +316,7 @@ pub enum KeyReport {
     /// application yet: it is passed on after the keys ahead of it, in the
     /// order pressed, never read (`docs/design/key-holding.md`, "Keys
     /// behind a held key"). What the key did is reported as for a key
-    /// passed at once, by the other reports, which come before this one
-    /// and say the key was deferred.
+    /// passed at once, by the other reports, which come before this one.
     Deferred {
         /// The transition to send again.
         stroke: HeldStroke,
@@ -336,8 +331,6 @@ pub enum KeyReport {
         trace_id: TraceId,
         /// As [`KeyReport::Observed`]'s.
         pressed_at_us: u64,
-        /// As [`KeyReport::Observed`]'s.
-        deferred: bool,
     },
     /// The key types `text` into the focused application: the source of
     /// `Input::CharacterTyped`. A tab is a tab character and Enter a
@@ -350,8 +343,6 @@ pub enum KeyReport {
         /// When the key was pressed, in microseconds on the run's shared
         /// clock.
         pressed_at_us: u64,
-        /// As [`KeyReport::Observed`]'s.
-        deferred: bool,
     },
 }
 
@@ -826,7 +817,6 @@ fn report_passed(
     scan_code: u32,
     key_number: u64,
     was_observed: bool,
-    behind_held: bool,
 ) {
     let pressed_at_us = unix_us();
     let trace_id = TraceId::mint();
@@ -842,7 +832,6 @@ fn report_passed(
                 trace_id,
                 text,
                 pressed_at_us,
-                deferred: behind_held,
             });
         }
         None if !was_observed && may_edit(event.vk) => {
@@ -850,7 +839,6 @@ fn report_passed(
             (state.reports)(KeyReport::Passed {
                 trace_id,
                 pressed_at_us,
-                deferred: behind_held,
             });
         }
         None => {}
@@ -908,7 +896,6 @@ fn decide(
         let _ = state.events.send(Routed::Gesture(emitted));
     }
     let was_observed = decision.observed.is_some();
-    let deferred = matches!(hold, Hold::Deferred(_));
     if let Some(observed) = decision.observed
         && !own
     {
@@ -924,7 +911,6 @@ fn decide(
             KeyReport::Observed {
                 gesture: observed,
                 pressed_at_us,
-                deferred,
             }
         });
     }
@@ -934,7 +920,7 @@ fn decide(
         && !decision.shared_modifier
         && !own
     {
-        report_passed(state, event, scan_code, key_number, was_observed, deferred);
+        report_passed(state, event, scan_code, key_number, was_observed);
     }
     // After what the key did, so that whoever passes it on has been told
     // of it first.
@@ -1150,9 +1136,7 @@ mod tests {
                 ),
                 KeyReport::Observed { gesture, .. } => format!("observed {}", gesture.gesture),
                 KeyReport::Passed { .. } => "passed".to_owned(),
-                KeyReport::Typed { text, deferred, .. } => {
-                    format!("typed {text}{}", if *deferred { ", deferred" } else { "" })
-                }
+                KeyReport::Typed { text, .. } => format!("typed {text}"),
             })
             .collect()
     }
@@ -1180,7 +1164,7 @@ mod tests {
             described(&reports.lock().unwrap()),
             [
                 "held kb:rightarrow #1",
-                "typed x, deferred",
+                "typed x",
                 "deferred 0x58 down #2",
                 "held kb:rightarrow #3",
                 "deferred 0x58 up #4",
@@ -1200,7 +1184,7 @@ mod tests {
         assert_eq!(decide(&mut state, letter_x(true), 0x2D, 0), swallowed);
         assert_eq!(
             described(&reports.lock().unwrap()),
-            ["typed x, deferred", "deferred 0x58 down #5"]
+            ["typed x", "deferred 0x58 down #5"]
         );
         // The last key held back comes back, clearing the second Right
         // Arrow and the letter's release though they never came: a key
@@ -1276,11 +1260,7 @@ mod tests {
         );
         assert_eq!(
             described(&reports.lock().unwrap()),
-            [
-                "held kb:rightarrow #1",
-                "typed x, deferred",
-                "deferred 0x58 down #2"
-            ]
+            ["held kb:rightarrow #1", "typed x", "deferred 0x58 down #2"]
         );
     }
 

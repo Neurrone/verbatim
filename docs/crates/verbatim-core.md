@@ -846,7 +846,11 @@ What a terminal says (`terminal.rs`; `docs/design/terminal-model.md`,
 "Core's flood policy"). The focused terminal's outpost reads it and sends
 each read; Core's terminal model (below) gives the read to the reading
 rules, and what they say (`Said`, `TerminalItem`s and the rules' own new
-lines) is spoken here; speech of anything but the focus is ignored.
+lines) is spoken here; speech of anything but the focus is ignored. The
+types of what the rules say, `TerminalItem` (output, a count of lines
+skipped, or a key's answer), `TerminalUnit`, `Skipped` and
+`TerminalKeyKind`, are Core's own (`terminal/items.rs`): none crosses a
+pipe.
 
 - The answers to keys are spoken at once, in order, ahead of the output
   the same speech carries: typing the terminal showed (`TerminalItem::Echo`)
@@ -885,8 +889,8 @@ lines) is spoken here; speech of anything but the focus is ignored.
   mark) is the backlog looked at: when more lines wait than "Lines spoken
   in full" (any count already skipped included), everything but the
   newest "Last lines to speak" becomes one "skipped N lines"
-  (`Phrase::SkippedLines`), adding any count the outpost sent; a count the
-  outpost could not make (`Skipped::Uncounted`) makes it "skipped lines"
+  (`Phrase::SkippedLines`), adding any count the rules gave; a count the
+  rules could not make (`Skipped::Uncounted`) makes it "skipped lines"
   (`Phrase::SkippedUncountedLines`), and lines that went by past the
   terminal's history (`Skipped::MoreThan`) make it "skipped more than N
   lines" (`Phrase::SkippedMoreThanLines`), N being the lines left

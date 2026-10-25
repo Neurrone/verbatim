@@ -133,11 +133,10 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   (`held_keys`) with the transitions the hook deferred behind held keys
   (`KeyReport::Deferred`), in the order reported. A held key waits at the
   front until Core emits `Effect::PassHeldKey`; a deferred transition
-  goes as soon as it reaches the front. A deferred key carries what it is
-  to a terminal's reading rules, gathered from its reports, and the
-  focused terminal's outpost is told of it (`SupervisorToOutpost::TerminalKey`)
-  just before it is sent, as reaching the program then; the hook's report
-  closure tells the outpost of every other key it passes, at once.
+  goes as soon as it reaches the front. A terminal's keys reach its
+  reading rules through Core alone, which takes each key input in and a
+  deferred key as reaching the program when the held key ahead of it is
+  passed on ([verbatim-core](verbatim-core.md), "Core's terminal model").
   Whatever reaches the front is sent with one `SendInput`, each key carrying its place in line
   (`passed_on_info`): a held key with the gesture's Shift, Control or Alt
   that are not down pressed around it and the key released first if

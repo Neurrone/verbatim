@@ -50,8 +50,8 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
     CaretKey, CaretMotion, Effect, FocusValidity, Message, NodeId, Phrase, QueryId, SegmentContent,
-    Skipped, SpeechMark, SpeechPriority, TerminalItem, TerminalKeyKind, TerminalUnit, TextOp,
-    TextReply, TextRequest, TraceId, Utterance, UtteranceSegment,
+    SpeechMark, SpeechPriority, TextOp, TextReply, TextRequest, TraceId, Utterance,
+    UtteranceSegment,
 };
 
 use verbatim_text::terminal_rows::Text;
@@ -59,6 +59,10 @@ use verbatim_text::terminal_rows::Text;
 use crate::editing;
 use crate::state::{ReviewText, SrState};
 use crate::text;
+
+mod items;
+
+pub(crate) use items::{Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 /// How many utterances of output are handed to speech before their marks
 /// are reached: two queued behind the one playing, so there is no gap
@@ -246,7 +250,7 @@ pub(crate) fn terminal_focus(state: &SrState) -> Option<NodeId> {
 /// What a caret key is to the reading rules: one Verbatim knows, by the
 /// unit it moves by, or any other ("Keys and their window").
 #[must_use]
-pub fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
+pub(crate) fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
     match key.motion {
         CaretMotion::PreviousCharacter
         | CaretMotion::NextCharacter
@@ -273,7 +277,7 @@ pub fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
 /// forgets it too; a control character, which types nothing the terminal
 /// shows as itself; and anything else, typed.
 #[must_use]
-pub fn typed_kind(typed: &str) -> TerminalKeyKind {
+pub(crate) fn typed_kind(typed: &str) -> TerminalKeyKind {
     if typed.chars().any(|c| matches!(c, '\r' | '\n')) {
         TerminalKeyKind::Enter
     } else if typed.contains('\t') {

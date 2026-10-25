@@ -1369,11 +1369,8 @@ impl Outpost {
             // `run_pipe` ends its loop on `Shutdown` and calls `shutdown`,
             // which takes the outpost, and handles `Assign`, which ends the
             // outpost when it fails; the hand-over's news of hooks is for
-            // the listener alone. Core's terminal model takes the keys and
-            // the settings; the keyboard hook and the shell still send them.
-            SupervisorToOutpost::TerminalKey(_)
-            | SupervisorToOutpost::TerminalSettings(_)
-            | SupervisorToOutpost::Shutdown
+            // the listener alone.
+            SupervisorToOutpost::Shutdown
             | SupervisorToOutpost::Assign { .. }
             | SupervisorToOutpost::HookInstalled { .. }
             | SupervisorToOutpost::HookRemoved { .. } => {}

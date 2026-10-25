@@ -218,9 +218,6 @@ Public API:
   limits, "Lines spoken in full" and "Last lines to speak" (30 each,
   `DEFAULT_TERMINAL_LINES`), read through `full_lines` and `last_lines`,
   which keep them between 1 and `MAX_TERMINAL_LINES`.
-  `TerminalSettings`, "report new output" and "review follows caret", is
-  still sent to each outpost, which no longer takes it: the reading rules
-  run in Core and take the reader settings there.
   `TypingEcho::next` is the toggle key's cycle. `verbatim-config` stores
   them; the shell hands them to the reducer as `Input::Settings`.
 - The theme model, described under "Themes" below: `Indication`,
@@ -351,23 +348,6 @@ the contract the Windows side implements.
   arrived.
 - `NormalizedEvent::TextChanged { node_id }`: the node's text changed;
   Core says nothing of it.
-- `TerminalItem` (`terminal.rs`) is one thing a terminal's reading rules
-  said, as Core's flood policy takes it: output, which Core queues by the
-  flood policy (`Output`, a new line whole, a redrawn row from the word
-  that changed, or a held line as it was last read, an empty one a blank
-  line; `Growth`, what a growing line gained, spoken like a line and
-  counted and dropped with its line; `Skipped`, a count of lines:
-  `Skipped::Count`, `Skipped::Uncounted` when the count is not known, or
-  `Skipped::MoreThan` when lines went by past the terminal's history, or
-  `Skipped::About` when a lost read counted them from text, a count of
-  none ahead of the lost read's lines; `plus` adds an older and a newer
-  count, a newer `MoreThan` standing for everything before it, and an
-  `About` making the sum about); and the answers to keys, which Core
-  speaks at once (`Echo`, typing the terminal showed; `Caret`, a key's
-  answer at the caret in a `TerminalUnit`, character, word or line;
-  `Gained` and `Lost`, text the caret's line gained or lost; `Answer`, a
-  row away from the caret that is a key's answer; `Suggestion`, text
-  after the caret in other colours). It no longer crosses a pipe.
 - `NormalizedEvent::TerminalSnapshot { node_id, snapshot }`: one read of a
   focused terminal, for Core's terminal model, which aligns it and runs
   the reading rules on it ([verbatim-core](verbatim-core.md), "Core's

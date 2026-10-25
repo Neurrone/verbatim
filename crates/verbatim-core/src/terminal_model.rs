@@ -55,9 +55,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, Skipped, TerminalColourRun,
-    TerminalItem, TerminalKeyKind, TerminalScope, TerminalSnapshot, TerminalText, TerminalUnit,
-    TextOp, TextReply, TextRequest, TraceId,
+    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalScope,
+    TerminalSnapshot, TerminalText, TextOp, TextReply, TextRequest, TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
@@ -65,7 +64,7 @@ use verbatim_text::terminal_reading::{
 use verbatim_text::terminal_rows::{Lost, Read, ReadText};
 
 use crate::state::SrState;
-use crate::terminal::{Said, SaidItem};
+use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
 
 pub(crate) use review::CaretAt;
 
