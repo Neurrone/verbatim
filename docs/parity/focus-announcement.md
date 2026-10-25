@@ -257,7 +257,7 @@ Cases that differ: Verbatim speaks both numbers on every focus, where
 NVDA leaves out an unchanged row or column within one table, which needs
 the containing grid's identity, not read, so a second Tab with Alt held
 says "row 1" again where NVDA says only the column (a deliberate
-divergence for now; Claude, 2026-10-25, pending Dickson's acceptance);
+divergence for now; Dickson, 2026-10-25);
 NVDA speaks a cell's coordinates text in place of its numbers when the
 cell gives one, and its row and column header texts before its row and
 column (from UI Automation's `TableItem` pattern, by default) and "through"
