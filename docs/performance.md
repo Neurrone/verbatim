@@ -2535,6 +2535,61 @@ one is held, and one hash lookup for each row of a read that keeps
 nothing of the last read, which only a screen switch or an overflow
 makes.
 
+### A terminal's reads in Core
+
+Once the reading rules run in Core's reducer (`docs/design/terminal-model.md`,
+"Where it runs"), each read crosses the pipe as a snapshot and is aligned
+on the reducer. Measured in the simulated terminal through `reduce` itself
+by `crates/verbatim-core/tests/terminal_cost.rs`, an ignored test run in a
+release build (`cargo test --release -p verbatim-core --test terminal_cost
+-- --ignored --nocapture`): each case fills a 120 by 30 terminal of each
+kind with a full history of numbered lines (9,001 rows), read as the
+outpost will read it for Core, writes its output, lets Core take the reads
+that follow with the whole document when its rules ask, and times each
+input that carries a read 31 times from a clone of the state before the
+output. The reducer's time is the whole step: rebuilding the read from the
+snapshot, the memory and the rules, and the flood policy taking their
+speech. The parse is that of the input's JSON, measured apart, as the
+supervisor's frame helper parses it off the reducer. Sizes are the
+snapshot's JSON as the event or reply carries it, without the lines'
+padding, with the same read padded (the form first planned) in brackets.
+Measured on 2026-10-25 on Dickson's x64 machine, two runs, medians in
+microseconds over both terminals:
+
+- An ordinary read of one new line: 1,109 to 1,135 bytes (11,765), of
+  which the screen 264 to 272; reducer 56 to 106 (rebuilding the read 2
+  to 4); parse 4 to 9.
+- A rotation of 61 rows: the read, 34 to 40 microseconds, keeps nothing
+  and asks for the whole document, 71.8 to 72.0 KB (1.12 MB); reducer
+  1,718 to 1,945 (rebuilding 252 to 284); parse 128 to 141 (padded 789
+  to 892).
+- A lost read keeping nothing, after 10,000 lines: the read 43 to 50
+  microseconds, then the whole document, 81.6 to 81.9 KB (1.12 MB),
+  every line handed to the flood policy; reducer 3,288 to 3,527
+  (rebuilding 278 to 308); parse 134 to 140 (padded 836 to 857).
+- A full-screen program's exit, whose read is the whole document: 71.7 to
+  72.0 KB (1.12 MB); reducer 1,591 to 1,690 (rebuilding 264 to 272);
+  parse 132 to 135 (padded 673 to 788).
+- A clear and a reprint of 8,905 rows: the read 40 to 45, then the whole
+  document, 160.1 KB (1.11 MB); reducer 2,966 to 3,034 (rebuilding 287 to
+  322); parse 160 to 185 (padded 734 to 821).
+- `clear; dir`, a clear and 100 lines: the read 1,823 to 1,863 bytes, 25
+  microseconds, and the whole document, now about a hundred rows, 2,421
+  to 2,461 bytes, 52 to 55.
+
+So the lost read and the clear and reprint are over the reducer's budget
+of 2 milliseconds a step (`docs/design/communication.md`, decision 9) at
+the median, 3.0 to 3.5 milliseconds, and the rotation and the full-screen
+exit, 1.6 to 1.9 at the median, pass it in their slowest runs: by the
+rule proposed for that decision, the alignment of a whole document goes
+off the reducer as an effect (sub-step 2.7 of the plan for the move). Rebuilding the padding, which the snapshot leaves out,
+costs 0.25 to 0.32 milliseconds of a whole document, against a parse that
+falls from 0.7 to 0.9 milliseconds to 0.13 to 0.19.
+
+A 2,000-line console-host flood read in 1,054 reads, as measured live on
+2026-10-08, moves 2.17 MB of snapshots (12.5 MB padded), about 2.1 KB a
+read.
+
 ### A terminal's upward search
 
 A read finds the screen's top row as last read without any search while
