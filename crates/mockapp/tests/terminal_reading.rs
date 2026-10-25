@@ -499,8 +499,8 @@ fn a_held_terminals_caret_event_is_read_with_the_text() {
 /// reaches the outpost only as the `WinEvent` UIA raises for MSAA clients,
 /// which the outpost drops, as the subscription leaves UIA's out for it,
 /// and a description change UIA delivers after it is reported alone; the
-/// console's own caret event (`EVENT_CONSOLE_CARET`) has the caret read
-/// and reported.
+/// console's own caret event (`EVENT_CONSOLE_CARET`) reads the terminal,
+/// and the read is sent with the caret.
 fn the_console_hosts_caret_comes_from_its_console() {
     let (mut app, outpost, text) = start_with(
         "mockapp-console-caret",
@@ -530,7 +530,30 @@ fn the_console_hosts_caret_comes_from_its_console() {
     outpost.settled();
     app.send("console-caret 1 0");
     outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    caret_read(&outpost, text);
+    assert_eq!(caret_at(&reported(&outpost, text)), ("one\r\n", 1));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A console host's caret move with no text change reaches Core: its caret
+/// event reads the terminal, as Windows Terminal's caret events do, and the
+/// read, its text as before, carries the moved caret, so Core's reading
+/// rules judge the next key from it (`docs/design/terminal-model.md`,
+/// "Where it runs": one caret).
+fn a_console_caret_move_with_no_text_change_is_read() {
+    let (mut app, outpost, area) = start_with(
+        "mockapp-console-caret-move",
+        "console_terminal.json",
+        "text",
+        OutpostOptions::default(),
+    );
+    app.send("caret text 24");
+    app.send("console-caret 2 1");
+    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    let read = reported(&outpost, area);
+    assert_eq!(text(&read), rows(&["one", "two", "ready>"]));
+    assert_eq!(caret_at(&read), ("two\r\n", 2));
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -552,7 +575,7 @@ fn the_console_hosts_system_caret_is_not_its_caret_event() {
     outpost.settled();
     app.send("console-caret 1 0");
     outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    caret_read(&outpost, text);
+    assert_eq!(caret_at(&reported(&outpost, text)), ("one\r\n", 1));
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -653,7 +676,7 @@ fn caret_event(app: &mut common::MockApp, outpost: &OutpostUnderTest) {
 /// window, read through MSAA, has the focus, the copy is heard again,
 /// before the console's caret event.
 fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
-    let (mut app, outpost, _text) = start_with(
+    let (mut app, outpost, area) = start_with(
         "mockapp-console-narrowed",
         "console_terminal_button.json",
         "text",
@@ -673,7 +696,10 @@ fn the_hooks_change_events_wait_for_a_window_read_through_msaa() {
     app.send("caret-event text");
     app.send("console-caret 0 0");
     outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
-    // The caret has not moved.
+    // The console's caret event reads the terminal: the caret has not
+    // moved, and the read, from where the first said to start, is sent
+    // once.
+    assert_eq!(caret_at(&reported(&outpost, area)), ("one\r\n", 0));
     outpost.settled();
 
     // The window has the focused state, which an MSAA focus in it needs,
@@ -982,6 +1008,10 @@ fn main() {
         (
             "the_console_hosts_caret_comes_from_its_console",
             the_console_hosts_caret_comes_from_its_console,
+        ),
+        (
+            "a_console_caret_move_with_no_text_change_is_read",
+            a_console_caret_move_with_no_text_change_is_read,
         ),
         (
             "the_console_hosts_system_caret_is_not_its_caret_event",

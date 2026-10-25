@@ -2729,8 +2729,10 @@ it.
   events read the terminal too, since it sometimes moves its caret with
   no text change; the read takes the caret, so it is not read again on its
   own. The console host's caret event (`EVENT_CONSOLE_CARET`), raised on
-  its cursor's blink timer when the cursor has moved, has the caret read
-  and reported, and reads the terminal when it is a caret key's evidence.
+  its cursor's blink timer when the cursor has moved, reads the terminal
+  likewise, so a caret move with no text change reaches Core's reading
+  rules in a read; while reading is held with the text changed it is
+  noted, as any caret event is.
   A change observed before the last read began is covered by it and reads
   nothing (`Terminal::covers`), compared in microseconds when the entry
   carries them, so a change in the read's own millisecond but before it

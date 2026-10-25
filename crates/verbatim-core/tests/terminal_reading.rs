@@ -519,3 +519,25 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     );
     assert_eq!(requests[2], TextOp::TerminalColours { since_ms: 301 });
 }
+
+#[test]
+fn a_caret_move_with_no_key_says_nothing_and_the_next_key_is_judged_from_it() {
+    let mut session = showing(20, 4, 10, "$ echo one");
+    // The program moves the caret back over "one" with no key: nothing is
+    // said ("The caret's line").
+    session.write("\x1b[3D", 100);
+    assert_eq!(session.heard(), []);
+    // Right Arrow then moves it one along, from where the program put it,
+    // to the "n".
+    let right = TraceId::mint();
+    session.input(&Input::CaretKey {
+        trace_id: right,
+        key: CaretKey {
+            motion: CaretMotion::NextCharacter,
+            select: false,
+        },
+        pressed_at_ms: 200,
+    });
+    session.write("\x1b[C", 250);
+    assert_eq!(session.heard(), [said(Some(right), "n")]);
+}

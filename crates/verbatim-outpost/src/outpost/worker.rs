@@ -1558,10 +1558,12 @@ impl Worker<'_> {
     /// the terminal's reading is held with its text changed.
     ///
     /// In a terminal Core's reading rules answer a key, so the caret event that
-    /// is its evidence reads the terminal; and Windows Terminal, which
-    /// sometimes moves its caret with no text change, has every caret event
-    /// read it, the read taking the caret too
-    /// (`docs/design/terminal-model.md`, section 5.1).
+    /// is its evidence reads the terminal; and every caret event of a focused
+    /// terminal reads it, the read taking the caret too, so that the rules
+    /// judge the next key from the caret the terminal moved: Windows
+    /// Terminal sometimes moves its caret with no text change, and the
+    /// console host's caret event is its cursor's move
+    /// (`docs/design/terminal-model.md`, "Where it runs": one caret).
     fn caret_event(&mut self, node_id: NodeId, trace: TraceId, observed_at_ms: u64) {
         if self.check_open_watch(node_id, true) {
             if self.focused_terminal(node_id) {
@@ -1571,9 +1573,7 @@ impl Worker<'_> {
         }
         if self.held_with_changes(node_id) {
             self.note_caret(node_id, trace, observed_at_ms);
-        } else if self.focused_terminal(node_id)
-            && !text_reads::console_focus(self.context, node_id)
-        {
+        } else if self.focused_terminal(node_id) {
             self.terminal_output(node_id, trace, observed_at_ms);
         } else {
             self.caret_of(node_id, trace, observed_at_ms);
