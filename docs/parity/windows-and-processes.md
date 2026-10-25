@@ -232,11 +232,33 @@ said nothing for the pane in any switch. No scenario can use Alt+Tab
 `a_pane_is_refused_only_by_its_own_class_in_file_explorer`,
 `the_task_switching_panes_foreground_change_or_msaa_focus_is_taken`);
 no Windows 10 machine has run it.
+The switcher's items: a UI Automation focus's snapshot carries its
+raw-view parent's automation id (`NodeDetails::parent_automation_id`,
+from the first ancestor the walk read) and its focus change's window
+facts whether Alt was held when the outpost read them
+(`WindowFacts::alt_held`, `GetAsyncKeyState`); Core takes a UI Automation
+list item in `explorer`, read with Alt held, whose parent's automation
+id is `SwitchItemListControl` or whose window's class is
+`MultitaskingViewFrame`, as having no containers, known to be none, so
+none is spoken or kept for the next focus (decision D6). The item says
+its name, row, column and position.
+**matched (verified)** for the item by NVDA's capture and a hand-run
+check of 2026-10-25 with this rule, built at 9c7f1935 (`ItemV/` in the
+same folder, four quick switches and two with Alt held): in both
+switches with Alt held Verbatim said the item alone, "ItemVB row 1
+column 2 2 of 11" and "ItemVA row 1 column 2 2 of 11", then the window
+switched to, as NVDA says "Nvda Sw B  row 1  column 2  2 of 10" (eleven
+windows were open in that run, ten in NVDA's); before the rule
+(`ExactV2/`) it said "Task Switching window", "Running applications
+list", and "ExactV2A 2 of 11". Core's unit tests pin the rule
+(`a_task_switching_item_reached_with_alt_held_says_only_itself`,
+`only_the_task_switchers_items_drop_their_containers`), and mockapp's
+`a_focus_carries_its_parents_automation_id` the parent's automation id
+from the listener's read and the outpost's own read.
 Cases that differ: the outpost's own read of a focus UI Automation did
-not deliver is Verbatim's alone (see above). With Alt held, Verbatim
-says the switcher's window and list ("Task Switching window", "Running
-applications list") before the item, and the item without its row and
-column, where NVDA says the item alone with them. The same app module's
-rule that drops a task switching list item's ancestry while Alt is held
-is not ported; whether it is what silences the ancestry on Windows 11 is
-not established.
+not deliver is Verbatim's alone (see above). A focus-now answer carries
+no application name and no Alt, so the rule never applies to one, where
+NVDA's applies however the item is reached. A second Tab with Alt held
+says "row 1" again, where NVDA leaves an unchanged row out
+([Focus announcement](focus-announcement.md), "Table cell
+coordinates").

@@ -258,7 +258,8 @@ NVDA leaves out an unchanged row or column within one table, which needs
 the containing grid's identity, not read, so a second Tab with Alt held
 says "row 1" again where NVDA says only the column (a deliberate
 divergence for now; Claude, 2026-10-25, pending Dickson's acceptance);
-NVDA speaks a cell's row and column header texts before its row and
+NVDA speaks a cell's coordinates text in place of its numbers when the
+cell gives one, and its row and column header texts before its row and
 column (from UI Automation's `TableItem` pattern, by default) and "through"
 a spanned cell's last row or column, neither of which Verbatim reads; a
 container the focus enters speaks none, since ancestors are read among
