@@ -1198,6 +1198,10 @@ struct ReducerThread<'a> {
     /// its wait ends if no answer has come ([`Effect::BoundHeldKeyWait`]):
     /// one of the reducer thread's deadlines, so it adds no wake-up source.
     held_wait: Option<(TraceId, Instant)>,
+    /// The focused terminal's quiet-period timer, as Core armed it
+    /// ([`Effect::TerminalTimer`]): when it is due on the shared clock, and
+    /// as an instant, one of the reducer thread's deadlines.
+    terminal_timer: Option<(u64, Instant)>,
     /// Control-plane `AwaitIdle` waiters that reached their place in line,
     /// and the idle barrier's round through every child that answers them
     /// (`docs/design/communication.md`, section 6.7).
@@ -1987,6 +1991,12 @@ impl ReducerThread<'_> {
             Effect::BoundHeldKeyWait { key, within_ms } => {
                 self.held_wait = Some((key, Instant::now() + Duration::from_millis(within_ms)));
             }
+            Effect::TerminalTimer { due_ms } => {
+                self.terminal_timer = due_ms.map(|due_ms| {
+                    let wait = due_ms.saturating_sub(latency::now_ms());
+                    (due_ms, Instant::now() + Duration::from_millis(wait))
+                });
+            }
             Effect::ForKey(key, effect) => self.execute(key, *effect),
             _ => {}
         }
@@ -2175,13 +2185,15 @@ impl ReducerThread<'_> {
 
     /// The earliest time a shell items request is answered with nothing
     /// if it has had no outcome by then, a request with a deadline is
-    /// ended, or a held key's wait for the key ahead of it ends.
+    /// ended, a held key's wait for the key ahead of it ends, or the
+    /// focused terminal's quiet-period timer is due.
     fn next_deadline(&self) -> Option<Instant> {
         self.shell_items_wanted
             .next_deadline()
             .into_iter()
             .chain(self.requests.next_deadline())
             .chain(self.held_wait.map(|(_, due)| due))
+            .chain(self.terminal_timer.map(|(_, due)| due))
             .min()
     }
 
@@ -2196,6 +2208,12 @@ impl ReducerThread<'_> {
         }
         if let Some((trace_id, _)) = self.held_wait.take_if(|(_, due)| *due <= now) {
             self.apply(Input::HeldKeyWaitEnded { trace_id });
+        }
+        if let Some((at_ms, _)) = self.terminal_timer.take_if(|(_, due)| *due <= now) {
+            self.apply(Input::TerminalTimer {
+                trace_id: TraceId::mint(),
+                at_ms,
+            });
         }
     }
 
@@ -2271,6 +2289,7 @@ fn reducer_loop(
         exit_sound: None,
         held_keys: held_keys::HeldKeys::default(),
         held_wait: None,
+        terminal_timer: None,
     };
     // The settings come first, before anything they govern.
     thread.apply(Input::Settings(settings));

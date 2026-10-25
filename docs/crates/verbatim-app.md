@@ -147,7 +147,12 @@ Milestone M4's text protocol is wired here (`docs/crates/verbatim-model.md`,
   `Effect::BoundHeldKeyWait` sets the one time at which a held key's wait
   for the key ahead of it ends, kept beside the reducer thread's other
   deadlines (`next_deadline`); when it passes, the thread enters
-  `Input::HeldKeyWaitEnded` with the key's trace ID. The read of the caret
+  `Input::HeldKeyWaitEnded` with the key's trace ID.
+  `Effect::TerminalTimer` sets or clears the focused terminal's
+  quiet-period timer, another of those deadlines, its due time on the
+  shared clock turned into an instant; when it passes, the thread enters
+  `Input::TerminalTimer` with that due time and a trace ID minted then.
+  The read of the caret
   before the key (`TextOp::ReadCaret`) is a request with a deadline,
   `HELD_KEY_BOUND`, 150 milliseconds: past it the request ends as
   unanswered and Core passes the key on without it.

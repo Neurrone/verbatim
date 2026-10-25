@@ -29,7 +29,7 @@ use crate::state::{
     Attention, FocusContext, LatestFocus, Navigator, NavigatorRead, PendingNavigation, SrState,
     TextFollowUp,
 };
-use crate::{editing, review, review_text, say_all, shell, terminal, text};
+use crate::{editing, review, review_text, say_all, shell, terminal, terminal_model, text};
 
 /// The activity id of the shell's window-snap results notification, the one
 /// UIA notification spoken from any application (`docs/parity/focus-events.md`, "Event
@@ -45,7 +45,23 @@ pub const SNAP_RESULTS_ACTIVITY: &str = "Windows.Shell.SnapComponent.SnapHotKeyR
 /// parts of the state it does not touch (architecture section 2).
 #[must_use]
 pub fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
+    let focus = state.focus.as_ref().map(|focus| focus.snapshot.id);
     let mut effects = reduce_input(state, input);
+    // The terminals Core reads (`terminal_model`): told when the focus
+    // reaches or leaves them, given the settings, and their text answered
+    // from their memory.
+    if !state.terminals.is_empty() {
+        let now = state.focus.as_ref().map(|focus| focus.snapshot.id);
+        if now != focus {
+            let at_ms = match input {
+                Input::Event { observed_at_ms, .. } => *observed_at_ms,
+                _ => 0,
+            };
+            effects.extend(terminal_model::focus_moved(state, (focus, now), at_ms));
+        }
+        effects.extend(terminal_model::sync_settings(state));
+        effects = terminal_model::intercept(state, effects, terminal_model::input_trace(input));
+    }
     // Whatever cuts speech off drops the terminal output handed to it, and
     // with it the output still waiting, as a key press does in NVDA.
     if effects.iter().any(terminal::cuts_speech) {
@@ -117,6 +133,7 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             pressed_at_ms,
         } => editing::held_key(state, *trace_id, *key, *pressed_at_ms),
         Input::HeldKeyWaitEnded { trace_id } => editing::held_wait_ended(state, *trace_id),
+        Input::TerminalTimer { trace_id, at_ms } => terminal_model::timer(state, *trace_id, *at_ms),
         Input::MarkReached { mark } => {
             let mut effects = say_all::mark_reached(state, *mark);
             effects.extend(terminal::mark_reached(state, *mark));
@@ -170,7 +187,9 @@ fn reduce_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
 /// judged by where the caret lands, text typed, or a key that clears a
 /// terminal's line. Any other input does nothing here.
 pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
-    match input {
+    // A terminal Core reads keeps the key for its reading rules.
+    let mut effects = terminal_model::key_input(state, input);
+    effects.extend(match input {
         Input::CaretKey {
             key, pressed_at_ms, ..
         } => editing::caret_key(state, *key, *pressed_at_ms),
@@ -182,7 +201,8 @@ pub(crate) fn key_input(state: &mut SrState, input: &Input) -> Vec<Effect> {
             Vec::new()
         }
         _ => Vec::new(),
-    }
+    });
+    effects
 }
 
 /// The trace of a key's input, minted when the hook saw the key.
@@ -471,8 +491,9 @@ fn reduce_text_completed(
     effects
 }
 
-/// [`reduce_text_completed`]'s dispatch, by the request answered.
-fn text_completed(
+/// [`reduce_text_completed`]'s dispatch, by the request answered; also
+/// how Core answers a request for a terminal's text from its memory.
+pub(crate) fn text_completed(
     state: &mut SrState,
     trace_id: TraceId,
     query_id: QueryId,
@@ -511,6 +532,9 @@ fn text_completed(
     }
     if say_all::is_pending(state, query_id) {
         return say_all::reply(state, trace_id, reply);
+    }
+    if terminal_model::is_pending(state, query_id) {
+        return terminal_model::reply(state, trace_id, query_id, reply);
     }
     if terminal::is_pending(state, query_id) {
         return terminal::reply(state, trace_id, query_id, reply);
@@ -629,6 +653,25 @@ fn reduce_caret_moved(
     effects
 }
 
+/// What a focused terminal said, or one read of it, which Core's terminal
+/// model aligns.
+fn terminal_event(
+    state: &mut SrState,
+    trace_id: TraceId,
+    observed_at_ms: u64,
+    event: &NormalizedEvent,
+) -> Vec<Effect> {
+    match event {
+        NormalizedEvent::TerminalSpeech { node_id, speech } => {
+            terminal::speech(state, trace_id, observed_at_ms, *node_id, speech)
+        }
+        NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
+            terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn reduce_event(
     state: &mut SrState,
     trace_id: TraceId,
@@ -709,8 +752,8 @@ fn reduce_event(
         moved @ NormalizedEvent::CaretMoved { .. } => {
             reduce_caret_moved(state, (trace_id, observed_at_ms), moved)
         }
-        NormalizedEvent::TerminalSpeech { node_id, speech } => {
-            terminal::speech(state, trace_id, observed_at_ms, *node_id, speech)
+        NormalizedEvent::TerminalSpeech { .. } | NormalizedEvent::TerminalSnapshot { .. } => {
+            terminal_event(state, trace_id, observed_at_ms, event)
         }
         NormalizedEvent::PropertyChanged {
             node_id,
@@ -1226,6 +1269,7 @@ fn outpost_ended(state: &mut SrState, outpost: OutpostId) -> Vec<Effect> {
     {
         state.pending_text = None;
     }
+    terminal_model::outpost_ended(state, outpost);
     if state
         .start_marker
         .is_some_and(|marker| marker.node().outpost() == outpost)

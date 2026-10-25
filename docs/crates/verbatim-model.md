@@ -375,6 +375,29 @@ the contract the Windows side implements.
   `followed` says the review cursor followed the caret a key moved
   (`serde(default)`). Text is sent without padding, a line whole however
   long ([verbatim-core](verbatim-core.md), "Terminals").
+- `NormalizedEvent::TerminalSnapshot { node_id, snapshot }`: one read of a
+  focused terminal, for Core's terminal model, which aligns it and runs
+  the reading rules on it ([verbatim-core](verbatim-core.md), "Core's
+  terminal model"; `docs/design/terminal-model.md`, "Where it runs"). No
+  outpost sends it yet. A `TerminalSnapshot` is the wire form of the
+  rules' read, whole by itself and naming nothing of an earlier read: its
+  `text` from the read's start to the document's end, the `screen`, the
+  document's `first_row` and the `caret_line`, each a `TerminalText`; the
+  flags `from_start`, `shrank`, `at_document_start` and `alternate`;
+  `caret_rows_to_end`, `caret_column` in characters, and `above`, the rows
+  it holds above the start it was asked for; `started_ms`, when the read
+  began on the shared clock; `waited`, whether it waited for Core's speech
+  queue; the screen's `colours` when it took them, rows of
+  `TerminalColourRun` (`column`, `length`, `foreground`, `background`);
+  and the `caret` as a caret report. A `TerminalText` is a text without
+  the spaces that pad its lines (`text`) and each line's padded length in
+  characters as runs of lines of one length (`lengths`): `unpadded` makes
+  one, and `padded` gives the text back exactly, since the rules measure
+  the screen's width from the padding. The screen is sent beside the
+  text rather than as a place in it: the read program reads it as the
+  provider's first visible range, in a call of its own, so it is where the
+  user scrolled the view, and the terminal may write between that call and
+  the text's.
 - `NormalizedEvent::ActiveTextPositionChanged { node_id, position }`: the
   place being read in a text focus moved without its caret (UIA's active
   text position changed event: the application scrolled to a place, such
@@ -529,6 +552,26 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   the run's shared clock, since the reading rules judge by that time which
   reads can carry its effects (answer `Done`, which Core does not wait
   for).
+- `TerminalReadNow(TerminalScope)`: read the focused terminal at once,
+  whatever its on-demand state, and answer with the read
+  (`TerminalSnapshot`): `Fresh`, a read as any other before a review
+  command Core answers from its memory; `Whole`, the whole document after
+  a lost read; `HistoryBlock { height }`, a first read again, counted up
+  from the document's end by `height` rows with as many above.
+- `TerminalHistory { above, whole }`: the text from `above` rows above the
+  start the next read takes to the document's end, or the whole document,
+  for a review answer above Core's memory (answer `TerminalHistory {
+  text, above }`, the text with its padding and the rows it holds above
+  that start).
+- `TerminalColours { since_ms }`: a key reached the program at `since_ms`,
+  so the first read that begins at or after it takes the screen's colours
+  (answer `Done`, or, when a read began at or after it without colours, a
+  read taken at once with them).
+- `TerminalShape { height, width }`: the screen's shape as the rules found
+  it, for the outpost's next reads (answer `Done`).
+
+Once the outpost reads for Core, `TerminalRead` and `TerminalCancel` are
+answered `TerminalSnapshot`, or `TerminalUnchanged` when nothing changed.
 
 Any request can also be answered `NoText` (the node has no text interface
 at all; Core then reviews its value or name as flat text, as NVDA's object
@@ -579,6 +622,9 @@ failed). A caret key's watch that ends with no evidence is answered
   whenever they change.
 - `Input::Fetches(Fetches)`: the details the active theme wants fetched
   (see "Themes" below), at startup and whenever the theme in use changes.
+- `Input::TerminalTimer { trace_id, at_ms }`: the focused terminal's
+  quiet-period timer came due at `at_ms` on the shared clock, as Core
+  armed it (`Effect::TerminalTimer`).
 
 ### Effects for the shell
 
@@ -587,6 +633,9 @@ failed). A caret key's watch that ends with no evidence is answered
   and let it go again; every true is followed by a false.
 - `Effect::SettingsChanged(ReaderSettings)`: a toggle key changed a
   setting; save it.
+- `Effect::TerminalTimer { due_ms }`: arm the focused terminal's
+  quiet-period timer for `due_ms` on the shared clock, replacing any armed
+  before, or disarm it (`None`).
 
 The model also adds `Role::Terminal`, NVDA's terminal role, for Windows
 Terminal's text control, the console host, and embedded terminals: the

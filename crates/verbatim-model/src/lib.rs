@@ -38,8 +38,8 @@ pub use speech::{
     UtteranceSource,
 };
 pub use terminal::{
-    Skipped, TerminalItem, TerminalKey, TerminalKeyKind, TerminalSettings, TerminalSpeech,
-    TerminalUnit,
+    Skipped, TerminalColourRun, TerminalItem, TerminalKey, TerminalKeyKind, TerminalScope,
+    TerminalSettings, TerminalSnapshot, TerminalSpeech, TerminalText, TerminalUnit,
 };
 pub use text::{
     BulletStyle, CaretKey, CaretMotion, CaretReply, CaretReport, CaretWatch, FocusText, FormatRun,

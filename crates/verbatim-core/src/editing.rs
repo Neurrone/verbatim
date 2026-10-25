@@ -352,7 +352,16 @@ fn pass_held(state: &mut SrState, held: HeldKey, at_ms: u64) -> Vec<Effect> {
     // holds: told before the key reaches the application, since the hook
     // held it, which tells the rules of every key it passes itself
     // (`crate::terminal::key`).
-    let mut effects = crate::terminal::key(state, crate::terminal::caret_key_kind(held.key), at_ms);
+    let kind = crate::terminal::caret_key_kind(held.key);
+    let mut effects = crate::terminal::key(state, kind.clone(), at_ms);
+    // A terminal Core reads keeps it for its reading rules, and asks for
+    // the colours from its time, before the key reaches the program.
+    effects.extend(crate::terminal_model::key(
+        state,
+        kind,
+        at_ms,
+        held.trace_id,
+    ));
     effects.extend(caret_key(state, held.key, at_ms));
     state.held_keys.awaiting_watch = effects.iter().find_map(|effect| match effect {
         Effect::Text(TextRequest {

@@ -650,6 +650,38 @@ pub enum TextOp {
     /// next read. The keyboard hook's thread tells the outpost of the keys
     /// it passes itself. Answered [`TextReply::Done`].
     TerminalKey(crate::TerminalKey),
+    /// Read the focused terminal at once, whatever its on-demand state, and
+    /// answer with the read ([`TextReply::TerminalSnapshot`]): a fresh read
+    /// before a review command, the whole document after a lost read, or a
+    /// first read again with its history block.
+    TerminalReadNow(crate::TerminalScope),
+    /// Read the history above the start the next read takes: from `above`
+    /// rows above it to the document's end, or the whole document when
+    /// `whole`. Answered [`TextReply::TerminalHistory`].
+    TerminalHistory {
+        /// How many rows above the start.
+        above: u32,
+        /// Whether to read the whole document instead.
+        whole: bool,
+    },
+    /// A key reached the focused terminal at `since_ms`: the first read
+    /// that begins at or after it takes the screen's colours. Answered
+    /// [`TextReply::Done`], or, when a read began at or after `since_ms`
+    /// without colours, with a read taken at once with them
+    /// ([`TextReply::TerminalSnapshot`]).
+    TerminalColours {
+        /// When the key reached the program, in milliseconds on the clock
+        /// every process of a run shares.
+        since_ms: u64,
+    },
+    /// The screen's height and width as the reading rules found them, for
+    /// the outpost's next reads. Answered [`TextReply::Done`].
+    TerminalShape {
+        /// Rows.
+        height: u32,
+        /// Cells.
+        width: u32,
+    },
 }
 
 /// A text request from Core to the outpost that owns `node_id`; the answer
@@ -709,6 +741,22 @@ pub enum TextReply {
     /// The answer to [`TextOp::TerminalRead`] and
     /// [`TextOp::TerminalCancel`]: what the read said, empty when nothing.
     Terminal(Box<crate::TerminalSpeech>),
+    /// A read of a terminal: the answer to [`TextOp::TerminalReadNow`], and
+    /// to [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`] once the
+    /// outpost reads for Core.
+    TerminalSnapshot(Box<crate::TerminalSnapshot>),
+    /// [`TextOp::TerminalRead`] or [`TextOp::TerminalCancel`] found nothing
+    /// changed since the last read.
+    TerminalUnchanged,
+    /// The answer to [`TextOp::TerminalHistory`]: the text read, padding
+    /// kept, and how many rows it holds above the start the next read
+    /// takes.
+    TerminalHistory {
+        /// The text.
+        text: String,
+        /// Rows above the start.
+        above: u32,
+    },
     /// The answer to [`TextOp::Location`]: screen coordinates of the point,
     /// in pixels.
     Location {

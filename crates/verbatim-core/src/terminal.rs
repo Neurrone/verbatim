@@ -214,7 +214,7 @@ fn push_line(waiting: &mut VecDeque<Waiting>, line: &str, kind: LineKind) {
 }
 
 /// Whether the focus is a live terminal.
-fn terminal_focus(state: &SrState) -> Option<NodeId> {
+pub(crate) fn terminal_focus(state: &SrState) -> Option<NodeId> {
     state
         .focus
         .as_ref()
@@ -454,23 +454,28 @@ pub(crate) fn reply(
     query_id: QueryId,
     reply: TextReply,
 ) -> Vec<Effect> {
-    let output = match reply {
-        TextReply::Terminal(speech) => *speech,
-        _ => TerminalSpeech::default(),
+    // Once the outpost reads for Core, its answer is a read Core's
+    // terminal model aligns, spoken under the read's speech key.
+    let (output, key, mut effects) = match reply {
+        TextReply::Terminal(speech) => (*speech, None, Vec::new()),
+        other => crate::terminal_model::answered_read(state, &other).unwrap_or_default(),
     };
-    if state.terminal.cancel == Some(query_id) {
+    let trace_id = key.unwrap_or(trace_id);
+    let spoken = if state.terminal.cancel == Some(query_id) {
         state.terminal.cancel = None;
-        return take(state, trace_id, &output, true);
-    }
-    if state.terminal.overtaken == Some(query_id) {
+        take(state, trace_id, &output, true)
+    } else if state.terminal.overtaken == Some(query_id) {
         state.terminal.overtaken = None;
-        return take(state, trace_id, &output, true);
-    }
-    state.terminal.request = None;
-    let mut effects = take(state, trace_id, &output, false);
-    if std::mem::take(&mut state.terminal.deciding) {
-        effects.extend(decide_and_pump(state));
-    }
+        take(state, trace_id, &output, true)
+    } else {
+        state.terminal.request = None;
+        let mut spoken = take(state, trace_id, &output, false);
+        if std::mem::take(&mut state.terminal.deciding) {
+            spoken.extend(decide_and_pump(state));
+        }
+        spoken
+    };
+    effects.extend(crate::terminal_model::under(key, spoken));
     effects
 }
 

@@ -348,6 +348,17 @@ pub enum NormalizedEvent {
         /// What it said.
         speech: crate::TerminalSpeech,
     },
+    /// One read of a focused terminal (`docs/design/terminal-model.md`,
+    /// "Where it runs"): its text, screen and caret, which Core's terminal
+    /// model aligns and its reading rules judge. Sent in place of
+    /// [`TerminalSpeech`](Self::TerminalSpeech) once the outpost reads for
+    /// Core; until then no outpost sends it.
+    TerminalSnapshot {
+        /// The terminal.
+        node_id: NodeId,
+        /// The read.
+        snapshot: Box<crate::TerminalSnapshot>,
+    },
     /// The place being read in a node's text moved without the caret: the
     /// application scrolled to it, as a document does to an in-page link's
     /// target (UIA's active text position changed event). Core speaks
@@ -397,6 +408,7 @@ impl NormalizedEvent {
             | NormalizedEvent::CaretMoved { node_id, .. }
             | NormalizedEvent::TextChanged { node_id }
             | NormalizedEvent::TerminalSpeech { node_id, .. }
+            | NormalizedEvent::TerminalSnapshot { node_id, .. }
             | NormalizedEvent::ActiveTextPositionChanged { node_id, .. } => {
                 *node_id = node_id.with_outpost(outpost);
             }
@@ -830,6 +842,16 @@ pub enum Input {
         /// events' `observed_at_ms` use.
         ended_at_ms: u64,
     },
+    /// The quiet-period timer of the focused terminal's reading rules came
+    /// due ([`Effect::TerminalTimer`]): the rules are given the keys that
+    /// reached the program by `at_ms`, then the timer.
+    TerminalTimer {
+        /// Trace ID minted when the shell found it due.
+        trace_id: TraceId,
+        /// When it came due, in milliseconds on the clock every process of
+        /// a run shares.
+        at_ms: u64,
+    },
     /// A window came to the foreground, as the focus listener tells it
     /// (architecture section 5): Core decides from it what the keyboard
     /// hook reads of the foreground ([`HookForeground`]).
@@ -1039,6 +1061,14 @@ pub enum Effect {
     /// a later key's own effects), and its requests and speech must carry
     /// its own key's trace, so that its answers and speech are that key's.
     ForKey(TraceId, Box<Effect>),
+    /// Arm the focused terminal's quiet-period timer for `due_ms`, in
+    /// milliseconds on the clock every process of a run shares, replacing
+    /// any armed before, or disarm it (`None`). When it passes, the shell
+    /// enters [`Input::TerminalTimer`].
+    TerminalTimer {
+        /// When it is due.
+        due_ms: Option<u64>,
+    },
     /// Ask the application in front for its focus, reported as a focus on
     /// the control alone, as NVDA's fake focus after a menu or the Alt+Tab
     /// switcher closes; an application whose outpost is not ready is asked

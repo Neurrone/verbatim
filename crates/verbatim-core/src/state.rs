@@ -688,6 +688,16 @@ pub struct SrState {
     /// 9), bounded by the flood policy's limits.
     #[serde(default)]
     pub(crate) terminal: crate::terminal::TerminalSpeechState,
+    /// Core's model of each terminal it reads, the most recently read last,
+    /// at most 16 (`crate::terminal_model`): none until an outpost sends a
+    /// terminal snapshot.
+    #[serde(default)]
+    pub(crate) terminals: Vec<crate::terminal_model::TerminalModel>,
+    /// The number of the last text anchor Core minted for a terminal's
+    /// review answers, in a range no outpost mints from
+    /// (`crate::terminal_model::TERMINAL_ANCHORS`).
+    #[serde(default)]
+    pub(crate) next_terminal_anchor: u64,
     /// The formatting last reported in a node's text (milestone M4 item 7):
     /// NVDA's per-object cache, from which only changes are spoken
     /// (`docs/nvda/document-formatting.md`). A new focus starts afresh.

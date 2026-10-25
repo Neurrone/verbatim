@@ -975,3 +975,108 @@ cursor reading at the caret once it followed it, the answers alone
 spoken of what a read before a cut said, and output cut off outside the
 reducer released by the pipeline's report of each cut utterance; `tests/alloc.rs` checks that a terminal line allocates the
 same whatever the size of the state.
+
+### Core's terminal model
+
+The reading rules move into Core (`docs/design/terminal-model.md`, "Where
+it runs"; Dickson, 2026-10-24). Core's side is built (`terminal_model.rs`
+and `terminal_model/review.rs`); no outpost sends it a snapshot yet, so
+Core holds no model in use and the outpost's own reading above still
+speaks. Everything below acts only on `NormalizedEvent::TerminalSnapshot`
+and on the answers to the requests it makes.
+
+- Public: `read_of(&TerminalSnapshot)`, the reading rules' `Read` of a
+  snapshot, its texts padded again exactly; and `snapshot_of(&Read,
+  waited, colours)`, the snapshot of a read as an outpost sends it, for
+  the tests and measurements that read the simulated terminal as the
+  outpost reads a real one.
+- `SrState::terminals` holds a model per terminal node read, at most 16,
+  the least recently read forgotten first, and those of an outpost that
+  ended dropped: the reading rules (`TerminalReader`) behind an `Arc`, so
+  a checkpoint's clone shares them and the first change after it copies
+  them once; the keys taken in and not yet given to the rules; the newest
+  key given; a read owed (the whole document, or a first read's history
+  block); the fresh read before a review answer, the review requests
+  waiting, and the history rows that came for the answer in progress; the
+  review places; the caret, the screen's shape and whether the last read
+  began at the document's start; the shape told to the outpost; the
+  quiet-period timer's due time; and the colours requests unanswered. A
+  model is made with a terminal's first snapshot, while it has the focus.
+- Keys. Every key input Core takes in while the focus is a terminal it
+  models is kept (`key_input` and, for a held key, `editing::pass_held`):
+  a caret key by its unit (`caret_key_kind`), Delete as Delete, any other
+  key passed as `Other`, text typed by `typed_kind`, and a clearing key
+  as `Forget` followed by the caret key the hook sends after it as
+  `Other`; a key deferred behind a held key is kept when Core handles it,
+  with its time taken as no earlier than the held key's pass. With each,
+  Core asks the outpost for the screen's colours from the key's time
+  (`TextOp::TerminalColours`), for a held key before its watch and its
+  pass. Before a read begun at S is given to the rules, they are given
+  every kept key whose time is at or before S, in the order Core took
+  them in, stopping at the first later one; before the timer at T, those
+  up to T. Past 256 kept keys the oldest is given at once. When the focus
+  leaves the terminal, the rules are told (`blur`) and the kept keys
+  dropped; when it returns, the rules are told (`focus`).
+- A read's speech key: once the keys up to the read's start are given,
+  the newest key given, when its window (`KEY_WINDOW_MS`) holds the
+  read's start. What the read says is handed to the flood policy above
+  under that key's trace, and every effect it causes goes out as
+  `Effect::ForKey` for it, so a key deferred behind a held key, whose
+  number fences off older speech, keeps the speech its read caused. A
+  read with no speech key, and the timer's speech, carry the input's
+  trace.
+- A live snapshot is taken only for the focused terminal. When the rules
+  ask for the whole document or for a first read again with its history
+  block, Core asks for it (`TextOp::TerminalReadNow`, `TerminalScope::Whole`
+  or `HistoryBlock { height }`) and, until it comes, drops the terminal's
+  live snapshots and answers its own flood-policy reads with nothing: the
+  outpost answers in order, so each began before the read owed, which
+  holds all it showed. A snapshot answering the flood policy's
+  `TerminalRead` or `TerminalCancel` is aligned the same way and its
+  speech taken in by the policy as an answer is today;
+  `TextReply::TerminalUnchanged` says nothing. A snapshot answering a
+  colours request is taken as a live read. The read's caret report, when
+  it carries one, becomes Core's caret, stamped with the read's start.
+  A new screen height or width is told to the outpost
+  (`TextOp::TerminalShape`), and the timer the rules ask for is armed or
+  disarmed for the focused terminal (`Effect::TerminalTimer`), which the
+  shell answers with `Input::TerminalTimer` when it is due.
+- Review commands. A request for a modeled terminal's text that the memory
+  answers (a read, a read ahead or a range at the caret, the start, the
+  end, or an anchor Core minted for it; a selection, a location or a caret
+  move there, answered `Unsupported`) is not sent: `reduce` takes it out
+  of the step's effects, asks for a fresh read (`TerminalScope::Fresh`),
+  aligns it, and answers the request from the memory as the outpost did
+  (`terminal_model/review.rs`, the outpost's review answers moved), its
+  answer then handled as if the outpost had sent it, and any request that
+  answer causes answered in turn. When an answer needs rows above the
+  memory, Core asks for them (`TextOp::TerminalHistory { above, whole }`)
+  and works the answer out again once they come. Its rows carry text
+  anchors with the top bit set (`TERMINAL_ANCHORS`), a range no outpost
+  mints from, each the place the memory keeps for it; at most 64 places
+  beyond those Core holds are kept. A request naming another anchor goes
+  to the outpost as before.
+- Settings: "report new output" and "review follows caret" are given to
+  every model's rules whenever they change, whichever way they changed.
+
+`tests/terminal_reading.rs` drives `reduce` with snapshots of the
+simulated terminal (`tests/terminal_support`), whose outpost reads as the
+outpost will for Core: it keeps the start of the last read whose screen
+showed text, reads at the height Core told, takes colours in the first
+read from a key's time, and answers Core's reads, history and shape. It
+checks new output spoken line by line; the review position moving with
+its row as output scrolls it into the history, a place whose line left
+its search keeping its place, a place above the memory found lower after
+its history was printed again longer, moving above the memory's rows to
+the document's start, a row ending at its text and a range joining lines,
+and the review reading at the caret; a key whose time is after a read's
+start given after that read; the echo of Up Arrow held and "x" deferred
+behind it going out for "x"; a read after every window carrying no key;
+live snapshots dropped while a whole read is owed; the timer giving the
+keys that came first; a snapshot of every corpus read rebuilding its read
+exactly, through its JSON, and the rules taking both alike; and a terminal
+session replayed from a dump to the same effects. The module's unit tests
+check the rules' speech mapped onto the flood policy's items and each key
+input's kind. `tests/terminal_cost.rs` is a measurement, not a test:
+the reducer's time for a terminal's costliest reads (`docs/performance.md`,
+"A terminal's reads in Core").
