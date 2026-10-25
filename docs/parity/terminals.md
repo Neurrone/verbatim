@@ -216,6 +216,10 @@ scenarios follow it as the model's order of work brings them back.
   2026-10-24). Over a long history it tells the screen coming back from a
   flood by the shell's screen it set aside when the program opened, so it
   says no skip there either (Dickson, 2026-10-25; `*_pager_history`).
+  A program already open when Verbatim first reads the terminal has no
+  such screen set aside, so its close over a long history says the
+  first 30 lines, "skipped more than N lines" and the last 30, a limit
+  of the design (Dickson, 2026-10-25).
 - The alternate screen's text scrolls through rows that stay put, so
   Verbatim finds how far it scrolled from the text.
 
