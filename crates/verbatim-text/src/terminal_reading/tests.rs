@@ -1360,3 +1360,24 @@ fn a_pager_closing_over_its_history_speaks_the_shells_visible_screen() {
         says(vec![line(6, "h7"), line(7, "h8"), line(8, "$")])
     );
 }
+
+#[test]
+fn enter_onto_a_line_already_there_says_nothing_so_a_clear_homing_the_caret_first_is_silent() {
+    // "The caret's line": Enter's answer is only new output, never the
+    // caret's line, as NVDA turns off its new-line announcement in
+    // terminals (Dickson, 2026-10-25). Windows Terminal's `cls` from Windows
+    // PowerShell homes the caret onto the screen's first row in one write
+    // and erases in the next: a read between them finds the caret on a line
+    // that was already there, with no text changed, and says nothing.
+    let mut term = Term::of(Flavor::WindowsTerminal, 30, 5, 20, Settings::default());
+    assert_eq!(
+        term.write("ready> .\\secret.ps1\r\nsecret\r\nready> cls", 100),
+        says(vec![
+            line(0, "ready> .\\secret.ps1"),
+            line(1, "secret"),
+            line(2, "ready> cls")
+        ])
+    );
+    term.key(KeyKind::Enter, 1000);
+    assert_eq!(term.write("\x1b[H", 1010), quiet(None));
+}

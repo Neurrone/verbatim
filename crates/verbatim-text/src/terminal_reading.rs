@@ -88,8 +88,11 @@ pub enum KeyKind {
     Typed(String),
     /// A caret key Verbatim knows, with its unit.
     Caret(Unit),
-    /// A key that forgets held typing: Enter, Tab, Escape, Control+C,
-    /// Control+D and Control+Break.
+    /// Enter: it forgets held typing, and its answer is only new output,
+    /// never the caret's line ("The caret's line").
+    Enter,
+    /// A key that forgets held typing: Tab, Escape, Control+C, Control+D
+    /// and Control+Break.
     Forget,
     /// Delete, which speaks what it leaves at the caret rather than what
     /// it removed ("The caret's line").
@@ -575,7 +578,7 @@ impl TerminalReader {
             keys.read = false;
             match &key.kind {
                 KeyKind::Typed(text) => keys.typed.push((text.clone(), key.at_ms)),
-                KeyKind::Forget => keys.typed.clear(),
+                KeyKind::Enter | KeyKind::Forget => keys.typed.clear(),
                 KeyKind::Caret(_) | KeyKind::Delete | KeyKind::Other => {}
             }
             keys.kinds.push(key.kind);
@@ -1439,6 +1442,15 @@ impl TerminalReader {
     ) -> Option<usize> {
         let caret = caret?;
         let keys = self.keys.as_ref()?;
+        // In a terminal Enter's answer is only new output, never the caret's
+        // line, as NVDA turns off its new-line announcement in terminals
+        // (`docs/parity/terminals.md`, "Typing"): what Enter changed is read
+        // as output, and a line the caret moved onto, such as the screen's
+        // first row a clear homes it to before it erases, says nothing.
+        if keys.kinds.last() == Some(&KeyKind::Enter) {
+            self.set_before(caret);
+            return None;
+        }
         let before = keys.before.clone();
         let line_rows = caret.line
             ..rows.len().min(

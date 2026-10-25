@@ -262,12 +262,15 @@ pub fn caret_key_kind(key: CaretKey) -> TerminalKeyKind {
     }
 }
 
-/// What text typed is to the reading rules: Enter and Tab forget the
-/// typing not yet shown, and so does a control character, which types
-/// nothing the terminal shows as itself; anything else is typed.
+/// What text typed is to the reading rules: Enter, which forgets the
+/// typing not yet shown and is answered only by new output; Tab, which
+/// forgets it too; a control character, which types nothing the terminal
+/// shows as itself; and anything else, typed.
 #[must_use]
 pub fn typed_kind(typed: &str) -> TerminalKeyKind {
-    if typed.chars().any(|c| matches!(c, '\r' | '\n' | '\t')) {
+    if typed.chars().any(|c| matches!(c, '\r' | '\n')) {
+        TerminalKeyKind::Enter
+    } else if typed.contains('\t') {
         TerminalKeyKind::Forget
     } else if typed.chars().any(char::is_control) {
         TerminalKeyKind::Other
@@ -1031,7 +1034,7 @@ mod tests {
             TerminalKeyKind::Other
         );
         assert_eq!(typed_kind("a"), TerminalKeyKind::Typed("a".to_owned()));
-        assert_eq!(typed_kind("\r"), TerminalKeyKind::Forget);
+        assert_eq!(typed_kind("\r"), TerminalKeyKind::Enter);
         assert_eq!(typed_kind("\t"), TerminalKeyKind::Forget);
         assert_eq!(typed_kind("\u{1}"), TerminalKeyKind::Other);
     }

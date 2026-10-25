@@ -143,8 +143,11 @@ pub enum TerminalKeyKind {
     Typed(String),
     /// A caret key Verbatim knows, with the unit it moves by.
     Caret(TerminalUnit),
-    /// A key that forgets typing not yet shown: Enter, Tab, Escape,
-    /// Control+C, Control+D and Control+Break.
+    /// Enter: it forgets typing not yet shown, and its answer is only new
+    /// output, never the caret's line ("The caret's line").
+    Enter,
+    /// A key that forgets typing not yet shown: Tab, Escape, Control+C,
+    /// Control+D and Control+Break.
     Forget,
     /// Delete, answered by what it leaves at the caret.
     Delete,

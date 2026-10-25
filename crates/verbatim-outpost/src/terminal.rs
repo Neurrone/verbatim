@@ -484,6 +484,7 @@ pub fn rules_key(key: &TerminalKey) -> Key {
                 TerminalUnit::Word => Unit::Word,
                 TerminalUnit::Line => Unit::Line,
             }),
+            TerminalKeyKind::Enter => KeyKind::Enter,
             TerminalKeyKind::Forget => KeyKind::Forget,
             TerminalKeyKind::Delete => KeyKind::Delete,
             TerminalKeyKind::Other => KeyKind::Other,
