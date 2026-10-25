@@ -235,8 +235,12 @@ impl Recording {
         let folder = to.parent().unwrap_or_else(|| Path::new("."));
         for log in [&self.video_log, &self.mux_log, &self.check_log] {
             let name = log.rsplit('\\').next().unwrap_or(log);
-            if let Err(error) = agent.copy_file(log, &folder.join(name)) {
-                problems.push(format!("could not copy {log}: {error}"));
+            let copy = folder.join(name);
+            if let Err(error) = agent.copy_file(log, &copy) {
+                problems.push(format!(
+                    "could not copy {log} to {}: {error}",
+                    copy.display()
+                ));
             }
         }
         if problems.is_empty() {

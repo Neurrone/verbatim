@@ -83,6 +83,15 @@ time within the test process via a shared lock, but Windows itself has no
 notion of "only one verbatim.exe" — two scenarios running concurrently
 would each think they own an instance the other just replaced out from
 under it (`single_instance::acquire_replacing`'s own algorithm).
+Separate test processes are kept apart by the workspace's run lock,
+`target/e2e-run.lock`, which each run holds from before it clears its
+artifacts until it has archived them: a scenario started while another
+`cargo test` in the same workspace is still running fails at once, saying
+so, instead of deleting the other run's artifacts and stage files under it.
+Wait for one run's process to exit before starting the next; a script
+that stops waiting on a timeout and starts another run is the usual way
+two overlap. Worktrees have their own locks, so two worktrees must not
+run scenarios against the same desktop at once.
 `.github/workflows/ci.yml`'s `e2e` job runs, on a plain `windows-latest`
 runner with the same environment variable,
 `cargo test -p verbatim-e2e --no-fail-fast -- --ignored --skip demo_ --skip measure_ --skip notepad_ --skip settings_search_suggestions --skip settings_combo_box_expanded --test-threads=1`,

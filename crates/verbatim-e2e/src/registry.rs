@@ -2057,6 +2057,46 @@ pub fn run_named(name: &str) {
     }
 }
 
+/// Takes the workspace's run lock, `target/e2e-run.lock`, for one run of
+/// the scenario `name`, from before it clears its artifacts until it has
+/// archived them; the lock is released when the returned file is dropped,
+/// or when this process ends however it ends. Panics, before the run
+/// touches anything, when another test process holds it: two runs at once
+/// share the desktop, the stage and the artifacts, and a second run
+/// started while a first was saving its recording deleted the first's
+/// artifacts folder under it. The in-process lock (`Scenario`'s) does not
+/// cover this, since each `cargo test` is its own process.
+fn hold_run_lock(name: &str) -> std::fs::File {
+    let folder = crate::scenario::workspace_root().join("target");
+    let path = folder.join("e2e-run.lock");
+    // `target` is missing when cargo builds elsewhere (`CARGO_TARGET_DIR`).
+    let file = std::fs::create_dir_all(&folder)
+        .and_then(|()| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(&path)
+        })
+        .unwrap_or_else(|error| {
+            panic!(
+                "scenario {name:?}: could not open the run lock {}: {error}",
+                path.display()
+            )
+        });
+    match file.try_lock() {
+        Ok(()) => file,
+        Err(std::fs::TryLockError::WouldBlock) => panic!(
+            "scenario {name:?}: another scenario run in this workspace holds {}; scenarios run one at a time, so wait for that run's test process to exit",
+            path.display()
+        ),
+        Err(std::fs::TryLockError::Error(error)) => panic!(
+            "scenario {name:?}: could not take the run lock {}: {error}",
+            path.display()
+        ),
+    }
+}
+
 /// Runs one scenario in compare mode ([`crate::compare`]): against NVDA,
 /// asserting nothing, and writing what the scenario expects Verbatim to
 /// say beside what NVDA said as `compare.txt` in the run's artifacts, and
@@ -2083,6 +2123,7 @@ fn run_compare(def: &ScenarioDef) {
             def.name
         );
     }
+    let _run_lock = hold_run_lock(def.name);
     let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name);
     if dir.exists() {
         std::fs::remove_dir_all(&dir).unwrap_or_else(|error| {
@@ -2215,6 +2256,7 @@ fn run_compare(def: &ScenarioDef) {
     reason = "one run in order, each step's problems collected, so a failure's place in the order is plain"
 )]
 fn run(def: &ScenarioDef) {
+    let _run_lock = hold_run_lock(def.name);
     let dir = artifacts::scenario_dir(&artifacts::artifacts_root(), def.name);
     if dir.exists() {
         std::fs::remove_dir_all(&dir).unwrap_or_else(|error| {
