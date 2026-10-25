@@ -80,6 +80,29 @@ reading or updating the remembered level, and a container the focus enters
 speaks no level at all. (`getPropertiesSpeech` in `speech/speech.py`, with
 `_speechState.oldTreeLevel`.)
 
+### Table cell coordinates
+
+An object that is a cell of a table speaks its row and column, "row 1",
+"column 2", after its keyboard shortcut and before its position. For a UI
+Automation object they are its `GridItem` pattern's zero-based row and
+column plus one, asked of the object when it is spoken
+(`_get_rowNumber` and `_get_columnNumber`, `NVDAObjects/UIA/__init__.py`
+2245 to 2287), and an object without the pattern has neither; a presentational
+row or column number, where an object has one, is spoken instead. Both
+are allowed for every reason but the mouse, so a focus, a container the
+focus enters, object navigation, and reporting the current object speak
+them, and they stand in for a name when NVDA decides whether a role is
+spoken (`_objectSpeech_calculateAllowedProps` and `getPropertiesSpeech`,
+`speech/speech.py` 937 to 1022 and 2013 to 2143). NVDA remembers the
+table, by the runtime id of the cell's containing grid, and the row and
+column it last spoke: a row is left out when it is the same as the last
+in the same table, and so is a column, so moving down a column says only
+the row, and an object whose table is not known always says both.
+Turning off the "Cell coordinates" document formatting option, on by
+default, leaves the numbers unsaid (`reportTableCellCoords`,
+`config/configSpec.py` 271). The Windows 11 Alt+Tab switcher's items are
+cells of a one-row grid, so each says "row 1" and its column.
+
 ### Which states are spoken, and in what order
 
 States are spoken in one fixed order, whatever order the object

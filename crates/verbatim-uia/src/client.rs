@@ -682,6 +682,12 @@ impl Uia {
     /// continue through the other API, local calls only
     /// (`docs/design/listener-without-connections.md`, section 4.3).
     ///
+    /// The automation id of the walk's first step, `element`'s raw-view
+    /// parent, is put in `parent_automation_id` when the step finds it,
+    /// whether or not the parent is reported, for Core's rules for an
+    /// application's elements (decision D6); it is left as it is
+    /// otherwise.
+    ///
     /// # Errors
     ///
     /// Returns the COM error if the tree walker itself cannot be created;
@@ -692,7 +698,7 @@ impl Uia {
         (element, element_window): (&Live, isize),
         request: &Request<Ancestor>,
         registry: &NodeIdRegistry,
-        max_hops: u32,
+        (max_hops, parent_automation_id): (u32, &mut Option<String>),
         stops: &AncestorStops<'_>,
     ) -> windows::core::Result<(Vec<NodeSnapshot>, Option<isize>, AncestorWalk)> {
         let AncestorStops {
@@ -762,7 +768,11 @@ impl Uia {
                     return Ok((chain, None, AncestorWalk::Unknown(hop)));
                 }
             };
-            current_window = parent.read().node.role.hwnd;
+            let read = parent.read();
+            current_window = read.node.role.hwnd;
+            if hops == 1 {
+                *parent_automation_id = read.automation_id;
+            }
             match take_shaped_ancestor(&parent, registry, read_by_other_api, known, &mut chain) {
                 Taken::Continue => current = parent.live().clone(),
                 Taken::Crossed(hwnd) => {

@@ -203,7 +203,20 @@ pub(super) fn window_facts(handle: isize) -> WindowFacts {
         in_foreground: relation.in_foreground,
         class,
         application: String::new(),
+        alt_held: false,
     }
+}
+
+/// Whether Alt is held now, by the system's asynchronous key state, as
+/// NVDA's File Explorer module reads it when it judges a task switching
+/// list item's container (`appModules/explorer.py`,
+/// `MultitaskingViewFrameListItem._get_container`): a local call.
+pub(super) fn alt_is_held() -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
+    // SAFETY: GetAsyncKeyState takes any virtual-key code.
+    let state = unsafe { GetAsyncKeyState(i32::from(VK_MENU.0)) };
+    // The high bit, the sign, says the key is down.
+    state < 0
 }
 
 /// The desktop window's handle.

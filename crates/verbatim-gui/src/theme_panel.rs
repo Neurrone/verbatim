@@ -849,6 +849,11 @@ fn preview_of(indication: Indication) -> Preview {
             }),
         ],
         Indication::Level => vec![label(), span(SegmentContent::Level(2))],
+        Indication::CellCoordinates => vec![
+            label(),
+            span(SegmentContent::Row(3)),
+            span(SegmentContent::Column(2)),
+        ],
         Indication::SpellingError => vec![
             span(SegmentContent::Format(TextFormat::SpellingError)),
             UtteranceSegment::text(sample),

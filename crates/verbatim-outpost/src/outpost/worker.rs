@@ -66,7 +66,7 @@ use super::intake::{Entry, Handling, Item, Object, UiaEvent, UiaKind, window_of}
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
-    MOVED_ON_GRACE, console_client, event_window_unreadable, focus_window_of,
+    MOVED_ON_GRACE, alt_is_held, console_client, event_window_unreadable, focus_window_of,
     foreground_window_handle, front_is_another_thread_of_its_application, is_descendant_window,
     now_ms, top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
 };
@@ -2275,7 +2275,8 @@ impl Worker<'_> {
             observed_at_ms: stamp.0,
             observed_at_us: stamp.1,
             backend,
-            window: window.map(|hwnd| event_window_facts(window_facts(hwnd), &event, name)),
+            window: window
+                .map(|hwnd| event_window_facts(window_facts(hwnd), &event, name, alt_is_held)),
             application: client,
             timing: EventTiming {
                 published_at_us: now_us(),
@@ -4303,17 +4304,20 @@ impl Worker<'_> {
 }
 
 /// `facts`, the window facts of an event message carrying `event`, with
-/// the window's class, and the application's name that `application`
-/// gives, only for a focus change, the one event Core's rules for an
-/// application's windows and elements match (decision D6), so that no
-/// other event carries their strings to Core.
+/// the window's class, the application's name that `application` gives,
+/// and whether Alt is held, as `alt_held` reads it, only for a focus
+/// change, the one event Core's rules for an application's windows and
+/// elements match (decision D6), so that no other event carries their
+/// strings to Core, nor reads the key.
 fn event_window_facts(
     mut facts: WindowFacts,
     event: &NormalizedEvent,
     application: impl FnOnce() -> String,
+    alt_held: impl FnOnce() -> bool,
 ) -> WindowFacts {
     if matches!(event, NormalizedEvent::FocusChanged { .. }) {
         facts.application = application();
+        facts.alt_held = alt_held();
     } else {
         facts.class = String::new();
     }
@@ -4349,8 +4353,9 @@ mod tests {
 
     /// A focus change's window facts keep the window's class, which Core's
     /// staging rule matches, and take the application's name, which its
-    /// rule for the task switcher's frame matches; any other event's carry
-    /// neither.
+    /// rule for the task switcher's frame matches, and whether Alt is held,
+    /// which its rule for the task switcher's items matches; any other
+    /// event's carry none of them.
     #[test]
     fn only_a_focus_change_carries_its_windows_class_and_application() {
         let facts = WindowFacts {
@@ -4361,6 +4366,7 @@ mod tests {
             in_foreground: true,
             class: "ForegroundStaging".to_owned(),
             application: String::new(),
+            alt_held: false,
         };
         let focus = NormalizedEvent::FocusChanged {
             node: NodeSnapshot {
@@ -4379,10 +4385,12 @@ mod tests {
             text: None,
         };
         let explorer = || "explorer".to_owned();
+        let held = || true;
         assert_eq!(
-            event_window_facts(facts.clone(), &focus, explorer),
+            event_window_facts(facts.clone(), &focus, explorer, held),
             WindowFacts {
                 application: "explorer".to_owned(),
+                alt_held: true,
                 ..facts.clone()
             }
         );
@@ -4391,7 +4399,7 @@ mod tests {
             value: Some("1".to_owned()),
         };
         assert_eq!(
-            event_window_facts(facts.clone(), &value, explorer),
+            event_window_facts(facts.clone(), &value, explorer, held),
             WindowFacts {
                 class: String::new(),
                 ..facts

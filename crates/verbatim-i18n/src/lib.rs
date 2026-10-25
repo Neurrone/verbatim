@@ -1036,6 +1036,18 @@ pub fn level(level: u32) -> String {
     i18n_embed_fl::fl!(loader(), "object-level", level = level.to_string())
 }
 
+/// The localized "row 3" phrase for a table cell's one-based row.
+#[must_use]
+pub fn cell_row(row: u32) -> String {
+    i18n_embed_fl::fl!(loader(), "object-row", row = row.to_string())
+}
+
+/// The localized "column 2" phrase for a table cell's one-based column.
+#[must_use]
+pub fn cell_column(column: u32) -> String {
+    i18n_embed_fl::fl!(loader(), "object-column", column = column.to_string())
+}
+
 /// The localized name of the built-in default theme, which has no name of
 /// its own in the theme model.
 #[must_use]
@@ -1088,6 +1100,7 @@ pub fn indication_name(indication: verbatim_model::Indication) -> String {
         Indication::Shortcut => i18n_embed_fl::fl!(loader, "indication-shortcut"),
         Indication::Position => i18n_embed_fl::fl!(loader, "indication-position"),
         Indication::Level => i18n_embed_fl::fl!(loader, "indication-level"),
+        Indication::CellCoordinates => i18n_embed_fl::fl!(loader, "indication-cell-coordinates"),
         Indication::SpellingError => i18n_embed_fl::fl!(loader, "indication-spelling-error"),
         Indication::GrammarError => i18n_embed_fl::fl!(loader, "indication-grammar-error"),
         Indication::FontName => i18n_embed_fl::fl!(loader, "indication-font-name"),
@@ -1540,6 +1553,7 @@ mod tests {
             (Indication::Shortcut, "shortcut key"),
             (Indication::Position, "position"),
             (Indication::Level, "level"),
+            (Indication::CellCoordinates, "cell coordinates"),
             (Indication::SpellingError, "spelling error"),
             (Indication::GrammarError, "grammar error"),
             (Indication::FontName, "font name"),

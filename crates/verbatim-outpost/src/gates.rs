@@ -11,20 +11,22 @@ use verbatim_uia::{AncestorGates, NodeGates};
 
 /// The gates of a [`verbatim_uia::Node`] read alone, such as a focus or a
 /// navigation step's neighbour, for the details `fetches` names: its
-/// description, keyboard shortcut, position in its set, and level, and its
-/// place, its rectangle and whether it is off the screen, which a read of
-/// one element includes.
+/// description, keyboard shortcut, position in its set, and level, and
+/// its row and column in a grid; and its place, its rectangle and whether
+/// it is off the screen, which a read of one element includes.
 #[must_use]
 pub fn node_gates(fetches: &Fetches) -> NodeGates {
     NodeGates {
         place: Some(()),
+        cell: fetches.cell_coordinates.then_some(()),
         ..many_node_gates(fetches)
     }
 }
 
 /// The gates of a [`verbatim_uia::Node`] read among many, such as a tree
-/// dump's: [`node_gates`] without its place, which a read of many elements
-/// never includes (`verbatim_uia::Place`).
+/// dump's: [`node_gates`] without its place or its row and column, which a
+/// read of many elements never includes (`verbatim_uia::Place`,
+/// `verbatim_uia::Cell`).
 #[must_use]
 pub fn many_node_gates(fetches: &Fetches) -> NodeGates {
     NodeGates {
@@ -35,6 +37,7 @@ pub fn many_node_gates(fetches: &Fetches) -> NodeGates {
         shortcut: fetches.shortcut.then_some(()),
         position: fetches.position.then_some(()),
         place: None,
+        cell: None,
         level: fetches.level,
     }
 }
@@ -72,12 +75,13 @@ mod tests {
     /// The gates for every detail but the one `off` turns off, as a node's
     /// and as the focus's, which must equal `expected` and that node
     /// within an ancestor, and as an ancestor's and a node's among many,
-    /// which are those without the place.
+    /// which are those without the place and the cell.
     fn assert_only(off: impl FnOnce(&mut Fetches), expected: NodeGates) {
         let mut fetches = Fetches::default();
         off(&mut fetches);
         let among_many = NodeGates {
             place: None,
+            cell: None,
             ..expected
         };
         assert_eq!(
@@ -130,6 +134,17 @@ mod tests {
             |fetches| fetches.position = false,
             NodeGates {
                 position: None,
+                ..Node::all_on()
+            },
+        );
+    }
+
+    #[test]
+    fn cell_coordinates_off_turn_off_the_cell_alone() {
+        assert_only(
+            |fetches| fetches.cell_coordinates = false,
+            NodeGates {
+                cell: None,
                 ..Node::all_on()
             },
         );

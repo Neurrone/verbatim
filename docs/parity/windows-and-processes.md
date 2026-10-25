@@ -165,8 +165,22 @@ becomes NVDA's focus (`UIAHandler/__init__.py` 261, 856 and 948), so the
 focus, the navigator and the foreground stay where they were, speech is
 not cut, and nothing is said. A foreground change is not refused so. The
 switcher's list items are not refused: with Alt held, NVDA says the item
-reached, by its window's title, row, column and position ("row 1 column
-2 2 of 10"), and then the window switched to. NVDA's capture of Alt+Tab
+reached alone, by its window's title, row, column and position ("Nvda
+Sw B  row 1  column 2  2 of 10"), and then the window switched to. The
+same module gives a UI Automation list item whose parent has the
+automation id `SwitchItemListControl`, or whose window's class is
+`MultitaskingViewFrame`, a container that is the desktop while Alt is
+held (`appModules/explorer.py` 39 to 45 and 303 to 311), so the item's
+focus ancestry is the desktop alone and no container is spoken
+([App modules](../nvda/app-modules-mechanism.md)). A probe of
+2026-10-25 read the Windows 11 switcher's item (class `ListViewItem`)
+with its raw-view parent the list "Running applications", automation id
+`SwitchItemListControl`, and its `GridItem` row 0 and column 1, so this
+rule applies on Windows 11 and the row and column are the grid item's
+([Focus announcement](focus-announcement.md), "Table cell
+coordinates"; the probe's script and output are
+`target/e2e-evidence/switcher-pane-2026-10-24/probe-item.ps1` and
+`Probe/`). NVDA's capture of Alt+Tab
 between two console windows, four quick switches and two with Alt held
 (`target/e2e-evidence/switcher-pane-2026-10-24/NvdaSw/`), said nothing
 for the switcher's pane in any switch. This rule does not explain all of

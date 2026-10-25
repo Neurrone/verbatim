@@ -78,6 +78,15 @@ pub struct WindowFacts {
     /// name could not be read.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub application: String,
+    /// Whether Alt was held when the event's window facts were read: a fact
+    /// of the keyboard, not of the window, read at the same time and for
+    /// the same rules, since one of them changes what a focus says while
+    /// Alt is held (`docs/parity/windows-and-processes.md`, "The Alt+Tab
+    /// switcher's pane"). Only a focus change carries it; `false` on every
+    /// other event and on a focus-now answer, and left out of the message
+    /// when `false`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub alt_held: bool,
 }
 
 /// The window that came to the system's foreground, as the focus listener
@@ -465,6 +474,10 @@ pub struct Notification {
 /// What a completed fetch produced.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a result is built once per fetch and moved, never stored in bulk"
+)]
 pub enum FetchResult {
     /// A fresh snapshot of the requested node.
     Node(NodeSnapshot),

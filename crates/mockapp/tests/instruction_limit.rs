@@ -124,13 +124,14 @@ impl Fixture {
     }
 
     /// The fill of a node read among many, as the tree dump reads one
-    /// without its locations: every detail but its place.
+    /// without its locations: every detail but its place and its cell.
     fn many_nodes(&self) -> Fill<Node> {
         Fill::new(
             &self
                 .uia
                 .request::<Node>(NodeGates {
                     place: None,
+                    cell: None,
                     ..Node::all_on()
                 })
                 .expect("a cache request"),
@@ -313,7 +314,7 @@ fn focus_and_navigation_execute_exactly() {
 
     assert_eq!(
         [worst, limited, typical, far, near_step],
-        [2429, 1842, 1107, 870, 139],
+        [2443, 1856, 1121, 879, 148],
         "focus ancestry worst, at depth limit 30, typical; navigation far and near"
     );
     assert!(worst < LIMIT / 2 && far < LIMIT / 2);
@@ -386,7 +387,7 @@ fn reads_and_paths_execute_exactly() {
 
     assert_eq!(
         [read, deepest, near, missing],
-        [2442, 1134, 148, 141],
+        [2456, 1143, 157, 150],
         "the listener's refreshed read; a path down sixty-two levels, down one, and to nothing"
     );
     assert!(read < LIMIT / 2 && deepest < LIMIT / 2);
@@ -426,7 +427,7 @@ fn controlled_selections_execute_exactly() {
 
     assert_eq!(
         [deep, near, missing],
-        [174, 206, 229],
+        [183, 215, 238],
         "controlled selection inside a group, second child, not found"
     );
 }

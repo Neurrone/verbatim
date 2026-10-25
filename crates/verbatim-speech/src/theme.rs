@@ -20,8 +20,8 @@ use std::sync::{Arc, PoisonError, RwLock};
 use tracing::warn;
 use verbatim_audio::Sound;
 use verbatim_i18n::{
-    character_description, character_name, format_text, level, message_text, negated_state_name,
-    phrase_text, position_in_set, role_name, state_name,
+    cell_column, cell_row, character_description, character_name, format_text, level, message_text,
+    negated_state_name, phrase_text, position_in_set, role_name, state_name,
 };
 use verbatim_model::{
     Earcon, Fetches, Indication, IndicationSetting, MAX_GAIN, Presentation, SegmentContent,
@@ -484,6 +484,7 @@ fn carries_content(indication: Indication) -> bool {
             | Indication::Shortcut
             | Indication::Position
             | Indication::Level
+            | Indication::CellCoordinates
             | Indication::FontName
             | Indication::FontSize
             | Indication::Color
@@ -553,6 +554,8 @@ fn words_of(content: &SegmentContent, language: Option<&str>) -> Option<String> 
             set_size.map(|set_size| position_in_set(*position, set_size))
         }
         SegmentContent::Level(depth) => Some(level(*depth)),
+        SegmentContent::Row(row) => Some(cell_row(*row)),
+        SegmentContent::Column(column) => Some(cell_column(*column)),
         SegmentContent::Message(message) => {
             let text = message_text(*message);
             (!text.is_empty()).then_some(text)
@@ -779,6 +782,19 @@ mod tests {
             set_size: None,
         })]);
         assert_eq!(plain().flatten(&without_size, UtteranceId(1)).text(), "");
+    }
+
+    #[test]
+    fn a_cells_row_and_column_render_their_localized_phrases() {
+        let utterance = utterance_of(vec![
+            UtteranceSegment::label("Nvda Sw B"),
+            UtteranceSegment::new(SegmentContent::Row(1)),
+            UtteranceSegment::new(SegmentContent::Column(2)),
+        ]);
+        assert_eq!(
+            plain().flatten(&utterance, UtteranceId(1)).text(),
+            "Nvda Sw B row 1 column 2"
+        );
     }
 
     #[test]

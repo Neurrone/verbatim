@@ -421,11 +421,12 @@ fn item(name: &str) -> Named {
 }
 
 /// A node read among many, as the outposts' tree dump reads one when
-/// locations are not asked for: every detail but its place
-/// (`verbatim_uia::Place`).
+/// locations are not asked for: every detail but its place and its cell
+/// (`verbatim_uia::Place`, `verbatim_uia::Cell`).
 fn many_nodes(uia: &Uia) -> Request<verbatim_uia::Node> {
     uia.request::<verbatim_uia::Node>(verbatim_uia::NodeGates {
         place: None,
+        cell: None,
         ..verbatim_uia::Node::all_on()
     })
     .expect("the node's request")

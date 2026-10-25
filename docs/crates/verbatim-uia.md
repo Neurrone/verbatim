@@ -118,9 +118,11 @@ Public API:
   fail about one run in five (mockapp's
   `tests/uia_bugs/a_cache_request_fails_while_uias_first_time_setup_runs_on_another_thread.rs`
   races six threads in each of four fresh processes).
-- `Uia::ancestors((element, element_window), request, registry, max_hops, stops)` — the
+- `Uia::ancestors((element, element_window), request, registry, (max_hops, parent_automation_id), stops)` — the
   chain of ancestors of an element, each read as the `Ancestor` shape,
-  outermost first, as `NodeSnapshot`s: a per-hop `GetParentElementBuildCache` walk
+  outermost first, as `NodeSnapshot`s, with the automation id of the
+  first step's element, the raw-view parent, put in
+  `parent_automation_id`: a per-hop `GetParentElementBuildCache` walk
   over the raw view (one cross-process round trip per ancestor, the walk
   NVDA shipped for years), capped by the caller, and stopped by
   `AncestorStops`: at a window read through the other API, at an ancestor
@@ -243,7 +245,9 @@ Public API:
   `AcceleratorKey` (both spoken, joined by two spaces, as NVDA joins
   them), `PositionInSet`, `SizeOfSet`, and `Level`; for an element read
   alone, never for one read among many, `BoundingRectangle` and
-  `IsOffscreen` (the `Place` group, below); and always `ClassName` and
+  `IsOffscreen` (the `Place` group, below), and, when the theme reports
+  cell coordinates, `IsGridItemPatternAvailable`, `GridItemRow` and
+  `GridItemColumn` (the `Cell` group, below); and always `ClassName` and
   `IsDialog` (a dialog by NVDA's
   rule), `IsPassword`, `IsRequiredForForm`, `IsDataValidForForm`, and
   `ValueIsReadOnly` (the protected, required, invalid entry, and
@@ -708,12 +712,15 @@ Public API:
     seconds under load (`docs/design/uia-shapes.md`, decision 9). The
     fetch shapes: `Node` (`RoleCore`, `ValueSet`, `States`, name, four
     gated details, the `Description`, `Shortcut` and `Position` groups and
-    the level, and the gated `Place` group: 22 to 31 properties;
+    the level, and the gated `Place` and `Cell` groups, the latter a grid
+    item's availability, row and column, read for an element read alone
+    and given one-based by `Cell::coordinates()`: 22 to 34 properties;
     `parts(runtime_id)`, with no rectangle and not off the screen when the
     place was not fetched, and on `Cached<Node>` `snapshot(registry)`,
     which keeps the element), covering `Kept` and `FocusInput`;
-    `Ancestor` (a `Node`, its own ungated `Description`, and the content
-    and control flags: 26 to 33; `is_control_and_content()`,
+    `Ancestor` (a `Node`, its own ungated `Description`, the content
+    and control flags, and its automation id, which a focus's snapshot
+    carries of its parent: 27 to 37; `is_control_and_content()`,
     `layout_description()`, and `snapshot` on `Cached<Ancestor>`),
     covering `Kept`, read with its node's place for the focused element
     alone; `DialogText` (role, value, states, name and an ungated

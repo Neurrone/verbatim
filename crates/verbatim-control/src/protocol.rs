@@ -231,6 +231,10 @@ pub enum Frame {
 /// Payload of a [`Frame::Reply`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[non_exhaustive]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "a reply is built once per request and sent, never stored in bulk"
+)]
 pub enum ReplyPayload {
     /// Answer to [`Request::Hello`]: the version the server will speak.
     Hello {

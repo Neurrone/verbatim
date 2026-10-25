@@ -76,6 +76,7 @@ fn window(handle: u64) -> WindowFacts {
         in_foreground: false,
         class: String::new(),
         application: String::new(),
+        alt_held: false,
     }
 }
 
@@ -1818,10 +1819,15 @@ fn details_speak_in_nvda_property_order() {
         rect: None,
         top_level_client: false,
         class_name: None,
+        row: Some(3),
+        column: Some(1),
+        parent_automation_id: None,
     };
 
     // The first level spoken goes first ("Where the level goes" in
-    // `docs/nvda/speech.md`); everything else keeps NVDA's order.
+    // `docs/nvda/speech.md`); everything else keeps NVDA's order, a table
+    // cell's row and column after the shortcut and before the position
+    // (`docs/parity/focus-announcement.md`, "Table cell coordinates").
     assert_eq!(
         focus_segments(item),
         vec![
@@ -1829,10 +1835,29 @@ fn details_speak_in_nvda_property_order() {
             UtteranceSegment::label("Report.txt"),
             UtteranceSegment::new(SegmentContent::Description("Text document".to_owned())),
             UtteranceSegment::new(SegmentContent::Shortcut("Alt+R".to_owned())),
+            UtteranceSegment::new(SegmentContent::Row(3)),
+            UtteranceSegment::new(SegmentContent::Column(1)),
             UtteranceSegment::new(SegmentContent::Position {
                 position: 2,
                 set_size: Some(5),
             }),
+        ]
+    );
+}
+
+/// A table cell with no name says its row and column without its role,
+/// which they stand in for as a name would (`docs/parity/focus-announcement.md`,
+/// "Table cell coordinates").
+#[test]
+fn a_nameless_cell_says_its_row_and_column_without_its_role() {
+    let mut cell = node(400, Role::Cell, None, None, StateSet::new());
+    cell.details.row = Some(4);
+    cell.details.column = Some(2);
+    assert_eq!(
+        focus_segments(cell),
+        vec![
+            UtteranceSegment::new(SegmentContent::Row(4)),
+            UtteranceSegment::new(SegmentContent::Column(2)),
         ]
     );
 }
@@ -5766,6 +5791,204 @@ fn a_pane_is_refused_only_by_its_own_class_in_file_explorer() {
                 Heard::Expire(focus_now(OutpostId(2), 3, &[], Some((OutpostId(1), 1000)))),
                 Heard::Stop,
                 queued(vec![UtteranceSegment::label("Output")]),
+            ]
+        );
+    }
+}
+
+/// The task switcher's item for the window `name`, the second of ten, in
+/// the first row and second column of its list, as the focus listener
+/// reads it in Windows 11: a list item whose raw-view parent, the list,
+/// has the automation id `parent_automation_id`.
+fn task_switching_item(id: u64, name: &str, parent_automation_id: Option<&str>) -> NodeSnapshot {
+    let mut item = node_of_class(id, Role::ListItem, Some(name), "ListViewItem");
+    item.details.position_in_set = Some(2);
+    item.details.set_size = Some(10);
+    item.details.row = Some(1);
+    item.details.column = Some(2);
+    item.details.parent_automation_id = parent_automation_id.map(str::to_owned);
+    item
+}
+
+/// The task switcher's containers as the focus listener reads them for
+/// its item: its window, "Task Switching", and its list, "Running
+/// applications", outermost first.
+fn task_switching_containers() -> Vec<NodeSnapshot> {
+    vec![
+        node(
+            10,
+            Role::Window,
+            Some("Task Switching"),
+            None,
+            StateSet::new(),
+        ),
+        node(
+            11,
+            Role::List,
+            Some("Running applications"),
+            None,
+            StateSet::new(),
+        ),
+    ]
+}
+
+/// What the task switcher's item `name` says itself: its title, row,
+/// column and position.
+fn task_switching_item_said(name: &str) -> Heard {
+    queued(vec![
+        UtteranceSegment::label(name),
+        UtteranceSegment::new(SegmentContent::Row(1)),
+        UtteranceSegment::new(SegmentContent::Column(2)),
+        UtteranceSegment::new(SegmentContent::Position {
+            position: 2,
+            set_size: Some(10),
+        }),
+    ])
+}
+
+/// What the task switcher's containers say as they are entered.
+fn task_switching_containers_said() -> [Heard; 2] {
+    [
+        queued(vec![
+            UtteranceSegment::label("Task Switching"),
+            role(Role::Window),
+        ]),
+        queued(vec![
+            UtteranceSegment::label("Running applications"),
+            role(Role::List),
+        ]),
+    ]
+}
+
+/// With Alt held in the Windows 11 Alt+Tab switcher, its item is said
+/// alone, by its window's title with its row, column and position, as
+/// NVDA's capture says it ("Nvda Sw B  row 1  column 2  2 of 10",
+/// `target/e2e-evidence/switcher-pane-2026-10-24/NvdaSw/`): NVDA's File
+/// Explorer module drops the item's containers while Alt is held
+/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
+/// None of them is kept either: a later focus with Alt released, as in the
+/// switcher Control+Alt+Tab keeps open, says them both.
+#[test]
+fn a_task_switching_item_reached_with_alt_held_says_only_itself() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let alt_held = WindowFacts {
+        alt_held: true,
+        ..task_switcher_window()
+    };
+    let item = task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl"));
+    let (after, effects) = reduce(
+        &state,
+        &focus_in(Pid(2), alt_held, item, task_switching_containers()),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 4, &[], Some((OutpostId(1), 1000)))),
+            Heard::Stop,
+            task_switching_item_said("Nvda Sw B"),
+        ]
+    );
+
+    let released = task_switching_item(5, "Nvda Sw A", Some("SwitchItemListControl"));
+    let (_, effects) = reduce(
+        &after,
+        &focus_in(
+            Pid(2),
+            task_switcher_window(),
+            released,
+            task_switching_containers(),
+        ),
+    );
+    let [window_said, list_said] = task_switching_containers_said();
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(
+                OutpostId(2),
+                5,
+                &[10, 11],
+                Some((OutpostId(1), 1000))
+            )),
+            window_said,
+            list_said,
+            task_switching_item_said("Nvda Sw A"),
+        ]
+    );
+}
+
+/// The rule drops an item's containers only for a UI Automation list item
+/// in File Explorer, read with Alt held, whose parent is the task
+/// switcher's list, or, in Windows 10 before version 1809, whose window is
+/// the switcher's `MultitaskingViewFrame` window. A list item in File
+/// Explorer under another list, one in another application under a list of
+/// that id, and one read through MSAA say their containers with Alt held
+/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
+#[test]
+fn only_the_task_switchers_items_drop_their_containers() {
+    let state = switch_to(&SrState::new(), Pid(1));
+    let alt_held = WindowFacts {
+        alt_held: true,
+        ..task_switcher_window()
+    };
+    let windows_10 = WindowFacts {
+        class: "MultitaskingViewFrame".to_owned(),
+        ..alt_held.clone()
+    };
+    let (_, effects) = reduce(
+        &state,
+        &focus_in(
+            Pid(2),
+            windows_10,
+            task_switching_item(4, "Nvda Sw B", None),
+            task_switching_containers(),
+        ),
+    );
+    assert_eq!(
+        heard(&effects),
+        vec![
+            Heard::Expire(focus_now(OutpostId(2), 4, &[], Some((OutpostId(1), 1000)))),
+            Heard::Stop,
+            task_switching_item_said("Nvda Sw B"),
+        ]
+    );
+
+    let terminal = WindowFacts {
+        application: "windowsterminal".to_owned(),
+        ..alt_held.clone()
+    };
+    let msaa = NodeSnapshot {
+        backend: Backend::Msaa,
+        ..task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl"))
+    };
+    for (facts, item) in [
+        (
+            alt_held.clone(),
+            task_switching_item(4, "Nvda Sw B", Some("ItemsView")),
+        ),
+        (
+            terminal,
+            task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl")),
+        ),
+        (alt_held, msaa),
+    ] {
+        let (_, effects) = reduce(
+            &state,
+            &focus_in(Pid(2), facts, item, task_switching_containers()),
+        );
+        let [window_said, list_said] = task_switching_containers_said();
+        assert_eq!(
+            heard(&effects),
+            vec![
+                Heard::Expire(focus_now(
+                    OutpostId(2),
+                    4,
+                    &[10, 11],
+                    Some((OutpostId(1), 1000))
+                )),
+                Heard::Stop,
+                window_said,
+                list_said,
+                task_switching_item_said("Nvda Sw B"),
             ]
         );
     }

@@ -251,12 +251,14 @@ fn wants_selected_child(role: Role) -> bool {
 /// between its calls. Failures degrade to no containers or no selected
 /// child; running out of time, or a step to a parent that fails or finds
 /// none below the desktop root ([`AncestorWalk::Unknown`]), to containers
-/// unknown. Enrichment never turns a focus into an error.
+/// unknown. Enrichment never turns a focus into an error. The automation
+/// id of the element's raw-view parent, when the walk's first step read
+/// it, is put in `parent_automation_id`.
 pub(super) fn uia_enrichment(
     context: &Context,
     (uia, nodes, ancestors): (&Uia, &Request<Node>, &Request<Ancestor>),
     element: &Cached<Node>,
-    role: Role,
+    (role, parent_automation_id): (Role, &mut Option<String>),
     previous: &[NodeSnapshot],
 ) -> Enrichment {
     let clock = context.clock();
@@ -265,7 +267,7 @@ pub(super) fn uia_enrichment(
         context,
         (uia, ancestors),
         (element.live(), element.read().role.hwnd),
-        previous,
+        (previous, parent_automation_id),
         Some(&out_of_time),
     );
     let selected = if wants_selected_child(role) || element.read().value_from_selection() {
@@ -292,12 +294,14 @@ pub(super) fn uia_enrichment(
 /// switches API when its walk crosses into such a window: in File
 /// Explorer, the folder window above the UIA file list is then the client
 /// area a foreground report already named, not a second, UIA copy of it.
-/// The desktop window ends the walk either way.
+/// The desktop window ends the walk either way. The automation id of the
+/// element's raw-view parent, when the walk's first step read it, is put
+/// in `parent_automation_id`.
 fn uia_ancestors(
     context: &Context,
     (uia, request): (&Uia, &Request<Ancestor>),
     (element, element_window): (&Live, isize),
-    previous: &[NodeSnapshot],
+    (previous, parent_automation_id): (&[NodeSnapshot], &mut Option<String>),
     out_of_time: Option<&dyn Fn() -> bool>,
 ) -> Option<Vec<NodeSnapshot>> {
     let desktop = desktop_window();
@@ -310,7 +314,7 @@ fn uia_ancestors(
         (element, element_window),
         request,
         &context.uia_registry,
-        MAX_ANCESTOR_HOPS,
+        (MAX_ANCESTOR_HOPS, parent_automation_id),
         &verbatim_uia::AncestorStops {
             read_by_other_api: &read_by_msaa,
             known: &known,
@@ -474,6 +478,18 @@ pub(super) fn uia_chain_from_read(
     }
 }
 
+/// The UIA nodes of `previous`, a previous chain, by runtime id, for a
+/// walk to stop at, and their node ids, in the same order, for splicing.
+fn known_uia_nodes(context: &Context, previous: &[NodeSnapshot]) -> (Vec<NodeId>, Vec<Vec<i32>>) {
+    previous
+        .iter()
+        .filter_map(|node| {
+            let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
+            Some((node.id, runtime_id))
+        })
+        .unzip()
+}
+
 /// The element a focus-now query read no longer has the keyboard focus,
 /// read live inside the provider ([`uia_remote_enrichment`]).
 pub(super) struct NotFocused;
@@ -496,12 +512,14 @@ pub(super) struct NotFocused;
 /// fails, the program by UIA's transaction timeout or the classic walk any
 /// way, reports the containers unknown, as does a walk that ends at a
 /// failed or missing parent below the top
-/// ([`verbatim_uia_rops::Ancestry::failed_hop`]).
+/// ([`verbatim_uia_rops::Ancestry::failed_hop`]). The automation id of the
+/// element's raw-view parent, the first ancestor read, is put in
+/// `parent_automation_id` when the walk read it.
 pub(super) fn uia_remote_enrichment(
     context: &Context,
     (uia, request): (&Uia, &Request<Ancestor>),
     element: &Cached<Node>,
-    previous: &[NodeSnapshot],
+    (previous, parent_automation_id): (&[NodeSnapshot], &mut Option<String>),
     window: Option<isize>,
 ) -> Option<Result<Enrichment, NotFocused>> {
     if !context.tries_remote(window) {
@@ -509,15 +527,7 @@ pub(super) fn uia_remote_enrichment(
     }
     let clock = context.clock();
     let out_of_time = time_limit(&clock, ENRICHMENT_BUDGET);
-    // The previous chain's UIA nodes, by runtime id, for the walk to stop
-    // at; their node ids, in the same order, for splicing.
-    let (known_ids, known): (Vec<NodeId>, Vec<Vec<i32>>) = previous
-        .iter()
-        .filter_map(|node| {
-            let runtime_id = context.uia_registry.runtime_id_of(node.id)?;
-            Some((node.id, runtime_id))
-        })
-        .unzip();
+    let (known_ids, known) = known_uia_nodes(context, previous);
     // The query reads the focus's control type and window; its ancestors
     // and selected child come back as ancestors, the child reported as
     // its node.
@@ -555,6 +565,9 @@ pub(super) fn uia_remote_enrichment(
             return Some(Ok((None, None)));
         }
     };
+    if let Some(parent) = ancestry.ancestors.first() {
+        *parent_automation_id = parent.read().automation_id;
+    }
     if let Path::Fallback(error) = &path {
         tracing::warn!(?window, %error, "a remote operation failed; read the classic way");
         if let (verbatim_uia_rops::Error::Import(_), Some(window)) = (error, window) {
@@ -709,7 +722,7 @@ fn msaa_ancestors(
                 context,
                 (uia, request),
                 (element.live(), hwnd),
-                previous,
+                (previous, &mut None),
                 out_of_time,
             )?;
             Some(above.into_iter().chain(below).collect())
@@ -934,12 +947,14 @@ pub(super) fn focused_control_in(
         node.details.class_name.clone_from(&fields.role.class_name);
         console_text_area(&mut node, Some(hwnd));
         // A focus that has moved on since the focused element was read is
-        // still this query's answer, read the classic way.
+        // still this query's answer, read the classic way. Its parent's
+        // automation id, for the same rules, comes with its ancestors.
+        let mut parent_automation_id = None;
         let (ancestors, selected_child) = match uia_remote_enrichment(
             context,
             (uia, &ancestor_request),
             &element,
-            &[],
+            (&[], &mut parent_automation_id),
             Some(hwnd),
         ) {
             Some(Ok(enrichment)) => enrichment,
@@ -947,10 +962,11 @@ pub(super) fn focused_control_in(
                 context,
                 (uia, &nodes, &ancestor_request),
                 &element,
-                node.role,
+                (node.role, &mut parent_automation_id),
                 &[],
             ),
         };
+        node.details.parent_automation_id = parent_automation_id;
         // A combo box without the `Value` pattern, or a looping selector:
         // its first selected item is its value.
         let mut selected_child = selected_child;
@@ -1159,7 +1175,7 @@ pub(super) fn ancestors(
             context,
             (uia, &request),
             (element.live(), element.read().role.hwnd),
-            &[],
+            (&[], &mut None),
             None,
         )
         .unwrap_or_default());

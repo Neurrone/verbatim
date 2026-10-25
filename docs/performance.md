@@ -407,9 +407,12 @@ verdict for the focus's window rather than asking the window again.
   only the application's outpost may send one into it (section 2 of the
   same design).
 - Today: 5 UIA calls, all the listener's, whichever way the outpost walks
-  to its own copy of the element. 301 provider calls in all with the
-  outpost's remote walk, 295 with its classic walk, the subscriptions'
-  moves included (303 and 297 while each ancestor was read with its
+  to its own copy of the element. 312 provider calls in all with the
+  outpost's remote walk, 306 with its classic walk, the subscriptions'
+  moves included, of which 9 `GetPatternProvider` calls are the grid
+  item's row and column of the focus and of its copies read alone
+  (`verbatim_uia::Cell`) and 2 `GetPropertyValue` calls the ancestors'
+  automation ids (301 and 295 before those; 303 and 297 while each ancestor was read with its
   location and whether it is off the screen, which a read of many
   elements no longer asks for, `docs/design/uia-shapes.md`, decision 9); one of them is the `GetPropertyValue` that the
   provider description cached with the outpost's lookup of the route's
@@ -572,9 +575,10 @@ focus waits behind the events queued before it as NVDA's does.
 - Today: 6 UIA calls and 1 window message, all the listener's: the
   sender's nearest window, its plain keyboard focus read, its refreshed
   cache, and three steps, to the group, to the window, and to the
-  desktop's root, where the walk stops; and the raw probe. 342 provider
-  calls in all with the outpost's remote walk, 333 with its classic walk
-  (346 and 337 with each ancestor's location read).
+  desktop's root, where the walk stops; and the raw probe. 354 provider
+  calls in all with the outpost's remote walk, 345 with its classic walk,
+  12 of them the grid item's row and column and the ancestors' automation
+  ids (346 and 337 with each ancestor's location read, before those).
   The raw probe costs mockapp one `WM_GETOBJECT`, with wParam 0, where
   `UiaHasServerSideProvider` cost it two, first with a nonzero wParam and
   then with wParam 0, and seven more provider calls as UIA connected (five
@@ -634,9 +638,11 @@ The focus lands on the list itself, and its selected item is read with it.
   windowless element, and the selected item's two (`SelectionPattern2`'s
   `FirstSelectedItem`, fetched with the `Selection` pattern, and
   `BuildUpdatedCache` on it).
-- Today: 7 UIA calls, all the listener's. 337 provider calls in all with
-  the outpost's remote walk, 332 with its classic walk (339 and 334 with
-  each ancestor's location read). The listener's
+- Today: 7 UIA calls, all the listener's. 352 provider calls in all with
+  the outpost's remote walk, 347 with its classic walk, 15 of them the
+  grid item's row and column, the selected item's among them, and the
+  ancestors' automation ids (339 and 334 with each ancestor's location
+  read, before those). The listener's
   one remote operation made 4 calls, 343 provider calls.
 - Target: the minimum.
 
@@ -683,9 +689,10 @@ The focus moves from one list item to the next.
 - Minimum: 5 UIA calls, as for any steady-state focus change on a
   windowless element.
 - Today: 5 UIA calls, the same as a steady-state focus change; the walk
-  stops at the list, which the previous chain holds. 316 provider calls
-  in all with the outpost's remote walk, 313 with its classic walk (318
-  and 315 with each ancestor's location read). The
+  stops at the list, which the previous chain holds. 327 provider calls
+  in all with the outpost's remote walk, 324 with its classic walk, 11 of
+  them the grid item's row and column and the ancestors' automation ids
+  (318 and 315 with each ancestor's location read, before those). The
   listener's one remote operation made 4 calls, 346 provider calls.
 - Target: the minimum.
 
@@ -1588,6 +1595,40 @@ class and the focus's application.
   `QueryFullProcessImageNameW`. For each UI Automation
   focus that is not a foreground change, Core compares the application's
   name, and for File Explorer's the element's class, with constants.
+- Target: the minimum.
+
+### The task switcher's items, and a grid item's row and column
+
+Core drops the containers of a task switcher's item reached with Alt held,
+matching the item's parent's automation id and whether Alt was held, and
+speaks a grid item's row and column (`docs/parity/windows-and-processes.md`,
+"The Alt+Tab switcher's pane"; `docs/parity/focus-announcement.md`, "Table
+cell coordinates").
+
+- Minimum: NVDA reads the parent's automation id from its base cache,
+  which the parent's object was built with when the object was made; Alt
+  with one `GetAsyncKeyState`, a local call; and the row and column as
+  two properties of the focused object, each a cross-process call unless
+  cached.
+- Today: no cross-process call, thread, timer, message or wake-up is
+  added. Every ancestor's request holds its automation id
+  (`verbatim_uia::Ancestor`), so the parent's comes with the walk that
+  reads the ancestors, and only the focus's snapshot carries it, one
+  string when the parent has one. The requests of an element read alone,
+  the focus, its selected child and a navigation step's neighbour, hold
+  the `GridItem` pattern's availability, row and column
+  (`verbatim_uia::Cell`), which no read of many elements asks for; in
+  mockapp each element read so costs 3 `GetPatternProvider` calls more,
+  as UIA asks the provider for the pattern to answer each of the three.
+  A snapshot carries the row and column only for a grid item, and every
+  snapshot is 40 bytes larger for the three fields, so the fetch result,
+  the control plane's reply and the events that hold one grow by as much
+  (each passes Clippy's size limit for an enum variant, allowed with its
+  reason). Alt is read
+  with one `GetAsyncKeyState` in the outpost for each focus change it
+  reports, with the window's facts. For each UI Automation list item
+  focus, Core compares the application's name and the parent's
+  automation id with constants.
 - Target: the minimum.
 
 ### The system caret's events
@@ -2792,21 +2833,23 @@ counting form executes twice as many, so it can count only programs under
 half the limit. Pinned exactly, worst case against mockapp first, the
 share of the limit in brackets:
 
-- The focus ancestry: 2,429 (24 percent) for a list sixty groups deep,
+- The focus ancestry: 2,443 (24 percent) for a list sixty groups deep,
   every ancestor up to the window returned under the outpost's depth limit
   of 64, against 64 known ancestors none of which it meets, with the
-  list's selected item and a held element's focus read; 1,842 for the same
+  list's selected item and a held element's focus read; 1,856 for the same
   stopped at a depth limit of 30, walking on to the window without
-  returning the rest; 1,107 for the list whose group is known, its window
-  still sixty-one levels up. It was 2,180, 1,686 and 1,038 before each
+  returning the rest; 1,121 for the list whose group is known, its window
+  still sixty-one levels up. It was 2,429, 1,842 and 1,107 before the
+  ancestors' requests held their automation ids and the focus's and its
+  selected item's their row and column in a grid, instructions that build
+  the requests once, whatever the depth; 2,180, 1,686 and 1,038 before each
   ancestor's record of the properties left out of its cache was returned
   with it, three instructions an ancestor (`docs/design/uia-shapes.md`,
   step 3), and 2,366, 1,779 and 1,044 before the focus and its selected
   item were filled by requests of their own, with their place, and the
   ancestors by requests without it (decision 9 there), 63 instructions
   more to build them. The focus listener's read, which also fills the
-  focus's own cache afresh, executes 2,442 at the worst case (2,379
-  before). A deeper tree adds a level of the window walk
+  focus's own cache afresh, executes 2,456 at the worst case. A deeper tree adds a level of the window walk
   for each level beyond the depth limit, a dozen or so instructions (the
   navigation step's walk, much the same, takes 12): about two hundred more
   levels before half the limit. mockapp's fixtures cannot nest
@@ -2820,18 +2863,18 @@ share of the limit in brackets:
   items whose children, none, a run reads, and 356 for the last four. A
   run that started from sixteen elements each leading down such a chain
   would add their sixteen reads, about 590, still under half the limit.
-- The navigation step: 870 (9 percent) from an item sixty-two levels
-  below its window, 139 from right under it, about 12 for each level
+- The navigation step: 879 (9 percent) from an item sixty-two levels
+  below its window, 148 from right under it, about 12 for each level
   walked.
-- The controlled selection: 174 for a result inside a group of the
-  controlled list, 206 for the list's second child, and 229 for an item
+- The controlled selection: 183 for a result inside a group of the
+  controlled list, 215 for the list's second child, and 238 for an item
   outside the list, all three of the list's elements walked and then the
   list's selection read, which is empty; about 35 for each element
   passed. Of these, 6 test whether the search found the element. An
   element not found takes 11 more when the first controlled element has
   nothing selected, to read its runtime id and current selection, plus
   the fill of its first selected element's cache when it has one, which
-  the 229 does not include; a selection the outpost reads as the focus's
+  the 238 does not include; a selection the outpost reads as the focus's
   own reads no current selection, and takes none of the 11. Besides, 5 return the runtime ids of the
   elements the relation names, for the outpost's log of a selection
   found in none: 1 for the string that collects them and 4 for each

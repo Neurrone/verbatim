@@ -52,3 +52,35 @@ pub(crate) fn refuses_focus(window: Option<&WindowFacts>, node: &NodeSnapshot) -
                 | (Some("Windows.UI.Input.InputSite.WindowClass"), Role::Pane)
         )
 }
+
+/// The automation id of the task switcher's list of windows, the parent of
+/// each of its items, in Windows 10 from version 1809 and in Windows 11.
+const TASK_SWITCHING_LIST: &str = "SwitchItemListControl";
+
+/// The class of the Windows 10 task switcher's window before version 1809,
+/// which its items are in.
+const TASK_SWITCHING_FRAME: &str = "MultitaskingViewFrame";
+
+/// Whether a UI Automation focus on `node`, with the window facts
+/// `window`, is an item of the task switcher reached with Alt held, whose
+/// containers are dropped: the focus is taken as having none, so none of
+/// them is spoken and none is kept for the next focus to compare with
+/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's
+/// pane"). It is when `node` was read through UI Automation as a list
+/// item, `window` names File Explorer as its application, Alt was held
+/// when the focus's window facts were read, and either `node`'s raw-view
+/// parent has the automation id `SwitchItemListControl` (Windows 10 from
+/// version 1809, Windows 11) or its window's class is
+/// `MultitaskingViewFrame` (Windows 10 before). With Alt released, as in
+/// the switcher that Control+Alt+Tab keeps open, the containers are
+/// spoken as any focus's are.
+pub(crate) fn drops_ancestry(window: Option<&WindowFacts>, node: &NodeSnapshot) -> bool {
+    node.backend == Backend::Uia
+        && node.role == Role::ListItem
+        && window.is_some_and(|window| {
+            window.application == FILE_EXPLORER
+                && window.alt_held
+                && (window.class == TASK_SWITCHING_FRAME
+                    || node.details.parent_automation_id.as_deref() == Some(TASK_SWITCHING_LIST))
+        })
+}

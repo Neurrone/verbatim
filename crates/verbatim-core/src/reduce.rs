@@ -568,12 +568,30 @@ fn focus_dropped_first(
         return true;
     }
     if is_duplicate_focus(state, node) {
-        keep_newer_reading(state, node, ancestors, *ancestors_unknown);
+        let (ancestors, ancestors_unknown) =
+            focus_ancestors(window, node, (ancestors, *ancestors_unknown));
+        keep_newer_reading(state, node, ancestors, ancestors_unknown);
         sync_navigator_with_focus(state);
         editing::keep_focus_caret(state, node.id, text.as_deref(), observed.0);
         return true;
     }
     is_stale_focus(state, node.id.outpost(), observed, window)
+}
+
+/// A focus's ancestors and whether they are unknown, as Core takes them:
+/// as the event reports them, but none, and known to be none, for an item
+/// whose containers an application's rule drops
+/// ([`crate::applications::drops_ancestry`]).
+fn focus_ancestors<'a>(
+    window: Option<&WindowFacts>,
+    node: &NodeSnapshot,
+    (ancestors, unknown): (&'a [NodeSnapshot], bool),
+) -> (&'a [NodeSnapshot], bool) {
+    if crate::applications::drops_ancestry(window, node) {
+        (&[], false)
+    } else {
+        (ancestors, unknown)
+    }
 }
 
 /// A caret report of `node`: keeps Core's caret current and speaks the
@@ -653,22 +671,26 @@ fn reduce_event(
             ancestors_unknown,
             selected_child,
             text,
-        } => reduce_focus_changed(
-            state,
-            trace_id,
-            source,
-            window,
-            &FocusReport {
-                node,
-                observed_at_ms,
-                observed_at_us: observed.1,
-                foreground: *foreground,
-                ancestors,
-                ancestors_unknown: *ancestors_unknown,
-                selected_child: selected_child.as_ref(),
-                text: text.as_deref(),
-            },
-        ),
+        } => {
+            let (ancestors, ancestors_unknown) =
+                focus_ancestors(window, node, (ancestors, *ancestors_unknown));
+            reduce_focus_changed(
+                state,
+                trace_id,
+                source,
+                window,
+                &FocusReport {
+                    node,
+                    observed_at_ms,
+                    observed_at_us: observed.1,
+                    foreground: *foreground,
+                    ancestors,
+                    ancestors_unknown,
+                    selected_child: selected_child.as_ref(),
+                    text: text.as_deref(),
+                },
+            )
+        }
         NormalizedEvent::SelectionChanged { node } => {
             reduce_selection_changed(state, trace_id, node)
         }
@@ -2464,16 +2486,20 @@ fn reports_text_itself(role: Role) -> bool {
 }
 
 /// Whether a node announced for `reason` speaks its role: always, unless
-/// the reason is focus, the node has a name or a value to hear instead, and
-/// its role is one left silent on focus.
+/// the reason is focus, the node has a name, a value, or a row or column in
+/// a table to hear instead, and its role is one left silent on focus.
 fn speaks_role(node: &NodeSnapshot, reason: Reason) -> bool {
     let something_else = node.name.as_deref().is_some_and(|name| !name.is_empty())
-        || node.value.as_deref().is_some_and(|value| !value.is_empty());
+        || node.value.as_deref().is_some_and(|value| !value.is_empty())
+        || node.details.row.is_some()
+        || node.details.column.is_some();
     !(reason == Reason::Focus && something_else && is_silent_on_focus(node.role))
 }
 
 /// The full announcement for a node, in NVDA's property order: name, role,
-/// value, states, description, keyboard shortcut, position in set, level —
+/// value, states, description, keyboard shortcut, row and column in a table
+/// (`docs/parity/focus-announcement.md`, "Table cell coordinates"),
+/// position in set, level —
 /// each as its semantic span kind, never anonymous text (decision D12).
 /// Detail spans simply do not appear when the backend reported nothing; the
 /// role does not appear when `reason` leaves it silent ([`speaks_role`]).
@@ -2512,6 +2538,12 @@ fn node_segments(
         segments.push(UtteranceSegment::new(SegmentContent::Shortcut(
             shortcut.clone(),
         )));
+    }
+    if let Some(row) = node.details.row {
+        segments.push(UtteranceSegment::new(SegmentContent::Row(row)));
+    }
+    if let Some(column) = node.details.column {
+        segments.push(UtteranceSegment::new(SegmentContent::Column(column)));
     }
     if let Some(position) = node.details.position_in_set {
         segments.push(UtteranceSegment::new(SegmentContent::Position {

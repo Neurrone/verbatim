@@ -6,10 +6,11 @@ use windows::Win32::UI::Accessibility::{
     UIA_AccessKeyPropertyId, UIA_AutomationIdPropertyId, UIA_BoundingRectanglePropertyId,
     UIA_ClassNamePropertyId, UIA_ControlTypePropertyId, UIA_ControllerForPropertyId,
     UIA_ExpandCollapseExpandCollapseStatePropertyId, UIA_FrameworkIdPropertyId,
-    UIA_FullDescriptionPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId,
-    UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
-    UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId, UIA_IsEnabledPropertyId,
-    UIA_IsExpandCollapsePatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
+    UIA_FullDescriptionPropertyId, UIA_GridItemColumnPropertyId, UIA_GridItemRowPropertyId,
+    UIA_HasKeyboardFocusPropertyId, UIA_HelpTextPropertyId, UIA_IsContentElementPropertyId,
+    UIA_IsControlElementPropertyId, UIA_IsDataValidForFormPropertyId, UIA_IsDialogPropertyId,
+    UIA_IsEnabledPropertyId, UIA_IsExpandCollapsePatternAvailablePropertyId,
+    UIA_IsGridItemPatternAvailablePropertyId, UIA_IsKeyboardFocusablePropertyId,
     UIA_IsOffscreenPropertyId, UIA_IsPasswordPropertyId,
     UIA_IsRangeValuePatternAvailablePropertyId, UIA_IsRequiredForFormPropertyId,
     UIA_IsSelectionItemPatternAvailablePropertyId, UIA_IsTextPatternAvailablePropertyId,
@@ -466,6 +467,47 @@ uia_shape! {
 }
 
 uia_shape! {
+    /// Where an element is in a grid, when it is a grid's item: read only
+    /// for the one element that is spoken alone, such as a focus, never by
+    /// a read of many, as NVDA's base cache holds none of it and it reads
+    /// these per object when it speaks one (`NVDAObjects/UIA/__init__.py`,
+    /// `_get_rowNumber` and `_get_columnNumber`).
+    pub struct Cell {
+        gates: none;
+        groups {}
+        properties {
+            /// Whether it has the `GridItem` pattern.
+            grid_item: UIA_IsGridItemPatternAvailablePropertyId => bool,
+            /// Its zero-based row, meaningful only with the pattern: a
+            /// remotely filled cache stores the default of zero.
+            row: UIA_GridItemRowPropertyId => i32,
+            /// Its zero-based column, meaningful only with the pattern.
+            column: UIA_GridItemColumnPropertyId => i32,
+        }
+        prefetch {}
+        covers {}
+    }
+}
+
+impl Cell {
+    /// Its one-based row and column, as NVDA numbers them for speech (the
+    /// pattern's zero-based values plus one), `None` for an element
+    /// without the `GridItem` pattern or with a negative row or column.
+    #[must_use]
+    pub fn coordinates(&self) -> Option<(u32, u32)> {
+        if !self.grid_item {
+            return None;
+        }
+        let one_based = |value: Option<i32>| {
+            u32::try_from(value?)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+        };
+        Some((one_based(self.row)?, one_based(self.column)?))
+    }
+}
+
+uia_shape! {
     /// A node as Core is told of it: a focus, a selection, a neighbour, a
     /// window, a tree dump's node. Its four details are fetched only when
     /// the active theme reports them, and its [`Place`] only for a read of
@@ -490,6 +532,8 @@ uia_shape! {
             position: Position,
             /// Where it is: its rectangle and whether it is off the screen.
             place: Place,
+            /// Where it is in a grid, when it is a grid's item.
+            cell: Cell,
         }
         properties {
             /// The name.
@@ -528,7 +572,14 @@ impl Node {
             rect: self.place.as_ref().and_then(|place| place.rect),
             top_level_client: false,
             class_name: None,
+            row: None,
+            column: None,
+            parent_automation_id: None,
         };
+        if let Some((row, column)) = self.cell.as_ref().and_then(Cell::coordinates) {
+            details.row = Some(row);
+            details.column = Some(column);
+        }
         strip_bidi_controls([&mut name, &mut value, &mut details.description]);
         let offscreen = self.place.as_ref().is_some_and(|place| place.offscreen);
         CachedUiaParts {
@@ -598,6 +649,12 @@ uia_shape! {
             content: UIA_IsContentElementPropertyId => bool,
             /// Whether UIA counts it as a control.
             control: UIA_IsControlElementPropertyId => bool,
+            /// Its automation id, which a focus's snapshot carries of its
+            /// nearest ancestor, its parent, for Core's rules for an
+            /// application's elements (decision D6), as NVDA's app modules
+            /// read `UIAAutomationId` of an object's parent from NVDA's base
+            /// cache.
+            automation_id: UIA_AutomationIdPropertyId => string,
         }
         gated_properties {}
         covers { Kept }

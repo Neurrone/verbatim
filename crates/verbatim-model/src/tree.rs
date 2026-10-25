@@ -456,6 +456,24 @@ pub struct NodeDetails {
     /// snapshot, and left out of the message, so that they carry no string.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class_name: Option<String>,
+    /// The one-based row of the grid cell the node is, when it is one
+    /// (UIA's `GridItem` pattern, its zero-based `Row` plus one), read only
+    /// for a node read alone, never among many, and only when the theme
+    /// reports cell coordinates (`docs/parity/focus-announcement.md`, "Table
+    /// cell coordinates"). Left out of the message when `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<u32>,
+    /// The one-based column of the grid cell the node is, read with
+    /// [`row`](Self::row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<u32>,
+    /// The UI Automation `AutomationId` of the node's raw-view parent,
+    /// carried only on the snapshot of a UI Automation focus, as
+    /// [`class_name`](Self::class_name) is, for Core's rules for an
+    /// application's elements (decision D6); `None` on every other snapshot,
+    /// and when the parent has none or was not read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_automation_id: Option<String>,
 }
 
 /// Everything the reducer needs to announce one node, captured in one place.

@@ -50,7 +50,7 @@ mod shapes;
 mod tests;
 
 pub use shapes::{
-    Ancestor, AncestorGates, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
+    Ancestor, AncestorGates, Cell, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
     ListenerEvent, Node, NodeGates, Place, Position, PropertyEvent, ProviderOrigin, RoleCore,
     SelectedItem, SelectionContainer, ShellButton, Shortcut, States, SuggestionsRefresh,
     TextAreaPattern, TextEvent, ValueSet, WindowLookup,

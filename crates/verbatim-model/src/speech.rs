@@ -91,6 +91,12 @@ pub enum SegmentContent {
     },
     /// One-based nesting level (tree items, headings).
     Level(u32),
+    /// The one-based row of a table cell, "row 3", from the node's
+    /// reported row.
+    Row(u32),
+    /// The one-based column of a table cell, "column 2", from the node's
+    /// reported column.
+    Column(u32),
     /// A fixed reader message, rendered to its localized wording — the
     /// D12-conformant way for the reducer to say something that is not a
     /// property of any node (a navigation edge, for instance) without

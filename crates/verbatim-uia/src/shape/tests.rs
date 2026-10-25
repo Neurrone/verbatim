@@ -4,15 +4,15 @@ use std::collections::BTreeSet;
 use windows::Win32::Foundation::RECT;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Accessibility::{
-    UIA_HasKeyboardFocusPropertyId, UIA_IsContentElementPropertyId, UIA_IsControlElementPropertyId,
-    UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionPatternId, UIA_TextPatternId,
-    UiaGetReservedNotSupportedValue,
+    UIA_AutomationIdPropertyId, UIA_HasKeyboardFocusPropertyId, UIA_IsContentElementPropertyId,
+    UIA_IsControlElementPropertyId, UIA_PATTERN_ID, UIA_PROPERTY_ID, UIA_SelectionPatternId,
+    UIA_TextPatternId, UiaGetReservedNotSupportedValue,
 };
 use windows::core::IUnknown;
 
 use super::{
-    Absent, Ancestor, CachedReads, Description, DialogText, FocusInput, HelpTextRefresh, Kept,
-    ListenerEvent, Node, Place, Position, PropertyEvent, ProviderOrigin, Reader, RoleCore,
+    Absent, Ancestor, CachedReads, Cell, Description, DialogText, FocusInput, HelpTextRefresh,
+    Kept, ListenerEvent, Node, Place, Position, PropertyEvent, ProviderOrigin, Reader, RoleCore,
     SelectionContainer, Shape, ShellButton, Shortcut, States, SuggestionsRefresh, TextAreaPattern,
     TextEvent, ValueSet, WindowLookup, request_properties,
 };
@@ -116,6 +116,7 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         Description,
         Shortcut,
         Position,
+        Cell,
         Node,
         Ancestor,
         DialogText,
@@ -127,10 +128,10 @@ fn every_shape_reads_exactly_what_its_request_holds_for_every_combination_of_gat
         TextAreaPattern,
         ProviderOrigin,
     );
-    // Five gates each: the description, shortcut, position and place
+    // Six gates each: the description, shortcut, position, place and cell
     // groups and the level.
-    assert_eq!(Node::combinations().len(), 32);
-    assert_eq!(Ancestor::combinations().len(), 32);
+    assert_eq!(Node::combinations().len(), 64);
+    assert_eq!(Ancestor::combinations().len(), 64);
 }
 
 #[test]
@@ -140,12 +141,13 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
         ("TextEvent", TextEvent::PROPERTIES, 3),
         ("PropertyEvent", PropertyEvent::PROPERTIES, 23),
         ("ListenerEvent", ListenerEvent::PROPERTIES, 15),
-        ("Node", Node::PROPERTIES, 31),
+        ("Node", Node::PROPERTIES, 34),
         // Neither the rectangle nor whether it is off the screen is read
-        // unless the place's gate asks for them.
+        // unless the place's gate asks for them, nor the row and column
+        // unless the cell's does.
         ("Node, ungated", Node::UNGATED, 22),
-        ("Ancestor", Ancestor::PROPERTIES, 33),
-        ("Ancestor, ungated", Ancestor::UNGATED, 26),
+        ("Ancestor", Ancestor::PROPERTIES, 37),
+        ("Ancestor, ungated", Ancestor::UNGATED, 27),
         ("DialogText", DialogText::PROPERTIES, 24),
     ] {
         assert_eq!(properties.len(), expected, "{shape}");
@@ -155,13 +157,15 @@ fn a_shapes_properties_are_its_fields_union_without_repeats() {
     assert_eq!(PropertyEvent::PATTERNS, []);
     assert_eq!(SelectionContainer::PATTERNS, [UIA_SelectionPatternId]);
     // With every gate on, a node's request is all of its properties, and
-    // an ancestor's is a node's with the content flags.
+    // an ancestor's is a node's with the content flags and the automation
+    // id.
     let node = ids(&request_properties::<Node>(&Node::all_on()));
     assert_eq!(node, ids(Node::PROPERTIES));
     let mut ancestor = node;
     ancestor.extend(ids(&[
         UIA_IsContentElementPropertyId,
         UIA_IsControlElementPropertyId,
+        UIA_AutomationIdPropertyId,
     ]));
     assert_eq!(
         ids(&request_properties::<Ancestor>(&Ancestor::all_on())),

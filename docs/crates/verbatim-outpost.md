@@ -1605,12 +1605,17 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   application's windows match, and the application's name, its
   executable's file name without the extension, lower-cased, read once
   per process with `QueryFullProcessImageNameW` and remembered, a
-  console window's client's for a focus in a console window), all local
-  calls. A UIA focus's snapshot, from the listener's read, a menu
-  opening's, or the outpost's own read of the focus, carries the
-  element's own UIA class (`NodeDetails::class_name`) from the element's
-  cache, which Core's rules for an application's elements match; no other
-  snapshot carries it.
+  console window's client's for a focus in a console window, and whether
+  Alt is held, by `GetAsyncKeyState`), all local calls. A UIA focus's
+  snapshot, from the listener's read, a menu opening's, or the outpost's
+  own read of the focus, carries the element's own UIA class
+  (`NodeDetails::class_name`) from the element's cache, and its raw-view
+  parent's automation id (`NodeDetails::parent_automation_id`) from the
+  first ancestor the walk read, which Core's rules for an application's
+  elements match; no other snapshot carries them. A node read alone
+  carries its grid row and column when it is a grid item and the theme
+  reports cell coordinates (`gates::node_gates`); a node read among many
+  never does.
 
 ### Reading the focus
 

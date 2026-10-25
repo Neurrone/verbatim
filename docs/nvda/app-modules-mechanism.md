@@ -43,6 +43,25 @@ Windows+X menu (`ForegroundStaging`, `LauncherTipWnd`,
 443 to 449). It does so after NVDA has made the window its focus and
 run its foreground event, so speech is still cut there.
 
+The same module gives an item of the task switcher's list, a UI
+Automation list item whose parent has the automation id
+`SwitchItemListControl` (Windows 10 from version 1809, and Windows 11,
+where the list is named "Running applications"), or whose window's class
+is `MultitaskingViewFrame` (Windows 10 before), a class whose container
+is the desktop while Alt is held, read with `GetAsyncKeyState` when the
+container is asked for, and its real parent otherwise
+(`MultitaskingViewFrameListItem`, `appModules/explorer.py` 39 to 45 and
+303 to 311). NVDA builds the focus ancestry by asking each object for its
+container (`setFocusObject`, `api.py` 104 to 147), so with Alt held the
+item's ancestry is the desktop alone, which the previous focus's ancestry
+holds too: no container is entered, so none is spoken, and NVDA finds the
+foreground window itself and runs its foreground event, which cuts speech
+(`doPreGainFocus`, `eventHandler.py` 402 to 413). The item is then spoken
+as any focus is, its name and its row, column and position ("Nvda Sw B
+row 1 column 2 2 of 10"; [Speech](speech.md), "Table cell coordinates").
+With Alt released, as in the switcher that Control+Alt+Tab keeps open,
+the item's containers are entered and spoken as any focus's are.
+
 What an app module can hook, in rough order of importance:
 
 - `chooseNVDAObjectOverlayClasses(obj, clsList)` — inject overlay

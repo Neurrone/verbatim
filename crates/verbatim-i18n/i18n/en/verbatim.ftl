@@ -286,6 +286,7 @@ indication-description = description
 indication-shortcut = shortcut key
 indication-position = position
 indication-level = level
+indication-cell-coordinates = cell coordinates
 indication-spelling-error = spelling error
 indication-grammar-error = grammar error
 indication-font-name = font name
@@ -393,6 +394,8 @@ state-linked = linked
 
 object-position-in-set = { $position } of { $set_size }
 object-level = level { $level }
+object-row = row { $row }
+object-column = column { $column }
 
 ## Clipboard.
 

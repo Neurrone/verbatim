@@ -1678,6 +1678,9 @@ fn read_snapshot_with(
             rect,
             top_level_client,
             class_name: None,
+            row: None,
+            column: None,
+            parent_automation_id: None,
         },
     }
 }

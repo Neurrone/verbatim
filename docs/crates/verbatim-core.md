@@ -277,7 +277,15 @@ Implementation notes, `reduce`:
   and role are `MultitaskingViewFrame` and window, or
   `Windows.UI.Input.InputSite.WindowClass` and pane, in the application
   its window facts name `explorer` (`docs/parity/windows-and-processes.md`, "The
-  Alt+Tab switcher's pane"). `tests/reduce.rs` checks both.
+  Alt+Tab switcher's pane"). A UI Automation focus on the task
+  switcher's item reached with Alt held is taken with no containers,
+  known to be none, so none is spoken or kept: a list item in
+  `explorer` whose window facts say Alt was held and whose parent's
+  automation id (`NodeDetails::parent_automation_id`) is
+  `SwitchItemListControl`, or whose window's class is
+  `MultitaskingViewFrame` (`applications::drops_ancestry`, applied where
+  the reducer takes a focus's ancestors, its duplicate's newer reading
+  included). `tests/reduce.rs` checks all three.
 - Event acceptance (decision D14 as amended by the outpost redesign;
   `docs/parity/focus-events.md`, "Event acceptance"): the state keeps an attention
   record, the application and window facts of the most recent foreground

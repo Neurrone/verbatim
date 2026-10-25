@@ -898,12 +898,14 @@ impl FocusReader {
         // Every detail: the listener reads for every application, whatever
         // theme decides which details are spoken. A request that cannot be
         // built is a read that failed.
-        // The ancestors are read without their place, as every read of
-        // many elements is, and the focus with it (`verbatim_uia::Place`).
+        // The ancestors are read without their place or their cell, as
+        // every read of many elements is, and the focus with them
+        // (`verbatim_uia::Place`, `verbatim_uia::Cell`).
         let input = sender.narrow::<FocusInput>();
         let ancestors = AncestorGates {
             node: NodeGates {
                 place: None,
+                cell: None,
                 ..Node::all_on()
             },
             ..Ancestor::all_on()
@@ -1086,6 +1088,12 @@ impl FocusReader {
             states: states.with(State::Focused),
             details: NodeDetails {
                 class_name,
+                // Its raw-view parent's automation id, the first ancestor
+                // the walk read, for the same rules: no call.
+                parent_automation_id: ancestry
+                    .ancestors
+                    .first()
+                    .and_then(|parent| parent.read().automation_id),
                 ..details
             },
         };

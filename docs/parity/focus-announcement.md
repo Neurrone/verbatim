@@ -232,6 +232,33 @@ Not yet:
 
 Different: an empty field has no placeholder to speak.
 
+### Table cell coordinates
+
+NVDA speaks a table cell's row and column, "row 1", "column 2", after
+its keyboard shortcut and before its position, from a UI Automation
+object's `GridItem` pattern, and leaves out a row or column the same as
+the last it spoke in the same table ([Speech](../nvda/speech.md), "Table
+cell coordinates"). Verbatim: the outpost reads the `GridItem` pattern's
+availability, row and column for an element read alone, a focus, its
+selected child and a navigation step's neighbour, never among many
+(`verbatim_uia::Cell`), and only while the theme reports the cell
+coordinates indication (`cell-coordinates`, on by default, as NVDA's
+"Cell coordinates" option is); the snapshot carries them one-based
+(`NodeDetails::row` and `NodeDetails::column`), and Core speaks them in
+NVDA's place, where they also stand in for a name in deciding whether a
+role is spoken. Pinned by Core's unit tests
+(`details_speak_in_nvda_property_order`,
+`a_nameless_cell_says_its_row_and_column_without_its_role`,
+`a_task_switching_item_reached_with_alt_held_says_only_itself`) and the
+theme's (`a_cells_row_and_column_render_their_localized_phrases`).
+**partial**: matched for the Alt+Tab switcher's items by NVDA's capture
+(`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
+Cases that differ: Verbatim speaks both numbers on every focus, where
+NVDA leaves out an unchanged row or column within one table, which needs
+the containing grid's identity, not read; a container the focus enters
+speaks none, since ancestors are read among many; MSAA and IAccessible2
+cells report none yet.
+
 ### An ancestor's state change observed just before a focus change
 
 NVDA handles events in the order they came, so it judges such a change

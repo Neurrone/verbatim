@@ -105,6 +105,9 @@ pub enum Indication {
     Position,
     /// An object's nesting level, "level 2"; id `level`.
     Level,
+    /// A table cell's row and column, "row 3", "column 2"; id
+    /// `cell-coordinates`.
+    CellCoordinates,
     /// A spelling error in text, where it starts and ends; id
     /// `spelling-error`.
     SpellingError,
@@ -163,11 +166,12 @@ pub enum Indication {
 
 /// The fixed ids of the indications that carry no role or state, in
 /// catalogue order (which is category order).
-const FIXED: [(Indication, &str); 27] = [
+const FIXED: [(Indication, &str); 28] = [
     (Indication::Description, "description"),
     (Indication::Shortcut, "shortcut"),
     (Indication::Position, "position"),
     (Indication::Level, "level"),
+    (Indication::CellCoordinates, "cell-coordinates"),
     (Indication::SpellingError, "spelling-error"),
     (Indication::GrammarError, "grammar-error"),
     (Indication::FontName, "font-name"),
@@ -216,9 +220,11 @@ impl Indication {
         match self {
             Self::Role(_) => IndicationCategory::Roles,
             Self::State(_) | Self::NegatedState(_) => IndicationCategory::States,
-            Self::Description | Self::Shortcut | Self::Position | Self::Level => {
-                IndicationCategory::Properties
-            }
+            Self::Description
+            | Self::Shortcut
+            | Self::Position
+            | Self::Level
+            | Self::CellCoordinates => IndicationCategory::Properties,
             Self::SpellingError
             | Self::GrammarError
             | Self::FontName
@@ -304,6 +310,7 @@ impl Indication {
             SegmentContent::Shortcut(_) => Self::Shortcut,
             SegmentContent::Position { .. } => Self::Position,
             SegmentContent::Level(_) => Self::Level,
+            SegmentContent::Row(_) | SegmentContent::Column(_) => Self::CellCoordinates,
             SegmentContent::SpelledCapital(_) => Self::Capital,
             SegmentContent::Message(Message::Blank) => Self::Blank,
             SegmentContent::Phrase(
@@ -694,6 +701,7 @@ impl Theme {
             shortcut: on(Indication::Shortcut),
             position: on(Indication::Position),
             level: on(Indication::Level),
+            cell_coordinates: on(Indication::CellCoordinates),
             spelling_errors: on(Indication::SpellingError),
             grammar_errors: on(Indication::GrammarError),
             font_name: on(Indication::FontName),
@@ -871,6 +879,8 @@ pub struct Fetches {
     pub position: bool,
     /// Nesting level.
     pub level: bool,
+    /// A table cell's row and column.
+    pub cell_coordinates: bool,
     /// Spelling errors in text.
     pub spelling_errors: bool,
     /// Grammar errors in text.
@@ -903,6 +913,7 @@ impl Default for Fetches {
             shortcut: true,
             position: true,
             level: true,
+            cell_coordinates: true,
             spelling_errors: true,
             grammar_errors: true,
             font_name: true,
@@ -1000,7 +1011,7 @@ mod tests {
         }
         assert_eq!(
             catalogue.len(),
-            Role::ALL.len() + SPOKEN_STATES.len() + NEGATED_STATES.len() + 27
+            Role::ALL.len() + SPOKEN_STATES.len() + NEGATED_STATES.len() + 28
         );
     }
 
@@ -1045,6 +1056,7 @@ mod tests {
                 shortcut: true,
                 position: true,
                 level: true,
+                cell_coordinates: true,
                 spelling_errors: true,
                 grammar_errors: true,
                 font_name: false,
