@@ -22,7 +22,8 @@ struct Match {
 
 /// The longest common subsequence of the old rows `old` names and the new
 /// rows `new` names (indices, each in increasing order), two rows kept when
-/// `matches` says so, as pairs of an old row's index and a new row's.
+/// `matches` says so of their positions in `old` and `new`, as pairs of an
+/// old row's index and a new row's.
 ///
 /// Among alignments that keep equally many rows, the one whose kept rows
 /// move in the fewest blocks wins, a block being a run of kept pairs with
@@ -53,7 +54,7 @@ pub(super) fn keep(
     let mut above: Vec<(i64, u32)> = vec![(0, NONE); m];
     let mut here: Vec<(i64, u32)> = vec![(0, NONE); m];
     let mut found: Vec<Match> = Vec::new();
-    for &old_index in old {
+    for (i, &old_index) in old.iter().enumerate() {
         let mut left = (0, NONE);
         for j in 0..m {
             let new_index = new[j];
@@ -61,7 +62,7 @@ pub(super) fn keep(
             if left.0 > best.0 {
                 best = left;
             }
-            if matches(old_index, new_index) {
+            if matches(i, j) {
                 let shift = isize_of(new_index) - isize_of(old_index);
                 let moved = i64::from(shift != fixed);
                 let diagonal = if j > 0 { above[j - 1] } else { (0, NONE) };

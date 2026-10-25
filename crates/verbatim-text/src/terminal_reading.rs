@@ -13,9 +13,7 @@
 //! passes keys as they reach the program, and calls [`TerminalReader::timer`]
 //! when the timer it asked for comes due.
 
-use std::sync::Arc;
-
-use crate::terminal_rows::{Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory};
+use crate::terminal_rows::{Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory, Text};
 use crate::{Segmenter, WordRules, graphemes, is_space, lost_text, squeezed};
 
 pub use crate::terminal_rows::LINGERING_MS;
@@ -287,11 +285,11 @@ enum Hold {
 struct LineState {
     /// Its text as last read, shared with the memory's row when it is one
     /// row read whole.
-    text: Arc<str>,
+    text: Text,
     /// What the user was last told of it, or knew of it when it was read
     /// silently: a growing line's spoken start while its word is held.
     /// Usually the same text as `text`, shared.
-    said: Arc<str>,
+    said: Text,
     /// Whether it was rewritten in place other than by growth.
     redrawn: bool,
     /// Whether it is volatile.
@@ -318,10 +316,10 @@ struct LineState {
 }
 
 impl LineState {
-    fn read(text: &Arc<str>) -> Self {
+    fn read(text: &Text) -> Self {
         Self {
-            text: Arc::clone(text),
-            said: Arc::clone(text),
+            text: text.clone(),
+            said: text.clone(),
             ..Self::default()
         }
     }
@@ -346,7 +344,7 @@ impl LineState {
 struct RowState {
     hash: u64,
     /// The memory's row's text, shared.
-    text: Arc<str>,
+    text: Text,
     colours: Option<Vec<ColourRun>>,
     line: Option<Box<LineState>>,
 }
@@ -643,12 +641,8 @@ impl TerminalReader {
             if due > now && end > top {
                 continue;
             }
-            let (text, said, hold, cut) = (
-                Arc::clone(&line.text),
-                Arc::clone(&line.said),
-                line.hold,
-                line.cut,
-            );
+            let (text, said, hold, cut) =
+                (line.text.clone(), line.said.clone(), line.hold, line.cut);
             match hold {
                 Some(Hold::Word) => {
                     if let Some(rest) = text.strip_prefix(&*said)
@@ -949,7 +943,7 @@ impl TerminalReader {
         // The lines, top to bottom.
         let mut items: Vec<(usize, Speech)> = Vec::new();
         // New lines, each with its text, or none when it is blank.
-        let mut fresh_lines: Vec<(usize, Option<Arc<str>>)> = Vec::new();
+        let mut fresh_lines: Vec<(usize, Option<Text>)> = Vec::new();
         let mut emphasis_candidates: Vec<usize> = Vec::new();
         let unprompted_before = self
             .keys
@@ -979,11 +973,17 @@ impl TerminalReader {
                 _ => String::new(),
             };
             let cut = cut_text.len();
-            let text: Arc<str> = if cut_text.is_empty() {
-                Arc::clone(&line.text)
+            let joined: Text;
+            let text: &Text = if cut_text.is_empty() {
+                &line.text
             } else {
-                Arc::from(format!("{cut_text}{}", line.text))
+                joined = Text::from(format!("{cut_text}{}", line.text));
+                &joined
             };
+            // Whether the line's history is kept once the read is handled
+            // ([`put`]), so a line above the rows kept that holds nothing
+            // needs none built.
+            let kept = line.rows.end > keep_from;
             let part = |at: usize| text[at.max(cut)..].to_owned();
             let first = line
                 .rows
@@ -1030,7 +1030,7 @@ impl TerminalReader {
                     .start(from)
                     .and_then(|old| previous.row(old))
                     .and_then(|row| row.line.as_ref())
-                    .map(|line| Arc::clone(&line.text)),
+                    .map(|line| line.text.clone()),
                 _ => None,
             };
             let changed = line.rows.clone().zip(kinds).any(|(row, kind)| {
@@ -1060,10 +1060,10 @@ impl TerminalReader {
                         input: true,
                         cut,
                         ..base.map_or_else(
-                            || LineState::read(&text),
+                            || LineState::read(text),
                             |mut base| {
-                                base.text.clone_from(&text);
-                                base.said.clone_from(&text);
+                                base.text.clone_from(text);
+                                base.said.clone_from(text);
                                 base.hold = None;
                                 base
                             },
@@ -1076,17 +1076,22 @@ impl TerminalReader {
                 if kinds.iter().all(|kind| *kind == NewRow::New) {
                     fresh_lines.push((start, None));
                 }
-                put(&mut screen, &line.rows, keep_from, LineState::default());
+                if kept {
+                    put(&mut screen, &line.rows, keep_from, LineState::default());
+                }
                 continue;
             }
             if silent || !report {
-                let mut state = base.unwrap_or_default();
-                state.cut = cut;
-                state.text.clone_from(&text);
-                state.said.clone_from(&text);
-                state.hold = None;
-                state.volatile = false;
-                put(&mut screen, &line.rows, keep_from, state);
+                // Nothing waits, so only a kept line needs its history.
+                if kept {
+                    let mut state = base.unwrap_or_default();
+                    state.cut = cut;
+                    state.text.clone_from(text);
+                    state.said.clone_from(text);
+                    state.hold = None;
+                    state.volatile = false;
+                    put(&mut screen, &line.rows, keep_from, state);
+                }
                 continue;
             }
             let Some(mut state) = base.map(|mut base| {
@@ -1096,26 +1101,25 @@ impl TerminalReader {
                 // New output, unless it is the input the shell reprinted
                 // ("New text").
                 let reprint = caret.as_ref().is_some_and(|caret| caret.line == start)
-                    && self.reprinted(&text, old_caret.as_ref(), &previous, &outcome, start);
-                let mut state = LineState::read(&text);
+                    && self.reprinted(text, old_caret.as_ref(), &previous, &outcome, start);
                 if reprint {
-                    state.input = true;
+                    // The input the shell reprinted says nothing; its history
+                    // records it as input below.
                 } else if changed {
-                    fresh_lines.push((start, Some(Arc::clone(&text))));
+                    fresh_lines.push((start, Some(text.clone())));
                 } else if written_back {
                     step.withheld.push(Withheld {
                         row: start,
                         reason: lost_reason,
                     });
-                } else if let Some(old) = split.filter(|old| *old != text) {
+                } else if let Some(old) = split.filter(|old| old != text) {
                     // Kept rows split off a line: silent when that line held
                     // their text, spoken as a change otherwise.
-                    if lost_text(&old, &text) {
+                    if lost_text(&old, text) {
                         step.withheld.push(Withheld {
                             row: start,
                             reason: Reason::LostText,
                         });
-                        drop_word(&mut state);
                     } else {
                         items.push((
                             start,
@@ -1126,7 +1130,13 @@ impl TerminalReader {
                         ));
                     }
                 }
-                put(&mut screen, &line.rows, keep_from, state);
+                // A new line waits for nothing, so only a kept one needs its
+                // history: its text, and whether it is the input reprinted.
+                if kept {
+                    let mut state = LineState::read(text);
+                    state.input = reprint;
+                    put(&mut screen, &line.rows, keep_from, state);
+                }
                 continue;
             };
             let old_text = state.text.clone();
@@ -1134,8 +1144,8 @@ impl TerminalReader {
                 // Kept rows are silent, wherever they moved; a line that
                 // only lost text is silent too, and rows joined into a
                 // line no read held speak it.
-                if old_text != text {
-                    if lost_text(&old_text, &text) {
+                if old_text != *text {
+                    if lost_text(&old_text, text) {
                         step.withheld.push(Withheld {
                             row: start,
                             reason: lost_reason,
@@ -1149,9 +1159,9 @@ impl TerminalReader {
                                 text: part(0),
                             },
                         ));
-                        state.said.clone_from(&text);
+                        state.said.clone_from(text);
                     }
-                    state.text.clone_from(&text);
+                    state.text.clone_from(text);
                 } else if window
                     && first_colours
                     && caret.as_ref().is_none_or(|caret| caret.line != start)
@@ -1173,13 +1183,13 @@ impl TerminalReader {
                             },
                         ));
                     }
-                    state.said.clone_from(&text);
+                    state.said.clone_from(text);
                     state.hold = None;
                 }
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
-            state.text.clone_from(&text);
+            state.text.clone_from(text);
             if !window {
                 state.unprompted_ms = Some(now);
             }
@@ -1224,9 +1234,9 @@ impl TerminalReader {
                         },
                     ));
                     state.said = if end == text.len() {
-                        Arc::clone(&text)
+                        text.clone()
                     } else {
-                        Arc::from(&text[..end])
+                        text.prefix(end)
                     };
                 }
                 if end < text.len() {
@@ -1252,14 +1262,14 @@ impl TerminalReader {
                     .zip(unprompted_before)
                     .is_none_or(|(at, since)| at < since);
             if prompted {
-                if gained_text(&old_text, &text) {
+                if gained_text(&old_text, text) {
                     key_speech.push(Speech::Answer {
                         row: start,
                         text: part(0),
                     });
-                    state.said.clone_from(&text);
+                    state.said.clone_from(text);
                     state.hold = None;
-                } else if lost_text(&old_text, &text) {
+                } else if lost_text(&old_text, text) {
                     step.withheld.push(Withheld {
                         row: start,
                         reason: lost_reason,
@@ -1275,7 +1285,7 @@ impl TerminalReader {
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
-            if lost_text(&old_text, &text) {
+            if lost_text(&old_text, text) {
                 step.withheld.push(Withheld {
                     row: start,
                     reason: lost_reason,
@@ -1284,13 +1294,13 @@ impl TerminalReader {
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
-            if spinner_step(&old_text, &text) {
+            if spinner_step(&old_text, text) {
                 step.withheld.push(Withheld {
                     row: start,
                     reason: Reason::Spinner,
                 });
                 if state.hold.is_none() {
-                    state.said.clone_from(&text);
+                    state.said.clone_from(text);
                 }
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
@@ -1310,7 +1320,7 @@ impl TerminalReader {
                     reason: Reason::Volatile,
                 });
             } else {
-                if let Some(at) = self.changed_start(&[&*state.said, &*old_text], &text) {
+                if let Some(at) = self.changed_start(&[&*state.said, &*old_text], text) {
                     items.push((
                         start,
                         Speech::Changed {
@@ -1319,7 +1329,7 @@ impl TerminalReader {
                         },
                     ));
                 }
-                state.said.clone_from(&text);
+                state.said.clone_from(text);
                 state.hold = None;
             }
             put(&mut screen, &line.rows, keep_from, state);
@@ -1359,10 +1369,15 @@ impl TerminalReader {
         if report && let Some(lost) = outcome.lost {
             items.push((0, Speech::LostRead(lost)));
         }
+        items.reserve(fresh_lines.len());
         for (row, text) in &fresh_lines {
             items.push((*row, line_speech(*row, text.as_deref().unwrap_or_default())));
         }
-        items.sort_by_key(|(row, _)| *row);
+        // Mostly in order already: sorted only when they are not, which a
+        // stable sort would leave as they are.
+        if !items.is_sorted_by_key(|(row, _)| *row) {
+            items.sort_by_key(|(row, _)| *row);
+        }
         if resized && !outcome.first {
             // Resizing speaks nothing but the caret's line if it changed;
             // the memory finds the review position again ("Starting again").
@@ -1401,6 +1416,7 @@ impl TerminalReader {
         self.fresh = false;
         self.screen = screen;
         step.speech = key_speech;
+        step.speech.reserve(held.len() + items.len());
         step.speech.extend(held);
         step.speech
             .extend(items.into_iter().map(|(_, speech)| speech));

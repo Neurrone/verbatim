@@ -27,12 +27,45 @@
 //! read is unchanged by the trim.
 
 use std::collections::{HashMap, HashSet};
+use std::hash::BuildHasherDefault;
 use std::ops::Range;
 use std::sync::Arc;
 
 mod align;
 
 use align::Likeness;
+
+/// A map keyed by row hashes or shifts, hashed by [`Spread`].
+type Map<K, V> = HashMap<K, V, BuildHasherDefault<Spread>>;
+/// A set of row hashes, hashed by [`Spread`].
+type Set<K> = HashSet<K, BuildHasherDefault<Spread>>;
+
+/// The hasher of the alignment's maps, whose keys are integers: row hashes,
+/// already spread over 64 bits, and shifts, small numbers that one folded
+/// multiplication spreads. Nothing outside the process chooses the keys, so
+/// the maps need no keyed hash, and their order is never relied on.
+#[derive(Clone, Copy, Default)]
+struct Spread(u64);
+
+impl std::hash::Hasher for Spread {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            self.write_u64(u64::from(byte));
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = fold(self.0 ^ value, HASH_FACTOR);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(u64::try_from(value).unwrap_or(u64::MAX));
+    }
+}
 
 /// How long a gone row lingers ("Lingering"), in milliseconds.
 pub const LINGERING_MS: u64 = 2000;
@@ -78,6 +111,138 @@ pub struct Read {
     pub above: usize,
 }
 
+/// The text of a row or a line: a stretch of a shared string, compared,
+/// shown and read as that stretch alone ([`Text::as_str`], and through
+/// `Deref` to `str`). The rows of one read share one string, so splitting a
+/// read allocates once however many rows it holds, and a wrapped line's
+/// text is the stretch its rows make up together. The rows the memory
+/// keeps after a read, and the text the reading rules keep of their lines,
+/// hold strings of their own ([`Text::owned`]), so nothing kept holds a
+/// whole read.
+#[derive(Clone, Default)]
+pub struct Text {
+    whole: Arc<str>,
+    start: usize,
+    end: usize,
+}
+
+impl Text {
+    /// The stretch `range` of `whole`.
+    fn within(whole: &Arc<str>, range: Range<usize>) -> Self {
+        Self {
+            whole: Arc::clone(whole),
+            start: range.start,
+            end: range.end,
+        }
+    }
+
+    /// The text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.whole[self.start..self.end]
+    }
+
+    /// Its length in bytes.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.end - self.start
+    }
+
+    /// Whether it is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.start == self.end
+    }
+
+    /// Its first `length` bytes, sharing its string.
+    #[must_use]
+    pub(crate) fn prefix(&self, length: usize) -> Self {
+        Self {
+            whole: Arc::clone(&self.whole),
+            start: self.start,
+            end: self.start + length.min(self.len()),
+        }
+    }
+
+    /// The same text in a string of its own, unless it already is all of
+    /// the string it is in.
+    #[must_use]
+    pub(crate) fn owned(&self) -> Self {
+        if self.start == 0 && self.end == self.whole.len() {
+            self.clone()
+        } else {
+            Self::from(self.as_str())
+        }
+    }
+
+    /// The text from this one's start to `last`'s end, when `last` and the
+    /// texts between are the stretches that follow this one in the same
+    /// string, as a wrapped line's rows split from one read are.
+    fn through<'a>(&self, rest: impl IntoIterator<Item = &'a Self>) -> Option<Self> {
+        let mut end = self.end;
+        for text in rest {
+            if !Arc::ptr_eq(&text.whole, &self.whole) || text.start != end {
+                return None;
+            }
+            end = text.end;
+        }
+        Some(Self {
+            whole: Arc::clone(&self.whole),
+            start: self.start,
+            end,
+        })
+    }
+}
+
+impl std::ops::Deref for Text {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl PartialEq for Text {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for Text {}
+
+impl std::fmt::Debug for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl std::fmt::Display for Text {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.as_str(), f)
+    }
+}
+
+impl From<&str> for Text {
+    fn from(text: &str) -> Self {
+        Self {
+            whole: Arc::from(text),
+            start: 0,
+            end: text.len(),
+        }
+    }
+}
+
+impl From<String> for Text {
+    fn from(text: String) -> Self {
+        let end = text.len();
+        Self {
+            whole: Arc::from(text),
+            start: 0,
+            end,
+        }
+    }
+}
+
 /// A row of the memory: one row of the last read.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
@@ -85,7 +250,7 @@ pub struct Row {
     /// padding, so the earlier rows of a wrapped line keep the spaces at
     /// their end. Shared, so the line it makes up and the reading rules'
     /// state of that line hold no copy of it.
-    pub text: Arc<str>,
+    pub text: Text,
     /// A 64-bit hash of `text`.
     pub hash: u64,
     /// Whether its line continues onto the next row.
@@ -102,7 +267,9 @@ impl Row {
     /// wrapped line's row.
     #[must_use]
     pub fn is_blank(&self) -> bool {
-        crate::trim_padding(&self.text).is_empty()
+        // A line's last row has no padding, so it is blank only when empty,
+        // which its length tells without reading its text.
+        self.text.is_empty() || (self.wraps && crate::trim_padding(&self.text).is_empty())
     }
 }
 
@@ -201,7 +368,7 @@ pub struct Line {
     /// Its rows.
     pub rows: Range<usize>,
     /// Its text, padding left out: a one-row line's is its row's, shared.
-    pub text: Arc<str>,
+    pub text: Text,
     /// The hash of `text`.
     pub hash: u64,
     /// When the line only gained at its end since the last read, rows
@@ -439,7 +606,7 @@ impl Screen {
     fn fresh(rows: Vec<Row>, read: &Read, (width, height): (usize, usize), asked: usize) -> Self {
         let caret = caret_row(rows.len(), read.caret_rows_to_end);
         let caret_column = caret.map_or(0, |row| line_column(&rows, row, read.caret_column));
-        Self {
+        let mut fresh = Self {
             next: next_of(rows.len(), read.above, asked),
             rows,
             width,
@@ -449,6 +616,18 @@ impl Screen {
             caret_column,
             shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
             ..Self::default()
+        };
+        fresh.own_kept();
+        fresh
+    }
+
+    /// Gives each row kept once the read is trimmed a string of its own
+    /// ([`Text`]), before anything takes its text, so that what the memory
+    /// and the reading rules keep holds none of the read's string.
+    fn own_kept(&mut self) {
+        let kept = self.trim_point();
+        for row in &mut self.rows[kept..] {
+            row.text = row.text.owned();
         }
     }
 }
@@ -473,7 +652,7 @@ fn next_of(rows: usize, above: usize, asked: usize) -> usize {
 /// spoken.
 #[derive(Clone, Debug, Default)]
 struct Aside {
-    rows: HashMap<u64, usize>,
+    rows: Map<u64, usize>,
 }
 
 impl Aside {
@@ -481,7 +660,7 @@ impl Aside {
     /// block, which a new screen replaced.
     fn of(memory: &Screen) -> Self {
         let total = memory.rows.len();
-        let mut rows = HashMap::new();
+        let mut rows = Map::default();
         for (at, row) in memory.rows.iter().enumerate() {
             if !row.is_blank() {
                 let distance = total - at;
@@ -712,18 +891,14 @@ impl TerminalMemory {
                     ..shape
                 };
             }
+            let next = Screen::fresh(rows, read, (width, height), asked_above.unwrap_or(0));
             let outcome = Outcome {
                 first: true,
-                rows: vec![NewRow::New; rows.len()],
-                lines: lines(&rows),
+                rows: vec![NewRow::New; next.rows.len()],
+                lines: lines(&next.rows),
                 ..shape
             };
-            self.screen = Some(Screen::fresh(
-                rows,
-                read,
-                (width, height),
-                asked_above.unwrap_or(0),
-            ));
+            self.screen = Some(next);
             return outcome;
         };
         // A changed width or height rewraps every row: the memory starts
@@ -837,13 +1012,14 @@ impl TerminalMemory {
         if let Some(current) = self.screen.take() {
             return self.start_again(&current, rows, read, &shape);
         }
+        let next = Screen::fresh(rows, read, (width, height), 0);
         let outcome = Outcome {
             first: true,
-            rows: vec![NewRow::New; rows.len()],
-            lines: lines(&rows),
+            rows: vec![NewRow::New; next.rows.len()],
+            lines: lines(&next.rows),
             ..shape
         };
-        self.screen = Some(Screen::fresh(rows, read, (width, height), 0));
+        self.screen = Some(next);
         outcome
     }
 
@@ -1156,23 +1332,51 @@ fn ambiguous(memory: &Screen, rows: &[Row], within: Range<usize>) -> bool {
         .caret
         .and_then(|row| row.checked_sub(memory.skipped))
         .unwrap_or(old.len());
-    let mut at: HashMap<u64, Vec<usize>> = HashMap::new();
+    let votes = shift_votes(old, 0..old.len().min(caret + 1), rows, within);
+    let best = votes.counts.iter().copied().max().unwrap_or(0);
+    best > 0 && votes.counts.iter().filter(|&&count| count == best).count() > 1
+}
+
+/// How many votes each shift (a read's row's index less an old row's) got
+/// ([`shift_votes`]): `counts[k]` is shift `low + k`'s.
+struct Votes {
+    low: isize,
+    counts: Vec<u32>,
+}
+
+/// For each shift, how many pairs of an old row `old_range` holds and a
+/// row of `rows` within `within`, both with text and with the same text, it
+/// puts one on the other. The old rows, at most a few screens, are looked
+/// up by hash, so the read's rows are passed over once, and every shift
+/// the two ranges allow has its count.
+fn shift_votes(old: &[Row], old_range: Range<usize>, rows: &[Row], within: Range<usize>) -> Votes {
+    let low = isize_of(within.start) - isize_of(old_range.end) + 1;
+    let span = (within.len() + old_range.len()).saturating_sub(1);
+    let mut votes = Votes {
+        low,
+        counts: Vec::new(),
+    };
+    let mut at: Map<u64, Vec<usize>> = Map::default();
+    for from in old_range {
+        if !old[from].is_blank() {
+            at.entry(old[from].hash).or_default().push(from);
+        }
+    }
+    if at.is_empty() {
+        return votes;
+    }
+    votes.counts = vec![0; span];
     for to in within {
-        if !rows[to].is_blank() {
-            at.entry(rows[to].hash).or_default().push(to);
+        if let Some(froms) = at.get(&rows[to].hash)
+            && !rows[to].is_blank()
+        {
+            for &from in froms {
+                let slot = usize::try_from(isize_of(to) - isize_of(from) - low).unwrap_or(0);
+                votes.counts[slot] += 1;
+            }
         }
     }
-    let mut votes: HashMap<isize, usize> = HashMap::new();
-    for (from, row) in old.iter().enumerate().take(caret + 1) {
-        if row.is_blank() {
-            continue;
-        }
-        for &to in at.get(&row.hash).into_iter().flatten() {
-            *votes.entry(isize_of(to) - isize_of(from)).or_default() += 1;
-        }
-    }
-    let best = votes.values().copied().max().unwrap_or(0);
-    best > 0 && votes.values().filter(|&&count| count == best).count() > 1
+    votes
 }
 
 /// Aligns `rows`, a read from the kept start, with `memory` ("The
@@ -1205,12 +1409,12 @@ fn align_read(
     let old_text: Vec<usize> = (0..old.len())
         .filter(|&from| !old[from].is_blank())
         .collect();
-    let old_hashes: HashSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
+    let old_hashes: Set<u64> = old_text.iter().map(|&from| old[from].hash).collect();
     // A row whose text is once among the old rows and once in the read is
     // kept where that text went, so it does not grow elsewhere and no other
     // row grows into it.
     let count = |hash: u64, rows: &[Row]| rows.iter().filter(|row| row.hash == hash).count();
-    let went: HashSet<u64> = old_text
+    let went: Set<u64> = old_text
         .iter()
         .map(|&from| old[from].hash)
         .filter(|&hash| count(hash, old) == 1 && count(hash, rows) == 1)
@@ -1257,7 +1461,12 @@ fn align_read(
             rows[to].hash == old[from].hash || (shift == base && grows(from, to))
         }
     };
-    let pairs = align::keep(&old_text, &window, matches, base);
+    let pairs = align::keep(
+        &old_text,
+        &window,
+        |i, j| matches(old_text[i], window[j]),
+        base,
+    );
     // Found by their text, the rows did not move where most of them went.
     let fixed = if trusted {
         base
@@ -1284,31 +1493,22 @@ fn align_read(
 fn screen_shift(memory: &Screen, rows: &[Row]) -> Option<isize> {
     #[cfg(test)]
     VOTES.with(|votes| votes.set(votes.get() + 1));
-    let mut at: HashMap<u64, Vec<usize>> = HashMap::new();
-    for (to, row) in rows.iter().enumerate() {
-        if !row.is_blank() {
-            at.entry(row.hash).or_default().push(to);
-        }
-    }
-    let mut votes: HashMap<isize, usize> = HashMap::new();
-    for (from, row) in memory.rows.iter().enumerate().skip(memory.screen_start()) {
-        if row.is_blank() {
-            continue;
-        }
-        for &to in at.get(&row.hash).into_iter().flatten() {
-            *votes.entry(isize_of(to) - isize_of(from)).or_default() += 1;
-        }
-    }
-    votes
-        .into_iter()
-        .max_by_key(|&(shift, count)| (count, std::cmp::Reverse(shift)))
-        .map(|(shift, _)| shift)
+    let old = &memory.rows;
+    let votes = shift_votes(old, memory.screen_start()..old.len(), rows, 0..rows.len());
+    let best = votes
+        .counts
+        .iter()
+        .copied()
+        .max()
+        .filter(|&best| best > 0)?;
+    let at = votes.counts.iter().position(|&count| count == best)?;
+    Some(votes.low + isize_of(at))
 }
 
 /// The shift most of `pairs` share, the topmost on a tie: where a row that
 /// did not move went. `base` when nothing was kept.
 fn commonest_shift(pairs: &[(usize, usize)], base: isize) -> isize {
-    let mut shifts: HashMap<isize, (usize, usize)> = HashMap::new();
+    let mut shifts: Map<isize, (usize, usize)> = Map::default();
     for (at, &(from, to)) in pairs.iter().enumerate() {
         let entry = shifts
             .entry(isize_of(to) - isize_of(from))
@@ -1345,16 +1545,15 @@ fn align_whole(
     let old_text: Vec<usize> = (0..old.len())
         .filter(|&from| !old[from].is_blank())
         .collect();
-    let hashes: HashSet<u64> = old_text.iter().map(|&from| old[from].hash).collect();
+    let hashes: Set<u64> = old_text.iter().map(|&from| old[from].hash).collect();
     let window: Vec<usize> = (within..rows.len())
         .filter(|&to| !rows[to].is_blank() && hashes.contains(&rows[to].hash))
         .collect();
-    let pairs = align::keep(
-        &old_text,
-        &window,
-        |from, to| rows[to].hash == old[from].hash,
-        0,
-    );
+    // The hashes side by side, as the subsequence compares every old row
+    // with text with every row of the window.
+    let old_hashes: Vec<u64> = old_text.iter().map(|&from| old[from].hash).collect();
+    let new_hashes: Vec<u64> = window.iter().map(|&to| rows[to].hash).collect();
+    let pairs = align::keep(&old_text, &window, |i, j| new_hashes[j] == old_hashes[i], 0);
     // The last read's rows found are those at or above its caret, as in
     // the test that made the read lost: a footer below the caret stays
     // where it is while the output passes it.
@@ -1453,12 +1652,26 @@ fn classify(
     // moved past others or a box of two equal borders redrawn lower
     // (claude-code-reply recording); a history row is not looked for, so
     // it is found only at its place or higher.
-    for from in history..count {
-        if fates[from] != (OldRow::Gone { lingering: false }) || old[from].is_blank() {
-            continue;
+    let gone: Vec<usize> = (history..count)
+        .filter(|&from| fates[from] == (OldRow::Gone { lingering: false }) && !old[from].is_blank())
+        .collect();
+    // The read's rows with each gone row's text, found in one pass.
+    let mut with_text: Map<u64, Vec<usize>> = gone
+        .iter()
+        .map(|&from| (old[from].hash, Vec::new()))
+        .collect();
+    if !with_text.is_empty() {
+        for (to, row) in rows.iter().enumerate() {
+            if let Some(found) = with_text.get_mut(&row.hash) {
+                found.push(to);
+            }
         }
-        let found = (0..total)
-            .filter(|&to| new[to] == NewRow::New && rows[to].hash == old[from].hash)
+    }
+    for from in gone {
+        let found = with_text[&old[from].hash]
+            .iter()
+            .copied()
+            .filter(|&to| new[to] == NewRow::New)
             .min_by_key(|&to| (isize_of(to) - place(from)).abs());
         if let Some(to) = found {
             new[to] = NewRow::Kept {
@@ -1805,6 +2018,7 @@ fn remember(
         places: Vec::new(),
         continued: false,
     };
+    next.own_kept();
     let fates = aligned.fates(memory);
     next.review = memory
         .review
@@ -2003,20 +2217,26 @@ fn written_past(
 
 /// The lines of `rows`, without their growth, which [`grew_from`] adds.
 fn lines(rows: &[Row]) -> Vec<Line> {
-    let mut lines = Vec::new();
+    let mut lines = Vec::with_capacity(rows.iter().filter(|row| !row.wraps).count() + 1);
     let mut first = 0;
     for (at, row) in rows.iter().enumerate() {
         if row.wraps && at + 1 < rows.len() {
             continue;
         }
         // A line's last row has no padding, so a one-row line's text is
-        // its row's.
+        // its row's; a longer line's is its rows' joined, the stretch they
+        // make up together while they are still in the string they were
+        // split into, and its hash is the one each row has as its line's.
         let (text, line_hash) = if first == at {
-            (Arc::clone(&row.text), row.hash)
+            (row.text.clone(), row.hash)
         } else {
-            let text = line_text(&rows[first..=at]);
-            let line_hash = hash(&text);
-            (Arc::from(text), line_hash)
+            let rest = rows[first + 1..=at].iter().map(|row| &row.text);
+            let text = rows[first]
+                .text
+                .through(rest)
+                .filter(|text| crate::trim_padding(text).len() == text.len())
+                .unwrap_or_else(|| Text::from(line_text(&rows[first..=at])));
+            (text, rows[first].line_hash)
         };
         lines.push(Line {
             rows: first..at + 1,
@@ -2031,8 +2251,12 @@ fn lines(rows: &[Row]) -> Vec<Line> {
 
 /// The text of a line's rows, joined, padding left out.
 fn line_text(rows: &[Row]) -> String {
-    let joined: String = rows.iter().map(|row| &*row.text).collect();
-    crate::trim_padding(&joined).to_owned()
+    let mut joined = String::with_capacity(rows.iter().map(|row| row.text.len()).sum());
+    for row in rows {
+        joined.push_str(&row.text);
+    }
+    joined.truncate(crate::trim_padding(&joined).len());
+    joined
 }
 
 /// Whether `line` only gained at its end since the last read: its first
@@ -2115,64 +2339,120 @@ fn measure(screen: &str, caret_row: &str, last_height: Option<usize>) -> (usize,
 /// ("Rows").
 fn split_rows(text: &str, width: usize) -> Vec<Row> {
     let text = text.strip_suffix("\r\n").unwrap_or(text);
-    let mut rows = Vec::new();
-    for line in text.split("\r\n") {
-        let pieces = row_pieces(line, width);
+    let mut rows = Vec::with_capacity(text.len() / (width + 2).max(1) + 1);
+    // The texts of the rows split since the last string was made, one
+    // after another, and each such row as where its text is in them, its
+    // hash, whether it wraps, and its line's hash; made into a string
+    // shared by those rows once they hold about `SHARED` bytes, at the end
+    // of a line.
+    let mut joined = String::new();
+    let mut pending: Vec<(Range<usize>, u64, bool, u64)> = Vec::new();
+    let mut pieces = Vec::new();
+    let mut lines = crlf_lines(text).peekable();
+    while let Some(span) = lines.next() {
+        let line = &text[span];
+        row_pieces(line, width, &mut pieces);
         let last = pieces.len() - 1;
         // Padding is the spaces after the line's last character ("Rows"):
         // a wrapped row keeps the spaces where it wrapped, but not those
-        // after the line's last character.
+        // after the line's last character, so each row ends at the first of
+        // them at the latest.
         let end = crate::trim_padding(line).len();
         let line_hash = hash(&line[..end]);
-        let mut offset = 0;
-        for (at, piece) in pieces.into_iter().enumerate() {
-            let start = offset;
-            offset += piece.len();
-            let piece = if at == last {
-                crate::trim_padding(piece)
-            } else {
-                &piece[..piece.len().min(end.saturating_sub(start))]
-            };
-            rows.push(Row {
-                hash: hash(piece),
-                text: Arc::from(piece),
-                wraps: at < last,
-                line_hash,
-                redrawn: false,
-            });
+        for (at, piece) in pieces.iter().enumerate() {
+            let piece = &line[piece.start..piece.end.min(end.max(piece.start))];
+            // A line of one row is that row's text.
+            let row_hash = if last == 0 { line_hash } else { hash(piece) };
+            let start = joined.len();
+            joined.push_str(piece);
+            pending.push((start..joined.len(), row_hash, at < last, line_hash));
+        }
+        if joined.len() >= SHARED || lines.peek().is_none() {
+            let whole: Arc<str> = Arc::from(joined.as_str());
+            rows.extend(
+                pending
+                    .drain(..)
+                    .map(|(range, hash, wraps, line_hash)| Row {
+                        text: Text::within(&whole, range),
+                        hash,
+                        wraps,
+                        line_hash,
+                        redrawn: false,
+                    }),
+            );
+            joined.clear();
         }
     }
     rows
 }
 
-/// One line of a read split into rows of `width` cells, padding kept: at
-/// least one row, empty for an empty line.
-fn row_pieces(line: &str, width: usize) -> Vec<&str> {
-    let mut pieces: Vec<&str> = Vec::new();
-    if line.is_ascii() && width > 0 {
+/// About how many bytes of rows' text one string holds when a read is
+/// split ([`split_rows`]): enough that a read of a full history is a few
+/// dozen allocations, and few enough that none is so large that the heap
+/// gives it pages of its own, which it then fills and frees at a cost of
+/// about 120 microseconds for each megabyte (measured on 2026-10-25).
+const SHARED: usize = 1 << 16;
+
+/// Where the lines of `text` are, split at each line break (`\r\n`) as
+/// `str::split("\r\n")` splits it, each break found by searching for its
+/// line feed.
+fn crlf_lines(text: &str) -> impl Iterator<Item = Range<usize>> {
+    let mut rest = Some(0);
+    std::iter::from_fn(move || {
+        let start = rest?;
+        let mut from = start;
+        while let Some(found) = text[from..].find('\n') {
+            let at = from + found;
+            if at > start && text.as_bytes()[at - 1] == b'\r' {
+                rest = Some(at + 1);
+                return Some(start..at - 1);
+            }
+            from = at + 1;
+        }
+        rest = None;
+        Some(start..text.len())
+    })
+}
+
+/// One line of a read split into rows of `width` cells, padding kept, as
+/// byte ranges of the line into `pieces`: at least one row, empty for an
+/// empty line.
+fn row_pieces(line: &str, width: usize, pieces: &mut Vec<Range<usize>>) {
+    pieces.clear();
+    // No character takes more cells than its UTF-8 bytes (only ASCII takes
+    // one byte, and none takes more than two cells), so a line of no more
+    // bytes than the width is one row, as a padded line is.
+    if line.len() <= width || width == 0 {
+        pieces.push(0..line.len());
+    } else if line.is_ascii() {
         // Every printable ASCII character takes one cell.
         let mut at = 0;
         loop {
             let end = (at + width).min(line.len());
-            pieces.push(&line[at..end]);
+            pieces.push(at..end);
             at = end;
             if at >= line.len() {
                 break;
             }
         }
+    } else if line.bytes().max().is_some_and(|byte| byte < 0xe0) && line.chars().count() <= width {
+        // Every character below U+0800, which UTF-8 writes with no byte of
+        // 0xE0 or more, takes at most one cell, so a line of no more such
+        // characters than the width is one row: Latin, Greek, Cyrillic,
+        // Hebrew and Arabic text.
+        pieces.push(0..line.len());
     } else {
         let (mut start, mut cells) = (0, 0);
         for (at, c) in line.char_indices() {
             let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
             if width > 0 && cells + cell > width && at > start {
-                pieces.push(&line[start..at]);
+                pieces.push(start..at);
                 (start, cells) = (at, 0);
             }
             cells += cell;
         }
-        pieces.push(&line[start..]);
+        pieces.push(start..line.len());
     }
-    pieces
 }
 
 /// The caret's row in a read of `rows` rows, from how many rows the
@@ -2192,13 +2472,46 @@ pub fn rows_of(text: &str, width: usize) -> Vec<Row> {
     split_rows(text, width)
 }
 
-/// A 64-bit hash of `text` (FNV-1a): the same in every process and build,
-/// so hashes kept in the memory compare across reads.
+/// A 64-bit hash of `text`: the same in every process and build, so hashes
+/// kept in the memory compare across reads. It takes the text eight bytes
+/// at a time, read as little-endian words: each word is mixed into the hash
+/// by a 64 by 64 to 128-bit multiplication whose two halves are folded
+/// together, the length mixed in first and a last multiplication spreading
+/// every bit over the result.
 #[must_use]
 pub fn hash(text: &str) -> u64 {
-    text.bytes().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
-    })
+    let bytes = text.as_bytes();
+    let length = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let mut hash = fold(length ^ HASH_SEED, HASH_FACTOR);
+    let (words, rest) = bytes.as_chunks::<8>();
+    for word in words {
+        hash = fold(hash ^ u64::from_le_bytes(*word), HASH_FACTOR);
+    }
+    if !rest.is_empty() {
+        let mut eight = [0; 8];
+        eight[..rest.len()].copy_from_slice(rest);
+        hash = fold(hash ^ u64::from_le_bytes(eight), HASH_FACTOR);
+    }
+    fold(hash ^ HASH_SEED, HASH_FINISH)
+}
+
+/// The constants of [`hash`], numbers with their bits spread evenly: the
+/// first 64 bits of the fractional parts of the golden ratio, the square
+/// root of 2 and the square root of 3, the two factors odd.
+const HASH_FACTOR: u64 = 0x9e37_79b9_7f4a_7c15;
+const HASH_SEED: u64 = 0x6a09_e667_f3bc_c908;
+const HASH_FINISH: u64 = 0xbb67_ae85_84ca_a73b;
+
+/// The 128-bit product of `a` and `b`, its high and low halves combined
+/// by exclusive or.
+fn fold(a: u64, b: u64) -> u64 {
+    let product = u128::from(a) * u128::from(b);
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the two halves of the product, each taken whole"
+    )]
+    let (high, low) = ((product >> 64) as u64, product as u64);
+    high ^ low
 }
 
 fn isize_of(value: usize) -> isize {

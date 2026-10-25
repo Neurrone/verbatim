@@ -55,7 +55,9 @@ Windows API, and `cargo xtask ci` checks that it does not.
 - `cell_width`: how many terminal cells text takes, two for wide East Asian
   characters and none for combining marks.
 - `trim_padding`: a terminal line without its trailing padding, whatever
-  whitespace characters it is made of.
+  whitespace characters it is made of; ASCII spaces are dropped eight
+  bytes at a time, and only a non-ASCII character has its property looked
+  up.
 - `composed` and `is_capital`: a character in Unicode's composed normal
   form (NFC, by ICU4X's `icu_normalizer`), and whether it is a capital,
   some code point uppercase and none lowercase once composed; the
@@ -99,10 +101,9 @@ speak: the reading rules (`terminal_reading`, below) are built on its
   (`history_block`). `rows` gives the last
   read's rows as `Rows`, counted from the read's first row: `len` is how
   many the read held, `first_kept` the first the memory keeps, `kept`
-  those rows and `get` one of them (`Row`: its text without padding,
-  shared as an `Arc<str>`, a 64-bit hash, whether it wraps onto the next
-  row, the hash of its whole line, and whether a program has rewritten
-  it). `trim` keeps only the screen above the screen and the rows below
+  those rows and `get` one of them (`Row`: its text without padding, a
+  `Text`, a 64-bit hash, whether it wraps onto the next row, the hash of
+  its whole line, and whether a program has rewritten it). `trim` keeps only the screen above the screen and the rows below
   it, and `first_kept` says before it from which row it will keep.
   `review` and `set_review` give the review position,
   and `marks` and `add_mark` the command marks, each an `Anchor` (a row
@@ -128,7 +129,7 @@ speak: the reading rules (`terminal_reading`, below) are built on its
   `OldRow` (`Kept` or `Rewritten` and where, `Gone` and whether it
   lingers, `Above`, past the read's start, or `Left`, out of the buffer
   past the document's start); the read's `Line`s (rows joined while each
-  wraps, with their text, a one-row line's shared with its row, and hash,
+  wraps, with their text, a one-row line's its row's, and hash,
   and `grew_from` when a line that did not move only gained at its end, so
   the text after that offset is what it gained); the rotation, how many
   rows the last read's rows moved up as the alignment found them; whether
@@ -145,8 +146,22 @@ speak: the reading rules (`terminal_reading`, below) are built on its
   the document's end by the outcome's height and reading that many rows
   above it, and give that read instead, and `blank`, when the read's
   screen shows no text where the last read's had text.
-- `hash`: the 64-bit hash of a row's text (FNV-1a), the same in every
-  process.
+- `Text`: a row's or a line's text, a stretch of a shared string that
+  reads, compares, prints and dereferences as that stretch alone (`as_str`,
+  `len`, `is_empty`, and `str`'s methods through `Deref`). The rows of one
+  read share strings of about 64 KB of their texts, so splitting a read is
+  a few allocations however many rows it holds, and a wrapped line's text
+  is the stretch its rows make up together. The rows the memory keeps
+  after a read are given strings of their own before anything takes their
+  text, so that nothing the memory or the reading rules keep holds a
+  whole read: what they keep is the size of the rows they keep.
+- `hash`: the 64-bit hash of a row's text, the same in every process and
+  build: the text taken eight bytes at a time as little-endian words, each
+  mixed in by a 128-bit product of the hash and a constant whose two
+  halves are combined by exclusive or, with the length mixed in first and
+  a last such product at the end. It reads a word where FNV-1a, the hash it
+  replaced, read a byte, about eight times fewer dependent
+  multiplications.
 - `rows_of`: a read's text split into rows as the memory splits a read,
   for a caller that reads rows the memory does not keep, the history above
   them, at the width a read found.
@@ -158,7 +173,13 @@ The read gives text, not coordinates, so a row's place is its index in
 the read that found it. A read's rows are its text split at line breaks
 and each line split into rows of the screen's width; padding is trimmed
 from a line's last row only, so a wrapped line's earlier rows keep the
-spaces where it wrapped. The width is the narrowest of the screen's lines
+spaces where it wrapped. A line is measured cell by cell only when it may
+be longer than a row: one of no more bytes than the width, as a padded
+line of ASCII is, or of no more characters than the width all below
+U+0800, is one row, since no character takes more cells than its bytes
+and none below U+0800 more than one (a unit test checks both of
+`unicode-width`). A one-row line's hash is its row's, and a wrapped line's
+is computed once, as its rows are split. The width is the narrowest of the screen's lines
 but its last, every line being a whole number of rows except Windows
 Terminal's last row of the buffer, which is one cell short. When every
 line but the last wraps, that narrowest line is several rows, so the
@@ -315,30 +336,32 @@ the aside screen while one is set aside, at most 60 hashes and distances.
 
 ### Cost
 
-Measured on 2026-10-24 on Dickson's x64 machine in a release build, 120 by
-30 with a full history of 9,001 rows of numbered lines, the memory's and
-the rules' time together, in either terminal: an ordinary read 60 to 270
-microseconds, whatever the rotation up to two screens less a row (59
-rows); a rotation past that, which keeps no row of the last read, is lost
-and reads
-the whole document, 4.2 to 5.2 milliseconds of the memory's and rules'
-time beside the read's own; a history of one repeated line costs an
-ordinary read, 85 to 115 microseconds; a clear and a reprint of 8,905
-rows of the 9,005, read whole, 5.3 to 8.3 milliseconds. Live in the
-console host, the read program's snapshot takes 0.45 to 1.06
-milliseconds with the screen above, against 0.37 to 0.75 without it, 7,318
-UTF-16 units against 3,658; a whole document 25 to 29 milliseconds, 1.1
-million units. The read program is unchanged by the screen above: its
-rows above the start cost the same five instructions however many there
-are (`docs/performance.md`).
+Measured on 2026-10-25 on Dickson's x64 machine in a release build, 120 by
+30 with a full history of 9,001 rows, the memory's and the rules' time
+together, in either terminal (`tests/terminal_cost.rs`, an ignored test;
+`docs/performance.md`, "A terminal's rotation"): an ordinary read about 50
+microseconds, and 32 to 42 for a rotation of 58 rows, settled in one
+read; a rotation past that, which keeps no row of the last read, is
+lost and reads the whole document, 1.4 to 1.8 milliseconds of the
+memory's and rules' time beside the read's own; an overflow that keeps
+nothing, every line spoken, 1.3 to 1.7, and 2.1 to 2.4 for lines of
+Cyrillic text one cell short of the width; a clear and a reprint of 8,905
+rows 1.3 to 1.4; and the worst case for the subsequence, 8,000 lines drawn
+from the last screen's texts, 1.8 to 2.1. Live in the console host, the
+read program's snapshot takes 0.45 to 1.06 milliseconds with the screen
+above, against 0.37 to 0.75 without it, 7,318 UTF-16 units against 3,658;
+a whole document 25 to 29 milliseconds, 1.1 million units. The read
+program is unchanged by the screen above: its rows above the start cost
+the same five instructions however many there are.
 
-With the reading rules on top, measured on 2026-10-24 with a counting
-allocator in a release build, 120 by 30 with a full history of 9,001 rows:
-held between reads, the rows kept take about 400 bytes each with the
-rules' state, and the memory holds nothing else that grows with the
-history. Handling a whole-document read raises the peak by 4.5 MB: the read's rows
-and lines, the outcome, and a small state for each row, with no line state
-for the lines above the rows the memory will keep.
+With the reading rules on top, measured on 2026-10-25 with a counting
+allocator in a release build, 120 by 30 with a full history: held between
+reads, about 21 KB, the rows kept taking about 450 bytes each with the
+rules' state, and nothing else that grows with the history. Handling a
+whole-document read raises the peak by 3.6 MB for numbered lines and 5.6
+MB for full rows: the read's rows and their texts in shared strings, the
+lines, the outcome, the speech, and a small state for each row, with no
+line state for the lines above the rows the memory will keep.
 
 ### Tests
 
@@ -366,10 +389,15 @@ setting the page before it aside (a listed limit), the review position
 through a scroll, a rotation and a redraw elsewhere, and on a row gone, a
 footer over more output than the history holds counted as more than, a
 history erase keeping its rows, blank screens between a clear and a
-reprint, and a lingering row taken back.
+reprint, and a lingering row taken back. One more checks that no
+character takes more cells than its bytes and none below U+0800 more than
+one, which splitting a read into rows relies on.
 
 The memory is also checked by the oracle, through the reading rules built
-on it (below).
+on it (below). `tests/terminal_cost.rs` is a measurement, not a test,
+ignored so that no test run includes it: the memory's and the rules' time
+for the costliest reads, run in a release build (`docs/performance.md`, "A
+terminal's rotation").
 
 ## The terminal reading rules
 

@@ -1272,3 +1272,18 @@ fn the_review_position_on_a_gone_row_after_a_refused_start_never_moves_above_the
         })
     );
 }
+
+#[test]
+fn no_character_takes_more_cells_than_its_bytes_and_none_below_u0800_more_than_one() {
+    // A read's rows are split without measuring each character when these
+    // hold ("Rows and the width"): a line of no more bytes than the width,
+    // or of no more characters below U+0800 than the width, is one row.
+    let wider: Vec<char> = (0..=u32::from(char::MAX))
+        .filter_map(char::from_u32)
+        .filter(|&c| {
+            let cells = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
+            cells > c.len_utf8() || (u32::from(c) < 0x800 && cells > 1)
+        })
+        .collect();
+    assert_eq!(wider, Vec::<char>::new());
+}

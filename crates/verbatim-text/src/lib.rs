@@ -82,7 +82,23 @@ pub fn cell_width(text: &str) -> usize {
 /// line are kept.
 #[must_use]
 pub fn trim_padding(line: &str) -> &str {
-    line.trim_end_matches(char::is_whitespace)
+    // A terminal pads with ASCII spaces, so those are dropped eight bytes at
+    // a time and other ASCII white space a byte at a time; only a
+    // non-ASCII character then needs its property looked up.
+    let bytes = line.as_bytes();
+    let mut end = bytes.len();
+    while end >= 8 && bytes[end - 8..end] == [b' '; 8] {
+        end -= 8;
+    }
+    while end > 0 && matches!(bytes[end - 1], b' ' | b'\t'..=b'\r') {
+        end -= 1;
+    }
+    let rest = &line[..end];
+    if rest.is_empty() || bytes[end - 1].is_ascii() {
+        rest
+    } else {
+        rest.trim_end_matches(char::is_whitespace)
+    }
 }
 
 /// `text` without white space, as a terminal's lines are compared.

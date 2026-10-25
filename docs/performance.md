@@ -2370,24 +2370,111 @@ between two reads:
   against 0.37 to 0.75 milliseconds and 3,658 units for the same snapshot
   without the screen above; a rotation of 61 rows or more adds the whole
   document's snapshot, 25 to 29 milliseconds, 1.1 million units.
-- The same in the simulated terminal, the memory's and the rules' time,
-  in both terminals alike: 60 to 270 microseconds for a rotation of 0 to
-  59 rows, 1 snapshot; 61, 100 or 1,000 rows 4.2 to 5.2 milliseconds, 2
-  snapshots, the second of the whole document.
-- A full history of one repeated line costs an ordinary read, 85 to 115
-  microseconds in the simulated terminal: the read's history rows allow
-  every rotation, and the last read's screen inside the read settles it.
-- A clear and a reprint of 8,905 rows of the 9,005, read whole: 5.3 to
-  8.3 milliseconds of the memory's and rules' time.
-- A row the subsequence leaves gone is looked for at the nearest new row
-  with its text, one pass over the read's rows for each gone row of the
-  last read's screen, with no allocation. Measured on 2026-10-25 (release
-  build, simulated terminal, 120 by 30, 9,001 rows of history): a lost
-  read whose whole document of about 9,300 rows keeps none of the last
-  screen's 29 rows, so the pass compares about 270,000 hashes, takes 7.3
-  to 12.8 milliseconds in all, the same as without the pass within the
-  noise, and an ordinary read of one new line 77 microseconds at the
-  median in both terminals.
+
+The memory's and the rules' time, from a read's text to its speech, is
+measured in the simulated terminal by
+`crates/verbatim-text/tests/terminal_cost.rs`, an ignored test run in a
+release build (`cargo test --release -p verbatim-text --test terminal_cost
+-- --ignored --nocapture`). Each case
+fills a 120 by 30 terminal of each kind with a full history, takes the
+first read, its history block and one ordinary read, writes its output,
+and times every read the rules then take, the whole document's included,
+31 times over the same reads with a fresh reader each time; the time the
+caller then spends freeing the steps (their lines and speech) is given
+apart. Measured on 2026-10-25 on Dickson's x64 machine, the median of the
+31 runs in the console host and Windows Terminal, with the same cases on
+the code before (commit 9ead3de8) in brackets; repeated runs of the
+benchmark moved the medians by up to 0.3 milliseconds, and the cases
+marked bimodal by up to 0.8, as the heap does or does not hand back pages
+of the larger vectors between runs:
+
+- One new line, an ordinary read: 50 microseconds (64 to 68).
+- A rotation of 58 rows, settled in one read: 32 to 42 microseconds (58
+  to 60).
+- A rotation of 61 rows, and of 1,000 rows, each a lost read and the
+  whole document of 1.1 MB: 1.4 to 1.8 milliseconds (5.2 to 5.4).
+- The same 1,000 rows of lines one cell short of the width: 1.2 to 2.0,
+  bimodal (5.7 to 5.9); of Cyrillic text one cell short of the width,
+  1.9 MB: 1.6 to 2.5, bimodal (9.7 to 9.8).
+- An overflow of 10,000 lines that keeps nothing of the last read, every
+  one of about 9,000 lines spoken: numbered lines 1.3 to 1.4 milliseconds
+  (4.8); lines one cell short of the width 1.5 to 1.7 (5.2 to 5.4);
+  Cyrillic text 2.1 to 2.4 (10.5 to 10.7); lines of two rows, whose
+  repeated second rows leave the read uncounted, 1.1 to 1.3 (5.8 to 6.3).
+- A clear and a reprint of 8,905 rows, read whole: 1.3 to 1.4
+  milliseconds (4.6).
+- 1,000 lines of a history of one repeated line, an ordinary read: 45
+  microseconds (57).
+- 1,000 lines walking through the last screen's texts, ambiguous, so
+  only the screen is aligned: 1.1 milliseconds (4.4).
+- The worst case for the subsequence: 8,000 lines drawn at random from
+  the last screen's texts, then 60 new lines, so that in the whole
+  document the last screen's rows are found at one place and their texts
+  at 8,000, every one compared with each of the last read's 59 rows with
+  text: 1.8 to 2.1 milliseconds (5.1).
+- Freeing the steps afterwards, the caller's: 16 to 400 microseconds for
+  a whole document (60 to 410 before).
+
+Where the time of a whole document goes, from timing spans added for
+the purpose and removed (median microseconds, console host): for the
+numbered overflow, splitting the text into rows 430, the alignment 100 (the
+ambiguity vote 27, the subsequence nothing, classifying the rows 39), the
+outcome's lines and kinds 176, the rules' row states 62, the rules' pass
+over each line 198, the speech of 9,000 lines 256, trimming 63; for the
+Cyrillic overflow, splitting 1,000 and speech 573; for the random 8,000
+lines, the subsequence 716 of 856 for the alignment. Before, the same
+numbered overflow spent 2,800 splitting (a string allocated for each row,
+the padding of each trimmed character by character twice, and every byte
+hashed twice, one at a time), 950 on the ambiguity vote (a list allocated
+for each distinct row of the document in a hash map with a keyed hash),
+and 350 to 400 on the reading rules' pass over each line, three shared-text
+counts and a state built for every line though none was kept.
+
+What remains is bounded by what the work must touch: hashing and copying
+every row's text once (about 0.1 milliseconds a megabyte each), one string
+for each line spoken, which the speech carries (`Speech::Line` owns its
+text, 0.25 milliseconds for 9,000 short lines and 0.57 for 9,000 lines of
+Cyrillic), a few hundred kilobytes of vectors for each row of the read
+(rows, kinds, lines, row states), and, in the subsequence, each of the
+last read's rows with text compared with each row of the document that
+has one of their texts. No case allocates a block of a megabyte or more:
+such a block takes pages of its own from the system, about 120
+microseconds a megabyte to fill and free (measured 2026-10-25), so a read's
+rows share strings of about 64 KB.
+
+The changes, none of which changes what is said or kept (the unit tests,
+the conformance corpus in both terminals, and the oracle's random and
+tiny streams give the same steps, the oracle's random streams needing
+the read with no text 35 times, repeated text twice, the rewritten history
+once and the lost read never, the tiny streams none):
+
+- A read's rows share strings of their texts (`Text`), so splitting a
+  read is a few dozen allocations instead of one for each row; the rows
+  the memory keeps are given strings of their own before anything takes
+  their text, so what is kept between reads holds no whole read. A wrapped
+  line's text is the stretch its rows make up together, and its hash the
+  one its rows were split with.
+- `trim_padding` drops ASCII spaces eight bytes at a time; a line is split
+  into rows without measuring each character when it cannot be longer
+  than a row; a one-row line is hashed once.
+- The row hash takes eight bytes at a time where FNV-1a took one
+  (`docs/crates/verbatim-text.md`, "`hash`").
+- The ambiguity vote and the screen's shift count into an array by shift,
+  looking up the last read's rows by hash instead of the read's; the
+  alignment's maps hash their integer keys with one multiplication.
+- A gone row's nearest copy is found from one pass over the read's rows.
+- The reading rules build no line state for a line that will not be kept
+  and holds nothing, and reserve the speech's space.
+
+The memory a terminal keeps between reads, measured on 2026-10-25 with a
+counting allocator in a release build (120 by 30, a full history): 21 KB
+after 100,000 numbered lines read 20 at a time (17 KB before), 20 KB after
+a flood of 10,000 numbered lines read whole (16 KB), and 27 KB after one
+of lines one cell short of the width (23 KB): a row's text is now a
+stretch of a string, 32 bytes where a shared string was 16. Handling a
+whole-document read raises the peak by 3.6 MB for numbered lines and 5.6
+MB for lines one cell short of the width (4.2 and 6.2 before), and an
+ordinary read by 27 and 36 KB (23 and 32 KB).
 
 A terminal's first read knows no screen's height and takes only the
 screen; when the document goes on above it, the read is taken again at
@@ -3144,55 +3231,59 @@ made (`docs/design/terminal-model.md`, section 12), one of each for every
 terminal. Windows Terminal's tabs share one process, so its outpost will
 hold one memory for each tab, under the outpost's memory cap of 200 MB.
 
-The sizes, on x64, for a row of 120 columns: a row's text is one shared
-string of 136 bytes of heap (the 120 bytes and two counts), which the
-memory's row, the line it makes up when the line is one row, and the
-reading rules' state of that line all point to. The memory's `Row` is 48
-bytes, so with its text it takes about 185 bytes, and one more byte
-records whether the row was read since a switch of screens. The reader's
-`RowState` is 56 bytes, the `LineState` of the line the row begins 144
-bytes more, and each row's line start 8 bytes; what was last said of a
-line is the same string as its text until the two differ. That is about
-210 bytes of the reader's for a row that begins a line, and about 400
-bytes a row in all. Colours add 24 bytes a run, only for the screen's rows
-and only after a key.
+The sizes, on x64, for a row of 120 columns: a kept row's text is a
+string of its own of 136 bytes of heap (the 120 bytes and two counts),
+which the memory's row, the line it makes up when the line is one row,
+and the reading rules' state of that line all point to, each through a
+32-byte `Text` (the string, and where the text starts and ends in it).
+The memory's `Row` is 56 bytes, so with its text it takes about 190
+bytes, and one more byte records whether the row was read since a switch
+of screens. The reader's `RowState` is 72 bytes, the `LineState` of the
+line the row begins 176 bytes more, and each row's line start 8 bytes;
+what was last said of a line is the same string as its text until the two
+differ. That is about 260 bytes of the reader's for a row that begins a
+line, and about 450 bytes a row in all. Colours add 24 bytes a run, only
+for the screen's rows and only after a key. While a read is handled, its
+rows share strings of about 64 KB of their texts instead
+(`docs/crates/verbatim-text.md`, "`Text`").
 
 For a 120 by 30 screen with a full history of 9,001 rows:
 
 - The last read's rows, with their text and history: the screen and the
   history block above it, so 60 rows, about 27 KB.
 - Lingering rows: at most the rows a read found gone, for 2 seconds,
-  each with its row (64 bytes and its text) and the reader's gone line
-  (24 bytes and its 144-byte state), about 370 bytes a row: under 12 KB
+  each with its row (72 bytes and its text) and the reader's gone line
+  (24 bytes and its 176-byte state), about 410 bytes a row: under 13 KB
   for a screen's worth.
 - Anchors: the review position and the command marks, 24 bytes each.
 
 Once a read is handled, the memory and the reading rules keep of it only
 the screen, the rows written below it and the screen above it
 (`TerminalMemory::trim`), so a read of the whole document (a lost read)
-leaves the same memory as an ordinary read. Measured on 2026-10-24 with a
-counting allocator in a release build, 120 by 30 with a full history of
-9,001 rows, after 100,000 lines read 20 at a time and then a flood read
-whole, a terminal's memory and reading rules held 125 KB to 127 KB, of
-which 72 KB and its queue's spare capacity were a history of row hashes
-the memory no longer keeps; the rest, about 0.05 MB in the terminal's
-outpost, does not grow however long it ran and however it was flooded.
-The figure without that history is to be measured again (the design's
-"Order of work"). While a whole-document read is handled, the
-reading rules' peak rises by 4.5 MB: the read's rows (9,001 of about 185
-bytes, 1.7 MB), its lines (56 bytes each, a one-row line sharing its
-row's text), the outcome, and a 56-byte state for each row, with no line
-state for the lines above the rows that will be kept. The outpost also
-holds the read's text (1.1 MB as UTF-8, and the 2.2 MB UTF-16 string UI
-Automation returned), so its peak rises by about 8 MB for that read, and
-falls back once the read is handled. The reading rules take about 35
-microseconds for an ordinary read of one line more and about 9
-milliseconds for a whole-document read.
+leaves the same memory as an ordinary read. Measured on 2026-10-25 with a
+counting allocator in a release build, 120 by 30 in the simulated console
+host with a full history: a terminal's memory and reading rules held 21
+KB after 100,000 numbered lines read 20 at a time, 20 KB after a flood of
+10,000 numbered lines read whole, and 27 KB after a flood of lines one
+cell short of the width, and do not grow however long it ran and however
+it was flooded. While a whole-document read is handled, the reading
+rules' peak rises by 3.6 MB for numbered lines and 5.6 MB for lines one
+cell short of the width: the read's rows (9,001 of 56 bytes, and their
+texts in strings of about 64 KB), its lines (72 bytes each, a line's text
+a stretch of the same strings), the outcome, the speech, and a 72-byte
+state for each row, with no line state for the lines above the rows that
+will be kept. The outpost also holds the read's text (1.1 MB as UTF-8,
+and the 2.2 MB UTF-16 string UI Automation returned), so its peak rises by
+about 7 to 9 MB for that read, and falls back once the read is handled.
+An ordinary read raises the peak by 27 KB. The reading rules take about
+50 microseconds for an ordinary read of one line more and 1.1 to 2.5
+milliseconds for a whole-document read ("A terminal's rotation").
 
 Two parts of the alignment run only when a read needs them, so a stream
 pays for neither. The vote on the shift the last read's screen rows took,
-a map from each hash of the read's rows with text to where they are and a
-map of shifts to counts, both of at most the read's rows, is taken only in
+a map from each hash of the last read's screen rows with text to where
+they are and a count for each shift the two reads allow, passing once
+over the read's rows, is taken only in
 a read found by text where a row of the history block has its text lower
 than its place, as when a program prints its history again longer or
 the same output is printed twice; a stream through a full history moves
