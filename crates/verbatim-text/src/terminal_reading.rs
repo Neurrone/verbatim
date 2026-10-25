@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use crate::terminal_rows::{Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory};
-use crate::{Segmenter, WordRules, graphemes, is_space};
+use crate::{Segmenter, WordRules, graphemes, is_space, lost_text, squeezed};
 
 pub use crate::terminal_rows::LINGERING_MS;
 
@@ -1832,18 +1832,6 @@ fn common_prefix(old: &str, new: &str) -> usize {
         .take_while(|(a, b)| old[(*a).clone()] == new[(*b).clone()])
         .last()
         .map_or(0, |(_, b)| b.end)
-}
-
-/// `text` without white space.
-fn squeezed(text: &str) -> String {
-    text.chars().filter(|c| !c.is_whitespace()).collect()
-}
-
-/// Whether `new` only lost text from `old`: compared without spaces, `old`
-/// contains it and is longer ("A key's answer").
-fn lost_text(old: &str, new: &str) -> bool {
-    let (old, new) = (squeezed(old), squeezed(new));
-    old.len() > new.len() && old.contains(&new)
 }
 
 /// Whether `new` gained text over `old` other than at its end: compared

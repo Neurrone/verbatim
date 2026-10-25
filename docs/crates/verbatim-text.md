@@ -194,7 +194,9 @@ left (which starts one), so among alignments keeping equally many rows the
 one with the fewest blocks wins, and then the one moving the fewest rows.
 Found by text, a row of the history block is found at its place or
 higher, or lower by the one shift the last read's screen rows with text
-took when they went lower, the commonest by a vote over their hashes:
+took when they went lower, the commonest by a vote over their hashes,
+taken only when a row of the history block has its text lower than its
+place:
 the same output printed twice in a full terminal puts the history's text
 lower while the screen goes up with the buffer, and a program printing
 its history again longer (Pi's regular mode on Control+O) moves both
@@ -217,7 +219,12 @@ whose shift is that of the kept row below them, so Pi's status row drawn
 a row lower with its spinner changed pairs with its old self. A read with
 no kept row pairs nothing. The caret's line that now starts where the last
 read's caret line did, otherwise new, is that line rewritten, with
-positions trusted. In every read from the kept start, the rows above
+positions trusted, unless it only lost text, compared whole without
+spaces, while the caret moved forward along it over text both reads show
+unchanged in the same columns, counted in characters along the line from
+the caret column the memory keeps with the caret: then another line was
+written there, as Windows Terminal's `cls` writing the prompt where it
+homed the caret. In every read from the kept start, the rows above
 where the last read's first row went are `Shown`: the shift most kept
 rows share places it with positions trusted or the start refused, and,
 found by text from an accepted start, the shift of the history block's

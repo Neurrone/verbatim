@@ -185,7 +185,13 @@ scenarios follow it as the model's order of work brings them back.
   Enter with the caret's line, so a read between Windows Terminal's two
   writes of `cls` from Windows PowerShell, which homes the caret onto the
   screen's first row before it erases, says nothing of that row (Dickson,
-  2026-10-25).
+  2026-10-25), and the prompt the erase then writes on that row is said,
+  as `cls` says the prompt: a line that only lost text while the caret
+  moved forward over text both reads show unchanged is not taken for the
+  caret's line (Dickson, 2026-10-25). With no read between the homing and
+  the erase, `cls` typed on a prompt on the screen's first row reads as
+  Control+W erasing a word and says nothing (a limit of
+  `docs/design/terminal-model.md`).
 - Up Arrow and a character typed at once (`*_up_typing`): NVDA says the
   character, "x", as it is typed and then the recalled line with it,
   "echo onex"; Verbatim reads the line's change once, both in it, and

@@ -85,6 +85,19 @@ pub fn trim_padding(line: &str) -> &str {
     line.trim_end_matches(char::is_whitespace)
 }
 
+/// `text` without white space, as a terminal's lines are compared.
+pub(crate) fn squeezed(text: &str) -> String {
+    text.chars().filter(|c| !c.is_whitespace()).collect()
+}
+
+/// Whether a terminal line `new` only lost text from `old`: compared
+/// without spaces, `old` contains it and is longer
+/// (`docs/design/terminal-model.md`, "A key's answer" and "The alignment").
+pub(crate) fn lost_text(old: &str, new: &str) -> bool {
+    let (old, new) = (squeezed(old), squeezed(new));
+    old.len() > new.len() && old.contains(&new)
+}
+
 /// `text` in Unicode's composed normal form (NFC): a letter typed or
 /// stored as a base letter and a combining accent ("E" and U+0301) becomes
 /// the precomposed letter ("É") where Unicode has one, so a character is

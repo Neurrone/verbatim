@@ -1368,7 +1368,11 @@ fn enter_onto_a_line_already_there_says_nothing_so_a_clear_homing_the_caret_firs
     // terminals (Dickson, 2026-10-25). Windows Terminal's `cls` from Windows
     // PowerShell homes the caret onto the screen's first row in one write
     // and erases in the next: a read between them finds the caret on a line
-    // that was already there, with no text changed, and says nothing.
+    // that was already there, with no text changed, and says nothing. The
+    // erase then leaves the prompt on that row, which only lost text while
+    // the caret moved forward over the prompt both reads show: it is not
+    // that line, so the read keeps nothing, a new screen, and the prompt is
+    // said ("The alignment"; Dickson, 2026-10-25).
     let mut term = Term::of(Flavor::WindowsTerminal, 30, 5, 20, Settings::default());
     assert_eq!(
         term.write("ready> .\\secret.ps1\r\nsecret\r\nready> cls", 100),
@@ -1380,4 +1384,28 @@ fn enter_onto_a_line_already_there_says_nothing_so_a_clear_homing_the_caret_firs
     );
     term.key(KeyKind::Enter, 1000);
     assert_eq!(term.write("\x1b[H", 1010), quiet(None));
+    assert_eq!(
+        term.write("\x1b[2J\x1b[3Jready> ", 1020),
+        says(vec![line(0, "ready>")])
+    );
+}
+
+#[test]
+fn escape_restoring_a_menu_completed_word_says_what_it_removed() {
+    // PSReadLine's MenuComplete: Control+Space after "Get-Ch" completes the
+    // word and draws a menu below; Escape restores "Get-Ch" and erases the
+    // menu. The caret moved back, so the line is that line, and what it
+    // lost is said ("The caret's line").
+    let mut term = Term::new(40, 5, 10);
+    term.write("PS> Get-Ch", 100);
+    term.key(KeyKind::Other, 1000);
+    let _ = term.write_coloured("ildItem\r\nGet-ChildItem  Get-Choice\x1b[1;18H", 1050);
+    term.key(KeyKind::Forget, 3000);
+    assert_eq!(
+        term.write_coloured("\x1b[2;1H\x1b[K\x1b[1;11H\x1b[K", 3050),
+        says(vec![Speech::Lost {
+            row: 0,
+            text: "ildItem".to_owned()
+        }])
+    );
 }

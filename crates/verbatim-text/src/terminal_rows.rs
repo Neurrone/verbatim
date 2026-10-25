@@ -353,6 +353,11 @@ struct Screen {
     /// Whether the last read started at the document's start.
     at_document_start: bool,
     caret: Option<usize>,
+    /// The caret's column along its line, in characters from the line's
+    /// start, as the reading rules count it, which tells a line written
+    /// where the caret's line started from that line rewritten ("The
+    /// alignment").
+    caret_column: usize,
     /// Whether the last read's screen showed text.
     shows_text: bool,
     lingering: Vec<Lingering>,
@@ -433,6 +438,7 @@ impl Screen {
     /// `asked`, 0 for a first read, with no history of its own.
     fn fresh(rows: Vec<Row>, read: &Read, (width, height): (usize, usize), asked: usize) -> Self {
         let caret = caret_row(rows.len(), read.caret_rows_to_end);
+        let caret_column = caret.map_or(0, |row| line_column(&rows, row, read.caret_column));
         Self {
             next: next_of(rows.len(), read.above, asked),
             rows,
@@ -440,6 +446,7 @@ impl Screen {
             height,
             at_document_start: read.at_document_start,
             caret,
+            caret_column,
             shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
             ..Self::default()
         }
@@ -1228,24 +1235,24 @@ fn align_read(
     // Found by text, the shift most of the last read's screen rows with
     // text took, when it put them lower than their places: a program that
     // erased the history and printed it again longer moved the history
-    // with them.
-    let lower = if trusted {
-        None
-    } else {
-        screen_shift(memory, rows).filter(|&shift| shift > place)
-    };
+    // with them. Voted on only when a row of the history block has its
+    // text lower than its place, so a read whose history went up with the
+    // buffer, as in a stream, takes no vote.
+    let lower = std::cell::OnceCell::new();
     let matches = |from: usize, to: usize| {
         let shift = isize_of(to) - isize_of(from);
         if trusted && from < history {
             shift == base && rows[to].hash == old[from].hash
-        } else if from < history && shift > place && Some(shift) != lower {
+        } else if from < history && shift > place {
             // Found by text, a row of the history block is at its place or
             // higher, or lower by the one shift the screen's rows took when
             // they went lower: the same output printed twice in a full
             // terminal puts the history's text lower while the screen's
             // rows go up, and a program printing the history again longer
             // moves both down ("The alignment").
-            false
+            rows[to].hash == old[from].hash
+                && *lower.get_or_init(|| screen_shift(memory, rows).filter(|&shift| shift > place))
+                    == Some(shift)
         } else {
             rows[to].hash == old[from].hash || (shift == base && grows(from, to))
         }
@@ -1275,6 +1282,8 @@ fn align_read(
 /// of `rows` with their text, the smallest on a tie; `None` when no screen
 /// row's text is in the read ("The alignment").
 fn screen_shift(memory: &Screen, rows: &[Row]) -> Option<isize> {
+    #[cfg(test)]
+    VOTES.with(|votes| votes.set(votes.get() + 1));
     let mut at: HashMap<u64, Vec<usize>> = HashMap::new();
     for (to, row) in rows.iter().enumerate() {
         if !row.is_blank() {
@@ -1590,7 +1599,9 @@ fn classify(
     // The caret's line is identified by its first row ("Keys"): when the
     // caret's line now starts where the last read's caret line, which had
     // text, started, and that row is otherwise new, it is that line
-    // rewritten.
+    // rewritten, unless it only lost text while the caret moved forward
+    // over text both reads show unchanged, as a clear writing its prompt
+    // where a homed caret was (Dickson, 2026-10-25).
     if let (Some(old_row), Some(caret)) = (
         memory
             .caret
@@ -1605,6 +1616,10 @@ fn classify(
             && !old[first].is_blank()
             && fates[first] == (OldRow::Gone { lingering: false })
             && new[to] == NewRow::New
+            && !written_past(
+                (old, first, memory.caret_column),
+                (rows, to, line_column(rows, caret, read.caret_column)),
+            )
         {
             new[to] = NewRow::Rewritten {
                 from: first,
@@ -1772,6 +1787,7 @@ fn remember(
             });
         }
     }
+    let caret_column = caret.map_or(0, |row| line_column(&rows, row, read.caret_column));
     let mut next = Screen {
         next: next_of(rows.len(), read.above, memory.height),
         rows,
@@ -1780,6 +1796,7 @@ fn remember(
         height,
         at_document_start: read.at_document_start,
         caret,
+        caret_column,
         shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
         lingering,
         review: None,
@@ -1937,6 +1954,51 @@ fn line_start(rows: &[Row], row: usize) -> usize {
         first -= 1;
     }
     first
+}
+
+/// The last row of the line whose first row is `first`.
+fn line_end(rows: &[Row], first: usize) -> usize {
+    let mut last = first;
+    while rows[last].wraps && last + 1 < rows.len() {
+        last += 1;
+    }
+    last
+}
+
+/// The column along its line of `column` in row `row`, in characters from
+/// the line's first row, as the reading rules count a caret.
+fn line_column(rows: &[Row], row: usize, column: usize) -> usize {
+    rows[line_start(rows, row)..row]
+        .iter()
+        .map(|row| row.text.chars().count())
+        .sum::<usize>()
+        + column
+}
+
+/// Whether the line whose first row is new row `to`, with the caret at
+/// `column` along it, was written where the line whose first row is old
+/// row `first` was, with the caret at `from` along it, rather than being
+/// that line rewritten: it only lost text, compared whole without spaces,
+/// while the caret moved forward over text both lines show unchanged in
+/// the same columns, as a clear writes its prompt where a homed caret was
+/// ("The alignment"; Dickson, 2026-10-25).
+fn written_past(
+    (old, first, from): (&[Row], usize, usize),
+    (rows, to, column): (&[Row], usize, usize),
+) -> bool {
+    if column <= from {
+        return false;
+    }
+    let old_text = line_text(&old[first..=line_end(old, first)]);
+    let new_text = line_text(&rows[to..=line_end(rows, to)]);
+    let cells = |text: &str| {
+        text.chars()
+            .chain(std::iter::repeat(' '))
+            .skip(from)
+            .take(column - from)
+            .collect::<String>()
+    };
+    crate::lost_text(&old_text, &new_text) && cells(&old_text) == cells(&new_text)
 }
 
 /// The lines of `rows`, without their growth, which [`grew_from`] adds.
@@ -2141,6 +2203,12 @@ pub fn hash(text: &str) -> u64 {
 
 fn isize_of(value: usize) -> isize {
     isize::try_from(value).unwrap_or(isize::MAX)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many votes [`screen_shift`] took on this thread, for the tests.
+    static VOTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[cfg(test)]

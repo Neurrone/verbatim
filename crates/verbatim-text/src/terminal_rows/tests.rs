@@ -796,6 +796,44 @@ fn windows_terminals_clear_and_a_full_screen_program_are_each_a_new_screen() {
 }
 
 #[test]
+fn a_caret_line_that_only_lost_text_while_the_caret_moved_forward_over_it_is_not_that_line() {
+    // Windows Terminal's `cls` homes the caret onto the first row, then
+    // erases and writes the prompt there: the row only lost text, and the
+    // caret moved forward over "ready> ", which both reads show in the same
+    // cells, so it is not the caret's line rewritten. Nothing is kept or
+    // paired: a new screen ("The alignment"; Dickson, 2026-10-25).
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 30, 5, 20);
+    watch.write("ready> .\\secret.ps1\r\nsecret\r\nready> cls");
+    watch.write("\x1b[H");
+    let cleared = watch.write("\x1b[2J\x1b[3Jready> ");
+    assert_eq!(cleared.switch, Switch::New);
+    assert_eq!(cleared.rows, [NEW]);
+}
+
+#[test]
+fn a_space_dismissing_a_suggestion_leaves_the_caret_line_that_line() {
+    // A space typed after "$ git sta" dismisses the grey suggestion after
+    // it: the line only lost text and the caret moved forward, but over a
+    // cell whose text changed, the suggestion's "t" now a space, so the row
+    // is still the caret's line, rewritten ("The alignment"; Dickson,
+    // 2026-10-25).
+    let mut watch = Watch::console(40, 3, 10);
+    watch.write("ok\r\n$ git sta\x1b[90mtus --porcelain --branch\x1b[0m\x1b[2;10H");
+    let typed = watch.write("\x1b[K ");
+    assert_eq!(
+        typed.rows,
+        [
+            kept(0),
+            NewRow::Rewritten {
+                from: 1,
+                moved: false,
+                alone: false
+            }
+        ]
+    );
+}
+
+#[test]
 fn the_alternate_screen_from_a_shell_as_long_as_it_is_a_new_screen_not_an_overflow() {
     // A fresh shell's document fills the screen, with no history, and the
     // alternate screen is as long, its cursor homed as a full-screen
@@ -1130,6 +1168,23 @@ fn the_history_blocks_text_printed_lower_while_the_screen_went_up_is_new() {
     assert!(!outcome.rewritten, "no row found lower");
     assert_eq!(watch.texts(), ["h3", "s1", "", "h1", "h2", "h3"]);
     assert_eq!(outcome.rows, [kept(2), kept(3), kept(4), NEW, NEW, NEW]);
+}
+
+#[test]
+fn a_stream_through_a_full_history_takes_no_vote_on_the_screens_shift() {
+    // A stream through a full history moves every row up, so each read is
+    // found by text and no row of the history block has its text lower
+    // than its place: the vote on the screen rows' shift is never taken
+    // ("The alignment"; `docs/performance.md`, "The terminal memory's
+    // cost, estimated").
+    let mut watch = Watch::console(10, 3, 3);
+    watch.write("s1\r\ns2\r\ns3\r\ns4\r\ns5\r\ns6\r\ns7");
+    super::VOTES.with(|votes| votes.set(0));
+    for line in 8..=13 {
+        let outcome = watch.write(&format!("\r\ns{line}"));
+        assert!(outcome.by_text, "found by text");
+    }
+    assert_eq!(super::VOTES.with(std::cell::Cell::get), 0);
 }
 
 #[test]

@@ -3188,3 +3188,18 @@ Automation returned), so its peak rises by about 8 MB for that read, and
 falls back once the read is handled. The reading rules take about 35
 microseconds for an ordinary read of one line more and about 9
 milliseconds for a whole-document read.
+
+Two parts of the alignment run only when a read needs them, so a stream
+pays for neither. The vote on the shift the last read's screen rows took,
+a map from each hash of the read's rows with text to where they are and a
+map of shifts to counts, both of at most the read's rows, is taken only in
+a read found by text where a row of the history block has its text lower
+than its place, as when a program prints its history again longer or
+the same output is printed twice; a stream through a full history moves
+every row up and takes none (`terminal_rows`'s test
+`a_stream_through_a_full_history_takes_no_vote_on_the_screens_shift`).
+The caret line's check, whether a line written where the caret's line
+started only lost text while the caret moved forward over it, joins the
+two lines' texts and compares them without spaces, four strings of a
+line's length, only when the caret's line starts where it did, nothing
+else kept or paired its first row, and the caret moved forward.
