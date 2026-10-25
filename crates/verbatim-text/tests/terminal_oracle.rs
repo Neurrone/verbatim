@@ -24,7 +24,7 @@ use verbatim_term_sim::oracle::{
 };
 use verbatim_term_sim::{Flavor, Query, Refused, Snapshot};
 use verbatim_text::terminal_reading::{self as rules, Settings, Speech, Step, TerminalReader};
-use verbatim_text::terminal_rows::{OldRow, Read};
+use verbatim_text::terminal_rows::{OldRow, Read, ReadText};
 
 /// How long after the last chunk the stream's last read comes: past the
 /// quiet period and the time a row lingers.
@@ -86,7 +86,7 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
             Speech::Line { text, .. } if text.is_empty() => {}
             Speech::Line { row, text } => heard.spoken.push(Spoken::Line {
                 row: *row,
-                text: text.clone(),
+                text: text.to_string(),
             }),
             Speech::Growth { row, text } => heard.spoken.push(Spoken::Growth {
                 row: *row,
@@ -157,7 +157,7 @@ impl Reader for Core {
             .as_ref()
             .expect("the simulated terminal answers every read");
         let read = Read {
-            text: snapshot.text.clone(),
+            text: ReadText::unpadded(&snapshot.text),
             screen: snapshot.screen.clone(),
             from_start: snapshot.from_start,
             shrank: snapshot.shrank,

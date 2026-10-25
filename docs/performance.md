@@ -2381,39 +2381,40 @@ first read, its history block and one ordinary read, writes its output,
 and times every read the rules then take, the whole document's included,
 31 times over the same reads with a fresh reader each time; the time the
 caller then spends freeing the steps (their lines and speech) is given
-apart. Measured on 2026-10-25 on Dickson's x64 machine, the median of the
-31 runs in the console host and Windows Terminal, with the same cases on
-the code before (commit 9ead3de8) in brackets; repeated runs of the
-benchmark moved the medians by up to 0.3 milliseconds, and the cases
-marked bimodal by up to 0.8, as the heap does or does not hand back pages
-of the larger vectors between runs:
+apart. Each read is given to the rules as Core gives it, its text without
+its lines' padding. Measured on 2026-10-26 on Dickson's x64 machine, the
+median of the 31 runs in the console host and Windows Terminal, two runs
+of the benchmark, with the same cases on the code before (commit
+b04a4b8d, the text padded and each new line's speech a string of its own)
+in brackets; repeated runs moved the medians by up to 0.3 milliseconds,
+and the cases marked bimodal by up to 0.6, as the heap does or does not
+hand back pages of the larger vectors between runs:
 
-- One new line, an ordinary read: 50 microseconds (64 to 68).
-- A rotation of 58 rows, settled in one read: 32 to 42 microseconds (58
-  to 60).
+- A rotation of 58 rows, settled in one read: 37 to 42 microseconds (32
+  to 42).
 - A rotation of 61 rows, and of 1,000 rows, each a lost read and the
-  whole document of 1.1 MB: 1.4 to 1.8 milliseconds (5.2 to 5.4).
-- The same 1,000 rows of lines one cell short of the width: 1.2 to 2.0,
-  bimodal (5.7 to 5.9); of Cyrillic text one cell short of the width,
-  1.9 MB: 1.6 to 2.5, bimodal (9.7 to 9.8).
+  whole document of 1.1 MB: 1.2 to 1.4 milliseconds (1.4 to 1.8).
+- The same 1,000 rows of lines one cell short of the width: 1.3 to 1.9,
+  bimodal (1.2 to 2.0); of Cyrillic text one cell short of the width,
+  1.9 MB: 1.7 to 1.8 (1.6 to 2.5, bimodal).
 - An overflow of 10,000 lines that keeps nothing of the last read, every
-  one of about 9,000 lines spoken: numbered lines 1.3 to 1.4 milliseconds
-  (4.8); lines one cell short of the width 1.5 to 1.7 (5.2 to 5.4);
-  Cyrillic text 2.1 to 2.4 (10.5 to 10.7); lines of two rows, whose
-  repeated second rows leave the read uncounted, 1.1 to 1.3 (5.8 to 6.3).
-- A clear and a reprint of 8,905 rows, read whole: 1.3 to 1.4
-  milliseconds (4.6).
-- 1,000 lines of a history of one repeated line, an ordinary read: 45
-  microseconds (57).
+  one of about 9,000 lines spoken: numbered lines 1.0 to 1.1 milliseconds
+  (1.3 to 1.4); lines one cell short of the width 1.4 to 1.5 (1.5 to 1.7);
+  Cyrillic text 1.8 to 2.0 (2.1 to 2.4); lines of two rows, whose
+  repeated second rows leave the read uncounted, 1.2 (1.1 to 1.3).
+- A clear and a reprint of 8,905 rows, read whole: 1.0 to 1.1
+  milliseconds (1.3 to 1.4).
+- 1,000 lines of a history of one repeated line, an ordinary read: 46 to
+  49 microseconds (45).
 - 1,000 lines walking through the last screen's texts, ambiguous, so
-  only the screen is aligned: 1.1 milliseconds (4.4).
+  only the screen is aligned: 1.0 milliseconds (1.1).
 - The worst case for the subsequence: 8,000 lines drawn at random from
   the last screen's texts, then 60 new lines, so that in the whole
   document the last screen's rows are found at one place and their texts
   at 8,000, every one compared with each of the last read's 59 rows with
-  text: 1.8 to 2.1 milliseconds (5.1).
-- Freeing the steps afterwards, the caller's: 16 to 400 microseconds for
-  a whole document (60 to 410 before).
+  text: 1.7 to 1.9 milliseconds (1.8 to 2.1).
+- Freeing the steps afterwards, the caller's: 16 to 60 microseconds for
+  a whole document (16 to 400 before).
 
 Where the time of a whole document goes, from timing spans added for
 the purpose and removed (median microseconds, console host): for the
@@ -2430,17 +2431,22 @@ for each distinct row of the document in a hash map with a keyed hash),
 and 350 to 400 on the reading rules' pass over each line, three shared-text
 counts and a state built for every line though none was kept.
 
+Since then the read's text comes without its padding (splitting the
+numbered overflow into rows fell from 430 to about 280 microseconds), and
+a new line's speech shares the read's text (`Speech::Line` holds a
+`Text`), so the 9,000 strings of a flood's lines, 0.25 milliseconds for
+short lines and 0.57 for Cyrillic, are no longer made ("A terminal's reads
+in Core").
+
 What remains is bounded by what the work must touch: hashing and copying
-every row's text once (about 0.1 milliseconds a megabyte each), one string
-for each line spoken, which the speech carries (`Speech::Line` owns its
-text, 0.25 milliseconds for 9,000 short lines and 0.57 for 9,000 lines of
-Cyrillic), a few hundred kilobytes of vectors for each row of the read
-(rows, kinds, lines, row states), and, in the subsequence, each of the
-last read's rows with text compared with each row of the document that
-has one of their texts. No case allocates a block of a megabyte or more:
-such a block takes pages of its own from the system, about 120
-microseconds a megabyte to fill and free (measured 2026-10-25), so a read's
-rows share strings of about 64 KB.
+every row's text once (about 0.1 milliseconds a megabyte each), a few
+hundred kilobytes of vectors for each row of the read (rows, kinds, lines,
+row states), and, in the subsequence, each of the last read's rows with
+text compared with each row of the document that has one of their texts.
+No case allocates a block of a megabyte or more: such a block takes pages
+of its own from the system, about 120 microseconds a megabyte to fill and
+free (measured 2026-10-25), so a read's rows share strings of about 64 KB
+or 1,024 rows.
 
 The changes, none of which changes what is said or kept (the unit tests,
 the conformance corpus in both terminals, and the oracle's random and
@@ -2547,44 +2553,107 @@ kind with a full history of numbered lines (9,001 rows), read as the
 outpost will read it for Core, writes its output, lets Core take the reads
 that follow with the whole document when its rules ask, and times each
 input that carries a read 31 times from a clone of the state before the
-output. The reducer's time is the whole step: rebuilding the read from the
-snapshot, the memory and the rules, and the flood policy taking their
+output. The reducer's time is the whole step: making the rules' read of
+the snapshot, the memory and the rules, and the flood policy taking their
 speech. The parse is that of the input's JSON, measured apart, as the
 supervisor's frame helper parses it off the reducer. Sizes are the
 snapshot's JSON as the event or reply carries it, without the lines'
 padding, with the same read padded (the form first planned) in brackets.
-Measured on 2026-10-25 on Dickson's x64 machine, two runs, medians in
-microseconds over both terminals:
+Measured on 2026-10-26 on Dickson's x64 machine, three runs, medians of
+the 31 in microseconds over both terminals, with the code before (commit
+b04a4b8d) in brackets:
 
 - An ordinary read of one new line: 1,109 to 1,135 bytes (11,765), of
-  which the screen 264 to 272; reducer 56 to 106 (rebuilding the read 2
-  to 4); parse 4 to 9.
-- A rotation of 61 rows: the read, 34 to 40 microseconds, keeps nothing
+  which the screen 264 to 272; reducer 56 to 68 (56 to 106); parse 4 to
+  9.
+- A rotation of 61 rows: the read, 34 to 42 microseconds, keeps nothing
   and asks for the whole document, 71.8 to 72.0 KB (1.12 MB); reducer
-  1,718 to 1,945 (rebuilding 252 to 284); parse 128 to 141 (padded 789
-  to 892).
-- A lost read keeping nothing, after 10,000 lines: the read 43 to 50
+  1,109 to 1,272 (1,718 to 1,945); parse 123 to 141 (padded 789 to 892).
+- A lost read keeping nothing, after 10,000 lines: the read 37 to 45
   microseconds, then the whole document, 81.6 to 81.9 KB (1.12 MB),
-  every line handed to the flood policy; reducer 3,288 to 3,527
-  (rebuilding 278 to 308); parse 134 to 140 (padded 836 to 857).
+  every line handed to the flood policy; reducer 1,664 to 1,845 (3,288 to
+  3,527); parse 125 to 146 (padded 836 to 857).
 - A full-screen program's exit, whose read is the whole document: 71.7 to
-  72.0 KB (1.12 MB); reducer 1,591 to 1,690 (rebuilding 264 to 272);
-  parse 132 to 135 (padded 673 to 788).
-- A clear and a reprint of 8,905 rows: the read 40 to 45, then the whole
-  document, 160.1 KB (1.11 MB); reducer 2,966 to 3,034 (rebuilding 287 to
-  322); parse 160 to 185 (padded 734 to 821).
-- `clear; dir`, a clear and 100 lines: the read 1,823 to 1,863 bytes, 25
-  microseconds, and the whole document, now about a hundred rows, 2,421
-  to 2,461 bytes, 52 to 55.
+  72.0 KB (1.12 MB); reducer 1,082 to 1,282 (1,591 to 1,690); parse 125
+  to 131 (padded 673 to 788).
+- A clear and a reprint of 8,905 rows: the read 35 to 40, then the whole
+  document, 160.1 KB (1.11 MB); reducer 1,437 to 1,888 (2,966 to 3,034);
+  parse 140 to 210 (padded 734 to 821).
+- `clear; dir`, a clear and 100 lines: the read 1,823 to 1,863 bytes, 22
+  to 23 microseconds, and the whole document, now about a hundred rows,
+  2,421 to 2,461 bytes, 40 to 41 (52 to 55).
 
-So the lost read and the clear and reprint are over the reducer's budget
-of 2 milliseconds a step (`docs/design/communication.md`, decision 9) at
-the median, 3.0 to 3.5 milliseconds, and the rotation and the full-screen
-exit, 1.6 to 1.9 at the median, pass it in their slowest runs: by the
-rule proposed for that decision, the alignment of a whole document goes
-off the reducer as an effect (sub-step 2.7 of the plan for the move). Rebuilding the padding, which the snapshot leaves out,
-costs 0.25 to 0.32 milliseconds of a whole document, against a parse that
-falls from 0.7 to 0.9 milliseconds to 0.13 to 0.19.
+So every case is within the reducer's budget of 2 milliseconds a step
+(`docs/design/communication.md`, decision 9) at the median, and the
+alignment of a whole document stays on the reducer (Dickson, 2026-10-26,
+who would rather optimize than move it off as an effect). The slowest of
+the 31 runs of the lost read and of the clear and reprint reach 1.9 to
+2.7 milliseconds: those are the runs in which the heap had handed back the
+pages of the last run's vectors and takes them again, below.
+
+Where the time of a whole document goes, from timing spans added for the
+purpose and removed, with the page faults each span took, median
+microseconds of three runs in each terminal, before and after:
+
+- Making the rules' read of the snapshot: 256 to 314 before, the text
+  padded again into a string of 1.1 MB that took 266 to 271 page faults;
+  2 to 37 after, the text taken as it came, without its padding, and
+  copied once (72 to 160 KB).
+- The memory's split of the read into rows: 451 to 597 before, trimming
+  the padding of 1.1 MB, and holding every row of a read of short lines
+  until its shared string was made, 360 KB; 265 to 350 after, from the
+  unpadded text, each line's length standing for its padding, with a
+  string made for every 1,024 rows.
+- The rest of the memory, the alignment: 297 to 404 before, 321 to 460
+  after, unchanged but for which allocations take the page faults.
+- The rules' pass over the lines, with the speech of 9,000 lines: 825 to
+  1,079 before, 469 to 689 after, since a new line's speech shares the
+  read's text instead of being a string of its own.
+- The rules' speech mapped onto the flood policy's items: 236 to 314
+  before, every text copied; nothing after, every text moved, and the
+  9,000 lines left as the rules share them.
+- Freeing the rules' step: 128 to 387 before; 30 to 270 after.
+- The flood policy: 425 to 561 before, each line copied into the waiting
+  queue, the queue grown to 9,000 lines, then all but the last few
+  dropped; 123 to 178 after, each line counted as it is queued and a
+  line past the backlog's bound never queued, so only the few kept are
+  made strings. Freeing the speech the policy was handed, 95 to 104
+  before, is now in it.
+- Page faults in the whole step: 830 to 1,150 for the lost read before,
+  330 to 400 after; 520 to 830 for the clear and reprint before, 16 to
+  390 after.
+
+The changes, none of which changes what is said or kept: every step of
+the rules and every review position, and every effect and terminal state
+of Core's reducer, fingerprinted over the conformance corpus in both
+terminals, the oracle's random and tiny streams, both benchmarks, and
+Core's terminal tests, 133,598 steps, are the same as before; the oracle's
+random streams still need the read with no text 35 times, repeated text
+twice, the rewritten history once and the lost read never, the tiny
+streams none.
+
+- The rules take a read's text without its padding, with each line's
+  padded length (`ReadText`, the snapshot's `TerminalText` as it came),
+  and split it into rows counting each line's padding without copying it;
+  the screen, the first row and the caret's row, a screen at most, are
+  still padded again for the rules, a few microseconds.
+- A read's rows share a string for every 64 KB or 1,024 rows, whichever
+  comes first.
+- A new line's speech (`Speech::Line`) holds the read's shared `Text`.
+- Core moves the rules' speech into the flood policy's items instead of
+  copying it, and the flood policy queues output and bounds the backlog to
+  the lines either limit keeps in one pass, a line of the rules made a
+  string of its own only once it waits.
+
+What remains, about 1.1 milliseconds for a whole document and 0.5 more
+for 9,000 spoken lines, is the memory's and the rules' own work on every
+row and line of the read, which "A terminal's rotation" bounds: hashing
+and copying every row's text, the vectors kept for each row (rows, kinds,
+lines, row states), and the alignment; and the 300 to 400 page faults the
+heap takes to give those vectors pages again after handing back the last
+run's, which is what spreads the slowest runs. Core's own part is the
+copy of the snapshot's text, the flood policy's count of each line and
+the freeing of the read's rows and lines, about 0.2 to 0.5 milliseconds.
 
 A 2,000-line console-host flood read in 1,054 reads, as measured live on
 2026-10-08, moves 2.17 MB of snapshots (12.5 MB padded), about 2.1 KB a

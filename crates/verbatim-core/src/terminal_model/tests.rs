@@ -3,13 +3,12 @@
 
 use verbatim_model::{
     Backend, CaretKey, CaretMotion, Input, NodeDetails, NodeId, NodeSnapshot, NormalizedEvent,
-    OutpostId, Pid, Role, Skipped, StateSet, TerminalItem, TerminalKeyKind, TerminalSpeech,
-    TerminalUnit, TraceId,
+    OutpostId, Pid, Role, Skipped, StateSet, TerminalItem, TerminalKeyKind, TerminalUnit, TraceId,
 };
 use verbatim_text::terminal_reading::{Settings, Speech, Step};
 use verbatim_text::terminal_rows::Lost;
 
-use super::{TerminalModel, rules_key, speech_of};
+use super::{Said, SaidItem, TerminalModel, rules_key, speech_of};
 use crate::state::SrState;
 
 #[test]
@@ -24,7 +23,7 @@ fn what_the_rules_say_is_cores_speech_in_order() {
             Speech::LostRead(Lost::About),
             Speech::Line {
                 row: 3,
-                text: "first".to_owned(),
+                text: "first".into(),
             },
             Speech::Growth {
                 row: 6,
@@ -39,19 +38,19 @@ fn what_the_rules_say_is_cores_speech_in_order() {
         ..Step::default()
     };
     assert_eq!(
-        speech_of(&step),
-        TerminalSpeech {
+        speech_of(step),
+        Said {
             items: vec![
-                TerminalItem::Caret {
+                SaidItem::Item(TerminalItem::Caret {
                     unit: TerminalUnit::Word,
                     text: "word".to_owned(),
-                },
+                }),
                 // After a lost read, its lines follow an "about" count of
                 // none; a line's growth is part of its line.
-                TerminalItem::Skipped(Skipped::About(0)),
-                TerminalItem::Output("first".to_owned()),
-                TerminalItem::Growth("grown".to_owned()),
-                TerminalItem::Echo("x".to_owned()),
+                SaidItem::Item(TerminalItem::Skipped(Skipped::About(0))),
+                SaidItem::Line("first".into()),
+                SaidItem::Item(TerminalItem::Growth("grown".to_owned())),
+                SaidItem::Item(TerminalItem::Echo("x".to_owned())),
             ],
             followed: true,
         }

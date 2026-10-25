@@ -31,7 +31,7 @@ use verbatim_model::{
 use verbatim_text::terminal_reading::{
     ColourRun, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
 };
-use verbatim_text::terminal_rows::{Lost, Read};
+use verbatim_text::terminal_rows::{Lost, Read, ReadText};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
     CaretAnswer, CaretLineQuery, Error as RopsError, Path, Snapshot, SnapshotQuery,
@@ -220,7 +220,8 @@ pub fn speech_of(step: &Step) -> TerminalSpeech {
         .speech
         .iter()
         .map(|speech| match speech {
-            Speech::Line { text, .. } | Speech::Changed { text, .. } | Speech::Held { text } => {
+            Speech::Line { text, .. } => TerminalItem::Output(text.to_string()),
+            Speech::Changed { text, .. } | Speech::Held { text } => {
                 TerminalItem::Output(text.clone())
             }
             // What a line gained, without the space that parts it from the
@@ -263,7 +264,7 @@ pub fn read_of(snapshot: &Snapshot, at_ms: u64) -> Read {
         |caret| caret_row(&caret.line.text, caret.line.offset),
     );
     Read {
-        text: String::from_utf16_lossy(&snapshot.text),
+        text: ReadText::unpadded(&String::from_utf16_lossy(&snapshot.text)),
         screen: String::from_utf16_lossy(&snapshot.screen),
         from_start: snapshot.from_start,
         shrank: snapshot.shrank,

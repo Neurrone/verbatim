@@ -60,6 +60,8 @@ use verbatim_model::{
     UtteranceSegment,
 };
 
+use verbatim_text::terminal_rows::Text;
+
 use crate::editing;
 use crate::state::{ReviewText, SrState};
 use crate::text;
@@ -191,25 +193,58 @@ pub(crate) const MAX_WAITING_BYTES: usize = 10 * 1024 * 1024;
 
 /// `line` cut to [`MAX_WAITING_BYTES`] on a grapheme boundary, and whether
 /// it was.
-fn within_bound(line: &str) -> (String, bool) {
+fn within_bound(mut line: String) -> (String, bool) {
     if line.len() <= MAX_WAITING_BYTES {
-        return (line.to_owned(), false);
+        return (line, false);
     }
-    let end = verbatim_text::graphemes(line)
+    let end = verbatim_text::graphemes(&line)
         .into_iter()
         .take_while(|grapheme| grapheme.end <= MAX_WAITING_BYTES)
         .last()
         .map_or(0, |grapheme| grapheme.end);
-    (line[..end].to_owned(), true)
+    line.truncate(end);
+    (line, true)
 }
 
-/// Adds a line to `waiting`, cut and followed by [`Waiting::Cut`] when it
-/// is larger than the bound, `kind` saying what a skipped count makes of it.
-fn push_line(waiting: &mut VecDeque<Waiting>, line: &str, kind: LineKind) {
-    let (line, cut) = within_bound(line);
-    waiting.push_back(Waiting::Line(line, kind));
-    if cut {
-        waiting.push_back(Waiting::Cut);
+/// What a terminal said, as the flood policy takes it in ([`speech`]): the
+/// outpost's speech, or the reading rules' in Core, whose new lines keep
+/// the rules' text, shared with the read, until they wait, so a line the
+/// backlog's bound skips is never copied ([`queue`]).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Said {
+    /// What to say, in the order it is spoken.
+    pub(crate) items: Vec<SaidItem>,
+    /// Whether the review cursor followed the caret
+    /// ([`TerminalSpeech::followed`]).
+    pub(crate) followed: bool,
+}
+
+/// One thing a terminal said.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SaidItem {
+    /// As the outpost sends it.
+    Item(TerminalItem),
+    /// A new line of output, as [`TerminalItem::Output`] is, its text the
+    /// reading rules'.
+    Line(Text),
+}
+
+impl SaidItem {
+    /// Whether it is output ([`TerminalItem::is_output`]).
+    fn is_output(&self) -> bool {
+        match self {
+            Self::Item(item) => item.is_output(),
+            Self::Line(_) => true,
+        }
+    }
+}
+
+impl From<TerminalSpeech> for Said {
+    fn from(speech: TerminalSpeech) -> Self {
+        Self {
+            items: speech.items.into_iter().map(SaidItem::Item).collect(),
+            followed: speech.followed,
+        }
     }
 }
 
@@ -287,7 +322,7 @@ pub(crate) fn speech(
     trace_id: TraceId,
     observed_at_ms: u64,
     node: NodeId,
-    speech: &TerminalSpeech,
+    speech: Said,
 ) -> Vec<Effect> {
     if !state.focus_matches(node) {
         return Vec::new();
@@ -325,14 +360,12 @@ fn answer_segments(item: &TerminalItem) -> Option<Vec<UtteranceSegment>> {
 /// Takes in what the focused terminal said: speaks the answers to keys,
 /// then, unless the output is `before_cut` (read before a cut), queues it
 /// by the flood policy and hands the oldest to speech.
-fn take(
-    state: &mut SrState,
-    trace_id: TraceId,
-    speech: &TerminalSpeech,
-    before_cut: bool,
-) -> Vec<Effect> {
+fn take(state: &mut SrState, trace_id: TraceId, speech: Said, before_cut: bool) -> Vec<Effect> {
     let mut effects = Vec::new();
     for item in &speech.items {
+        let SaidItem::Item(item) = item else {
+            continue;
+        };
         match item {
             // With passwords spoken, typing was echoed as it was typed.
             TerminalItem::Echo(typed) if !state.settings.speak_terminal_passwords => {
@@ -353,7 +386,7 @@ fn take(
         // reads at the caret as the outpost finds it.
         navigator.text = ReviewText::Caret;
     }
-    let output = speech.items.iter().any(TerminalItem::is_output);
+    let output = speech.items.iter().any(SaidItem::is_output);
     if !state.settings.report_terminal_output || before_cut || !output {
         return effects;
     }
@@ -361,7 +394,7 @@ fn take(
     if state.terminal.group.is_none() {
         state.terminal.group = Some(state.settings.full_lines());
     }
-    queue(state, speech);
+    queue(state, speech.items);
     bound(state);
     effects.extend(pump(state, trace_id));
     effects.extend(hold_if_full(state));
@@ -457,19 +490,19 @@ pub(crate) fn reply(
     // Once the outpost reads for Core, its answer is a read Core's
     // terminal model aligns, spoken under the read's speech key.
     let (output, key, mut effects) = match reply {
-        TextReply::Terminal(speech) => (*speech, None, Vec::new()),
+        TextReply::Terminal(speech) => (Said::from(*speech), None, Vec::new()),
         other => crate::terminal_model::answered_read(state, &other).unwrap_or_default(),
     };
     let trace_id = key.unwrap_or(trace_id);
     let spoken = if state.terminal.cancel == Some(query_id) {
         state.terminal.cancel = None;
-        take(state, trace_id, &output, true)
+        take(state, trace_id, output, true)
     } else if state.terminal.overtaken == Some(query_id) {
         state.terminal.overtaken = None;
-        take(state, trace_id, &output, true)
+        take(state, trace_id, output, true)
     } else {
         state.terminal.request = None;
-        let mut spoken = take(state, trace_id, &output, false);
+        let mut spoken = take(state, trace_id, output, false);
         if std::mem::take(&mut state.terminal.deciding) {
             spoken.extend(decide_and_pump(state));
         }
@@ -479,9 +512,122 @@ pub(crate) fn reply(
     effects
 }
 
-/// Adds the output to the waiting queue, in the order it is spoken.
-fn queue(state: &mut SrState, speech: &TerminalSpeech) {
+/// Adds the output among `items` to the waiting queue, in the order it is
+/// spoken, its text moved, and keeps the backlog behind the group being
+/// spoken to at most as many lines as either limit could keep, older ones
+/// counted as skipped, as [`skip_all_but`] would once they were added:
+/// output past that bound is counted as it is added, and never added, so a
+/// line of the reading rules' is made a string of its own only once it
+/// waits. Which of them is spoken is decided once the group is heard
+/// ([`decide`]).
+fn queue(state: &mut SrState, items: Vec<SaidItem>) {
+    let keep = state.settings.full_lines().max(state.settings.last_lines());
     let terminal = &mut state.terminal;
+    let group_left = terminal.group.unwrap_or(0);
+    // The backlog once the output is added: the lines past the group's
+    // ([`backlog_start`]).
+    let lines = waiting_lines(&terminal.waiting)
+        + items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    SaidItem::Item(TerminalItem::Output(_)) | SaidItem::Line(_)
+                )
+            })
+            .count();
+    let backlog = match group_left {
+        0 => lines,
+        group => lines.saturating_sub(group),
+    };
+    let waiting = &mut terminal.waiting;
+    if backlog <= keep {
+        added(items, |item| match item {
+            Adding::Waiting(Waiting::Skipped(skipped)) => push_skipped(waiting, skipped),
+            item => waiting.push_back(item.waiting()),
+        });
+        return;
+    }
+    // The waiting items go round once, each taken from the front and given
+    // back at the back unless it is skipped, followed by the output's.
+    let mut bounded = Bounded {
+        group_left: (group_left > 0).then_some(group_left),
+        skipping: group_left == 0,
+        dropping: backlog - keep,
+        skipped: None,
+        in_line: false,
+    };
+    // The item before the next, held until the next is known: a skipped
+    // count of the output merges with a skipped count before it, as
+    // [`push_skipped`] merges it with the last waiting.
+    let mut held: Option<Adding> = None;
+    for _ in 0..waiting.len() {
+        if let Some(item) = waiting.pop_front()
+            && let Some(before) = held.replace(Adding::Waiting(item))
+        {
+            bounded.add(waiting, before);
+        }
+    }
+    added(items, |item| match (item, &mut held) {
+        (
+            Adding::Waiting(Waiting::Skipped(skipped)),
+            Some(Adding::Waiting(Waiting::Skipped(last))),
+        ) => *last = last.plus(skipped),
+        (item, held) => {
+            if let Some(before) = held.replace(item) {
+                bounded.add(waiting, before);
+            }
+        }
+    });
+    if let Some(before) = held {
+        bounded.add(waiting, before);
+    }
+    bounded.end(waiting);
+}
+
+/// A waiting item as it is added ([`queue`]): one of the reading rules'
+/// lines keeps their text until it waits.
+enum Adding {
+    /// An item as it waits.
+    Waiting(Waiting),
+    /// A line no larger than the bound, of the kind given, its text the
+    /// reading rules'.
+    Line(Text, LineKind),
+}
+
+impl Adding {
+    /// What it waits as.
+    fn waiting(self) -> Waiting {
+        match self {
+            Self::Waiting(item) => item,
+            Self::Line(text, kind) => Waiting::Line(text.to_string(), kind),
+        }
+    }
+
+    /// The line's kind when it is a line, or else the item, with no text.
+    fn kind(&self) -> Result<LineKind, &Waiting> {
+        match self {
+            Self::Waiting(Waiting::Line(_, kind)) | Self::Line(_, kind) => Ok(*kind),
+            Self::Waiting(item) => Err(item),
+        }
+    }
+
+    /// Whether it is a line that counts ([`is_line`]).
+    fn is_line(&self) -> bool {
+        matches!(self.kind(), Ok(LineKind::Line(_)))
+    }
+
+    /// Whether it belongs to the line before it ([`belongs`]).
+    fn belongs(&self) -> bool {
+        matches!(self.kind(), Ok(LineKind::Growth) | Err(Waiting::Cut))
+    }
+}
+
+/// The waiting items the output among `items` makes, in order, each given
+/// to `add`, a skipped count as itself for `add` to merge with a count
+/// before it. A line larger than the bound is cut and followed by
+/// [`Waiting::Cut`].
+fn added(items: Vec<SaidItem>, mut add: impl FnMut(Adding)) {
     // Every line counts, blank ones included (Dickson, 2026-10-07, and the
     // coherence review of 2026-10-09): a blank line waits like any other
     // and is counted when skipped, but is never spoken ([`pump`]).
@@ -491,20 +637,113 @@ fn queue(state: &mut SrState, speech: &TerminalSpeech) {
     // of its lines, and says "skipped lines" unless a skip after it will
     // say "more than" ([`pump`]).
     let mut counted = Counted::Exactly;
-    for item in &speech.items {
-        match item {
-            TerminalItem::Output(line) => {
-                push_line(&mut terminal.waiting, line, LineKind::Line(counted));
+    for item in items {
+        let (line, kind) = match item {
+            SaidItem::Line(text) if text.len() <= MAX_WAITING_BYTES => {
+                add(Adding::Line(text, LineKind::Line(counted)));
+                continue;
             }
-            TerminalItem::Growth(line) => push_line(&mut terminal.waiting, line, LineKind::Growth),
-            TerminalItem::Skipped(Skipped::About(0)) => counted = Counted::About,
-            TerminalItem::Skipped(skipped) => {
-                if *skipped == Skipped::MoreThan(0) {
+            SaidItem::Line(text) => (text.to_string(), LineKind::Line(counted)),
+            SaidItem::Item(TerminalItem::Output(line)) => (line, LineKind::Line(counted)),
+            SaidItem::Item(TerminalItem::Growth(line)) => (line, LineKind::Growth),
+            SaidItem::Item(TerminalItem::Skipped(Skipped::About(0))) => {
+                counted = Counted::About;
+                continue;
+            }
+            SaidItem::Item(TerminalItem::Skipped(skipped)) => {
+                if skipped == Skipped::MoreThan(0) {
                     counted = Counted::MoreThan;
                 }
-                push_skipped(&mut terminal.waiting, *skipped);
+                add(Adding::Waiting(Waiting::Skipped(skipped)));
+                continue;
             }
-            _ => {}
+            SaidItem::Item(_) => continue,
+        };
+        let (line, cut) = within_bound(line);
+        add(Adding::Waiting(Waiting::Line(line, kind)));
+        if cut {
+            add(Adding::Waiting(Waiting::Cut));
+        }
+    }
+}
+
+/// The waiting queue rebuilt in order while the backlog is over its bound
+/// ([`queue`]): the group being spoken and what belongs to its last line
+/// kept, then, from the backlog's start, what [`skip_all_but`] drops
+/// counted into one skipped count in its place, then the rest kept.
+struct Bounded {
+    /// Lines of the group still to come; `None` once they and what belongs
+    /// to the last of them have.
+    group_left: Option<usize>,
+    /// Whether the backlog has started and nothing in it is kept yet.
+    skipping: bool,
+    /// Lines still to drop.
+    dropping: usize,
+    /// The count of what was dropped.
+    skipped: Option<Skipped>,
+    /// Whether the last item dropped was a line, whose growth goes with it.
+    in_line: bool,
+}
+
+impl Bounded {
+    /// The next item, kept at the back of `waiting`, or dropped and
+    /// counted.
+    fn add(&mut self, waiting: &mut VecDeque<Waiting>, item: Adding) {
+        if let Some(left) = &mut self.group_left {
+            if *left > 0 {
+                if item.is_line() {
+                    *left -= 1;
+                }
+                waiting.push_back(item.waiting());
+                return;
+            }
+            // What belongs to the group's last line is the group's.
+            if item.belongs() {
+                waiting.push_back(item.waiting());
+                return;
+            }
+            self.group_left = None;
+            self.skipping = true;
+        }
+        if self.skipping {
+            let drop = match item.kind() {
+                Err(Waiting::Skipped(_)) => true,
+                _ if item.belongs() => self.in_line || self.dropping > 0,
+                _ => self.dropping > 0,
+            };
+            if drop {
+                match item.kind() {
+                    Ok(LineKind::Line(counted)) => {
+                        self.skipped = Some(with_line(self.skipped, counted));
+                        self.dropping = self.dropping.saturating_sub(1);
+                        self.in_line = true;
+                    }
+                    Err(Waiting::Skipped(count)) => {
+                        let count = *count;
+                        self.skipped = Some(self.skipped.map_or(count, |s| s.plus(count)));
+                        self.in_line = false;
+                    }
+                    // A dropped line's growth, and its note that it was cut,
+                    // go with it.
+                    Ok(LineKind::Growth) | Err(_) => {}
+                }
+                return;
+            }
+            self.end(waiting);
+        }
+        waiting.push_back(item.waiting());
+    }
+
+    /// Puts the count of what was dropped where it was, once nothing more
+    /// is: a line's growth alone counts no line, and leaves no count.
+    fn end(&mut self, waiting: &mut VecDeque<Waiting>) {
+        if std::mem::take(&mut self.skipping)
+            && let Some(skipped) = self
+                .skipped
+                .take()
+                .filter(|skipped| *skipped != Skipped::Count(0))
+        {
+            waiting.push_back(Waiting::Skipped(skipped));
         }
     }
 }
@@ -590,26 +829,13 @@ fn skip_all_but(waiting: &mut VecDeque<Waiting>, start: usize, keep: usize) {
     }
 }
 
-/// Keeps the backlog behind the group being spoken bounded: at most as
-/// many lines as either limit could keep, older ones counted as skipped,
-/// and everything waiting at most [`MAX_WAITING_BYTES`], the oldest lines
-/// counted as skipped beyond it. Which of them is spoken is decided once the
-/// group is heard ([`decide`]).
+/// Keeps everything waiting at most [`MAX_WAITING_BYTES`], the oldest
+/// lines counted as skipped beyond it, as [`queue`] keeps the backlog to
+/// as many lines as either limit could keep.
 fn bound(state: &mut SrState) {
-    let keep = state.settings.full_lines().max(state.settings.last_lines());
     let terminal = &mut state.terminal;
-    let start = backlog_start(&terminal.waiting, terminal.group.unwrap_or(0));
-    let backlog = terminal
-        .waiting
-        .iter()
-        .skip(start)
-        .filter(|item| is_line(item))
-        .count();
-    if backlog > keep {
-        skip_all_but(&mut terminal.waiting, start, keep);
-    }
-    // Then by bytes: the oldest waiting lines join the skipped count until
-    // what waits fits the bound, the backlog's first, then the group's.
+    // The oldest waiting lines join the skipped count until what waits fits
+    // the bound, the backlog's first, then the group's.
     let mut bytes: usize = terminal
         .waiting
         .iter()

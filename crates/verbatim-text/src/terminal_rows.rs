@@ -79,9 +79,10 @@ pub const LINGERING_MS: u64 = 2000;
     reason = "independent answers of one read, as the read program gives them"
 )]
 pub struct Read {
-    /// The text from the read's start to the document's end, padding and
-    /// line breaks included.
-    pub text: String,
+    /// The text from the read's start to the document's end, line breaks
+    /// included, without its lines' padding and with each line's length
+    /// with it.
+    pub text: ReadText,
     /// The screen's text, for its width and height.
     pub screen: String,
     /// Whether the read started where the last read said to start.
@@ -109,6 +110,83 @@ pub struct Read {
     /// ([`TerminalMemory::above`]): fewer than asked when the document's
     /// start came first.
     pub above: usize,
+}
+
+/// A read's text without the spaces that pad its lines, and how long each
+/// line was with them, in characters, as runs of lines of one length: how
+/// many lines, and their length ("Rows"). Splitting a read into rows
+/// ([`TerminalMemory::read`]) takes each line's padding as that many
+/// spaces after its text, which it never copies, so a read of a full
+/// history of short lines is split from its text alone, about a tenth of
+/// the padded size. A line with no length given has no padding.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReadText {
+    /// The text, lines parted by a carriage return and line feed, each
+    /// without the spaces at its end.
+    pub text: String,
+    /// Each line's length with its padding, in characters, as runs of
+    /// lines of one length: how many lines, and their length.
+    pub lengths: Vec<(u32, u32)>,
+}
+
+impl ReadText {
+    /// `padded` without the spaces at the end of each of its lines.
+    #[must_use]
+    pub fn unpadded(padded: &str) -> Self {
+        let mut text = String::with_capacity(padded.len());
+        let mut lengths: Vec<(u32, u32)> = Vec::new();
+        for (index, line) in padded.split("\r\n").enumerate() {
+            if index > 0 {
+                text.push_str("\r\n");
+            }
+            let length = u32::try_from(characters(line)).unwrap_or(u32::MAX);
+            text.push_str(line.trim_end_matches(' '));
+            match lengths.last_mut() {
+                Some((count, last)) if *last == length => *count += 1,
+                _ => lengths.push((1, length)),
+            }
+        }
+        Self { text, lengths }
+    }
+
+    /// The text with each line padded again to its length.
+    #[must_use]
+    pub fn padded(&self) -> String {
+        let mut padded = String::new();
+        for (index, (line, spaces)) in self.lines().enumerate() {
+            if index > 0 {
+                padded.push_str("\r\n");
+            }
+            padded.push_str(line);
+            padded.extend(std::iter::repeat_n(' ', spaces));
+        }
+        padded
+    }
+
+    /// Each line, split at line breaks as `str::split("\r\n")` splits it,
+    /// with how many spaces padded it.
+    fn lines(&self) -> impl Iterator<Item = (&str, usize)> {
+        let mut lengths = self.lengths.iter().flat_map(|&(count, length)| {
+            std::iter::repeat_n(
+                usize::try_from(length).unwrap_or(usize::MAX),
+                usize::try_from(count).unwrap_or(usize::MAX),
+            )
+        });
+        crlf_lines(&self.text).map(move |span| {
+            let line = &self.text[span];
+            let length = lengths.next().unwrap_or(0);
+            (line, length.saturating_sub(characters(line)))
+        })
+    }
+}
+
+/// How many characters `line` holds: its bytes when it is ASCII.
+fn characters(line: &str) -> usize {
+    if line.is_ascii() {
+        line.len()
+    } else {
+        line.chars().count()
+    }
 }
 
 /// The text of a row or a line: a stretch of a shared string, compared,
@@ -2356,23 +2434,65 @@ fn measure(screen: &str, caret_row: &str, last_height: Option<usize>) -> (usize,
 }
 
 /// The rows of a read's text: its lines split at line breaks, each into
-/// rows of `width` cells, padding trimmed from each line's last row only
-/// ("Rows").
-fn split_rows(text: &str, width: usize) -> Vec<Row> {
-    let text = text.strip_suffix("\r\n").unwrap_or(text);
-    let mut rows = Vec::with_capacity(text.len() / (width + 2).max(1) + 1);
+/// rows of `width` cells as it was padded, padding left out ("Rows").
+fn split_rows(text: &ReadText, width: usize) -> Vec<Row> {
+    // A text ending in a line break ends with an empty line of no padding,
+    // which is not a row.
+    let mut lines = text.lines().peekable();
+    let mut first = true;
+    let lines = std::iter::from_fn(move || {
+        let line = lines.next()?;
+        if !first && line == ("", 0) && lines.peek().is_none() {
+            return None;
+        }
+        first = false;
+        Some(line)
+    });
+    let rows = text
+        .lengths
+        .iter()
+        .map(|&(count, length)| {
+            let (count, length) = (count as usize, length as usize);
+            count.saturating_mul(length.div_ceil(width.max(1)).max(1))
+        })
+        .fold(0usize, usize::saturating_add);
+    split_lines(lines, rows, width)
+}
+
+/// The rows of `lines`, each a line's text and how many spaces padded it,
+/// with room for about `rows` of them: each line split into rows of
+/// `width` cells, padding trimmed from each line's last row only ("Rows").
+fn split_lines<'a>(
+    lines: impl Iterator<Item = (&'a str, usize)>,
+    rows: usize,
+    width: usize,
+) -> Vec<Row> {
+    let mut rows = Vec::with_capacity(rows);
     // The texts of the rows split since the last string was made, one
     // after another, and each such row as where its text is in them, its
     // hash, whether it wraps, and its line's hash; made into a string
-    // shared by those rows once they hold about `SHARED` bytes, at the end
-    // of a line.
-    let mut joined = String::new();
-    let mut pending: Vec<(Range<usize>, u64, bool, u64)> = Vec::new();
+    // shared by those rows once they hold about `SHARED` bytes or are
+    // `SHARED_ROWS` rows, at the end of a line.
+    let mut joined = String::with_capacity(SHARED);
+    let mut pending: Vec<(Range<usize>, u64, bool, u64)> = Vec::with_capacity(SHARED_ROWS);
     let mut pieces = Vec::new();
-    let mut lines = crlf_lines(text).peekable();
-    while let Some(span) = lines.next() {
-        let line = &text[span];
-        row_pieces(line, width, &mut pieces);
+    let mut flush = |joined: &mut String, pending: &mut Vec<(Range<usize>, u64, bool, u64)>| {
+        let whole: Arc<str> = Arc::from(joined.as_str());
+        rows.extend(
+            pending
+                .drain(..)
+                .map(|(range, hash, wraps, line_hash)| Row {
+                    text: Text::within(&whole, range),
+                    hash,
+                    wraps,
+                    line_hash,
+                    redrawn: false,
+                }),
+        );
+        joined.clear();
+    };
+    for (line, spaces) in lines {
+        row_pieces(line, spaces, width, &mut pieces);
         let last = pieces.len() - 1;
         // Padding is the spaces after the line's last character ("Rows"):
         // a wrapped row keeps the spaces where it wrapped, but not those
@@ -2381,28 +2501,20 @@ fn split_rows(text: &str, width: usize) -> Vec<Row> {
         let end = crate::trim_padding(line).len();
         let line_hash = hash(&line[..end]);
         for (at, piece) in pieces.iter().enumerate() {
-            let piece = &line[piece.start..piece.end.min(end.max(piece.start))];
+            let start = piece.start.min(end);
+            let piece = &line[start..piece.end.min(end).max(start)];
             // A line of one row is that row's text.
             let row_hash = if last == 0 { line_hash } else { hash(piece) };
             let start = joined.len();
             joined.push_str(piece);
             pending.push((start..joined.len(), row_hash, at < last, line_hash));
         }
-        if joined.len() >= SHARED || lines.peek().is_none() {
-            let whole: Arc<str> = Arc::from(joined.as_str());
-            rows.extend(
-                pending
-                    .drain(..)
-                    .map(|(range, hash, wraps, line_hash)| Row {
-                        text: Text::within(&whole, range),
-                        hash,
-                        wraps,
-                        line_hash,
-                        redrawn: false,
-                    }),
-            );
-            joined.clear();
+        if joined.len() >= SHARED || pending.len() >= SHARED_ROWS {
+            flush(&mut joined, &mut pending);
         }
+    }
+    if !pending.is_empty() {
+        flush(&mut joined, &mut pending);
     }
     rows
 }
@@ -2413,6 +2525,12 @@ fn split_rows(text: &str, width: usize) -> Vec<Row> {
 /// gives it pages of its own, which it then fills and frees at a cost of
 /// about 120 microseconds for each megabyte (measured on 2026-10-25).
 const SHARED: usize = 1 << 16;
+
+/// About how many rows one string holds when a read is split
+/// ([`split_rows`]): a read of short rows makes a string for each of these,
+/// so that the rows waiting for their string stay a few tens of kilobytes,
+/// which the heap does not hand back to the system between reads.
+const SHARED_ROWS: usize = 1 << 10;
 
 /// Where the lines of `text` are, split at each line break (`\r\n`) as
 /// `str::split("\r\n")` splits it, each break found by searching for its
@@ -2435,36 +2553,41 @@ fn crlf_lines(text: &str) -> impl Iterator<Item = Range<usize>> {
     })
 }
 
-/// One line of a read split into rows of `width` cells, padding kept, as
-/// byte ranges of the line into `pieces`: at least one row, empty for an
-/// empty line.
-fn row_pieces(line: &str, width: usize, pieces: &mut Vec<Range<usize>>) {
+/// One line of a read, `line` followed by `spaces` spaces of padding,
+/// split into rows of `width` cells, padding kept, as byte ranges of the
+/// padded line into `pieces`: at least one row, empty for an empty line.
+/// The padding is counted, never copied: a range past `line` lies in it.
+fn row_pieces(line: &str, spaces: usize, width: usize, pieces: &mut Vec<Range<usize>>) {
     pieces.clear();
+    let length = line.len().saturating_add(spaces);
     // No character takes more cells than its UTF-8 bytes (only ASCII takes
     // one byte, and none takes more than two cells), so a line of no more
     // bytes than the width is one row, as a padded line is.
-    if line.len() <= width || width == 0 {
-        pieces.push(0..line.len());
+    if length <= width || width == 0 {
+        pieces.push(0..length);
     } else if line.is_ascii() {
-        // Every printable ASCII character takes one cell.
+        // Every printable ASCII character takes one cell, as does a space.
         let mut at = 0;
         loop {
-            let end = (at + width).min(line.len());
+            let end = (at + width).min(length);
             pieces.push(at..end);
             at = end;
-            if at >= line.len() {
+            if at >= length {
                 break;
             }
         }
-    } else if line.bytes().max().is_some_and(|byte| byte < 0xe0) && line.chars().count() <= width {
+    } else if line.bytes().max().is_some_and(|byte| byte < 0xe0)
+        && line.chars().count().saturating_add(spaces) <= width
+    {
         // Every character below U+0800, which UTF-8 writes with no byte of
         // 0xE0 or more, takes at most one cell, so a line of no more such
         // characters than the width is one row: Latin, Greek, Cyrillic,
         // Hebrew and Arabic text.
-        pieces.push(0..line.len());
+        pieces.push(0..length);
     } else {
         let (mut start, mut cells) = (0, 0);
-        for (at, c) in line.char_indices() {
+        let padding = (line.len()..length).map(|at| (at, ' '));
+        for (at, c) in line.char_indices().chain(padding) {
             let cell = unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
             if width > 0 && cells + cell > width && at > start {
                 pieces.push(start..at);
@@ -2472,7 +2595,7 @@ fn row_pieces(line: &str, width: usize, pieces: &mut Vec<Range<usize>>) {
             }
             cells += cell;
         }
-        pieces.push(start..line.len());
+        pieces.push(start..length);
     }
 }
 
@@ -2490,7 +2613,9 @@ fn caret_row(rows: usize, to_end: u32) -> Option<usize> {
 /// history above them, at the width a read found.
 #[must_use]
 pub fn rows_of(text: &str, width: usize) -> Vec<Row> {
-    split_rows(text, width)
+    let text = text.strip_suffix("\r\n").unwrap_or(text);
+    let rows = text.len() / (width + 2).max(1) + 1;
+    split_lines(crlf_lines(text).map(|span| (&text[span], 0)), rows, width)
 }
 
 /// Whether a read's screen shows text: anything but padding, line breaks

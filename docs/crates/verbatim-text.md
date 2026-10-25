@@ -92,7 +92,17 @@ speak: the reading rules (`terminal_reading`, below) are built on its
   rows its row and those below hold, and how many rows it holds above the
   start it was asked for), with the text as UTF-8 and the time of the read
   in milliseconds. The start for the next read is an opaque provider range
-  the outpost keeps.
+  the outpost keeps. The text from the read's start comes without its
+  lines' padding (`ReadText`); the screen, the first row and the caret's
+  row, a screen at most, come padded.
+- `ReadText`: a read's text without the spaces that pad its lines
+  (`text`), and each line's length with them in characters, as runs of
+  lines of one length (`lengths`), the form in which a read crosses to
+  Core (`verbatim_model::TerminalText`). `unpadded` makes one from padded
+  text, and `padded` gives that text back. The memory splits a read into
+  rows from it, each line's padding counted from its length and never
+  copied, so a full history of short lines is split from about a tenth of
+  its padded size.
 - `TerminalMemory::new` and `TerminalMemory::read(&Read) -> Outcome`: one
   memory per terminal, kept while the terminal exists. `above` gives how
   many rows the next read takes above its start: a screen, as the last
@@ -149,9 +159,11 @@ speak: the reading rules (`terminal_reading`, below) are built on its
 - `Text`: a row's or a line's text, a stretch of a shared string that
   reads, compares, prints and dereferences as that stretch alone (`as_str`,
   `len`, `is_empty`, and `str`'s methods through `Deref`). The rows of one
-  read share strings of about 64 KB of their texts, so splitting a read is
-  a few allocations however many rows it holds, and a wrapped line's text
-  is the stretch its rows make up together. The rows the memory keeps
+  read share strings of about 64 KB or 1,024 rows of their texts,
+  whichever comes first, so splitting a read is a few allocations however
+  many rows it holds, the rows waiting for their string stay a few tens of
+  kilobytes, and a wrapped line's text is the stretch its rows make up
+  together. The rows the memory keeps
   after a read are given strings of their own before anything takes their
   text, so that nothing the memory or the reading rules keep holds a
   whole read: what they keep is the size of the rows they keep.
@@ -162,9 +174,9 @@ speak: the reading rules (`terminal_reading`, below) are built on its
   a last such product at the end. It reads a word where FNV-1a, the hash it
   replaced, read a byte, about eight times fewer dependent
   multiplications.
-- `rows_of`: a read's text split into rows as the memory splits a read,
-  for a caller that reads rows the memory does not keep, the history above
-  them, at the width a read found.
+- `rows_of`: a read's text, padded, split into rows as the memory splits a
+  read, for a caller that reads rows the memory does not keep, the history
+  above them, at the width a read found.
 - `shows_text`: whether a read's screen shows text, anything but padding
   and white space, the one test of "A read with no text", for the memory
   and for the caller that keeps where the next read starts.
@@ -174,13 +186,15 @@ speak: the reading rules (`terminal_reading`, below) are built on its
 
 The read gives text, not coordinates, so a row's place is its index in
 the read that found it. A read's rows are its text split at line breaks
-and each line split into rows of the screen's width; padding is trimmed
-from a line's last row only, so a wrapped line's earlier rows keep the
-spaces where it wrapped. A line is measured cell by cell only when it may
-be longer than a row: one of no more bytes than the width, as a padded
-line of ASCII is, or of no more characters than the width all below
-U+0800, is one row, since no character takes more cells than its bytes
-and none below U+0800 more than one (a unit test checks both of
+and each line, its padding counted as spaces after its text, split into
+rows of the screen's width; padding is left out of a line's last row
+only, so a wrapped line's earlier rows keep the spaces where it wrapped,
+and a line whose padding fills whole rows has rows with no text, as the
+padded text had. A line is measured cell by cell only when it may be
+longer than a row: one of no more bytes than the width with its padding,
+as a padded line of ASCII is, or of no more characters than the width
+all below U+0800, is one row, since no character takes more cells than
+its bytes and none below U+0800 more than one (a unit test checks both of
 `unicode-width`). A one-row line's hash is its row's, and a wrapped line's
 is computed once, as its rows are split. The width is the narrowest of the screen's lines
 but its last, every line being a whole number of rows except Windows
@@ -440,7 +454,9 @@ the memory, which the reader lends out. Floods are Core's to split
   `followed`, whether a
   key moved the caret within its window and the review position followed
   it. `Speech` is a new line (`Line`, a blank one with empty text, which
-  Core counts and does not speak), what a growing line gained (`Growth`), a
+  Core counts and does not speak; its text a `Text` sharing the read's
+  string, so a caller that only counts the line, as Core's flood policy
+  counts the lines it skips, never copies it), what a growing line gained (`Growth`), a
   redrawn row from the word that changed (`Changed`), a held line that
   left the read before it was spoken, as it was last read (`Held`, naming
   no row), a lost read (`LostRead`, before its lines, with how Core counts

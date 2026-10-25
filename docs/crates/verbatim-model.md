@@ -393,7 +393,10 @@ the contract the Windows side implements.
   the spaces that pad its lines (`text`) and each line's padded length in
   characters as runs of lines of one length (`lengths`): `unpadded` makes
   one, and `padded` gives the text back exactly, since the rules measure
-  the screen's width from the padding. The screen is sent beside the
+  the screen's width from the padding. Core gives the rules the read's
+  text as it comes, each line's length standing for its padding
+  (`verbatim_text::terminal_rows::ReadText`), and pads only the screen,
+  the first row and the caret's row. The screen is sent beside the
   text rather than as a place in it: the read program reads it as the
   provider's first visible range, in a call of its own, so it is where the
   user scrolled the view, and the terminal may write between that call and

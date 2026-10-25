@@ -919,7 +919,10 @@ anything but the focus is ignored.
   `conhost_flood` failure of 2026-10-08). Output under the limit is never
   touched, however many batches it arrives in. Behind the group being
   spoken, the waiting queue keeps at most as many lines as either limit
-  keeps, older ones folded into the skipped count, and everything waiting
+  keeps, older ones folded into the skipped count as the output is
+  queued, so a line past that bound never waits (a flood read whole hands
+  the policy about 9,000 lines, of which it keeps a few), and everything
+  waiting
   at most 10 MB (`MAX_WAITING_BYTES`, Dickson, 2026-10-07), the oldest
   waiting lines folded into the skipped count beyond it; a single line
   larger than that is cut on a grapheme boundary and followed by "line
@@ -986,7 +989,9 @@ speaks. Everything below acts only on `NormalizedEvent::TerminalSnapshot`
 and on the answers to the requests it makes.
 
 - Public: `read_of(&TerminalSnapshot)`, the reading rules' `Read` of a
-  snapshot, its texts padded again exactly; and `snapshot_of(&Read,
+  snapshot: its text as it came, without its lines' padding (the rules'
+  `ReadText`), and the screen, the first row and the caret's row, a
+  screen at most, padded again exactly; and `snapshot_of(&Read,
   waited, colours)`, the snapshot of a read as an outpost sends it, for
   the tests and measurements that read the simulated terminal as the
   outpost reads a real one.

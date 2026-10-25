@@ -53,15 +53,16 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
     Effect, Input, NodeId, OutpostId, QueryId, Skipped, TerminalColourRun, TerminalItem,
-    TerminalKeyKind, TerminalScope, TerminalSnapshot, TerminalSpeech, TerminalText, TerminalUnit,
-    TextOp, TextReply, TextRequest, TraceId,
+    TerminalKeyKind, TerminalScope, TerminalSnapshot, TerminalText, TerminalUnit, TextOp,
+    TextReply, TextRequest, TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
 };
-use verbatim_text::terminal_rows::{Lost, Read};
+use verbatim_text::terminal_rows::{Lost, Read, ReadText};
 
 use crate::state::SrState;
+use crate::terminal::{Said, SaidItem};
 
 pub(crate) use review::CaretAt;
 
@@ -386,11 +387,16 @@ fn rules_key(kind: &TerminalKeyKind, at_ms: u64) -> Key {
     }
 }
 
-/// The reading rules' read of `snapshot`, its texts padded again.
+/// The reading rules' read of `snapshot`: its text as it came, without
+/// its lines' padding, which the rules take as each line's length; the
+/// screen and the rows, a screen at most, padded again.
 #[must_use]
 pub fn read_of(snapshot: &TerminalSnapshot) -> Read {
     Read {
-        text: snapshot.text.padded(),
+        text: ReadText {
+            text: snapshot.text.text.clone(),
+            lengths: snapshot.text.lengths.clone(),
+        },
         screen: snapshot.screen.padded(),
         from_start: snapshot.from_start,
         shrank: snapshot.shrank,
@@ -417,7 +423,10 @@ pub fn snapshot_of(
 ) -> TerminalSnapshot {
     let cells = |value: usize| u32::try_from(value).unwrap_or(u32::MAX);
     TerminalSnapshot {
-        text: TerminalText::unpadded(&read.text),
+        text: TerminalText {
+            text: read.text.text.clone(),
+            lengths: read.text.lengths.clone(),
+        },
         screen: TerminalText::unpadded(&read.screen),
         from_start: read.from_start,
         shrank: read.shrank,
@@ -465,40 +474,43 @@ fn colours_of(colours: &[Vec<TerminalColourRun>]) -> Vec<Vec<ColourRun>> {
         .collect()
 }
 
-/// What the reading rules said, as Core's flood policy takes it.
-fn speech_of(step: &Step) -> TerminalSpeech {
+/// What the reading rules said, as Core's flood policy takes it: the
+/// speech's text moved, not copied, and a new line's left as the rules
+/// share it with the read.
+fn speech_of(step: Step) -> Said {
     let items = step
         .speech
-        .iter()
-        .map(|speech| match speech {
-            Speech::Line { text, .. } | Speech::Changed { text, .. } | Speech::Held { text } => {
-                TerminalItem::Output(text.clone())
-            }
-            // What a line gained, without the space that parts it from the
-            // text it follows, which says nothing.
-            Speech::Growth { text, .. } => TerminalItem::Growth(text.trim_start().to_owned()),
-            // After a lost read, its lines follow a count of none of how
-            // they are counted, to which each adds when the flood policy
-            // skips it ("Core's flood policy").
-            Speech::LostRead(Lost::About) => TerminalItem::Skipped(Skipped::About(0)),
-            Speech::LostRead(Lost::MoreThan) => TerminalItem::Skipped(Skipped::MoreThan(0)),
-            Speech::LostRead(Lost::Uncounted) => TerminalItem::Skipped(Skipped::Uncounted),
-            Speech::Echo { text, .. } => TerminalItem::Echo(text.clone()),
-            Speech::Caret { unit, text, .. } => TerminalItem::Caret {
-                unit: match unit {
-                    Unit::Character => TerminalUnit::Character,
-                    Unit::Word => TerminalUnit::Word,
-                    Unit::Line => TerminalUnit::Line,
+        .into_iter()
+        .map(|speech| {
+            SaidItem::Item(match speech {
+                Speech::Line { text, .. } => return SaidItem::Line(text),
+                Speech::Changed { text, .. } | Speech::Held { text } => TerminalItem::Output(text),
+                // What a line gained, without the space that parts it from the
+                // text it follows, which says nothing.
+                Speech::Growth { text, .. } => TerminalItem::Growth(text.trim_start().to_owned()),
+                // After a lost read, its lines follow a count of none of how
+                // they are counted, to which each adds when the flood policy
+                // skips it ("Core's flood policy").
+                Speech::LostRead(Lost::About) => TerminalItem::Skipped(Skipped::About(0)),
+                Speech::LostRead(Lost::MoreThan) => TerminalItem::Skipped(Skipped::MoreThan(0)),
+                Speech::LostRead(Lost::Uncounted) => TerminalItem::Skipped(Skipped::Uncounted),
+                Speech::Echo { text, .. } => TerminalItem::Echo(text),
+                Speech::Caret { unit, text, .. } => TerminalItem::Caret {
+                    unit: match unit {
+                        Unit::Character => TerminalUnit::Character,
+                        Unit::Word => TerminalUnit::Word,
+                        Unit::Line => TerminalUnit::Line,
+                    },
+                    text,
                 },
-                text: text.clone(),
-            },
-            Speech::Gained { text, .. } => TerminalItem::Gained(text.clone()),
-            Speech::Lost { text, .. } => TerminalItem::Lost(text.clone()),
-            Speech::Answer { text, .. } => TerminalItem::Answer(text.clone()),
-            Speech::Suggestion { text, .. } => TerminalItem::Suggestion(text.clone()),
+                Speech::Gained { text, .. } => TerminalItem::Gained(text),
+                Speech::Lost { text, .. } => TerminalItem::Lost(text),
+                Speech::Answer { text, .. } => TerminalItem::Answer(text),
+                Speech::Suggestion { text, .. } => TerminalItem::Suggestion(text),
+            })
         })
         .collect();
-    TerminalSpeech {
+    Said {
         items,
         followed: step.followed,
     }
@@ -507,7 +519,7 @@ fn speech_of(step: &Step) -> TerminalSpeech {
 /// What aligning a snapshot gave.
 struct Taken {
     /// What the rules said, unless they asked for another read instead.
-    speech: Option<TerminalSpeech>,
+    speech: Option<Said>,
     /// The read's speech key.
     key: Option<TraceId>,
     /// The requests and the timer it caused.
@@ -579,7 +591,7 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
         crate::editing::update_caret(state, node, caret.clone(), started_ms);
     }
     Taken {
-        speech: Some(speech_of(&step)),
+        speech: Some(speech_of(step)),
         key,
         effects,
     }
@@ -591,7 +603,7 @@ fn speak(
     state: &mut SrState,
     trace_id: TraceId,
     (node, started_ms): (NodeId, u64),
-    speech: &TerminalSpeech,
+    speech: Said,
     key: Option<TraceId>,
 ) -> Vec<Effect> {
     let effects = crate::terminal::speech(state, key.unwrap_or(trace_id), started_ms, node, speech);
@@ -631,7 +643,7 @@ pub(crate) fn snapshot_event(
             state,
             trace_id,
             (node, snapshot.started_ms),
-            &speech,
+            speech,
             taken.key,
         ));
     }
@@ -644,19 +656,19 @@ pub(crate) fn snapshot_event(
 pub(crate) fn answered_read(
     state: &mut SrState,
     reply: &TextReply,
-) -> Option<(TerminalSpeech, Option<TraceId>, Vec<Effect>)> {
+) -> Option<(Said, Option<TraceId>, Vec<Effect>)> {
     let node = state.terminal.node?;
     // While a read the rules asked for is owed, a read begun before it
     // says nothing: the owed read holds everything it showed.
     if model_of(state, node).is_some_and(|model| model.owed.is_some()) {
-        return Some((TerminalSpeech::default(), None, Vec::new()));
+        return Some((Said::default(), None, Vec::new()));
     }
     match reply {
         TextReply::TerminalSnapshot(snapshot) => {
             let taken = take_snapshot(state, node, snapshot);
             Some((taken.speech.unwrap_or_default(), taken.key, taken.effects))
         }
-        TextReply::TerminalUnchanged => Some((TerminalSpeech::default(), None, Vec::new())),
+        TextReply::TerminalUnchanged => Some((Said::default(), None, Vec::new())),
         _ => None,
     }
 }
@@ -737,7 +749,7 @@ pub(crate) fn reply(
                     state,
                     trace_id,
                     (node, snapshot.started_ms),
-                    &speech,
+                    speech,
                     taken.key,
                 ));
             }
@@ -925,13 +937,7 @@ pub(crate) fn timer(state: &mut SrState, trace_id: TraceId, at_ms: u64) -> Vec<E
     let step = model.rules().timer(at_ms);
     model.due_ms = step.timer;
     let mut effects: Vec<Effect> = timer_effect(state, node, before).into_iter().collect();
-    effects.extend(speak(
-        state,
-        trace_id,
-        (node, at_ms),
-        &speech_of(&step),
-        None,
-    ));
+    effects.extend(speak(state, trace_id, (node, at_ms), speech_of(step), None));
     effects
 }
 

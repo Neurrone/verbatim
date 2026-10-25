@@ -5,7 +5,7 @@
 
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
-use super::{Anchor, Lost, NewRow, OldRow, Outcome, Read, Switch, TerminalMemory, hash};
+use super::{Anchor, Lost, NewRow, OldRow, Outcome, Read, ReadText, Switch, TerminalMemory, hash};
 
 /// A terminal watched as the outpost watches it: each read starts where
 /// the last said, a screen above it, with the height the memory found, and
@@ -56,7 +56,7 @@ impl Watch {
             let snapshot = self.terminal.snapshot(&query).expect("a simulated read");
             self.taken += 1;
             let read = Read {
-                text: snapshot.text,
+                text: ReadText::unpadded(&snapshot.text),
                 screen: snapshot.screen,
                 from_start: snapshot.from_start,
                 shrank: snapshot.shrank,
@@ -940,7 +940,7 @@ fn read_of(rows: &[&str], screen: usize, at_document_start: bool, at_ms: u64) ->
     let padded: Vec<String> = rows.iter().map(|row| format!("{row:10}")).collect();
     let last = padded.last().cloned().unwrap_or_default();
     Read {
-        text: padded.join("\r\n"),
+        text: ReadText::unpadded(&padded.join("\r\n")),
         screen: padded[padded.len() - screen..].join("\r\n"),
         at_document_start,
         alternate: rows.len() == screen && at_document_start,

@@ -16,7 +16,7 @@ use verbatim_model::{
     TextReply, TextRequest, TraceId,
 };
 use verbatim_term_sim::{Flavor, Query, Range, Terminal};
-use verbatim_text::terminal_rows::{Read, shows_text};
+use verbatim_text::terminal_rows::{Read, ReadText, shows_text};
 
 pub const OUTPOST: OutpostId = OutpostId(1);
 pub const TERMINAL: u64 = 12;
@@ -116,7 +116,7 @@ impl Outpost {
         };
         let snapshot = self.sim.snapshot(&query).expect("a simulated read");
         let read = Read {
-            text: snapshot.text,
+            text: ReadText::unpadded(&snapshot.text),
             screen: snapshot.screen,
             from_start: snapshot.from_start,
             shrank: snapshot.shrank,

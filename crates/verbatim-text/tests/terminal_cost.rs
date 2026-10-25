@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 use verbatim_term_sim::conformance::history;
 use verbatim_term_sim::{Flavor, Query, Snapshot, Terminal};
 use verbatim_text::terminal_reading::{Settings, Step, TerminalReader};
-use verbatim_text::terminal_rows::Read;
+use verbatim_text::terminal_rows::{Read, ReadText};
 
 /// The screen's width and height.
 const WIDTH: usize = 120;
@@ -217,7 +217,7 @@ struct Reads {
 
 fn read_of(snapshot: &Snapshot, at_ms: u64) -> Read {
     Read {
-        text: snapshot.text.clone(),
+        text: ReadText::unpadded(&snapshot.text),
         screen: snapshot.screen.clone(),
         from_start: snapshot.from_start,
         shrank: snapshot.shrank,
@@ -325,7 +325,7 @@ fn take_reads(case: &Case, flavor: Flavor) -> Reads {
     }
     terminal.write(output.as_bytes());
     let after = settle(&terminal, &mut reader, &mut query, &mut at_ms);
-    let sizes = after.iter().map(|read| read.text.len()).collect();
+    let sizes = after.iter().map(|read| read.text.padded().len()).collect();
     Reads {
         before,
         after,

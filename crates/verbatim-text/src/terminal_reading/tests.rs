@@ -10,7 +10,7 @@ use verbatim_term_sim::{Flavor, Query, Terminal};
 use super::{
     ColourRun, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit, Withheld,
 };
-use crate::terminal_rows::{Anchor, Lost, Read, hash};
+use crate::terminal_rows::{Anchor, Lost, Read, ReadText, Text, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
 /// said, a screen above it, the whole document is read when the reader
@@ -105,7 +105,7 @@ impl Term {
             let snapshot = self.terminal.snapshot(&query).expect("a simulated read");
             taken += 1;
             let read = Read {
-                text: snapshot.text,
+                text: ReadText::unpadded(&snapshot.text),
                 screen: snapshot.screen,
                 from_start: snapshot.from_start,
                 shrank: snapshot.shrank,
@@ -202,7 +202,7 @@ fn quiet(timer: Option<u64>) -> Step {
 fn line(row: usize, text: &str) -> Speech {
     Speech::Line {
         row,
-        text: text.to_owned(),
+        text: Text::from(text),
     }
 }
 
@@ -879,7 +879,7 @@ trait WithText {
 impl WithText for Read {
     fn with_text(self, text: &str) -> Self {
         Read {
-            text: text.to_owned(),
+            text: ReadText::unpadded(text),
             screen: text.to_owned(),
             first_row: text.split("\r\n").next().unwrap_or_default().to_owned(),
             caret_rows_to_end: 1,
@@ -892,7 +892,7 @@ fn screen_read(lines: &[&str], width: usize, caret: usize, column: usize, at_ms:
     let padded: Vec<String> = lines.iter().map(|line| format!("{line:width$}")).collect();
     let text = padded.join("\r\n");
     Read {
-        text: text.clone(),
+        text: ReadText::unpadded(&text),
         screen: text,
         from_start: true,
         shrank: false,
@@ -1542,7 +1542,7 @@ fn corpus_read(
         let snapshot = terminal.snapshot(query).expect("a simulated read");
         taken += 1;
         let read = Read {
-            text: snapshot.text,
+            text: ReadText::unpadded(&snapshot.text),
             screen: snapshot.screen,
             from_start: snapshot.from_start,
             shrank: snapshot.shrank,

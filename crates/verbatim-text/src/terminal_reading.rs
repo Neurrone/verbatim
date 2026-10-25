@@ -167,8 +167,9 @@ pub enum Speech {
     Line {
         /// The line's first row.
         row: usize,
-        /// Its text.
-        text: String,
+        /// Its text, sharing the read's string: a caller that keeps it,
+        /// rather than only counting it, makes a string of it.
+        text: Text,
     },
     /// What a growing line gained ("Growing lines").
     Growth {
@@ -1394,8 +1395,11 @@ impl TerminalReader {
             items.push((0, Speech::LostRead(lost)));
         }
         items.reserve(fresh_lines.len());
-        for (row, text) in &fresh_lines {
-            items.push((*row, line_speech(*row, text.as_deref().unwrap_or_default())));
+        // A blank line's text, the same empty string for each.
+        let blank = Text::default();
+        for (row, text) in fresh_lines {
+            let text = text.unwrap_or_else(|| blank.clone());
+            items.push((row, Speech::Line { row, text }));
         }
         // Mostly in order already: sorted only when they are not, which a
         // stable sort would leave as they are.
@@ -1439,11 +1443,10 @@ impl TerminalReader {
         };
         self.fresh = false;
         self.screen = screen;
-        step.speech = key_speech;
-        step.speech.reserve(held.len() + items.len());
-        step.speech.extend(held);
-        step.speech
-            .extend(items.into_iter().map(|(_, speech)| speech));
+        // The read's speech in the items' own space: the answers to keys
+        // and the held lines go before them.
+        step.speech = items.into_iter().map(|(_, speech)| speech).collect();
+        step.speech.splice(0..0, key_speech.into_iter().chain(held));
         if report {
             self.release(now, &mut step.speech);
         }
@@ -1858,14 +1861,6 @@ fn put(screen: &mut Screen, rows: &std::ops::Range<usize>, keep_from: usize, sta
 fn drop_word(state: &mut LineState) {
     if state.hold == Some(Hold::Word) {
         state.hold = None;
-    }
-}
-
-/// The speech of a new line starting at `row`, with `text`.
-fn line_speech(row: usize, text: &str) -> Speech {
-    Speech::Line {
-        row,
-        text: text.to_owned(),
     }
 }
 

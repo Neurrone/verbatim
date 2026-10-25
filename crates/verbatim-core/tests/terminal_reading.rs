@@ -24,7 +24,7 @@ use verbatim_model::{
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query};
 use verbatim_text::terminal_reading::{Settings, TerminalReader};
-use verbatim_text::terminal_rows::Read;
+use verbatim_text::terminal_rows::{Read, ReadText};
 
 /// Heard with no key.
 fn plain(words: &[&str]) -> Vec<Said> {
@@ -342,7 +342,7 @@ fn a_snapshot_rebuilds_its_read_and_the_rules_take_it_alike() {
                 loop {
                     let snapshot = terminal.snapshot(&query).expect("a simulated read");
                     let read = Read {
-                        text: snapshot.text,
+                        text: ReadText::unpadded(&snapshot.text),
                         screen: snapshot.screen,
                         from_start: snapshot.from_start,
                         shrank: snapshot.shrank,

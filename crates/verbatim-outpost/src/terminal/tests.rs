@@ -13,7 +13,7 @@ use verbatim_model::{
 };
 use verbatim_term_sim::{Flavor, Query};
 use verbatim_text::terminal_reading::{Speech, Step};
-use verbatim_text::terminal_rows::Read;
+use verbatim_text::terminal_rows::{Read, ReadText};
 
 use super::review::{self, CaretAt, History};
 use super::{Terminal, rules_key, speech_of, split};
@@ -56,7 +56,7 @@ impl Watch {
         loop {
             let snapshot = self.sim.snapshot(&query).expect("a simulated read");
             let read = Read {
-                text: snapshot.text,
+                text: ReadText::unpadded(&snapshot.text),
                 screen: snapshot.screen,
                 from_start: snapshot.from_start,
                 shrank: snapshot.shrank,
@@ -189,7 +189,7 @@ fn what_the_rules_say_is_cores_speech_in_order() {
             Speech::LostRead(verbatim_text::terminal_rows::Lost::About),
             Speech::Line {
                 row: 3,
-                text: "first".to_owned(),
+                text: "first".into(),
             },
             Speech::Growth {
                 row: 6,

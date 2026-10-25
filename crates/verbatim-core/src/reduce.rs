@@ -662,9 +662,13 @@ fn terminal_event(
     event: &NormalizedEvent,
 ) -> Vec<Effect> {
     match event {
-        NormalizedEvent::TerminalSpeech { node_id, speech } => {
-            terminal::speech(state, trace_id, observed_at_ms, *node_id, speech)
-        }
+        NormalizedEvent::TerminalSpeech { node_id, speech } => terminal::speech(
+            state,
+            trace_id,
+            observed_at_ms,
+            *node_id,
+            terminal::Said::from(speech.clone()),
+        ),
         NormalizedEvent::TerminalSnapshot { node_id, snapshot } => {
             terminal_model::snapshot_event(state, trace_id, *node_id, snapshot)
         }
