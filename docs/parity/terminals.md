@@ -94,7 +94,9 @@ scenarios follow it as the model's order of work brings them back.
   spoken in full" (30) lines waiting once a group's last line has been
   heard, the older ones become "skipped N lines" ("skipped lines" when
   the count is lost, "skipped more than N lines" when the lines went by
-  past the terminal's history, N the history's rows left unspoken, and
+  past the terminal's history, as when one write larger than the
+  history follows a fresh or cleared screen (`conhost_fresh_flood`,
+  `windows_terminal_clear_flood`), N the history's rows left unspoken, and
   "skipped about N lines" when a lost read counted them from text) and
   the newest "Last lines to speak" (30) are kept;
   NVDA speaks them all. Nothing is lost for good: every line is still
@@ -177,9 +179,12 @@ scenarios follow it as the model's order of work brings them back.
   Windows Terminal but only the last six in the console host; a row
   changed says "changed" in both, and the rows scrolled down and up say
   "row 0" and "row 30" in both (`*_full_screen`).
-- Closing the alternate screen, Verbatim speaks only "closed" and the
-  prompt, the main screen being as it was, where NVDA speaks the whole
-  main screen again (Dickson, 2026-10-09).
+- Closing the alternate screen, Verbatim speaks the shell's screen as it
+  comes back, at most a screen, through the flood policy, as NVDA speaks
+  the shell's screen when a pager closes (`nv-con-pager.txt`; Dickson,
+  2026-10-24). Over a long history it tells the screen coming back from a
+  flood by the shell's screen it set aside when the program opened, so it
+  says no skip there either (Dickson, 2026-10-25; `*_pager_history`).
 - The alternate screen's text scrolls through rows that stay put, so
   Verbatim finds how far it scrolled from the text.
 

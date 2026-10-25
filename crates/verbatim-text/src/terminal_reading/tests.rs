@@ -1314,3 +1314,49 @@ fn a_flood_past_a_first_reads_screen_and_its_history_is_a_lost_read() {
     expected.push(line(10, "PS C:>"));
     assert_eq!(term.write(&flood, 2000), says(expected));
 }
+
+#[test]
+fn a_flood_larger_than_the_buffer_from_a_fresh_screen_says_more_than_went_by() {
+    // A fresh console host, then one write of more lines than its buffer
+    // holds before the next read: nothing of the screen is kept and no
+    // screen is aside, so the read is lost, and every line of the whole
+    // document is new after the lost read's mark, more than went by ("A
+    // lost read", "Screens").
+    let mut term = Term::new(20, 5, 10);
+    assert_eq!(term.write("$ run\r\n", 100), says(vec![line(0, "$ run")]));
+    let flood = (1..=20)
+        .map(|line| format!("n{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let mut expected = vec![Speech::LostRead(Lost::MoreThan)];
+    expected.extend((7..=20).map(|number| line(number - 7, &format!("n{number}"))));
+    expected.push(line(14, "$"));
+    assert_eq!(term.write(&(flood + "$ "), 200), says(expected));
+}
+
+#[test]
+fn a_pager_closing_over_its_history_speaks_the_shells_visible_screen() {
+    // The pager's reads keep its rows as it scrolls, so the shell's screen
+    // stays aside; closing it finds that screen back at its places, a new
+    // screen, so only its visible rows are spoken, with no skip ("The
+    // aside screen", "Screens"; NVDA speaks the shell's screen when a
+    // pager closes, `nv-con-pager.txt`).
+    let mut term = Term::new(20, 3, 20);
+    let history = (1..=8)
+        .map(|line| format!("h{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let _ = term.write(&(history + "$ "), 100);
+    assert_eq!(
+        term.write("\x1b[?1049h\x1b[Hp1\r\np2\r\n:", 200),
+        says(vec![line(0, "p1"), line(1, "p2"), line(2, ":")])
+    );
+    assert_eq!(
+        term.write("\r\x1b[Kp3\r\n:", 300),
+        says(vec![line(1, "p3")])
+    );
+    assert_eq!(
+        term.write("\x1b[?1049l", 400),
+        says(vec![line(6, "h7"), line(7, "h8"), line(8, "$")])
+    );
+}

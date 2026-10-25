@@ -220,12 +220,15 @@ An old row left over is gone, and lingers for 2 seconds when a program
 had rewritten it or it was at or below the caret. A new row with a
 lingering row's text is that row back (`Returned`), wherever it comes back.
 
-A read is lost when positions are not trusted, its start was not refused,
-and it keeps no row with text that the last read had at or above the
-caret, or keeps them equally well at more than one place (two shifts tie
-for the most rows with their text). The memory then asks for the whole
-document and changes nothing until it comes. The whole document is aligned
-with the last read's rows the same way: found at one place, the rows above
+A read is lost when it keeps and pairs nothing of the last read and is no
+new screen, positions trusted or not, or when positions are not trusted,
+its start was not refused, and it keeps no row with text that the last
+read had at or above the caret, or keeps them equally well at more than
+one place (two shifts tie for the most rows with their text). The memory
+then asks for the whole document and changes nothing until it comes. When
+the aside screen (below) is found in the whole document, the read is a new
+screen; otherwise the whole document is aligned with the last read's rows
+the same way: found at one place, the rows above
 the topmost kept row are `Shown` and the rows below the last read's are
 new, counted as about (`Lost::About`); found nowhere at or above the old
 caret, every row above the visible screen is new, counted as more than
@@ -234,10 +237,22 @@ screen is aligned, the rows above it `Shown`, and what went by has no
 count (`Lost::Uncounted`).
 
 A read that keeps and pairs nothing of the last read, rows below the caret
-included, is a new screen (`Switch::New`) when its start was refused or
-when either read's screen starts at the document's start: its visible rows
-are new, the rows above them `Shown`, the review position goes to the
-caret, and the command marks wait for their lines.
+included, is a new screen (`Switch::New`) when its start was refused,
+when its own screen starts at the document's start, or when the aside
+screen is found in it: its visible rows are new, the rows above them
+`Shown`, the review position goes to the caret, and the command marks
+wait for their lines.
+
+A new screen sets aside the screen it replaced, the last read's screen and
+history block, as a map from each row's hash to the least distance from
+the document's end a row with it had, for rows with text only, in place of
+any earlier aside screen. It is found in a read when a row with text of it
+is there no nearer the document's end than it was, its place or higher. A
+read that keeps or pairs something of the last read while its own screen
+does not start at the document's start drops it, so a full-screen
+program's own reads, on a screen at the document's start, keep the shell's
+screen aside until the program closes. It is used only to recognise that
+screen coming back, never spoken.
 
 A read whose screen shows no text where the last read's had text, as
 between a program's clear and its reprint, changes nothing (`blank`), and
@@ -271,7 +286,8 @@ from the last read's first row moves: the memory keeps how many rows it
 dropped, and anchors, lingering rows, the caret and what the next
 `Outcome` says of old rows are still counted from that row. A whole
 document of 9,000 rows therefore leaves the same memory as an ordinary
-read: about 60 rows of a 120 by 30 screen.
+read: about 60 rows of a 120 by 30 screen. Beside it the memory holds
+the aside screen while one is set aside, at most 60 hashes and distances.
 
 ### Cost
 
@@ -316,7 +332,13 @@ kept where its text went, a wrapped line split across the read's top,
 Windows Terminal's cut last row, a clear and a reprint, output repeated
 after `cls` and after a clear that took the screen with it, the alternate
 screen opened and closed, each a new screen, a pager's pages, a scroll on
-the alternate screen, Windows Terminal's clear, the review position
+the alternate screen, Windows Terminal's clear, a flood larger than the
+buffer from a fresh screen and from Windows Terminal's cleared one, each a
+lost read counted as more than, a pager and a full-screen program closing
+over a long history and over a full one, each found by the aside screen,
+the aside screen found in a lost read's whole document and dropped once a
+read on a screen with history keeps something, a page that keeps no row
+setting the page before it aside (a listed limit), the review position
 through a scroll, a rotation and a redraw elsewhere, and on a row gone, a
 footer over more output than the history holds counted as more than, a
 history erase keeping its rows, blank screens between a clear and a

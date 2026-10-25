@@ -17,8 +17,9 @@
 //! last read had at or above the caret, or keeps it equally well at more
 //! than one place, with positions not trusted and its start not refused, is
 //! lost: the whole document is read once ("A lost read"). A read that keeps
-//! and pairs nothing with its start refused, or either read's screen at the
-//! document's start, is a new screen ("Screens").
+//! and pairs nothing is a new screen when its start was refused, its own
+//! screen starts at the document's start, or the aside screen is found in
+//! it ("Screens", "The aside screen"), and otherwise lost too.
 //!
 //! The memory holds only the last read: once a read is handled, its rows
 //! from a screen above the next read's start on. Rows keep their places,
@@ -333,10 +334,6 @@ struct Lingering {
 /// the next read's start, the caret, lingering rows and the anchors are
 /// counted as the last read's rows are.
 #[derive(Clone, Debug, Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent facts of the last read"
-)]
 struct Screen {
     rows: Vec<Row>,
     /// How many of the last read's rows lie above `rows`, trimmed once the
@@ -353,9 +350,6 @@ struct Screen {
     caret: Option<usize>,
     /// Whether the last read's screen showed text.
     shows_text: bool,
-    /// Whether the last read's screen started at the document's start, so
-    /// that its first row was a row of the screen, not of the history.
-    no_history: bool,
     lingering: Vec<Lingering>,
     review: Option<Anchor>,
     marks: Vec<Anchor>,
@@ -442,7 +436,6 @@ impl Screen {
             at_document_start: read.at_document_start,
             caret,
             shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
-            no_history: read.alternate,
             ..Self::default()
         }
     }
@@ -461,11 +454,58 @@ fn next_of(rows: usize, above: usize, asked: usize) -> usize {
     }
 }
 
+/// The screen a new screen replaced ("The aside screen"): for each text of
+/// its rows with text, the hash and the least distance from the document's
+/// end a row with it had at that read, 1 for the last row. Kept for
+/// recognition only, to tell that screen coming back from a flood; never
+/// spoken.
+#[derive(Clone, Debug, Default)]
+struct Aside {
+    rows: HashMap<u64, usize>,
+}
+
+impl Aside {
+    /// The aside screen of `memory`, the last read's screen and history
+    /// block, which a new screen replaced.
+    fn of(memory: &Screen) -> Self {
+        let total = memory.rows.len();
+        let mut rows = HashMap::new();
+        for (at, row) in memory.rows.iter().enumerate() {
+            if !row.is_blank() {
+                let distance = total - at;
+                rows.entry(row.hash)
+                    .and_modify(|kept: &mut usize| *kept = (*kept).min(distance))
+                    .or_insert(distance);
+            }
+        }
+        Self { rows }
+    }
+
+    /// Whether a row with text of the aside screen is in `rows`, a read to
+    /// the document's end, at its place or higher: no nearer the
+    /// document's end than it was, since rows move only up and the end
+    /// only down.
+    fn found(&self, rows: &[Row]) -> bool {
+        let total = rows.len();
+        rows.iter().enumerate().any(|(at, row)| {
+            !row.is_blank()
+                && self
+                    .rows
+                    .get(&row.hash)
+                    .is_some_and(|&distance| total - at >= distance)
+        })
+    }
+}
+
 /// The memory of one terminal ("The memory"), kept while the terminal
 /// exists, across focus changes.
 #[derive(Clone, Debug, Default)]
 pub struct TerminalMemory {
     screen: Option<Screen>,
+    /// The screen the last new screen replaced ("The aside screen"), until
+    /// a read keeps something of the last read with its own screen below
+    /// the document's start, or another new screen replaces it.
+    aside: Option<Aside>,
     /// Whether the whole document was asked for, until it is read.
     asked_whole: bool,
     /// The screen's height a first read was asked again with, a screen of
@@ -685,9 +725,15 @@ impl TerminalMemory {
                 ..shape
             };
         }
-        // The whole document a lost read asked for ("A lost read").
+        // The whole document a lost read asked for ("A lost read"), in
+        // which the aside screen is looked for too: found, the earlier
+        // screen is back, a new screen ("The aside screen").
         if asked_whole && read.at_document_start && !read.from_start {
+            if self.aside_found(&rows) {
+                return self.screens(&current, rows, read, &shape);
+            }
             let (aligned, lost) = align_whole(&current, (&rows, height), read, caret);
+            self.drop_aside(&aligned, read);
             let shape = Outcome {
                 lost: Some(lost),
                 by_text: true,
@@ -705,15 +751,20 @@ impl TerminalMemory {
             ..shape
         };
         // Whether this is a different screen: nothing of the last read
-        // survives, rows below the caret included ("Screens").
+        // survives, rows below the caret included, and the start was
+        // refused, the read's own screen starts at the document's start, or
+        // the screen a new screen replaced is back ("Screens", "The aside
+        // screen").
         let nothing = had_text && !aligned.kept_text && !aligned.paired;
-        if nothing && (refused || current.no_history || read.alternate) {
+        if nothing && (refused || read.alternate || self.aside_found(&rows)) {
             return self.screens(&current, rows, read, &shape);
         }
-        // A lost read: positions not trusted, the start not refused, and
-        // nothing the last read had at or above the caret kept, or kept
-        // equally well at more than one place ("A lost read").
-        if !trusted && !refused && had_text && (aligned.lost() || aligned.ambiguous) {
+        // A lost read: a read that keeps nothing in any other case, or
+        // positions not trusted, the start not refused, and nothing the
+        // last read had at or above the caret kept, or kept equally well at
+        // more than one place ("A lost read").
+        let lost = !trusted && !refused && had_text && (aligned.lost() || aligned.ambiguous);
+        if nothing || lost {
             self.asked_whole = true;
             self.screen = Some(current);
             return Outcome {
@@ -721,8 +772,24 @@ impl TerminalMemory {
                 ..shape
             };
         }
+        self.drop_aside(&aligned, read);
         let next = remember(&current, rows, &aligned, read, (width, height), caret);
         self.finish(&current, next, &aligned, &shape, Switch::None)
+    }
+
+    /// Whether the aside screen is in `rows` ([`Aside::found`]).
+    fn aside_found(&self, rows: &[Row]) -> bool {
+        self.aside.as_ref().is_some_and(|aside| aside.found(rows))
+    }
+
+    /// Drops the aside screen when `read`, aligned as `aligned`, kept
+    /// something of the last read and its own screen does not start at the
+    /// document's start: back in a shell with history, the screen it
+    /// replaced is not coming back ("The aside screen").
+    fn drop_aside(&mut self, aligned: &Aligned, read: &Read) {
+        if (aligned.kept_text || aligned.paired) && !read.alternate {
+            self.aside = None;
+        }
     }
 
     /// Takes `read`, for which [`TerminalMemory::read`] asked for the whole
@@ -816,8 +883,10 @@ impl TerminalMemory {
 
     /// A read that keeps nothing of the last read and pairs nothing, a new
     /// screen ("Screens"): its visible rows are new and its rows above them
-    /// silent. The review position goes to the caret, and the command marks
-    /// wait for their lines.
+    /// silent. The review position goes to the caret, the command marks
+    /// wait for their lines, and the last read's screen and history block
+    /// are set aside in place of any earlier aside screen ("The aside
+    /// screen").
     fn screens(
         &mut self,
         current: &Screen,
@@ -826,6 +895,7 @@ impl TerminalMemory {
         shape: &Outcome,
     ) -> Outcome {
         let (width, height, caret) = (shape.width, shape.height, shape.caret);
+        self.aside = Some(Aside::of(current));
         let old = vec![OldRow::Gone { lingering: false }; current.total()];
         let mut next = Screen::fresh(rows, read, (width, height), current.height);
         next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
@@ -1645,7 +1715,6 @@ fn remember(
         at_document_start: read.at_document_start,
         caret,
         shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
-        no_history: read.alternate,
         lingering,
         review: None,
         marks: Vec::new(),

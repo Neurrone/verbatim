@@ -127,9 +127,6 @@ fn heard(step: &Step, review: Option<isize>) -> Heard {
         if outcome.lost.is_some() {
             heard.limits.push(Limit::LostRead);
         }
-        if outcome.switch == Switch::New {
-            heard.limits.push(Limit::NewScreenFlood);
-        }
     }
     if let Some(outcome) = step.outcome.as_ref().filter(|outcome| !outcome.first) {
         heard.moved = Some(
@@ -208,6 +205,15 @@ impl Core {
         // nor at the read after it.
         let blank = step.outcome.as_ref().is_some_and(|outcome| outcome.blank);
         let mut heard = heard(&step, memory.review().map(|anchor| anchor.row));
+        // A new screen whose start was refused ("Limits").
+        if step
+            .outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.switch == Switch::New)
+            && (read.shrank || !read.from_start)
+        {
+            heard.limits.push(Limit::RefusedScreen);
+        }
         if blank || self.blank {
             heard.moved = None;
         }
@@ -414,8 +420,6 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
     //   so the lost read says "skipped lines" (repeated text);
     // - a flood larger than the read covers, after a full history, whose
     //   lines above the screen a lost read counts (a lost read);
-    // - a flood after a screen at the document's start, taken for a new
-    //   screen (a flood taken for a new screen);
     // - a volatile row held when only reads with no text follow, which the
     //   reader's timer speaks (a read with no text).
     let repeated = stream(&[
@@ -471,16 +475,6 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
             false,
         ),
     ]);
-    let new_screen = stream(&[
-        (Op::Write("ok"), true),
-        (
-            Op::Flood {
-                lines: 8,
-                word: "wrapping-word",
-            },
-            false,
-        ),
-    ]);
     let held = stream(&[
         (Op::Write("ok"), true),
         (Op::InsertAboveFooter, false),
@@ -504,9 +498,42 @@ fn the_cores_reader_meets_the_random_streams_limits_on_their_smallest_streams() 
     meet_only_through_their_limits(&[
         (repeated, Limit::RepeatedText),
         (lost, Limit::LostRead),
-        (new_screen, Limit::NewScreenFlood),
         (held, Limit::BlankScreen),
     ]);
+}
+
+#[test]
+fn the_cores_reader_meets_the_refused_screens_limit_on_its_smallest_stream() {
+    // A limit ("Limits"), accepted only through its own reason and failing
+    // without it: in Windows Terminal, a flood and a repaint, which erases
+    // the screen and shrinks the document, before the next read refuse its
+    // start, a new screen whose rows above the visible screen, the flood's
+    // newest lines, are silent. The console host's erase pushes the screen
+    // into the history, refusing nothing, so the stream is Windows
+    // Terminal's alone.
+    let refused = stream(&[
+        (
+            Op::Flood {
+                lines: 12,
+                word: "hello",
+            },
+            true,
+        ),
+        (
+            Op::Flood {
+                lines: 10,
+                word: "dog",
+            },
+            false,
+        ),
+        (Op::Repaint("cat"), true),
+    ]);
+    let flavor = Flavor::WindowsTerminal;
+    assert_eq!(violations(&refused, flavor, Size::SMALL), []);
+    assert_ne!(
+        violations_without(&refused, flavor, Size::SMALL, Limit::RefusedScreen),
+        []
+    );
 }
 
 /// Asserts that each stream shows no violation in either terminal, and

@@ -277,13 +277,14 @@ pub enum Limit {
     /// when the buffer moved since the last read by more than the read
     /// covered: at least a screen's rows left the buffer.
     LostRead,
-    /// A read that keeps nothing of the last read, as after a flood larger
-    /// than the read covers following Windows Terminal's clear, is taken
-    /// for a new screen whose rows above the visible screen are silent
-    /// ("Limits"). Such a missed line is accepted only when no row with
-    /// text of the last read's screen and history block is still in the
-    /// buffer.
-    NewScreenFlood,
+    /// A new screen whose start was refused, as after Windows Terminal's
+    /// clear followed by more than a screen of output before the next
+    /// read, leaves its rows above the visible screen silent ("Limits"):
+    /// after a clear they are new, after a screen switch they are history,
+    /// and no text tells which. Such a missed line is accepted only when no
+    /// row with text of the last read's screen and history block is still
+    /// in the buffer.
+    RefusedScreen,
 }
 
 /// A line a reader withholds at a read, and why.
@@ -1035,7 +1036,7 @@ fn excused(reads: &[Observation], violation: &Violation) -> bool {
         return true;
     }
     if above_screen
-        && limits.contains(&Limit::NewScreenFlood)
+        && limits.contains(&Limit::RefusedScreen)
         && last_main(reads, read).is_some_and(|last| nothing_survived(last, observed))
     {
         return true;

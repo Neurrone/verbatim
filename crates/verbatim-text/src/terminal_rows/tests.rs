@@ -848,3 +848,192 @@ fn a_lost_read_whose_rows_fit_twice_is_uncounted() {
     rows.extend([kept(3), kept(4), NEW]);
     assert_eq!(outcome.rows, rows);
 }
+
+/// A read of `rows`, each padded to 10 cells, its screen the last
+/// `screen` of them and its caret at the end of the last.
+fn read_of(rows: &[&str], screen: usize, at_document_start: bool, at_ms: u64) -> Read {
+    let padded: Vec<String> = rows.iter().map(|row| format!("{row:10}")).collect();
+    let last = padded.last().cloned().unwrap_or_default();
+    Read {
+        text: padded.join("\r\n"),
+        screen: padded[padded.len() - screen..].join("\r\n"),
+        at_document_start,
+        alternate: rows.len() == screen && at_document_start,
+        first_row: if at_document_start {
+            padded[0].clone()
+        } else {
+            String::new()
+        },
+        caret_rows_to_end: 1,
+        caret_line: last,
+        caret_column: rows.last().map_or(0, |row| row.len()),
+        at_ms,
+        ..Read::default()
+    }
+}
+
+/// A memory that read a shell's screen at the document's start, "h1",
+/// "h2" and "$ pi", and then a new screen whose start was refused, so that
+/// the shell's screen is aside ("The aside screen").
+fn with_the_shell_aside() -> TerminalMemory {
+    let mut memory = TerminalMemory::new();
+    assert!(
+        memory
+            .read(&read_of(&["h1", "h2", "$ pi"], 3, true, 0))
+            .first
+    );
+    let opened = memory.read(&Read {
+        shrank: true,
+        ..read_of(&["q1", "q2", "q3"], 3, true, 100)
+    });
+    assert_eq!(opened.switch, Switch::New);
+    memory
+}
+
+/// `count` numbered lines of `word`, each ended with a line break.
+fn numbered(word: &str, count: usize) -> String {
+    (1..=count)
+        .map(|line| format!("{word}{line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat()
+}
+
+#[test]
+fn a_flood_larger_than_the_buffer_from_a_fresh_screen_is_a_lost_read() {
+    // A fresh console host's screen starts at the document's start; one
+    // write of more lines than the buffer holds before the next read keeps
+    // nothing of it, and with no screen set aside the read is lost, the
+    // last read's rows nowhere in the whole document: more than the buffer
+    // went by ("Screens", "A lost read").
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write("$ run\r\n");
+    let outcome = watch.write(&(numbered("n", 20) + "$ "));
+    assert_eq!(watch.taken, 2, "the whole document read");
+    assert_eq!(outcome.switch, Switch::None);
+    assert_eq!(outcome.lost, Some(Lost::MoreThan));
+    assert_eq!(outcome.rows, [NEW; 9]);
+}
+
+#[test]
+fn a_flood_larger_than_the_history_after_windows_terminals_clear_is_a_lost_read() {
+    // Windows Terminal's clear empties the history and is a new screen,
+    // setting the screen before it aside; the typing on the cleared screen
+    // keeps it there, its screen at the document's start. A write of more
+    // than the history then keeps nothing of the prompt's screen, and the
+    // aside screen's rows left with the clear, so the read is lost ("The
+    // aside screen", "A lost read"). The flood's last line repeats a row of
+    // the aside screen, but nearer the document's end than that row was, so
+    // it is not found there.
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 3, 6);
+    watch.write("a\r\nb\r\nn20\r\nc\r\n$ clear");
+    let cleared = watch.write("\x1b[H\x1b[2J\x1b[3J$ ");
+    assert_eq!(cleared.switch, Switch::New);
+    watch.write("run\r\n");
+    let outcome = watch.write(&(numbered("n", 20) + "$ "));
+    assert_eq!(watch.taken, 2, "the whole document read");
+    assert_eq!(outcome.switch, Switch::None);
+    assert_eq!(outcome.lost, Some(Lost::MoreThan));
+}
+
+#[test]
+fn a_pager_closing_over_more_than_two_screens_of_history_is_a_new_screen() {
+    // The pager's own reads keep its rows as it scrolls, its screen at the
+    // document's start, so the shell's screen stays aside; closing it keeps
+    // nothing of the pager's screen, and the shell's rows are found at
+    // their places, so it is a new screen: its visible rows new, the rows
+    // above them history ("The aside screen", "Screens").
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write(&(numbered("h", 8) + "$ less"));
+    let opened = watch.write("\x1b[?1049h\x1b[Hp1\r\np2\r\n:");
+    assert_eq!(opened.switch, Switch::New);
+    let scrolled = watch.write("\r\x1b[Kp3\r\n:");
+    assert_eq!(scrolled.switch, Switch::None);
+    let closed = watch.write("\x1b[?1049l");
+    assert_eq!(watch.taken, 1, "one read");
+    assert_eq!(closed.switch, Switch::New);
+    assert_eq!(closed.lost, None);
+    let mut rows = vec![NewRow::Shown; 6];
+    rows.extend([NEW; 3]);
+    assert_eq!(closed.rows, rows);
+}
+
+#[test]
+fn a_full_screen_program_closing_over_a_full_buffer_and_two_new_lines_is_a_new_screen() {
+    // With the buffer full, the shell's two lines after the program closed
+    // move its rows up two places: the aside screen's rows are found higher
+    // than their places, so it is a new screen ("The aside screen").
+    let mut watch = Watch::console(10, 3, 6);
+    watch.write(&(numbered("h", 12) + "$ vim"));
+    watch.write("\x1b[?1049h\x1b[Hv1\r\n~\r\n:");
+    watch.write("\x1b[1;1Hv2");
+    let closed = watch.write("\x1b[?1049l\r\nout\r\n$ ");
+    assert_eq!(closed.switch, Switch::New);
+    assert_eq!(closed.lost, None);
+    let texts = watch.texts();
+    assert_eq!(texts[texts.len() - 3..], ["$ vim", "out", "$"]);
+}
+
+#[test]
+fn the_aside_screen_is_looked_for_in_a_lost_reads_whole_document() {
+    // A read that keeps nothing and does not hold the aside screen is lost;
+    // in the whole document the aside screen's rows are found higher than
+    // their places, so it is a new screen after all ("The aside screen").
+    let mut memory = with_the_shell_aside();
+    let far = memory.read(&Read {
+        from_start: true,
+        above: 3,
+        ..read_of(&["o1", "o2", "o3", "o4", "o5", "o6", "o7"], 3, false, 200)
+    });
+    assert!(far.whole_document, "a lost read");
+    let rows = [
+        "h1", "h2", "$ pi", "x1", "o1", "o2", "o3", "o4", "o5", "o6", "o7",
+    ];
+    let whole = memory.read(&read_of(&rows, 3, true, 300));
+    assert_eq!(whole.switch, Switch::New);
+    assert_eq!(whole.lost, None);
+}
+
+#[test]
+fn a_read_keeping_something_with_its_screen_below_the_documents_start_drops_the_aside_screen() {
+    // Back on a screen with history, a read that keeps something of the
+    // last read drops the aside screen, so a later lost read whose whole
+    // document holds the aside screen's rows is counted, not taken for that
+    // screen back ("The aside screen").
+    let mut memory = with_the_shell_aside();
+    let kept_some = memory.read(&Read {
+        from_start: true,
+        ..read_of(&["q1", "q2", "q3", "r1"], 3, true, 200)
+    });
+    assert_eq!(kept_some.switch, Switch::None);
+    let far = memory.read(&Read {
+        from_start: true,
+        above: 3,
+        ..read_of(&["s1", "s2", "s3", "s4", "s5", "s6"], 3, false, 300)
+    });
+    assert!(far.whole_document, "a lost read");
+    let rows = [
+        "h1", "h2", "$ pi", "q1", "q2", "q3", "r1", "s1", "s2", "s3", "s4", "s5", "s6",
+    ];
+    let whole = memory.read(&read_of(&rows, 3, true, 400));
+    assert_eq!(whole.switch, Switch::None);
+    assert_eq!(whole.lost, Some(Lost::About));
+}
+
+#[test]
+fn a_page_that_keeps_no_row_sets_the_page_before_it_aside() {
+    // A limit ("Limits"): a page that keeps no row of the page before it,
+    // its status row included, with the caret off its line so that pairs
+    // nothing either, is a new screen and sets that page aside in place of
+    // the shell's screen, so the shell's screen coming back over its
+    // history is not recognised: the read is lost, and counted as more than
+    // went by.
+    let mut watch = Watch::console(10, 3, 20);
+    watch.write(&(numbered("h", 8) + "$ less"));
+    watch.write("\x1b[?1049h\x1b[Hp1\r\np2\r\n:");
+    let paged = watch.write("\x1b[H\x1b[2Jq1\r\nq2\r\n=\x1b[H");
+    assert_eq!(paged.switch, Switch::New);
+    let closed = watch.write("\x1b[?1049l");
+    assert_eq!(watch.taken, 2, "the whole document read");
+    assert_eq!(closed.switch, Switch::None);
+    assert_eq!(closed.lost, Some(Lost::MoreThan));
+}
