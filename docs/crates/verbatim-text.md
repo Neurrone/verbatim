@@ -165,6 +165,9 @@ speak: the reading rules (`terminal_reading`, below) are built on its
 - `rows_of`: a read's text split into rows as the memory splits a read,
   for a caller that reads rows the memory does not keep, the history above
   them, at the width a read found.
+- `shows_text`: whether a read's screen shows text, anything but padding
+  and white space, the one test of "A read with no text", for the memory
+  and for the caller that keeps where the next read starts.
 - `LINGERING_MS`: how long a gone row lingers, 2 seconds.
 
 ### How a read is aligned
@@ -532,7 +535,12 @@ newest key, the caret's line is not answered, and what changed is read as
 output. With "review follows caret" on, a key that moved the
 caret moves the review position to it; the focus arriving does so too.
 
-Colours are compared only in the first read after a key: among rows whose
+Colours are compared only in the first read with colours in a key's
+window, which the caller takes as the first read after each key: a read in
+the window before it, without colours, leaves the caret's line unanswered
+and its line before the keys as it was, so that read answers the keys,
+their echo included, as the design's echo waits for the colours; a new
+line at the caret is output either way. Among rows whose
 text did not change, the one row whose colours changed, or with no colours
 read before the one row that differs from both its neighbours, is the
 answer, when exactly one stands out. Text after the caret in other colours
@@ -543,6 +551,17 @@ not again while typing follows it.
 whole-document read: a read that asks for one starts the memory again
 from itself (`TerminalMemory::restart`), each anchor found again by its
 line. Keys are still answered.
+
+### Serialization
+
+With the optional `serde` feature, which `verbatim-core` enables, the
+reader, its memory and every type they hold serialize and deserialize
+(Claude, 2026-10-25, pending Dickson's acceptance), so Core's state, which
+holds a terminal's reader, is dumped and replayed by the flight recorder
+whole. A row's text is written as its text alone, and restored as a
+string of its own; the segmenter holds no state and is made afresh. The
+reader, the memory and their parts are also `Clone`, `PartialEq` and
+`Eq`, as Core's state is.
 
 ### Cost
 
@@ -574,6 +593,18 @@ screen; Windows Terminal's clear; a resize; output in the background;
 "report new output" off, and its marks and review position through a
 flood; Pi streaming above its status row, Ink's region drawn again with a
 changed cost, and several progress lines settling.
+
+The harness reads as the outpost does, the first read after a key with the
+screen's colours. Two tests take a read without colours in a key's window
+and show the suggestion and the emphasis left to the next read with
+colours. A reader serialized after each input of a session and restored
+gives the same steps as the reader never serialized. And every stream of
+the conformance corpus, in both terminals, with each read followed by
+another taken with nothing written between, at the time of the read after
+it, says exactly what it says with each read once, the quiet-period timer
+run when it comes due, and the read taken again says and withholds
+nothing: a read identical to the last but for its time changes nothing
+heard.
 
 `tests/terminal_oracle.rs` checks the rules against the simulator's
 oracle, which judges by text, over the conformance corpus in both

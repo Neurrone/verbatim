@@ -51,6 +51,7 @@ pub fn quiet_period(interval_ms: Option<u64>) -> u64 {
 /// The reader's settings. Floods are Core's to split ("Core's flood
 /// policy"), so the lines a flood speaks are not among them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Settings {
     /// "Report new output": with it off, no output is spoken, and the whole
     /// document is never asked for ("The read"); keys are still answered.
@@ -70,6 +71,7 @@ impl Default for Settings {
 
 /// The unit a caret key Verbatim knows moves by.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Unit {
     /// A character: Left Arrow, Right Arrow, Home, End.
     Character,
@@ -81,6 +83,7 @@ pub enum Unit {
 
 /// What a key is, as far as the reading rules care.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum KeyKind {
     /// A typed character, as text.
     Typed(String),
@@ -102,6 +105,7 @@ pub enum KeyKind {
 
 /// A key as it reached the program.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Key {
     /// What it is.
     pub kind: KeyKind,
@@ -112,6 +116,7 @@ pub struct Key {
 /// A stretch of one row's cells in one foreground and background, as the
 /// read program's colours give it ("Colours").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ColourRun {
     /// Its first column, in cells.
     pub column: usize,
@@ -268,8 +273,12 @@ pub struct Step {
     pub followed: bool,
 }
 
+/// A read's colours by row, each row's when the read took them.
+type RowColours<'a> = Option<&'a [Option<&'a Vec<ColourRun>>]>;
+
 /// What a line waits for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 enum Hold {
     /// A volatile row's settling.
     Volatile,
@@ -281,7 +290,8 @@ enum Hold {
 
 /// A line's history ("The memory"), kept on its first row, or on the
 /// first row kept of it once the rows above are trimmed.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct LineState {
     /// Its text as last read, shared with the memory's row when it is one
     /// row read whole.
@@ -340,7 +350,8 @@ impl LineState {
 
 /// A row's history beyond the memory's: its colours, and its line's when it
 /// starts one.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct RowState {
     hash: u64,
     /// The memory's row's text, shared.
@@ -351,6 +362,7 @@ struct RowState {
 
 /// The caret as a read left it, its rows counted from the read's first.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Caret {
     /// Its row.
     row: usize,
@@ -364,7 +376,8 @@ struct Caret {
 
 /// The reader's view of one read: its rows from `skipped` on, the rows
 /// the memory keeps.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Screen {
     rows: Vec<RowState>,
     /// The first row of each row's line, an index of `rows`.
@@ -424,7 +437,8 @@ impl Screen {
 }
 
 /// The keys whose window is open.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Keys {
     /// When the latest reached the program.
     last_ms: u64,
@@ -448,7 +462,8 @@ struct Keys {
 }
 
 /// A line found gone, kept while it lingers.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Gone {
     hash: u64,
     line: Box<LineState>,
@@ -456,10 +471,13 @@ struct Gone {
 }
 
 /// The reading rules for one terminal ("Reading rules").
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TerminalReader {
     memory: TerminalMemory,
     settings: Settings,
+    /// Stateless, so made afresh when a reader is restored.
+    #[cfg_attr(feature = "serde", serde(skip))]
     segmenter: Segmenter,
     screen: Screen,
     lingering: Vec<Gone>,
@@ -888,7 +906,12 @@ impl TerminalReader {
             }
             _ => false,
         };
-        let first_colours = window && self.keys.as_ref().is_some_and(|keys| !keys.read);
+        // The keys' colours are those of the first read with colours in
+        // their window ("Colours"): a read before it, without colours,
+        // leaves the caret's line, the emphasis and the suggestion to it.
+        let colours_due = window && self.keys.as_ref().is_some_and(|keys| !keys.read);
+        let first_colours = colours_due && colours.is_some();
+        let defer = colours_due && colours.is_none();
         let mut answered: Option<usize> = None;
         let mut key_speech: Vec<Speech> = Vec::new();
         // Where the review position goes, set once the read is handled.
@@ -919,13 +942,14 @@ impl TerminalReader {
             answered = self.answer_caret(
                 caret.as_ref(),
                 &outcome,
-                rows,
-                new_colours.as_deref(),
+                (rows, new_colours.as_deref()),
+                defer,
                 &mut key_speech,
             );
             if let Some(caret) = &caret
                 && self.settings.review_follows_caret
                 && moved
+                && !defer
             {
                 step.followed = true;
                 reviews.push((caret.row, read.caret_column));
@@ -1447,13 +1471,15 @@ impl TerminalReader {
     /// The caret's line as a key's answer ("Keys and their window"): typing echoed, the
     /// key's unit or the landing rule, text gained or lost, or the line
     /// changed some other way. Returns the line answered, whose change is
-    /// then not output.
+    /// then not output. With `defer`, a read before the first with colours
+    /// in the keys' window, the line is answered by that read instead: this
+    /// one says nothing of it and leaves the line before the keys as it is.
     fn answer_caret(
         &mut self,
         caret: Option<&Caret>,
         outcome: &Outcome,
-        rows: &[Row],
-        colours: Option<&[Option<&Vec<ColourRun>>]>,
+        (rows, colours): (&[Row], RowColours<'_>),
+        defer: bool,
         speech: &mut Vec<Speech>,
     ) -> Option<usize> {
         let caret = caret?;
@@ -1501,6 +1527,11 @@ impl TerminalReader {
         let same = before
             .as_ref()
             .is_some_and(|before| before.line == caret.line);
+        if defer {
+            // A new line at the caret is output, colours or not; any other
+            // line the keys' answer would speak of waits for the colours.
+            return (same || !fresh && (before.is_some() || unit.is_some())).then_some(caret.line);
+        }
         // A suggestion after the caret in other colours than the typing.
         let suggestion = colours.and_then(|colours| suggestion(caret, rows, colours));
         // The line as the typing shows it: the suggestion blanked where it

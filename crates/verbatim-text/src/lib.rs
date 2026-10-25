@@ -265,7 +265,7 @@ impl WordRules {
 /// Word and sentence segmentation. Building it is cheap; the jieba
 /// dictionary is loaded the first time Chinese text is segmented, and kept
 /// for the life of the process.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Segmenter {
     _private: (),
 }

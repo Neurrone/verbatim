@@ -243,8 +243,24 @@ impl From<String> for Text {
     }
 }
 
+/// Written as its text alone, so a row restored holds a string of its own.
+#[cfg(feature = "serde")]
+impl serde::Serialize for Text {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[cfg(feature = "serde")]
+impl<'de> serde::Deserialize<'de> for Text {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer).map(Self::from)
+    }
+}
+
 /// A row of the memory: one row of the last read.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Row {
     /// Its text, padding left out ("Rows"): only a line's last row has
     /// padding, so the earlier rows of a wrapped line keep the spaces at
@@ -276,6 +292,7 @@ impl Row {
 /// A remembered place ("The memory"): the review position or a command
 /// mark.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Anchor {
     /// Its row, counted from the last read's first row; negative above
     /// it, in the history.
@@ -492,7 +509,8 @@ pub enum Lost {
 }
 
 /// A row that lingers: gone, kept for a while with its history.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Lingering {
     row: Row,
     /// When it was found gone.
@@ -505,7 +523,8 @@ struct Lingering {
 /// One screen's memory. Its rows are the last read's from `skipped` on;
 /// the next read's start, the caret, lingering rows and the anchors are
 /// counted as the last read's rows are.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Screen {
     rows: Vec<Row>,
     /// How many of the last read's rows lie above `rows`, trimmed once the
@@ -614,7 +633,7 @@ impl Screen {
             at_document_start: read.at_document_start,
             caret,
             caret_column,
-            shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
+            shows_text: shows_text(&read.screen),
             ..Self::default()
         };
         fresh.own_kept();
@@ -650,7 +669,8 @@ fn next_of(rows: usize, above: usize, asked: usize) -> usize {
 /// end a row with it had at that read, 1 for the last row. Kept for
 /// recognition only, to tell that screen coming back from a flood; never
 /// spoken.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Aside {
     rows: Map<u64, usize>,
 }
@@ -690,7 +710,8 @@ impl Aside {
 
 /// The memory of one terminal ("The memory"), kept while the terminal
 /// exists, across focus changes.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TerminalMemory {
     screen: Option<Screen>,
     /// The screen the last new screen replaced ("The aside screen"), until
@@ -910,7 +931,7 @@ impl TerminalMemory {
         // is a read between a program's clear and its reprint: it changes
         // nothing ("A read with no text"), where the next read starts
         // included, which the caller keeps as the last read placed it.
-        if current.shows_text && crate::trim_padding(&read.screen).trim().is_empty() {
+        if current.shows_text && !shows_text(&read.screen) {
             self.screen = Some(current);
             return Outcome {
                 blank: true,
@@ -2010,7 +2031,7 @@ fn remember(
         at_document_start: read.at_document_start,
         caret,
         caret_column,
-        shows_text: !crate::trim_padding(&read.screen).trim().is_empty(),
+        shows_text: shows_text(&read.screen),
         lingering,
         review: None,
         marks: Vec::new(),
@@ -2470,6 +2491,16 @@ fn caret_row(rows: usize, to_end: u32) -> Option<usize> {
 #[must_use]
 pub fn rows_of(text: &str, width: usize) -> Vec<Row> {
     split_rows(text, width)
+}
+
+/// Whether a read's screen shows text: anything but padding, line breaks
+/// and other white space ("A read with no text"). The one test of it, for
+/// the memory, which takes a read whose screen shows no text where the last
+/// read's did as one between a program's clear and its reprint, and for the
+/// caller that keeps where the next read starts.
+#[must_use]
+pub fn shows_text(screen: &str) -> bool {
+    !crate::trim_padding(screen).trim().is_empty()
 }
 
 /// A 64-bit hash of `text`: the same in every process and build, so hashes

@@ -2209,8 +2209,11 @@ dependencies = [
  "icu_segmenter",
  "jieba-rs",
  "proptest",
+ "serde",
+ "serde_json",
  "unicode-width",
  "verbatim-term-sim",
+ "verbatim-text",
  "workspace-hack",
 ]
 

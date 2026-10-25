@@ -4,6 +4,7 @@
 //! with keys as they reach the program, and the speech, the lines withheld
 //! and the timer asserted whole.
 
+use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
 use super::{
@@ -12,14 +13,17 @@ use super::{
 use crate::terminal_rows::{Anchor, Lost, Read, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
-/// said, a screen above it, and the whole document is read when the reader
-/// asks.
+/// said, a screen above it, the whole document is read when the reader
+/// asks, and the first read after a key takes the screen's colours.
 struct Term {
     terminal: Terminal,
     reader: TerminalReader,
     query: Query,
     /// Whether the last read moved the review position to the caret.
     followed: bool,
+    /// Whether a key came since the last read, so the next read takes the
+    /// screen's colours.
+    colours_due: bool,
 }
 
 impl Term {
@@ -40,6 +44,7 @@ impl Term {
             reader: TerminalReader::new(settings),
             query: Query::default(),
             followed: false,
+            colours_due: false,
         };
         let first = term.read(0);
         assert_eq!(first, quiet(None), "the first read speaks nothing");
@@ -82,8 +87,18 @@ impl Term {
         self.take(at_ms, false, None)
     }
 
-    /// One read at `at_ms`, the whole document read again when asked.
+    /// One read at `at_ms` without the screen's colours, even after a key.
+    fn read_colourless(&mut self, at_ms: u64) -> Step {
+        self.colours_due = false;
+        self.take(at_ms, false, None)
+    }
+
+    /// One read at `at_ms`, the whole document read again when asked, with
+    /// `colours`, or the screen's own when a key came since the last read.
     fn take(&mut self, at_ms: u64, waited: bool, colours: Option<&[Vec<ColourRun>]>) -> Step {
+        let due = (colours.is_none() && self.colours_due).then(|| self.colours());
+        let colours = colours.or(due.as_deref());
+        self.colours_due = false;
         let mut query = self.query;
         let mut taken = 0;
         loop {
@@ -149,6 +164,7 @@ impl Term {
     }
 
     fn key(&mut self, kind: KeyKind, at_ms: u64) -> Step {
+        self.colours_due = true;
         self.reader.key(Key { kind, at_ms })
     }
 
@@ -1408,4 +1424,241 @@ fn escape_restoring_a_menu_completed_word_says_what_it_removed() {
             text: "ildItem".to_owned()
         }])
     );
+}
+
+// "Colours": the keys' colours are those of the first read with colours in
+// their window.
+
+#[test]
+fn a_colourless_read_in_a_keys_window_leaves_the_suggestion_to_the_next_read_with_colours() {
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ e", 100);
+    term.typed("c", 1000);
+    term.terminal.write(b"c\x1b[90mho hi\x1b[0m\x1b[5D");
+    assert_eq!(term.read_colourless(1050), quiet(None));
+    let colours = term.colours();
+    assert_eq!(
+        term.take(1100, false, Some(&colours)),
+        says(vec![
+            echo(0, "c"),
+            Speech::Suggestion {
+                row: 0,
+                text: "ho hi".to_owned()
+            }
+        ])
+    );
+}
+
+#[test]
+fn a_colourless_read_in_a_keys_window_leaves_the_emphasis_to_the_next_read_with_colours() {
+    let mut term = Term::new(20, 5, 10);
+    term.write("fruits:\r\napple\r\nbanana\r\n$ ", 100);
+    let plain = |length| ColourRun {
+        column: 0,
+        length,
+        foreground: 0x00cc_cccc,
+        background: 0,
+    };
+    let lit = |length| ColourRun {
+        column: 0,
+        length,
+        foreground: 0,
+        background: 0x00cc_cccc,
+    };
+    term.key(KeyKind::Other, 1000);
+    assert_eq!(term.read_colourless(1050), quiet(None));
+    let colours = vec![
+        vec![plain(20)],
+        vec![lit(5), plain(15)],
+        vec![plain(20)],
+        vec![plain(20)],
+    ];
+    assert_eq!(
+        term.take(1100, false, Some(&colours)),
+        says(vec![answer(1, "apple")])
+    );
+}
+
+// The reader restored from its serialized form, as Core's flight recorder
+// dumps and replays it ("Where it runs").
+
+/// The steps of a session of typing at a prompt, output, a redrawn row and
+/// a recalled line, in which after `restore_after` inputs the reader is
+/// serialized and restored and the rest are given to the restored reader.
+fn session(restore_after: Option<usize>) -> Vec<Step> {
+    let mut term = Term::new(20, 5, 10);
+    let mut steps = Vec::new();
+    let inputs: [&dyn Fn(&mut Term) -> Step; 10] = [
+        &|term| term.write("$ ", 100),
+        &|term| term.typed("l", 1000),
+        &|term| term.write_coloured("l", 1050),
+        &|term| term.typed("s", 1200),
+        &|term| term.write_coloured("s", 1250),
+        &|term| term.key(KeyKind::Enter, 2000),
+        &|term| term.write("\r\none\r\nprogress 10%\r\n", 2050),
+        &|term| term.write("\x1b[Aprogress 20%\r\n$ ", 5000),
+        &|term| term.key(KeyKind::Caret(Unit::Line), 6000),
+        &|term| term.write_coloured("ls", 6050),
+    ];
+    for (taken, input) in inputs.iter().enumerate() {
+        steps.push(input(&mut term));
+        if restore_after == Some(taken + 1) {
+            let json = serde_json::to_string(&term.reader).expect("the reader serializes");
+            let restored: TerminalReader =
+                serde_json::from_str(&json).expect("the reader deserializes");
+            assert_eq!(restored, term.reader, "the restored reader is the reader");
+            term.reader = restored;
+        }
+    }
+    steps
+}
+
+#[test]
+fn a_reader_serialized_mid_session_and_restored_gives_the_same_steps() {
+    let whole = session(None);
+    for restore_after in 1..whole.len() {
+        assert_eq!(
+            session(Some(restore_after)),
+            whole,
+            "restored after {restore_after} inputs"
+        );
+    }
+}
+
+// A read identical to the last, which the outpost could leave unsent
+// (decision 1 of the plan for moving the reader into Core).
+
+/// One read of `terminal` at `at_ms` as the outpost takes it, given to
+/// `reader`, the whole document or the history block read again at once
+/// when the rules ask, and the query of the next read.
+fn corpus_read(
+    terminal: &Terminal,
+    reader: &mut TerminalReader,
+    query: &mut Query,
+    at_ms: u64,
+) -> Step {
+    let mut taken = 0;
+    loop {
+        let snapshot = terminal.snapshot(query).expect("a simulated read");
+        taken += 1;
+        let read = Read {
+            text: snapshot.text,
+            screen: snapshot.screen,
+            from_start: snapshot.from_start,
+            shrank: snapshot.shrank,
+            at_document_start: snapshot.at_document_start,
+            alternate: snapshot.alternate,
+            first_row: snapshot.first_row,
+            caret_rows_to_end: snapshot.caret_rows_to_end,
+            caret_line: snapshot.caret_line,
+            caret_column: snapshot.caret_column,
+            at_ms,
+            above: usize::try_from(snapshot.above).expect("a few rows"),
+        };
+        let step = reader.read(&read, false, None);
+        let height = step.outcome.as_ref().map_or(0, |outcome| outcome.height);
+        let screen_rows = u32::try_from(height).expect("a small screen");
+        if step.whole_document || step.history_block {
+            assert_eq!(taken, 1, "a read is taken again at most once");
+            *query = Query {
+                start: None,
+                screen_rows,
+                whole: step.whole_document,
+                above: if step.whole_document { 0 } else { screen_rows },
+            };
+            continue;
+        }
+        let blank = step.outcome.as_ref().is_some_and(|outcome| outcome.blank);
+        *query = Query {
+            start: if blank {
+                query.start
+            } else {
+                Some(snapshot.next_start)
+            },
+            screen_rows,
+            whole: false,
+            above: u32::try_from(reader.memory().above()).expect("a small screen"),
+        };
+        return step;
+    }
+}
+
+/// What the rules say over a corpus stream in `flavor`, read as the oracle
+/// reads it, a read after each chunk and one after the quiet period, with
+/// the quiet-period timer run when it comes due, as Core runs it; and, with
+/// `twice`, each read followed by another with nothing written between, at
+/// the time of the read after it: the read the outpost would take next,
+/// identical to the last but for its time. A read taken again says and
+/// withholds nothing.
+fn corpus_speech((name, stream): (&str, &Stream), flavor: Flavor, twice: bool) -> Vec<Speech> {
+    const QUIET_MS: u64 = 10_000;
+    let mut terminal = Terminal::new(flavor, 120, 30, history(flavor));
+    let mut reader = TerminalReader::new(Settings::default());
+    let mut query = Query::default();
+    let mut speech = Vec::new();
+    let mut due: Option<u64> = None;
+    // The timer, run at each time it came due before `at_ms`.
+    let timers = |reader: &mut TerminalReader,
+                  due: &mut Option<u64>,
+                  speech: &mut Vec<Speech>,
+                  at_ms: u64| {
+        while let Some(at) = due.filter(|at| *at <= at_ms) {
+            let step = reader.timer(at);
+            speech.extend(step.speech);
+            *due = step.timer;
+        }
+    };
+    let time = |chunk: usize| {
+        stream
+            .at_ms
+            .get(chunk)
+            .copied()
+            .unwrap_or(u64::try_from(chunk).expect("a few chunks") * 10)
+    };
+    let last = time(stream.chunks.len().saturating_sub(1)) + QUIET_MS;
+    for chunk in 0..=stream.chunks.len() {
+        if let Some(bytes) = stream.chunks.get(chunk) {
+            terminal.write(bytes.as_bytes());
+        }
+        let at_ms = if chunk < stream.chunks.len() {
+            time(chunk)
+        } else {
+            last
+        };
+        timers(&mut reader, &mut due, &mut speech, at_ms);
+        let step = corpus_read(&terminal, &mut reader, &mut query, at_ms);
+        speech.extend(step.speech);
+        due = step.timer;
+        if twice {
+            let next_ms = if chunk + 1 < stream.chunks.len() {
+                time(chunk + 1)
+            } else {
+                last
+            };
+            timers(&mut reader, &mut due, &mut speech, next_ms);
+            let again = corpus_read(&terminal, &mut reader, &mut query, next_ms);
+            due = again.timer;
+            assert_eq!(
+                (again.speech, again.withheld),
+                (Vec::new(), Vec::new()),
+                "{name} in {flavor:?}: the read after chunk {chunk} taken again at {next_ms} says nothing"
+            );
+        }
+    }
+    speech
+}
+
+#[test]
+fn every_corpus_stream_with_each_read_given_twice_says_what_it_says_with_each_read_once() {
+    let corpus = streams();
+    assert!(!corpus.is_empty(), "the corpus has no streams");
+    for (name, stream) in &corpus {
+        for flavor in [Flavor::ConsoleHost, Flavor::WindowsTerminal] {
+            assert_eq!(
+                corpus_speech((name, stream), flavor, true),
+                corpus_speech((name, stream), flavor, false),
+                "{name} in {flavor:?}"
+            );
+        }
+    }
 }
