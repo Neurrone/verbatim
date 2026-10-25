@@ -42,7 +42,7 @@ What has landed is in [Completed milestones](roadmap-done.md), "M4,
 completed so far". The open work was planned as three groups, each one
 session (Dickson, 2026-10-15). The first, the focus pipeline with its
 File Explorer evidence pass, landed on 2026-10-17, and its open
-follow-ups are under "Follow-ups from M4.1" below. Two groups remain: the terminal redesign, and the audio step; within a group, the items are in the order they are done
+follow-ups are under "Follow-ups from M4.1" below. Four groups remain: the terminal redesign, the audio step, the focus pipeline rework, and the caret and selection rework, the last two each in a session of its own (Dickson, 2026-10-25); within a group, the items are in the order they are done
 (Dickson, 2026-10-10 and 2026-10-13). Each item is one change,
 checked with `cargo xtask ci` and its related scenarios ten times, with the
 full suite where every scenario is affected. A change in what is heard goes
@@ -167,6 +167,92 @@ with the item.
   audible gap" from `verbatim::audio` (debug build). They are not caused
   by the focus work and were not compared with older runs; they are to
   be looked at with the audio step.
+
+### The focus pipeline rework
+
+Agreed with Dickson on 2026-10-25 after a study of the pipeline found its
+shape forced by three measured UIA facts (an element cannot leave the
+process that received its event; a focus registration is desktop-wide;
+a hung window named in a focus WinEvent holds every UIA event of a
+process registered for focus), but about half of its ninety mechanisms
+making Verbatim's processes agree on copies of one fact. Each item
+removes one such reconciliation; the shape (the listener reads every UIA
+focus, the outposts the rest, Core decides) stays.
+
+- Repeats judged in Core. The listener keeps the last focus each
+  application's reading thread read; a focus event on that element, by
+  NVDA's `CompareElements` and a live `CurrentHasKeyboardFocus` on the
+  kept element, never inferred from a cache, is not read again but sent
+  as an ordinary focus fact with the kept facts and the event's cached
+  states, and Core's duplicate rule drops it or takes it; the outpost
+  does the same for a repeated MSAA focus. No protocol change. It
+  removes `CoreFocus` and its recipients, the listener's held elements,
+  the outpost's queue of unjudged focuses, and the follow-up on reads a
+  watchdog abandons, and closes the hole where a focus returning to an
+  element while Core's notice is in flight is never spoken. First count
+  the repeats per scenario from the listener's and outposts' debug logs
+  (`notepad_`, `windows_terminal_`, `explorer_folder_window`,
+  `rapid_tabbing_in_settings`), and check that a name or value changed
+  since the kept read reaches Core.
+- The wait for a missing UIA focus moves into the listener, whose
+  desktop-wide hook already receives every focus WinEvent beside the UIA
+  focus on one clock; at its one-second bound it tells the outpost the
+  focus is missing, and the outpost reads it in its ordered stream as
+  now. It removes the drop evidence on the wire, the marker news, the
+  100 ms look-back across two clocks and `CoreFocus` closing the wait.
+  This replaces the placement of 2026-10-21. The read itself stays
+  (decision 11; Dickson, 2026-10-25); once the rework lands, count how
+  often it fires with NVDA closed and with it running, to test whether
+  NVDA's presence causes UIA's undelivered focuses.
+- The hand-over to a new outpost holds the outpost's own hook copies
+  until the moment forwarding ended is known, instead of matching the
+  listener's copies by counting, so each event arrives once by
+  construction; first measure the relay's latency at start-up over fifty
+  starts.
+- Every observation stamped in microseconds from one clock, everywhere,
+  so focus ordering is a total order.
+- The marker that holds an application's later events until the
+  listener's read arrives stays; build `text_box_first_character_after_tab`
+  (`docs/design/focus-pipeline.md`, section 14), which measures what its
+  removal would lose.
+- Check, and fix if real, the possible defects the study found: the
+  hand-over's maps never trimmed when forwarding's end never arrives; an
+  ancestor released by `NodesHeld` spliced into a later report; the
+  outbound merge leaving the outpost's states read out of step with
+  Core; a focus-now answer's unjudged entry never drained.
+
+### The caret and selection rework
+
+Agreed with Dickson on 2026-10-25 after a study found the design's shape
+right (a held key's caret read before it, the outpost watching for
+evidence and comparing positions in the provider, Core choosing every
+word) but a second layer, added before key holding closed the race it
+answered, never removed: the caret and selection were kept in nine
+places, and two known defects come from copies disagreeing (Control+A
+followed by a repeated focus says nothing; a superseded key's answer
+leaves Core's caret stale).
+
+- One last read per text node in the outpost, replaced by every read;
+  one request per key that reads the caret before it and opens the watch
+  with that read as the key's baseline; every read reports facts; Core
+  takes every report and every answer, late or superseded, as the newest
+  caret by one stamp, the read's start; the baseline's life follows the
+  focus Core holds.
+- Removed: Core's history of eight caret reports and its Backspace and
+  Delete prediction, the outpost's history of eight reads (now, with
+  caret keys in an elevated window judged from the last read until
+  uiAccess, M8.1), the time-zero record of Core's own caret move, the
+  "since" check limited to a line, report numbers, the three modes of
+  the selection baseline, the separate watch request, and the single
+  superseded slot.
+- Control+Z, Control+Y, Control+X, Control+V and Escape in a text field
+  match NVDA: not held and silent, replacing the decision of 2026-10-08
+  that spoke them; the `caret_keys` scenarios' expectations change.
+- The judgement of a key's evidence stays in the outpost, named in D14
+  as the one read-time decision outside Core, since it bounds reads on
+  text changes.
+- The outbound merge's clause against merging across a reply is checked
+  and removed, its stated reason predating 505e3ad8.
 
 ### Deferred
 
