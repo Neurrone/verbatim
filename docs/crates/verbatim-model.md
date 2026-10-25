@@ -524,8 +524,8 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   terminal (the keyboard hook's thread tells the outpost of the keys it
   passes itself, in the outpost's own protocol): its
   `TerminalKeyKind` (`Typed` text, a `Caret` key Verbatim knows with its
-  `TerminalUnit`, `Forget` for Enter, Tab, Escape, Control+C, Control+D and
-  Control+Break, or `Other`) and `at_ms`, when it reached the program on
+  `TerminalUnit`, `Enter`, answered only by output, `Forget` for Tab,
+  Escape, Control+C, Control+D and Control+Break, or `Other`) and `at_ms`, when it reached the program on
   the run's shared clock, since the reading rules judge by that time which
   reads can carry its effects (answer `Done`, which Core does not wait
   for).

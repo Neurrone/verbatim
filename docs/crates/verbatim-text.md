@@ -192,11 +192,15 @@ programming in which each cell keeps the best alignment ending on the same
 shift (which continues a block) and the best anywhere above and to the
 left (which starts one), so among alignments keeping equally many rows the
 one with the fewest blocks wins, and then the one moving the fewest rows.
-Found by text, a row of the history block is found only at its place or
-higher, since its rows only move up: its place is where the read's start
-puts it, or, with the start refused, where the document's start puts it
-when both reads began there; a screen row is not limited, since a footer
-moves down. The shift most kept rows share is the one that did not move,
+Found by text, a row of the history block is found at its place or
+higher, or lower by the one shift the last read's screen rows with text
+took when they went lower, the commonest by a vote over their hashes:
+the same output printed twice in a full terminal puts the history's text
+lower while the screen goes up with the buffer, and a program printing
+its history again longer (Pi's regular mode on Control+O) moves both
+down. Its place is where the read's start puts it, or, with the start
+refused, where the document's start puts it when both reads began there;
+a screen row is not limited, since a footer moves down. The shift most kept rows share is the one that did not move,
 and gives the rotation. A row the subsequence leaves gone is kept at the
 nearest new row with its text, whatever else moved and whether or not the
 text is unique, except a row of the history block, and no other row grows
@@ -213,9 +217,15 @@ whose shift is that of the kept row below them, so Pi's status row drawn
 a row lower with its spinner changed pairs with its old self. A read with
 no kept row pairs nothing. The caret's line that now starts where the last
 read's caret line did, otherwise new, is that line rewritten, with
-positions trusted. Rows of a read found by text above the topmost kept
-row are new, unless the start was refused, when the rows above the last
-read's place are `Shown`.
+positions trusted. In every read from the kept start, the rows above
+where the last read's first row went are `Shown`: the shift most kept
+rows share places it with positions trusted or the start refused, and,
+found by text from an accepted start, the shift of the history block's
+kept rows, with nothing `Shown` when none was kept. `Outcome::rewritten`
+says a program may have printed its history again: the start was refused
+with something kept, or, found by text, the last read's rows went lower
+than their places; what it printed above the last read's reach is not
+heard, a listed limit.
 
 An old row left over is gone, and lingers for 2 seconds when a program
 had rewritten it or it was at or below the caret. A new row with a
@@ -232,17 +242,18 @@ screen; otherwise the whole document is aligned with the last read's rows
 the same way: found at one place, the rows above
 the topmost kept row are `Shown` and the rows below the last read's are
 new, counted as about (`Lost::About`); found nowhere at or above the old
-caret, every row above the visible screen is new, counted as more than
-(`Lost::MoreThan`); fitting at more than one place, only the visible
+caret, every row is new, counted as more than (`Lost::MoreThan`), or as
+about when the read that asked for the whole document had its start
+refused, the document having shrunk under a clear (`clear; dir`); fitting at more than one place, only the visible
 screen is aligned, the rows above it `Shown`, and what went by has no
 count (`Lost::Uncounted`).
 
 A read that keeps and pairs nothing of the last read, rows below the caret
-included, is a new screen (`Switch::New`) when its start was refused,
-when its own screen starts at the document's start, or when the aside
-screen is found in it: its visible rows are new, the rows above them
-`Shown`, the review position goes to the caret, and the command marks
-wait for their lines.
+included, is a new screen (`Switch::New`) when its own screen starts at
+the document's start or when the aside screen is found in it: its visible
+rows are new, the rows above them `Shown`, the review position goes to
+the caret, and the command marks wait for their lines. A refused start
+with neither is a lost read.
 
 A new screen sets aside the screen it replaced, the last read's screen and
 history block, as a map from each row's hash to the least distance from
@@ -271,7 +282,12 @@ Anchors move with the alignment: a kept or rewritten row carries its
 anchor to its new place, the column clamped to the text; a gone row passes
 the review position to the nearest surviving row above, or to the caret;
 above the read it keeps its place relative to the alignment's shift,
-clamped to the document's start when the read began there.
+clamped to the document's start when the read began there. With the
+read's start refused, the rows above the read are gone, the document
+having shrunk beneath them: an anchor there is found again by its line's
+hash nearest its old place, from the read's end, or the review position
+goes to the caret, and a gone row's search for a surviving row above
+stops at the read's first row.
 A command mark moves to the first row of its line, and is dropped when its
 row was rewritten or is gone.
 
@@ -372,9 +388,10 @@ the memory, which the reader lends out. Floods are Core's to split
     top to the document's end.
   - `key(Key)`: a key as it reached the program, with when. `KeyKind` is a
     typed character (`Typed`), a caret key Verbatim knows with its `Unit`
-    (character, word or line), a key that forgets held typing (`Forget`:
-    Enter, Tab, Escape, Control+C, Control+D, Control+Break), or any other
-    key (`Other`).
+    (character, word or line), Enter (`Enter`), which forgets held typing
+    and is answered only by output, a key that forgets held typing
+    (`Forget`: Tab, Escape, Control+C, Control+D, Control+Break), or any
+    other key (`Other`).
   - `focus(at_ms)` and `blur()`: the focus arriving and leaving.
   - `timer(now_ms)`: the timer the last step asked for came due.
   - `set_settings(Settings)`.
@@ -473,8 +490,11 @@ unspoken; a caret moved with no text change says a caret key's unit, or
 for any other key the landing rule; a caret that ended on another line
 says that line, whatever changed on it; a line that gained text says the
 gain, one that lost text next to the caret says the loss, and one changed
-otherwise speaks from the changed word. A new line at the caret, as after
-Enter, is output. With "review follows caret" on, a key that moved the
+otherwise speaks from the changed word. A new line at the caret is
+output. Enter is answered only by output, never by the caret's line, as
+NVDA turns off its new-line announcement in terminals: when Enter is the
+newest key, the caret's line is not answered, and what changed is read as
+output. With "review follows caret" on, a key that moved the
 caret moves the review position to it; the focus arriving does so too.
 
 Colours are compared only in the first read after a key: among rows whose

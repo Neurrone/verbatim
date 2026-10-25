@@ -80,6 +80,14 @@ scenarios follow it as the model's order of work brings them back.
 - Verbatim+5 toggles "Report new output", on NVDA's key for its "report
   dynamic content changes" toggle, saying "report new output on" and
   "off".
+- A program that erases the screen and the history and prints them
+  again, as Pi's regular mode does on Control+O to expand or collapse its
+  tool output, is heard only within the screens Verbatim last read: Pi's
+  "Tool output: expanded" is spoken, and lines the program added above
+  them are not, read with the review cursor instead (Dickson, 2026-10-25,
+  a listed limit; pi-changed-above recording). NVDA's character diff of
+  the whole document would speak those added lines too, with its usual
+  fragments; no capture exists.
 - Commands, their output, the prompt, and the review cursor over the
   output read the same in both screen readers, in both terminals, apart
   from symbol names in flowing text ("ready greater" for the prompt
@@ -97,7 +105,11 @@ scenarios follow it as the model's order of work brings them back.
   past the terminal's history, as when one write larger than the
   history follows a fresh or cleared screen (`conhost_fresh_flood`,
   `windows_terminal_clear_flood`), N the history's rows left unspoken, and
-  "skipped about N lines" when a lost read counted them from text) and
+  "skipped about N lines" when a lost read counted them from text, as
+  after Windows Terminal's clear followed by more than a screen of output
+  before the next read, such as `clear; dir` typed as one line, whose
+  every line after the clear is new (Dickson, 2026-10-25;
+  `windows_terminal_cleared_flood`)) and
   the newest "Last lines to speak" (30) are kept;
   NVDA speaks them all. Nothing is lost for good: every line is still
   there for the review cursor (the `*_flood` and `*_scrollback_overflow`
@@ -161,6 +173,19 @@ scenarios follow it as the model's order of work brings them back.
   speaks only the new text.
 - Escape and other keys outside the caret keys are spoken by their
   evidence (`docs/parity/text.md`, "TextInfo-equivalent layer").
+- Enter in a terminal is answered only by new output, never by the
+  caret's line (matched). NVDA speaks the caret's new line after Enter in
+  an edit field by binding Enter to its new-line script, but only where
+  the object announces new lines, and every terminal turns that off: its
+  live-text behaviour, which the console's and Windows Terminal's
+  objects take, and Windows Terminal's notification overlay both set
+  `announceNewLineText` to false at the pinned source. Enter is then
+  passed to the program with no script, and only what NVDA's change
+  monitor finds inserted is spoken. Verbatim's reading never answers
+  Enter with the caret's line, so a read between Windows Terminal's two
+  writes of `cls` from Windows PowerShell, which homes the caret onto the
+  screen's first row before it erases, says nothing of that row (Dickson,
+  2026-10-25).
 - Up Arrow and a character typed at once (`*_up_typing`): NVDA says the
   character, "x", as it is typed and then the recalled line with it,
   "echo onex"; Verbatim reads the line's change once, both in it, and

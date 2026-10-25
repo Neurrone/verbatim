@@ -868,7 +868,7 @@ anything but the focus is ignored.
   out here (`caret_key_kind`: the arrows left and right, Home and End a
   character; Control with them a word; the arrows up and down, the page
   keys, Control with Home and End or the arrows up and down a line; any
-  other `Other`; `typed_kind`: text typed, `Forget` for Enter and Tab,
+  other `Other`; `typed_kind`: text typed, `Enter` for Enter, `Forget` for Tab,
   `Other` for a control character), and from `SrState::terminal_outpost`,
   the focused terminal's outpost.
 - The review cursor in a terminal follows the caret only when the

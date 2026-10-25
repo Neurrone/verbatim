@@ -2811,8 +2811,10 @@ it.
   starts, or the whole document for its start (`review::History`), split
   into rows as the memory splits a read (`verbatim_text::terminal_rows::rows_of`);
   a place there is found again as the nearest row of its line's hash from
-  the place up to a screen above it, since rows above the screen only move
-  up, and otherwise keeps its place and reads the row there now. A request
+  a screen above the place to a screen below it, the higher first at one
+  distance, since a full history moves rows up and a program printing its
+  history again longer moves them down, and otherwise keeps its place and
+  reads the row there now. A request
   naming an anchor the terminal did not mint, such as a caret report's, is
   answered as any text's; a terminal's text is not selected, nor its caret
   moved, by Verbatim, and a place's screen position is not read

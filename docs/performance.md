@@ -2486,6 +2486,21 @@ scrollback is not yet full, lines are slow to walk one at a time (about
 1.6 milliseconds a line in a 9,001-line buffer holding 600 lines), which
 the screen read never does: it moves by many rows in one call.
 
+### A terminal review command above the last read
+
+A review command whose place lies above the rows a terminal's memory
+keeps reads the history in one remote operation of its own
+(`review::History`, `verbatim_uia_rops::terminal_snapshot`), from a
+screen above the place to the document's end, and looks for the place's
+line by its hash from a screen above the place to a screen below it,
+nearest first (Dickson, 2026-10-25). The search below adds no call and no
+row to the read, which already held the rows below the place: only up to
+one screen more of 64-bit hash comparisons, a few microseconds. It is
+paid only on a review command above the last read, never on the event or
+speech path. The design had estimated two screens of rows at about 0.24
+milliseconds against 0.12 for one, assuming a read of one screen; the
+read's size is unchanged by the search and was not measured again.
+
 ### A terminal's colours
 
 The first read of a focused terminal after each key reads the screen's
