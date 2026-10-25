@@ -170,7 +170,8 @@ with the item.
 
 ### The focus pipeline rework
 
-Agreed with Dickson on 2026-10-25 after a study of the pipeline found its
+The scope, order of work and study are in
+[the focus pipeline rework](design/focus-pipeline-rework.md). Agreed with Dickson on 2026-10-25 after a study of the pipeline found its
 shape forced by three measured UIA facts (an element cannot leave the
 process that received its event; a focus registration is desktop-wide;
 a hung window named in a focus WinEvent holds every UIA event of a
@@ -223,7 +224,8 @@ focus, the outposts the rest, Core decides) stays.
 
 ### The caret and selection rework
 
-Agreed with Dickson on 2026-10-25 after a study found the design's shape
+The scope, order of work and study are in
+[the caret and selection rework](design/caret-selection-rework.md). Agreed with Dickson on 2026-10-25 after a study found the design's shape
 right (a held key's caret read before it, the outpost watching for
 evidence and comparing positions in the provider, Core choosing every
 word) but a second layer, added before key holding closed the race it

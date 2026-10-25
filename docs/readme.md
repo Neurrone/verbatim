@@ -93,6 +93,13 @@ NVDA says, to decide what Verbatim should say.
   - [listener-without-connections.md](design/listener-without-connections.md)
     — removing the per-application lock: only an application's own outpost
     connects to it or sends it a remote operation; adopted and built.
+  - [focus-pipeline-rework.md](design/focus-pipeline-rework.md) — the
+    reconciliations between the listener, the outposts and Core to
+    remove, with the study behind them; agreed 2026-10-25, not built.
+  - [caret-selection-rework.md](design/caret-selection-rework.md) — one
+    caret baseline and one request per key, the layer key holding made
+    redundant removed, with the study behind them; agreed 2026-10-25,
+    not built.
   - [uia-shapes.md](design/uia-shapes.md) — every cached UIA read
     declared with its request; adopted and built.
   - [terminal-model.md](design/terminal-model.md) — a model of how
