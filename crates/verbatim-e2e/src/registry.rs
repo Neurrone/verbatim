@@ -1280,6 +1280,17 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         teardown: terminal_fresh_flood::teardown,
     },
     ScenarioDef {
+        name: "windows_terminal_cleared_flood",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: terminal_fresh_flood::setup_cleared_windows_terminal,
+        body: terminal_fresh_flood::body_cleared_windows_terminal,
+        teardown: terminal_fresh_flood::teardown,
+    },
+    ScenarioDef {
         name: "conhost_fresh_flood",
         group: Group::Text,
         settings: None,

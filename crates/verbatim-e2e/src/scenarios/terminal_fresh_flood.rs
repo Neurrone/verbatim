@@ -38,6 +38,25 @@
 //! document then holds 9,031 rows, its history and its screen: fill lines
 //! 71 to 9,100 and the prompt, so 30 last and "skipped more than 9001
 //! lines" once the cleared lines' group is heard.
+//!
+//! `windows_terminal_cleared_flood` is Windows Terminal's clear followed by
+//! more than a screen of output before the next read, the document then
+//! shorter than at that read, as `clear; dir` typed as one line in a
+//! terminal with some history: the read's start is refused, it keeps
+//! nothing, its screen does not start at the document's start and no
+//! screen is aside, so it is a lost read, and the whole document, holding
+//! nothing of the last read, is all new, counted as about (Dickson,
+//! 2026-10-25). `old.ps1` first writes "old line 1" to "old line 200" in
+//! one write, a flood heard as any flood, its count exact: "old line 1" to
+//! "old line 30", "skipped 141 lines", "old line 172" to "old line 200" and
+//! the prompt. `cleared.ps1` then writes "before line 1" to "before line
+//! 30" in one write, so Core holds the terminal, and once the first has
+//! been heard the scenario writes a go file, and the script clears with
+//! `Clear-Host`, erasing the screen and the history, and writes "cleared
+//! line 1" to "cleared line 100" in one write. The read after the group's
+//! last line finds a document of 101 rows, the cleared lines and the
+//! prompt, against about 233 at the last read: it joins the burst, skipped
+//! down to its last 30, "skipped about 71 lines".
 
 use std::io;
 use std::time::Duration;
@@ -82,6 +101,32 @@ Wait-Go 'clear-go-2'\r\n\
 $fill = foreach ($line in 1..9100) { \"fill line $line\" }\r\n\
 Write-Raw (\"`r`n\" + ($fill -join \"`r`n\") + \"`r`n\")\r\n";
 
+/// The go file the second clearing script waits for.
+const CLEARED_GO_FILE: &str = "cleared-go";
+
+/// The old lines, in one raw write.
+const OLD_SCRIPT: &str = "$old = foreach ($line in 1..200) { \"old line $line\" }\r\n\
+$bytes = [Console]::OutputEncoding.GetBytes(($old -join \"`r`n\") + \"`r`n\")\r\n\
+[Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)\r\n";
+
+/// A group's worth of lines, the go file, the clear, then the cleared
+/// lines, each in one raw write.
+const CLEARED_SCRIPT: &str = "function Wait-Go($name) {\r\n\
+\x20   $watcher = New-Object IO.FileSystemWatcher($PSScriptRoot, $name)\r\n\
+\x20   if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot $name))) { $null = $watcher.WaitForChanged('Created') }\r\n\
+\x20   $watcher.Dispose()\r\n\
+}\r\n\
+function Write-Raw($text) {\r\n\
+\x20   $bytes = [Console]::OutputEncoding.GetBytes($text)\r\n\
+\x20   [Console]::OpenStandardOutput().Write($bytes, 0, $bytes.Length)\r\n\
+}\r\n\
+$before = foreach ($line in 1..30) { \"before line $line\" }\r\n\
+Write-Raw (($before -join \"`r`n\") + \"`r`n\")\r\n\
+Wait-Go 'cleared-go'\r\n\
+Clear-Host\r\n\
+$cleared = foreach ($line in 1..100) { \"cleared line $line\" }\r\n\
+Write-Raw (($cleared -join \"`r`n\") + \"`r`n\")\r\n";
+
 /// `word` lines `first` to `last`.
 fn numbered(word: &str, first: u32, last: u32) -> Vec<String> {
     (first..=last)
@@ -112,6 +157,14 @@ pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<Scen
     terminal::open_windows_terminal(scenario, "clear-flood", &[("clear.ps1", CLEAR_SCRIPT)])
 }
 
+pub(crate) fn setup_cleared_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_windows_terminal(
+        scenario,
+        "cleared-flood",
+        &[("old.ps1", OLD_SCRIPT), ("cleared.ps1", CLEARED_SCRIPT)],
+    )
+}
+
 pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_console_host(scenario, "fresh-flood", &[("fresh.ps1", FRESH_SCRIPT)])
 }
@@ -129,6 +182,26 @@ pub(crate) fn body_windows_terminal(scenario: &mut Scenario, state: &mut Scenari
     let mut rest = numbered("cleared line", 2, 30);
     rest.push("sound: skipped-lines skipped more than 9001 lines".to_owned());
     rest.extend(numbered("fill line", 9_072, 9_100));
+    rest.push(PROMPT.to_owned());
+    expect(scenario, &rest);
+}
+
+/// `windows_terminal_cleared_flood`: the old lines' flood, then the cleared
+/// lines all new after the clear, counted as about.
+pub(crate) fn body_cleared_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
+    terminal::type_with_echo(scenario, r".\old.ps1", terminal::Echo::Shown);
+    let mut old = numbered("old line", 1, 30);
+    old.push("sound: skipped-lines skipped 141 lines".to_owned());
+    old.extend(numbered("old line", 172, 200));
+    old.push(PROMPT.to_owned());
+    expect(scenario, &old);
+    terminal::type_with_echo(scenario, r".\cleared.ps1", terminal::Echo::Shown);
+    expect(scenario, &numbered("before line", 1, 1));
+    go(scenario, state, CLEARED_GO_FILE);
+    let mut rest = numbered("before line", 2, 30);
+    rest.push("sound: skipped-lines skipped about 71 lines".to_owned());
+    rest.extend(numbered("cleared line", 72, 100));
     rest.push(PROMPT.to_owned());
     expect(scenario, &rest);
 }
