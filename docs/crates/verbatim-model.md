@@ -153,6 +153,7 @@ Public API:
   state tokens (including `NegatedState` for announcements like "not
   checked"), `SpelledCapital` (an uppercase letter spelled out, which a
   theme speaks at a raised pitch), `Position` (a "2 of 5" pair), `Level`,
+  `Row` and `Column` (a table cell's "row 3" and "column 2"),
   `Message` (a fixed
   reader message the reducer names — a navigation edge, for instance —
   rather than a property of any node, so it can say something without
@@ -598,11 +599,11 @@ with a theme is `verbatim-speech`'s.
 - `Indication` — one entry of the catalogue of everything Verbatim can
   report, with a stable id (`id`, `from_id`) that theme files use, and a
   `category` (`IndicationCategory`: roles, states, properties, text
-  formatting, structure, events). `Indication::catalogue()` lists all 95
+  formatting, structure, events). `Indication::catalogue()` lists all 96
   in display order: the 52 roles (`role-link`), the 13 states that are
   spoken (`state-checked`) and the 3 whose absence is
   (`state-not-checked`), the properties (`description`, `shortcut`,
-  `position`, `level`), text formatting (`spelling-error`,
+  `position`, `level`, `cell-coordinates`), text formatting (`spelling-error`,
   `grammar-error`, `font-name`, `font-size`, `color`,
   `background-color`, `font-attributes` (bold, italic, and underline,
   NVDA's font attributes), `strikethrough`, `underline-style` (the kind of
@@ -654,7 +655,7 @@ with a theme is `verbatim-speech`'s.
   it: sound volume (0 to 100, relative to speech), sounds during say-all,
   and speaking indications that play a sound (for learning a theme).
 - `Fetches` — the details the reducer fetches: description, shortcut,
-  position, level, spelling and grammar errors, font name, font size,
+  position, level, a table cell's row and column, spelling and grammar errors, font name, font size,
   color, background color, font attributes, strikethrough, the kind of
   underline, bullet style, and links, each unless its indication is off. The shell gives them to the reducer as
   `Input::Fetches`.

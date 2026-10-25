@@ -5878,7 +5878,12 @@ fn a_task_switching_item_reached_with_alt_held_says_only_itself() {
     let item = task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl"));
     let (after, effects) = reduce(
         &state,
-        &focus_in(Pid(2), alt_held, item, task_switching_containers()),
+        &focus_in(
+            Pid(2),
+            alt_held.clone(),
+            item.clone(),
+            task_switching_containers(),
+        ),
     );
     assert_eq!(
         heard(&effects),
@@ -5888,6 +5893,13 @@ fn a_task_switching_item_reached_with_alt_held_says_only_itself() {
             task_switching_item_said("Nvda Sw B"),
         ]
     );
+    // The same focus again, a duplicate whose newer reading is kept, keeps
+    // no containers either.
+    let (after, effects) = reduce(
+        &after,
+        &focus_in(Pid(2), alt_held, item, task_switching_containers()),
+    );
+    assert_eq!(heard(&effects), vec![]);
 
     let released = task_switching_item(5, "Nvda Sw A", Some("SwitchItemListControl"));
     let (_, effects) = reduce(
@@ -5921,7 +5933,8 @@ fn a_task_switching_item_reached_with_alt_held_says_only_itself() {
 /// switcher's list, or, in Windows 10 before version 1809, whose window is
 /// the switcher's `MultitaskingViewFrame` window. A list item in File
 /// Explorer under another list, one in another application under a list of
-/// that id, and one read through MSAA say their containers with Alt held
+/// that id, one read through MSAA, and an element of another role under the
+/// switcher's list say their containers with Alt held
 /// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
 #[test]
 fn only_the_task_switchers_items_drop_their_containers() {
@@ -5960,6 +5973,10 @@ fn only_the_task_switchers_items_drop_their_containers() {
         backend: Backend::Msaa,
         ..task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl"))
     };
+    let cell = NodeSnapshot {
+        role: Role::Cell,
+        ..task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl"))
+    };
     for (facts, item) in [
         (
             alt_held.clone(),
@@ -5969,7 +5986,8 @@ fn only_the_task_switchers_items_drop_their_containers() {
             terminal,
             task_switching_item(4, "Nvda Sw B", Some("SwitchItemListControl")),
         ),
-        (alt_held, msaa),
+        (alt_held.clone(), msaa),
+        (alt_held, cell),
     ] {
         let (_, effects) = reduce(
             &state,

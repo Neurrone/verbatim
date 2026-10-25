@@ -83,7 +83,10 @@ speaks no level at all. (`getPropertiesSpeech` in `speech/speech.py`, with
 ### Table cell coordinates
 
 An object that is a cell of a table speaks its row and column, "row 1",
-"column 2", after its keyboard shortcut and before its position. For a UI
+"column 2", after its keyboard shortcut and before its position, each
+after its header's text when the "Table headers" option reports rows or
+columns, as it reports both by default, and a cell spanning several rows
+or columns adds "through" its last (`speech/speech.py` 2099 to 2143). For a UI
 Automation object they are its `GridItem` pattern's zero-based row and
 column plus one, asked of the object when it is spoken
 (`_get_rowNumber` and `_get_columnNumber`, `NVDAObjects/UIA/__init__.py`

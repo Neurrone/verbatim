@@ -344,6 +344,54 @@ fn a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped()
     app.quit();
 }
 
+/// A UIA focus's snapshot carries its raw-view parent's automation id,
+/// which Core's rule for the task switcher's items matches
+/// (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane"),
+/// from the listener's read and from the outpost's own read of a focus no
+/// UIA focus event answered; its ancestors carry none.
+fn a_focus_carries_its_parents_automation_id() {
+    let title = common::unique_title("mockapp-parent-automation-id");
+    let mut app = common::spawn("switcher.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus window_a");
+    outpost.read_focus_as(client.focused().live().element());
+    winevent_focus(&outpost, hwnd);
+    outpost.settled();
+    outpost.pass_time(Duration::from_millis(1000));
+    outpost.settle();
+    let reported = outpost.reported_focus();
+    assert_eq!(
+        (
+            reported.node.name.as_deref(),
+            reported.node.details.parent_automation_id.as_deref(),
+        ),
+        (Some("Window A"), Some("SwitchItemListControl"))
+    );
+
+    app.send("set-focus window_b");
+    let item = client.focused();
+    let reported = outpost.uia_focus(&item);
+    assert_eq!(
+        (
+            reported.node.name.as_deref(),
+            reported.node.details.parent_automation_id.as_deref(),
+        ),
+        (Some("Window B"), Some("SwitchItemListControl"))
+    );
+    assert!(
+        reported
+            .ancestors
+            .iter()
+            .all(|ancestor| ancestor.details.parent_automation_id.is_none())
+    );
+
+    drop(outpost);
+    app.quit();
+}
+
 /// A UIA focus event whose element still had the keyboard focus when the
 /// listener read it is reported, whatever has happened since: Windows
 /// Terminal's Control+Tab gives the focus to the tab it leaves, then to
@@ -2544,6 +2592,10 @@ fn main() {
         (
             "a_controls_own_focus_reports_its_focused_child",
             a_controls_own_focus_reports_its_focused_child,
+        ),
+        (
+            "a_focus_carries_its_parents_automation_id",
+            a_focus_carries_its_parents_automation_id,
         ),
         (
             "a_focus_whose_element_lost_the_keyboard_focus_before_it_was_read_is_dropped",

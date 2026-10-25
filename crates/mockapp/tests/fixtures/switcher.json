@@ -1,0 +1,27 @@
+{
+  "id": "root",
+  "role": "window",
+  "name": "Mockapp Switcher Fixture",
+  "children": [
+    {
+      "id": "switch_list",
+      "role": "list",
+      "name": "Running applications",
+      "automation_id": "SwitchItemListControl",
+      "children": [
+        {
+          "id": "window_a",
+          "role": "list_item",
+          "name": "Window A",
+          "states": ["focusable", "selectable"]
+        },
+        {
+          "id": "window_b",
+          "role": "list_item",
+          "name": "Window B",
+          "states": ["focusable", "selectable"]
+        }
+      ]
+    }
+  ]
+}

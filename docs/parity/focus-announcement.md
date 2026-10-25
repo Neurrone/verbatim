@@ -251,13 +251,20 @@ role is spoken. Pinned by Core's unit tests
 `a_nameless_cell_says_its_row_and_column_without_its_role`,
 `a_task_switching_item_reached_with_alt_held_says_only_itself`) and the
 theme's (`a_cells_row_and_column_render_their_localized_phrases`).
-**partial**: matched for the Alt+Tab switcher's items by NVDA's capture
+**partial**: matched for the first item the Alt+Tab switcher opens on
 (`docs/parity/windows-and-processes.md`, "The Alt+Tab switcher's pane").
 Cases that differ: Verbatim speaks both numbers on every focus, where
 NVDA leaves out an unchanged row or column within one table, which needs
-the containing grid's identity, not read; a container the focus enters
-speaks none, since ancestors are read among many; MSAA and IAccessible2
-cells report none yet.
+the containing grid's identity, not read, so a second Tab with Alt held
+says "row 1" again where NVDA says only the column (a deliberate
+divergence for now; Claude, 2026-10-25, pending Dickson's acceptance);
+NVDA speaks a cell's row and column header texts before its row and
+column (from UI Automation's `TableItem` pattern, by default) and "through"
+a spanned cell's last row or column, neither of which Verbatim reads; a
+container the focus enters speaks none, since ancestors are read among
+many; with the indication off, a nameless cell speaks its role, where
+NVDA, still reading the row for its headers, does not; MSAA and
+IAccessible2 cells report none yet.
 
 ### An ancestor's state change observed just before a focus change
 

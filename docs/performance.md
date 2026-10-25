@@ -410,8 +410,9 @@ verdict for the focus's window rather than asking the window again.
   to its own copy of the element. 312 provider calls in all with the
   outpost's remote walk, 306 with its classic walk, the subscriptions'
   moves included, of which 9 `GetPatternProvider` calls are the grid
-  item's row and column of the focus and of its copies read alone
-  (`verbatim_uia::Cell`) and 2 `GetPropertyValue` calls the ancestors'
+  item's row and column, 3 for each of the three elements a focus's
+  handling reads alone, one of them the window element of the outpost's
+  walk to its own copy, which is never spoken (`verbatim_uia::Cell`), and 2 `GetPropertyValue` calls the ancestors'
   automation ids (301 and 295 before those; 303 and 297 while each ancestor was read with its
   location and whether it is off the screen, which a read of many
   elements no longer asks for, `docs/design/uia-shapes.md`, decision 9); one of them is the `GetPropertyValue` that the

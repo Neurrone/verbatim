@@ -19,8 +19,9 @@ Public API:
 - `role_name(role)`, `state_name(state)`, `negated_state_name(state)` — the
   localized spoken words for utterance tokens; states that are never spoken
   (focused, focusable, selectable, offscreen) return `None`.
-- `position_in_set(position, set_size)` and `level(n)` — the localized
-  "2 of 5" and "level 3" phrases for the corresponding utterance spans.
+- `position_in_set(position, set_size)`, `level(n)`, `cell_row(n)` and
+  `cell_column(n)` — the localized "2 of 5", "level 3", "row 3" and
+  "column 2" phrases for the corresponding utterance spans.
   Both pass their numbers as pre-rendered strings so no locale applies
   digit grouping to an ordinal position.
 - `message_text(message)` and `phrase_text(phrase)` — the wording of the
