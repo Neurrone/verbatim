@@ -2392,6 +2392,53 @@ the focus returns to it. It adds no wake-up and nothing to the reads
 that follow, and a terminal whose screen starts at the document's start
 is not read again.
 
+### A full-screen program's exit
+
+Measured on 2026-10-25 on Dickson's x64 machine, Windows build 26200, by
+a probe outside Verbatim (a release build making the read program's calls
+one at a time), 120 by 30 with a full history of numbered lines.
+
+- The read after a full-screen program closes. The read program keeps,
+  as the next read's start, the range at the top of the alternate screen,
+  which is the document's first row there. Both terminals accept that
+  range on the main screen once the alternate screen has closed, and it
+  lies above where the next read would start, so the read takes it and
+  runs to the document's end: the whole document, 1,098,120 UTF-16 units
+  in the console host and 1,101,779 in Windows Terminal. The `GetText` of
+  it took 28.6 to 30.5 milliseconds in the console host and 11.3 to 11.6
+  in Windows Terminal, against 0.44 to 0.60 and 0.77 to 1.29 for two
+  screens; the terminal's writer waits while it copies. That is paid once
+  each time a full-screen program closes over a full history, never per
+  event, with no wake-up or call added. It stays (Dickson, 2026-10-25):
+  starting the read no higher than two screens above the document's end
+  would do the same after a fresh or cleared screen, whose output must be
+  read from the document's start to be counted exactly.
+- The console host's scroll update. With an out-of-context hook taking
+  40 microseconds a callback, as Verbatim's does, each line written into
+  the full buffer raised one scroll update with a vertical distance of
+  minus one: 1 for 1 line, 1,000 for 1,000 lines in one write, 20,000 for
+  20,000 lines in ten writes, their sum equal to how far the document's
+  first row advanced every time, none lost. The same event comes for
+  movement that is no rotation: 21 for the 40 lines that first scrolled
+  the view on a fresh window, 8,950 while 9,000 lines filled the buffer
+  with the first row unchanged, and 30 for 30 line feeds in a scroll
+  region of rows 1 to 20. `ESC[2J` gave one event of minus 29, the rows it
+  pushed into the history, with the first row advanced by 29; `ESC[3J` one
+  of plus 8,971; `ESC[S`, `ESC[L`, `ESC[M` and the alternate screen
+  opening and closing none. So the event counts rows the text moved up in
+  the window, which equals the rotation only once the buffer is full and
+  outside a scroll region. Verbatim does not use it (Dickson, 2026-10-25).
+- Every write raised at least one console update: a write on the bottom
+  row with no line feed one region update, a write wrapping from the
+  bottom row a region update and a scroll update, `ESC[S`, `ESC[L` and
+  `ESC[M` one region update each.
+
+The aside screen (`docs/design/terminal-model.md`, "The aside screen")
+adds no call, wake-up or timer: at most 60 hashes and distances while
+one is held, and one hash lookup for each row of a read that keeps
+nothing of the last read, which only a screen switch or an overflow
+makes.
+
 ### A terminal's upward search
 
 A read finds the screen's top row as last read without any search while

@@ -83,6 +83,9 @@ The facts the rules rest on. "Measured" means the measurements of 2026-10-06 to 
 - Reverse video covers only the cells written in it, so a selected row reads as several colours; telling a selected row needs each row's colour runs. A stretch of cells answers its first cell's colour when every cell but its last has it, and "mixed" otherwise; Windows Terminal does not implement `FindAttribute`.
 - Windows Terminal serves UI Automation on its UI thread; with software rendering, a call that arrives during a heavy frame waits for it (10 to 36 milliseconds), while a read made on the text-changed event, which comes once the frame is done, did not wait. It raises no text-changed event for writes made only of blank lines.
 - The console host's four console WinEvents are its change signals: a region update for each write of a row's cells, a simple update for one cell (each typed character's echo) and for a whole-buffer clear, a scroll update for text scrolled up, and a layout event for the view moving, a resize and the alternate screen opening or closing. UIA's text changes stopped reaching Verbatim in the middle of 12,000-line writes in 2 of 14 runs, so since 2026-10-13 the WinEvents are the only signal taken there (`docs/design/wake-ups.md`, item 15).
+- The console host's scroll update counts rows the text moved up in its window, not rotations of the buffer (measured 2026-10-25 on build 26200, a probe outside Verbatim with a 40-microsecond callback, `docs/performance.md`, "A full-screen program's exit"). Once the buffer is full each line raises one with a vertical distance of minus one, and their sum equalled the rotation exactly for 1, 1,000 and 20,000 lines, none lost; but the same minus one comes for each line the view scrolls down before the buffer is full (8,950 of them while 9,000 lines filled it, with no rotation) and for each line a scroll region scrolls, `ESC[2J` gives one event of the rows it pushed into the history, `ESC[3J` one of plus the history's rows, and `ESC[S`, `ESC[L`, `ESC[M` and the alternate screen give none. The reading does not use it (Dickson, 2026-10-25).
+- Every write the same probe made raised at least one console update: a write on the bottom row with no line feed a region update, a write that wraps from the bottom row a region update and a scroll update, `ESC[S`, `ESC[L` and `ESC[M` each a region update.
+- A range kept at the alternate screen's top is accepted on the main screen after the alternate screen closes, in both terminals, and lies above where the next read would start (measured 2026-10-25).
 - Windows Terminal's notifications carry printed characters with no positions, and the console host's will report only the span the cursor travelled, so neither tells new output from a redraw. The events are signals to read, not content (decided).
 - Only the console host tells its buffer's size through UI Automation; the text pattern says nothing of rows past the document's end in either.
 
@@ -117,7 +120,7 @@ For each terminal, kept in Core while the terminal exists, across focus changes:
 - Lingering rows, with their history, for 2 seconds.
 - Anchors: the review position and the command marks, each a place in the buffer, a column, and the hash of its line.
 - What waits for the quiet period: unfinished words, volatile rows, rows held for keys, marks waiting for their line.
-- The aside screen, while one is held ("The aside screen"): the hashes of the rows with text of the screen the last new screen replaced, each with its distance from the document's end, about half a kilobyte.
+- The aside screen, while one is held ("The aside screen"): the hashes of the rows with text of the screen the last new screen replaced, each with its distance from the document's end, about a kilobyte.
 
 Nothing older than the last read is kept but the aside screen: about the last read's rows, a few kilobytes per terminal.
 
@@ -188,7 +191,7 @@ When a read is judged a new screen, the screen it replaced, the last read's scre
 
 So vim, less, htop or Pi's fullscreen mode closing over a long history, with the buffer full or not and with the shell printing lines after it, is a new screen: the aside rows are found at their places, or higher once the buffer is full. The program's own reads keep its rows, but its screen starts at the document's start, so they do not drop the aside screen. Windows Terminal's clear sets aside the screen before it, whose rows the clear erased, so a command of more than the history after it is a lost read, "skipped more than N lines", like one after a fresh console host's first screen, which has no aside screen. Back in a shell with history, the first read that keeps a row drops it, so a screen a program leaves behind cannot later take a flood for its return.
 
-It is the one exception to the memory holding only what the last read showed (Dickson, 2026-10-25): about half a kilobyte of hashes, for recognition only, never spoken, with nothing inferred from it.
+It is the one exception to the memory holding only what the last read showed (Dickson, 2026-10-25): about a kilobyte of hashes, for recognition only, never spoken, with nothing inferred from it.
 
 ### Starting again
 
@@ -275,7 +278,6 @@ Cases no reader can resolve from the text, and cases decided as not handled:
 - A hidden cursor parked away from the user's attention gives the caret nothing useful to say.
 - Panes drawn side by side by one program share rows, so a change is not attributed to its pane (Dickson, 2026-10-23).
 - Windows Terminal raises no text-changed event for writes made only of blank lines, so such a scroll is seen at the next read.
-- Read in the console host's source, not measured: it may raise no event for a write that leaves the cursor where it was, as when a full history moves under a cursor on the bottom row. NVDA has the same exposure. Whether build 26100 does this is open.
 
 ## Costs
 
@@ -284,10 +286,12 @@ Measured on 2026-10-23 and 2026-10-24, 120 columns by 30 rows, both terminals, u
 - A read of the screen's text alone, as one remote operation: 0.19 milliseconds in the console host, 0.27 in Windows Terminal. A 30-row read 0.12 milliseconds; 1,000 rows 1.3 to 3.4; a full history of 9,001 rows 9.4 to 29 (the snapshot alone 25 to 26 milliseconds in the console host through the outpost, 1.1 million UTF-16 units, 31 to 38 milliseconds for the whole read). The terminal's writer waits while a read copies.
 - Each read takes one screen of rows more than the screen: about 0.1 milliseconds more, 0.45 to 1.06 milliseconds against 0.37 to 0.75 in the console host (2026-10-24). The positions test compares one screen of hashes, microseconds.
 - A whole read only for a lost read with a full history: 25 to 38 milliseconds of snapshot, during which the terminal's writer waits, at most once per group of spoken output, never with output off (accepted by Dickson on 2026-10-24); and about 9 milliseconds of alignment of 9,000 rows, which runs on Core's reducer once the reading moves there, measured then and moved off the reducer as an effect if over its budget, with 1.1 MB of text crossing the pipe once per such read.
+- A full-screen program closing: the read after it starts at the range kept at the alternate screen's top, which the main screen takes as its first row, so it reads the whole document. In a full history that is 1.1 million UTF-16 units, the text's `GetText` alone 28.6 to 30.5 milliseconds in the console host and 11.3 to 11.6 in Windows Terminal, against 0.44 to 1.29 for two screens (measured 2026-10-25), once per exit, the terminal's writer waiting. It is kept as it is (Dickson, 2026-10-25): starting such a read two screens above the document's end would also start there after a fresh screen, where the same kept start must read from the document's start to count its output exactly.
+- The aside screen: at most 60 hashes and distances, about a kilobyte, while one is held; the check runs only on a read that keeps nothing of the last read, one hash lookup for each row of that read, or of the whole document a lost read already holds. No call, wake-up or timer.
 - A review command above the last read: one more remote operation of up to one screen of rows, about 0.12 milliseconds.
 - A terminal's first read, when the document goes on above its screen: one more remote operation of two screens of rows, about 0.45 to 1.06 milliseconds in the console host, once each time the outpost begins reading a terminal (the focus arriving at it).
 - Colours, in the first read after a key only, added to the time from that key to its speech: a plain shell screen 2.6 milliseconds more in the console host and 1.6 in Windows Terminal; PSReadLine's line 1.9 and 1.2; Claude Code's screen 1.0 and 0.7; Pi's screen 8.0 and 4.9; the worst case, every cell a different colour, 72 and 31 (six programs, none over 4,200 instructions). Read with separate calls instead, the runs of a colourful screen cost 56 and 118 milliseconds; read with every read, colours would cost 6 to 12 percent of a core while Pi or Claude Code streams.
-- Memory: the last read's rows, a few kilobytes per terminal, however long it ran and however it was flooded.
+- Memory: the last read's rows and the aside screen, a few kilobytes per terminal, however long it ran and however it was flooded.
 - The quiet-period timer: one wake-up for each thing that waits for it, when it ends.
 - The terminals' own cost of being watched, unchanged by any design: the console host raises about 13,600 events in a 10,000-line flood, about 40 microseconds each to a listening client; with Verbatim a console-host flood took 2.9 to 3.7 seconds against 1.6 to 1.9 with no screen reader, and a Windows Terminal flood 1.5 to 1.7 seconds against 1.4 to 1.6 (2026-10-07, debug build).
 
