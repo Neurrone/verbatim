@@ -328,6 +328,29 @@ fn a_review_place_whose_line_left_its_search_keeps_its_place() {
 }
 
 #[test]
+fn a_review_place_above_the_memory_is_found_lower_after_its_history_was_printed_again_longer() {
+    // A program erases the screen and the history and prints them again with
+    // two lines added at the top, as Pi's regular mode does on Control+O:
+    // the review position's line, in the history above the memory's rows,
+    // is now two rows lower than its place, and is found there, a screen
+    // below the place being searched as well as a screen above it ("The
+    // review anchor").
+    let mut watch = Watch::new(20, 3, 100);
+    let lines = (1..=12)
+        .map(|line| format!("line {line}\r\n"))
+        .collect::<Vec<_>>()
+        .concat();
+    let _ = watch.write(&lines);
+    let mut minted = 0;
+    let (text, _, anchor, _) = landed(&watch.answer(&line_at(TextPoint::Start, 2), &mut minted));
+    assert_eq!(text, "line 3");
+    let _ = watch.write(&format!("\x1b[2J\x1b[3J\x1b[Hnew a\r\nnew b\r\n{lines}"));
+    let at = TextPoint::At(TextPosition { anchor, offset: 0 });
+    let (text, _, _, moved) = landed(&watch.answer(&line_at(at, 0), &mut minted));
+    assert_eq!((text.as_str(), moved), ("line 3", 0));
+}
+
+#[test]
 fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
     let mut watch = Watch::new(20, 3, 100);
     let lines = (1..=12)

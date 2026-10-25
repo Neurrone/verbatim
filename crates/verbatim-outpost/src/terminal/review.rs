@@ -364,10 +364,11 @@ impl Rows<'_> {
     /// Where a place on row `row`, of a line with hash `line_hash`, is
     /// now ("The review anchor"): the row itself where the memory keeps
     /// it, since its alignment moved it; above the memory's rows, the
-    /// nearest row of a line with its hash from the place up to a screen
-    /// above it, since a full history only moves rows up, the rows read by
-    /// place in one read; with none, the place itself and the row there
-    /// now.
+    /// nearest row of a line with its hash from a screen above the place
+    /// to a screen below it, the higher first at one distance, since a full
+    /// history moves rows up and a program printing its history again
+    /// longer moves them down, the rows read by place in one read; with
+    /// none, the place itself and the row there now.
     fn found(&mut self, row: isize, line_hash: u64) -> Result<Option<isize>, TextError> {
         if row >= self.first_kept() {
             return Ok((row <= self.last()).then_some(row));
@@ -376,14 +377,19 @@ impl Rows<'_> {
         let top = self
             .known_first()
             .map_or(row - screen, |first| (row - screen).max(first));
-        // One read from a screen above the place down covers the search.
+        let bottom = (row + screen).min(self.last());
+        // One read from a screen above the place to the document's end
+        // covers the search.
         self.row(top)?;
-        for candidate in (top..=row).rev() {
-            if self
-                .row(candidate)?
-                .is_some_and(|line| line.hash == line_hash)
-            {
-                return Ok(Some(candidate));
+        for distance in 0..=screen {
+            for candidate in [row - distance, row + distance] {
+                if (top..=bottom).contains(&candidate)
+                    && self
+                        .row(candidate)?
+                        .is_some_and(|line| line.hash == line_hash)
+                {
+                    return Ok(Some(candidate));
+                }
             }
         }
         Ok(self.row(row)?.map(|_| row))
