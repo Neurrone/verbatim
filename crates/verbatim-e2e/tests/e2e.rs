@@ -137,6 +137,8 @@ scenario_tests! {
     conhost_redrawn_list
     windows_terminal_pager
     conhost_pager
+    windows_terminal_pager_history
+    conhost_pager_history
     windows_terminal_review_output
     conhost_review_output
     windows_terminal_footer_flood

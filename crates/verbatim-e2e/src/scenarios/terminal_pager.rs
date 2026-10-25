@@ -11,10 +11,22 @@
 //! Up Arrow moves a line back: a line inserted at the top, pushing the
 //! prompt off the bottom, the earlier line written there, then the prompt
 //! on the last row again. Q closes the alternate screen and prints
-//! "closed"; the main screen comes back as a new screen, so its rows are
+//! "closed", in one write, so that every read after it finds the same
+//! screen; the main screen comes back as a new screen, so its rows are
 //! spoken, the command, "closed" and the prompt, as NVDA speaks the shell's
 //! screen when a pager closes (`docs/design/terminal-model.md`, "Screens",
-//! Dickson, 2026-10-24). The text scrolls through rows that stay put, so the screen
+//! Dickson, 2026-10-24).
+//!
+//! `windows_terminal_pager_history` and `conhost_pager_history` run the
+//! same pager after `lines.ps1` has printed 100 lines, "history line 1" to
+//! "history line 100", heard through the flood policy as lines 1 to 30,
+//! "skipped 41 lines", lines 72 to 100 and the prompt. The pager's own
+//! reads keep its rows, so the shell's screen stays aside while it runs;
+//! closing it finds that screen back at its places, a new screen, so only
+//! its visible rows are spoken, the newest 27 history lines, the command,
+//! "closed" and the prompt, 30 lines, with no skip
+//! (`docs/design/terminal-model.md`, "The aside screen", Dickson,
+//! 2026-10-25). The text scrolls through rows that stay put, so the screen
 //! diff finds how far from the text (`docs/design/phase6-design.md`, "Terminal line
 //! keys as NVDA has them"), and each move speaks only the line it brought
 //! onto the screen. The caret stays after the prompt, so the keys
@@ -71,8 +83,10 @@ while ($true) {\r\n\
 \x20       [Console]::Write(\"$e[H$e[L\" + (Text $top) + \"$e[$rows;1H$e[K:\")\r\n\
 \x20   }\r\n\
 }\r\n\
-[Console]::Write(\"$e[?1049l\")\r\n\
-'closed'\r\n";
+[Console]::Write(\"$e[?1049l\" + \"closed`r`n\")\r\n";
+
+/// 100 numbered lines, as output before the pager.
+const LINES_SCRIPT: &str = "foreach ($n in 1..100) { \"history line $n\" }\r\n";
 
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_windows_terminal(scenario, "pager", &[("pager.ps1", PAGER_SCRIPT)])
@@ -82,9 +96,56 @@ pub(crate) fn setup_console_host(scenario: &mut Scenario) -> io::Result<Scenario
     terminal::open_console_host(scenario, "pager", &[("pager.ps1", PAGER_SCRIPT)])
 }
 
+pub(crate) fn setup_history_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_windows_terminal(
+        scenario,
+        "pager-history",
+        &[("pager.ps1", PAGER_SCRIPT), ("lines.ps1", LINES_SCRIPT)],
+    )
+}
+
+pub(crate) fn setup_history_console_host(scenario: &mut Scenario) -> io::Result<ScenarioState> {
+    terminal::open_console_host(
+        scenario,
+        "pager-history",
+        &[("pager.ps1", PAGER_SCRIPT), ("lines.ps1", LINES_SCRIPT)],
+    )
+}
+
+/// "history line `first`" to "history line `last`".
+fn history(first: u32, last: u32) -> Vec<String> {
+    (first..=last)
+        .map(|line| format!("history line {line}"))
+        .collect()
+}
+
+/// Prints the 100 history lines and hears them through the flood policy.
+fn history_steps(scenario: &mut Scenario) {
+    terminal::type_with_echo(scenario, r".\lines.ps1", terminal::Echo::Shown);
+    let mut heard = history(1, 30);
+    heard.push("sound: skipped-lines skipped 41 lines".to_owned());
+    heard.extend(history(72, 100));
+    heard.push(PROMPT.to_owned());
+    let heard: Vec<&str> = heard.iter().map(String::as_str).collect();
+    scenario.speech().expect_within(&heard, PAGE_SPEECH);
+}
+
+/// Hears the shell's visible screen as the pager closes over the history:
+/// the newest 27 history lines, the command, "closed" and the prompt.
+fn closed_over_history(scenario: &mut Scenario) {
+    let mut heard = history(74, 100);
+    heard.extend([
+        r"ready> .\pager.ps1".to_owned(),
+        "closed".to_owned(),
+        PROMPT.to_owned(),
+    ]);
+    let heard: Vec<&str> = heard.iter().map(String::as_str).collect();
+    scenario.speech().expect_within(&heard, PAGE_SPEECH);
+}
+
 /// Opens the pager, hears its page, moves down a line and back up, and
-/// closes it.
-fn pager_steps(scenario: &mut Scenario) {
+/// presses Q.
+fn pager_until_closed(scenario: &mut Scenario) {
     terminal::type_with_echo(scenario, r".\pager.ps1", terminal::Echo::Shown);
     let page: Vec<String> = (1..=29)
         .map(|line| format!("page line {line}"))
@@ -100,6 +161,34 @@ fn pager_steps(scenario: &mut Scenario) {
     scenario.speech().expect(&["page line 1"]);
     scenario.send_keys(&["q"]).expect("presses Q");
     scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
+}
+
+/// `windows_terminal_pager_history`.
+pub(crate) fn body_history_windows_terminal(scenario: &mut Scenario, state: &mut ScenarioState) {
+    terminal::expect_windows_terminal_prompt_read(scenario, state, terminal::LAUNCH_REPEATS);
+    history_steps(scenario);
+    pager_until_closed(scenario);
+    closed_over_history(scenario);
+}
+
+/// `conhost_pager_history`.
+pub(crate) fn body_history_console_host(scenario: &mut Scenario, state: &mut ScenarioState) {
+    let title = terminal::title(state).to_owned();
+    // The console host's text area has no name.
+    terminal::expect_prompt_read(
+        scenario,
+        state,
+        &[&format!("{title} window"), "terminal", "blank"],
+    );
+    history_steps(scenario);
+    pager_until_closed(scenario);
+    closed_over_history(scenario);
+}
+
+/// Opens the pager, hears its page, moves down a line and back up, and
+/// closes it.
+fn pager_steps(scenario: &mut Scenario) {
+    pager_until_closed(scenario);
     scenario
         .speech()
         .expect(&[r"ready> .\pager.ps1", "closed", PROMPT]);

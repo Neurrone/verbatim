@@ -184,7 +184,7 @@ scenarios follow it as the model's order of work brings them back.
   the shell's screen when a pager closes (`nv-con-pager.txt`; Dickson,
   2026-10-24). Over a long history it tells the screen coming back from a
   flood by the shell's screen it set aside when the program opened, so it
-  says no skip there either (Dickson, 2026-10-25).
+  says no skip there either (Dickson, 2026-10-25; `*_pager_history`).
 - The alternate screen's text scrolls through rows that stay put, so
   Verbatim finds how far it scrolled from the text.
 
