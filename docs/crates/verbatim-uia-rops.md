@@ -481,6 +481,12 @@ and ends its text is recorded by the conformance expectations
   history rotated.
 - `caret_rows_to_end`: how many lines the caret moves to reach the
   document's end.
+- `caret`: when asked, the caret and its line, and whether the caret is
+  not where the query's `since` says. A `since` the provider will not
+  compare with the caret is a range on the other screen, below the
+  alternate screen's height, which both terminals refuse with `E_FAIL`
+  (measured 2026-10-25), so the caret moved; the comparison runs in a try
+  block, so the refusal does not fail the read.
 - `colours`: when asked, each screen row's runs of one foreground and
   background (`ColourRun`: its first column, its length in cells, and
   its two colours as `0x00BBGGRR`), from the screen's top to the

@@ -483,7 +483,11 @@ impl CaretLineRegisters {
 /// them, from `element`, the query's element as the program imported it,
 /// with `pattern`, its text pattern as the program already has it, and, to
 /// say whether the caret moved, `since`, the query's `since` range as the
-/// program imported it.
+/// program imported it. A `since` the provider will not compare with the
+/// caret lies on a terminal's other screen, beyond the screen it now
+/// shows, so the caret moved (both terminals answer `E_FAIL` for a range
+/// on the main screen below the alternate screen's height, measured
+/// 2026-10-25).
 pub(crate) fn emit_caret_line(
     b: &mut Builder,
     query: &CaretLineQuery<'_>,
@@ -504,9 +508,17 @@ pub(crate) fn emit_caret_line(
     let point = c.collapsed(b, caret.caret);
     let moved = query.since.zip(since).map(|(since, known)| {
         let endpoint = b.int(endpoint_number(since.endpoint));
-        let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
-        let differs = b.not_equal(order, c.zero);
-        b.add_to_results(differs)
+        let differs = b.new_bool(true);
+        let differs = b.add_to_results(differs);
+        b.try_catch(
+            |b| {
+                let order = b.text_range_compare_endpoints(point, c.start, known, endpoint);
+                let differ = b.not_equal(order, c.zero);
+                b.set(differs, differ);
+            },
+            |_, _| {},
+        );
+        differs
     });
     let line_unit = b.int(TextUnit_Line.0);
     let line = c.unit_at(b, point, line_unit);
@@ -514,17 +526,35 @@ pub(crate) fn emit_caret_line(
 }
 
 /// The caret and its line the classic way, as [`caret_read_classic`] reads
-/// them.
+/// them, and whether the caret moved as [`emit_caret_line`] says it: a
+/// `since` the provider will not compare with lies on the other screen.
 ///
 /// # Errors
 ///
 /// [`Error::Uia`] when a call fails.
 pub(crate) fn caret_line_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Error> {
+    let mut answer = caret_line_read_classic(query)?;
+    if let Some(since) = query.since {
+        let point = if answer.collapsed {
+            answer.caret.clone()
+        } else {
+            collapsed(&answer.caret)?
+        };
+        answer.moved = point
+            .compare_endpoints(Endpoint::Start, since.range, since.endpoint)
+            .ok()
+            .is_none_or(|order| order != 0);
+    }
+    Ok(answer)
+}
+
+/// The caret and its line the classic way, with no `since` compared.
+fn caret_line_read_classic(query: &CaretLineQuery<'_>) -> Result<CaretAnswer, Error> {
     caret_read_classic(&CaretQuery {
         element: query.element,
         pattern: query.pattern,
         pattern2: query.pattern2,
-        since: query.since,
+        since: None,
         previous_selection: None,
         previous_collapsed: false,
         unit: None,
