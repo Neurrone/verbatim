@@ -358,6 +358,59 @@ deferred.
   `target/e2e-evidence/m42-text-parity-2026-10-23/exploration/`): the
   agent has no mouse request, so no scenario pins "beta selected" for a
   double-click inside a word.
+- The platform-neutral dependency check (`check_platform_neutral_deps` in
+  `xtask/src/main.rs`) runs `cargo tree -e normal`, so a neutral crate's
+  build-dependency on `windows-sys` or on a Windows-specific workspace
+  crate is not caught; `winapi` is on neither banned list
+  (`WINDOWS_BINDINGS` and `RAW_WINDOWS_BINDINGS`); and a neutral crate
+  depending on a Windows-only workspace crate that itself uses no Windows
+  bindings passes, since the check looks only for the bindings.
+- Mockapp's `uia_combo_box_costs_exactly`
+  (`crates/mockapp/tests/call_counts.rs`) depends on UI Automation keeping
+  an element's state for roughly 500 milliseconds after
+  `FindFirstBuildCache`: read warm, the combo box costs 6 provider calls
+  fewer, so the exact count fails under desktop load. What the test pins
+  awaits Dickson's decision.
+- Mockapp's
+  `a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`
+  (`crates/mockapp/tests/shutdown.rs`) failed once in `cargo xtask ci`
+  with the handler registrations [0, 0, 1, 1], and passed on reruns; its
+  cause is to be found if it recurs.
+- A console whose provider's formatting check gets no answer is probed
+  and checked twice in one arbitration entry, through the `None` branch of
+  `decide` in `crates/verbatim-outpost/src/arbitration.rs`; this predates
+  a133815e, which keeps no verdict from a probe that timed out.
+- The outpost's per-text-node selection baseline is not judged against
+  the focus Core holds, as the listener's repeats are (decision D14,
+  "Where the rules run"); whether it should be is a question for Dickson.
+- A focus-now answer carries no application name and no Alt state, so an
+  application rule such as the Alt+Tab switcher's cannot apply to a focus
+  read on request.
+- Table cells: the suppression of an unchanged row and column within the
+  same table is not ported (pending Dickson), nor are header texts, spans,
+  a cell's own coordinates text, or MSAA and IAccessible2 cells.
+- On this Windows 11 build `TrayNotifyWnd`'s UIA subtree is empty, so the
+  tray list (`crates/verbatim-outpost/src/outpost/shell_items.rs`) is
+  empty unless the overflow flyout is open; and a double press of
+  Verbatim+F11 opens the tray list rather than the taskbar list.
+- A stuck flood console and its shell once outlived their scenario's
+  cleanup, and the agent was force-killed to end them; the cleanup of such
+  a console is not tested in normal runs.
+- The listener's watchdog abandon path (`crates/verbatim-outpost/src/focus_read.rs`):
+  a listener-read focus abandoned before it is sent is never judged by
+  Core, so the listener drops no repeats in that application until a
+  later focus is judged. It costs reads, not speech (pending Dickson).
+- The focus ordering's tests: the hook-stamp test
+  (`a_hooked_event_is_stamped_before_its_bookkeeping` in
+  `crates/verbatim-outpost/src/outpost/mod.rs`) exercises only
+  `take_in_hooked`, not that the hook callback calls it; mockapp's
+  `a_focus_now_answer_is_stamped_to_the_microsecond` checks the
+  milliseconds only to equal the microseconds divided by 1,000, which
+  cannot tell one clock read from two; and `observed_no_earlier`, with
+  stamps that mix milliseconds only and microseconds, is not a total order,
+  so the outpost's running maximum of another application's focus
+  (`crates/verbatim-outpost/src/outpost/held.rs`) can depend on arrival
+  order.
 
 ## M4.2 — Parity small items
 
