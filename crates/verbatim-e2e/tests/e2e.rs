@@ -111,6 +111,8 @@ scenario_tests! {
     conhost_history_flood
     windows_terminal_history_flood_during_group
     conhost_history_flood_during_group
+    windows_terminal_clear_flood
+    conhost_fresh_flood
     windows_terminal_scrollback_overflow
     conhost_scrollback_overflow
     windows_terminal_scrollback_overflow_during_group

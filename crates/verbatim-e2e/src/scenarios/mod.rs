@@ -54,6 +54,7 @@ pub(crate) mod terminal_editing;
 pub(crate) mod terminal_flood;
 pub(crate) mod terminal_flood_kinds;
 pub(crate) mod terminal_footer;
+pub(crate) mod terminal_fresh_flood;
 pub(crate) mod terminal_key_timing;
 pub(crate) mod terminal_lists;
 pub(crate) mod terminal_overflow;
