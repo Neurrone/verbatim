@@ -518,7 +518,7 @@ knowing for review:
   under `Asker::ShellItems`, or `Query::ShellItemPosition` under
   `Asker::ShellItemPosition`, or starts an outpost for it and sends the
   query once it is ready, and hands the outcome to the dialog's delivery
-  callback, exactly once: the items or the rectangle, or `None` for
+  callback, exactly once: the items or the candidates, or `None` for
   any failure, when the process gets no outpost (`NotWatched`, or an end
   with no replacement while it starts), when no outpost is ready six
   seconds after the request, or when no answer has come six seconds after
@@ -534,8 +534,10 @@ knowing for review:
   waits without one when none is outstanding; only the queue's end
   (`Received::Closed`) ends it, since a system wait can run out a clock
   tick before the deadline. The GUI event thread tells the reducer of `GuiEvent::ShellItemGone`
-  (`Input::ShellItemGone`), which says it queued, when the list dialog
-  finds its chosen item gone. When the loop exits — Exit item,
+  (`Input::ShellItemGone`) when the list dialog finds its chosen item
+  gone, and of `GuiEvent::ShellItemUnclickable`
+  (`Input::ShellItemUnclickable`) when it finds the item with no point to
+  click; the reducer says either queued. When the loop exits — Exit item,
   control-plane quit, or a replacing instance's `WM_QUIT` — teardown drops
   the hooks and shuts the outposts and the listener down cleanly through
   `Supervisor::shutdown`, killing through its job only a child that has

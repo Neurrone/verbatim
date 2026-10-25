@@ -386,6 +386,14 @@ pub mod messages {
         fl!(loader(), "tray-list-gone", name = name)
     }
 
+    /// Spoken when the tray icon or taskbar button `name`, chosen in the
+    /// list dialog, is there but off the screen or with no rectangle or an
+    /// empty one, so it has no point to click.
+    #[must_use]
+    pub fn tray_list_unclickable(name: &str) -> String {
+        fl!(loader(), "tray-list-unclickable", name = name)
+    }
+
     /// Title of the Select Synthesizer dialog.
     #[must_use]
     pub fn select_synth_title() -> String {
@@ -790,6 +798,7 @@ pub fn phrase_text(phrase: &verbatim_model::Phrase) -> String {
         ),
         Phrase::CopiedToClipboard(text) => messages::clipboard_copied(text),
         Phrase::ShellItemGone(name) => messages::tray_list_gone(name),
+        Phrase::ShellItemUnclickable(name) => messages::tray_list_unclickable(name),
         // `Phrase` is non_exhaustive; an unmapped future phrase speaks
         // nothing rather than crashing the pipeline.
         _ => String::new(),
@@ -1788,6 +1797,10 @@ mod tests {
             phrase_text(&Phrase::ShellItemGone("Clock".to_owned())),
             "Clock is no longer there"
         );
+        assert_eq!(
+            phrase_text(&Phrase::ShellItemUnclickable("Clock".to_owned())),
+            "Clock cannot be clicked"
+        );
     }
 
     #[test]
@@ -1843,6 +1856,10 @@ mod tests {
         assert_eq!(
             messages::tray_list_gone("Volume"),
             "Volume is no longer there"
+        );
+        assert_eq!(
+            messages::tray_list_unclickable("Volume"),
+            "Volume cannot be clicked"
         );
     }
 

@@ -830,7 +830,8 @@ operating system formatted them, `ClipboardCopied` "Copied to clipboard:"
 with the text (`Phrase::CopiedToClipboard`) or "Unable to copy"
 (`Message::UnableToCopy`), and the theme page's `PreviewSpeech` its
 sample, all interrupting; `ShellItemGone` says the list dialog's item is
-no longer there, queued, and `PreviewEarcon` plays its event. Each speaks
+no longer there and `ShellItemUnclickable` that it cannot be clicked,
+both queued, and `PreviewEarcon` plays its event. Each speaks
 under the trace its input carries, so a copy's confirmation is fenced off
 by a later key press, as that key's other speech is.
 `MenuOrSwitchEnded` asks for the application in front's focus

@@ -159,6 +159,22 @@ fn a_shell_item_gone_is_said_queued() {
 }
 
 #[test]
+fn a_shell_item_unclickable_is_said_queued() {
+    let trace_id = TraceId::mint();
+    assert_eq!(
+        effects_of(&Input::ShellItemUnclickable {
+            trace_id,
+            name: "Clock".to_owned(),
+        }),
+        [said(
+            trace_id,
+            SpeechPriority::Queued,
+            SegmentContent::Phrase(Phrase::ShellItemUnclickable("Clock".to_owned())),
+        )]
+    );
+}
+
+#[test]
 fn the_theme_pages_previews_are_spoken_interrupting_or_played() {
     let trace_id = TraceId::mint();
     assert_eq!(

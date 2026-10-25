@@ -87,8 +87,8 @@ pub(crate) enum Asker {
         deliver: verbatim_gui::DeliverShellItems,
     },
     /// The list dialog's request for where the item clicked is now, whose
-    /// outcome goes to `deliver`: its rectangle, or `None` when it is not
-    /// there or for any failure.
+    /// outcome goes to `deliver`: the buttons that may be it, or `None` for
+    /// any failure.
     ShellItemPosition {
         /// Where the outcome goes.
         deliver: verbatim_gui::DeliverShellItemPosition,
@@ -300,14 +300,14 @@ fn describe(outcome: &QueryOutcome) -> String {
 }
 
 /// Hands a shell item position query's outcome to the list dialog's
-/// `deliver`: the rectangle, or `None` when the item is not there or for
-/// any failure. Nothing re-enters the reducer.
+/// `deliver`: the buttons that may be the item, or `None` for any failure.
+/// Nothing re-enters the reducer.
 fn deliver_shell_item_position(
     deliver: verbatim_gui::DeliverShellItemPosition,
     outcome: QueryOutcome,
 ) -> Vec<Input> {
     match outcome {
-        QueryOutcome::Done(QueryResult::ShellItemPosition(position)) => deliver(position),
+        QueryOutcome::Done(QueryResult::ShellItemPosition(found)) => deliver(Some(found)),
         other => {
             tracing::warn!(
                 reason = describe(&other),
@@ -788,8 +788,9 @@ mod tests {
 
     #[test]
     fn a_shell_item_position_answer_reaches_the_dialog_and_a_failure_gives_none() {
-        let outcomes: std::sync::Arc<std::sync::Mutex<Vec<Option<verbatim_model::Rect>>>> =
-            std::sync::Arc::default();
+        let outcomes: std::sync::Arc<
+            std::sync::Mutex<Vec<Option<verbatim_model::ShellCandidates>>>,
+        > = std::sync::Arc::default();
         let mut table = RequestTable::default();
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         let asker = |outcomes: &std::sync::Arc<std::sync::Mutex<Vec<_>>>| {
@@ -798,25 +799,35 @@ mod tests {
                 deliver: Box::new(move |position| kept.lock().expect("outcomes").push(position)),
             }
         };
-        let rect = verbatim_model::Rect {
-            left: 1162,
-            top: 752,
-            width: 24,
-            height: 48,
+        let found = verbatim_model::ShellCandidates {
+            candidates: vec![verbatim_model::ShellCandidate {
+                item: verbatim_model::ShellItem {
+                    name: "Clock".to_owned(),
+                    runtime_id: vec![42, 1],
+                },
+                offscreen: false,
+                rect: Some(verbatim_model::Rect {
+                    left: 1162,
+                    top: 752,
+                    width: 24,
+                    height: 48,
+                }),
+            }],
+            complete: true,
         };
-        let found = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
+        let answered = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
         let failed = table.begin_until(OutpostId(1), asker(&outcomes), deadline);
         table.finish(
-            found,
+            answered,
             OutpostId(1),
-            QueryOutcome::Done(QueryResult::ShellItemPosition(Some(rect))),
+            QueryOutcome::Done(QueryResult::ShellItemPosition(found.clone())),
         );
         table.finish(
             failed,
             OutpostId(1),
             QueryOutcome::Failed("no client".into()),
         );
-        assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(rect), None]);
+        assert_eq!(*outcomes.lock().expect("outcomes"), vec![Some(found), None]);
         assert_eq!(table.next_deadline(), None);
     }
 

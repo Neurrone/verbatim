@@ -266,6 +266,9 @@ pub enum Phrase {
     /// The shell item list dialog's chosen item was gone: "Clock is no
     /// longer there".
     ShellItemGone(String),
+    /// The shell item list dialog's chosen item was there with no point to
+    /// click: "Clock cannot be clicked".
+    ShellItemUnclickable(String),
 }
 
 /// A fixed reader message a [`SegmentContent::Message`] segment names.

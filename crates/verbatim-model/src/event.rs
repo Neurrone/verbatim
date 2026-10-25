@@ -803,6 +803,15 @@ pub enum Input {
         /// The item's name, as the list showed it.
         name: String,
     },
+    /// The shell item list dialog's chosen item was there when it would
+    /// have been clicked, but off the screen or with no rectangle or an
+    /// empty one, so it was not clicked.
+    ShellItemUnclickable {
+        /// Trace ID minted when the dialog found it unclickable.
+        trace_id: TraceId,
+        /// The item's name, as the list showed it.
+        name: String,
+    },
     /// The settings dialog's theme page previews an indication spoken: a
     /// sample, in the theme's words.
     PreviewSpeech {

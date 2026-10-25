@@ -234,7 +234,7 @@ fn main() {
                     }
                 }
                 // The preview opens no shell item list.
-                GuiEvent::ShellItemGone(_) => {}
+                GuiEvent::ShellItemGone(_) | GuiEvent::ShellItemUnclickable(_) => {}
             }
         }
     });

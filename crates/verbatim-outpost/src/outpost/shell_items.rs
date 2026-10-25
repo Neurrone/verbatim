@@ -12,11 +12,12 @@
 //! `verbatim_uia::ShellButton`, and every named, on-screen button becomes
 //! a [`ShellItem`]. The walk reads whether each button is off the screen
 //! but never where it is (`docs/architecture.md`, "Bulk reads carry only
-//! cheap properties"): a click asks for one button's position, which the
-//! outpost answers by walking the same surface again, finding the chosen
-//! item there by its runtime id, or else by a name no other item has
-//! ([`refind`]), and reading that one button's `verbatim_uia::Place`, so a
-//! click lands where the button is then. A window the outpost's application
+//! cheap properties"): a click asks where the chosen item is, which the
+//! outpost answers by walking the same surface again and reading
+//! `verbatim_uia::Place` for each button whose runtime id or name is the
+//! chosen item's, normally one, so a click lands where the button is then.
+//! Which of them is the item, if any, Core decides
+//! (`verbatim_gui`'s `refind`). A window the outpost's application
 //! does not serve is not read: the outpost connects only to its own
 //! application's windows (section 4.3 of the same design). `Shell_TrayWnd`
 //! and `TrayNotifyWnd` are read through UIA whatever their provider, so
@@ -26,11 +27,12 @@
 //! shell busy past the connection timeout is, reads none of its items.
 //!
 //! The walk has a time budget, [`WALK_BUDGET`], asked before each of its
-//! calls after the first, a position's read included: once it has passed,
-//! the walk makes no more and
-//! the list holds the items read by then, rather than the worker's
-//! deadline for the query abandoning the walk with none.
+//! calls after the first, a candidate's position read included: once it
+//! has passed, the walk makes no more and the answer holds the items read
+//! by then, rather than the worker's deadline for the query abandoning the
+//! walk with none.
 
+use std::cell::Cell;
 use std::time::Duration;
 
 use windows::Win32::Foundation::HWND;
@@ -38,7 +40,7 @@ use windows::Win32::UI::Accessibility::{IUIAutomationTreeWalker, UIA_ButtonContr
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowExW, FindWindowW, IsWindowVisible};
 use windows::core::{HSTRING, PCWSTR};
 
-use verbatim_model::{Rect, ShellItem, ShellItemKind};
+use verbatim_model::{ShellCandidate, ShellCandidates, ShellItem, ShellItemKind};
 use verbatim_uia::{Cached, Direction, Place, Request, ShellButton, Uia, element_is_gone};
 
 use super::Context;
@@ -73,23 +75,24 @@ pub(super) fn shell_items(
     let clock = context.clock();
     let out_of_time = time_limit(&clock, WALK_BUDGET);
     Ok(walk_surface(context, uia, kind, &out_of_time)?
+        .found
         .into_iter()
         .map(|found| found.item)
         .collect())
 }
 
-/// Where `chosen`, an item of `kind` the user picked from an earlier list,
-/// is on the screen now: the surface walked again, the item found there
-/// ([`refind`]), and that one button's place read. `None` when it is gone,
-/// when its name alone cannot tell it from another item's, when it is now
-/// off the screen or has an empty rectangle, which leaves a click no point
-/// to target, or when the walk's budget passed before the read.
+/// The buttons of `kind` that may be `chosen`, an item the user picked
+/// from an earlier list, now: the surface walked again, and every button
+/// whose runtime id or name is `chosen`'s ([`is_candidate`]) read for its
+/// place, one read each. A candidate gone before its read is left out; the
+/// budget passing before a read leaves that candidate and the rest out and
+/// the answer incomplete.
 pub(super) fn shell_item_position(
     context: &Context,
     client: &mut Client,
     kind: ShellItemKind,
     chosen: &ShellItem,
-) -> Result<Option<Rect>, ReadError> {
+) -> Result<ShellCandidates, ReadError> {
     let uia = client
         .uia()
         .ok_or_else(|| ReadError::Failed("could not create a UIA client".to_owned()))?;
@@ -98,29 +101,50 @@ pub(super) fn shell_item_position(
         .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
     let clock = context.clock();
     let out_of_time = time_limit(&clock, WALK_BUDGET);
-    let found = walk_surface(context, uia, kind, &out_of_time)?;
-    let items: Vec<&ShellItem> = found.iter().map(|found| &found.item).collect();
-    let Some(index) = refind(chosen, &items) else {
-        tracing::info!(name = chosen.name, "the chosen shell item is not there");
-        return Ok(None);
-    };
-    if out_of_time() {
-        tracing::debug!(
-            name = chosen.name,
-            "the shell walk ran out of time before the item's position was read"
-        );
-        return Ok(None);
-    }
-    let place = match found[index].element.live().refresh(&place) {
-        Ok(element) => element.read(),
-        Err(error) if element_is_gone(&error) => return Ok(None),
-        Err(error) => {
-            return Err(ReadError::Failed(format!(
-                "could not read the shell item's position: {error}"
-            )));
+    let walked = walk_surface(context, uia, kind, &out_of_time)?;
+    let mut complete = walked.complete;
+    let mut candidates = Vec::new();
+    for found in walked
+        .found
+        .iter()
+        .filter(|found| is_candidate(chosen, &found.item))
+    {
+        if out_of_time() {
+            tracing::debug!(
+                name = chosen.name,
+                "the shell walk ran out of time before a candidate's position was read"
+            );
+            complete = false;
+            break;
         }
-    };
-    Ok(usable_position(place.offscreen, place.rect))
+        match found.element.live().refresh(&place) {
+            Ok(element) => {
+                let place = element.read();
+                candidates.push(ShellCandidate {
+                    item: found.item.clone(),
+                    offscreen: place.offscreen,
+                    rect: place.rect,
+                });
+            }
+            Err(error) if element_is_gone(&error) => {}
+            Err(error) => {
+                return Err(ReadError::Failed(format!(
+                    "could not read the shell item's position: {error}"
+                )));
+            }
+        }
+    }
+    Ok(ShellCandidates {
+        candidates,
+        complete,
+    })
+}
+
+/// Whether the walked button `item` may be `chosen`: its runtime id is
+/// `chosen`'s, when `chosen` has one, or its name is.
+fn is_candidate(chosen: &ShellItem, item: &ShellItem) -> bool {
+    (!chosen.runtime_id.is_empty() && item.runtime_id == chosen.runtime_id)
+        || item.name == chosen.name
 }
 
 /// One walked button: the item it becomes, and its element, for its
@@ -130,6 +154,15 @@ struct Found {
     element: Cached<ShellButton>,
 }
 
+/// One walk of a surface.
+struct Walked {
+    /// The buttons listed, in the shell's order.
+    found: Vec<Found>,
+    /// Whether every button was read: false when the time budget or the
+    /// node cap cut the walk short, or a step or a window's lookup failed.
+    complete: bool,
+}
+
 /// The buttons of `kind`, walked in the outpost's application under the
 /// budget `out_of_time` keeps.
 fn walk_surface(
@@ -137,7 +170,7 @@ fn walk_surface(
     uia: &Uia,
     kind: ShellItemKind,
     out_of_time: &dyn Fn() -> bool,
-) -> Result<Vec<Found>, ReadError> {
+) -> Result<Walked, ReadError> {
     let request = uia
         .request_fixed::<ShellButton>()
         .map_err(|error| ReadError::Failed(format!("could not build a cache request: {error}")))?;
@@ -157,6 +190,7 @@ fn walk_surface(
         walker: &walker,
         request: &request,
         out_of_time,
+        cut_short: Cell::new(false),
     };
     let mut items = Vec::new();
     match kind {
@@ -181,14 +215,18 @@ fn walk_surface(
             );
         }
     }
-    if out_of_time() {
+    let complete = !walk.cut_short.get();
+    if !complete {
         tracing::debug!(
             ?kind,
             items = items.len(),
-            "the shell walk ran out of time; the list is partial"
+            "the shell walk was cut short; the list is partial"
         );
     }
-    Ok(items)
+    Ok(Walked {
+        found: items,
+        complete,
+    })
 }
 
 /// How a shell window's element is looked up.
@@ -251,6 +289,10 @@ struct Walk<'a> {
     /// Whether the walk's [`WALK_BUDGET`] has passed, asked before each
     /// call after the first.
     out_of_time: &'a dyn Fn() -> bool,
+    /// Whether a button may have been left unread: set when the budget or
+    /// the node cap stopped the walk, or a step or a window's lookup
+    /// failed. The depth cap and the excluded subtree do not set it.
+    cut_short: Cell<bool>,
 }
 
 impl Walk<'_> {
@@ -270,7 +312,7 @@ impl Walk<'_> {
             tracing::debug!(window, "a shell window of another application is not read");
             return;
         }
-        if (self.out_of_time)() {
+        if self.out_of_time_now() {
             return;
         }
         let root = match lookup {
@@ -281,6 +323,7 @@ impl Walk<'_> {
             Ok(element) => element,
             Err(error) => {
                 tracing::warn!(%error, "shell window has no UIA element");
+                self.cut_short.set(true);
                 return;
             }
         };
@@ -320,45 +363,60 @@ impl Walk<'_> {
             // Tray and taskbar buttons carry no nested items worth walking.
             return;
         }
-        if depth >= MAX_DEPTH || (self.out_of_time)() {
+        if depth >= MAX_DEPTH || self.out_of_time_now() {
             return;
         }
-        let mut next = step(
-            element
-                .live()
-                .walk(self.walker, Direction::FirstChild, self.request),
-        );
+        let mut next = self.step(element.live().walk(
+            self.walker,
+            Direction::FirstChild,
+            self.request,
+        ));
         while let Some(current) = next {
             *visited += 1;
             if *visited >= MAX_NODES {
                 tracing::debug!("shell enumeration hit its node cap; results may be partial");
+                self.cut_short.set(true);
                 return;
             }
             self.collect_recursive(&current, exclude, depth + 1, visited, items);
-            if (self.out_of_time)() {
+            if self.out_of_time_now() {
                 return;
             }
-            next = step(
-                current
-                    .live()
-                    .walk(self.walker, Direction::NextSibling, self.request),
-            );
+            next = self.step(current.live().walk(
+                self.walker,
+                Direction::NextSibling,
+                self.request,
+            ));
         }
     }
-}
 
-/// One step of the walk: the element reached, or none at the end of an
-/// element's children (the null element, an error carrying no failure
-/// code). A step that fails is read as no more items too, as NVDA reads a
-/// failed UIA step as no child, so the list keeps the items read by then;
-/// the failure is logged, naming its error, so it is not invisible.
-fn step(found: windows::core::Result<Cached<ShellButton>>) -> Option<Cached<ShellButton>> {
-    match found {
-        Ok(element) => Some(element),
-        Err(error) if error.code().is_ok() => None,
-        Err(error) => {
-            tracing::warn!(%error, "a shell walk step failed; its items there are not read");
-            None
+    /// Whether the budget has passed, recording that the walk stops short.
+    fn out_of_time_now(&self) -> bool {
+        let out = (self.out_of_time)();
+        if out {
+            self.cut_short.set(true);
+        }
+        out
+    }
+
+    /// One step of the walk: the element reached, or none at the end of an
+    /// element's children (the null element, an error carrying no failure
+    /// code). A step that fails is read as no more items too, as NVDA reads
+    /// a failed UIA step as no child, so the list keeps the items read by
+    /// then; the failure is logged, naming its error, so it is not
+    /// invisible, and leaves the walk incomplete.
+    fn step(
+        &self,
+        found: windows::core::Result<Cached<ShellButton>>,
+    ) -> Option<Cached<ShellButton>> {
+        match found {
+            Ok(element) => Some(element),
+            Err(error) if error.code().is_ok() => None,
+            Err(error) => {
+                tracing::warn!(%error, "a shell walk step failed; its items there are not read");
+                self.cut_short.set(true);
+                None
+            }
         }
     }
 }
@@ -372,52 +430,9 @@ fn listed_name(name: Option<String>, offscreen: bool) -> Option<String> {
     name.filter(|name| !name.trim().is_empty())
 }
 
-/// The index of the item in a fresh walk, `fresh`, that is `chosen`, an
-/// item the user picked from an earlier one, wherever it is now: the item
-/// with the same runtime id, or else the only item with the same name.
-/// `None` when it is gone, or when its name alone cannot tell it from
-/// another item's, so a click never lands on an icon that merely took its
-/// place.
-fn refind(chosen: &ShellItem, fresh: &[&ShellItem]) -> Option<usize> {
-    if !chosen.runtime_id.is_empty()
-        && let Some(index) = fresh
-            .iter()
-            .position(|item| item.runtime_id == chosen.runtime_id)
-    {
-        return Some(index);
-    }
-    let mut named = fresh
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.name == chosen.name);
-    match (named.next(), named.next()) {
-        (Some((index, _)), None) => Some(index),
-        _ => None,
-    }
-}
-
-/// The rectangle a click targets, read for the one button clicked: none
-/// when the button is now off the screen or its rectangle is empty, since
-/// a click targets its center.
-fn usable_position(offscreen: bool, rect: Option<Rect>) -> Option<Rect> {
-    if offscreen {
-        return None;
-    }
-    rect.filter(|rect| rect.width > 0 && rect.height > 0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn rect(width: i32, height: i32) -> Rect {
-        Rect {
-            left: 100,
-            top: 200,
-            width,
-            height,
-        }
-    }
 
     fn item(name: &str, runtime_id: &[i32]) -> ShellItem {
         ShellItem {
@@ -450,56 +465,17 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_item_is_found_by_its_runtime_id() {
+    fn a_button_with_the_chosen_runtime_id_or_name_is_a_candidate() {
         let chosen = item("Volume", &[42, 1]);
-        let fresh = [item("Network", &[42, 2]), item("Volume", &[42, 1])];
-        assert_eq!(refind(&chosen, &[&fresh[0], &fresh[1]]), Some(1));
+        assert!(is_candidate(&chosen, &item("Network", &[42, 1])));
+        assert!(is_candidate(&chosen, &item("Volume", &[42, 7])));
+        assert!(!is_candidate(&chosen, &item("Network", &[42, 1, 9])));
     }
 
     #[test]
-    fn an_item_with_a_new_runtime_id_is_found_by_its_unique_name() {
-        let chosen = item("Volume", &[42, 1]);
-        let fresh = [item("Network", &[42, 2]), item("Volume", &[42, 7])];
-        assert_eq!(refind(&chosen, &[&fresh[0], &fresh[1]]), Some(1));
-    }
-
-    #[test]
-    fn a_gone_or_ambiguous_item_is_not_found() {
-        let chosen = item("Volume", &[42, 1]);
-        assert_eq!(refind(&chosen, &[&item("Network", &[42, 1, 9])]), None);
-        let twins = [item("Volume", &[42, 3]), item("Volume", &[42, 4])];
-        assert_eq!(
-            refind(&chosen, &[&twins[0], &twins[1]]),
-            None,
-            "two items of that name, neither of them the one chosen"
-        );
-    }
-
-    #[test]
-    fn an_onscreen_rectangle_is_the_position() {
-        assert_eq!(
-            usable_position(false, Some(rect(24, 24))),
-            Some(rect(24, 24))
-        );
-    }
-
-    #[test]
-    fn an_offscreen_button_has_no_position() {
-        assert_eq!(usable_position(true, Some(rect(24, 24))), None);
-    }
-
-    #[test]
-    fn a_degenerate_rectangle_is_no_position() {
-        assert_eq!(usable_position(false, None), None);
-        assert_eq!(
-            usable_position(false, Some(rect(0, 24))),
-            None,
-            "a zero-width rectangle has no clickable center"
-        );
-        assert_eq!(
-            usable_position(false, Some(rect(24, 0))),
-            None,
-            "a zero-height rectangle has no clickable center"
-        );
+    fn an_empty_runtime_id_matches_only_by_name() {
+        let chosen = item("Volume", &[]);
+        assert!(!is_candidate(&chosen, &item("Network", &[])));
+        assert!(is_candidate(&chosen, &item("Volume", &[42, 7])));
     }
 }

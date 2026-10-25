@@ -947,11 +947,12 @@ pub enum Query {
         /// Which shell surface.
         kind: verbatim_model::ShellItemKind,
     },
-    /// Where one item of a list [`Query::ShellItems`] answered is on the
-    /// screen now, for a click on it: the outpost walks the surface again,
-    /// finds the item by its runtime id, or else by a name no other item
-    /// has, and reads that one button's position, which no list read
-    /// fetches. Answered [`QueryResult::ShellItemPosition`].
+    /// Where one item of a list [`Query::ShellItems`] answered may be on
+    /// the screen now, for a click on it: the outpost walks the surface
+    /// again and reads the position, which no list read fetches, of every
+    /// button whose runtime id or name is the item's. Which of them Core
+    /// clicks, if any, Core decides. Answered
+    /// [`QueryResult::ShellItemPosition`].
     ShellItemPosition {
         /// Which shell surface the item was listed from.
         kind: verbatim_model::ShellItemKind,
@@ -1017,10 +1018,9 @@ pub enum QueryResult {
     Text(TextReply),
     /// The answer to [`Query::ShellItems`], in the shell's order.
     ShellItems(Vec<verbatim_model::ShellItem>),
-    /// The answer to [`Query::ShellItemPosition`]: the item's screen
-    /// rectangle, or `None` when it is gone, cannot be told apart by its
-    /// name, is off the screen, or has an empty rectangle.
-    ShellItemPosition(Option<verbatim_model::Rect>),
+    /// The answer to [`Query::ShellItemPosition`]: the buttons that may be
+    /// the item, with their positions, and whether the walk read them all.
+    ShellItemPosition(verbatim_model::ShellCandidates),
 }
 
 /// The answer to [`Query::FocusNow`].

@@ -1747,6 +1747,7 @@ impl ReducerThread<'_> {
             | Input::ClockRead { trace_id, .. }
             | Input::ClipboardCopied { trace_id, .. }
             | Input::ShellItemGone { trace_id, .. }
+            | Input::ShellItemUnclickable { trace_id, .. }
             | Input::PreviewSpeech { trace_id, .. } => *trace_id,
             _ => TraceId::mint(),
         };
@@ -2555,8 +2556,8 @@ fn shell_list_kind(emitted: &EmittedGesture) -> ShellItemKind {
 
 /// The GUI event thread body: the Exit item asks the app to shut down; the
 /// app tells the GUI to tear down, which ends the main thread's loop. A
-/// shell item that was gone when the list dialog would have clicked it is
-/// told to the reducer, which says so.
+/// shell item that was gone, or had no point to click, when the list dialog
+/// would have clicked it is told to the reducer, which says so.
 fn gui_event_loop(
     gui_event_rx: &Receiver<GuiEvent>,
     gui_handle: &Arc<OnceLock<GuiHandle>>,
@@ -2570,6 +2571,13 @@ fn gui_event_loop(
             }
             GuiEvent::ShellItemGone(name) => {
                 let input = Input::ShellItemGone {
+                    trace_id: TraceId::mint(),
+                    name,
+                };
+                let _ = command_tx.send(ShellCommand::Input(Box::new(input)));
+            }
+            GuiEvent::ShellItemUnclickable(name) => {
+                let input = Input::ShellItemUnclickable {
                     trace_id: TraceId::mint(),
                     name,
                 };

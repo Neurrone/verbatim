@@ -1030,8 +1030,8 @@ Fetch shapes:
   (`IsTextPatternAvailable`, `AutomationId`, `ControllerFor`), chosen per
   property id as `refreshed_for` chooses today.
 - `ShellButton`: `NativeWindowHandle`, `ControlType`, `Name`,
-  `IsOffscreen`; a click reads the one clicked button's `Place`
-  (decision 9).
+  `IsOffscreen`; a click reads `Place` for each button that may be the
+  one clicked, normally one (decision 9).
 - `TextAreaPattern`: the Text pattern, which `ListenerEvent` prefetches
   and covers, for the focus listener's console check of a text area.
 
@@ -1443,8 +1443,9 @@ Every decision was settled by Dickson on 2026-10-13.
   registration's cache holds either, `PropertyEvent`'s among them, so a
   state change's set, which replaces the focus's, is never off the
   screen. The shell's tray and taskbar list reads `IsOffscreen` for every
-  button, to leave hidden ones out, and the position of the one button
-  clicked, never in the list (Dickson, 2026-10-24).
+  button, to leave hidden ones out, and, for a click, the position of each
+  button with the clicked item's runtime id or name, normally one, never
+  in the list (Dickson, 2026-10-24).
 
 
 - Decision 4. The description of ancestors, and `is_layout` (section 5.4).

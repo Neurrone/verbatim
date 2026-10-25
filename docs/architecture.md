@@ -847,8 +847,9 @@ M13) for Java applications.
   does the same: its base cache request holds neither. Children are listed
   in one call, as NVDA's are, so a child gone before it is simply absent.
   The shell's tray and taskbar list reads whether each button is off the
-  screen, to leave hidden ones out, and the position only of the button
-  clicked (Dickson, 2026-10-24).
+  screen, to leave hidden ones out, and positions only for a click, of the
+  buttons with the clicked item's runtime id or name, normally one
+  (Dickson, 2026-10-24).
 - **Threading.** Per UIA guidance, event callbacks arrive on dedicated MTA
   threads separate from threads that make UIA calls; each outpost owns both.
   Multiple UIA client threads are a supported, intended part of the design.

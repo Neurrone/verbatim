@@ -618,7 +618,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `Activate`, `Ancestors`, `DumpTree`, `Text`, a node and a model
   `TextOp`, milestone M4's text protocol, `ShellItems`, the shell's
   tray icons or taskbar buttons for Core's list dialog, or
-  `ShellItemPosition`, where one of them is now, for a click), `Cancel` (withdraws a query that
+  `ShellItemPosition`, the buttons that may be one of them now, with
+  their positions, for a click), `Cancel` (withdraws a query that
   has not started), `Ping`, `IdleQuery` (the harness's idle barrier's
   round, under "The idle barrier" below), `Shutdown` (shut down
   cleanly and exit, under "Shutting down" below), and `Assign` (to a
@@ -2364,16 +2365,20 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   the `ShellButton` shape, which holds whether a button is off the screen
   but not where it is, and answers every named, on-screen button as a
   `ShellItem`, a name and a runtime id. `ShellItemPosition { kind, item }`
-  walks the same surface the same way, finds the item by its runtime id,
-  or else by a name no other item has (`refind`), and reads that one
-  button's `Place`, answering its rectangle, or `None` when the item is
-  not there, is now off the screen, has an empty rectangle, or the time
-  budget passed before the read. Either reads no window its application does
+  walks the same surface the same way and reads `Place` for each listed
+  button whose runtime id or name is the item's, normally one, answering
+  `ShellCandidates`: each candidate's item, whether it is off the screen
+  and its rectangle, with whether the walk read every button, which the
+  time budget, the node cap, a failed step or a failed window lookup
+  makes false. A candidate gone before its read is left out, and the
+  budget passing before a read leaves the rest out and the answer
+  incomplete. Which candidate is the item, if any, Core decides
+  (`verbatim-gui`'s `refind`). Either reads no window its application does
   not serve, looks `Shell_TrayWnd` and `TrayNotifyWnd` up without the
   proxy rule (`any_window_element`) and the overflow flyout's window
   under it (`window_element`), and asks its time budget (`WALK_BUDGET`,
   2 seconds) before each call after the first, answering the items read
-  by then once it has passed, a position's read included; a walk step that fails is read as no more
+  by then once it has passed, a candidate's read included; a walk step that fails is read as no more
   items there, as NVDA reads a failed UIA step, and logged as a warning
   naming its error; all within the worker's deadline for the query
   (`protocol::WALK_DEADLINE`, 5 seconds, public so that Core's deadline

@@ -44,7 +44,8 @@ use verbatim_speech::{SettingId, SettingValue, SpeechSettingsHost};
 
 pub use plan::ControlPlan;
 pub use shell_items::{
-    DeliverShellItemPosition, DeliverShellItems, ShellAsk, ShellItem, ShellItemKind, ShellItemsHost,
+    DeliverShellItemPosition, DeliverShellItems, ShellAsk, ShellCandidate, ShellCandidates,
+    ShellItem, ShellItemKind, ShellItemsHost,
 };
 pub use terminal_panel::{TerminalChange, TerminalHost};
 pub use theme_panel::ThemeHost;
@@ -81,6 +82,11 @@ pub enum GuiEvent {
     /// dialog, was not there to click when the click was made, so nothing
     /// was clicked; the app says so.
     ShellItemGone(String),
+    /// The tray icon or taskbar button with this name, chosen in the list
+    /// dialog, was there when the click was made but off the screen or with
+    /// no rectangle or an empty one, so nothing was clicked; the app says
+    /// so.
+    ShellItemUnclickable(String),
 }
 
 /// A message for the GUI thread: a command from the app, or the outcome of
@@ -411,11 +417,14 @@ impl GuiCore {
             return;
         };
         let events = self.events.clone();
-        let gone: tray_list::OnGone = Arc::new(move |name| {
-            let _ = events.send(GuiEvent::ShellItemGone(name));
+        let missed: tray_list::OnMissed = Arc::new(move |name, why| {
+            let _ = events.send(match why {
+                tray_list::Missed::Gone => GuiEvent::ShellItemGone(name),
+                tray_list::Missed::Unclickable => GuiEvent::ShellItemUnclickable(name),
+            });
         });
         let (model, buttons) =
-            tray_list::shell_list_dialog(kind, items, &self.shell_host, &gone).split();
+            tray_list::shell_list_dialog(kind, items, &self.shell_host, &missed).split();
         *self.list_buttons.borrow_mut() = Some(buttons);
         // Same discipline as settings: take the foreground before the
         // dialog exists, so the process already owns it when the dialog

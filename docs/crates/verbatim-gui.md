@@ -31,13 +31,19 @@ Public API:
   carries once, on another thread. `ShellAsk::Items` (`DeliverShellItems`)
   asks for the surface's items, delivered as the items or `None` for a
   failure; `ShellAsk::Position` (`DeliverShellItemPosition`) asks where an
-  item chosen from an earlier list is now, delivered as its screen
-  rectangle or `None` when it is gone, cannot be told apart, has no point
-  to click, or the request failed; `answer_nothing` hands either `None`.
-  The app implements the host by asking the outpost of the process that
-  owns the taskbar, which reads the items, or finds the chosen item again
-  by its runtime id, or else by a name no other item has, and reads that
-  one button's position, within its own application, so the GUI makes no
+  item chosen from an earlier list is now, delivered as the
+  `ShellCandidates` the outpost found, the buttons with its runtime id or
+  name and their positions, with whether the walk read every button, or
+  `None` when the request failed; `answer_nothing` hands either `None`.
+  `refind(chosen, name_unique, found)` is the decision of which candidate
+  is the item: the one with its runtime id, or else the only one with its
+  name, taken only when `name_unique` (no other item of the list it was
+  chosen from had its name) and the walk was complete, so a click never
+  lands on the other of two "Volume" icons when the chosen one has gone.
+  `usable_position` is a candidate's rectangle when it is on the screen
+  and not empty. The app implements the host by asking the outpost of the
+  process that owns the taskbar, which reads the items, or the candidates
+  and their positions, within its own application, so the GUI makes no
   UIA connection into the shell's windows
   (`docs/design/listener-without-connections.md`, decision 9), and the GUI
   sends a list's outcome down its channel to the GUI thread. `run_gui`
@@ -292,8 +298,11 @@ injects the matching mouse events (`SendInput`; left down and up, twice
 for the double click, right down and up). Icons move when another is
 added or removed, so a rectangle recorded when the list was made could
 lie under a different icon by then, and the list carries none. An item
-that cannot be found, or a request that fails, clicks nothing and raises
+`refind` cannot find, or a request that fails, clicks nothing and raises
 `GuiEvent::ShellItemGone`, which the app speaks ("Volume is no longer
-there"). Each dialog closes through one path in C++, which
+there"); an item found off the screen, or with no rectangle or an empty
+one, which the list cannot leave out since it reads no rectangles, clicks
+nothing and raises `GuiEvent::ShellItemUnclickable` ("Volume cannot be
+clicked"). Each dialog closes through one path in C++, which
 destroys it and tells `GuiCore`, and the deferred postPopup frame hide
 only happens once nothing still needs the frame as its visible owner.

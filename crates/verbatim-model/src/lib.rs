@@ -31,7 +31,7 @@ pub use gesture::{GestureId, GestureParseError};
 pub use settings::{
     DEFAULT_TERMINAL_LINES, MAX_TERMINAL_LINES, ReaderSettings, SayAllUnit, TypingEcho,
 };
-pub use shell::{ShellItem, ShellItemKind};
+pub use shell::{ShellCandidate, ShellCandidates, ShellItem, ShellItemKind};
 pub use speech::{
     FocusNow, FocusValidity, Message, Phrase, SegmentContent, SelectionText, SpeechMark,
     SpeechPriority, TextFormat, Utterance, UtteranceEnding, UtteranceId, UtteranceSegment,

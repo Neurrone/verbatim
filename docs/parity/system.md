@@ -137,13 +137,17 @@ moved since, as tray icons do when another is added or removed, leaves
 a different icon, or none, under the click. Verbatim: **different**
 (`docs/design/safety-audit-2026-10-06.md`, "D4. A shell item click goes
 to a rectangle captured when the list was built"): the list records no
-rectangles; a click has the outpost walk the tray or taskbar again, find
-the chosen item by its UIA runtime id, or else by a name no other item
-has, and read that one button's rectangle, and clicks its center there,
-as the add-on clicks the center; an item that cannot be found is not
-clicked, and Verbatim says "is no
-longer there" after its name (`verbatim-gui`'s `tray_list` and
-`shell_items`). The items are read by the outpost of File Explorer's
+rectangles; a click has the outpost walk the tray or taskbar again and
+read the rectangle of each button with the chosen item's UIA runtime id or
+name, and Core takes the one with its runtime id, or else the only one
+with its name when no other item of the list had that name and the walk
+read every button, and clicks its center there, as the add-on clicks the
+center. An item that cannot be found this way is not clicked, and
+Verbatim says "is no longer there" after its name; one found off the
+screen, or with no rectangle or an empty one, which the add-on leaves out
+of its list, is listed, since the list reads no rectangles, and is not
+clicked, and Verbatim says "cannot be clicked" after its name
+(`verbatim-gui`'s `tray_list` and `shell_items`). The items are read by the outpost of File Explorer's
 taskbar process within its own application, where the add-on reads them
 from NVDA's process (`verbatim-outpost`'s `shell_items`).
 

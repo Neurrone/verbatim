@@ -36,7 +36,12 @@ pub(crate) fn reduce(state: &mut SrState, input: &Input) -> Vec<Effect> {
             text,
             copied,
         } => clipboard(*trace_id, text, *copied),
-        Input::ShellItemGone { trace_id, name } => shell_item_gone(*trace_id, name),
+        Input::ShellItemGone { trace_id, name } => {
+            shell_item_not_clicked(*trace_id, Phrase::ShellItemGone(name.to_owned()))
+        }
+        Input::ShellItemUnclickable { trace_id, name } => {
+            shell_item_not_clicked(*trace_id, Phrase::ShellItemUnclickable(name.to_owned()))
+        }
         Input::PreviewSpeech { trace_id, segments } => preview_speech(*trace_id, segments),
         Input::PreviewEarcon(earcon) => vec![Effect::PlayEarcon(*earcon)],
         Input::MenuOrSwitchEnded { ended_at_ms } => menu_or_switch_ended(state, *ended_at_ms),
@@ -147,14 +152,13 @@ fn clipboard(trace_id: TraceId, text: &str, copied: bool) -> Vec<Effect> {
     )]
 }
 
-/// The shell item list dialog's chosen item was gone: said queued.
-fn shell_item_gone(trace_id: TraceId, name: &str) -> Vec<Effect> {
+/// The shell item list dialog's chosen item was not clicked, for the
+/// reason `phrase` says: said queued.
+fn shell_item_not_clicked(trace_id: TraceId, phrase: Phrase) -> Vec<Effect> {
     vec![utterance(
         trace_id,
         SpeechPriority::Queued,
-        vec![UtteranceSegment::new(SegmentContent::Phrase(
-            Phrase::ShellItemGone(name.to_owned()),
-        ))],
+        vec![UtteranceSegment::new(SegmentContent::Phrase(phrase))],
     )]
 }
 

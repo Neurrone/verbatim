@@ -71,7 +71,10 @@ Public API:
   and one of its buttons (a name and a UIA runtime id, with no position,
   which a click asks for): the outpost protocol's `ShellItems` query and
   answer and its `ShellItemPosition` query, and what `verbatim-gui`'s
-  list dialog shows.
+  list dialog shows. `ShellCandidates` answers that query: each
+  `ShellCandidate`, a button with the clicked item's runtime id or name,
+  whether it is off the screen and its rectangle, and whether the walk
+  read every button, for `verbatim-gui` to decide which is the item.
 - `NormalizedEvent` — `FocusChanged` (carrying a full snapshot, a
   `foreground` flag set when the focus is a window that just became the
   system's foreground window, the node's ancestor chain, outermost first,
@@ -132,7 +135,7 @@ Public API:
   (once per stall, as the shell judges it), `LockKeyToggled` (a
   `LockKey` and its new state), `ClockRead` (the press count and the time
   and date the system formatted), `ClipboardCopied` (the text and whether
-  the clipboard holds it), `ShellItemGone`, the theme page's
+  the clipboard holds it), `ShellItemGone` and `ShellItemUnclickable`, the theme page's
   `PreviewSpeech` and `PreviewEarcon`, `MenuOrSwitchEnded` (when a
   menu or the Alt+Tab switcher closed), and `ForegroundWindow` (the
   window the focus listener reported in front). Milestone M4 adds the text protocol's
@@ -167,7 +170,7 @@ Public API:
   count of characters, and `SelectedInstead`, "hello selected instead",
   for a selection that replaced another after the text changed; `Positioned` with screen coordinates;
   `LockKeyState`, "caps lock on"; `CopiedToClipboard` with the text;
-  `ShellItemGone` with the item's name; and the new
+  `ShellItemGone` and `ShellItemUnclickable` with the item's name; and the new
   values of the typing echo toggles, and `SkippedLines` with a count, for
   terminal output too much to read, or `SkippedUncountedLines`, "skipped
   lines", when the count is not known, or `SkippedMoreThanLines` with a

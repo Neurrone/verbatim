@@ -1052,31 +1052,29 @@ diagnostic, through `verbatim_uia_rops::tree_dump`
 File Explorer's outpost walks the notification area or the taskbar for
 Core's list dialog (`outpost/shell_items.rs`): one call for the window's
 element and one per walk step, each element filled with the
-`ShellButton` shape. Since 2026-10-25 the shape holds whether an element
-is off the screen but not its rectangle, by Dickson's decision of
-2026-10-24 (`docs/architecture.md`, "Bulk reads carry only cheap
-properties"), and a click asks for the one clicked button's position
-(`Query::ShellItemPosition`), which walks the surface again, finds the
-item, and reads its `Place`, one call more. Measured on 2026-10-25 against
-this machine's Windows 11 taskbar (build 26200), from a separate process
-as the outpost is, 100 runs each, interleaved, in a scratch program
+`ShellButton` shape, which holds whether an element is off the screen but
+not its rectangle (`docs/architecture.md`, "Bulk reads carry only cheap
+properties"; Dickson, 2026-10-24). A click asks where the chosen item is
+(`Query::ShellItemPosition`): the outpost walks the surface again and
+reads `Place` for each button with the item's runtime id or name, one
+call each, normally one, and Core decides which is the item. Measured on
+2026-10-25 against this machine's Windows 11 taskbar (build 26200), from
+a separate process as the outpost is, 100 runs each, in a scratch program
 running the outpost's walk:
 
 - A taskbar list read: 23 calls, 19 elements filled and 14 buttons
-  listed, before and after. Before, each of the 19 elements' caches held
-  its rectangle; after, none does. 20.4 ms at the median before (22.6 at
-  the 95th percentile) and 20.1 ms after (22.5): the taskbar's provider
-  answers a rectangle without a round trip to its UI thread, so the
-  difference is within the runs' noise here. The saving is the
+  listed, 20.1 ms at the median and 22.5 ms at the 95th percentile. The
+  taskbar's provider answers a rectangle without a round trip to its UI
+  thread, so reading none saves no measurable time here; it saves the
   provider's work of 19 rectangles per list, which matters where a
   provider answers a rectangle only by asking its UI thread.
-- A click: before, one walk with every rectangle, 23 calls, 20.4 ms at
-  the median; after, the same walk without rectangles and one `Place`
-  read of the clicked button, 24 calls, 20.1 ms and 0.4 ms (0.5 at the
-  95th percentile), so about the same.
+- A click: the same walk and one `Place` read per candidate, 24 calls
+  with the usual one candidate, the read 0.4 ms at the median (0.5 at
+  the 95th percentile). Two items of one name make two candidates and 25
+  calls.
 - A tray list read: the notification area's own element has no buttons
   under it on this build, which shows its icons under the taskbar's
-  element, so the read is 2 calls and lists nothing, before and after.
+  element, so the read is 2 calls and lists nothing.
 
 ### An object navigation step, MSAA
 
