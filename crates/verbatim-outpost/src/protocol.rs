@@ -106,10 +106,15 @@ pub fn now_us() -> u64 {
 /// Whether an observation stamped `later`, its milliseconds and
 /// microseconds on the run's shared clock (microseconds 0 when not known),
 /// was no earlier than one stamped `earlier`: to the microsecond when both
-/// carry microseconds, else to the millisecond. Core orders two focuses
-/// from different outposts the same way (`docs/parity/focus-events.md`,
-/// "Stale focus events"), so the listener and the outposts take a focus
-/// Core queued as newer exactly when Core does.
+/// carry microseconds, else to the millisecond, a tie counting as no
+/// earlier. Core orders two focuses from different outposts the same way
+/// (`docs/parity/focus-events.md`, "Stale focus events"), so the listener
+/// and the outposts take a focus Core queued as newer by Core's rule. The
+/// rule is a total order only among stamps that all carry microseconds or
+/// all lack them: with mixed stamps it is not transitive (a stamp without
+/// microseconds ties every stamp in its millisecond), so a running maximum
+/// kept by it can depend on the order the stamps arrive in, and two
+/// processes that saw them in different orders can then disagree.
 #[must_use]
 pub fn observed_no_earlier(later: (u64, u64), earlier: (u64, u64)) -> bool {
     if later.1 != 0 && earlier.1 != 0 {

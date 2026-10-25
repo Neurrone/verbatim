@@ -320,7 +320,9 @@ fn ci() -> ExitCode {
 /// [`WINDOWS_BINDINGS`] anywhere in its normal (non-dev, non-build)
 /// dependency tree for the host's target, or a workspace crate in that tree
 /// other than [`WORKSPACE_HACK`] depends directly on one of
-/// [`RAW_WINDOWS_BINDINGS`]. The error names every offending crate and
+/// [`RAW_WINDOWS_BINDINGS`]. It also fails if cargo tree does not list the
+/// neutral crate itself as a workspace crate, since the second rule would
+/// then pass whatever the tree held. The error names every offending crate and
 /// binding so one run reports the whole problem.
 fn check_platform_neutral_deps() -> Result<(), String> {
     // The workspace root, the parent of this crate's directory; a crate
@@ -352,6 +354,10 @@ fn check_platform_neutral_deps() -> Result<(), String> {
         // `ancestors[depth]` is the latest crate seen at each depth, with
         // whether it is a workspace crate.
         let mut ancestors: Vec<(&str, bool)> = Vec::new();
+        // The neutral crate itself, at depth 0, must be recognised as a
+        // workspace crate, or a change in how cargo tree writes paths would
+        // make every workspace crate look external and the rule pass.
+        let mut root_recognised = false;
         for line in tree.lines() {
             let digits = line.bytes().take_while(u8::is_ascii_digit).count();
             let Ok(depth) = line[..digits].parse::<usize>() else {
@@ -362,6 +368,9 @@ fn check_platform_neutral_deps() -> Result<(), String> {
                 continue;
             };
             let in_workspace = rest.contains(&format!("({root}{}", std::path::MAIN_SEPARATOR));
+            if depth == 0 && name == *crate_name && in_workspace {
+                root_recognised = true;
+            }
             if WINDOWS_BINDINGS.contains(&name) {
                 offences.push(format!("{crate_name} depends on {name}"));
             }
@@ -375,6 +384,12 @@ fn check_platform_neutral_deps() -> Result<(), String> {
             }
             ancestors.truncate(depth);
             ancestors.push((name, in_workspace));
+        }
+        if !root_recognised {
+            return Err(format!(
+                "cargo tree for {crate_name} did not list it as a workspace crate under {root}, \
+                 so the check cannot tell workspace crates apart:\n{tree}"
+            ));
         }
     }
     if offences.is_empty() {

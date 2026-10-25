@@ -897,7 +897,10 @@ its element is gone (`UIA_E_ELEMENTNOTAVAILABLE`) leaves that element
 childless and marks the dump incomplete; any other failure, UIA's
 transaction timeout among them, fails the dump. UIA itself answers a
 read whose element dies when asked for its first child as no children,
-not as a failure.
+not as a failure, so the classic dump lists an element that disappeared
+during the dump, childless, without marking the dump incomplete: UIA
+hides the failure, and Dickson accepted the classic dump's not reporting
+it.
 
 The program starts from up to sixteen waiting elements and reads, for
 each in turn and then each child it finds, the children, filling each

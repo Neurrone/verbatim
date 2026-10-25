@@ -3816,12 +3816,13 @@ impl Worker<'_> {
 
     /// A UIA focus as the focus listener judged and read it from the
     /// event's own element (`docs/design/focus-pipeline.md`, section 12):
-    /// it was no repeat of the last focus accepted, its nearest window
+    /// it was no repeat of the focus Core holds, its nearest window
     /// passed NVDA's acceptance test against the foreground window, the
     /// element had the keyboard focus when the listener read it, as
     /// NVDA's `shouldAllowUIAFocusEvent` requires, and its states, value,
     /// details, ancestors, and selected child are the element's own, read
-    /// in one remote operation. The outpost reports it at once, its node
+    /// with the classic walk, one call at a time on the element the
+    /// listener holds. The outpost reports it at once, its node
     /// minted from its runtime id; the listener's evidence that the element
     /// it read before under that runtime id has lost the focus or died
     /// gives the id a new node first. Only then, off the way to speech,

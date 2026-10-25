@@ -662,8 +662,8 @@ with a theme is `verbatim-speech`'s.
   `Input::Fetches`.
 
 Implementation note, `GestureId::parse`: splits `source:parts`, lowercases
-everything, and sorts the plus-separated parts, exactly like NVDA's
-`normalizeGestureIdentifier` — so `kb:Verbatim+V` and `kb:v+verbatim` are
+everything, and sorts the plus-separated parts, as NVDA normalizes a
+gesture identifier (`docs/nvda/input.md`, "Gestures and mapping"), so `kb:Verbatim+V` and `kb:v+verbatim` are
 one gesture and binding lookup is order- and case-insensitive.
 Deserialization re-parses, so an identifier read from config or the wire is
 always normalized.

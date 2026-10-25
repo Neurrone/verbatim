@@ -2427,9 +2427,10 @@ fn a_listener_read_focus_is_reported_with_the_listeners_stamp() {
     app.quit();
 }
 
-/// A focus-now answer is stamped when its read began, in milliseconds and
-/// microseconds from one clock read, so Core orders the focus it becomes
-/// to the microsecond.
+/// A focus-now answer is stamped when its read began, to the microsecond,
+/// so Core orders the focus it becomes to the microsecond. Its milliseconds
+/// are checked only to agree with its microseconds, which cannot tell one
+/// clock read from two in the same millisecond.
 fn a_focus_now_answer_is_stamped_to_the_microsecond() {
     let title = common::unique_title("mockapp-focus-now-stamp");
     let mut app = common::spawn("small.json", "uia", &title);

@@ -1494,7 +1494,9 @@ mod hook_stamp_tests {
     use crate::protocol::EventTiming;
 
     /// A hooked event is stamped when its callback began, not after the
-    /// event thread's bookkeeping, however long that took.
+    /// event thread's bookkeeping, however long that took. This exercises
+    /// `take_in_hooked` alone: that the outpost's hook callback calls it,
+    /// rather than stamping on its own, rests on reading the callback.
     #[test]
     fn a_hooked_event_is_stamped_before_its_bookkeeping() {
         let clock = Cell::new(7_000_000);

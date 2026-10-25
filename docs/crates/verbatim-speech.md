@@ -142,9 +142,9 @@ Public API:
   focus speech or a later key press's fence, with every mark it carried)
   and `marks_failed` (the same for one that failed); both default no-ops,
   called on the queue thread once per such utterance and never for one
-  with no marks, after its `utterance_ended` for one cut before it reached
-  the synthesizer and in no fixed order with it for one the mixer ended,
-  whose ending the mixer's thread reports: the queue
+  with no marks, and always after its `utterance_ended`, including for
+  one the mixer ended, whose ending the mixer's thread reports before
+  handing it to the queue thread: the queue
   thread keeps the marks of each utterance with marks it has handed on
   until the mixer reports its ending, so that utterance costs one small
   list, and no other speech costs anything). `utterance_queued`, and the ending of an utterance
