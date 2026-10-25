@@ -13,16 +13,19 @@
 //!
 //! - Keys. Every key Core takes in while it reads the focused terminal is
 //!   kept, in the order Core took it in, with when it reached the program
-//!   and its trace. Before a read that began at time S is given to the
-//!   rules, they are given every kept key whose time is at or before S, in
-//!   order, stopping at the first later one; a key in S's own millisecond
-//!   counts as before it. Before the timer at T, likewise up to T. The
+//!   and its trace. Before a read taken at time S is given to the rules,
+//!   they are given every kept key whose time is at or before S, in order,
+//!   stopping at the first later one; a key in S's own millisecond counts
+//!   as before it. A read is taken as of when it ended ([`read_at`]): the
+//!   terminal answered it at some moment before then, so a key whose
+//!   effect it shows reached the program no later. Before the timer at T,
+//!   likewise up to T. The
 //!   arrival of a message decides nothing. With each key Core asks the
 //!   outpost for the screen's colours in the first read from the key's time
 //!   ([`TextOp::TerminalColours`]).
-//! - A read's speech key: once the keys up to its start are given, the
+//! - A read's speech key: once the keys up to its time are given, the
 //!   newest key given, when its window (`KEY_WINDOW_MS` after it) holds
-//!   the read's start. The read's speech is spoken under that key's trace
+//!   the read's time. The read's speech is spoken under that key's trace
 //!   ([`Effect::ForKey`]), and the flood policy speaks the read's output
 //!   under it later too, so a key deferred behind a held key, which the
 //!   read's speech answers, does not cut it off. A read with no speech key
@@ -241,11 +244,11 @@ impl TerminalModel {
         self.last_key = Some((key.trace, key.at_ms));
     }
 
-    /// The key a read that began at `started_ms` is spoken under: the
+    /// The key a read taken at `at_ms` ([`read_at`]) is spoken under: the
     /// newest key given, when its window holds the read.
-    fn speech_key(&self, started_ms: u64) -> Option<TraceId> {
+    fn speech_key(&self, at_ms: u64) -> Option<TraceId> {
         self.last_key
-            .filter(|(_, at_ms)| at_ms + KEY_WINDOW_MS >= started_ms)
+            .filter(|(_, key_ms)| key_ms + KEY_WINDOW_MS >= at_ms)
             .map(|(trace, _)| trace)
     }
 }
@@ -311,7 +314,7 @@ fn timer_effect(state: &SrState, node: NodeId, before: Option<u64>) -> Option<Ef
 }
 
 /// A key of `kind` that reached the focused terminal at `at_ms`, with its
-/// trace: kept until a read that began at or after it, and the colours
+/// trace: kept until a read taken at or after it, and the colours
 /// asked for from its time. Nothing when Core does not read the focus.
 pub(crate) fn key(
     state: &mut SrState,
@@ -389,6 +392,18 @@ fn rules_key(kind: &TerminalKeyKind, at_ms: u64) -> Key {
     }
 }
 
+/// When `snapshot`'s text and caret were taken, as far as keys are
+/// concerned: when the read ended, since the terminal answered it at some
+/// moment before then, so a key whose effect it shows reached the program
+/// no later; when it began, for a snapshot that does not say when it
+/// ended. A key that reached the program after the read began but before
+/// the terminal answered it was taken as coming after the read, its effect
+/// in the read then judged as no key's.
+#[must_use]
+pub fn read_at(snapshot: &TerminalSnapshot) -> u64 {
+    snapshot.ended_ms.max(snapshot.started_ms)
+}
+
 /// The reading rules' read of `snapshot`: its text as it came, without
 /// its lines' padding, which the rules take as each line's length; the
 /// screen and the rows, a screen at most, padded again.
@@ -408,7 +423,7 @@ pub fn read_of(snapshot: &TerminalSnapshot) -> Read {
         caret_rows_to_end: snapshot.caret_rows_to_end,
         caret_line: snapshot.caret_line.padded(),
         caret_column: usize::try_from(snapshot.caret_column).unwrap_or(usize::MAX),
-        at_ms: snapshot.started_ms,
+        at_ms: read_at(snapshot),
         above: usize::try_from(snapshot.above).unwrap_or(usize::MAX),
     }
 }
@@ -440,6 +455,7 @@ pub fn snapshot_of(
         caret_column: cells(read.caret_column),
         above: cells(read.above),
         started_ms: read.at_ms,
+        ended_ms: read.at_ms,
         waited,
         colours: colours.map(|rows| {
             rows.iter()
@@ -533,17 +549,17 @@ struct Taken {
 /// block when the rules ask, keeps the caret and the shape the read found,
 /// tells the outpost a new shape, and takes the read's caret as Core's.
 fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot) -> Taken {
-    let started_ms = snapshot.started_ms;
+    let at_ms = read_at(snapshot);
     let model = model_or_new(state, node);
     let before = model.due_ms;
-    model.give_keys(started_ms);
+    model.give_keys(at_ms);
     let read = read_of(snapshot);
     let colours = snapshot.colours.as_deref().map(colours_of);
     let step = model
         .rules()
         .read(&read, snapshot.waited, colours.as_deref());
     model.due_ms = step.timer;
-    let key = model.speech_key(started_ms);
+    let key = model.speech_key(at_ms);
     let height = step.outcome.as_ref().map_or(0, |outcome| {
         u32::try_from(outcome.height).unwrap_or(u32::MAX)
     });
@@ -590,7 +606,7 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
     }
     effects.extend(timer_effect(state, node, before));
     if let Some(caret) = &snapshot.caret {
-        crate::editing::update_caret(state, node, caret.clone(), started_ms);
+        crate::editing::update_caret(state, node, caret.clone(), at_ms);
     }
     Taken {
         speech: Some(speech_of(step)),
@@ -678,8 +694,8 @@ pub(crate) fn answered_read(
 /// The read before a held key in terminal `node`
 /// (`docs/design/key-holding.md`), a snapshot: aligned as a live read is,
 /// and its caret given as the answer [`crate::editing::held_read`] takes, as
-/// read when the read began, since Core takes a read's caret as of its
-/// start. Without a caret, the read is unanswered.
+/// read when the read ended ([`read_at`]), so the key is taken as pressed
+/// just after it. Without a caret, the read is unanswered.
 pub(crate) fn before_key(
     state: &mut SrState,
     trace_id: TraceId,
@@ -691,7 +707,7 @@ pub(crate) fn before_key(
         Some(caret) => TextReply::Caret(Box::new(CaretReply {
             moved: false,
             caret: caret.clone(),
-            read_at_ms: snapshot.started_ms,
+            read_at_ms: read_at(snapshot),
             unit: None,
             selection_changes: Vec::new(),
             content_changed: false,

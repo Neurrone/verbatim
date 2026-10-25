@@ -57,6 +57,8 @@ pub struct Terminal {
     /// read ([`Terminal::covers`]).
     read_started_ms: u64,
     read_started_us: u64,
+    /// When the last read ended, in milliseconds on the shared clock.
+    read_ended_ms: u64,
     /// Whether the last read took the colours.
     read_colours: bool,
     /// The caret last sent to Core for the terminal: a caret read that
@@ -110,18 +112,15 @@ impl Terminal {
     /// A key reached the terminal at `since_ms`
     /// ([`verbatim_model::TextOp::TerminalColours`]): the next read takes
     /// the colours. Returns whether a read is to be taken at once instead:
-    /// one began at or after `since_ms` without them, so the key's window
-    /// has a read without colours and none with them yet.
+    /// one ended at or after `since_ms` without them, so Core may give the
+    /// key to its reading rules before it, and the key's window then has a
+    /// read without colours and none with them yet. A read that ended then
+    /// with colours does not stand in for the next: Core may have taken it
+    /// before the key, whose report can reach Core after a read in the
+    /// same millisecond.
     pub fn colours(&mut self, since_ms: u64) -> bool {
-        if self.read_started_ms >= since_ms && self.read_started_ms != 0 {
-            if self.read_colours {
-                return false;
-            }
-            self.colours_due = true;
-            return true;
-        }
         self.colours_due = true;
-        false
+        self.read_ended_ms >= since_ms && self.read_ended_ms != 0 && !self.read_colours
     }
 
     /// Whether `snapshot` is to be sent to Core as a live read, noting it
@@ -171,6 +170,7 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
         caret_column,
         above,
         started_ms: _,
+        ended_ms: _,
         waited,
         colours,
         caret: _,
@@ -336,6 +336,7 @@ pub fn snapshot_of(snapshot: &Snapshot, started_ms: u64, waited: bool) -> Termin
         caret_column: cells(caret_column),
         above: snapshot.above,
         started_ms,
+        ended_ms: started_ms,
         waited,
         colours: snapshot.colours.as_ref().map(|rows| {
             rows.iter()
@@ -473,7 +474,8 @@ pub fn read<'a>(
         colours = snapshot.colours.is_some(),
         "terminal snapshot timing"
     );
-    let wire = snapshot_of(&snapshot, started_ms, waited);
+    let mut wire = snapshot_of(&snapshot, started_ms, waited);
+    wire.ended_ms = (crate::protocol::now_us() / 1_000).max(started_ms);
     let shows = verbatim_text::terminal_rows::shows_text(&wire.screen.text);
     if shows || !terminal.showed_text {
         terminal.start = snapshot
@@ -484,6 +486,7 @@ pub fn read<'a>(
     }
     terminal.read_started_ms = started_ms;
     terminal.read_started_us = clock_us;
+    terminal.read_ended_ms = wire.ended_ms;
     terminal.read_colours = wire.colours.is_some();
     if wire.colours.is_some() {
         terminal.colours_due = false;

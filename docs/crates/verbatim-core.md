@@ -1013,15 +1013,17 @@ they make.
   with its time taken as no earlier than the held key's pass. With each,
   Core asks the outpost for the screen's colours from the key's time
   (`TextOp::TerminalColours`), for a held key before its watch and its
-  pass. Before a read begun at S is given to the rules, they are given
-  every kept key whose time is at or before S, in the order Core took
-  them in, stopping at the first later one; before the timer at T, those
-  up to T. Past 256 kept keys the oldest is given at once. When the focus
+  pass. A read is taken as of when it ended (`read_at`): the terminal
+  answered it at some moment before then, so a key whose effect it shows
+  reached the program no later. Before a read taken at S is given to the
+  rules, they are given every kept key whose time is at or before S, in
+  the order Core took them in, stopping at the first later one; before
+  the timer at T, those up to T. Past 256 kept keys the oldest is given at once. When the focus
   leaves the terminal, the rules are told (`blur`) and the kept keys
   dropped; when it returns, the rules are told (`focus`).
-- A read's speech key: once the keys up to the read's start are given,
+- A read's speech key: once the keys up to the read's time are given,
   the newest key given, when its window (`KEY_WINDOW_MS`) holds the
-  read's start. What the read says is handed to the flood policy above
+  read's time. What the read says is handed to the flood policy above
   under that key's trace, and every effect it causes goes out as
   `Effect::ForKey` for it, so a key deferred behind a held key, whose
   number fences off older speech, keeps the speech its read caused. A
@@ -1038,12 +1040,14 @@ they make.
   speech taken in by the policy as an answer is today;
   `TextReply::TerminalUnchanged` says nothing. A snapshot answering a
   colours request is taken as a live read. The read's caret report, when
-  it carries one, becomes Core's caret, stamped with the read's start.
+  it carries one, becomes Core's caret, stamped with the read's time;
+  output read before speech was cut off is judged by when the read
+  began.
 - The read before a held key (`TextOp::ReadCaret`) is answered in a
   terminal with a snapshot (`before_key`): it is aligned as a live read
   is, and its caret answers the read as `editing::held_read` takes it, as
-  read when the read began, so the key is taken as pressed a millisecond
-  after the read's start.
+  read at the read's time, so the key is taken as pressed a millisecond
+  after the read ended.
   A new screen height or width is told to the outpost
   (`TextOp::TerminalShape`), and the timer the rules ask for is armed or
   disarmed for the focused terminal (`Effect::TerminalTimer`), which the

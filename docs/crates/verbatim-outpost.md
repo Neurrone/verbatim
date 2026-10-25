@@ -2714,9 +2714,14 @@ it.
   to Core's request is always sent, as `TextReply::TerminalSnapshot`.
 - Colours ("Colours"). Core asks for the colours with every key that
   reaches the terminal (`TextOp::TerminalColours { since_ms }`): when the
-  last read began at or after the key without them, a read is taken at
-  once with them and answers the request; otherwise the next read takes
-  them, and the request is answered `Done` (`Terminal::colours`).
+  last read ended at or after the key without them, a read is taken at
+  once with them and answers the request, since Core may take the key
+  before that read; otherwise the next read takes them, and the request
+  is answered `Done` (`Terminal::colours`). A read that ended after the
+  key with colours does not stand in for the next, since the key's report
+  can reach Core after a read in the same millisecond. Each read carries
+  when it began and when it ended (`ended_ms`), which Core orders keys
+  against.
 - Keys. A terminal's keys and the reading rules' settings are Core's
   alone; the outpost is told of neither. A held caret key's read before
   it is passed on

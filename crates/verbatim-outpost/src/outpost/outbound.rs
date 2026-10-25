@@ -543,6 +543,7 @@ mod tests {
                 caret_column: 0,
                 above: 0,
                 started_ms: 0,
+                ended_ms: 0,
                 waited: false,
                 colours: coloured.then(|| {
                     vec![vec![TerminalColourRun {

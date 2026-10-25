@@ -359,8 +359,9 @@ the contract the Windows side implements.
   document's `first_row` and the `caret_line`, each a `TerminalText`; the
   flags `from_start`, `shrank`, `at_document_start` and `alternate`;
   `caret_rows_to_end`, `caret_column` in characters, and `above`, the rows
-  it holds above the start it was asked for; `started_ms`, when the read
-  began on the shared clock; `waited`, whether it waited for Core's speech
+  it holds above the start it was asked for; `started_ms` and `ended_ms`,
+  when the read began and ended on the shared clock, the terminal having
+  answered it at some moment between (`ended_ms` 0 when not known); `waited`, whether it waited for Core's speech
   queue; the screen's `colours` when it took them, rows of
   `TerminalColourRun` (`column`, `length`, `foreground`, `background`);
   and the `caret` as a caret report. A `TerminalText` is a text without
@@ -535,9 +536,9 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   text, above }`, the text with its padding and the rows it holds above
   that start).
 - `TerminalColours { since_ms }`: a key reached the program at `since_ms`,
-  so the first read that begins at or after it takes the screen's colours
-  (answer `Done`, or, when a read began at or after it without colours, a
-  read taken at once with them).
+  so the next read takes the screen's colours (answer `Done`, or, when a
+  read ended at or after it without colours, a read taken at once with
+  them).
 - `TerminalShape { height, width }`: the screen's shape as the rules found
   it, for the outpost's next reads (answer `Done`).
 

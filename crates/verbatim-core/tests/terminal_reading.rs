@@ -541,3 +541,25 @@ fn a_caret_move_with_no_key_says_nothing_and_the_next_key_is_judged_from_it() {
     session.write("\x1b[C", 250);
     assert_eq!(session.heard(), [said(Some(right), "n")]);
 }
+
+#[test]
+fn a_key_that_reached_the_program_while_a_read_was_taken_is_given_before_it() {
+    // The read began at 1000, the key reached the program at 1001, and the
+    // terminal answered the read after it, showing the key's echo; the
+    // read ended at 1002. The echo goes out for the key.
+    let mut session = showing(20, 4, 100, "$ ");
+    let (key, input) = typed("l", 1001);
+    session.input(&input);
+    let _ = session.requests();
+    session.outpost.sim.write(b"l");
+    session.at_ms = 1002;
+    let (_, mut snapshot) = session.outpost.read(None, 1002);
+    snapshot.started_ms = 1000;
+    session.input(&terminal_support::event(
+        verbatim_model::NormalizedEvent::TerminalSnapshot {
+            node_id: terminal_support::node(),
+            snapshot: Box::new(snapshot),
+        },
+    ));
+    assert_eq!(session.heard(), [said(Some(key), "l")]);
+}

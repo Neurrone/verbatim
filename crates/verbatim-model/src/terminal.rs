@@ -47,8 +47,17 @@ pub struct TerminalSnapshot {
     /// How many rows the read holds above the start it was asked for.
     pub above: u32,
     /// When the read began, in milliseconds on the clock every process of
-    /// a run shares.
+    /// a run shares: output it shows was written before it ended, and
+    /// output read before speech was cut off, which began before the cut,
+    /// is not spoken.
     pub started_ms: u64,
+    /// When the read ended, on the same clock: the terminal's text and
+    /// caret are as of a moment between its start and its end, so every
+    /// key whose effect it can show reached the program by then, and a key
+    /// is given to the reading rules before the read when it reached the
+    /// program by its end; 0 when not known, the start standing in.
+    #[serde(default)]
+    pub ended_ms: u64,
     /// Whether the read waited for Core's speech queue ("Volatile rows").
     pub waited: bool,
     /// The screen's colour runs, row by row from the screen's top to the
