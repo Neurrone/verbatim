@@ -178,7 +178,11 @@ Related items:
   during the read is placed as if counted from the read it names; an
   `Unanswered` history read is placed as no rows above the start, as if
   the document began there; and a whole-document history read is placed
-  by the end of the memory's rows rather than by a start.
+  by the end of the memory's rows rather than by a start, so more than a
+  screen of output no read has shown yet, printed during the round trip,
+  shifts every placed row (reproduced on 2026-10-26: ReviewTop then
+  ReviewNextLine read the wrong line); the outpost could count a whole
+  read's rows from its newest start too, so Core places it by start.
 
 ### The audio step
 

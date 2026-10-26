@@ -504,7 +504,7 @@ fn rows_after_ls(lines: u32) -> Vec<String> {
     rows
 }
 
-/// As [`command_marks_move_the_review_cursor`], but the program prints five
+/// As [`command_marks_move_the_review_cursor`], but the program prints three
 /// more lines before the outpost searches, read and sent to Core first: the
 /// search's answer is counted from that newer read, and the move still
 /// lands on the command's line, then says nothing past it.

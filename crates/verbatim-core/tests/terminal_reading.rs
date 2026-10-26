@@ -105,7 +105,7 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
 
 /// A terminal of four rows whose review position is on "two", in the
 /// history above the rows the memory keeps, with nine lines printed below
-/// it and six above it, so that no history read below reaches the
+/// it and seven above it, so that no history read below reaches the
 /// document's start.
 fn reviewing_two() -> Session {
     let text = format!("{}one\r\ntwo\r\nthree\r\n", numbered(1..=6));
