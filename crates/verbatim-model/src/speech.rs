@@ -347,6 +347,13 @@ pub enum Message {
     SelectionRemoved,
     /// A copy to the clipboard failed — NVDA's "Unable to copy".
     UnableToCopy,
+    /// "Report status bar" in a terminal whose screen shows no text — "no
+    /// status bar information".
+    NoStatusBarInformation,
+    /// "Report status bar" outside a terminal Core reads — NVDA's "No
+    /// status line found". Provisional until the general status bar of
+    /// milestone M5.
+    NoStatusLineFound,
 }
 
 /// One segment of an utterance, with an optional language override.

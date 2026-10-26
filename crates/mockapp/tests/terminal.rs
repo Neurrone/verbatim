@@ -17,7 +17,8 @@
 //! and the read costs one call remotely; and a terminal whose text changes
 //! with no caret event, as the console host's does while typing, has
 //! Core's reading rules echo the typing and say what Backspace deleted,
-//! the keys reaching them through Core.
+//! the keys reaching them through Core; and "Report status bar" reads the
+//! rows below the caret after a fresh read.
 
 mod common;
 #[path = "common/harness.rs"]
@@ -26,7 +27,7 @@ mod harness;
 use verbatim_core::{SrState, reduce};
 use verbatim_model::{
     Backend, CallCounts, CaretKey, CaretMotion, Effect, Input, NodeDetails, NodeId, NodeSnapshot,
-    NormalizedEvent, OutpostId, Pid, Role, SegmentContent, StateSet, TerminalScope,
+    NormalizedEvent, OutpostId, Pid, ReviewCommand, Role, SegmentContent, StateSet, TerminalScope,
     TerminalSnapshot, TextOp, TextReply, TraceId,
 };
 use verbatim_outpost::protocol::now_us;
@@ -335,6 +336,70 @@ fn new_output_is_said_line_by_line_classic() {
     new_output_is_said_line_by_line(false);
 }
 
+/// Shows `rows` in mockapp's terminal with the caret at the end of row
+/// `caret`'s text.
+fn show_caret_on(app: &mut common::MockApp, hwnd: HWND, rows: &[&str], caret: usize) {
+    let (text, _) = terminal_text(rows);
+    let row_units = WIDTH + 2;
+    let at = caret * row_units + rows[caret].encode_utf16().count();
+    common::apply(app, hwnd, &format!("set-text term {text}"));
+    common::apply(app, hwnd, &format!("caret term {at} {at}"));
+}
+
+/// A session over mockapp's terminal, focused and read once.
+fn session(uia: &Uia, hwnd: HWND, remote: bool) -> Session<'_> {
+    let mut session = Session {
+        uia,
+        source: source(uia, hwnd, remote),
+        terminal: Terminal::new(),
+        remote,
+        state: SrState::new(),
+        spoken: Vec::new(),
+    };
+    session.input(&focus());
+    session.live();
+    session.spoken.clear();
+    session
+}
+
+/// A command's first press.
+fn command(command: ReviewCommand, repeat: u8) -> Input {
+    Input::Command {
+        trace_id: TraceId::mint(),
+        command,
+        repeat,
+    }
+}
+
+/// "Report status bar" reads the rows below the caret, after the fresh read
+/// Core asks the outpost for, and nothing else.
+fn the_status_bar_is_read_below_the_caret(remote: bool) {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-status-bar");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    common::apply(&mut app, hwnd, "screen term 5");
+    show_caret_on(&mut app, hwnd, &["one", "ready>", "status: busy"], 1);
+    let mut session = session(&uia, hwnd, remote);
+    show_caret_on(&mut app, hwnd, &["one", "ready>", "status: done"], 1);
+    session.input(&command(ReviewCommand::ReportStatusBar, 0));
+    let text = |text: &str| SegmentContent::Text(text.to_owned());
+    assert_eq!(
+        session.spoken,
+        [vec![text("done")], vec![text("status: done")]]
+    );
+    app.quit();
+}
+
+fn the_status_bar_is_read_below_the_caret_remote() {
+    the_status_bar_is_read_below_the_caret(true);
+}
+
+fn the_status_bar_is_read_below_the_caret_classic() {
+    the_status_bar_is_read_below_the_caret(false);
+}
+
 /// The node Core knows mockapp's terminal by.
 fn terminal_node() -> NodeId {
     NodeId::in_outpost(OutpostId(1), 1)
@@ -425,6 +490,14 @@ fn main() {
         (
             "backspace_says_what_it_deleted_without_caret_events_classic",
             backspace_says_what_it_deleted_without_caret_events_classic,
+        ),
+        (
+            "the_status_bar_is_read_below_the_caret_remote",
+            the_status_bar_is_read_below_the_caret_remote,
+        ),
+        (
+            "the_status_bar_is_read_below_the_caret_classic",
+            the_status_bar_is_read_below_the_caret_classic,
         ),
     ]);
 }

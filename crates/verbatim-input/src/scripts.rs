@@ -130,6 +130,8 @@ pub enum ScriptAction {
     /// Report the focus object; repeated presses spell its name, then
     /// spell it with character descriptions.
     ReportFocus,
+    /// Report the status bar; repeated presses spell then copy it.
+    ReportStatusBar,
 }
 
 impl ScriptAction {
@@ -176,6 +178,7 @@ impl ScriptAction {
             Self::ReportCaretLocation => ReviewCommand::ReportCaretLocation,
             Self::ReportReviewLocation => ReviewCommand::ReportReviewLocation,
             Self::ReportFocus => ReviewCommand::ReportFocus,
+            Self::ReportStatusBar => ReviewCommand::ReportStatusBar,
             Self::SpeakTime | Self::ShowTrayList => return None,
         })
     }
@@ -233,7 +236,7 @@ const COMMON_BINDINGS: &[RawBinding] = &[
 
 /// The desktop layout's own M4 bindings, NVDA's `kb(desktop):` ones: keys
 /// the laptop layout gives other meanings (Verbatim+Down Arrow reads the
-/// next review line there).
+/// next review line there, and Verbatim+End moves to the line's end).
 const DESKTOP_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+pageup", ScriptAction::ReviewPreviousPage),
     ("kb:verbatim+pagedown", ScriptAction::ReviewNextPage),
@@ -246,6 +249,7 @@ const DESKTOP_BINDINGS: &[RawBinding] = &[
         "kb:verbatim+shift+numpaddelete",
         ScriptAction::ReportReviewLocation,
     ),
+    ("kb:verbatim+end", ScriptAction::ReportStatusBar),
 ];
 
 /// The laptop layout's own bindings, M3's in the same order as
@@ -304,6 +308,7 @@ const LAPTOP_BINDINGS: &[RawBinding] = &[
         "kb:verbatim+shift+delete",
         ScriptAction::ReportReviewLocation,
     ),
+    ("kb:verbatim+shift+end", ScriptAction::ReportStatusBar),
 ];
 
 /// The complete gesture table for the chosen layout: the layout's own
@@ -521,7 +526,7 @@ mod tests {
 
     #[test]
     fn desktop_table_binds_exactly_the_documented_gestures() {
-        // The desktop's own 5, then the 33 of every layout.
+        // The desktop's own 6, then the 33 of every layout.
         assert_eq!(
             bindings_for(KeyboardLayout::Desktop),
             expected_table(&[
@@ -536,14 +541,15 @@ mod tests {
                     "kb:verbatim+shift+numpaddelete",
                     ScriptAction::ReportReviewLocation
                 ),
+                ("kb:verbatim+end", ScriptAction::ReportStatusBar),
             ])
         );
     }
 
     #[test]
     fn laptop_table_binds_exactly_the_documented_gestures() {
-        // Its own 26 (M3's 7 object-navigation and 13 review-cursor, M4's
-        // 6), then the 33 of every layout.
+        // Its own 27 (M3's 7 object-navigation and 13 review-cursor, M4's
+        // 6, and report status bar), then the 33 of every layout.
         assert_eq!(
             bindings_for(KeyboardLayout::Laptop),
             expected_table(&[
@@ -600,6 +606,7 @@ mod tests {
                     "kb:verbatim+shift+delete",
                     ScriptAction::ReportReviewLocation
                 ),
+                ("kb:verbatim+shift+end", ScriptAction::ReportStatusBar),
             ])
         );
     }
@@ -650,6 +657,36 @@ mod tests {
         assert_eq!(
             gesture_of(KeyboardLayout::Laptop, ScriptAction::ReviewNextLine).as_deref(),
             Some("kb:downarrow+verbatim")
+        );
+    }
+
+    /// "Report status bar" is NVDA's Verbatim+End on the desktop and
+    /// Verbatim+Shift+End on the laptop, whose Verbatim+End stays the
+    /// review cursor's end of line.
+    #[test]
+    fn report_status_bar_is_bound_in_each_layout() {
+        let gesture = |identifier| GestureId::parse(identifier).unwrap();
+        let action_of = |layout, identifier| {
+            bindings_for(layout)
+                .into_iter()
+                .find(|(bound, _)| *bound == gesture(identifier))
+                .map(|(_, action)| action)
+        };
+        assert_eq!(
+            action_of(KeyboardLayout::Desktop, "kb:verbatim+end"),
+            Some(ScriptAction::ReportStatusBar)
+        );
+        assert_eq!(
+            action_of(KeyboardLayout::Laptop, "kb:verbatim+shift+end"),
+            Some(ScriptAction::ReportStatusBar)
+        );
+        assert_eq!(
+            action_of(KeyboardLayout::Laptop, "kb:verbatim+end"),
+            Some(ScriptAction::ReviewEndOfLine)
+        );
+        assert_eq!(
+            ScriptAction::ReportStatusBar.review_command(),
+            Some(ReviewCommand::ReportStatusBar)
         );
     }
 

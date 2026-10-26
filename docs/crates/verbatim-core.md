@@ -1068,7 +1068,15 @@ they make.
   anchors with the top bit set (`TERMINAL_ANCHORS`), a range no outpost
   mints from, each the place the memory keeps for it; at most 64 places
   beyond those Core holds are kept. A request naming another anchor goes
-  to the outpost as before.
+  to the outpost as before. A waiting review is an enum,
+  `Review::Text` for such a request or `Review::StatusBar` for "Report
+  status bar" (`terminal_model::report_status_bar`), both answered after
+  the same fresh read; the status bar's footer is
+  `terminal_model/review.rs`'s `footer`, the lines below the caret's
+  line, else the rows at the screen's bottom a program rewrote, else the
+  last line with text, read, spelled or copied by the press's repeat
+  count. Outside a modeled terminal it says `Message::NoStatusLineFound`,
+  and with no text `Message::NoStatusBarInformation`.
 - Settings: "report new output" and "review follows caret" are given to
   every model's rules whenever they change, whichever way they changed.
 

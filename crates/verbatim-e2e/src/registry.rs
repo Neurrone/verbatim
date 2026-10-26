@@ -173,8 +173,8 @@ use crate::scenarios::{
     terminal_editing, terminal_flood, terminal_flood_kinds, terminal_footer, terminal_fresh_flood,
     terminal_key_timing, terminal_lists, terminal_overflow, terminal_pager, terminal_progress,
     terminal_review_grid, terminal_review_output, terminal_review_padding, terminal_screens,
-    terminal_settings_page, terminal_short_output, terminal_typing, terminal_windows,
-    text_box_say_all, theme_panel, typed_words, word_selection,
+    terminal_settings_page, terminal_short_output, terminal_status_bar, terminal_typing,
+    terminal_windows, text_box_say_all, theme_panel, typed_words, word_selection,
 };
 use crate::speech::SpeechFailure;
 
@@ -1645,6 +1645,28 @@ pub const SCENARIOS: &[ScenarioDef] = &[
         setup: terminal_footer::setup_overflow_console_host,
         body: terminal_footer::body_overflow_console_host,
         teardown: terminal_footer::teardown,
+    },
+    ScenarioDef {
+        name: "windows_terminal_status_bar",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: terminal_status_bar::setup_windows_terminal,
+        body: terminal_status_bar::body_windows_terminal,
+        teardown: terminal_status_bar::teardown,
+    },
+    ScenarioDef {
+        name: "conhost_status_bar",
+        group: Group::Text,
+        settings: None,
+        local_only: false,
+        document: None,
+        comparable: Comparable::Yes,
+        setup: terminal_status_bar::setup_console_host,
+        body: terminal_status_bar::body_console_host,
+        teardown: terminal_status_bar::teardown,
     },
     ScenarioDef {
         name: "windows_terminal_short_output",

@@ -639,6 +639,72 @@ fn read_range(
     Ok(Plan::Reply(TextReply::Range { text, truncated }))
 }
 
+/// The footer "Report status bar" reads (`docs/design/terminal-model.md`,
+/// "Features and settings"), as the last read found the screen: the lines
+/// below the caret's line; with none, the run of rows at the screen's
+/// bottom that a program has rewritten, trailing blank rows skipped; with
+/// neither, the last line with text. Each line is its rows joined, top to
+/// bottom, its padding left out, and blank lines are left out.
+pub(crate) fn footer(model: &TerminalModel) -> Vec<String> {
+    let rows = model.reader.memory().rows();
+    let len = rows.len();
+    let height = usize::try_from(model.height).unwrap_or(usize::MAX);
+    let top = len.saturating_sub(height).max(rows.first_kept());
+    let blank = |row: usize| rows.get(row).is_none_or(Row::is_blank);
+    let wraps = |row: usize| rows.get(row).is_some_and(|found| found.wraps);
+    // The first row of the line holding `row`, on the screen.
+    let start_of = |mut row: usize| {
+        while row > top && wraps(row - 1) {
+            row -= 1;
+        }
+        row
+    };
+    // The lines of rows `from` to `to`, joined, the blank ones left out.
+    let lines = |from: usize, to: usize| {
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        for row in from..to {
+            let Some(found) = rows.get(row) else {
+                break;
+            };
+            line.push_str(found.text.as_str());
+            if !found.wraps || row + 1 == to {
+                let text = verbatim_text::trim_padding(&line);
+                if !text.trim().is_empty() {
+                    lines.push(text.to_owned());
+                }
+                line.clear();
+            }
+        }
+        lines
+    };
+    if let Some(caret) = model.caret {
+        let mut end = caret.row;
+        while wraps(end) && end + 1 < len {
+            end += 1;
+        }
+        let below = lines(end + 1, len);
+        if !below.is_empty() {
+            return below;
+        }
+    }
+    let mut last = len;
+    while last > top && blank(last - 1) {
+        last -= 1;
+    }
+    let mut first = last;
+    while first > top && rows.get(first - 1).is_some_and(|found| found.redrawn) {
+        first -= 1;
+    }
+    if first < last {
+        return lines(start_of(first), last);
+    }
+    if last > top {
+        return lines(start_of(last - 1), last);
+    }
+    Vec::new()
+}
+
 fn isize_of(value: usize) -> isize {
     isize::try_from(value).unwrap_or(isize::MAX)
 }

@@ -53,7 +53,7 @@ pub(crate) use super::no_teardown as teardown;
 const FLOOD_STEP: Duration = Duration::from_secs(120);
 
 /// The flood above a redrawing footer.
-const SCRIPT: &str = "Add-Type -TypeDefinition @\"\r\n\
+pub(crate) const SCRIPT: &str = "Add-Type -TypeDefinition @\"\r\n\
 using System;\r\n\
 using System.Runtime.InteropServices;\r\n\
 public static class Vt {\r\n\
@@ -181,6 +181,14 @@ fn flood_lines(first: u32, last: u32) -> Vec<String> {
 fn steps(scenario: &mut Scenario) {
     terminal::type_with_echo(scenario, r".\footer.ps1", terminal::Echo::Shown);
     scenario.speech().expect(&["status: busy"]);
+    flood(scenario);
+    scenario.send_keys(&["n"]).expect("presses n");
+    scenario.speech().expect(&["footer gone", PROMPT]);
+}
+
+/// The key that starts [`SCRIPT`]'s flood, waiting at "status: busy", and
+/// what is heard of the flood, to the footer's "done".
+pub(crate) fn flood(scenario: &mut Scenario) {
     scenario.send_keys(&["n"]).expect("presses n");
     // The flood policy, which NVDA does not have.
     scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
@@ -190,8 +198,6 @@ fn steps(scenario: &mut Scenario) {
     heard.push("done".to_owned());
     let heard: Vec<&str> = heard.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&heard, FLOOD_STEP);
-    scenario.send_keys(&["n"]).expect("presses n");
-    scenario.speech().expect(&["footer gone", PROMPT]);
 }
 
 /// `windows_terminal_footer_flood`.

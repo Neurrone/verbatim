@@ -11,7 +11,8 @@
 //! a snapshot rebuilds its read exactly; a terminal session survives a
 //! flight recorder's dump and replay; and the colours of a key's window
 //! reach the echo's read whatever reads the outpost leaves unsent or takes
-//! at once.
+//! at once; and "Report status bar" reads the footer after a fresh read,
+//! spelled and copied on later presses, the review cursor left alone.
 
 mod terminal_support;
 
@@ -21,8 +22,8 @@ use std::io::BufReader;
 use terminal_support::{Outpost, Said, Session, said};
 use verbatim_core::{RecordedInput, SrState, dump, read_of, replay, snapshot_of};
 use verbatim_model::{
-    CaretKey, CaretMotion, Effect, Input, ReaderSettings, ReviewCommand, TerminalScope, TextOp,
-    TraceId, TypingEcho,
+    CaretKey, CaretMotion, Effect, Input, Message, ReaderSettings, ReviewCommand, SegmentContent,
+    TerminalScope, TextOp, TraceId, TypingEcho,
 };
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query};
@@ -425,6 +426,141 @@ fn a_snapshot_rebuilds_its_read_and_the_rules_take_it_alike() {
             }
         }
     }
+}
+
+// "Report status bar".
+
+const STATUS_BAR: ReviewCommand = ReviewCommand::ReportStatusBar;
+
+/// The segments of the last utterance Core spoke.
+fn last_spoken(session: &Session) -> Vec<SegmentContent> {
+    session
+        .log
+        .iter()
+        .flat_map(|(_, effects)| effects)
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance) => Some(
+                utterance
+                    .segments
+                    .iter()
+                    .map(|segment| segment.content.clone())
+                    .filter(|content| !matches!(content, SegmentContent::Mark(_)))
+                    .collect(),
+            ),
+            _ => None,
+        })
+        .next_back()
+        .expect("Core spoke")
+}
+
+#[test]
+fn the_status_bar_is_the_lines_below_the_caret_one_segment_each() {
+    // Pi's editor: the transcript, the editor's line with the caret, and its
+    // footer of two lines below it.
+    let mut session = showing(
+        20,
+        6,
+        100,
+        "transcript\r\n> fix it\r\nmodel: x\r\ntokens: 12\x1b[2;9H",
+    );
+    session.log.clear();
+    session.input(&command(STATUS_BAR));
+    assert_eq!(session.heard(), plain(&["model: x tokens: 12"]));
+    assert_eq!(
+        last_spoken(&session),
+        [
+            SegmentContent::Text("model: x".to_owned()),
+            SegmentContent::Text("tokens: 12".to_owned()),
+        ]
+    );
+    assert_eq!(session.requests(), [FRESH]);
+}
+
+#[test]
+fn the_status_bar_is_the_rewritten_rows_at_the_bottom_with_the_caret_on_the_last() {
+    let mut session = showing(30, 5, 100, "output\r\nprogress 1\r\nstatus 1");
+    // The program rewrites its last two rows, leaving the caret on the last.
+    session.write("\x1b[1A\rprogress 2\r\nstatus 2", 100);
+    let _ = session.heard();
+    session.input(&command(STATUS_BAR));
+    assert_eq!(session.heard(), plain(&["progress 2 status 2"]));
+}
+
+#[test]
+fn the_status_bar_is_the_last_line_with_text_with_no_footer() {
+    let mut session = showing(20, 4, 100, "one\r\ntwo\r\nready>");
+    session.input(&command(STATUS_BAR));
+    assert_eq!(session.heard(), plain(&["ready>"]));
+}
+
+#[test]
+fn a_blank_screen_has_no_status_bar_information() {
+    let mut session = showing(20, 4, 100, "");
+    session.input(&command(STATUS_BAR));
+    assert_eq!(session.heard(), plain(&["Message(NoStatusBarInformation)"]));
+}
+
+#[test]
+fn the_status_bar_is_spelled_on_the_second_press_and_copied_on_the_third() {
+    let mut session = showing(20, 4, 100, "one\r\nab\x1b[1;4H");
+    session.input(&pressed(STATUS_BAR, 1));
+    assert_eq!(session.heard(), plain(&["a b"]));
+    session.input(&pressed(STATUS_BAR, 2));
+    assert_eq!(session.heard(), []);
+    assert_eq!(session.copied, ["ab"]);
+}
+
+#[test]
+fn the_status_bar_leaves_the_review_cursor_where_it_was() {
+    let mut session = showing(20, 5, 100, "one\r\ntwo\r\nready>\r\nfooter");
+    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    assert_eq!(session.heard(), plain(&["ready>", "two"]));
+    session.input(&command(STATUS_BAR));
+    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["footer", "two"]));
+}
+
+#[test]
+fn a_footer_written_just_before_the_command_is_the_one_read() {
+    let mut session = showing(20, 4, 100, "ready>\r\n\r\n\r\nstatus: busy\x1b[1;7H");
+    // The footer changes with no live read before the command: the
+    // command's fresh read takes it, and reads it, after speaking its change.
+    session
+        .outpost
+        .sim
+        .write(b"\x1b[s\x1b[4;1Hstatus: done\x1b[u");
+    session.log.clear();
+    session.input(&command(STATUS_BAR));
+    // In the order Core speaks them; the support hears an utterance with no
+    // index marks at once, ahead of output still queued.
+    let spoken: Vec<String> = session
+        .log
+        .iter()
+        .flat_map(|(_, effects)| effects)
+        .filter_map(|effect| match effect {
+            Effect::Speak(utterance) => Some(terminal_support::words(&utterance.segments)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(spoken, ["done", "status: done"]);
+}
+
+#[test]
+fn outside_a_terminal_no_status_line_is_found() {
+    let mut state = SrState::new();
+    let effects = verbatim_core::reduce(&mut state, &command(STATUS_BAR));
+    let [Effect::Speak(utterance)] = effects.as_slice() else {
+        panic!("one utterance, not {effects:?}");
+    };
+    assert_eq!(
+        utterance
+            .segments
+            .iter()
+            .map(|segment| segment.content.clone())
+            .collect::<Vec<_>>(),
+        [SegmentContent::Message(Message::NoStatusLineFound)]
+    );
 }
 
 // The flight recorder.

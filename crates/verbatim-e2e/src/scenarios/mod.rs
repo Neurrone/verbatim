@@ -66,6 +66,7 @@ pub(crate) mod terminal_review_padding;
 pub(crate) mod terminal_screens;
 pub(crate) mod terminal_settings_page;
 pub(crate) mod terminal_short_output;
+pub(crate) mod terminal_status_bar;
 pub(crate) mod terminal_typing;
 pub(crate) mod terminal_windows;
 pub(crate) mod text_box;

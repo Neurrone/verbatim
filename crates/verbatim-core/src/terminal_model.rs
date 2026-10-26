@@ -113,14 +113,22 @@ impl Owed {
     }
 }
 
-/// A request for a terminal's text Core answers from its memory.
+/// What a review command waiting for the fresh read asks of the memory.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Review {
-    query_id: QueryId,
+enum Review {
+    /// A request for the terminal's text, answered as the outpost would.
+    Text { query_id: QueryId, op: TextOp },
+    /// "Report status bar", with the press's repeat count.
+    StatusBar { repeat: u8 },
+}
+
+/// A review command waiting for an answer from the memory.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Waiting {
     /// The trace of the input that asked for it, when it had one; the
     /// answer's otherwise.
     trace: Option<TraceId>,
-    op: TextOp,
+    review: Review,
 }
 
 /// Rows of the history above the memory, read for the review answer in
@@ -150,8 +158,9 @@ pub(crate) struct TerminalModel {
     owed: Option<Owed>,
     /// The fresh read asked for before a review answer.
     fresh: Option<QueryId>,
-    /// The requests waiting for an answer from the memory, oldest first.
-    reviews: VecDeque<Review>,
+    /// The review commands waiting for an answer from the memory, oldest
+    /// first.
+    reviews: VecDeque<Waiting>,
     /// The history read asked for by the review answer in progress.
     history_asked: Option<(QueryId, u32, bool)>,
     /// The history reads that came for the review answer in progress.
@@ -862,27 +871,90 @@ pub(crate) fn intercept(
             kept.push(effect);
             continue;
         };
-        let fresh = {
-            let Some(model) = model_mut(state, node) else {
-                continue;
-            };
-            model.reviews.push_back(Review {
-                query_id,
+        kept.extend(queue(
+            state,
+            node,
+            Waiting {
                 trace,
-                op,
-            });
-            model.fresh.is_none() && model.history_asked.is_none()
-        };
-        if fresh {
-            let (fresh_query, effect) =
-                request(state, node, TextOp::TerminalReadNow(TerminalScope::Fresh));
-            if let Some(model) = model_mut(state, node) {
-                model.fresh = Some(fresh_query);
-            }
-            kept.push(effect);
-        }
+                review: Review::Text { query_id, op },
+            },
+        ));
     }
     kept
+}
+
+/// Keeps `waiting` for terminal `node`'s answer from its memory, asking
+/// for the fresh read it waits for unless a read or history is already
+/// asked for, which it then waits for too.
+fn queue(state: &mut SrState, node: NodeId, waiting: Waiting) -> Vec<Effect> {
+    let fresh = {
+        let Some(model) = model_mut(state, node) else {
+            return Vec::new();
+        };
+        model.reviews.push_back(waiting);
+        model.fresh.is_none() && model.history_asked.is_none()
+    };
+    if !fresh {
+        return Vec::new();
+    }
+    let (fresh_query, effect) = request(state, node, TextOp::TerminalReadNow(TerminalScope::Fresh));
+    if let Some(model) = model_mut(state, node) {
+        model.fresh = Some(fresh_query);
+    }
+    vec![effect]
+}
+
+/// "Report status bar" (`docs/design/terminal-model.md`, "Features and
+/// settings"): in the focused terminal Core reads, its footer, answered
+/// after a fresh read as every review command is, and spelled on the
+/// second press and copied on the third; elsewhere "No status line found",
+/// until milestone M5's general status bar.
+pub(crate) fn report_status_bar(state: &mut SrState, trace_id: TraceId, repeat: u8) -> Vec<Effect> {
+    let Some(node) = focused(state) else {
+        return vec![crate::editing::speak(
+            trace_id,
+            crate::review_text::message(verbatim_model::Message::NoStatusLineFound),
+        )];
+    };
+    queue(
+        state,
+        node,
+        Waiting {
+            trace: Some(trace_id),
+            review: Review::StatusBar { repeat },
+        },
+    )
+}
+
+/// What "Report status bar" says of `footer`, its lines, on press
+/// `repeat`: the lines, one segment each, on the first; spelled on the
+/// second; copied to the clipboard, joined by line breaks, on the third and
+/// later; "no status bar information" when there are none.
+fn status_bar(trace_id: TraceId, repeat: u8, footer: &[String]) -> Effect {
+    use verbatim_model::UtteranceSegment;
+    if footer.is_empty() {
+        return crate::editing::speak(
+            trace_id,
+            crate::review_text::message(verbatim_model::Message::NoStatusBarInformation),
+        );
+    }
+    match repeat {
+        0 => crate::editing::speak(
+            trace_id,
+            footer
+                .iter()
+                .map(|line| UtteranceSegment::text(line.clone()))
+                .collect(),
+        ),
+        1 => crate::editing::speak(
+            trace_id,
+            footer
+                .iter()
+                .flat_map(|line| crate::review_text::spell_or_blank(line, false, None))
+                .collect(),
+        ),
+        _ => Effect::CopyToClipboard(footer.join("\r\n")),
+    }
 }
 
 /// Answers terminal `node`'s waiting requests from its memory, in order,
@@ -902,15 +974,24 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
             model.history.clear();
             break;
         };
-        let answer = review::answer(model, &waiting.op, &mut mint, &held);
+        let trace = waiting.trace.unwrap_or(trace_id);
+        let (query_id, op) = match waiting.review {
+            Review::Text { query_id, op } => (query_id, op),
+            Review::StatusBar { repeat } => {
+                let footer = review::footer(model);
+                model.reviews.pop_front();
+                effects.push(status_bar(trace, repeat, &footer));
+                continue;
+            }
+        };
+        let answer = review::answer(model, &op, &mut mint, &held);
         state.next_terminal_anchor = mint;
         match answer {
             Ok(reply) => {
                 if let Some(model) = model_mut(state, node) {
                     model.reviews.pop_front();
                 }
-                let trace = waiting.trace.unwrap_or(trace_id);
-                let caused = crate::reduce::text_completed(state, trace, waiting.query_id, reply);
+                let caused = crate::reduce::text_completed(state, trace, query_id, reply);
                 effects.extend(queue_only(state, caused, trace));
             }
             Err(review::Need { above, whole }) => {
@@ -935,10 +1016,9 @@ fn queue_only(state: &mut SrState, effects: Vec<Effect>, trace: TraceId) -> Vec<
         match answerable(state, &effect) {
             Some((query_id, node, op)) => {
                 if let Some(model) = model_mut(state, node) {
-                    model.reviews.push_back(Review {
-                        query_id,
+                    model.reviews.push_back(Waiting {
                         trace: Some(trace),
-                        op,
+                        review: Review::Text { query_id, op },
                     });
                 }
             }

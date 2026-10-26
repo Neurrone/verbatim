@@ -700,6 +700,10 @@ pub fn message_text(message: verbatim_model::Message) -> String {
         Message::Space => i18n_embed_fl::fl!(loader, "message-space"),
         Message::StartMarked => i18n_embed_fl::fl!(loader, "message-start-marked"),
         Message::NoStartMarker => i18n_embed_fl::fl!(loader, "message-no-start-marker"),
+        Message::NoStatusBarInformation => {
+            i18n_embed_fl::fl!(loader, "message-no-status-bar-information")
+        }
+        Message::NoStatusLineFound => i18n_embed_fl::fl!(loader, "message-no-status-line-found"),
         Message::PressTwiceToCopy => i18n_embed_fl::fl!(loader, "message-press-twice-to-copy"),
         Message::CaretMovesReview => i18n_embed_fl::fl!(loader, "message-caret-moves-review"),
         Message::CaretDoesNotMoveReview => {
@@ -1945,6 +1949,14 @@ mod tests {
         assert_eq!(
             message_text(verbatim_model::Message::NoStartMarker),
             "No start marker set"
+        );
+        assert_eq!(
+            message_text(verbatim_model::Message::NoStatusBarInformation),
+            "no status bar information"
+        );
+        assert_eq!(
+            message_text(verbatim_model::Message::NoStatusLineFound),
+            "No status line found"
         );
         assert_eq!(
             message_text(verbatim_model::Message::CannotSelect),

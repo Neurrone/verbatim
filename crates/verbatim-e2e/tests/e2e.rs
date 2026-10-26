@@ -145,6 +145,8 @@ scenario_tests! {
     windows_terminal_footer_flood
     conhost_footer_flood
     conhost_footer_overflow
+    windows_terminal_status_bar
+    conhost_status_bar
     windows_terminal_short_output
     conhost_short_output
     windows_terminal_two_windows

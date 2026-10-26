@@ -953,6 +953,11 @@ pub enum ReviewCommand {
     /// on the second press in a streak, with character descriptions on the
     /// third and later.
     ReportFocus,
+    /// Report the status bar: in a terminal, its footer
+    /// (`docs/design/terminal-model.md`, "Features and settings"); spelled
+    /// on the second press in a streak, copied to the clipboard on the
+    /// third.
+    ReportStatusBar,
 }
 
 /// An event Verbatim indicates at once, outside the speech queue, named

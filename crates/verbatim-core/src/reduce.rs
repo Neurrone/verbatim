@@ -1419,6 +1419,9 @@ fn reduce_command(
             caret_command(state, trace_id, command)
         }
         ReviewCommand::ReportFocus => report_focus(state, trace_id, repeat),
+        ReviewCommand::ReportStatusBar => {
+            terminal_model::report_status_bar(state, trace_id, repeat)
+        }
         _ => navigator_command(state, trace_id, command, repeat),
     };
     stopped.append(&mut effects);

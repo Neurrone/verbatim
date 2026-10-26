@@ -237,21 +237,6 @@ lines leaves Verbatim's review cursor on the line reviewed, where NVDA
 follows the caret to the prompt (different; `*_review_output` takes this
 expectation when the model is built).
 
-#### Reading on demand
-
-- "Report status bar", on NVDA's gestures (NVDA+End in the desktop
-  layout, NVDA+Shift+End in the laptop layout), reads the footer of a
-  terminal as it is now, top to bottom, or with no footer the last row
-  with text, so a row that never stops changing can be heard (Dickson,
-  2026-10-23; section 5.11).
-- Verbatim+Alt+Up Arrow and Verbatim+Alt+Down Arrow move the review
-  cursor to the previous and next command the user entered and speak
-  its line, from marks Verbatim sets when Enter is pressed on a line a
-  key changed; commands entered before Verbatim watched the terminal
-  have none, and no prompt is guessed (Dickson, 2026-10-23; section
-  5.13). NVDA has no such command, and uses NVDA+Alt+Up and Down Arrow
-  to pan its magnifier.
-
 #### Windows and tabs
 
 - Switching to another window, as clicking its taskbar button does,
@@ -369,3 +354,40 @@ expectation when the model is built).
   which NVDA speaks as a run of numbers and Verbatim as the changed
   lines from their numbers once the keys pause, within its limits
   (Dickson, 2026-10-23; section 5.7).
+
+### Reading a terminal on demand
+
+NVDA: "report status bar" (NVDA+End, NVDA+Shift+End in the laptop
+layout) reads an application's status bar, or a status bar control at
+the foreground window's bottom left, read on the first press, spelled
+on the second and copied on the third, and says "No status line found"
+with none (`globalCommands.py`, `script_reportStatusLine`;
+`api.getStatusBar`). It has no terminal behaviour, and no command to
+move between commands entered.
+
+Verbatim: **different** (Dickson, 2026-10-23 and 2026-10-26;
+`docs/design/terminal-model.md`, "Features and settings"), Verbatim's
+own commands for a terminal, so no capture is taken:
+
+- "Report status bar", on NVDA's gestures (NVDA+End in the desktop
+  layout, NVDA+Shift+End in the laptop layout), reads the footer of a
+  terminal as it is now, top to bottom: the lines below the caret's
+  line, or else the rows at the screen's bottom a program has rewritten,
+  or else the last line with text, so a row that never stops changing
+  can be heard; a second press spells it and a third copies it, as
+  NVDA's command does with a status bar, and a screen with no text says
+  "no status bar information". This is Verbatim's own: NVDA's command
+  reads an application's status bar, or a status bar control at the
+  foreground window's bottom left, and has no terminal behaviour, so no
+  capture is taken. In vim and less the same rule finds their last rows,
+  which are a footer as worded. Outside a terminal Verbatim says NVDA's
+  "No status line found" until the general status bar of M5 (Dickson,
+  2026-10-23 and 2026-10-26; `docs/design/terminal-model.md`, "Features
+  and settings").
+- Verbatim+Alt+Up Arrow and Verbatim+Alt+Down Arrow move the review
+  cursor to the previous and next command the user entered and speak
+  its line, from marks Verbatim sets when Enter is pressed on a line a
+  key changed; commands entered before Verbatim watched the terminal
+  have none, and no prompt is guessed (Dickson, 2026-10-23; section
+  5.13). NVDA has no such command, and uses NVDA+Alt+Up and Down Arrow
+  to pan its magnifier.

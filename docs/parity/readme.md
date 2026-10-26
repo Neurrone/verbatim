@@ -128,7 +128,7 @@ alone; and Verbatim's menu is on Verbatim+V, not NVDA+N.
 
 **not yet (unscheduled)**. Among them
 are the settings ring (NVDA+Control+arrows), speech modes, the title
-(NVDA+T), the status bar (NVDA+End), read window
+(NVDA+T), the status bar outside a terminal (NVDA+End), read window
 (NVDA+B), sleep mode, quit (NVDA+Q), pass the next key through
 (NVDA+F2), and the desktop layout's current line (NVDA+UpArrow). As in
 NVDA, a Verbatim key combination with no command reaches the

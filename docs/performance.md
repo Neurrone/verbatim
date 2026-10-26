@@ -2887,6 +2887,14 @@ speech path. The design had estimated two screens of rows at about 0.24
 milliseconds against 0.12 for one, assuming a read of one screen; the
 read's size is unchanged by the search and was not measured again.
 
+### A terminal's status bar
+
+"Report status bar" costs one fresh read per press, the read every
+review command takes, and then a walk up the memory's last screen of
+rows in the reducer, with no other call; the third press's copy is the
+shell's clipboard write. It adds nothing to any other read, so the event
+and speech paths pay nothing for it (Dickson, 2026-10-26).
+
 ### A terminal's colours
 
 Every read of a focused terminal that begins in a key's window, the
