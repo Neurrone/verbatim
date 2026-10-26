@@ -9,14 +9,17 @@
 //! and waits for a key: only the footer is heard, the cleared screen's
 //! blank rows above it being no output. A key read without showing it
 //! starts the flood, "flood line 1" to "flood line 100" written into the
-//! region, with the footer redrawn as it was every twenty lines and as
-//! "status: done" at the end. The flood policy applies as to any flood:
-//! lines 1 to 30 whole, then "skipped 41 lines" (lines 31 to 71), then the
-//! newest thirty, lines 72 to 100 and the footer's change, "done": the
-//! footer stays on the last row while the rows above it scroll, and is
-//! said only as it changed, never again as new. A redraw that leaves the
-//! footer as it was says nothing. Another key removes the region, clears
-//! the screen and prints "footer gone".
+//! region, with the footer redrawn as it was every twenty lines. The flood
+//! policy applies as to any flood: lines 1 to 30 whole, then "skipped 41
+//! lines" (lines 31 to 71), then the newest lines, 72 to 100. A redraw that
+//! leaves the footer as it was says nothing. Once line 100 is heard, the
+//! read after the flood has the footer, and a second key redraws it as
+//! "status: done", said only as it changed, "done". The script waits for
+//! that key because a read taken while output moves the document's end can
+//! leave the footer out, and the footer is then taken as gone and said
+//! whole when it changes (`docs/design/terminal-model.md`, "Limits").
+//! Another key removes the region, clears the screen and prints "footer
+//! gone".
 //!
 //! `conhost_footer_overflow` runs a flood above the footer that is longer
 //! than the console host's history, written as the console host's view
@@ -72,6 +75,7 @@ for ($n = 1; $n -le 100; $n++) {\r\n\
 \x20   [Console]::Write(\"`nflood line $n\")\r\n\
 \x20   if ($n % 20 -eq 0) { [Console]::Write(\"$e[s$e[$rows;1Hstatus: busy$e[u\") }\r\n\
 }\r\n\
+$null = [Console]::ReadKey($true)\r\n\
 [Console]::Write(\"$e[s$e[$rows;1Hstatus: done$e[u\")\r\n\
 $null = [Console]::ReadKey($true)\r\n\
 [Console]::Write(\"$e[r$e[2J$e[H\")\r\n\
@@ -186,8 +190,9 @@ fn steps(scenario: &mut Scenario) {
     scenario.speech().expect(&["footer gone", PROMPT]);
 }
 
-/// The key that starts [`SCRIPT`]'s flood, waiting at "status: busy", and
-/// what is heard of the flood, to the footer's "done".
+/// The key that starts [`SCRIPT`]'s flood, waiting at "status: busy", what
+/// is heard of the flood, to its last line, and the key that then redraws
+/// the footer as "status: done", heard as "done".
 pub(crate) fn flood(scenario: &mut Scenario) {
     scenario.send_keys(&["n"]).expect("presses n");
     // The flood policy, which NVDA does not have.
@@ -195,9 +200,10 @@ pub(crate) fn flood(scenario: &mut Scenario) {
     let mut heard = flood_lines(1, 30);
     heard.push("sound: skipped-lines skipped 41 lines".to_owned());
     heard.extend(flood_lines(72, 100));
-    heard.push("done".to_owned());
     let heard: Vec<&str> = heard.iter().map(String::as_str).collect();
     scenario.speech().expect_within(&heard, FLOOD_STEP);
+    scenario.send_keys(&["n"]).expect("presses n");
+    scenario.speech().expect(&["done"]);
 }
 
 /// `windows_terminal_footer_flood`.

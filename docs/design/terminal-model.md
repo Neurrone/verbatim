@@ -123,6 +123,7 @@ The facts the rules rest on, measured in both terminals (`docs/performance.md`) 
 - One `GetText` is atomic with respect to the terminal's writes but not the program's, so a line written in two calls can be read half written; the terminal's writer waits while a read copies.
 - Rows keep their places until the history is full; then each new line moves the whole buffer up under fixed places. Both terminals keep 9,001 rows by default.
 - Both pad every row to the width and give a wrapped line whole; Windows Terminal's range for the buffer's last row ends one cell short.
+- The document's range ends where the document ended when the range was taken, so a read whose text is taken after output moved the end lower stops at the old end; during a scroll region's flood this cut 186 of 200 console host reads and 130 of 200 Windows Terminal reads, and none with no output arriving (`experiments/a-terminal-read-ends-at-the-document-end-it-started-with`).
 - The alternate screen is one screen tall, with no history; a range kept at its top is accepted on the main screen after it closes.
 - The console host's `cls` pushes the screen into the history; Windows Terminal's clear erases the screen and the history, refusing a kept start. Windows PowerShell 5.1's `cls` in Windows Terminal homes the caret in one write and erases in the next.
 - Reverse video covers only the cells written in it, so telling a selected row needs each row's colour runs, and Windows Terminal does not implement `FindAttribute`.
@@ -169,6 +170,7 @@ Cases no reader can resolve from the text, and cases decided as not handled:
 - Colours that change with no key and no text change are not heard (Dickson, 2026-10-23).
 - A hidden cursor parked away from the user's attention gives the caret nothing useful to say.
 - Panes side by side share rows, so a change is not attributed to its pane (Dickson, 2026-10-23).
+- A row below a scroll region that a read during output leaves out is taken as gone, and is spoken whole when it next changes, such as "status: done" rather than "done", because the read's text ends where the document ended when its range was taken (Dickson, 2026-10-26).
 
 ## Costs
 

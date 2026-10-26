@@ -155,8 +155,6 @@ Related items:
 - Windows Terminal's launch focus sometimes speaks "... terminal" without
   "... window", and the desktop's announcement is sometimes cancelled
   (seen in the `*_up_typing`, `*_typing` and `*_commands` scenarios).
-- `conhost_footer_flood` hears "status: done" where it expects "done",
-  on the base build too.
 - `conhost_typing` missed a typed "o" in 2 of 6 runs on the base build.
 - Pi's regular mode has no steps yet in the "Report status bar" and
   moving-by-command scenarios; they wait for Pi to be installed on the
