@@ -250,6 +250,24 @@ focus, the outposts the rest, Core decides) stays.
   ancestor released by `NodesHeld` spliced into a later report; the
   outbound merge leaving the outpost's states read out of step with
   Core; a focus-now answer's unjudged entry never drained.
+- The window part of a focus's ancestry from window state Windows keeps,
+  which never waits on the application's thread: the top-level window
+  by `GetAncestor` with `GA_ROOT` of the nearest-window handle the
+  listener already has, its title by `GetWindowText`, and its class name,
+  so a slow application can delay only the inner elements its UIA parent
+  walk adds, never the "<title> window" announcement; NVDA takes its
+  foreground object from the operating system's foreground window in the
+  same way (`api.setFocusObject`). Found on 2026-10-26: Windows
+  Terminal raises its focus event before it has finished showing its
+  window, and its one UI thread then blocks in
+  `DwmExtendFrameIntoClientArea`; on the test VM's software-rendered
+  compositor that took 0.3 to 1.5 seconds per window change, so every
+  call into Terminal waited, and a parent step past the focus read's
+  2-second budget left the ancestors unknown and Verbatim said only
+  "<title> terminal". On a machine with a real graphics card the wait is
+  milliseconds, so the reason is reliability, not that stall (Dickson,
+  2026-10-26). Not a longer budget or retries, and nothing specific to
+  Terminal: every call into a busy application stalls alike.
 
 ### The caret and selection rework
 
