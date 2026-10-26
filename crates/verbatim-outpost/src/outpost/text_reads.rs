@@ -71,6 +71,9 @@ pub(super) struct OpenWatch {
     pub(super) timing: EventTiming,
     /// The calls its checks have made so far, none of which found evidence.
     pub(super) calls: CallCounts,
+    /// Its re-reads of the console host's caret, while they last
+    /// ([`super::caret_poll`]).
+    pub(super) poll: Option<super::caret_poll::Poll>,
 }
 
 /// A check of a caret key's watch, as the worker makes it.

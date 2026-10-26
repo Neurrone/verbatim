@@ -58,6 +58,7 @@ use crate::protocol::{
 use super::Context;
 use super::acceptance::{self, EventName, SystemWindows};
 use super::alarm::Alarm;
+use super::caret_poll::{Poll, Ticker};
 use super::focus_path::{self, FocusPath};
 use super::gap::{self, FocusGap};
 use super::held;
@@ -505,6 +506,7 @@ pub(super) fn start(context: &Arc<Context>, warm: bool) {
         .watchdog
         .lock()
         .unwrap_or_else(PoisonError::into_inner) = Some(watchdog);
+    Ticker::start(context);
 }
 
 fn spawn_worker(context: Arc<Context>, generation: u64, warm: bool) {
@@ -531,6 +533,7 @@ fn spawn_worker(context: Arc<Context>, generation: u64, warm: bool) {
 /// to end a call the application does not answer. Returns how many worker
 /// threads were waited for.
 pub(super) fn stop(context: &Context) -> usize {
+    context.caret_poll.stop();
     context.watch.lock().stopping = true;
     context.watch.alarm.wake();
     let watchdog = context
@@ -1148,6 +1151,11 @@ impl Worker<'_> {
                     return;
                 }
                 let opened = Instant::now();
+                // The console host raises its caret event only on its
+                // cursor's blink timer, so its caret is re-read meanwhile
+                // (`super::caret_poll`).
+                let poll = text_reads::console_focus(self.context, node_id)
+                    .then(|| Poll::new(opened, watch.pressed_at_ms, now_ms()));
                 *self.context.caret_watch() = Some(OpenWatch {
                     request_id,
                     trace,
@@ -1156,11 +1164,15 @@ impl Worker<'_> {
                     opened,
                     timing: self.timing,
                     calls,
+                    poll,
                 });
                 self.context
                     .intake
                     .wake_at(Some(opened + CARET_WATCH_BOUND));
-                tracing::debug!(%trace, ?calls, "a caret key's watch is open");
+                if let Some(poll) = poll {
+                    self.context.caret_poll.set(poll.next);
+                }
+                tracing::debug!(%trace, ?calls, polled = poll.is_some(), "a caret key's watch is open");
             }
         }
     }
@@ -1214,6 +1226,9 @@ impl Worker<'_> {
             }
             Watched::Answered(reply) => {
                 context.intake.wake_at(None);
+                if open.poll.is_some() {
+                    context.caret_poll.cancel();
+                }
                 self.sent_reply_caret(node_id, &reply);
                 let calls = take_calls();
                 tracing::debug!(
@@ -1261,6 +1276,9 @@ impl Worker<'_> {
             return;
         };
         self.context.intake.wake_at(None);
+        if open.poll.is_some() {
+            self.context.caret_poll.cancel();
+        }
         let published = publish_aside(
             self.context,
             self.generation,
@@ -1289,10 +1307,14 @@ impl Worker<'_> {
         }
     }
 
-    /// [`Item::Wake`]: ends the open caret key's watch once it has reached
-    /// [`CARET_WATCH_BOUND`], which only frees it and says nothing.
+    /// [`Item::Wake`]: re-reads the console host's caret for the open caret
+    /// key's watch when its poll's read is due, ending the watch when the
+    /// last read finds no evidence, as at its own bound (`super::caret_poll`);
+    /// ends the open watch once it has reached [`CARET_WATCH_BOUND`], which
+    /// only frees it and says nothing.
     fn wake(&mut self) {
         self.gap_wake();
+        self.poll_caret();
         let bound = self
             .context
             .caret_watch()
@@ -1302,6 +1324,58 @@ impl Worker<'_> {
             Some(bound) if Instant::now() >= bound => self.end_watch("its bound passed"),
             Some(bound) => self.context.intake.wake_at(Some(bound)),
             None => {}
+        }
+    }
+
+    /// The open caret key's watch's poll read, when one is due: answers the
+    /// key on evidence, reading the terminal then, ends the watch when the read was the poll's last,
+    /// and otherwise sets the poll's next tick.
+    fn poll_caret(&mut self) {
+        let now = Instant::now();
+        let Some((node_id, trace)) = self
+            .context
+            .caret_watch()
+            .as_ref()
+            .filter(|open| open.poll.is_some_and(|poll| now >= poll.next))
+            .map(|open| (open.node_id, open.trace))
+        else {
+            return;
+        };
+        if self.check_watch_now(node_id, false) {
+            // Core's reading rules answer the key from a read that shows
+            // what it did, as after a first check that answers it.
+            if self.focused_terminal(node_id) {
+                self.terminal_output(node_id, trace, 0);
+            }
+            return;
+        }
+        let after = Instant::now();
+        let next = {
+            let mut open = self.context.caret_watch();
+            let Some(open) = open.as_mut().filter(|open| open.node_id == node_id) else {
+                return;
+            };
+            // A caret event handled meanwhile has stopped the poll.
+            let Some(poll) = open.poll else {
+                return;
+            };
+            open.poll = poll.after_read(after);
+            open.poll
+        };
+        match next {
+            Some(next) => self.context.caret_poll.set(next.next),
+            None => self.end_watch("its poll's bound passed"),
+        }
+    }
+
+    /// Stops the open caret key's watch's poll of the console host's caret
+    /// on `node_id`, if it polls, as the console's caret event arrives.
+    fn stop_poll(&self, node_id: NodeId) {
+        let mut open = self.context.caret_watch();
+        if let Some(open) = open.as_mut().filter(|open| open.node_id == node_id)
+            && open.poll.take().is_some()
+        {
+            self.context.caret_poll.cancel();
         }
     }
 
@@ -2361,6 +2435,7 @@ impl Worker<'_> {
             // terminal's caret event, as its UIA caret events are not
             // subscribed to either.
             if let Some(node_id) = self.focused_console_terminal(hwnd) {
+                self.stop_poll(node_id);
                 self.caret_event(node_id, trace, observed_at_ms);
             }
             return;

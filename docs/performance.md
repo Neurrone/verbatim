@@ -1266,6 +1266,20 @@ and in its edit control.
   count). A key that leaves no selection and found none pays
   nothing more: the program's comparison is skipped when neither holds
   anything.
+- In the console host, whose caret events come only on its 530 ms blink
+  timer, a watch the first check leaves open re-reads the caret every 5
+  ms until it moves, the console's caret event arrives, or 50 ms after
+  the key, a documented workaround (Dickson, 2026-10-26;
+  `docs/design/key-holding.md`, "The console host's caret poll"). Each
+  re-read is the check above, one round trip remotely, so a key pays at
+  most 10 more round trips and 20 more wake-ups (the poll timer's thread
+  and the worker, once each per tick), and nothing while no watch polls.
+  In `measure_keys_conhost` (release, 2026-10-26) the 48 watches left open
+  were each answered within 5 ms, by one re-read or the console update's
+  check, where before they waited 84 ms at the median and 434 at most for
+  the blink timer's event; caret reads by watches went from 1.32 to 1.34
+  per key, and the caret keys' time from the last key to speech from P95
+  44.0, P99 146.8 and maximum 233.1 ms to 9.0, 9.4 and 9.4.
 - Wall clock: what matters is what waits behind the key. Before, every
   other entry of the application's outpost waited out the key's wait: in
   mockapp, a focus change delivered just after a Right Arrow the

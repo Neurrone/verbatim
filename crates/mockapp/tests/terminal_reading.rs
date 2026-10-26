@@ -971,6 +971,75 @@ fn the_read_before_a_held_key_is_a_read_with_its_caret() {
     app.quit();
 }
 
+/// The console host's text area, with an outpost watching it, and a caret
+/// key's watch on it from the caret as a held key's read before it finds
+/// it, opened and checked once with the caret where it was.
+fn console_watch(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, u64) {
+    let (app, mut outpost, area) = start_with(
+        name,
+        "console_terminal.json",
+        "text",
+        OutpostOptions::default(),
+    );
+    let before = ask(&mut outpost, area, TextOp::ReadCaret);
+    let caret = read_answer(&outpost, before)
+        .caret
+        .expect("the read's caret");
+    let key = ask(
+        &mut outpost,
+        area,
+        TextOp::AwaitCaret(CaretWatch {
+            landing: false,
+            since: Some(TextPosition {
+                anchor: caret.line.start,
+                offset: caret.line.offset,
+            }),
+            pressed_at_ms: 0,
+            unit: TextUnit::Character,
+            compare: None,
+            deletes: false,
+        }),
+    );
+    (app, outpost, area, key)
+}
+
+/// The console host raises its caret event only on its cursor's blink
+/// timer, so its caret key's watch re-reads the caret every 5 ms
+/// (`docs/design/key-holding.md`, "The console host's caret poll"): a
+/// caret the application moves after the watch's first check, with no
+/// event, answers the key, and the terminal is read after it.
+fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
+    let (mut app, outpost, area, key) = console_watch("mockapp-console-polled-caret");
+    // Held after the watch's first check, the worker's next read is the
+    // poll's.
+    outpost.hold_worker();
+    app.send("caret text 1");
+    outpost.release_worker();
+    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
+        panic!("the watch was not answered with the caret");
+    };
+    assert!(reply.moved);
+    assert_eq!(
+        (reply.caret.line.text.as_str(), reply.caret.line.offset),
+        ("one                 \r\n", 1)
+    );
+    assert_eq!(caret_at(&reported(&outpost, area)), ("one\r\n", 1));
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// A console host's caret key's watch whose poll finds nothing by its bound,
+/// 50 ms after the key, ends as a watch does at its own bound: answered
+/// `WatchEnded`, and nothing else said.
+fn a_console_hosts_watch_ends_when_its_poll_finds_nothing() {
+    let (app, outpost, _area, key) = console_watch("mockapp-console-poll-bound");
+    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -993,6 +1062,14 @@ fn main() {
         (
             "the_read_before_a_held_key_is_a_read_with_its_caret",
             the_read_before_a_held_key_is_a_read_with_its_caret,
+        ),
+        (
+            "a_console_hosts_caret_moved_without_an_event_answers_its_watch",
+            a_console_hosts_caret_moved_without_an_event_answers_its_watch,
+        ),
+        (
+            "a_console_hosts_watch_ends_when_its_poll_finds_nothing",
+            a_console_hosts_watch_ends_when_its_poll_finds_nothing,
         ),
         (
             "a_focus_now_terminal_reports_its_output",

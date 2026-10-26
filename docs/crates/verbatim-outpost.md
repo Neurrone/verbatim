@@ -2030,7 +2030,15 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     caret key's watch replaces it, when a focus on another node is
     reported, or when it is `CARET_WATCH_BOUND` (10 seconds) old, which
     only frees it: the intake wakes the idle worker then (`Item::Wake`,
-    `Intake::wake_at`), and nothing is spoken. So a key that moves nothing
+    `Intake::wake_at`), and nothing is spoken. In the console host, whose
+    caret events come only on its cursor's blink timer, a watch the first
+    check leaves open also re-reads the caret every 5 ms until it has
+    moved, the console's caret event arrives, or 50 ms after the key's
+    `pressed_at_ms`, and ends `WatchEnded` when that last re-read finds
+    nothing (`outpost/caret_poll.rs`, a documented workaround: each tick
+    comes from a high-resolution waitable timer one thread waits on, set
+    only while a watch polls, which ends the intake's wait;
+    `docs/design/key-holding.md`, "The console host's caret poll"). So a key that moves nothing
     is silent (`docs/parity/text.md`, "TextInfo-equivalent layer"), and a key
     whose application reports nothing when it moves the caret is silent
     too. Through UIA each check is the whole caret read above, one round

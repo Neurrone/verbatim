@@ -249,7 +249,7 @@ Moving by command: when Enter is pressed on a line a key changed since it appear
 - A key's window, and the limit on a typed character's echo: 300 milliseconds after the key reached the program, NVDA's wait for the caret in Windows Terminal. Both are judged at reads, with no timer.
 - A row that keeps changing, a row that changed alone before the first of the keys, and a lingering row: 2 seconds, which takes in a once-a-second timer's ticks and htop's 1.5-second refresh. Judged at reads, with no timer.
 - The quiet period: 1 second, or 1.5 times the time between the row's last two changes when that is longer, so a once-a-second timer is not judged settled between ticks. It is the reading's one timer, armed only while something waits for it, with one wake-up when it ends.
-- From key holding (`docs/design/key-holding.md`), unchanged: a held caret key waits at most 150 milliseconds for the read before it; a key pressed behind a held key waits at most 100 milliseconds after that key was passed on; a held key's watch ends with its evidence, at the next key or focus change, or after 10 seconds.
+- From key holding (`docs/design/key-holding.md`), unchanged: a held caret key waits at most 150 milliseconds for the read before it; a key pressed behind a held key waits at most 100 milliseconds after that key was passed on; a held key's watch ends with its evidence, at the next key or focus change, or after 10 seconds; in the console host a watch the first check leaves open re-reads the caret every 5 ms, and ends 50 milliseconds after the key when nothing moved ("The console host's caret poll" there).
 
 ## Limits
 
