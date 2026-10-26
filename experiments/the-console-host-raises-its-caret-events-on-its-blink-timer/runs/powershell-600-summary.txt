@@ -1,0 +1,13 @@
+# shell=powershell conhost_pid=18720 shell_pid=6780 window=0x7590318 window_pid=6780 interval=600
+idle 3001 ms: nothing
+presses 120, moved 120
+caret move seen by spin reads in 120/120: ms after key P50 0.95 P95 5.06 max 51.10 min 0.49
+EVENT_OBJECT_LOCATIONCHANGE obj=-8 (console): in 120/120 presses; first after key ms P50 257.3 P95 500.5 max 534.8 min 3.1; per press 1-1
+EVENT_CONSOLE_CARET obj=2 (console): in 120/120 presses; first after key ms P50 257.4 P95 500.6 max 534.8 min 3.1; per press 1-1
+EVENT_OBJECT_TEXTSELECTIONCHANGED obj=n (console): in 120/120 presses; first after key ms P50 257.5 P95 500.7 max 534.9 min 3.1; per press 1-1
+0x11b obj=n (console): in 120/120 presses; first after key ms P50 257.6 P95 501.0 max 534.9 min 3.2; per press 1-1
+0x121 obj=n (console): in 120/120 presses; first after key ms P50 257.6 P95 501.0 max 535.0 min 3.2; per press 1-1
+0x10a obj=n (console): in 120/120 presses; first after key ms P50 257.6 P95 501.0 max 535.0 min 3.2; per press 1-1
+0x10c obj=n (console): in 120/120 presses; first after key ms P50 257.7 P95 501.0 max 535.0 min 3.2; per press 1-1
+UIA TextSelectionChanged class=: in 120/120 presses; first after key ms P50 258.7 P95 501.4 max 535.8 min 3.8; per press 1-1
+EVENT_CONSOLE_CARET gaps ms, first 40: 9224 1906 523 4777 524 539 524 1065 524 539 524 523 538 1063 523 536 521 538 523 538 522 1059 539 521 540 522 538 522 537 1061 523 537 522 540 521 538 1060 522 538 522

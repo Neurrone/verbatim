@@ -1,0 +1,1682 @@
+# shell=cmd conhost_pid=20468 shell_pid=11728 window=0x7540318 window_pid=11728 interval=600
+## presses: index	at_us	key	before	after
+0	11519528.4	left	113,3	112,3	4.80
+1	12185617.1	left	112,3	111,3	54.14
+2	12813924.2	left	111,3	110,3	0.49
+3	13427521.3	left	110,3	109,3	0.46
+4	14061306.1	left	109,3	108,3	42.29
+5	14706479.3	left	108,3	107,3	0.90
+6	15375813.5	left	107,3	106,3	33.94
+7	16005334.0	left	106,3	105,3	15.09
+8	16608693.0	left	105,3	104,3	15.18
+9	17256292.4	left	104,3	103,3	0.69
+10	17919162.2	left	103,3	102,3	33.73
+11	18537386.4	left	102,3	101,3	0.47
+12	19140979.1	left	101,3	100,3	0.39
+13	19820039.4	left	100,3	99,3	4.16
+14	20424483.9	left	99,3	98,3	0.56
+15	21037796.6	left	98,3	97,3	0.50
+16	21667061.7	left	97,3	96,3	28.06
+17	22272479.8	left	96,3	95,3	4.02
+18	22872863.4	left	95,3	94,3	1.13
+19	23475451.1	left	94,3	93,3	0.43
+20	24080096.6	right	93,3	94,3	4.03
+21	24682695.8	right	94,3	95,3	1.61
+22	25298678.1	right	95,3	96,3	0.44
+23	25904099.2	right	96,3	97,3	0.45
+24	26535336.9	right	97,3	98,3	33.93
+25	27138775.5	right	98,3	99,3	0.75
+26	27786099.1	right	99,3	100,3	33.03
+27	28413775.3	right	100,3	101,3	19.99
+28	29032532.5	right	101,3	102,3	36.32
+29	29650287.8	right	102,3	103,3	0.48
+30	30254812.5	right	103,3	104,3	2.66
+31	30870525.0	right	104,3	105,3	0.66
+32	31508914.7	right	105,3	106,3	25.12
+33	32138286.5	right	106,3	107,3	23.97
+34	32766199.7	right	107,3	108,3	6.05
+35	33366863.3	right	108,3	109,3	0.88
+36	33967369.0	right	109,3	110,3	0.34
+37	34567657.5	right	110,3	111,3	0.62
+38	35169449.4	right	111,3	112,3	1.17
+39	35769758.2	right	112,3	113,3	0.84
+40	36370954.2	left	113,3	112,3	1.14
+41	36971125.5	left	112,3	111,3	0.30
+42	37571544.6	left	111,3	110,3	0.54
+43	38171843.7	left	110,3	109,3	0.60
+44	38772447.2	left	109,3	108,3	0.29
+45	39372664.9	left	108,3	107,3	0.35
+46	39972966.9	left	107,3	106,3	1.25
+47	40573542.8	left	106,3	105,3	0.56
+48	41173741.6	left	105,3	104,3	0.33
+49	41774305.7	left	104,3	103,3	0.52
+50	42374564.9	left	103,3	102,3	0.54
+51	42979837.9	left	102,3	101,3	1.03
+52	43580086.4	left	101,3	100,3	0.78
+53	44180436.7	left	100,3	99,3	0.40
+54	44780962.4	left	99,3	98,3	0.39
+55	45381137.7	left	98,3	97,3	0.66
+56	45981571.9	left	97,3	96,3	0.31
+57	46581977.9	left	96,3	95,3	0.37
+58	47182544.6	left	95,3	94,3	0.41
+59	47783047.0	left	94,3	93,3	0.77
+60	48383574.2	right	93,3	94,3	0.66
+61	48983852.4	right	94,3	95,3	0.82
+62	49584278.1	right	95,3	96,3	0.55
+63	50184900.8	right	96,3	97,3	0.41
+64	50785285.9	right	97,3	98,3	0.74
+65	51396031.0	right	98,3	99,3	18.16
+66	52011587.9	right	99,3	100,3	27.15
+67	52611989.1	right	100,3	101,3	2.37
+68	53220685.5	right	101,3	102,3	0.62
+69	53857527.0	right	102,3	103,3	7.16
+70	54458026.0	right	103,3	104,3	0.37
+71	55058502.8	right	104,3	105,3	0.39
+72	55658864.4	right	105,3	106,3	0.38
+73	56259385.2	right	106,3	107,3	0.35
+74	56859931.5	right	107,3	108,3	0.41
+75	57460140.6	right	108,3	109,3	0.73
+76	58060578.1	right	109,3	110,3	0.32
+77	58661180.6	right	110,3	111,3	0.34
+78	59261749.4	right	111,3	112,3	0.30
+79	59861968.4	right	112,3	113,3	0.53
+80	60462173.0	left	113,3	112,3	0.30
+81	61062307.6	left	112,3	111,3	0.34
+82	61662548.2	left	111,3	110,3	0.35
+83	62262735.4	left	110,3	109,3	0.33
+84	62865037.3	left	109,3	108,3	0.54
+85	63465546.7	left	108,3	107,3	0.30
+86	64065745.1	left	107,3	106,3	0.34
+87	64666348.5	left	106,3	105,3	0.31
+88	65266716.8	left	105,3	104,3	0.40
+89	65867345.2	left	104,3	103,3	0.81
+90	66467792.7	left	103,3	102,3	0.37
+91	67068230.9	left	102,3	101,3	0.90
+92	67668787.0	left	101,3	100,3	0.36
+93	68269051.2	left	100,3	99,3	0.31
+94	68869733.7	left	99,3	98,3	0.56
+95	69470340.5	left	98,3	97,3	0.42
+96	70070820.5	left	97,3	96,3	0.83
+97	70671838.2	left	96,3	95,3	0.63
+98	71272366.3	left	95,3	94,3	0.32
+99	71899493.6	left	94,3	93,3	6.19
+100	72535678.7	right	93,3	94,3	33.22
+101	73172153.4	right	94,3	95,3	18.08
+102	73774560.6	right	95,3	96,3	4.09
+103	74380709.4	right	96,3	97,3	4.10
+104	74983765.0	right	97,3	98,3	1.24
+105	75589415.2	right	98,3	99,3	0.58
+106	76189874.9	right	99,3	100,3	0.74
+107	76790668.4	right	100,3	101,3	0.30
+108	77390953.7	right	101,3	102,3	0.48
+109	77991439.8	right	102,3	103,3	0.80
+110	78592068.1	right	103,3	104,3	0.66
+111	79193937.7	right	104,3	105,3	0.92
+112	79794376.3	right	105,3	106,3	0.59
+113	80394979.6	right	106,3	107,3	0.36
+114	81004107.4	right	107,3	108,3	0.57
+115	81607220.2	right	108,3	109,3	3.62
+116	82212934.1	right	109,3	110,3	2.77
+117	82873794.3	right	110,3	111,3	24.96
+118	83493722.0	right	111,3	112,3	4.83
+119	84095815.8	right	112,3	113,3	1.96
+## records: at_us	source	...
+320832.3	win	0x8005	hwnd=0x7540318	obj=-4	child=0	thread=15248	console=true
+324084.2	win	0x8002	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+325532.5	win	0x4006	hwnd=0x7540318	obj=11728	child=0	thread=15248	console=true
+326422.4	win	0x4005	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+326560.5	win	0x8004	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+328076.5	win	0x800b	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+328418.0	win	0x800e	hwnd=0x7540318	obj=-5	child=0	thread=15248	console=true
+328823.6	win	0x800c	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+804620.2	win	0x4002	hwnd=0x7540318	obj=0	child=42	thread=15248	console=true
+840607.1	win	0x4002	hwnd=0x7540318	obj=65536	child=65582	thread=15248	console=true
+840949.6	win	0x4002	hwnd=0x7540318	obj=196608	child=196650	thread=15248	console=true
+870272.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+870308.6	win	0x4001	hwnd=0x7540318	obj=2	child=196651	thread=15248	console=true
+3638557.6	win	0x4001	hwnd=0x7540318	obj=1	child=917564	thread=15248	console=true
+3638582.3	win	0x0008	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+3638930.7	win	0x0009	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+3639049.4	win	0x800c	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+4589882.4	uiafocus	20005	class=Shell_TrayWnd	type=50033
+5600822.5	win	0x4006	hwnd=0x7540318	obj=21388	child=0	thread=15248	console=true
+5667918.3	win	0x8014	hwnd=0x7540318	obj=1	child=0	thread=15248	console=true
+5668004.8	win	0x011b	hwnd=0x7540318	obj=1	child=0	thread=15248	console=true
+5668025.1	win	0x0121	hwnd=0x7540318	obj=1	child=0	thread=15248	console=true
+5668043.2	win	0x010a	hwnd=0x7540318	obj=1	child=0	thread=15248	console=true
+5668058.1	win	0x010c	hwnd=0x7540318	obj=1	child=0	thread=15248	console=true
+5668308.0	win	0x8014	hwnd=0x7540318	obj=2	child=0	thread=15248	console=true
+5668332.7	win	0x011b	hwnd=0x7540318	obj=2	child=0	thread=15248	console=true
+5668351.5	win	0x0121	hwnd=0x7540318	obj=2	child=0	thread=15248	console=true
+5668354.3	win	0x010a	hwnd=0x7540318	obj=2	child=0	thread=15248	console=true
+5668357.0	win	0x010c	hwnd=0x7540318	obj=2	child=0	thread=15248	console=true
+5668463.1	win	0x4003	hwnd=0x7540318	obj=196651	child=458853	thread=15248	console=true
+5668499.6	win	0x800e	hwnd=0x7540318	obj=3	child=0	thread=15248	console=true
+5668529.3	win	0x0120	hwnd=0x7540318	obj=3	child=0	thread=15248	console=true
+5668548.2	win	0x011e	hwnd=0x7540318	obj=3	child=0	thread=15248	console=true
+5668569.0	win	0x011f	hwnd=0x7540318	obj=3	child=0	thread=15248	console=true
+5669672.6	win	0x800c	hwnd=0x7540318	obj=0	child=0	thread=15248	console=true
+5674964.4	win	0x4003	hwnd=0x7540318	obj=196652	child=458851	thread=15248	console=true
+5675019.4	win	0x800e	hwnd=0x7540318	obj=4	child=0	thread=15248	console=true
+5675048.2	win	0x0120	hwnd=0x7540318	obj=4	child=0	thread=15248	console=true
+5675065.4	win	0x011e	hwnd=0x7540318	obj=4	child=0	thread=15248	console=true
+5675068.4	win	0x011f	hwnd=0x7540318	obj=4	child=0	thread=15248	console=true
+5683261.9	win	0x4003	hwnd=0x7540318	obj=196653	child=458856	thread=15248	console=true
+5683314.0	win	0x800e	hwnd=0x7540318	obj=5	child=0	thread=15248	console=true
+5683337.7	win	0x0120	hwnd=0x7540318	obj=5	child=0	thread=15248	console=true
+5683354.8	win	0x011e	hwnd=0x7540318	obj=5	child=0	thread=15248	console=true
+5683357.6	win	0x011f	hwnd=0x7540318	obj=5	child=0	thread=15248	console=true
+5691630.7	win	0x4003	hwnd=0x7540318	obj=196654	child=458863	thread=15248	console=true
+5691680.4	win	0x800e	hwnd=0x7540318	obj=6	child=0	thread=15248	console=true
+5691703.0	win	0x0120	hwnd=0x7540318	obj=6	child=0	thread=15248	console=true
+5691719.4	win	0x011e	hwnd=0x7540318	obj=6	child=0	thread=15248	console=true
+5691722.5	win	0x011f	hwnd=0x7540318	obj=6	child=0	thread=15248	console=true
+5700157.0	win	0x4003	hwnd=0x7540318	obj=196655	child=458784	thread=15248	console=true
+5700225.2	win	0x800e	hwnd=0x7540318	obj=7	child=0	thread=15248	console=true
+5700256.1	win	0x0120	hwnd=0x7540318	obj=7	child=0	thread=15248	console=true
+5700279.1	win	0x011e	hwnd=0x7540318	obj=7	child=0	thread=15248	console=true
+5700282.0	win	0x011f	hwnd=0x7540318	obj=7	child=0	thread=15248	console=true
+5708469.5	win	0x4003	hwnd=0x7540318	obj=196656	child=458868	thread=15248	console=true
+5708517.0	win	0x800e	hwnd=0x7540318	obj=8	child=0	thread=15248	console=true
+5708536.7	win	0x0120	hwnd=0x7540318	obj=8	child=0	thread=15248	console=true
+5708551.5	win	0x011e	hwnd=0x7540318	obj=8	child=0	thread=15248	console=true
+5708554.6	win	0x011f	hwnd=0x7540318	obj=8	child=0	thread=15248	console=true
+5716866.0	win	0x4003	hwnd=0x7540318	obj=196657	child=458856	thread=15248	console=true
+5716923.7	win	0x800e	hwnd=0x7540318	obj=9	child=0	thread=15248	console=true
+5716929.6	win	0x0120	hwnd=0x7540318	obj=9	child=0	thread=15248	console=true
+5716946.6	win	0x011e	hwnd=0x7540318	obj=9	child=0	thread=15248	console=true
+5716968.7	win	0x011f	hwnd=0x7540318	obj=9	child=0	thread=15248	console=true
+5717890.5	uia	20014	class=	type=50030
+5718701.7	uia	20014	class=	type=50030
+5719478.3	uia	20015	class=	type=50030
+5720228.6	uia	20015	class=	type=50030
+5720968.0	uia	20015	class=	type=50030
+5721749.6	uia	20015	class=	type=50030
+5722489.6	uia	20015	class=	type=50030
+5723217.0	uia	20015	class=	type=50030
+5723911.8	uia	20015	class=	type=50030
+5737912.1	win	0x4003	hwnd=0x7540318	obj=196658	child=458853	thread=15248	console=true
+5737967.2	win	0x800e	hwnd=0x7540318	obj=10	child=0	thread=15248	console=true
+5737988.0	win	0x0120	hwnd=0x7540318	obj=10	child=0	thread=15248	console=true
+5738010.6	win	0x011e	hwnd=0x7540318	obj=10	child=0	thread=15248	console=true
+5738014.3	win	0x011f	hwnd=0x7540318	obj=10	child=0	thread=15248	console=true
+5738914.0	uia	20015	class=	type=50030
+5766299.5	win	0x4003	hwnd=0x7540318	obj=196659	child=458784	thread=15248	console=true
+5766344.5	win	0x800e	hwnd=0x7540318	obj=11	child=0	thread=15248	console=true
+5766365.9	win	0x0120	hwnd=0x7540318	obj=11	child=0	thread=15248	console=true
+5766385.2	win	0x011e	hwnd=0x7540318	obj=11	child=0	thread=15248	console=true
+5766397.9	win	0x011f	hwnd=0x7540318	obj=11	child=0	thread=15248	console=true
+5767467.2	uia	20015	class=	type=50030
+5799506.4	win	0x4003	hwnd=0x7540318	obj=196660	child=458865	thread=15248	console=true
+5799556.6	win	0x800e	hwnd=0x7540318	obj=12	child=0	thread=15248	console=true
+5799577.3	win	0x0120	hwnd=0x7540318	obj=12	child=0	thread=15248	console=true
+5799593.0	win	0x011e	hwnd=0x7540318	obj=12	child=0	thread=15248	console=true
+5799595.5	win	0x011f	hwnd=0x7540318	obj=12	child=0	thread=15248	console=true
+5800551.1	uia	20015	class=	type=50030
+5831859.2	win	0x4003	hwnd=0x7540318	obj=196661	child=458869	thread=15248	console=true
+5831883.7	win	0x800e	hwnd=0x7540318	obj=13	child=0	thread=15248	console=true
+5831907.0	win	0x0120	hwnd=0x7540318	obj=13	child=0	thread=15248	console=true
+5831927.5	win	0x011e	hwnd=0x7540318	obj=13	child=0	thread=15248	console=true
+5831950.6	win	0x011f	hwnd=0x7540318	obj=13	child=0	thread=15248	console=true
+5833050.2	uia	20015	class=	type=50030
+5868363.6	win	0x4003	hwnd=0x7540318	obj=196662	child=458857	thread=15248	console=true
+5868409.5	win	0x800e	hwnd=0x7540318	obj=14	child=0	thread=15248	console=true
+5868437.2	win	0x0120	hwnd=0x7540318	obj=14	child=0	thread=15248	console=true
+5868458.5	win	0x011e	hwnd=0x7540318	obj=14	child=0	thread=15248	console=true
+5868461.6	win	0x011f	hwnd=0x7540318	obj=14	child=0	thread=15248	console=true
+5869507.1	uia	20015	class=	type=50030
+5876793.0	win	0x4003	hwnd=0x7540318	obj=196663	child=458851	thread=15248	console=true
+5876826.2	win	0x800e	hwnd=0x7540318	obj=15	child=0	thread=15248	console=true
+5876861.3	win	0x0120	hwnd=0x7540318	obj=15	child=0	thread=15248	console=true
+5876869.9	win	0x011e	hwnd=0x7540318	obj=15	child=0	thread=15248	console=true
+5876894.6	win	0x011f	hwnd=0x7540318	obj=15	child=0	thread=15248	console=true
+5877737.2	uia	20015	class=	type=50030
+5885035.2	win	0x4003	hwnd=0x7540318	obj=196664	child=458859	thread=15248	console=true
+5885074.3	win	0x800e	hwnd=0x7540318	obj=16	child=0	thread=15248	console=true
+5885095.5	win	0x0120	hwnd=0x7540318	obj=16	child=0	thread=15248	console=true
+5885112.8	win	0x011e	hwnd=0x7540318	obj=16	child=0	thread=15248	console=true
+5885115.9	win	0x011f	hwnd=0x7540318	obj=16	child=0	thread=15248	console=true
+5886034.3	uia	20015	class=	type=50030
+5893451.0	win	0x4003	hwnd=0x7540318	obj=196665	child=458784	thread=15248	console=true
+5893509.9	win	0x800e	hwnd=0x7540318	obj=17	child=0	thread=15248	console=true
+5893528.9	win	0x0120	hwnd=0x7540318	obj=17	child=0	thread=15248	console=true
+5893532.8	win	0x011e	hwnd=0x7540318	obj=17	child=0	thread=15248	console=true
+5893535.3	win	0x011f	hwnd=0x7540318	obj=17	child=0	thread=15248	console=true
+5894425.7	uia	20015	class=	type=50030
+5902491.2	win	0x4003	hwnd=0x7540318	obj=196666	child=458850	thread=15248	console=true
+5902546.6	win	0x800e	hwnd=0x7540318	obj=18	child=0	thread=15248	console=true
+5902562.1	win	0x0120	hwnd=0x7540318	obj=18	child=0	thread=15248	console=true
+5902566.1	win	0x011e	hwnd=0x7540318	obj=18	child=0	thread=15248	console=true
+5902568.6	win	0x011f	hwnd=0x7540318	obj=18	child=0	thread=15248	console=true
+5903931.0	uia	20015	class=	type=50030
+5936411.6	win	0x4003	hwnd=0x7540318	obj=196667	child=458866	thread=15248	console=true
+5936454.8	win	0x800e	hwnd=0x7540318	obj=19	child=0	thread=15248	console=true
+5936474.0	win	0x0120	hwnd=0x7540318	obj=19	child=0	thread=15248	console=true
+5936477.1	win	0x011e	hwnd=0x7540318	obj=19	child=0	thread=15248	console=true
+5936479.9	win	0x011f	hwnd=0x7540318	obj=19	child=0	thread=15248	console=true
+5937499.6	uia	20015	class=	type=50030
+5976315.7	win	0x4003	hwnd=0x7540318	obj=196668	child=458863	thread=15248	console=true
+5976364.5	win	0x800e	hwnd=0x7540318	obj=20	child=0	thread=15248	console=true
+5976384.5	win	0x0120	hwnd=0x7540318	obj=20	child=0	thread=15248	console=true
+5976400.8	win	0x011e	hwnd=0x7540318	obj=20	child=0	thread=15248	console=true
+5976403.6	win	0x011f	hwnd=0x7540318	obj=20	child=0	thread=15248	console=true
+5977374.0	uia	20015	class=	type=50030
+5984909.8	win	0x4003	hwnd=0x7540318	obj=196669	child=458871	thread=15248	console=true
+5985002.0	win	0x800e	hwnd=0x7540318	obj=21	child=0	thread=15248	console=true
+5985045.8	win	0x0120	hwnd=0x7540318	obj=21	child=0	thread=15248	console=true
+5985050.2	win	0x011e	hwnd=0x7540318	obj=21	child=0	thread=15248	console=true
+5985053.4	win	0x011f	hwnd=0x7540318	obj=21	child=0	thread=15248	console=true
+5985928.2	uia	20015	class=	type=50030
+5993224.1	win	0x4003	hwnd=0x7540318	obj=196670	child=458862	thread=15248	console=true
+5993282.5	win	0x800e	hwnd=0x7540318	obj=22	child=0	thread=15248	console=true
+5993308.3	win	0x0120	hwnd=0x7540318	obj=22	child=0	thread=15248	console=true
+5993326.2	win	0x011e	hwnd=0x7540318	obj=22	child=0	thread=15248	console=true
+5993329.4	win	0x011f	hwnd=0x7540318	obj=22	child=0	thread=15248	console=true
+5994208.9	uia	20015	class=	type=50030
+6009815.9	win	0x4003	hwnd=0x7540318	obj=196671	child=458784	thread=15248	console=true
+6009864.7	win	0x800e	hwnd=0x7540318	obj=23	child=0	thread=15248	console=true
+6009887.6	win	0x0120	hwnd=0x7540318	obj=23	child=0	thread=15248	console=true
+6009911.0	win	0x011e	hwnd=0x7540318	obj=23	child=0	thread=15248	console=true
+6009914.5	win	0x011f	hwnd=0x7540318	obj=23	child=0	thread=15248	console=true
+6010748.7	uia	20015	class=	type=50030
+6023776.7	win	0x4003	hwnd=0x7540318	obj=196672	child=458854	thread=15248	console=true
+6023837.4	win	0x800e	hwnd=0x7540318	obj=24	child=0	thread=15248	console=true
+6023861.1	win	0x0120	hwnd=0x7540318	obj=24	child=0	thread=15248	console=true
+6023885.3	win	0x011e	hwnd=0x7540318	obj=24	child=0	thread=15248	console=true
+6023888.9	win	0x011f	hwnd=0x7540318	obj=24	child=0	thread=15248	console=true
+6024728.9	uia	20015	class=	type=50030
+6039840.0	win	0x4003	hwnd=0x7540318	obj=196673	child=458863	thread=15248	console=true
+6039891.9	win	0x800e	hwnd=0x7540318	obj=25	child=0	thread=15248	console=true
+6039920.7	win	0x0120	hwnd=0x7540318	obj=25	child=0	thread=15248	console=true
+6039947.8	win	0x011e	hwnd=0x7540318	obj=25	child=0	thread=15248	console=true
+6039952.2	win	0x011f	hwnd=0x7540318	obj=25	child=0	thread=15248	console=true
+6040781.4	uia	20015	class=	type=50030
+6069168.5	win	0x4003	hwnd=0x7540318	obj=196674	child=458872	thread=15248	console=true
+6069221.2	win	0x800e	hwnd=0x7540318	obj=26	child=0	thread=15248	console=true
+6069239.6	win	0x0120	hwnd=0x7540318	obj=26	child=0	thread=15248	console=true
+6069253.6	win	0x011e	hwnd=0x7540318	obj=26	child=0	thread=15248	console=true
+6069256.3	win	0x011f	hwnd=0x7540318	obj=26	child=0	thread=15248	console=true
+6070305.8	uia	20015	class=	type=50030
+6092801.4	win	0x4003	hwnd=0x7540318	obj=196675	child=458784	thread=15248	console=true
+6092845.7	win	0x800e	hwnd=0x7540318	obj=27	child=0	thread=15248	console=true
+6092868.3	win	0x0120	hwnd=0x7540318	obj=27	child=0	thread=15248	console=true
+6092880.6	win	0x011e	hwnd=0x7540318	obj=27	child=0	thread=15248	console=true
+6092883.6	win	0x011f	hwnd=0x7540318	obj=27	child=0	thread=15248	console=true
+6093717.1	uia	20015	class=	type=50030
+6103330.4	win	0x4003	hwnd=0x7540318	obj=196676	child=458858	thread=15248	console=true
+6103388.2	win	0x800e	hwnd=0x7540318	obj=28	child=0	thread=15248	console=true
+6103410.2	win	0x0120	hwnd=0x7540318	obj=28	child=0	thread=15248	console=true
+6103426.2	win	0x011e	hwnd=0x7540318	obj=28	child=0	thread=15248	console=true
+6103429.2	win	0x011f	hwnd=0x7540318	obj=28	child=0	thread=15248	console=true
+6104246.1	uia	20015	class=	type=50030
+6112002.1	win	0x4003	hwnd=0x7540318	obj=196677	child=458869	thread=15248	console=true
+6112052.9	win	0x800e	hwnd=0x7540318	obj=29	child=0	thread=15248	console=true
+6112074.4	win	0x0120	hwnd=0x7540318	obj=29	child=0	thread=15248	console=true
+6112093.4	win	0x011e	hwnd=0x7540318	obj=29	child=0	thread=15248	console=true
+6112096.7	win	0x011f	hwnd=0x7540318	obj=29	child=0	thread=15248	console=true
+6113051.2	uia	20015	class=	type=50030
+6130218.1	win	0x4003	hwnd=0x7540318	obj=196678	child=458861	thread=15248	console=true
+6130277.1	win	0x800e	hwnd=0x7540318	obj=30	child=0	thread=15248	console=true
+6130297.9	win	0x0120	hwnd=0x7540318	obj=30	child=0	thread=15248	console=true
+6130343.9	win	0x011e	hwnd=0x7540318	obj=30	child=0	thread=15248	console=true
+6130373.8	win	0x011f	hwnd=0x7540318	obj=30	child=0	thread=15248	console=true
+6131345.6	uia	20015	class=	type=50030
+6141915.6	win	0x4003	hwnd=0x7540318	obj=196679	child=458864	thread=15248	console=true
+6141979.9	win	0x800e	hwnd=0x7540318	obj=31	child=0	thread=15248	console=true
+6142003.3	win	0x0120	hwnd=0x7540318	obj=31	child=0	thread=15248	console=true
+6142019.6	win	0x011e	hwnd=0x7540318	obj=31	child=0	thread=15248	console=true
+6142022.8	win	0x011f	hwnd=0x7540318	obj=31	child=0	thread=15248	console=true
+6142832.4	uia	20015	class=	type=50030
+6156060.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+6156119.9	win	0x4001	hwnd=0x7540318	obj=2	child=196680	thread=15248	console=true
+6156193.3	win	0x8014	hwnd=0x7540318	obj=32	child=0	thread=15248	console=true
+6156228.5	win	0x011b	hwnd=0x7540318	obj=32	child=0	thread=15248	console=true
+6156244.6	win	0x0121	hwnd=0x7540318	obj=32	child=0	thread=15248	console=true
+6156247.6	win	0x010a	hwnd=0x7540318	obj=32	child=0	thread=15248	console=true
+6156249.8	win	0x010c	hwnd=0x7540318	obj=32	child=0	thread=15248	console=true
+6157047.7	uia	20014	class=	type=50030
+6174879.6	win	0x4003	hwnd=0x7540318	obj=196680	child=458867	thread=15248	console=true
+6174917.3	win	0x800e	hwnd=0x7540318	obj=33	child=0	thread=15248	console=true
+6174921.0	win	0x0120	hwnd=0x7540318	obj=33	child=0	thread=15248	console=true
+6174931.5	win	0x011e	hwnd=0x7540318	obj=33	child=0	thread=15248	console=true
+6174961.6	win	0x011f	hwnd=0x7540318	obj=33	child=0	thread=15248	console=true
+6175771.5	uia	20015	class=	type=50030
+6210602.4	win	0x4003	hwnd=0x7540318	obj=196681	child=458784	thread=15248	console=true
+6210644.9	win	0x800e	hwnd=0x7540318	obj=34	child=0	thread=15248	console=true
+6210662.4	win	0x0120	hwnd=0x7540318	obj=34	child=0	thread=15248	console=true
+6210677.2	win	0x011e	hwnd=0x7540318	obj=34	child=0	thread=15248	console=true
+6210679.9	win	0x011f	hwnd=0x7540318	obj=34	child=0	thread=15248	console=true
+6211608.3	uia	20015	class=	type=50030
+6229927.5	win	0x4003	hwnd=0x7540318	obj=196682	child=458863	thread=15248	console=true
+6229981.9	win	0x800e	hwnd=0x7540318	obj=35	child=0	thread=15248	console=true
+6230001.1	win	0x0120	hwnd=0x7540318	obj=35	child=0	thread=15248	console=true
+6230014.9	win	0x011e	hwnd=0x7540318	obj=35	child=0	thread=15248	console=true
+6230018.0	win	0x011f	hwnd=0x7540318	obj=35	child=0	thread=15248	console=true
+6230837.9	uia	20015	class=	type=50030
+6261441.5	win	0x4003	hwnd=0x7540318	obj=196683	child=458870	thread=15248	console=true
+6261490.5	win	0x800e	hwnd=0x7540318	obj=36	child=0	thread=15248	console=true
+6261508.5	win	0x0120	hwnd=0x7540318	obj=36	child=0	thread=15248	console=true
+6261521.8	win	0x011e	hwnd=0x7540318	obj=36	child=0	thread=15248	console=true
+6261524.4	win	0x011f	hwnd=0x7540318	obj=36	child=0	thread=15248	console=true
+6262388.3	uia	20015	class=	type=50030
+6269779.1	win	0x4003	hwnd=0x7540318	obj=196684	child=458853	thread=15248	console=true
+6269838.8	win	0x800e	hwnd=0x7540318	obj=37	child=0	thread=15248	console=true
+6269875.0	win	0x0120	hwnd=0x7540318	obj=37	child=0	thread=15248	console=true
+6269893.5	win	0x011e	hwnd=0x7540318	obj=37	child=0	thread=15248	console=true
+6269896.5	win	0x011f	hwnd=0x7540318	obj=37	child=0	thread=15248	console=true
+6271206.5	uia	20015	class=	type=50030
+6278007.5	win	0x4003	hwnd=0x7540318	obj=196685	child=458866	thread=15248	console=true
+6278088.5	win	0x800e	hwnd=0x7540318	obj=38	child=0	thread=15248	console=true
+6278111.2	win	0x0120	hwnd=0x7540318	obj=38	child=0	thread=15248	console=true
+6278133.6	win	0x011e	hwnd=0x7540318	obj=38	child=0	thread=15248	console=true
+6278136.2	win	0x011f	hwnd=0x7540318	obj=38	child=0	thread=15248	console=true
+6279329.0	uia	20015	class=	type=50030
+6338134.3	win	0x4003	hwnd=0x7540318	obj=196686	child=458784	thread=15248	console=true
+6338186.4	win	0x800e	hwnd=0x7540318	obj=39	child=0	thread=15248	console=true
+6338214.2	win	0x0120	hwnd=0x7540318	obj=39	child=0	thread=15248	console=true
+6338238.6	win	0x011e	hwnd=0x7540318	obj=39	child=0	thread=15248	console=true
+6338241.6	win	0x011f	hwnd=0x7540318	obj=39	child=0	thread=15248	console=true
+6339386.2	uia	20015	class=	type=50030
+6379164.1	win	0x4003	hwnd=0x7540318	obj=196687	child=458868	thread=15248	console=true
+6379212.1	win	0x800e	hwnd=0x7540318	obj=40	child=0	thread=15248	console=true
+6379231.2	win	0x0120	hwnd=0x7540318	obj=40	child=0	thread=15248	console=true
+6379251.7	win	0x011e	hwnd=0x7540318	obj=40	child=0	thread=15248	console=true
+6379254.6	win	0x011f	hwnd=0x7540318	obj=40	child=0	thread=15248	console=true
+6380225.0	uia	20015	class=	type=50030
+6411358.3	win	0x4003	hwnd=0x7540318	obj=196688	child=458856	thread=15248	console=true
+6411413.8	win	0x800e	hwnd=0x7540318	obj=41	child=0	thread=15248	console=true
+6411438.4	win	0x0120	hwnd=0x7540318	obj=41	child=0	thread=15248	console=true
+6411457.0	win	0x011e	hwnd=0x7540318	obj=41	child=0	thread=15248	console=true
+6411459.7	win	0x011f	hwnd=0x7540318	obj=41	child=0	thread=15248	console=true
+6412549.2	uia	20015	class=	type=50030
+6449307.7	win	0x4003	hwnd=0x7540318	obj=196689	child=458853	thread=15248	console=true
+6449358.9	win	0x800e	hwnd=0x7540318	obj=42	child=0	thread=15248	console=true
+6449400.3	win	0x0120	hwnd=0x7540318	obj=42	child=0	thread=15248	console=true
+6449422.8	win	0x011e	hwnd=0x7540318	obj=42	child=0	thread=15248	console=true
+6449426.6	win	0x011f	hwnd=0x7540318	obj=42	child=0	thread=15248	console=true
+6450733.1	uia	20015	class=	type=50030
+6463966.6	win	0x4003	hwnd=0x7540318	obj=196690	child=458784	thread=15248	console=true
+6464021.6	win	0x800e	hwnd=0x7540318	obj=43	child=0	thread=15248	console=true
+6464043.7	win	0x0120	hwnd=0x7540318	obj=43	child=0	thread=15248	console=true
+6464058.2	win	0x011e	hwnd=0x7540318	obj=43	child=0	thread=15248	console=true
+6464061.1	win	0x011f	hwnd=0x7540318	obj=43	child=0	thread=15248	console=true
+6464888.9	uia	20015	class=	type=50030
+6477481.0	win	0x4003	hwnd=0x7540318	obj=196691	child=458860	thread=15248	console=true
+6477530.4	win	0x800e	hwnd=0x7540318	obj=44	child=0	thread=15248	console=true
+6477567.4	win	0x0120	hwnd=0x7540318	obj=44	child=0	thread=15248	console=true
+6477590.9	win	0x011e	hwnd=0x7540318	obj=44	child=0	thread=15248	console=true
+6477607.5	win	0x011f	hwnd=0x7540318	obj=44	child=0	thread=15248	console=true
+6478633.5	uia	20015	class=	type=50030
+6489417.9	win	0x4003	hwnd=0x7540318	obj=196692	child=458849	thread=15248	console=true
+6489449.1	win	0x800e	hwnd=0x7540318	obj=45	child=0	thread=15248	console=true
+6489473.6	win	0x0120	hwnd=0x7540318	obj=45	child=0	thread=15248	console=true
+6489495.5	win	0x011e	hwnd=0x7540318	obj=45	child=0	thread=15248	console=true
+6489515.4	win	0x011f	hwnd=0x7540318	obj=45	child=0	thread=15248	console=true
+6490685.2	uia	20015	class=	type=50030
+6499072.4	win	0x4003	hwnd=0x7540318	obj=196693	child=458874	thread=15248	console=true
+6499136.6	win	0x800e	hwnd=0x7540318	obj=46	child=0	thread=15248	console=true
+6499160.9	win	0x0120	hwnd=0x7540318	obj=46	child=0	thread=15248	console=true
+6499178.4	win	0x011e	hwnd=0x7540318	obj=46	child=0	thread=15248	console=true
+6499181.2	win	0x011f	hwnd=0x7540318	obj=46	child=0	thread=15248	console=true
+6500221.9	uia	20015	class=	type=50030
+6517072.3	win	0x4003	hwnd=0x7540318	obj=196694	child=458873	thread=15248	console=true
+6517103.2	win	0x800e	hwnd=0x7540318	obj=47	child=0	thread=15248	console=true
+6517123.4	win	0x0120	hwnd=0x7540318	obj=47	child=0	thread=15248	console=true
+6517140.0	win	0x011e	hwnd=0x7540318	obj=47	child=0	thread=15248	console=true
+6517153.4	win	0x011f	hwnd=0x7540318	obj=47	child=0	thread=15248	console=true
+6518004.7	uia	20015	class=	type=50030
+6526982.1	win	0x4003	hwnd=0x7540318	obj=196695	child=458784	thread=15248	console=true
+6527028.0	win	0x800e	hwnd=0x7540318	obj=48	child=0	thread=15248	console=true
+6527046.2	win	0x0120	hwnd=0x7540318	obj=48	child=0	thread=15248	console=true
+6527059.3	win	0x011e	hwnd=0x7540318	obj=48	child=0	thread=15248	console=true
+6527062.2	win	0x011f	hwnd=0x7540318	obj=48	child=0	thread=15248	console=true
+6527851.8	uia	20015	class=	type=50030
+6536481.3	win	0x4003	hwnd=0x7540318	obj=196696	child=458852	thread=15248	console=true
+6536530.9	win	0x800e	hwnd=0x7540318	obj=49	child=0	thread=15248	console=true
+6536556.1	win	0x0120	hwnd=0x7540318	obj=49	child=0	thread=15248	console=true
+6536573.6	win	0x011e	hwnd=0x7540318	obj=49	child=0	thread=15248	console=true
+6536576.8	win	0x011f	hwnd=0x7540318	obj=49	child=0	thread=15248	console=true
+6537367.1	uia	20015	class=	type=50030
+6545090.8	win	0x4003	hwnd=0x7540318	obj=196697	child=458863	thread=15248	console=true
+6545139.7	win	0x800e	hwnd=0x7540318	obj=50	child=0	thread=15248	console=true
+6545157.5	win	0x0120	hwnd=0x7540318	obj=50	child=0	thread=15248	console=true
+6545170.7	win	0x011e	hwnd=0x7540318	obj=50	child=0	thread=15248	console=true
+6545173.4	win	0x011f	hwnd=0x7540318	obj=50	child=0	thread=15248	console=true
+6546168.9	uia	20015	class=	type=50030
+6555176.4	win	0x4003	hwnd=0x7540318	obj=196698	child=458855	thread=15248	console=true
+6555228.0	win	0x800e	hwnd=0x7540318	obj=51	child=0	thread=15248	console=true
+6555250.8	win	0x0120	hwnd=0x7540318	obj=51	child=0	thread=15248	console=true
+6555266.8	win	0x011e	hwnd=0x7540318	obj=51	child=0	thread=15248	console=true
+6555269.6	win	0x011f	hwnd=0x7540318	obj=51	child=0	thread=15248	console=true
+6556168.5	uia	20015	class=	type=50030
+6564021.6	win	0x4003	hwnd=0x7540318	obj=196699	child=458784	thread=15248	console=true
+6564071.4	win	0x800e	hwnd=0x7540318	obj=52	child=0	thread=15248	console=true
+6564095.3	win	0x0120	hwnd=0x7540318	obj=52	child=0	thread=15248	console=true
+6564112.1	win	0x011e	hwnd=0x7540318	obj=52	child=0	thread=15248	console=true
+6564115.1	win	0x011f	hwnd=0x7540318	obj=52	child=0	thread=15248	console=true
+6564934.7	uia	20015	class=	type=50030
+6574261.2	win	0x4003	hwnd=0x7540318	obj=196700	child=458800	thread=15248	console=true
+6574306.6	win	0x800e	hwnd=0x7540318	obj=53	child=0	thread=15248	console=true
+6574323.7	win	0x0120	hwnd=0x7540318	obj=53	child=0	thread=15248	console=true
+6574342.4	win	0x011e	hwnd=0x7540318	obj=53	child=0	thread=15248	console=true
+6574347.1	win	0x011f	hwnd=0x7540318	obj=53	child=0	thread=15248	console=true
+6575113.6	uia	20015	class=	type=50030
+6584215.8	win	0x4003	hwnd=0x7540318	obj=196701	child=458801	thread=15248	console=true
+6584267.8	win	0x800e	hwnd=0x7540318	obj=54	child=0	thread=15248	console=true
+6584287.4	win	0x0120	hwnd=0x7540318	obj=54	child=0	thread=15248	console=true
+6584302.0	win	0x011e	hwnd=0x7540318	obj=54	child=0	thread=15248	console=true
+6584304.4	win	0x011f	hwnd=0x7540318	obj=54	child=0	thread=15248	console=true
+6585350.6	uia	20015	class=	type=50030
+6592608.2	win	0x4003	hwnd=0x7540318	obj=196702	child=458802	thread=15248	console=true
+6592643.2	win	0x800e	hwnd=0x7540318	obj=55	child=0	thread=15248	console=true
+6592665.4	win	0x0120	hwnd=0x7540318	obj=55	child=0	thread=15248	console=true
+6592685.3	win	0x011e	hwnd=0x7540318	obj=55	child=0	thread=15248	console=true
+6592720.9	win	0x011f	hwnd=0x7540318	obj=55	child=0	thread=15248	console=true
+6593564.1	uia	20015	class=	type=50030
+6602333.5	win	0x4003	hwnd=0x7540318	obj=196703	child=458803	thread=15248	console=true
+6602374.5	win	0x800e	hwnd=0x7540318	obj=56	child=0	thread=15248	console=true
+6602406.3	win	0x0120	hwnd=0x7540318	obj=56	child=0	thread=15248	console=true
+6602433.5	win	0x011e	hwnd=0x7540318	obj=56	child=0	thread=15248	console=true
+6602456.6	win	0x011f	hwnd=0x7540318	obj=56	child=0	thread=15248	console=true
+6603294.5	uia	20015	class=	type=50030
+6611740.8	win	0x4003	hwnd=0x7540318	obj=196704	child=458804	thread=15248	console=true
+6611775.9	win	0x800e	hwnd=0x7540318	obj=57	child=0	thread=15248	console=true
+6611792.3	win	0x0120	hwnd=0x7540318	obj=57	child=0	thread=15248	console=true
+6611796.6	win	0x011e	hwnd=0x7540318	obj=57	child=0	thread=15248	console=true
+6611828.4	win	0x011f	hwnd=0x7540318	obj=57	child=0	thread=15248	console=true
+6612677.7	uia	20015	class=	type=50030
+6624732.5	win	0x4003	hwnd=0x7540318	obj=196705	child=458805	thread=15248	console=true
+6624777.3	win	0x800e	hwnd=0x7540318	obj=58	child=0	thread=15248	console=true
+6624798.7	win	0x0120	hwnd=0x7540318	obj=58	child=0	thread=15248	console=true
+6624813.5	win	0x011e	hwnd=0x7540318	obj=58	child=0	thread=15248	console=true
+6624816.8	win	0x011f	hwnd=0x7540318	obj=58	child=0	thread=15248	console=true
+6625771.6	uia	20015	class=	type=50030
+6633511.6	win	0x4003	hwnd=0x7540318	obj=196706	child=458806	thread=15248	console=true
+6633572.5	win	0x800e	hwnd=0x7540318	obj=59	child=0	thread=15248	console=true
+6633592.5	win	0x0120	hwnd=0x7540318	obj=59	child=0	thread=15248	console=true
+6633607.7	win	0x011e	hwnd=0x7540318	obj=59	child=0	thread=15248	console=true
+6633610.4	win	0x011f	hwnd=0x7540318	obj=59	child=0	thread=15248	console=true
+6634497.6	uia	20015	class=	type=50030
+6642130.1	win	0x4003	hwnd=0x7540318	obj=196707	child=458807	thread=15248	console=true
+6642191.0	win	0x800e	hwnd=0x7540318	obj=60	child=0	thread=15248	console=true
+6642217.1	win	0x0120	hwnd=0x7540318	obj=60	child=0	thread=15248	console=true
+6642260.4	win	0x011e	hwnd=0x7540318	obj=60	child=0	thread=15248	console=true
+6642263.5	win	0x011f	hwnd=0x7540318	obj=60	child=0	thread=15248	console=true
+6643282.6	uia	20015	class=	type=50030
+6650776.1	win	0x4003	hwnd=0x7540318	obj=196708	child=458808	thread=15248	console=true
+6650833.3	win	0x800e	hwnd=0x7540318	obj=61	child=0	thread=15248	console=true
+6650856.4	win	0x0120	hwnd=0x7540318	obj=61	child=0	thread=15248	console=true
+6650873.3	win	0x011e	hwnd=0x7540318	obj=61	child=0	thread=15248	console=true
+6650876.1	win	0x011f	hwnd=0x7540318	obj=61	child=0	thread=15248	console=true
+6651772.7	uia	20015	class=	type=50030
+6660580.2	win	0x4003	hwnd=0x7540318	obj=196709	child=458809	thread=15248	console=true
+6660627.2	win	0x800e	hwnd=0x7540318	obj=62	child=0	thread=15248	console=true
+6660644.8	win	0x0120	hwnd=0x7540318	obj=62	child=0	thread=15248	console=true
+6660658.3	win	0x011e	hwnd=0x7540318	obj=62	child=0	thread=15248	console=true
+6660660.6	win	0x011f	hwnd=0x7540318	obj=62	child=0	thread=15248	console=true
+6661631.3	uia	20015	class=	type=50030
+6673880.0	win	0x4003	hwnd=0x7540318	obj=196710	child=458784	thread=15248	console=true
+6673991.7	win	0x800e	hwnd=0x7540318	obj=63	child=0	thread=15248	console=true
+6674030.5	win	0x0120	hwnd=0x7540318	obj=63	child=0	thread=15248	console=true
+6674048.4	win	0x011e	hwnd=0x7540318	obj=63	child=0	thread=15248	console=true
+6674073.3	win	0x011f	hwnd=0x7540318	obj=63	child=0	thread=15248	console=true
+6675236.7	uia	20015	class=	type=50030
+6692442.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+6692549.4	win	0x4001	hwnd=0x7540318	obj=2	child=196711	thread=15248	console=true
+6692629.9	win	0x8014	hwnd=0x7540318	obj=64	child=0	thread=15248	console=true
+6692668.9	win	0x011b	hwnd=0x7540318	obj=64	child=0	thread=15248	console=true
+6692671.4	win	0x0121	hwnd=0x7540318	obj=64	child=0	thread=15248	console=true
+6692673.9	win	0x010a	hwnd=0x7540318	obj=64	child=0	thread=15248	console=true
+6692676.3	win	0x010c	hwnd=0x7540318	obj=64	child=0	thread=15248	console=true
+6693602.8	uia	20014	class=	type=50030
+6695769.6	win	0x4003	hwnd=0x7540318	obj=196711	child=458849	thread=15248	console=true
+6695823.1	win	0x800e	hwnd=0x7540318	obj=65	child=0	thread=15248	console=true
+6695840.9	win	0x0120	hwnd=0x7540318	obj=65	child=0	thread=15248	console=true
+6695845.0	win	0x011e	hwnd=0x7540318	obj=65	child=0	thread=15248	console=true
+6695847.9	win	0x011f	hwnd=0x7540318	obj=65	child=0	thread=15248	console=true
+6696743.3	uia	20015	class=	type=50030
+6723996.7	win	0x4003	hwnd=0x7540318	obj=196712	child=458850	thread=15248	console=true
+6724052.0	win	0x800e	hwnd=0x7540318	obj=66	child=0	thread=15248	console=true
+6724082.3	win	0x0120	hwnd=0x7540318	obj=66	child=0	thread=15248	console=true
+6724097.4	win	0x011e	hwnd=0x7540318	obj=66	child=0	thread=15248	console=true
+6724100.3	win	0x011f	hwnd=0x7540318	obj=66	child=0	thread=15248	console=true
+6725186.6	uia	20015	class=	type=50030
+6746105.1	win	0x4003	hwnd=0x7540318	obj=196713	child=458851	thread=15248	console=true
+6746150.2	win	0x800e	hwnd=0x7540318	obj=67	child=0	thread=15248	console=true
+6746170.1	win	0x0120	hwnd=0x7540318	obj=67	child=0	thread=15248	console=true
+6746186.4	win	0x011e	hwnd=0x7540318	obj=67	child=0	thread=15248	console=true
+6746189.7	win	0x011f	hwnd=0x7540318	obj=67	child=0	thread=15248	console=true
+6747130.5	uia	20015	class=	type=50030
+6760675.7	win	0x4003	hwnd=0x7540318	obj=196714	child=458852	thread=15248	console=true
+6760727.5	win	0x800e	hwnd=0x7540318	obj=68	child=0	thread=15248	console=true
+6760753.8	win	0x0120	hwnd=0x7540318	obj=68	child=0	thread=15248	console=true
+6760781.8	win	0x011e	hwnd=0x7540318	obj=68	child=0	thread=15248	console=true
+6760784.8	win	0x011f	hwnd=0x7540318	obj=68	child=0	thread=15248	console=true
+6761643.6	uia	20015	class=	type=50030
+6808462.8	win	0x4003	hwnd=0x7540318	obj=196715	child=458853	thread=15248	console=true
+6808593.1	win	0x800e	hwnd=0x7540318	obj=69	child=0	thread=15248	console=true
+6808598.3	win	0x0120	hwnd=0x7540318	obj=69	child=0	thread=15248	console=true
+6808601.8	win	0x011e	hwnd=0x7540318	obj=69	child=0	thread=15248	console=true
+6808604.0	win	0x011f	hwnd=0x7540318	obj=69	child=0	thread=15248	console=true
+6809571.6	uia	20015	class=	type=50030
+6842843.4	win	0x4003	hwnd=0x7540318	obj=196716	child=458854	thread=15248	console=true
+6842895.3	win	0x800e	hwnd=0x7540318	obj=70	child=0	thread=15248	console=true
+6842922.4	win	0x0120	hwnd=0x7540318	obj=70	child=0	thread=15248	console=true
+6842936.5	win	0x011e	hwnd=0x7540318	obj=70	child=0	thread=15248	console=true
+6842947.5	win	0x011f	hwnd=0x7540318	obj=70	child=0	thread=15248	console=true
+6844313.8	uia	20015	class=	type=50030
+6879231.5	win	0x4003	hwnd=0x7540318	obj=196717	child=458855	thread=15248	console=true
+6879252.2	win	0x800e	hwnd=0x7540318	obj=71	child=0	thread=15248	console=true
+6879266.8	win	0x0120	hwnd=0x7540318	obj=71	child=0	thread=15248	console=true
+6879269.6	win	0x011e	hwnd=0x7540318	obj=71	child=0	thread=15248	console=true
+6879271.8	win	0x011f	hwnd=0x7540318	obj=71	child=0	thread=15248	console=true
+6880385.9	uia	20015	class=	type=50030
+6913905.7	win	0x4003	hwnd=0x7540318	obj=196718	child=458856	thread=15248	console=true
+6913951.7	win	0x800e	hwnd=0x7540318	obj=72	child=0	thread=15248	console=true
+6913972.4	win	0x0120	hwnd=0x7540318	obj=72	child=0	thread=15248	console=true
+6913995.8	win	0x011e	hwnd=0x7540318	obj=72	child=0	thread=15248	console=true
+6913998.9	win	0x011f	hwnd=0x7540318	obj=72	child=0	thread=15248	console=true
+6914995.1	uia	20015	class=	type=50030
+6930197.0	win	0x4003	hwnd=0x7540318	obj=196719	child=458857	thread=15248	console=true
+6930201.2	win	0x800e	hwnd=0x7540318	obj=73	child=0	thread=15248	console=true
+6930204.3	win	0x0120	hwnd=0x7540318	obj=73	child=0	thread=15248	console=true
+6930206.7	win	0x011e	hwnd=0x7540318	obj=73	child=0	thread=15248	console=true
+6930213.0	win	0x011f	hwnd=0x7540318	obj=73	child=0	thread=15248	console=true
+6931292.1	uia	20015	class=	type=50030
+6960486.7	win	0x4003	hwnd=0x7540318	obj=196720	child=458858	thread=15248	console=true
+6960539.9	win	0x800e	hwnd=0x7540318	obj=74	child=0	thread=15248	console=true
+6960560.3	win	0x0120	hwnd=0x7540318	obj=74	child=0	thread=15248	console=true
+6960591.4	win	0x011e	hwnd=0x7540318	obj=74	child=0	thread=15248	console=true
+6960605.1	win	0x011f	hwnd=0x7540318	obj=74	child=0	thread=15248	console=true
+6961582.1	uia	20015	class=	type=50030
+7215250.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+7215314.3	win	0x4001	hwnd=0x7540318	obj=2	child=196721	thread=15248	console=true
+7215360.9	win	0x8014	hwnd=0x7540318	obj=75	child=0	thread=15248	console=true
+7215380.0	win	0x011b	hwnd=0x7540318	obj=75	child=0	thread=15248	console=true
+7215383.2	win	0x0121	hwnd=0x7540318	obj=75	child=0	thread=15248	console=true
+7215385.7	win	0x010a	hwnd=0x7540318	obj=75	child=0	thread=15248	console=true
+7215389.2	win	0x010c	hwnd=0x7540318	obj=75	child=0	thread=15248	console=true
+7216306.7	uia	20014	class=	type=50030
+8515402.1	mark	idle-start
+11517102.5	mark	idle-end
+11519740.0	key	0
+11988698.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+11988763.1	win	0x4001	hwnd=0x7540318	obj=2	child=196720	thread=15248	console=true
+11988823.3	win	0x8014	hwnd=0x7540318	obj=76	child=0	thread=15248	console=true
+11988871.1	win	0x011b	hwnd=0x7540318	obj=76	child=0	thread=15248	console=true
+11988874.0	win	0x0121	hwnd=0x7540318	obj=76	child=0	thread=15248	console=true
+11988876.3	win	0x010a	hwnd=0x7540318	obj=76	child=0	thread=15248	console=true
+11988878.4	win	0x010c	hwnd=0x7540318	obj=76	child=0	thread=15248	console=true
+11989700.4	uia	20014	class=	type=50030
+12185844.2	key	1
+12512540.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+12512602.9	win	0x4001	hwnd=0x7540318	obj=2	child=196719	thread=15248	console=true
+12512665.4	win	0x8014	hwnd=0x7540318	obj=77	child=0	thread=15248	console=true
+12512709.4	win	0x011b	hwnd=0x7540318	obj=77	child=0	thread=15248	console=true
+12512712.5	win	0x0121	hwnd=0x7540318	obj=77	child=0	thread=15248	console=true
+12512715.1	win	0x010a	hwnd=0x7540318	obj=77	child=0	thread=15248	console=true
+12512717.5	win	0x010c	hwnd=0x7540318	obj=77	child=0	thread=15248	console=true
+12513576.7	uia	20014	class=	type=50030
+12814218.4	key	2
+13052048.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+13052097.7	win	0x4001	hwnd=0x7540318	obj=2	child=196718	thread=15248	console=true
+13052155.1	win	0x8014	hwnd=0x7540318	obj=78	child=0	thread=15248	console=true
+13052192.0	win	0x011b	hwnd=0x7540318	obj=78	child=0	thread=15248	console=true
+13052195.6	win	0x0121	hwnd=0x7540318	obj=78	child=0	thread=15248	console=true
+13052198.0	win	0x010a	hwnd=0x7540318	obj=78	child=0	thread=15248	console=true
+13052200.4	win	0x010c	hwnd=0x7540318	obj=78	child=0	thread=15248	console=true
+13053008.0	uia	20014	class=	type=50030
+13427771.1	key	3
+13573703.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+13573766.1	win	0x4001	hwnd=0x7540318	obj=2	child=196717	thread=15248	console=true
+13573805.5	win	0x8014	hwnd=0x7540318	obj=79	child=0	thread=15248	console=true
+13573840.6	win	0x011b	hwnd=0x7540318	obj=79	child=0	thread=15248	console=true
+13573843.5	win	0x0121	hwnd=0x7540318	obj=79	child=0	thread=15248	console=true
+13573845.8	win	0x010a	hwnd=0x7540318	obj=79	child=0	thread=15248	console=true
+13573848.2	win	0x010c	hwnd=0x7540318	obj=79	child=0	thread=15248	console=true
+13574638.9	uia	20014	class=	type=50030
+14061509.8	key	4
+14112375.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+14112381.9	win	0x4001	hwnd=0x7540318	obj=2	child=196716	thread=15248	console=true
+14112421.8	win	0x8014	hwnd=0x7540318	obj=80	child=0	thread=15248	console=true
+14112467.7	win	0x011b	hwnd=0x7540318	obj=80	child=0	thread=15248	console=true
+14112503.0	win	0x0121	hwnd=0x7540318	obj=80	child=0	thread=15248	console=true
+14112506.0	win	0x010a	hwnd=0x7540318	obj=80	child=0	thread=15248	console=true
+14112508.6	win	0x010c	hwnd=0x7540318	obj=80	child=0	thread=15248	console=true
+14113313.2	uia	20014	class=	type=50030
+14706777.6	key	5
+15159266.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+15159303.3	win	0x4001	hwnd=0x7540318	obj=2	child=196715	thread=15248	console=true
+15159358.9	win	0x8014	hwnd=0x7540318	obj=81	child=0	thread=15248	console=true
+15159406.1	win	0x011b	hwnd=0x7540318	obj=81	child=0	thread=15248	console=true
+15159410.0	win	0x0121	hwnd=0x7540318	obj=81	child=0	thread=15248	console=true
+15159412.5	win	0x010a	hwnd=0x7540318	obj=81	child=0	thread=15248	console=true
+15159414.9	win	0x010c	hwnd=0x7540318	obj=81	child=0	thread=15248	console=true
+15160269.8	uia	20014	class=	type=50030
+15376077.4	key	6
+15698750.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+15698761.1	win	0x4001	hwnd=0x7540318	obj=2	child=196714	thread=15248	console=true
+15698802.3	win	0x8014	hwnd=0x7540318	obj=82	child=0	thread=15248	console=true
+15698850.3	win	0x011b	hwnd=0x7540318	obj=82	child=0	thread=15248	console=true
+15698898.8	win	0x0121	hwnd=0x7540318	obj=82	child=0	thread=15248	console=true
+15698901.7	win	0x010a	hwnd=0x7540318	obj=82	child=0	thread=15248	console=true
+15698905.0	win	0x010c	hwnd=0x7540318	obj=82	child=0	thread=15248	console=true
+15699763.1	uia	20014	class=	type=50030
+16005571.1	key	7
+16222688.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+16222813.6	win	0x4001	hwnd=0x7540318	obj=2	child=196713	thread=15248	console=true
+16222855.4	win	0x8014	hwnd=0x7540318	obj=83	child=0	thread=15248	console=true
+16222893.6	win	0x011b	hwnd=0x7540318	obj=83	child=0	thread=15248	console=true
+16222904.9	win	0x0121	hwnd=0x7540318	obj=83	child=0	thread=15248	console=true
+16222907.7	win	0x010a	hwnd=0x7540318	obj=83	child=0	thread=15248	console=true
+16222910.5	win	0x010c	hwnd=0x7540318	obj=83	child=0	thread=15248	console=true
+16223806.6	uia	20014	class=	type=50030
+16608925.1	key	8
+16761375.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+16761514.2	win	0x4001	hwnd=0x7540318	obj=2	child=196712	thread=15248	console=true
+16761572.5	win	0x8014	hwnd=0x7540318	obj=84	child=0	thread=15248	console=true
+16761628.4	win	0x011b	hwnd=0x7540318	obj=84	child=0	thread=15248	console=true
+16761641.5	win	0x0121	hwnd=0x7540318	obj=84	child=0	thread=15248	console=true
+16761650.7	win	0x010a	hwnd=0x7540318	obj=84	child=0	thread=15248	console=true
+16761714.0	win	0x010c	hwnd=0x7540318	obj=84	child=0	thread=15248	console=true
+16762633.5	uia	20014	class=	type=50030
+17256772.8	key	9
+17285189.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+17285221.4	win	0x4001	hwnd=0x7540318	obj=2	child=196711	thread=15248	console=true
+17285278.1	win	0x8014	hwnd=0x7540318	obj=85	child=0	thread=15248	console=true
+17285317.1	win	0x011b	hwnd=0x7540318	obj=85	child=0	thread=15248	console=true
+17285320.5	win	0x0121	hwnd=0x7540318	obj=85	child=0	thread=15248	console=true
+17285322.9	win	0x010a	hwnd=0x7540318	obj=85	child=0	thread=15248	console=true
+17285325.2	win	0x010c	hwnd=0x7540318	obj=85	child=0	thread=15248	console=true
+17286151.0	uia	20014	class=	type=50030
+17919381.3	key	10
+18347074.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+18347124.9	win	0x4001	hwnd=0x7540318	obj=2	child=196710	thread=15248	console=true
+18347172.4	win	0x8014	hwnd=0x7540318	obj=86	child=0	thread=15248	console=true
+18347206.0	win	0x011b	hwnd=0x7540318	obj=86	child=0	thread=15248	console=true
+18347208.8	win	0x0121	hwnd=0x7540318	obj=86	child=0	thread=15248	console=true
+18347211.4	win	0x010a	hwnd=0x7540318	obj=86	child=0	thread=15248	console=true
+18347213.7	win	0x010c	hwnd=0x7540318	obj=86	child=0	thread=15248	console=true
+18358540.6	uia	20014	class=	type=50030
+18537650.1	key	11
+18870324.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+18870381.0	win	0x4001	hwnd=0x7540318	obj=2	child=196709	thread=15248	console=true
+18870441.8	win	0x8014	hwnd=0x7540318	obj=87	child=0	thread=15248	console=true
+18870483.4	win	0x011b	hwnd=0x7540318	obj=87	child=0	thread=15248	console=true
+18870486.0	win	0x0121	hwnd=0x7540318	obj=87	child=0	thread=15248	console=true
+18870487.9	win	0x010a	hwnd=0x7540318	obj=87	child=0	thread=15248	console=true
+18870490.0	win	0x010c	hwnd=0x7540318	obj=87	child=0	thread=15248	console=true
+18871282.2	uia	20014	class=	type=50030
+19141186.9	key	12
+19413273.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+19413410.6	win	0x4001	hwnd=0x7540318	obj=2	child=196708	thread=15248	console=true
+19413527.9	win	0x8014	hwnd=0x7540318	obj=88	child=0	thread=15248	console=true
+19413597.5	win	0x011b	hwnd=0x7540318	obj=88	child=0	thread=15248	console=true
+19413610.3	win	0x0121	hwnd=0x7540318	obj=88	child=0	thread=15248	console=true
+19413613.1	win	0x010a	hwnd=0x7540318	obj=88	child=0	thread=15248	console=true
+19413615.4	win	0x010c	hwnd=0x7540318	obj=88	child=0	thread=15248	console=true
+19415581.6	uia	20014	class=	type=50030
+19820289.4	key	13
+19933620.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+19933627.0	win	0x4001	hwnd=0x7540318	obj=2	child=196707	thread=15248	console=true
+19933678.5	win	0x8014	hwnd=0x7540318	obj=89	child=0	thread=15248	console=true
+19933732.8	win	0x011b	hwnd=0x7540318	obj=89	child=0	thread=15248	console=true
+19933782.1	win	0x0121	hwnd=0x7540318	obj=89	child=0	thread=15248	console=true
+19933805.7	win	0x010a	hwnd=0x7540318	obj=89	child=0	thread=15248	console=true
+19933828.6	win	0x010c	hwnd=0x7540318	obj=89	child=0	thread=15248	console=true
+19934602.0	uia	20014	class=	type=50030
+20424798.1	key	14
+20471901.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+20471969.9	win	0x4001	hwnd=0x7540318	obj=2	child=196706	thread=15248	console=true
+20472028.0	win	0x8014	hwnd=0x7540318	obj=90	child=0	thread=15248	console=true
+20472070.5	win	0x011b	hwnd=0x7540318	obj=90	child=0	thread=15248	console=true
+20472073.5	win	0x0121	hwnd=0x7540318	obj=90	child=0	thread=15248	console=true
+20472076.5	win	0x010a	hwnd=0x7540318	obj=90	child=0	thread=15248	console=true
+20472079.1	win	0x010c	hwnd=0x7540318	obj=90	child=0	thread=15248	console=true
+20472950.0	uia	20014	class=	type=50030
+21038030.2	key	15
+21533613.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+21533640.8	win	0x4001	hwnd=0x7540318	obj=2	child=196705	thread=15248	console=true
+21533701.2	win	0x8014	hwnd=0x7540318	obj=91	child=0	thread=15248	console=true
+21533812.7	win	0x011b	hwnd=0x7540318	obj=91	child=0	thread=15248	console=true
+21533847.9	win	0x0121	hwnd=0x7540318	obj=91	child=0	thread=15248	console=true
+21533879.9	win	0x010a	hwnd=0x7540318	obj=91	child=0	thread=15248	console=true
+21533884.9	win	0x010c	hwnd=0x7540318	obj=91	child=0	thread=15248	console=true
+21534588.7	uia	20014	class=	type=50030
+21667288.4	key	16
+22057372.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+22057447.5	win	0x4001	hwnd=0x7540318	obj=2	child=196704	thread=15248	console=true
+22057529.3	win	0x8014	hwnd=0x7540318	obj=92	child=0	thread=15248	console=true
+22057574.3	win	0x011b	hwnd=0x7540318	obj=92	child=0	thread=15248	console=true
+22057607.6	win	0x0121	hwnd=0x7540318	obj=92	child=0	thread=15248	console=true
+22057633.2	win	0x010a	hwnd=0x7540318	obj=92	child=0	thread=15248	console=true
+22057667.9	win	0x010c	hwnd=0x7540318	obj=92	child=0	thread=15248	console=true
+22058455.0	uia	20014	class=	type=50030
+22272703.1	key	17
+22581061.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+22581113.6	win	0x4001	hwnd=0x7540318	obj=2	child=196703	thread=15248	console=true
+22581194.8	win	0x8014	hwnd=0x7540318	obj=93	child=0	thread=15248	console=true
+22581244.1	win	0x011b	hwnd=0x7540318	obj=93	child=0	thread=15248	console=true
+22581268.6	win	0x0121	hwnd=0x7540318	obj=93	child=0	thread=15248	console=true
+22581275.8	win	0x010a	hwnd=0x7540318	obj=93	child=0	thread=15248	console=true
+22581277.8	win	0x010c	hwnd=0x7540318	obj=93	child=0	thread=15248	console=true
+22582001.4	uia	20014	class=	type=50030
+22873114.2	key	18
+23120076.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+23120110.5	win	0x4001	hwnd=0x7540318	obj=2	child=196702	thread=15248	console=true
+23120171.6	win	0x8014	hwnd=0x7540318	obj=94	child=0	thread=15248	console=true
+23120226.4	win	0x011b	hwnd=0x7540318	obj=94	child=0	thread=15248	console=true
+23120228.9	win	0x0121	hwnd=0x7540318	obj=94	child=0	thread=15248	console=true
+23120230.8	win	0x010a	hwnd=0x7540318	obj=94	child=0	thread=15248	console=true
+23120232.7	win	0x010c	hwnd=0x7540318	obj=94	child=0	thread=15248	console=true
+23120988.8	uia	20014	class=	type=50030
+23475677.5	key	19
+23642922.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+23643067.8	win	0x4001	hwnd=0x7540318	obj=2	child=196701	thread=15248	console=true
+23643125.5	win	0x8014	hwnd=0x7540318	obj=95	child=0	thread=15248	console=true
+23643275.8	win	0x011b	hwnd=0x7540318	obj=95	child=0	thread=15248	console=true
+23643379.9	win	0x0121	hwnd=0x7540318	obj=95	child=0	thread=15248	console=true
+23643383.7	win	0x010a	hwnd=0x7540318	obj=95	child=0	thread=15248	console=true
+23643386.5	win	0x010c	hwnd=0x7540318	obj=95	child=0	thread=15248	console=true
+23644290.7	uia	20014	class=	type=50030
+24080313.8	key	20
+24181402.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+24181415.1	win	0x4001	hwnd=0x7540318	obj=2	child=196702	thread=15248	console=true
+24181463.7	win	0x8014	hwnd=0x7540318	obj=96	child=0	thread=15248	console=true
+24181518.2	win	0x011b	hwnd=0x7540318	obj=96	child=0	thread=15248	console=true
+24181560.0	win	0x0121	hwnd=0x7540318	obj=96	child=0	thread=15248	console=true
+24181562.9	win	0x010a	hwnd=0x7540318	obj=96	child=0	thread=15248	console=true
+24181565.4	win	0x010c	hwnd=0x7540318	obj=96	child=0	thread=15248	console=true
+24182426.3	uia	20014	class=	type=50030
+24682924.4	key	21
+24704433.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+24704506.4	win	0x4001	hwnd=0x7540318	obj=2	child=196703	thread=15248	console=true
+24704595.1	win	0x8014	hwnd=0x7540318	obj=97	child=0	thread=15248	console=true
+24704637.9	win	0x011b	hwnd=0x7540318	obj=97	child=0	thread=15248	console=true
+24704656.6	win	0x0121	hwnd=0x7540318	obj=97	child=0	thread=15248	console=true
+24704682.1	win	0x010a	hwnd=0x7540318	obj=97	child=0	thread=15248	console=true
+24704685.1	win	0x010c	hwnd=0x7540318	obj=97	child=0	thread=15248	console=true
+24705528.1	uia	20014	class=	type=50030
+25298908.1	key	22
+25766148.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+25766211.3	win	0x4001	hwnd=0x7540318	obj=2	child=196704	thread=15248	console=true
+25766271.6	win	0x8014	hwnd=0x7540318	obj=98	child=0	thread=15248	console=true
+25766315.0	win	0x011b	hwnd=0x7540318	obj=98	child=0	thread=15248	console=true
+25766318.7	win	0x0121	hwnd=0x7540318	obj=98	child=0	thread=15248	console=true
+25766321.5	win	0x010a	hwnd=0x7540318	obj=98	child=0	thread=15248	console=true
+25766324.3	win	0x010c	hwnd=0x7540318	obj=98	child=0	thread=15248	console=true
+25767120.2	uia	20014	class=	type=50030
+25904352.2	key	23
+26290063.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+26290075.3	win	0x4001	hwnd=0x7540318	obj=2	child=196705	thread=15248	console=true
+26290159.0	win	0x8014	hwnd=0x7540318	obj=99	child=0	thread=15248	console=true
+26290208.2	win	0x011b	hwnd=0x7540318	obj=99	child=0	thread=15248	console=true
+26290230.2	win	0x0121	hwnd=0x7540318	obj=99	child=0	thread=15248	console=true
+26290234.1	win	0x010a	hwnd=0x7540318	obj=99	child=0	thread=15248	console=true
+26290236.7	win	0x010c	hwnd=0x7540318	obj=99	child=0	thread=15248	console=true
+26291944.6	uia	20014	class=	type=50030
+26535565.9	key	24
+26828231.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+26828237.4	win	0x4001	hwnd=0x7540318	obj=2	child=196706	thread=15248	console=true
+26828279.8	win	0x8014	hwnd=0x7540318	obj=100	child=0	thread=15248	console=true
+26828334.3	win	0x011b	hwnd=0x7540318	obj=100	child=0	thread=15248	console=true
+26828373.1	win	0x0121	hwnd=0x7540318	obj=100	child=0	thread=15248	console=true
+26828376.7	win	0x010a	hwnd=0x7540318	obj=100	child=0	thread=15248	console=true
+26828379.5	win	0x010c	hwnd=0x7540318	obj=100	child=0	thread=15248	console=true
+26829139.8	uia	20014	class=	type=50030
+27139040.6	key	25
+27351801.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+27351808.6	win	0x4001	hwnd=0x7540318	obj=2	child=196707	thread=15248	console=true
+27351893.6	win	0x8014	hwnd=0x7540318	obj=101	child=0	thread=15248	console=true
+27351917.4	win	0x011b	hwnd=0x7540318	obj=101	child=0	thread=15248	console=true
+27351937.1	win	0x0121	hwnd=0x7540318	obj=101	child=0	thread=15248	console=true
+27351952.4	win	0x010a	hwnd=0x7540318	obj=101	child=0	thread=15248	console=true
+27351955.4	win	0x010c	hwnd=0x7540318	obj=101	child=0	thread=15248	console=true
+27352744.9	uia	20014	class=	type=50030
+27786328.0	key	26
+27889498.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+27889580.7	win	0x4001	hwnd=0x7540318	obj=2	child=196708	thread=15248	console=true
+27889689.0	win	0x8014	hwnd=0x7540318	obj=102	child=0	thread=15248	console=true
+27889732.8	win	0x011b	hwnd=0x7540318	obj=102	child=0	thread=15248	console=true
+27889735.8	win	0x0121	hwnd=0x7540318	obj=102	child=0	thread=15248	console=true
+27889738.2	win	0x010a	hwnd=0x7540318	obj=102	child=0	thread=15248	console=true
+27889740.9	win	0x010c	hwnd=0x7540318	obj=102	child=0	thread=15248	console=true
+27890573.4	uia	20014	class=	type=50030
+28413989.1	key	27
+28953408.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+28953415.8	win	0x4001	hwnd=0x7540318	obj=2	child=196709	thread=15248	console=true
+28953499.7	win	0x8014	hwnd=0x7540318	obj=103	child=0	thread=15248	console=true
+28953564.5	win	0x011b	hwnd=0x7540318	obj=103	child=0	thread=15248	console=true
+28953582.5	win	0x0121	hwnd=0x7540318	obj=103	child=0	thread=15248	console=true
+28953586.2	win	0x010a	hwnd=0x7540318	obj=103	child=0	thread=15248	console=true
+28953588.9	win	0x010c	hwnd=0x7540318	obj=103	child=0	thread=15248	console=true
+28954392.0	uia	20014	class=	type=50030
+29032756.4	key	28
+29476208.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+29476214.3	win	0x4001	hwnd=0x7540318	obj=2	child=196710	thread=15248	console=true
+29476266.2	win	0x8014	hwnd=0x7540318	obj=104	child=0	thread=15248	console=true
+29476283.8	win	0x011b	hwnd=0x7540318	obj=104	child=0	thread=15248	console=true
+29476301.4	win	0x0121	hwnd=0x7540318	obj=104	child=0	thread=15248	console=true
+29476316.5	win	0x010a	hwnd=0x7540318	obj=104	child=0	thread=15248	console=true
+29476319.2	win	0x010c	hwnd=0x7540318	obj=104	child=0	thread=15248	console=true
+29477098.9	uia	20014	class=	type=50030
+29650561.4	key	29
+29999409.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+29999444.8	win	0x4001	hwnd=0x7540318	obj=2	child=196711	thread=15248	console=true
+29999469.2	win	0x8014	hwnd=0x7540318	obj=105	child=0	thread=15248	console=true
+29999528.9	win	0x011b	hwnd=0x7540318	obj=105	child=0	thread=15248	console=true
+29999566.9	win	0x0121	hwnd=0x7540318	obj=105	child=0	thread=15248	console=true
+29999570.3	win	0x010a	hwnd=0x7540318	obj=105	child=0	thread=15248	console=true
+29999573.0	win	0x010c	hwnd=0x7540318	obj=105	child=0	thread=15248	console=true
+30000409.0	uia	20014	class=	type=50030
+30255030.3	key	30
+30539114.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+30539121.2	win	0x4001	hwnd=0x7540318	obj=2	child=196712	thread=15248	console=true
+30539164.7	win	0x8014	hwnd=0x7540318	obj=106	child=0	thread=15248	console=true
+30539241.1	win	0x011b	hwnd=0x7540318	obj=106	child=0	thread=15248	console=true
+30539281.0	win	0x0121	hwnd=0x7540318	obj=106	child=0	thread=15248	console=true
+30539295.4	win	0x010a	hwnd=0x7540318	obj=106	child=0	thread=15248	console=true
+30539306.2	win	0x010c	hwnd=0x7540318	obj=106	child=0	thread=15248	console=true
+30540018.7	uia	20014	class=	type=50030
+30870732.8	key	31
+31061869.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+31061954.3	win	0x4001	hwnd=0x7540318	obj=2	child=196713	thread=15248	console=true
+31062020.3	win	0x8014	hwnd=0x7540318	obj=107	child=0	thread=15248	console=true
+31062069.5	win	0x011b	hwnd=0x7540318	obj=107	child=0	thread=15248	console=true
+31062072.8	win	0x0121	hwnd=0x7540318	obj=107	child=0	thread=15248	console=true
+31062075.5	win	0x010a	hwnd=0x7540318	obj=107	child=0	thread=15248	console=true
+31062078.2	win	0x010c	hwnd=0x7540318	obj=107	child=0	thread=15248	console=true
+31062837.4	uia	20014	class=	type=50030
+31509130.6	key	32
+31600792.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+31600827.1	win	0x4001	hwnd=0x7540318	obj=2	child=196714	thread=15248	console=true
+31600846.3	win	0x8014	hwnd=0x7540318	obj=108	child=0	thread=15248	console=true
+31600911.7	win	0x011b	hwnd=0x7540318	obj=108	child=0	thread=15248	console=true
+31600945.9	win	0x0121	hwnd=0x7540318	obj=108	child=0	thread=15248	console=true
+31600948.3	win	0x010a	hwnd=0x7540318	obj=108	child=0	thread=15248	console=true
+31600950.4	win	0x010c	hwnd=0x7540318	obj=108	child=0	thread=15248	console=true
+31601714.3	uia	20014	class=	type=50030
+32138516.9	key	33
+32663304.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+32663402.9	win	0x4001	hwnd=0x7540318	obj=2	child=196715	thread=15248	console=true
+32663464.2	win	0x8014	hwnd=0x7540318	obj=109	child=0	thread=15248	console=true
+32663504.1	win	0x011b	hwnd=0x7540318	obj=109	child=0	thread=15248	console=true
+32663529.8	win	0x0121	hwnd=0x7540318	obj=109	child=0	thread=15248	console=true
+32663544.2	win	0x010a	hwnd=0x7540318	obj=109	child=0	thread=15248	console=true
+32663554.4	win	0x010c	hwnd=0x7540318	obj=109	child=0	thread=15248	console=true
+32664289.5	uia	20014	class=	type=50030
+32768452.8	key	34
+33185003.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+33185010.4	win	0x4001	hwnd=0x7540318	obj=2	child=196716	thread=15248	console=true
+33185095.5	win	0x8014	hwnd=0x7540318	obj=110	child=0	thread=15248	console=true
+33185147.6	win	0x011b	hwnd=0x7540318	obj=110	child=0	thread=15248	console=true
+33185166.9	win	0x0121	hwnd=0x7540318	obj=110	child=0	thread=15248	console=true
+33185170.0	win	0x010a	hwnd=0x7540318	obj=110	child=0	thread=15248	console=true
+33185172.6	win	0x010c	hwnd=0x7540318	obj=110	child=0	thread=15248	console=true
+33185994.6	uia	20014	class=	type=50030
+33367098.1	key	35
+33723147.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+33723152.8	win	0x4001	hwnd=0x7540318	obj=2	child=196717	thread=15248	console=true
+33723257.7	win	0x8014	hwnd=0x7540318	obj=111	child=0	thread=15248	console=true
+33723316.0	win	0x011b	hwnd=0x7540318	obj=111	child=0	thread=15248	console=true
+33723341.1	win	0x0121	hwnd=0x7540318	obj=111	child=0	thread=15248	console=true
+33723344.1	win	0x010a	hwnd=0x7540318	obj=111	child=0	thread=15248	console=true
+33723346.4	win	0x010c	hwnd=0x7540318	obj=111	child=0	thread=15248	console=true
+33724008.4	uia	20014	class=	type=50030
+33967538.5	key	36
+34245303.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+34245336.8	win	0x4001	hwnd=0x7540318	obj=2	child=196718	thread=15248	console=true
+34245388.2	win	0x8014	hwnd=0x7540318	obj=112	child=0	thread=15248	console=true
+34245444.0	win	0x011b	hwnd=0x7540318	obj=112	child=0	thread=15248	console=true
+34245456.1	win	0x0121	hwnd=0x7540318	obj=112	child=0	thread=15248	console=true
+34245457.8	win	0x010a	hwnd=0x7540318	obj=112	child=0	thread=15248	console=true
+34245459.2	win	0x010c	hwnd=0x7540318	obj=112	child=0	thread=15248	console=true
+34246090.5	uia	20014	class=	type=50030
+34568135.6	key	37
+34784350.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+34784416.5	win	0x4001	hwnd=0x7540318	obj=2	child=196719	thread=15248	console=true
+34784452.0	win	0x8014	hwnd=0x7540318	obj=113	child=0	thread=15248	console=true
+34784500.5	win	0x011b	hwnd=0x7540318	obj=113	child=0	thread=15248	console=true
+34784525.3	win	0x0121	hwnd=0x7540318	obj=113	child=0	thread=15248	console=true
+34784540.8	win	0x010a	hwnd=0x7540318	obj=113	child=0	thread=15248	console=true
+34784543.4	win	0x010c	hwnd=0x7540318	obj=113	child=0	thread=15248	console=true
+34785659.5	uia	20014	class=	type=50030
+35169722.8	key	38
+35306695.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+35306817.0	win	0x4001	hwnd=0x7540318	obj=2	child=196720	thread=15248	console=true
+35306916.6	win	0x8014	hwnd=0x7540318	obj=114	child=0	thread=15248	console=true
+35306988.4	win	0x011b	hwnd=0x7540318	obj=114	child=0	thread=15248	console=true
+35306992.3	win	0x0121	hwnd=0x7540318	obj=114	child=0	thread=15248	console=true
+35306994.8	win	0x010a	hwnd=0x7540318	obj=114	child=0	thread=15248	console=true
+35307047.0	win	0x010c	hwnd=0x7540318	obj=114	child=0	thread=15248	console=true
+35310542.2	uia	20014	class=	type=50030
+35770020.4	key	39
+35830208.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+35830215.5	win	0x4001	hwnd=0x7540318	obj=2	child=196721	thread=15248	console=true
+35830293.1	win	0x8014	hwnd=0x7540318	obj=115	child=0	thread=15248	console=true
+35830361.7	win	0x011b	hwnd=0x7540318	obj=115	child=0	thread=15248	console=true
+35830418.3	win	0x0121	hwnd=0x7540318	obj=115	child=0	thread=15248	console=true
+35830422.5	win	0x010a	hwnd=0x7540318	obj=115	child=0	thread=15248	console=true
+35830425.2	win	0x010c	hwnd=0x7540318	obj=115	child=0	thread=15248	console=true
+35831233.6	uia	20014	class=	type=50030
+36371222.0	key	40
+36892919.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+36892973.4	win	0x4001	hwnd=0x7540318	obj=2	child=196720	thread=15248	console=true
+36893085.6	win	0x8014	hwnd=0x7540318	obj=116	child=0	thread=15248	console=true
+36893167.7	win	0x011b	hwnd=0x7540318	obj=116	child=0	thread=15248	console=true
+36893185.4	win	0x0121	hwnd=0x7540318	obj=116	child=0	thread=15248	console=true
+36893187.5	win	0x010a	hwnd=0x7540318	obj=116	child=0	thread=15248	console=true
+36893189.4	win	0x010c	hwnd=0x7540318	obj=116	child=0	thread=15248	console=true
+36893962.3	uia	20014	class=	type=50030
+36971267.6	key	41
+37431515.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+37431619.5	win	0x4001	hwnd=0x7540318	obj=2	child=196719	thread=15248	console=true
+37431681.7	win	0x8014	hwnd=0x7540318	obj=117	child=0	thread=15248	console=true
+37431716.2	win	0x011b	hwnd=0x7540318	obj=117	child=0	thread=15248	console=true
+37431717.9	win	0x0121	hwnd=0x7540318	obj=117	child=0	thread=15248	console=true
+37431719.4	win	0x010a	hwnd=0x7540318	obj=117	child=0	thread=15248	console=true
+37431720.9	win	0x010c	hwnd=0x7540318	obj=117	child=0	thread=15248	console=true
+37432368.2	uia	20014	class=	type=50030
+37571686.3	key	42
+37952320.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+37952361.8	win	0x4001	hwnd=0x7540318	obj=2	child=196718	thread=15248	console=true
+37952455.6	win	0x8014	hwnd=0x7540318	obj=118	child=0	thread=15248	console=true
+37952496.0	win	0x011b	hwnd=0x7540318	obj=118	child=0	thread=15248	console=true
+37952524.3	win	0x0121	hwnd=0x7540318	obj=118	child=0	thread=15248	console=true
+37952531.3	win	0x010a	hwnd=0x7540318	obj=118	child=0	thread=15248	console=true
+37952536.9	win	0x010c	hwnd=0x7540318	obj=118	child=0	thread=15248	console=true
+37953225.3	uia	20014	class=	type=50030
+38172018.9	key	43
+38490084.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+38490088.5	win	0x4001	hwnd=0x7540318	obj=2	child=196717	thread=15248	console=true
+38490151.5	win	0x8014	hwnd=0x7540318	obj=119	child=0	thread=15248	console=true
+38490186.6	win	0x011b	hwnd=0x7540318	obj=119	child=0	thread=15248	console=true
+38490210.8	win	0x0121	hwnd=0x7540318	obj=119	child=0	thread=15248	console=true
+38490237.8	win	0x010a	hwnd=0x7540318	obj=119	child=0	thread=15248	console=true
+38490240.1	win	0x010c	hwnd=0x7540318	obj=119	child=0	thread=15248	console=true
+38490946.4	uia	20014	class=	type=50030
+38772591.7	key	44
+39011085.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+39011102.5	win	0x4001	hwnd=0x7540318	obj=2	child=196716	thread=15248	console=true
+39011138.4	win	0x8014	hwnd=0x7540318	obj=120	child=0	thread=15248	console=true
+39011178.8	win	0x011b	hwnd=0x7540318	obj=120	child=0	thread=15248	console=true
+39011227.2	win	0x0121	hwnd=0x7540318	obj=120	child=0	thread=15248	console=true
+39011235.7	win	0x010a	hwnd=0x7540318	obj=120	child=0	thread=15248	console=true
+39011237.9	win	0x010c	hwnd=0x7540318	obj=120	child=0	thread=15248	console=true
+39011891.1	uia	20014	class=	type=50030
+39372832.7	key	45
+39549269.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+39549297.5	win	0x4001	hwnd=0x7540318	obj=2	child=196715	thread=15248	console=true
+39549354.4	win	0x8014	hwnd=0x7540318	obj=121	child=0	thread=15248	console=true
+39549392.0	win	0x011b	hwnd=0x7540318	obj=121	child=0	thread=15248	console=true
+39549406.3	win	0x0121	hwnd=0x7540318	obj=121	child=0	thread=15248	console=true
+39549409.6	win	0x010a	hwnd=0x7540318	obj=121	child=0	thread=15248	console=true
+39549412.1	win	0x010c	hwnd=0x7540318	obj=121	child=0	thread=15248	console=true
+39550138.1	uia	20014	class=	type=50030
+39974175.2	key	46
+40077677.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+40077701.0	win	0x4001	hwnd=0x7540318	obj=2	child=196714	thread=15248	console=true
+40077761.2	win	0x8014	hwnd=0x7540318	obj=122	child=0	thread=15248	console=true
+40077781.4	win	0x011b	hwnd=0x7540318	obj=122	child=0	thread=15248	console=true
+40077795.6	win	0x0121	hwnd=0x7540318	obj=122	child=0	thread=15248	console=true
+40077807.8	win	0x010a	hwnd=0x7540318	obj=122	child=0	thread=15248	console=true
+40077814.7	win	0x010c	hwnd=0x7540318	obj=122	child=0	thread=15248	console=true
+40078516.4	uia	20014	class=	type=50030
+40573692.8	key	47
+40601449.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+40601491.1	win	0x4001	hwnd=0x7540318	obj=2	child=196713	thread=15248	console=true
+40601521.8	win	0x8014	hwnd=0x7540318	obj=123	child=0	thread=15248	console=true
+40601555.8	win	0x011b	hwnd=0x7540318	obj=123	child=0	thread=15248	console=true
+40601666.4	win	0x0121	hwnd=0x7540318	obj=123	child=0	thread=15248	console=true
+40601672.5	win	0x010a	hwnd=0x7540318	obj=123	child=0	thread=15248	console=true
+40601674.9	win	0x010c	hwnd=0x7540318	obj=123	child=0	thread=15248	console=true
+40602233.0	uia	20014	class=	type=50030
+41173929.1	key	48
+41662158.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+41662163.6	win	0x4001	hwnd=0x7540318	obj=2	child=196712	thread=15248	console=true
+41662224.0	win	0x8014	hwnd=0x7540318	obj=124	child=0	thread=15248	console=true
+41662262.5	win	0x011b	hwnd=0x7540318	obj=124	child=0	thread=15248	console=true
+41662275.3	win	0x0121	hwnd=0x7540318	obj=124	child=0	thread=15248	console=true
+41662278.2	win	0x010a	hwnd=0x7540318	obj=124	child=0	thread=15248	console=true
+41662280.8	win	0x010c	hwnd=0x7540318	obj=124	child=0	thread=15248	console=true
+41663013.3	uia	20014	class=	type=50030
+41774466.0	key	49
+42200233.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+42200239.5	win	0x4001	hwnd=0x7540318	obj=2	child=196711	thread=15248	console=true
+42200241.6	win	0x8014	hwnd=0x7540318	obj=125	child=0	thread=15248	console=true
+42200243.2	win	0x011b	hwnd=0x7540318	obj=125	child=0	thread=15248	console=true
+42200244.8	win	0x0121	hwnd=0x7540318	obj=125	child=0	thread=15248	console=true
+42200246.4	win	0x010a	hwnd=0x7540318	obj=125	child=0	thread=15248	console=true
+42200247.9	win	0x010c	hwnd=0x7540318	obj=125	child=0	thread=15248	console=true
+42200742.2	uia	20014	class=	type=50030
+42374768.7	key	50
+42721656.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+42721715.6	win	0x4001	hwnd=0x7540318	obj=2	child=196710	thread=15248	console=true
+42721774.0	win	0x8014	hwnd=0x7540318	obj=126	child=0	thread=15248	console=true
+42721809.1	win	0x011b	hwnd=0x7540318	obj=126	child=0	thread=15248	console=true
+42721811.8	win	0x0121	hwnd=0x7540318	obj=126	child=0	thread=15248	console=true
+42721814.0	win	0x010a	hwnd=0x7540318	obj=126	child=0	thread=15248	console=true
+42721816.5	win	0x010c	hwnd=0x7540318	obj=126	child=0	thread=15248	console=true
+42722545.4	uia	20014	class=	type=50030
+42980571.0	key	51
+43259976.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+43259982.2	win	0x4001	hwnd=0x7540318	obj=2	child=196709	thread=15248	console=true
+43260090.4	win	0x8014	hwnd=0x7540318	obj=127	child=0	thread=15248	console=true
+43260119.4	win	0x011b	hwnd=0x7540318	obj=127	child=0	thread=15248	console=true
+43260145.6	win	0x0121	hwnd=0x7540318	obj=127	child=0	thread=15248	console=true
+43260172.3	win	0x010a	hwnd=0x7540318	obj=127	child=0	thread=15248	console=true
+43260174.4	win	0x010c	hwnd=0x7540318	obj=127	child=0	thread=15248	console=true
+43260951.5	uia	20014	class=	type=50030
+43580757.9	key	52
+43782987.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+43783021.0	win	0x4001	hwnd=0x7540318	obj=2	child=196708	thread=15248	console=true
+43783065.8	win	0x8014	hwnd=0x7540318	obj=128	child=0	thread=15248	console=true
+43783080.8	win	0x011b	hwnd=0x7540318	obj=128	child=0	thread=15248	console=true
+43783104.7	win	0x0121	hwnd=0x7540318	obj=128	child=0	thread=15248	console=true
+43783119.6	win	0x010a	hwnd=0x7540318	obj=128	child=0	thread=15248	console=true
+43783129.4	win	0x010c	hwnd=0x7540318	obj=128	child=0	thread=15248	console=true
+43783815.3	uia	20014	class=	type=50030
+44180637.4	key	53
+44321946.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+44321952.9	win	0x4001	hwnd=0x7540318	obj=2	child=196707	thread=15248	console=true
+44322037.8	win	0x8014	hwnd=0x7540318	obj=129	child=0	thread=15248	console=true
+44322083.5	win	0x011b	hwnd=0x7540318	obj=129	child=0	thread=15248	console=true
+44322099.3	win	0x0121	hwnd=0x7540318	obj=129	child=0	thread=15248	console=true
+44322102.3	win	0x010a	hwnd=0x7540318	obj=129	child=0	thread=15248	console=true
+44322104.1	win	0x010c	hwnd=0x7540318	obj=129	child=0	thread=15248	console=true
+44322857.5	uia	20014	class=	type=50030
+44781188.1	key	54
+44842687.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+44842790.3	win	0x4001	hwnd=0x7540318	obj=2	child=196706	thread=15248	console=true
+44842876.8	win	0x8014	hwnd=0x7540318	obj=130	child=0	thread=15248	console=true
+44842906.6	win	0x011b	hwnd=0x7540318	obj=130	child=0	thread=15248	console=true
+44842910.1	win	0x0121	hwnd=0x7540318	obj=130	child=0	thread=15248	console=true
+44842912.9	win	0x010a	hwnd=0x7540318	obj=130	child=0	thread=15248	console=true
+44842915.7	win	0x010c	hwnd=0x7540318	obj=130	child=0	thread=15248	console=true
+44843481.7	uia	20014	class=	type=50030
+45381307.4	key	55
+45382181.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+45382211.3	win	0x4001	hwnd=0x7540318	obj=2	child=196705	thread=15248	console=true
+45382275.9	win	0x8014	hwnd=0x7540318	obj=131	child=0	thread=15248	console=true
+45382313.4	win	0x011b	hwnd=0x7540318	obj=131	child=0	thread=15248	console=true
+45382326.6	win	0x0121	hwnd=0x7540318	obj=131	child=0	thread=15248	console=true
+45382329.9	win	0x010a	hwnd=0x7540318	obj=131	child=0	thread=15248	console=true
+45382333.0	win	0x010c	hwnd=0x7540318	obj=131	child=0	thread=15248	console=true
+45383153.2	uia	20014	class=	type=50030
+45981755.7	key	56
+46444581.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+46444588.9	win	0x4001	hwnd=0x7540318	obj=2	child=196704	thread=15248	console=true
+46444651.0	win	0x8014	hwnd=0x7540318	obj=132	child=0	thread=15248	console=true
+46444671.9	win	0x011b	hwnd=0x7540318	obj=132	child=0	thread=15248	console=true
+46444691.6	win	0x0121	hwnd=0x7540318	obj=132	child=0	thread=15248	console=true
+46444707.4	win	0x010a	hwnd=0x7540318	obj=132	child=0	thread=15248	console=true
+46444710.3	win	0x010c	hwnd=0x7540318	obj=132	child=0	thread=15248	console=true
+46445604.5	uia	20014	class=	type=50030
+46582159.8	key	57
+46967946.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+46967993.8	win	0x4001	hwnd=0x7540318	obj=2	child=196703	thread=15248	console=true
+46968075.6	win	0x8014	hwnd=0x7540318	obj=133	child=0	thread=15248	console=true
+46968184.2	win	0x011b	hwnd=0x7540318	obj=133	child=0	thread=15248	console=true
+46968260.3	win	0x0121	hwnd=0x7540318	obj=133	child=0	thread=15248	console=true
+46968284.7	win	0x010a	hwnd=0x7540318	obj=133	child=0	thread=15248	console=true
+46968288.4	win	0x010c	hwnd=0x7540318	obj=133	child=0	thread=15248	console=true
+46968987.0	uia	20014	class=	type=50030
+47182748.5	key	58
+47489501.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+47489552.3	win	0x4001	hwnd=0x7540318	obj=2	child=196702	thread=15248	console=true
+47489593.4	win	0x8014	hwnd=0x7540318	obj=134	child=0	thread=15248	console=true
+47489624.5	win	0x011b	hwnd=0x7540318	obj=134	child=0	thread=15248	console=true
+47489626.7	win	0x0121	hwnd=0x7540318	obj=134	child=0	thread=15248	console=true
+47489628.5	win	0x010a	hwnd=0x7540318	obj=134	child=0	thread=15248	console=true
+47489630.3	win	0x010c	hwnd=0x7540318	obj=134	child=0	thread=15248	console=true
+47490348.1	uia	20014	class=	type=50030
+47783734.9	key	59
+48027413.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+48027441.3	win	0x4001	hwnd=0x7540318	obj=2	child=196701	thread=15248	console=true
+48027501.9	win	0x8014	hwnd=0x7540318	obj=135	child=0	thread=15248	console=true
+48027539.9	win	0x011b	hwnd=0x7540318	obj=135	child=0	thread=15248	console=true
+48027551.2	win	0x0121	hwnd=0x7540318	obj=135	child=0	thread=15248	console=true
+48027554.2	win	0x010a	hwnd=0x7540318	obj=135	child=0	thread=15248	console=true
+48027556.5	win	0x010c	hwnd=0x7540318	obj=135	child=0	thread=15248	console=true
+48028245.5	uia	20014	class=	type=50030
+48383734.2	key	60
+48549694.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+48549771.6	win	0x4001	hwnd=0x7540318	obj=2	child=196702	thread=15248	console=true
+48549801.9	win	0x8014	hwnd=0x7540318	obj=136	child=0	thread=15248	console=true
+48549811.7	win	0x011b	hwnd=0x7540318	obj=136	child=0	thread=15248	console=true
+48549813.8	win	0x0121	hwnd=0x7540318	obj=136	child=0	thread=15248	console=true
+48549815.8	win	0x010a	hwnd=0x7540318	obj=136	child=0	thread=15248	console=true
+48549839.1	win	0x010c	hwnd=0x7540318	obj=136	child=0	thread=15248	console=true
+48550433.7	uia	20014	class=	type=50030
+48984591.5	key	61
+49088898.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+49088957.5	win	0x4001	hwnd=0x7540318	obj=2	child=196703	thread=15248	console=true
+49089033.3	win	0x8014	hwnd=0x7540318	obj=137	child=0	thread=15248	console=true
+49089079.7	win	0x011b	hwnd=0x7540318	obj=137	child=0	thread=15248	console=true
+49089127.1	win	0x0121	hwnd=0x7540318	obj=137	child=0	thread=15248	console=true
+49089136.1	win	0x010a	hwnd=0x7540318	obj=137	child=0	thread=15248	console=true
+49089206.5	win	0x010c	hwnd=0x7540318	obj=137	child=0	thread=15248	console=true
+49090140.6	uia	20014	class=	type=50030
+49584477.0	key	62
+49610019.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=9440	console=true
+49610051.0	win	0x4001	hwnd=0x7540318	obj=2	child=196704	thread=15248	console=true
+49610136.3	win	0x8014	hwnd=0x7540318	obj=138	child=0	thread=15248	console=true
+49610172.1	win	0x011b	hwnd=0x7540318	obj=138	child=0	thread=15248	console=true
+49610174.3	win	0x0121	hwnd=0x7540318	obj=138	child=0	thread=15248	console=true
+49610175.9	win	0x010a	hwnd=0x7540318	obj=138	child=0	thread=15248	console=true
+49610177.5	win	0x010c	hwnd=0x7540318	obj=138	child=0	thread=15248	console=true
+49610914.0	uia	20014	class=	type=50030
+50185112.4	key	63
+50673455.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+50673490.5	win	0x4001	hwnd=0x7540318	obj=2	child=196705	thread=15248	console=true
+50673550.8	win	0x8014	hwnd=0x7540318	obj=139	child=0	thread=15248	console=true
+50673599.0	win	0x011b	hwnd=0x7540318	obj=139	child=0	thread=15248	console=true
+50673612.1	win	0x0121	hwnd=0x7540318	obj=139	child=0	thread=15248	console=true
+50673615.0	win	0x010a	hwnd=0x7540318	obj=139	child=0	thread=15248	console=true
+50673617.8	win	0x010c	hwnd=0x7540318	obj=139	child=0	thread=15248	console=true
+50674397.2	uia	20014	class=	type=50030
+50785918.9	key	64
+51211816.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+51211837.8	win	0x4001	hwnd=0x7540318	obj=2	child=196706	thread=15248	console=true
+51211853.1	win	0x8014	hwnd=0x7540318	obj=140	child=0	thread=15248	console=true
+51211902.2	win	0x011b	hwnd=0x7540318	obj=140	child=0	thread=15248	console=true
+51211939.3	win	0x0121	hwnd=0x7540318	obj=140	child=0	thread=15248	console=true
+51211942.3	win	0x010a	hwnd=0x7540318	obj=140	child=0	thread=15248	console=true
+51211945.0	win	0x010c	hwnd=0x7540318	obj=140	child=0	thread=15248	console=true
+51212561.0	uia	20014	class=	type=50030
+51396201.4	key	65
+51735069.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+51735108.9	win	0x4001	hwnd=0x7540318	obj=2	child=196707	thread=15248	console=true
+51735141.5	win	0x8014	hwnd=0x7540318	obj=141	child=0	thread=15248	console=true
+51735251.5	win	0x011b	hwnd=0x7540318	obj=141	child=0	thread=15248	console=true
+51735293.5	win	0x0121	hwnd=0x7540318	obj=141	child=0	thread=15248	console=true
+51735295.9	win	0x010a	hwnd=0x7540318	obj=141	child=0	thread=15248	console=true
+51735298.1	win	0x010c	hwnd=0x7540318	obj=141	child=0	thread=15248	console=true
+51736123.9	uia	20014	class=	type=50030
+52011814.6	key	66
+52273969.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+52273993.7	win	0x4001	hwnd=0x7540318	obj=2	child=196708	thread=15248	console=true
+52274181.3	win	0x8014	hwnd=0x7540318	obj=142	child=0	thread=15248	console=true
+52274291.3	win	0x011b	hwnd=0x7540318	obj=142	child=0	thread=15248	console=true
+52274295.9	win	0x0121	hwnd=0x7540318	obj=142	child=0	thread=15248	console=true
+52274298.7	win	0x010a	hwnd=0x7540318	obj=142	child=0	thread=15248	console=true
+52274301.8	win	0x010c	hwnd=0x7540318	obj=142	child=0	thread=15248	console=true
+52275104.2	uia	20014	class=	type=50030
+52612242.3	key	67
+52796471.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+52796556.5	win	0x4001	hwnd=0x7540318	obj=2	child=196709	thread=15248	console=true
+52796658.4	win	0x8014	hwnd=0x7540318	obj=143	child=0	thread=15248	console=true
+52796728.9	win	0x011b	hwnd=0x7540318	obj=143	child=0	thread=15248	console=true
+52796744.5	win	0x0121	hwnd=0x7540318	obj=143	child=0	thread=15248	console=true
+52796748.1	win	0x010a	hwnd=0x7540318	obj=143	child=0	thread=15248	console=true
+52796751.3	win	0x010c	hwnd=0x7540318	obj=143	child=0	thread=15248	console=true
+52797572.3	uia	20014	class=	type=50030
+53220904.1	key	68
+53334626.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+53334650.9	win	0x4001	hwnd=0x7540318	obj=2	child=196710	thread=15248	console=true
+53334685.3	win	0x8014	hwnd=0x7540318	obj=144	child=0	thread=15248	console=true
+53334730.6	win	0x011b	hwnd=0x7540318	obj=144	child=0	thread=15248	console=true
+53334772.8	win	0x0121	hwnd=0x7540318	obj=144	child=0	thread=15248	console=true
+53334775.2	win	0x010a	hwnd=0x7540318	obj=144	child=0	thread=15248	console=true
+53334777.5	win	0x010c	hwnd=0x7540318	obj=144	child=0	thread=15248	console=true
+53335599.3	uia	20014	class=	type=50030
+53857807.6	key	69
+54380603.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+54380610.1	win	0x4001	hwnd=0x7540318	obj=2	child=196711	thread=15248	console=true
+54380640.7	win	0x8014	hwnd=0x7540318	obj=145	child=0	thread=15248	console=true
+54380708.8	win	0x011b	hwnd=0x7540318	obj=145	child=0	thread=15248	console=true
+54380754.7	win	0x0121	hwnd=0x7540318	obj=145	child=0	thread=15248	console=true
+54380757.4	win	0x010a	hwnd=0x7540318	obj=145	child=0	thread=15248	console=true
+54380759.8	win	0x010c	hwnd=0x7540318	obj=145	child=0	thread=15248	console=true
+54381572.8	uia	20014	class=	type=50030
+54458181.5	key	70
+54918874.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+54918906.2	win	0x4001	hwnd=0x7540318	obj=2	child=196712	thread=15248	console=true
+54918989.9	win	0x8014	hwnd=0x7540318	obj=146	child=0	thread=15248	console=true
+54919047.6	win	0x011b	hwnd=0x7540318	obj=146	child=0	thread=15248	console=true
+54919063.7	win	0x0121	hwnd=0x7540318	obj=146	child=0	thread=15248	console=true
+54919067.7	win	0x010a	hwnd=0x7540318	obj=146	child=0	thread=15248	console=true
+54919071.0	win	0x010c	hwnd=0x7540318	obj=146	child=0	thread=15248	console=true
+54919740.9	uia	20014	class=	type=50030
+55058709.5	key	71
+55440639.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+55440645.6	win	0x4001	hwnd=0x7540318	obj=2	child=196713	thread=15248	console=true
+55440723.0	win	0x8014	hwnd=0x7540318	obj=147	child=0	thread=15248	console=true
+55440779.5	win	0x011b	hwnd=0x7540318	obj=147	child=0	thread=15248	console=true
+55440797.6	win	0x0121	hwnd=0x7540318	obj=147	child=0	thread=15248	console=true
+55440800.2	win	0x010a	hwnd=0x7540318	obj=147	child=0	thread=15248	console=true
+55440802.1	win	0x010c	hwnd=0x7540318	obj=147	child=0	thread=15248	console=true
+55441476.9	uia	20014	class=	type=50030
+55659063.0	key	72
+55979038.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+55979097.5	win	0x4001	hwnd=0x7540318	obj=2	child=196714	thread=15248	console=true
+55979153.3	win	0x8014	hwnd=0x7540318	obj=148	child=0	thread=15248	console=true
+55979193.9	win	0x011b	hwnd=0x7540318	obj=148	child=0	thread=15248	console=true
+55979197.9	win	0x0121	hwnd=0x7540318	obj=148	child=0	thread=15248	console=true
+55979200.5	win	0x010a	hwnd=0x7540318	obj=148	child=0	thread=15248	console=true
+55979203.3	win	0x010c	hwnd=0x7540318	obj=148	child=0	thread=15248	console=true
+55979891.1	uia	20014	class=	type=50030
+56259577.9	key	73
+56501139.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+56501188.3	win	0x4001	hwnd=0x7540318	obj=2	child=196715	thread=15248	console=true
+56501260.1	win	0x8014	hwnd=0x7540318	obj=149	child=0	thread=15248	console=true
+56501332.5	win	0x011b	hwnd=0x7540318	obj=149	child=0	thread=15248	console=true
+56501365.6	win	0x0121	hwnd=0x7540318	obj=149	child=0	thread=15248	console=true
+56501384.0	win	0x010a	hwnd=0x7540318	obj=149	child=0	thread=15248	console=true
+56501392.7	win	0x010c	hwnd=0x7540318	obj=149	child=0	thread=15248	console=true
+56501984.6	uia	20014	class=	type=50030
+56860120.3	key	74
+57039219.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+57039244.4	win	0x4001	hwnd=0x7540318	obj=2	child=196716	thread=15248	console=true
+57039290.8	win	0x8014	hwnd=0x7540318	obj=150	child=0	thread=15248	console=true
+57039323.5	win	0x011b	hwnd=0x7540318	obj=150	child=0	thread=15248	console=true
+57039337.6	win	0x0121	hwnd=0x7540318	obj=150	child=0	thread=15248	console=true
+57039339.7	win	0x010a	hwnd=0x7540318	obj=150	child=0	thread=15248	console=true
+57039341.7	win	0x010c	hwnd=0x7540318	obj=150	child=0	thread=15248	console=true
+57039966.0	uia	20014	class=	type=50030
+57460695.3	key	75
+57560618.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+57560643.6	win	0x4001	hwnd=0x7540318	obj=2	child=196717	thread=15248	console=true
+57560676.2	win	0x8014	hwnd=0x7540318	obj=151	child=0	thread=15248	console=true
+57560723.2	win	0x011b	hwnd=0x7540318	obj=151	child=0	thread=15248	console=true
+57560738.7	win	0x0121	hwnd=0x7540318	obj=151	child=0	thread=15248	console=true
+57560740.7	win	0x010a	hwnd=0x7540318	obj=151	child=0	thread=15248	console=true
+57560742.6	win	0x010c	hwnd=0x7540318	obj=151	child=0	thread=15248	console=true
+57561383.4	uia	20014	class=	type=50030
+58060759.2	key	76
+58098289.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+58098309.5	win	0x4001	hwnd=0x7540318	obj=2	child=196718	thread=15248	console=true
+58098328.8	win	0x8014	hwnd=0x7540318	obj=152	child=0	thread=15248	console=true
+58098369.2	win	0x011b	hwnd=0x7540318	obj=152	child=0	thread=15248	console=true
+58098425.1	win	0x0121	hwnd=0x7540318	obj=152	child=0	thread=15248	console=true
+58098435.0	win	0x010a	hwnd=0x7540318	obj=152	child=0	thread=15248	console=true
+58098436.7	win	0x010c	hwnd=0x7540318	obj=152	child=0	thread=15248	console=true
+58099024.2	uia	20014	class=	type=50030
+58661362.9	key	77
+59157237.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+59157268.6	win	0x4001	hwnd=0x7540318	obj=2	child=196719	thread=15248	console=true
+59157288.3	win	0x8014	hwnd=0x7540318	obj=153	child=0	thread=15248	console=true
+59157309.8	win	0x011b	hwnd=0x7540318	obj=153	child=0	thread=15248	console=true
+59157317.4	win	0x0121	hwnd=0x7540318	obj=153	child=0	thread=15248	console=true
+59157319.4	win	0x010a	hwnd=0x7540318	obj=153	child=0	thread=15248	console=true
+59157321.2	win	0x010c	hwnd=0x7540318	obj=153	child=0	thread=15248	console=true
+59157846.9	uia	20014	class=	type=50030
+59261893.3	key	78
+59679263.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+59679338.9	win	0x4001	hwnd=0x7540318	obj=2	child=196720	thread=15248	console=true
+59679364.4	win	0x8014	hwnd=0x7540318	obj=154	child=0	thread=15248	console=true
+59679370.9	win	0x011b	hwnd=0x7540318	obj=154	child=0	thread=15248	console=true
+59679375.3	win	0x0121	hwnd=0x7540318	obj=154	child=0	thread=15248	console=true
+59679385.1	win	0x010a	hwnd=0x7540318	obj=154	child=0	thread=15248	console=true
+59679386.7	win	0x010c	hwnd=0x7540318	obj=154	child=0	thread=15248	console=true
+59679975.1	uia	20014	class=	type=50030
+59862121.8	key	79
+60217455.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+60217472.9	win	0x4001	hwnd=0x7540318	obj=2	child=196721	thread=15248	console=true
+60217497.4	win	0x8014	hwnd=0x7540318	obj=155	child=0	thread=15248	console=true
+60217542.6	win	0x011b	hwnd=0x7540318	obj=155	child=0	thread=15248	console=true
+60217577.7	win	0x0121	hwnd=0x7540318	obj=155	child=0	thread=15248	console=true
+60217579.5	win	0x010a	hwnd=0x7540318	obj=155	child=0	thread=15248	console=true
+60217581.0	win	0x010c	hwnd=0x7540318	obj=155	child=0	thread=15248	console=true
+60218247.6	uia	20014	class=	type=50030
+60462328.0	key	80
+60740039.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+60740064.9	win	0x4001	hwnd=0x7540318	obj=2	child=196720	thread=15248	console=true
+60740109.6	win	0x8014	hwnd=0x7540318	obj=156	child=0	thread=15248	console=true
+60740174.3	win	0x011b	hwnd=0x7540318	obj=156	child=0	thread=15248	console=true
+60740215.7	win	0x0121	hwnd=0x7540318	obj=156	child=0	thread=15248	console=true
+60740218.3	win	0x010a	hwnd=0x7540318	obj=156	child=0	thread=15248	console=true
+60740220.3	win	0x010c	hwnd=0x7540318	obj=156	child=0	thread=15248	console=true
+60740859.2	uia	20014	class=	type=50030
+61062460.8	key	81
+61277056.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+61277121.2	win	0x4001	hwnd=0x7540318	obj=2	child=196719	thread=15248	console=true
+61277213.6	win	0x8014	hwnd=0x7540318	obj=157	child=0	thread=15248	console=true
+61277254.5	win	0x011b	hwnd=0x7540318	obj=157	child=0	thread=15248	console=true
+61277268.5	win	0x0121	hwnd=0x7540318	obj=157	child=0	thread=15248	console=true
+61277270.7	win	0x010a	hwnd=0x7540318	obj=157	child=0	thread=15248	console=true
+61277272.7	win	0x010c	hwnd=0x7540318	obj=157	child=0	thread=15248	console=true
+61277852.2	uia	20014	class=	type=50030
+61662733.8	key	82
+61800319.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+61800336.5	win	0x4001	hwnd=0x7540318	obj=2	child=196718	thread=15248	console=true
+61800344.0	win	0x8014	hwnd=0x7540318	obj=158	child=0	thread=15248	console=true
+61800349.7	win	0x011b	hwnd=0x7540318	obj=158	child=0	thread=15248	console=true
+61800351.3	win	0x0121	hwnd=0x7540318	obj=158	child=0	thread=15248	console=true
+61800352.8	win	0x010a	hwnd=0x7540318	obj=158	child=0	thread=15248	console=true
+61800354.3	win	0x010c	hwnd=0x7540318	obj=158	child=0	thread=15248	console=true
+61800863.1	uia	20014	class=	type=50030
+62262910.0	key	83
+62337980.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+62338010.9	win	0x4001	hwnd=0x7540318	obj=2	child=196717	thread=15248	console=true
+62338070.6	win	0x8014	hwnd=0x7540318	obj=159	child=0	thread=15248	console=true
+62338110.9	win	0x011b	hwnd=0x7540318	obj=159	child=0	thread=15248	console=true
+62338114.3	win	0x0121	hwnd=0x7540318	obj=159	child=0	thread=15248	console=true
+62338116.7	win	0x010a	hwnd=0x7540318	obj=159	child=0	thread=15248	console=true
+62338118.9	win	0x010c	hwnd=0x7540318	obj=159	child=0	thread=15248	console=true
+62338845.0	uia	20014	class=	type=50030
+62865496.6	key	84
+63396980.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+63397026.3	win	0x4001	hwnd=0x7540318	obj=2	child=196716	thread=15248	console=true
+63397086.1	win	0x8014	hwnd=0x7540318	obj=160	child=0	thread=15248	console=true
+63397122.5	win	0x011b	hwnd=0x7540318	obj=160	child=0	thread=15248	console=true
+63397142.2	win	0x0121	hwnd=0x7540318	obj=160	child=0	thread=15248	console=true
+63397145.6	win	0x010a	hwnd=0x7540318	obj=160	child=0	thread=15248	console=true
+63397148.0	win	0x010c	hwnd=0x7540318	obj=160	child=0	thread=15248	console=true
+63397766.2	uia	20014	class=	type=50030
+63465695.8	key	85
+63919384.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+63919421.4	win	0x4001	hwnd=0x7540318	obj=2	child=196715	thread=15248	console=true
+63919461.2	win	0x8014	hwnd=0x7540318	obj=161	child=0	thread=15248	console=true
+63919504.7	win	0x011b	hwnd=0x7540318	obj=161	child=0	thread=15248	console=true
+63919536.2	win	0x0121	hwnd=0x7540318	obj=161	child=0	thread=15248	console=true
+63919572.1	win	0x010a	hwnd=0x7540318	obj=161	child=0	thread=15248	console=true
+63919604.6	win	0x010c	hwnd=0x7540318	obj=161	child=0	thread=15248	console=true
+63920244.2	uia	20014	class=	type=50030
+64065921.6	key	86
+64456900.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+64456942.0	win	0x4001	hwnd=0x7540318	obj=2	child=196714	thread=15248	console=true
+64457088.6	win	0x8014	hwnd=0x7540318	obj=162	child=0	thread=15248	console=true
+64457160.8	win	0x011b	hwnd=0x7540318	obj=162	child=0	thread=15248	console=true
+64457193.6	win	0x0121	hwnd=0x7540318	obj=162	child=0	thread=15248	console=true
+64457225.0	win	0x010a	hwnd=0x7540318	obj=162	child=0	thread=15248	console=true
+64457252.3	win	0x010c	hwnd=0x7540318	obj=162	child=0	thread=15248	console=true
+64457834.3	uia	20014	class=	type=50030
+64666487.7	key	87
+64994394.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+64994446.4	win	0x4001	hwnd=0x7540318	obj=2	child=196713	thread=15248	console=true
+64994485.4	win	0x8014	hwnd=0x7540318	obj=163	child=0	thread=15248	console=true
+64994515.0	win	0x011b	hwnd=0x7540318	obj=163	child=0	thread=15248	console=true
+64994516.7	win	0x0121	hwnd=0x7540318	obj=163	child=0	thread=15248	console=true
+64994518.2	win	0x010a	hwnd=0x7540318	obj=163	child=0	thread=15248	console=true
+64994519.8	win	0x010c	hwnd=0x7540318	obj=163	child=0	thread=15248	console=true
+64995078.6	uia	20014	class=	type=50030
+65266934.4	key	88
+65516294.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+65516302.7	win	0x4001	hwnd=0x7540318	obj=2	child=196712	thread=15248	console=true
+65516394.1	win	0x8014	hwnd=0x7540318	obj=164	child=0	thread=15248	console=true
+65516419.0	win	0x011b	hwnd=0x7540318	obj=164	child=0	thread=15248	console=true
+65516445.3	win	0x0121	hwnd=0x7540318	obj=164	child=0	thread=15248	console=true
+65516473.5	win	0x010a	hwnd=0x7540318	obj=164	child=0	thread=15248	console=true
+65516477.1	win	0x010c	hwnd=0x7540318	obj=164	child=0	thread=15248	console=true
+65517546.2	uia	20014	class=	type=50030
+65868108.8	key	89
+66053159.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+66053195.6	win	0x4001	hwnd=0x7540318	obj=2	child=196711	thread=15248	console=true
+66053243.9	win	0x8014	hwnd=0x7540318	obj=165	child=0	thread=15248	console=true
+66053281.3	win	0x011b	hwnd=0x7540318	obj=165	child=0	thread=15248	console=true
+66053304.0	win	0x0121	hwnd=0x7540318	obj=165	child=0	thread=15248	console=true
+66053307.1	win	0x010a	hwnd=0x7540318	obj=165	child=0	thread=15248	console=true
+66053309.2	win	0x010c	hwnd=0x7540318	obj=165	child=0	thread=15248	console=true
+66053916.2	uia	20014	class=	type=50030
+66468004.5	key	90
+66574892.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+66574924.4	win	0x4001	hwnd=0x7540318	obj=2	child=196710	thread=15248	console=true
+66574978.6	win	0x8014	hwnd=0x7540318	obj=166	child=0	thread=15248	console=true
+66575019.2	win	0x011b	hwnd=0x7540318	obj=166	child=0	thread=15248	console=true
+66575042.6	win	0x0121	hwnd=0x7540318	obj=166	child=0	thread=15248	console=true
+66575044.8	win	0x010a	hwnd=0x7540318	obj=166	child=0	thread=15248	console=true
+66575046.7	win	0x010c	hwnd=0x7540318	obj=166	child=0	thread=15248	console=true
+66575750.8	uia	20014	class=	type=50030
+67068517.3	key	91
+67113533.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+67113617.8	win	0x4001	hwnd=0x7540318	obj=2	child=196709	thread=15248	console=true
+67113686.9	win	0x8014	hwnd=0x7540318	obj=167	child=0	thread=15248	console=true
+67113715.7	win	0x011b	hwnd=0x7540318	obj=167	child=0	thread=15248	console=true
+67113734.8	win	0x0121	hwnd=0x7540318	obj=167	child=0	thread=15248	console=true
+67113750.9	win	0x010a	hwnd=0x7540318	obj=167	child=0	thread=15248	console=true
+67113768.2	win	0x010c	hwnd=0x7540318	obj=167	child=0	thread=15248	console=true
+67114426.5	uia	20014	class=	type=50030
+67668929.4	key	92
+68172837.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+68172860.6	win	0x4001	hwnd=0x7540318	obj=2	child=196708	thread=15248	console=true
+68172900.3	win	0x8014	hwnd=0x7540318	obj=168	child=0	thread=15248	console=true
+68172946.0	win	0x011b	hwnd=0x7540318	obj=168	child=0	thread=15248	console=true
+68172965.0	win	0x0121	hwnd=0x7540318	obj=168	child=0	thread=15248	console=true
+68172980.0	win	0x010a	hwnd=0x7540318	obj=168	child=0	thread=15248	console=true
+68172981.7	win	0x010c	hwnd=0x7540318	obj=168	child=0	thread=15248	console=true
+68173612.8	uia	20014	class=	type=50030
+68269208.9	key	93
+68695837.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+68695865.6	win	0x4001	hwnd=0x7540318	obj=2	child=196707	thread=15248	console=true
+68695935.6	win	0x8014	hwnd=0x7540318	obj=169	child=0	thread=15248	console=true
+68695960.2	win	0x011b	hwnd=0x7540318	obj=169	child=0	thread=15248	console=true
+68695962.0	win	0x0121	hwnd=0x7540318	obj=169	child=0	thread=15248	console=true
+68695963.6	win	0x010a	hwnd=0x7540318	obj=169	child=0	thread=15248	console=true
+68695965.2	win	0x010c	hwnd=0x7540318	obj=169	child=0	thread=15248	console=true
+68696554.4	uia	20014	class=	type=50030
+68869930.0	key	94
+69233425.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+69233458.5	win	0x4001	hwnd=0x7540318	obj=2	child=196706	thread=15248	console=true
+69233535.8	win	0x8014	hwnd=0x7540318	obj=170	child=0	thread=15248	console=true
+69233590.5	win	0x011b	hwnd=0x7540318	obj=170	child=0	thread=15248	console=true
+69233609.1	win	0x0121	hwnd=0x7540318	obj=170	child=0	thread=15248	console=true
+69233612.8	win	0x010a	hwnd=0x7540318	obj=170	child=0	thread=15248	console=true
+69233615.7	win	0x010c	hwnd=0x7540318	obj=170	child=0	thread=15248	console=true
+69234282.8	uia	20014	class=	type=50030
+69470590.4	key	95
+69756341.1	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+69756369.6	win	0x4001	hwnd=0x7540318	obj=2	child=196705	thread=15248	console=true
+69756413.2	win	0x8014	hwnd=0x7540318	obj=171	child=0	thread=15248	console=true
+69756448.0	win	0x011b	hwnd=0x7540318	obj=171	child=0	thread=15248	console=true
+69756461.1	win	0x0121	hwnd=0x7540318	obj=171	child=0	thread=15248	console=true
+69756467.6	win	0x010a	hwnd=0x7540318	obj=171	child=0	thread=15248	console=true
+69756469.2	win	0x010c	hwnd=0x7540318	obj=171	child=0	thread=15248	console=true
+69757203.1	uia	20014	class=	type=50030
+70070994.3	key	96
+70294337.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+70294343.1	win	0x4001	hwnd=0x7540318	obj=2	child=196704	thread=15248	console=true
+70294426.1	win	0x8014	hwnd=0x7540318	obj=172	child=0	thread=15248	console=true
+70294459.1	win	0x011b	hwnd=0x7540318	obj=172	child=0	thread=15248	console=true
+70294505.9	win	0x0121	hwnd=0x7540318	obj=172	child=0	thread=15248	console=true
+70294532.6	win	0x010a	hwnd=0x7540318	obj=172	child=0	thread=15248	console=true
+70294535.5	win	0x010c	hwnd=0x7540318	obj=172	child=0	thread=15248	console=true
+70295281.0	uia	20014	class=	type=50030
+70671983.0	key	97
+70817632.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+70817718.3	win	0x4001	hwnd=0x7540318	obj=2	child=196703	thread=15248	console=true
+70817784.1	win	0x8014	hwnd=0x7540318	obj=173	child=0	thread=15248	console=true
+70817806.6	win	0x011b	hwnd=0x7540318	obj=173	child=0	thread=15248	console=true
+70817809.1	win	0x0121	hwnd=0x7540318	obj=173	child=0	thread=15248	console=true
+70817811.0	win	0x010a	hwnd=0x7540318	obj=173	child=0	thread=15248	console=true
+70817812.9	win	0x010c	hwnd=0x7540318	obj=173	child=0	thread=15248	console=true
+70818501.6	uia	20014	class=	type=50030
+71272523.0	key	98
+71355045.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+71355147.0	win	0x4001	hwnd=0x7540318	obj=2	child=196702	thread=15248	console=true
+71355195.5	win	0x8014	hwnd=0x7540318	obj=174	child=0	thread=15248	console=true
+71355251.3	win	0x011b	hwnd=0x7540318	obj=174	child=0	thread=15248	console=true
+71355255.1	win	0x0121	hwnd=0x7540318	obj=174	child=0	thread=15248	console=true
+71355299.1	win	0x010a	hwnd=0x7540318	obj=174	child=0	thread=15248	console=true
+71355306.1	win	0x010c	hwnd=0x7540318	obj=174	child=0	thread=15248	console=true
+71355829.7	uia	20014	class=	type=50030
+71899816.5	key	99
+72401258.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+72401360.3	win	0x4001	hwnd=0x7540318	obj=2	child=196701	thread=15248	console=true
+72401424.3	win	0x8014	hwnd=0x7540318	obj=175	child=0	thread=15248	console=true
+72401462.0	win	0x011b	hwnd=0x7540318	obj=175	child=0	thread=15248	console=true
+72401465.3	win	0x0121	hwnd=0x7540318	obj=175	child=0	thread=15248	console=true
+72401468.1	win	0x010a	hwnd=0x7540318	obj=175	child=0	thread=15248	console=true
+72401470.8	win	0x010c	hwnd=0x7540318	obj=175	child=0	thread=15248	console=true
+72402219.2	uia	20014	class=	type=50030
+72535879.7	key	100
+72940628.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+72940822.9	win	0x4001	hwnd=0x7540318	obj=2	child=196702	thread=15248	console=true
+72940974.0	win	0x8014	hwnd=0x7540318	obj=176	child=0	thread=15248	console=true
+72940997.3	win	0x011b	hwnd=0x7540318	obj=176	child=0	thread=15248	console=true
+72941013.3	win	0x0121	hwnd=0x7540318	obj=176	child=0	thread=15248	console=true
+72941038.8	win	0x010a	hwnd=0x7540318	obj=176	child=0	thread=15248	console=true
+72941052.6	win	0x010c	hwnd=0x7540318	obj=176	child=0	thread=15248	console=true
+72941841.8	uia	20014	class=	type=50030
+73172402.3	key	101
+73463068.3	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+73463076.3	win	0x4001	hwnd=0x7540318	obj=2	child=196703	thread=15248	console=true
+73463136.1	win	0x8014	hwnd=0x7540318	obj=177	child=0	thread=15248	console=true
+73463162.5	win	0x011b	hwnd=0x7540318	obj=177	child=0	thread=15248	console=true
+73463184.1	win	0x0121	hwnd=0x7540318	obj=177	child=0	thread=15248	console=true
+73463198.9	win	0x010a	hwnd=0x7540318	obj=177	child=0	thread=15248	console=true
+73463201.7	win	0x010c	hwnd=0x7540318	obj=177	child=0	thread=15248	console=true
+73463943.3	uia	20014	class=	type=50030
+73774849.0	key	102
+74002126.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+74002146.4	win	0x4001	hwnd=0x7540318	obj=2	child=196704	thread=15248	console=true
+74002176.2	win	0x8014	hwnd=0x7540318	obj=178	child=0	thread=15248	console=true
+74002227.7	win	0x011b	hwnd=0x7540318	obj=178	child=0	thread=15248	console=true
+74002283.0	win	0x0121	hwnd=0x7540318	obj=178	child=0	thread=15248	console=true
+74002286.2	win	0x010a	hwnd=0x7540318	obj=178	child=0	thread=15248	console=true
+74002288.6	win	0x010c	hwnd=0x7540318	obj=178	child=0	thread=15248	console=true
+74003108.5	uia	20014	class=	type=50030
+74380961.2	key	103
+74524840.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+74524848.4	win	0x4001	hwnd=0x7540318	obj=2	child=196705	thread=15248	console=true
+74524952.1	win	0x8014	hwnd=0x7540318	obj=179	child=0	thread=15248	console=true
+74524982.2	win	0x011b	hwnd=0x7540318	obj=179	child=0	thread=15248	console=true
+74525007.8	win	0x0121	hwnd=0x7540318	obj=179	child=0	thread=15248	console=true
+74525026.5	win	0x010a	hwnd=0x7540318	obj=179	child=0	thread=15248	console=true
+74525029.9	win	0x010c	hwnd=0x7540318	obj=179	child=0	thread=15248	console=true
+74525850.3	uia	20014	class=	type=50030
+74983982.2	key	104
+75063559.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+75063606.7	win	0x4001	hwnd=0x7540318	obj=2	child=196706	thread=15248	console=true
+75063688.7	win	0x8014	hwnd=0x7540318	obj=180	child=0	thread=15248	console=true
+75063746.1	win	0x011b	hwnd=0x7540318	obj=180	child=0	thread=15248	console=true
+75063783.6	win	0x0121	hwnd=0x7540318	obj=180	child=0	thread=15248	console=true
+75063787.2	win	0x010a	hwnd=0x7540318	obj=180	child=0	thread=15248	console=true
+75063789.4	win	0x010c	hwnd=0x7540318	obj=180	child=0	thread=15248	console=true
+75064482.2	uia	20014	class=	type=50030
+75589676.0	key	105
+76124929.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+76124990.5	win	0x4001	hwnd=0x7540318	obj=2	child=196707	thread=15248	console=true
+76125044.2	win	0x8014	hwnd=0x7540318	obj=181	child=0	thread=15248	console=true
+76125087.7	win	0x011b	hwnd=0x7540318	obj=181	child=0	thread=15248	console=true
+76125091.0	win	0x0121	hwnd=0x7540318	obj=181	child=0	thread=15248	console=true
+76125093.5	win	0x010a	hwnd=0x7540318	obj=181	child=0	thread=15248	console=true
+76125096.0	win	0x010c	hwnd=0x7540318	obj=181	child=0	thread=15248	console=true
+76125826.4	uia	20014	class=	type=50030
+76190120.0	key	106
+76648263.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+76648269.5	win	0x4001	hwnd=0x7540318	obj=2	child=196708	thread=15248	console=true
+76648345.7	win	0x8014	hwnd=0x7540318	obj=182	child=0	thread=15248	console=true
+76648416.6	win	0x011b	hwnd=0x7540318	obj=182	child=0	thread=15248	console=true
+76648436.4	win	0x0121	hwnd=0x7540318	obj=182	child=0	thread=15248	console=true
+76648438.4	win	0x010a	hwnd=0x7540318	obj=182	child=0	thread=15248	console=true
+76648440.1	win	0x010c	hwnd=0x7540318	obj=182	child=0	thread=15248	console=true
+76649174.2	uia	20014	class=	type=50030
+76790814.7	key	107
+77170402.2	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+77170457.2	win	0x4001	hwnd=0x7540318	obj=2	child=196709	thread=15248	console=true
+77170526.9	win	0x8014	hwnd=0x7540318	obj=183	child=0	thread=15248	console=true
+77170588.0	win	0x011b	hwnd=0x7540318	obj=183	child=0	thread=15248	console=true
+77170591.3	win	0x0121	hwnd=0x7540318	obj=183	child=0	thread=15248	console=true
+77170596.1	win	0x010a	hwnd=0x7540318	obj=183	child=0	thread=15248	console=true
+77170598.8	win	0x010c	hwnd=0x7540318	obj=183	child=0	thread=15248	console=true
+77171410.5	uia	20014	class=	type=50030
+77391331.4	key	108
+77708641.9	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+77708726.6	win	0x4001	hwnd=0x7540318	obj=2	child=196710	thread=15248	console=true
+77708803.2	win	0x8014	hwnd=0x7540318	obj=184	child=0	thread=15248	console=true
+77708873.6	win	0x011b	hwnd=0x7540318	obj=184	child=0	thread=15248	console=true
+77708877.1	win	0x0121	hwnd=0x7540318	obj=184	child=0	thread=15248	console=true
+77708880.6	win	0x010a	hwnd=0x7540318	obj=184	child=0	thread=15248	console=true
+77708883.3	win	0x010c	hwnd=0x7540318	obj=184	child=0	thread=15248	console=true
+77709625.2	uia	20014	class=	type=50030
+77991661.4	key	109
+78232567.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+78232577.4	win	0x4001	hwnd=0x7540318	obj=2	child=196711	thread=15248	console=true
+78232729.7	win	0x8014	hwnd=0x7540318	obj=185	child=0	thread=15248	console=true
+78232764.3	win	0x011b	hwnd=0x7540318	obj=185	child=0	thread=15248	console=true
+78232790.8	win	0x0121	hwnd=0x7540318	obj=185	child=0	thread=15248	console=true
+78232793.8	win	0x010a	hwnd=0x7540318	obj=185	child=0	thread=15248	console=true
+78232796.0	win	0x010c	hwnd=0x7540318	obj=185	child=0	thread=15248	console=true
+78233681.0	uia	20014	class=	type=50030
+78592255.3	key	110
+78771805.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+78771850.6	win	0x4001	hwnd=0x7540318	obj=2	child=196712	thread=15248	console=true
+78771924.9	win	0x8014	hwnd=0x7540318	obj=186	child=0	thread=15248	console=true
+78771971.3	win	0x011b	hwnd=0x7540318	obj=186	child=0	thread=15248	console=true
+78771987.5	win	0x0121	hwnd=0x7540318	obj=186	child=0	thread=15248	console=true
+78771990.5	win	0x010a	hwnd=0x7540318	obj=186	child=0	thread=15248	console=true
+78771993.4	win	0x010c	hwnd=0x7540318	obj=186	child=0	thread=15248	console=true
+78772857.9	uia	20014	class=	type=50030
+79194501.8	key	111
+79295262.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+79295268.8	win	0x4001	hwnd=0x7540318	obj=2	child=196713	thread=15248	console=true
+79295359.8	win	0x8014	hwnd=0x7540318	obj=187	child=0	thread=15248	console=true
+79295377.2	win	0x011b	hwnd=0x7540318	obj=187	child=0	thread=15248	console=true
+79295394.0	win	0x0121	hwnd=0x7540318	obj=187	child=0	thread=15248	console=true
+79295407.0	win	0x010a	hwnd=0x7540318	obj=187	child=0	thread=15248	console=true
+79295409.4	win	0x010c	hwnd=0x7540318	obj=187	child=0	thread=15248	console=true
+79296333.7	uia	20014	class=	type=50030
+79794562.1	key	112
+79834166.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+79834203.5	win	0x4001	hwnd=0x7540318	obj=2	child=196714	thread=15248	console=true
+79834255.0	win	0x8014	hwnd=0x7540318	obj=188	child=0	thread=15248	console=true
+79834295.0	win	0x011b	hwnd=0x7540318	obj=188	child=0	thread=15248	console=true
+79834308.0	win	0x0121	hwnd=0x7540318	obj=188	child=0	thread=15248	console=true
+79834310.9	win	0x010a	hwnd=0x7540318	obj=188	child=0	thread=15248	console=true
+79834313.5	win	0x010c	hwnd=0x7540318	obj=188	child=0	thread=15248	console=true
+79835016.2	uia	20014	class=	type=50030
+80395137.3	key	113
+80880412.6	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+80880420.5	win	0x4001	hwnd=0x7540318	obj=2	child=196715	thread=15248	console=true
+80880423.3	win	0x8014	hwnd=0x7540318	obj=189	child=0	thread=15248	console=true
+80880426.1	win	0x011b	hwnd=0x7540318	obj=189	child=0	thread=15248	console=true
+80880428.5	win	0x0121	hwnd=0x7540318	obj=189	child=0	thread=15248	console=true
+80880430.7	win	0x010a	hwnd=0x7540318	obj=189	child=0	thread=15248	console=true
+80880433.3	win	0x010c	hwnd=0x7540318	obj=189	child=0	thread=15248	console=true
+80882158.6	uia	20014	class=	type=50030
+81004312.6	key	114
+81420537.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+81420567.9	win	0x4001	hwnd=0x7540318	obj=2	child=196716	thread=15248	console=true
+81420601.4	win	0x8014	hwnd=0x7540318	obj=190	child=0	thread=15248	console=true
+81420661.4	win	0x011b	hwnd=0x7540318	obj=190	child=0	thread=15248	console=true
+81420712.9	win	0x0121	hwnd=0x7540318	obj=190	child=0	thread=15248	console=true
+81420715.9	win	0x010a	hwnd=0x7540318	obj=190	child=0	thread=15248	console=true
+81420718.8	win	0x010c	hwnd=0x7540318	obj=190	child=0	thread=15248	console=true
+81421514.8	uia	20014	class=	type=50030
+81607441.1	key	115
+81942870.8	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+81942879.0	win	0x4001	hwnd=0x7540318	obj=2	child=196717	thread=15248	console=true
+81942985.1	win	0x8014	hwnd=0x7540318	obj=191	child=0	thread=15248	console=true
+81943074.2	win	0x011b	hwnd=0x7540318	obj=191	child=0	thread=15248	console=true
+81943078.4	win	0x0121	hwnd=0x7540318	obj=191	child=0	thread=15248	console=true
+81943081.1	win	0x010a	hwnd=0x7540318	obj=191	child=0	thread=15248	console=true
+81943083.7	win	0x010c	hwnd=0x7540318	obj=191	child=0	thread=15248	console=true
+81943922.2	uia	20014	class=	type=50030
+82215578.0	key	116
+82482200.4	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+82482207.1	win	0x4001	hwnd=0x7540318	obj=2	child=196718	thread=15248	console=true
+82482264.3	win	0x8014	hwnd=0x7540318	obj=192	child=0	thread=15248	console=true
+82482294.0	win	0x011b	hwnd=0x7540318	obj=192	child=0	thread=15248	console=true
+82482317.9	win	0x0121	hwnd=0x7540318	obj=192	child=0	thread=15248	console=true
+82482354.9	win	0x010a	hwnd=0x7540318	obj=192	child=0	thread=15248	console=true
+82482379.1	win	0x010c	hwnd=0x7540318	obj=192	child=0	thread=15248	console=true
+82484660.2	uia	20014	class=	type=50030
+82874004.2	key	117
+83005925.0	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+83005992.9	win	0x4001	hwnd=0x7540318	obj=2	child=196719	thread=15248	console=true
+83006039.1	win	0x8014	hwnd=0x7540318	obj=193	child=0	thread=15248	console=true
+83006082.1	win	0x011b	hwnd=0x7540318	obj=193	child=0	thread=15248	console=true
+83006092.9	win	0x0121	hwnd=0x7540318	obj=193	child=0	thread=15248	console=true
+83006112.5	win	0x010a	hwnd=0x7540318	obj=193	child=0	thread=15248	console=true
+83006116.3	win	0x010c	hwnd=0x7540318	obj=193	child=0	thread=15248	console=true
+83007211.5	uia	20014	class=	type=50030
+83493982.1	key	118
+83529364.5	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+83529372.7	win	0x4001	hwnd=0x7540318	obj=2	child=196720	thread=15248	console=true
+83529434.3	win	0x8014	hwnd=0x7540318	obj=194	child=0	thread=15248	console=true
+83529454.8	win	0x011b	hwnd=0x7540318	obj=194	child=0	thread=15248	console=true
+83529473.0	win	0x0121	hwnd=0x7540318	obj=194	child=0	thread=15248	console=true
+83529487.3	win	0x010a	hwnd=0x7540318	obj=194	child=0	thread=15248	console=true
+83529490.1	win	0x010c	hwnd=0x7540318	obj=194	child=0	thread=15248	console=true
+83530266.9	uia	20014	class=	type=50030
+84096004.8	key	119
+84592704.7	win	0x800b	hwnd=0x7540318	obj=-8	child=0	thread=17648	console=true
+84592721.9	win	0x4001	hwnd=0x7540318	obj=2	child=196721	thread=15248	console=true
+84592792.6	win	0x8014	hwnd=0x7540318	obj=195	child=0	thread=15248	console=true
+84592833.2	win	0x011b	hwnd=0x7540318	obj=195	child=0	thread=15248	console=true
+84592846.3	win	0x0121	hwnd=0x7540318	obj=195	child=0	thread=15248	console=true
+84592849.1	win	0x010a	hwnd=0x7540318	obj=195	child=0	thread=15248	console=true
+84592851.6	win	0x010c	hwnd=0x7540318	obj=195	child=0	thread=15248	console=true
+84593656.6	uia	20014	class=	type=50030
+85722002.6	mark	end

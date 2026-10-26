@@ -1,0 +1,13 @@
+# shell=cmd conhost_pid=20468 shell_pid=11728 window=0x7540318 window_pid=11728 interval=600
+idle 3002 ms: nothing
+presses 120, moved 120
+caret move seen by spin reads in 120/120: ms after key P50 0.65 P95 33.25 max 54.14 min 0.29
+EVENT_OBJECT_LOCATIONCHANGE obj=-8 (console): in 120/120 presses; first after key ms P50 277.9 P95 504.9 max 539.6 min 1.0; per press 1-1
+EVENT_CONSOLE_CARET obj=2 (console): in 120/120 presses; first after key ms P50 277.9 P95 505.0 max 539.6 min 1.1; per press 1-1
+EVENT_OBJECT_TEXTSELECTIONCHANGED obj=n (console): in 120/120 presses; first after key ms P50 278.0 P95 505.0 max 539.7 min 1.1; per press 1-1
+0x11b obj=n (console): in 120/120 presses; first after key ms P50 278.0 P95 505.1 max 539.8 min 1.2; per press 1-1
+0x121 obj=n (console): in 120/120 presses; first after key ms P50 278.1 P95 505.1 max 539.8 min 1.2; per press 1-1
+0x10a obj=n (console): in 120/120 presses; first after key ms P50 278.1 P95 505.1 max 539.8 min 1.2; per press 1-1
+0x10c obj=n (console): in 120/120 presses; first after key ms P50 278.1 P95 505.1 max 539.8 min 1.2; per press 1-1
+UIA TextSelectionChanged class=: in 120/120 presses; first after key ms P50 278.7 P95 505.7 max 540.6 min 2.0; per press 1-1
+EVENT_CONSOLE_CARET gaps ms, first 40: 2768 2518 536 523 4773 524 539 522 539 1047 539 524 539 524 1062 523 543 520 538 1062 524 524 539 523 538 523 1062 524 538 524 538 1064 523 523 540 523 539 1063 522 538

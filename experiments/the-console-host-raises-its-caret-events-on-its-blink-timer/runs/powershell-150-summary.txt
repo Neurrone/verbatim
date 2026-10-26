@@ -1,0 +1,21 @@
+# shell=powershell conhost_pid=8968 shell_pid=17860 window=0x5550380 window_pid=17860 interval=150
+idle 3000 ms: nothing
+presses 120, moved 120
+caret move seen by spin reads in 120/120: ms after key P50 0.84 P95 1.24 max 2.72 min 0.51
+EVENT_OBJECT_HIDE obj=-8 (hwnd 0x0): in 1/120 presses; first after key ms P50 81.6 P95 81.6 max 81.6 min 81.6; per press 2-2
+EVENT_OBJECT_LOCATIONCHANGE obj=-8 (console): in 34/120 presses; first after key ms P50 82.0 P95 144.9 max 149.5 min 1.5; per press 1-1
+EVENT_CONSOLE_CARET obj=2 (console): in 34/120 presses; first after key ms P50 82.0 P95 145.0 max 149.6 min 1.6; per press 1-1
+EVENT_OBJECT_TEXTSELECTIONCHANGED obj=n (console): in 33/120 presses; first after key ms P50 82.7 P95 145.1 max 149.7 min 1.6; per press 1-1
+0x11b obj=n (console): in 33/120 presses; first after key ms P50 82.7 P95 145.1 max 149.7 min 1.6; per press 1-1
+0x121 obj=n (console): in 33/120 presses; first after key ms P50 82.8 P95 145.4 max 149.7 min 1.6; per press 1-1
+0x10a obj=n (console): in 33/120 presses; first after key ms P50 82.8 P95 145.4 max 149.7 min 1.6; per press 1-1
+0x10c obj=n (console): in 33/120 presses; first after key ms P50 82.8 P95 145.4 max 149.7 min 1.6; per press 1-1
+UIA TextSelectionChanged class=: in 33/120 presses; first after key ms P50 83.5 P95 146.0 max 150.3 min 2.2; per press 1-1
+EVENT_CONSOLE_UPDATE_REGION obj=0 (hwnd 0x58908a4): in 1/120 presses; first after key ms P50 109.6 P95 109.6 max 109.6 min 109.6; per press 1-1
+EVENT_CONSOLE_START_APPLICATION obj=17324 (hwnd 0x58908a4): in 1/120 presses; first after key ms P50 129.4 P95 129.4 max 129.4 min 129.4; per press 1-1
+EVENT_CONSOLE_LAYOUT obj=0 (hwnd 0x58908a4): in 1/120 presses; first after key ms P50 133.8 P95 133.8 max 133.8 min 133.8; per press 1-1
+UIA focus changed class=: in 1/120 presses; first after key ms P50 135.3 P95 135.3 max 135.3 min 135.3; per press 2-2
+UIA focus changed class=ConsoleWindowClass: in 1/120 presses; first after key ms P50 136.1 P95 136.1 max 136.1 min 136.1; per press 2-2
+EVENT_CONSOLE_START_APPLICATION obj=16900 (hwnd 0x7660318): in 1/120 presses; first after key ms P50 145.8 P95 145.8 max 145.8 min 145.8; per press 1-1
+EVENT_CONSOLE_LAYOUT obj=0 (hwnd 0x7660318): in 1/120 presses; first after key ms P50 149.8 P95 149.8 max 149.8 min 149.8; per press 1-1
+EVENT_CONSOLE_CARET gaps ms, first 40: 156189 1742 534 4779 522 538 523 523 538 521 538 523 538 523 538 522 538 521 538 523 539 522 538 522 539 523 539 523 538 522 538 523 536 523 525 539 522
