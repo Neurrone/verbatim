@@ -652,21 +652,15 @@ pub enum TextOp {
     /// before a review command, the whole document after a lost read, or a
     /// first read again with its history block.
     TerminalReadNow(crate::TerminalScope),
-    /// Read the history above the start of read `read`: from `above` rows
-    /// above it to the document's end, or the whole document when `whole`.
-    /// The outpost counts from that read's start while it keeps it, among
-    /// the last few it kept, and from the start the next read takes
-    /// otherwise. Answered [`TextReply::TerminalHistory`].
+    /// Read the history above the start the next read takes: from `above`
+    /// rows above it to the document's end, or the whole document when
+    /// `whole`. Answered [`TextReply::TerminalHistory`], which names the
+    /// read whose start that is.
     TerminalHistory {
         /// How many rows above the start.
         above: u32,
         /// Whether to read the whole document instead.
         whole: bool,
-        /// The read whose start `above` is counted from
-        /// ([`crate::TerminalSnapshot::read`]): the one Core's memory last
-        /// took when it asked.
-        #[serde(default)]
-        read: u64,
     },
     /// Search the focused terminal's text for `needle`, a row's text with
     /// no line break, outward from the row `from` rows above where the next
@@ -772,7 +766,7 @@ pub enum TextReply {
     /// changed since the last read.
     TerminalUnchanged,
     /// The answer to [`TextOp::TerminalHistory`]: the text read, padding
-    /// kept, how many rows it holds above the start it was counted from,
+    /// kept, how many rows it holds above the start the next read takes,
     /// and the read whose start that is.
     TerminalHistory {
         /// The text.

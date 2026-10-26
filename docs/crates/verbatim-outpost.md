@@ -2795,19 +2795,13 @@ it.
   key's watch is open, the intake drops the window's console updates
   without waking the worker (`docs/design/wake-ups.md`).
 - The review cursor is Core's. Rows above those Core's memory keeps are
-  read when Core asks (`TextOp::TerminalHistory { above, whole, read }`),
-  in a snapshot of their own from as many rows above the start of the
-  read Core names, or the whole document, padding kept, answered
+  read when Core asks (`TextOp::TerminalHistory { above, whole }`), in a
+  snapshot of their own from as many rows above where the next read
+  starts, or the whole document, padding kept, answered
   `TextReply::TerminalHistory` with how many rows the read holds above
   that start and the number of the read whose start it is
   (`terminal::history`, whose `History` also says which path answered).
-  Besides the start the next read takes, the outpost keeps the starts of
-  the last three reads kept before it (`terminal::EARLIER_STARTS`), each
-  with its number as Core knows it, so a history read Core asked of a
-  read before a live read or two the outpost took meanwhile is still
-  counted from that read's start and holds the rows Core asked for;
-  otherwise it is counted from the next read's start. A command mark's
-  line above them is
+  A command mark's line above them is
   looked for when Core asks (`TextOp::TerminalFind`), by
   `terminal::find` with `verbatim_uia_rops::terminal_find`, answered
   `TextReply::TerminalFound` with each match's rows above that start and

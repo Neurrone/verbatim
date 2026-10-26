@@ -95,27 +95,36 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
     // Down from it, through the history, read again for each command.
     session.input(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["three"]));
-    let history = |read| TextOp::TerminalHistory {
-        above: 9,
+    // Each history read asks for a screen more than the command needs.
+    let history = TextOp::TerminalHistory {
+        above: 13,
         whole: false,
-        read,
     };
-    assert_eq!(session.requests(), [FRESH, history(5), FRESH, history(6)]);
+    assert_eq!(session.requests(), [FRESH, history.clone(), FRESH, history]);
 }
 
-#[test]
-fn output_arriving_while_a_history_read_is_out_moves_nothing() {
-    // The review position on "two", in the history above the memory's rows;
-    // before the outpost reads the history, the program prints two more
-    // lines, read and taken first. The history is read from the start Core
-    // asked from, and placed among the memory's rows as they are: the
-    // command reads "two" with one history read, and the next line below it.
-    let mut session = showing(20, 4, 100, "one\r\ntwo\r\nthree\r\n");
+/// A terminal of four rows whose review position is on "two", in the
+/// history above the rows the memory keeps, with nine lines printed below
+/// it and six above it, so that no history read below reaches the
+/// document's start.
+fn reviewing_two() -> Session {
+    let text = format!("{}one\r\ntwo\r\nthree\r\n", numbered(1..=6));
+    let mut session = showing(20, 4, 100, &text);
     session.input(&command(ReviewCommand::ReviewPreviousLine));
     session.input(&command(ReviewCommand::ReviewPreviousLine));
     session.write("four\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\n", 200);
     let _ = session.heard();
     let _ = session.requests();
+    session
+}
+
+#[test]
+fn output_arriving_while_a_history_read_is_out_is_covered_by_the_screen_more_it_asks_for() {
+    // Before the outpost reads the history, the program prints two more
+    // lines, read and taken first. The history is counted from the newest
+    // read's start, and the screen more than the command needed still holds
+    // "two": the command reads it with one history read.
+    let mut session = reviewing_two();
     session.output_before_histories = [("ten\r\neleven\r\n".to_owned(), 300)].into();
     session.input(&command(ReviewCommand::ReviewCurrentLine));
     assert_eq!(session.heard(), plain(&["ten", "eleven", "two"]));
@@ -124,9 +133,8 @@ fn output_arriving_while_a_history_read_is_out_moves_nothing() {
         [
             FRESH,
             TextOp::TerminalHistory {
-                above: 9,
+                above: 13,
                 whole: false,
-                read: 5,
             }
         ]
     );
@@ -135,14 +143,45 @@ fn output_arriving_while_a_history_read_is_out_moves_nothing() {
 }
 
 #[test]
-fn a_history_read_counted_from_a_start_the_memory_lost_ends_the_command() {
+fn more_than_a_screen_arriving_while_a_history_read_is_out_ends_the_command() {
+    // Five more lines, more than the screen more the command asked for: the
+    // history read does not reach "two", so the command says nothing and
+    // reads no more history. The review position stays on "two", which the
+    // next command reads.
+    let mut session = reviewing_two();
+    session.output_before_histories = [(
+        "ten\r\neleven\r\ntwelve\r\nthirteen\r\nfourteen\r\n".to_owned(),
+        300,
+    )]
+    .into();
+    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(
+        session.heard(),
+        plain(&["ten", "eleven", "twelve", "thirteen", "fourteen"])
+    );
+    assert_eq!(
+        session.requests(),
+        [
+            FRESH,
+            TextOp::TerminalHistory {
+                above: 13,
+                whole: false,
+            }
+        ]
+    );
+    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["two"]));
+}
+
+#[test]
+fn a_history_answer_counted_from_a_read_core_did_not_take_ends_the_command() {
     // The review position on "line 4", in the history above the memory's
     // rows; before the outpost reads the history, a flood carries the last
-    // read's rows out of the buffer, so the memory takes the whole document
-    // instead, which did not start at the start before it. The history,
-    // counted from the start Core asked from, cannot be placed: the command
-    // says nothing, and the next one reads where the lost read left the
-    // review position.
+    // read's rows out of the buffer. Core does not take the read that shows
+    // it, asking for the whole document instead, which comes after the
+    // history; the history is counted from the start of the read Core did
+    // not take, so it cannot be placed: the command says nothing, and the
+    // next one reads where the whole document left the review position.
     let mut session = showing(20, 3, 9, &numbered(1..=12));
     session.input(&command(ReviewCommand::ReviewTop));
     session.input(&command(ReviewCommand::ReviewNextLine));
@@ -150,7 +189,9 @@ fn a_history_read_counted_from_a_start_the_memory_lost_ends_the_command() {
     assert_eq!(session.heard(), plain(&["line 2", "line 3", "line 4"]));
     let _ = session.requests();
     session.output_before_histories = [(numbered(13..=40), 100)].into();
+    session.hold_whole = true;
     session.input(&command(ReviewCommand::ReviewCurrentLine));
+    session.answer_held();
     let mut flood = vec!["Phrase(SkippedUncountedLines)".to_owned()];
     flood.extend((30..=40).map(|line| format!("line {line}")));
     let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
@@ -160,9 +201,8 @@ fn a_history_read_counted_from_a_start_the_memory_lost_ends_the_command() {
         [
             FRESH,
             TextOp::TerminalHistory {
-                above: 10,
+                above: 13,
                 whole: false,
-                read: 6,
             },
             TextOp::TerminalReadNow(TerminalScope::Whole)
         ]
@@ -225,8 +265,7 @@ fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
             FRESH,
             TextOp::TerminalHistory {
                 above: 0,
-                whole: true,
-                read: 3,
+                whole: true
             }
         ]
     );
@@ -982,6 +1021,52 @@ fn a_press_makes_at_most_three_searches() {
     assert_eq!(needles, ["$ echo d", "$ echo c", "$ echo b"]);
     session.input(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo a"]));
+}
+
+#[test]
+fn a_line_move_after_a_mark_move_while_output_scrolls_reads_its_own_line() {
+    // The review position on "$ line 1", above the rows the memory keeps,
+    // and six lines printed that no read has shown yet. Three commands are
+    // pressed faster than the outpost answers: a line move down, which reads
+    // the history after its fresh read; a move to the previous command mark,
+    // whose search goes out while two more lines are read; and a line move
+    // up, which reads from where the review position was when it was
+    // pressed. The read taken while the search was out counts its rows from
+    // a start six rows lower, so the history the first command read is not
+    // among its rows: the last command reads the history again and says the
+    // line above "$ line 1". Each command's speech cuts off the one before,
+    // so only the last is heard after the output.
+    let mut session = showing(30, 4, 100, "intro\r\n$ ");
+    let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
+    session.write(&numbered(1..=20), at_ms);
+    let _ = session.heard();
+    session.input(&command(UP));
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(session.heard(), plain(&["$ echo one", "one", "$ line 1"]));
+    let _ = session.requests();
+    session.outpost.sim.write(numbered(21..=26).as_bytes());
+    session.output_before_finds = [(numbered(27..=28), at_ms + 1000)].into();
+    session.inputs(&[
+        command(ReviewCommand::ReviewNextLine),
+        command(UP),
+        command(ReviewCommand::ReviewPreviousLine),
+    ]);
+    assert_eq!(
+        session.heard(),
+        plain(&[
+            "line 21", "line 22", "line 23", "line 24", "line 25", "line 26", "line 27", "line 28",
+            "one"
+        ])
+    );
+    let history = |above| TextOp::TerminalHistory {
+        above,
+        whole: false,
+    };
+    assert_eq!(
+        session.requests(),
+        [FRESH, history(31), find("$ echo one", 25), history(33)]
+    );
 }
 
 #[test]

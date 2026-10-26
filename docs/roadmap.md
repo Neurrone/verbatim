@@ -173,6 +173,12 @@ Related items:
 - The reader ignores the colours of a colours re-read that comes late.
 - The outpost takes a read's `ended_ms` after converting its text from
   UTF-16, so the conversion's time counts as part of the read.
+- A review command's history read is placed with gaps in its checks:
+  its answer carries no `from_start`, so a start the outpost refused
+  during the read is placed as if counted from the read it names; an
+  `Unanswered` history read is placed as no rows above the start, as if
+  the document began there; and a whole-document history read is placed
+  by the end of the memory's rows rather than by a start.
 
 ### The audio step
 

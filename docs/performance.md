@@ -2899,8 +2899,8 @@ the screen read never does: it moves by many rows in one call.
 
 A review command whose place lies above the rows a terminal's memory
 keeps reads the history in one remote operation of its own
-(`review::History`, `verbatim_uia_rops::terminal_snapshot`), from a
-screen above the place to the document's end, and looks for the place's
+(`review::History`, `verbatim_uia_rops::terminal_snapshot`), from two
+screens above the place to the document's end, and looks for the place's
 line by its hash from a screen above the place to a screen below it,
 nearest first (Dickson, 2026-10-25). The search below adds no call and no
 row to the read, which already held the rows below the place: only up to
@@ -2910,20 +2910,17 @@ speech path. The design had estimated two screens of rows at about 0.24
 milliseconds against 0.12 for one, assuming a read of one screen; the
 read's size is unchanged by the search and was not measured again.
 
-The history read is counted from the start of the read Core's memory
-last took when it asked, and its answer names the read it was counted
-from: Core places its rows among the memory's rows when it comes,
-following that start by place across the reads the memory took
-meanwhile, so a live read that scrolls the rows while the history read
-is out costs no second history read, and the command makes one. For
-that the outpost keeps the starts of the last three reads it kept
-before the next read's (`terminal::EARLIER_STARTS`), three agile
-references it already made and now holds a little longer, with no call
-added; each read the memory takes while a history read is out adds two
-integer additions in the reducer. Rows that cannot be placed end the
-command, saying nothing. Nothing is added to the event or speech path
-but holding those references. This follows from the code and was not
-measured.
+The second screen above the place covers output that scrolls while the
+history read is out: its answer names the read whose start its rows are
+counted from, and Core places them only when its memory last took that
+read, so up to a screen of output read meanwhile costs no second
+history read. Rows that cannot be placed, or that fall short, end the
+command, saying nothing, and nothing is asked again, so a command makes
+at most one history read. The second screen adds one screen of rows to
+that read, about 0.12 milliseconds by the design's estimate above, with
+no call added; clearing the kept rows when the memory takes a read is
+one assignment. Nothing is added to the event or speech path. This
+follows from the code and was not measured.
 
 ### A terminal's command marks
 

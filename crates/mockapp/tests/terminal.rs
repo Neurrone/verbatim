@@ -191,7 +191,7 @@ impl Session<'_> {
                 TextOp::AwaitCaret(_) => TextReply::WatchEnded,
                 // The session reads only when a test or Core asks.
                 TextOp::TerminalHold => TextReply::Done,
-                TextOp::TerminalHistory { above, whole, read } => {
+                TextOp::TerminalHistory { above, whole } => {
                     self.histories += 1;
                     if let Some((app, hwnd, shown)) = self.before_history.take() {
                         let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
@@ -202,7 +202,7 @@ impl Session<'_> {
                         self.uia,
                         (self.source.element(), self.source.pattern()),
                         &self.terminal,
-                        (*above, *whole, *read, self.remote),
+                        (*above, *whole, self.remote),
                     )
                     .expect("the history is read");
                     // The path asked for answered, never the fallback.
@@ -516,7 +516,7 @@ fn command_marks_are_found_while_output_scrolls(remote: bool) {
     let uia = Uia::new().expect("a UIA client");
     {
         let mut session = session_with_a_command(&uia, &mut app, hwnd, remote);
-        session.before_find = Some((&mut app, hwnd, rows_after_ls(15)));
+        session.before_find = Some((&mut app, hwnd, rows_after_ls(13)));
         session.input(&command(ReviewCommand::PreviousCommandMark, 0));
         let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
         assert_eq!(session.finds, 1);
@@ -540,11 +540,11 @@ fn command_marks_are_found_while_output_scrolls_classic() {
 
 /// The review cursor on the command's line above the rows Core keeps, as
 /// [`command_marks_move_the_review_cursor`] puts it there; the program
-/// prints five more lines before the outpost reads the history the next
+/// prints three more lines before the outpost reads the history the next
 /// line needs, read and sent to Core first: the history's rows are
-/// counted from the start Core asked from, and the review cursor still
-/// moves to the command's output, with one history read on the remote
-/// path.
+/// counted from that newer read's start, the screen more Core asked for
+/// still holds the command's output, and the review cursor moves to it,
+/// with one history read on the remote path.
 fn the_history_is_placed_while_output_scrolls_remote() {
     common::init_com();
     let title = common::unique_title("mockapp-terminal-history-scrolling");
@@ -558,7 +558,7 @@ fn the_history_is_placed_while_output_scrolls_remote() {
         assert_eq!(session.spoken, [text("ready>ls")]);
         session.spoken.clear();
         session.histories = 0;
-        session.before_history = Some((&mut app, hwnd, rows_after_ls(15)));
+        session.before_history = Some((&mut app, hwnd, rows_after_ls(13)));
         session.input(&command(ReviewCommand::ReviewNextLine, 0));
         assert!(session.before_history.is_none(), "the history was read");
         assert_eq!(session.histories, 1);

@@ -3908,14 +3908,11 @@ impl Worker<'_> {
                 }
                 return true;
             }
-            TextOp::TerminalHistory { above, whole, read } => {
+            TextOp::TerminalHistory { above, whole } => {
                 let reply = match self.client.uia() {
-                    Some(uia) if focused => text_reads::terminal_history(
-                        self.context,
-                        uia,
-                        node_id,
-                        (*above, *whole, *read),
-                    ),
+                    Some(uia) if focused => {
+                        text_reads::terminal_history(self.context, uia, node_id, (*above, *whole))
+                    }
                     _ => TextReply::Unanswered,
                 };
                 self.reply_text(request, reply);

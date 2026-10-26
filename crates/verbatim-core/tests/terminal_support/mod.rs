@@ -59,10 +59,6 @@ pub fn focus() -> Input {
     })
 }
 
-/// How many starts the outpost keeps before the one the next read takes
-/// (`verbatim_outpost::terminal::EARLIER_STARTS`).
-const EARLIER_STARTS: usize = 3;
-
 /// The simulated terminal read as the outpost reads it for Core: each read
 /// starts where the last read whose screen showed text said to start, a
 /// screen of rows above it, at the height Core told; the first read takes
@@ -77,9 +73,6 @@ pub struct Outpost {
     width: usize,
     /// Where the next read starts.
     start: Option<Range>,
-    /// The starts kept before it, oldest first, at most
-    /// [`EARLIER_STARTS`], each with its read as Core knows it.
-    earlier: VecDeque<(u64, Range)>,
     /// The reads taken, which number each.
     reads: u64,
     /// The read whose start is kept, as Core knows it: the last read sent
@@ -110,7 +103,6 @@ impl Outpost {
             sim: Terminal::new(flavor, width, height, history),
             width,
             start: None,
-            earlier: VecDeque::new(),
             reads: 0,
             start_read: 0,
             sent_read: 0,
@@ -202,12 +194,7 @@ impl Outpost {
         let shows = shows_text(&read.screen);
         self.reads += 1;
         if shows || !self.showed_text {
-            if let Some(kept) = self.start.replace(snapshot.next_start) {
-                if self.earlier.len() == EARLIER_STARTS {
-                    self.earlier.pop_front();
-                }
-                self.earlier.push_back((self.start_read, kept));
-            }
+            self.start = Some(snapshot.next_start);
             self.start_read = self.reads;
             self.showed_text = shows;
         }
@@ -310,18 +297,9 @@ impl Outpost {
                 self.answered(&snapshot);
                 TextReply::TerminalSnapshot(Box::new(snapshot))
             }
-            TextOp::TerminalHistory { above, whole, read } => {
-                // Counted from read `read`'s start while it is kept, and
-                // from the next read's otherwise.
-                let earlier = (*read != self.start_read)
-                    .then(|| self.earlier.iter().rev().find(|(kept, _)| kept == read))
-                    .flatten();
-                let (start, read) = match earlier {
-                    Some((read, range)) => (Some(*range), *read),
-                    None => (self.start, self.start_read),
-                };
+            TextOp::TerminalHistory { above, whole } => {
                 let query = Query {
-                    start: if *whole { None } else { start },
+                    start: if *whole { None } else { self.start },
                     screen_rows: self.height,
                     whole: *whole,
                     above: if *whole { 0 } else { *above },
@@ -330,7 +308,7 @@ impl Outpost {
                 TextReply::TerminalHistory {
                     text: snapshot.text,
                     above: snapshot.above,
-                    read,
+                    read: self.start_read,
                 }
             }
             TextOp::TerminalFind { needle, from, rows } => self.find(needle, *from, *rows),
@@ -482,6 +460,18 @@ impl Session {
     pub fn input(&mut self, input: &Input) {
         let effects = self.step(input.clone());
         self.run(effects);
+        self.play();
+    }
+
+    /// Feeds `inputs` one after another before the outpost answers any
+    /// request they make, as keys pressed faster than it answers, then
+    /// answers those requests, in order, and plays what they queued.
+    pub fn inputs(&mut self, inputs: &[Input]) {
+        for input in inputs {
+            let effects = self.step(input.clone());
+            self.take(effects, None);
+        }
+        self.run(Vec::new());
         self.play();
     }
 

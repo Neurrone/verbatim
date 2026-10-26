@@ -856,15 +856,15 @@ pub(super) fn terminal_read(
     }
 }
 
-/// Reads the history of the focused terminal `node_id` above the start of
-/// read `read`, for a review command Core answers from its memory
+/// Reads the history of the focused terminal `node_id` above where its
+/// next read starts, for a review command Core answers from its memory
 /// ([`verbatim_model::TextOp::TerminalHistory`]): from `above` rows above
 /// that start to the document's end, or the whole document when `whole`.
 pub(super) fn terminal_history(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
-    (above, whole, read): (u32, bool, u64),
+    (above, whole): (u32, bool),
 ) -> TextReply {
     let Ok(source) = uia_source(context, node_id) else {
         return TextReply::Unanswered;
@@ -878,7 +878,7 @@ pub(super) fn terminal_history(
         uia,
         (source.element(), source.pattern()),
         terminal,
-        (above, whole, read, remote),
+        (above, whole, remote),
     ) {
         Ok(history) => TextReply::TerminalHistory {
             text: history.text,
