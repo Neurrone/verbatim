@@ -592,6 +592,10 @@ fn a_request_waiting_in_the_host_is_in_its_first_chunk() {
 }
 
 fn main() -> ExitCode {
+    // SAFETY: first thing in `main`, before any thread starts: the stand-in
+    // host this binary launches stamps its times on the same clock as the
+    // test, as `verbatim-app` hands its clock to the processes it launches.
+    unsafe { verbatim_process::clock::hand_on() };
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|arg| arg == "--pipe-in") {
         return stand_in(&args);
