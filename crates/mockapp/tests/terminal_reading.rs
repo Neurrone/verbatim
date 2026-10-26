@@ -65,6 +65,8 @@ mod common;
 #[path = "common/harness.rs"]
 mod harness;
 
+use std::time::{Duration, Instant};
+
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
     CaretWatch, FocusText, NodeId, NormalizedEvent, PropertyChange, Role, TerminalScope,
@@ -973,8 +975,12 @@ fn the_read_before_a_held_key_is_a_read_with_its_caret() {
 
 /// The console host's text area, with an outpost watching it, and a caret
 /// key's watch on it from the caret as a held key's read before it finds
-/// it, opened and checked once with the caret where it was.
-fn console_watch(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, u64) {
+/// it, opened and checked once with the caret where it was, for a key
+/// passed on at `pressed_at_ms` (0 when unknown).
+fn console_watch(
+    name: &str,
+    pressed_at_ms: u64,
+) -> (common::MockApp, OutpostUnderTest, NodeId, u64) {
     let (app, mut outpost, area) = start_with(
         name,
         "console_terminal.json",
@@ -994,7 +1000,7 @@ fn console_watch(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, u64)
                 anchor: caret.line.start,
                 offset: caret.line.offset,
             }),
-            pressed_at_ms: 0,
+            pressed_at_ms,
             unit: TextUnit::Character,
             compare: None,
             deletes: false,
@@ -1009,7 +1015,7 @@ fn console_watch(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, u64)
 /// caret the application moves after the watch's first check, with no
 /// event, answers the key, and the terminal is read after it.
 fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
-    let (mut app, outpost, area, key) = console_watch("mockapp-console-polled-caret");
+    let (mut app, outpost, area, key) = console_watch("mockapp-console-polled-caret", 0);
     // Held after the watch's first check, the worker's next read is the
     // poll's.
     outpost.hold_worker();
@@ -1029,12 +1035,75 @@ fn a_console_hosts_caret_moved_without_an_event_answers_its_watch() {
     app.quit();
 }
 
+/// The longest a caret key's watch stays open without evidence, the
+/// outpost's `CARET_WATCH_BOUND`: a watch answered sooner was ended by
+/// something else.
+const WATCH_BOUND: Duration = Duration::from_secs(10);
+
 /// A console host's caret key's watch whose poll finds nothing by its bound,
 /// 50 ms after the key, ends as a watch does at its own bound: answered
-/// `WatchEnded`, and nothing else said.
+/// `WatchEnded`, and nothing else said, before the watch's own bound could
+/// have ended it.
 fn a_console_hosts_watch_ends_when_its_poll_finds_nothing() {
-    let (app, outpost, _area, key) = console_watch("mockapp-console-poll-bound");
+    let asked = Instant::now();
+    let (app, outpost, _area, key) = console_watch("mockapp-console-poll-bound", 0);
     assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
+    let waited = asked.elapsed();
+    assert!(
+        waited < WATCH_BOUND,
+        "the watch ended after {waited:?}, by its own bound, not its poll's"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The poll's bound is 50 ms after the key's `pressed_at_ms`, not after the
+/// watch opened: a key passed on two seconds after the test asks has its
+/// watch re-read until 50 ms after that, and ended then, before the watch's
+/// own bound.
+fn a_console_hosts_poll_is_bounded_from_the_keys_time() {
+    let asked = Instant::now();
+    let pressed_at_ms = common::outpost::now_ms() + 2_000;
+    let (app, outpost, _area, key) = console_watch("mockapp-console-poll-key-time", pressed_at_ms);
+    assert_eq!(answer_to(&outpost, key), TextReply::WatchEnded);
+    let waited = asked.elapsed();
+    assert!(
+        waited >= Duration::from_secs(2) && waited < WATCH_BOUND,
+        "the watch ended after {waited:?}, not at its poll's bound from the key's time"
+    );
+    outpost.settled();
+    drop(outpost);
+    app.quit();
+}
+
+/// The console's caret event for a watched node whose check finds no move,
+/// such as a blink tick left over from an earlier cursor set, leaves the
+/// poll reading: a caret moved after it, with no event, answers the key.
+fn a_console_caret_event_without_a_move_leaves_the_poll_reading() {
+    let (mut app, outpost, area, key) = console_watch("mockapp-console-event-then-move", 0);
+    let console = common::find_window(&app.title);
+    outpost.hold_worker();
+    app.send("console-caret 0 0");
+    outpost.heard(&[Heard::Msaa(WinEventKind::ConsoleCaret)]);
+    // A foreground change behind the event holds the worker again once it
+    // has handled the event, whose check finds the caret where it was, and
+    // whose read of the terminal finds nothing new to report.
+    outpost.deliver(DeliveredFact::Foreground {
+        hwnd: console.0 as isize,
+    });
+    outpost.step_worker(2);
+    app.send("caret text 1");
+    outpost.release_worker();
+    let TextReply::Caret(reply) = answer_to(&outpost, key) else {
+        panic!("the watch was not answered with the caret");
+    };
+    assert!(reply.moved);
+    assert_eq!(
+        (reply.caret.line.text.as_str(), reply.caret.line.offset),
+        ("one                 \r\n", 1)
+    );
+    assert_eq!(caret_at(&reported(&outpost, area)), ("one\r\n", 1));
     outpost.settled();
     drop(outpost);
     app.quit();
@@ -1070,6 +1139,14 @@ fn main() {
         (
             "a_console_hosts_watch_ends_when_its_poll_finds_nothing",
             a_console_hosts_watch_ends_when_its_poll_finds_nothing,
+        ),
+        (
+            "a_console_hosts_poll_is_bounded_from_the_keys_time",
+            a_console_hosts_poll_is_bounded_from_the_keys_time,
+        ),
+        (
+            "a_console_caret_event_without_a_move_leaves_the_poll_reading",
+            a_console_caret_event_without_a_move_leaves_the_poll_reading,
         ),
         (
             "a_focus_now_terminal_reports_its_output",

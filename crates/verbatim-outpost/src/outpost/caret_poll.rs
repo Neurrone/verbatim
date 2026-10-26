@@ -2,23 +2,25 @@
 //! for evidence (`docs/design/key-holding.md`, "The console host's caret
 //! poll"). The console host raises its caret events only on its cursor's
 //! 530 ms blink timer, so a caret key's watch there that finds no move on
-//! its first check re-reads the caret every [`INTERVAL`] until the caret
-//! has moved, the console's caret event arrives, or [`BOUND`] after the
-//! key was passed on (Dickson, 2026-10-26).
+//! its first check re-reads the caret every [`INTERVAL`] until a check
+//! answers the key, its own or one an event makes, the console's caret
+//! event included, or [`BOUND`] after the key was passed on (Dickson,
+//! 2026-10-26). An event whose check finds no evidence leaves the poll
+//! reading: a blink tick left over from an earlier cursor set can come
+//! before the key's move.
 //!
-//! The worker makes the reads; this thread only ends the worker's wait for
-//! work at each tick, on a high-resolution waitable timer, since the
-//! intake's own wait keeps the system's timer resolution, 15.6 ms by
-//! default. The timer is set only while a watch polls, so the thread wakes
-//! for nothing else.
+//! The worker makes the reads, on [`Item::Wake`]: it asks the intake to
+//! wake it at the open watch's next read ([`wake_for`]), and the intake's
+//! own wait for work ends then, on a high-resolution timer, since a wait
+//! at the system's timer resolution, 15.6 ms by default, would miss most
+//! reads. No other thread is involved, so each read costs one wake-up of
+//! the worker, and the timer is not set for the poll while no watch polls.
+//!
+//! [`Item::Wake`]: super::intake::Item::Wake
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
-use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use super::Context;
-use super::alarm::Alarm;
+use super::text_reads::{CARET_WATCH_BOUND, OpenWatch};
 
 /// How long after one of the poll's reads the next is made.
 pub(super) const INTERVAL: Duration = Duration::from_millis(5);
@@ -63,69 +65,108 @@ impl Poll {
     }
 }
 
-/// The poll's timer and the thread that waits on it.
-#[derive(Default)]
-pub(super) struct Ticker {
-    alarm: Alarm,
-    stopping: AtomicBool,
-    thread: Mutex<Option<JoinHandle<()>>>,
+/// When the worker is to be woken for `open`: at its poll's next read, or
+/// at its bound ([`CARET_WATCH_BOUND`]) when it does not poll.
+pub(super) fn wake_for(open: &OpenWatch) -> Instant {
+    let bound = open.opened + CARET_WATCH_BOUND;
+    open.poll.map_or(bound, |poll| poll.next.min(bound))
 }
 
-impl Ticker {
-    /// Starts the thread that gives the worker [`Item::Wake`] at each
-    /// tick.
-    ///
-    /// [`Item::Wake`]: super::intake::Item::Wake
-    pub(super) fn start(context: &Arc<Context>) {
-        let ticked = Arc::clone(context);
-        let thread = thread::Builder::new()
-            .name("verbatim-caret-poll".to_owned())
-            .stack_size(64 * 1024)
-            .spawn(move || {
-                loop {
-                    ticked.caret_poll.alarm.wait();
-                    if ticked.caret_poll.stopping.load(Ordering::Acquire) {
-                        return;
-                    }
-                    ticked.intake.wake_at(Some(Instant::now()));
-                }
-            })
-            .expect("spawn the caret poll's thread");
-        *context
-            .caret_poll
-            .thread
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(thread);
-    }
+/// What a poll read that found no evidence leaves of the watch it was made
+/// for ([`after_read`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum AfterRead {
+    /// That watch is no longer open, or no longer polls: answered, ended or
+    /// replaced meanwhile, by this worker or by the one that replaced it
+    /// after an abandonment. The watch open now, if any, is left alone.
+    Gone,
+    /// The watch's next read is set.
+    Again,
+    /// The read was the poll's last: the watch is to end.
+    Last,
+}
 
-    /// Ends the thread and waits for it.
-    pub(super) fn stop(&self) {
-        self.stopping.store(true, Ordering::Release);
-        self.alarm.wake();
-        let thread = self
-            .thread
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
-        if let Some(thread) = thread {
-            let _ = thread.join();
-        }
-    }
-
-    /// Sets the next tick for `at`, replacing any set before.
-    pub(super) fn set(&self, at: Instant) {
-        self.alarm.set(at);
-    }
-
-    /// Cancels the next tick, if one is set.
-    pub(super) fn cancel(&self) {
-        self.alarm.cancel();
+/// Sets the next read of the watch for request `request_id`, if it is the
+/// one in `open`, after a read of it at `now` found no evidence. The watch
+/// is matched by its request, not its node: a newer watch on the same node
+/// is another key's.
+pub(super) fn after_read(open: &mut Option<OpenWatch>, request_id: u64, now: Instant) -> AfterRead {
+    let Some(open) = open.as_mut().filter(|open| open.request_id == request_id) else {
+        return AfterRead::Gone;
+    };
+    let Some(poll) = open.poll else {
+        return AfterRead::Gone;
+    };
+    open.poll = poll.after_read(now);
+    if open.poll.is_some() {
+        AfterRead::Again
+    } else {
+        AfterRead::Last
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use verbatim_model::{CallCounts, CaretWatch, NodeId, TextUnit, TraceId};
+
     use super::*;
+    use crate::protocol::EventTiming;
+
+    /// A watch for request `request_id` on node 1, opened at `opened`,
+    /// polling as `poll` says.
+    fn watch(request_id: u64, opened: Instant, poll: Option<Poll>) -> OpenWatch {
+        OpenWatch {
+            request_id,
+            trace: TraceId::mint(),
+            node_id: NodeId::new(1),
+            watch: CaretWatch {
+                since: None,
+                pressed_at_ms: 0,
+                unit: TextUnit::Character,
+                compare: None,
+                landing: false,
+                deletes: false,
+            },
+            opened,
+            timing: EventTiming::default(),
+            calls: CallCounts::default(),
+            poll,
+        }
+    }
+
+    #[test]
+    fn a_polling_watch_wakes_the_worker_at_its_next_read() {
+        let opened = Instant::now();
+        let poll = Poll::new(opened, 0, 0);
+        assert_eq!(wake_for(&watch(7, opened, Some(poll))), opened + INTERVAL);
+        assert_eq!(
+            wake_for(&watch(7, opened, None)),
+            opened + CARET_WATCH_BOUND
+        );
+    }
+
+    #[test]
+    fn a_read_for_a_replaced_watch_leaves_the_newer_one_on_its_node_alone() {
+        let opened = Instant::now();
+        let newer = Poll::new(opened, 0, 0);
+        let mut open = Some(watch(8, opened, Some(newer)));
+        // The read for request 7, the older key's, returns after the newer
+        // key's watch on the same node opened, at that watch's bound.
+        assert_eq!(after_read(&mut open, 7, opened + BOUND), AfterRead::Gone);
+        let open = open.expect("the newer watch stays open");
+        assert_eq!(open.poll.map(|poll| poll.next), Some(newer.next));
+    }
+
+    #[test]
+    fn a_read_at_the_bound_is_the_watchs_last() {
+        let opened = Instant::now();
+        let mut open = Some(watch(7, opened, Some(Poll::new(opened, 0, 0))));
+        assert_eq!(
+            after_read(&mut open, 7, opened + INTERVAL),
+            AfterRead::Again
+        );
+        assert_eq!(after_read(&mut open, 7, opened + BOUND), AfterRead::Last);
+    }
 
     #[test]
     fn the_poll_ends_its_bound_after_the_key_was_passed_on() {

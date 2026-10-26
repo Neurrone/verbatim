@@ -704,7 +704,14 @@ Everything below is measured unless marked inferred.
 ### Caret keys in the console host
 
 `EVENT_CONSOLE_CARET` comes on the cursor's blink timer, so a caret key
-whose speech waited for it would wait up to about half a second. None did.
+whose speech waited for it would wait up to about half a second. A watch
+the first check leaves open therefore re-reads the caret every 5 ms until
+a check finds the evidence, or 50 ms after the key (`docs/design/key-holding.md`,
+"The console host's caret poll"): at most 10 wake-ups of the worker per
+key, one per re-read, on the intake's own high-resolution timer, with no
+other thread, and none while no watch polls. The figures below were
+measured before the poll; at the time none of the measured keys waited
+for the blink timer.
 
 - In `measure_keys_conhost` the outpost answered 81 caret-key queries per
   run. In the debug run three of them opened a watch, each answered after

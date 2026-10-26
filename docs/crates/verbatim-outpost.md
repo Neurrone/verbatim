@@ -887,6 +887,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     publishes, and an event set for a foreground fact and the shutdown;
     setting and cancelling wake no thread, so the watchdog wakes only when
     a deadline or grace passes (`docs/design/wake-ups.md`, item 3).
+  - The worker waits for work on an alarm of the intake's own: its event
+    is set when something is pushed while the worker waits, and its timer
+    is set, as the worker begins to wait, to the earlier of the wake the
+    worker asked for (`Intake::wake_at`) and the bound of its wait for a
+    UIA focus, so a wake comes on time at a resolution finer than the
+    system's 15.6 ms timer. Only the worker asks for a wake, so no other
+    thread's write can take one back.
   - The watchdog abandons a worker whose call passes its deadline (an
     event, a focus, or a focus-now query 10 s, NVDA's normal watchdog
     timeout, since an application that is starting up can take seconds to
@@ -2032,13 +2039,13 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     only frees it: the intake wakes the idle worker then (`Item::Wake`,
     `Intake::wake_at`), and nothing is spoken. In the console host, whose
     caret events come only on its cursor's blink timer, a watch the first
-    check leaves open also re-reads the caret every 5 ms until it has
-    moved, the console's caret event arrives, or 50 ms after the key's
+    check leaves open also re-reads the caret every 5 ms until a check,
+    its own or an event's, finds the evidence, or 50 ms after the key's
     `pressed_at_ms`, and ends `WatchEnded` when that last re-read finds
-    nothing (`outpost/caret_poll.rs`, a documented workaround: each tick
-    comes from a high-resolution waitable timer one thread waits on, set
-    only while a watch polls, which ends the intake's wait;
-    `docs/design/key-holding.md`, "The console host's caret poll"). So a key that moves nothing
+    nothing (`outpost/caret_poll.rs`, a documented workaround: the worker
+    asks the intake to wake it at the next read, one wake-up of the worker
+    per read and no other thread; `docs/design/key-holding.md`, "The
+    console host's caret poll"). So a key that moves nothing
     is silent (`docs/parity/text.md`, "TextInfo-equivalent layer"), and a key
     whose application reports nothing when it moves the caret is silent
     too. Through UIA each check is the whole caret read above, one round

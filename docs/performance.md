@@ -1272,8 +1272,9 @@ and in its edit control.
   the key, a documented workaround (Dickson, 2026-10-26;
   `docs/design/key-holding.md`, "The console host's caret poll"). Each
   re-read is the check above, one round trip remotely, so a key pays at
-  most 10 more round trips and 20 more wake-ups (the poll timer's thread
-  and the worker, once each per tick), and nothing while no watch polls.
+  most 10 more round trips and 10 more wake-ups, the worker's, one per
+  re-read on the intake's own high-resolution timer, with no other
+  thread, and nothing while no watch polls.
   In `measure_keys_conhost` (release, 2026-10-26) the 48 watches left open
   were each answered within 5 ms, by one re-read or the console update's
   check, where before they waited 84 ms at the median and 434 at most for

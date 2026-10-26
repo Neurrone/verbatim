@@ -228,9 +228,6 @@ pub(crate) struct Context {
     /// The caret key's watch for evidence the worker keeps open between its
     /// entries, if one is open.
     caret_watch: Mutex<Option<text_reads::OpenWatch>>,
-    /// The timer of the console host's caret poll, which the open watch
-    /// keeps ([`caret_poll`]).
-    caret_poll: caret_poll::Ticker,
     /// The idle barrier's round the worker has reached and not yet
     /// answered, kept while deferred work is pending
     /// (`worker::answer_idle`).
@@ -975,7 +972,6 @@ impl Outpost {
             remote_operations: options.remote_operations,
             classic_windows: Mutex::new(HashMap::new()),
             caret_watch: Mutex::new(None),
-            caret_poll: caret_poll::Ticker::default(),
             idle_query: Mutex::new(None),
             held_anchors: Arc::clone(&held_anchors),
             uia_anchors: Mutex::new(Anchors::sharing(

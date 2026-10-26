@@ -152,7 +152,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Condvar, Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Instant;
 
 use verbatim_ia2::WinEventKind;
@@ -164,6 +164,7 @@ use verbatim_uia::{Agile, Cached, Kept, PropertyEvent, TextEvent};
 
 use crate::protocol::{DeliveredFact, DropEvidence, Query, UiaSnapshotFact, WinEventStamp};
 
+use super::alarm::Alarm;
 use super::handover::Arrival;
 use super::worker::is_state_property;
 
@@ -435,6 +436,10 @@ impl Planned {
 }
 
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about the queue, each kept under its one lock"
+)]
 struct State {
     waiting: VecDeque<Waiting>,
     batch: VecDeque<Planned>,
@@ -457,6 +462,10 @@ struct State {
     /// When the worker asked to be given [`Item::Wake`] if nothing else
     /// comes first.
     wake: Option<Instant>,
+    /// Whether the worker waits in [`Intake::next_with_gap`], so that what
+    /// changes what it waits for sets the alarm's event; taken by the first
+    /// to set it.
+    asleep: bool,
     /// The console window whose updates are dropped as they are pushed
     /// ([`Intake::absorb_console_updates`]).
     absorbed: Option<isize>,
@@ -573,7 +582,11 @@ impl Pushed {
 #[derive(Default)]
 pub(super) struct Intake {
     state: Mutex<State>,
-    ready: Condvar,
+    /// The worker's wait for work: its event ends the wait when something
+    /// is pushed, and its high-resolution timer when the wake the worker
+    /// asked for comes, so a wake comes on time at a resolution finer than
+    /// the system's 15.6 ms timer ([`super::alarm`]).
+    alarm: Alarm,
 }
 
 impl State {
@@ -699,8 +712,7 @@ impl Intake {
             return;
         }
         if state.resolves_without_read(&entry) {
-            drop(state);
-            self.ready.notify_one();
+            self.rouse(state);
             return;
         }
         let marker = match &entry.item {
@@ -773,8 +785,7 @@ impl Intake {
             Some(place) => state.waiting[place] = waiting,
             None => state.waiting.push_back(waiting),
         }
-        drop(state);
-        self.ready.notify_one();
+        self.rouse(state);
         if let Some(pushed) = logged {
             pushed.log();
         }
@@ -865,18 +876,17 @@ impl Intake {
                 GapWake::Not => None,
             };
             let wake = [state.wake, gap].into_iter().flatten().min();
-            state = match wake {
+            state.asleep = true;
+            drop(state);
+            match wake {
                 Some(wake) => {
-                    self.ready
-                        .wait_timeout(state, wake - now)
-                        .unwrap_or_else(PoisonError::into_inner)
-                        .0
+                    self.alarm.set(wake);
+                    self.alarm.wait();
                 }
-                None => self
-                    .ready
-                    .wait(state)
-                    .unwrap_or_else(PoisonError::into_inner),
-            };
+                None => self.alarm.wait_for_event(),
+            }
+            state = self.lock();
+            state.asleep = false;
         }
     }
 
@@ -901,8 +911,7 @@ impl Intake {
             }
         }
         dropped.extend(state.idle.take());
-        drop(state);
-        self.ready.notify_all();
+        self.rouse(state);
         dropped
     }
 
@@ -915,11 +924,15 @@ impl Intake {
     }
 
     /// Asks [`next`](Self::next) for an [`Item::Wake`] at `at` if nothing
-    /// else is to be done then, or for none. The worker waits for nothing:
-    /// the queue's own wait for work ends at that time as well.
+    /// else is to be done then, or for none, in place of any time asked for
+    /// before. The worker waits for nothing: the queue's own wait for work
+    /// ends at that time as well, on its alarm's timer, which only the
+    /// worker's wait sets, so no other thread's write can take the time
+    /// back.
     pub(super) fn wake_at(&self, at: Option<Instant>) {
-        self.lock().wake = at;
-        self.ready.notify_one();
+        let mut state = self.lock();
+        state.wake = at;
+        self.rouse(state);
     }
 
     /// Withdraws query `request_id` if it has not started. Returns whether it
@@ -992,8 +1005,7 @@ impl Intake {
                 },
             );
         }
-        drop(state);
-        self.ready.notify_one();
+        self.rouse(state);
     }
 
     /// Keeps `entry` to be handed out once nothing else is ready, in place
@@ -1080,8 +1092,18 @@ impl Intake {
         self.lock().focused.clone()
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+    fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Releases `state`, which the caller has changed, ending the worker's
+    /// wait if it waits, so it looks again.
+    fn rouse(&self, mut state: MutexGuard<'_, State>) {
+        let asleep = std::mem::take(&mut state.asleep);
+        drop(state);
+        if asleep {
+            self.alarm.wake();
+        }
     }
 }
 
