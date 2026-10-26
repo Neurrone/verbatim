@@ -190,11 +190,11 @@ pub(crate) struct TerminalModel {
     /// The lines of the command marks set, newest last, at most twice
     /// [`MARKS`], for the marks the memory and the aside screen keep.
     pub(crate) mark_lines: VecDeque<MarkLine>,
-    /// The line hash of a command entered and when the quiet period after
-    /// its Enter ends: until a read shows the line marked, or the period
-    /// ends, a new row starting a line with that hash is marked, as where
+    /// The mark set at a command's Enter and when the quiet period after
+    /// the key ends: until a read shows that mark kept, or the period ends,
+    /// a new row starting a line with its line's hash is marked, as where
     /// Pi and Claude Code print the input they cleared.
-    pending_mark: Option<(u64, u64)>,
+    pending_mark: Option<(Anchor, u64)>,
     /// The places the review answers minted, each a text anchor's number
     /// and the memory's place for it, oldest first.
     pub(crate) places: VecDeque<(u64, u64)>,
@@ -299,7 +299,7 @@ impl TerminalModel {
             return;
         };
         self.keep_mark_line(mark);
-        self.pending_mark = Some((mark.line_hash, at_ms + QUIET_MS));
+        self.pending_mark = Some((mark, at_ms + QUIET_MS));
     }
 
     /// Keeps the line of `mark`, just set on a row the memory keeps.
@@ -328,19 +328,26 @@ impl TerminalModel {
 
     /// After a read at `at_ms` that `rows` describes, the command entered
     /// last: forgotten once the read is past the quiet period after its
-    /// Enter; else marked where the read shows it, as when the line it was
-    /// entered on survived, or else on the new row starting a line with its
-    /// hash nearest the caret.
+    /// Enter; else, unless the mark set at the Enter survived the read, as
+    /// when the line it was entered on did, marked on the new row starting
+    /// a line with its hash nearest the caret. An older mark on a line with
+    /// the same text does not count.
     fn settle_mark(&mut self, rows: &[NewRow], at_ms: u64) {
-        let Some((hash, until_ms)) = self.pending_mark else {
+        let Some((entered, until_ms)) = self.pending_mark else {
             return;
         };
         if at_ms > until_ms {
             self.pending_mark = None;
             return;
         }
+        let hash = entered.line_hash;
         let memory = self.reader.memory();
-        if memory.marks().iter().any(|mark| mark.line_hash == hash) {
+        // The memory follows the mark set last, the one set at the Enter
+        // unless Core set another since, which ends the pending mark.
+        if memory
+            .newest_mark()
+            .is_some_and(|newest| newest.line_hash == hash)
+        {
             self.pending_mark = None;
             return;
         }
@@ -935,14 +942,37 @@ pub(crate) fn reply(
             rows_above,
         });
     } else if let Some((_, op)) = model.find_asked.take() {
-        let matches = match reply {
-            TextReply::TerminalFound(matches) => matches,
-            _ => Vec::new(),
-        };
-        model.found.push((op, matches));
+        match reply {
+            TextReply::TerminalFound(matches) => model.found.push((op, matches)),
+            // A search that never ran, as when the terminal lost the focus:
+            // only a search that ran drops a mark, so the move is abandoned,
+            // saying nothing, and the marks are kept.
+            _ => effects.extend(abandon_mark(state, node, trace_id)),
+        }
     }
     effects.extend(answer_reviews(state, node, trace_id));
     effects
+}
+
+/// Abandons terminal `node`'s command mark move in progress, the first
+/// review command waiting, whose search never ran: its line move says
+/// nothing, as when no mark is left that way.
+fn abandon_mark(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
+    let Some(model) = model_mut(state, node) else {
+        return Vec::new();
+    };
+    model.found.clear();
+    let Some(Waiting {
+        trace,
+        review: Review::Mark { query_id, .. },
+    }) = model.reviews.front().cloned()
+    else {
+        return Vec::new();
+    };
+    model.reviews.pop_front();
+    let trace = trace.unwrap_or(trace_id);
+    let caused = crate::reduce::text_completed(state, trace, query_id, TextReply::NoText);
+    queue_only(state, caused, trace)
 }
 
 /// The trace of an input, for a request it causes that Core answers later.
@@ -1080,8 +1110,9 @@ pub(crate) fn command_mark(
 
 /// What "Report status bar" says of `footer`, its lines, on press
 /// `repeat`: the lines, one segment each, on the first; spelled on the
-/// second; copied to the clipboard, joined by line breaks, on the third and
-/// later; "no status bar information" when there are none.
+/// second, joined by a space; copied to the clipboard, joined by line
+/// breaks, on the third and later; "no status bar information" when there
+/// are none.
 fn status_bar(trace_id: TraceId, repeat: u8, footer: &[String]) -> Effect {
     use verbatim_model::UtteranceSegment;
     if footer.is_empty() {
@@ -1098,12 +1129,12 @@ fn status_bar(trace_id: TraceId, repeat: u8, footer: &[String]) -> Effect {
                 .map(|line| UtteranceSegment::text(line.clone()))
                 .collect(),
         ),
+        // Spelled as one text, its lines joined by a space as a status
+        // bar's parts are (`docs/parity/terminals.md`, "Reading a
+        // terminal on demand"), so the space is spelled between them.
         1 => crate::editing::speak(
             trace_id,
-            footer
-                .iter()
-                .flat_map(|line| crate::review_text::spell_or_blank(line, false, None))
-                .collect(),
+            crate::review_text::spell_or_blank(&footer.join(" "), false, None),
         ),
         _ => Effect::CopyToClipboard(footer.join("\r\n")),
     }

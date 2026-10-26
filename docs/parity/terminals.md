@@ -358,12 +358,53 @@ expectation when the model is built).
 ### Reading a terminal on demand
 
 NVDA: "report status bar" (NVDA+End, NVDA+Shift+End in the laptop
-layout) reads an application's status bar, or a status bar control at
-the foreground window's bottom left, read on the first press, spelled
-on the second and copied on the third, and says "No status line found"
-with none (`globalCommands.py`, `script_reportStatusLine`;
-`api.getStatusBar`). It has no terminal behaviour, and no command to
-move between commands entered.
+layout) reads on the first press, spells on the second and copies on
+the third (`globalCommands.py`, `script_reportStatusLine` and
+`_getStatusBarText`). It looks in three places in turn:
+
+- A status bar object: the application module's `statusBar`, or else
+  the object at the foreground window's bottom-left corner, or the
+  nearest ancestor of it with the status bar role (`api.getStatusBar`).
+  Its text is its name and its children's names and values, joined by
+  spaces (`api.getStatusBarText`).
+- With none, the application module's `statusBarTextInfo`.
+- Where the module does not implement that, the foreground object's
+  `flatReviewPosition`, expanded to the whole story, collapsed to its
+  end (`collapse(True)`) and expanded to a line: the story's last line.
+
+Only when all three find nothing does it say "No status line found". It
+has no command to move between commands entered.
+
+What the pinned source shows for the two terminals, uncaptured:
+
+- No application module in the pinned source covers the console host or
+  Windows Terminal, so neither has a `statusBar` or `statusBarTextInfo`
+  of its own, and both reach the defaults.
+- Whether the object at the window's bottom-left corner has a status
+  bar ancestor depends on the live tree and the window's frame, which
+  the source cannot show; neither terminal's own tree is known to hold
+  a status bar.
+- `flatReviewPosition` (`NVDAObjects/__init__.py`) starts at the
+  foreground object's `simpleParent`, not at the object itself, and
+  walks up its content ancestors, answering only from one that is the
+  root of a tree interceptor or whose `TextInfo` is a display-model
+  one. For a top-level window that parent is the desktop, which
+  `NVDAObjects.window.Window` keeps as a plain window (its
+  `getPossibleAPIClasses` yields no API class for the class "#32769",
+  and the `Desktop` overlay sets no `TextInfo`, leaving the base
+  `NVDAObjectTextInfo`), and the desktop has no parent. So by the
+  source the fallback finds nothing in either terminal, and NVDA says
+  "No status line found" there unless the corner lookup finds a status
+  bar.
+- The display-model classes (`GenericWindow`, `WindowRoot` and
+  `ContentGenericClient` in `NVDAObjects/IAccessible`) would apply to a
+  window object of MSAA's, but the walk examines only the foreground
+  object's ancestors. Were the foreground object NVDA records for a
+  terminal below its top-level window, the walk would pass that window,
+  and its display-model text, the text drawn in it as NVDA's display
+  model captured it, would be read; the source cannot tell which object
+  is the foreground, nor what the display model captures of either
+  terminal's rendering.
 
 Verbatim: **different** (Dickson, 2026-10-23 and 2026-10-26;
 `docs/design/terminal-model.md`, "Features and settings"), Verbatim's
@@ -376,10 +417,9 @@ own commands for a terminal, so no capture is taken:
   or else the last line with text, so a row that never stops changing
   can be heard; a second press spells it and a third copies it, as
   NVDA's command does with a status bar, and a screen with no text says
-  "no status bar information". This is Verbatim's own: NVDA's command
-  reads an application's status bar, or a status bar control at the
-  foreground window's bottom left, and has no terminal behaviour, so no
-  capture is taken. In vim and less the same rule finds their last rows,
+  "no status bar information". This is Verbatim's own: by the pinned
+  source NVDA finds no status line in either terminal (above), which no
+  capture has confirmed. In vim and less the same rule finds their last rows,
   which are a footer as worded. Outside a terminal Verbatim says NVDA's
   "No status line found" until the general status bar of M5 (Dickson,
   2026-10-23 and 2026-10-26; `docs/design/terminal-model.md`, "Features

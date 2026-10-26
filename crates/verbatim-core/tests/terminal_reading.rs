@@ -502,12 +502,13 @@ fn a_blank_screen_has_no_status_bar_information() {
 
 #[test]
 fn the_status_bar_is_spelled_on_the_second_press_and_copied_on_the_third() {
-    let mut session = showing(20, 4, 100, "one\r\nab\x1b[1;4H");
+    let mut session = showing(20, 4, 100, "one\r\nab\r\ncd\x1b[1;4H");
+    // The lines spelled as one text, the space between them spelled.
     session.input(&pressed(STATUS_BAR, 1));
-    assert_eq!(session.heard(), plain(&["a b"]));
+    assert_eq!(session.heard(), plain(&["a b Message(Space) c d"]));
     session.input(&pressed(STATUS_BAR, 2));
     assert_eq!(session.heard(), []);
-    assert_eq!(session.copied, ["ab"]);
+    assert_eq!(session.copied, ["ab\r\ncd"]);
 }
 
 #[test]
@@ -690,6 +691,40 @@ fn input_printed_lower_is_marked_on_its_new_row() {
 }
 
 #[test]
+fn input_printed_lower_again_is_marked_again() {
+    // Pi's regular mode, the same input entered twice, the editor cleared
+    // and the input printed in separate reads each time: the older mark
+    // with the same text does not stand for the newer one.
+    let mut session = showing(
+        30,
+        12,
+        100,
+        "transcript\r\n---\r\n\r\n---\r\nfooter\x1b[3;1H",
+    );
+    let mut at_ms = 1000;
+    for _ in 0..2 {
+        for character in "hi there".chars() {
+            let (_, input) = typed(&character.to_string(), at_ms);
+            session.input(&input);
+            session.write(&character.to_string(), at_ms + 5);
+            at_ms += 10;
+        }
+        let (_, input) = typed("\r", at_ms);
+        session.input(&input);
+        session.write("\x1b[2K\r", at_ms + 100);
+        session.write("\x1b[1A\x1b[Lhi there\x1b[2B\r", at_ms + 500);
+        at_ms += 2000;
+    }
+    let _ = session.heard();
+    for _ in 0..2 {
+        session.input(&command(UP));
+        assert_eq!(session.heard(), plain(&["hi there"]));
+    }
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
 fn input_printed_after_the_quiet_period_is_not_marked() {
     let mut session = showing(
         30,
@@ -727,6 +762,45 @@ fn a_mark_above_the_memory_is_found_by_one_search() {
     // the mark, and the search runs back from a screen below the mark, the
     // row 14 rows above that start.
     assert_eq!(session.requests(), [FRESH, find("$ echo one", 14, true)]);
+}
+
+#[test]
+fn a_command_entered_twice_above_the_memory_is_found_at_each_mark() {
+    // The search for the older mark starts a screen below its place, where
+    // the newer line with the same text lies too: the match nearest the
+    // mark's place is its line.
+    let mut session = showing(30, 4, 100, "$ ");
+    let at_ms = enter(&mut session, "ls", "a\r\n", 1000);
+    enter(&mut session, "ls", "a\r\n", at_ms);
+    session.write(&numbered(1..=20), 6000);
+    let _ = session.heard();
+    for _ in 0..2 {
+        session.input(&command(UP));
+        assert_eq!(session.heard(), plain(&["$ ls"]));
+    }
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+    session.input(&command(DOWN));
+    assert_eq!(session.heard(), plain(&["$ ls"]));
+    session.input(&command(DOWN));
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn a_search_that_never_ran_drops_no_mark() {
+    let mut session = showing(30, 4, 100, "$ ");
+    enter(&mut session, "echo one", "one\r\n", 1000);
+    session.write(&numbered(1..=20), 5000);
+    let _ = session.heard();
+    let _ = session.requests();
+    // The outpost answers the search unanswered, as when the focus moved:
+    // the move says nothing, and the mark is kept for the next.
+    session.unanswered_finds = true;
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+    session.unanswered_finds = false;
+    session.input(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ echo one"]));
 }
 
 #[test]

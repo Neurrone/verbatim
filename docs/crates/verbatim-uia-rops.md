@@ -586,15 +586,19 @@ regardless costs as much and an ordinary screen would cost it too.
 `terminal_find_classic` behind it) looks for a command mark's line by
 its first row's text (`FindQuery`): from the row `from` rows above where
 the next read starts, backward over the rows above it or forward from
-it, nearest first, at most `FIND_MATCHES` (20) matches, the console
-host's bound ("A terminal's upward search" in `docs/performance.md`).
+it, nearest first, at most `FIND_MATCHES` (20) matches that start a
+row, the console host's bound, over at most `FIND_CALLS` (100)
+`FindText` calls, hits within rows included, so that a needle found
+mostly within rows ends rather than walking the whole history ("A
+terminal's upward search" in `docs/performance.md`).
 Each match that starts a row gives a `FindMatch`: its rows above that
 start, counted by moving its row and the start to the document's end,
 and the text of `rows` rows from it, for the caller to check by its
 line's hash. A failing call on a match, as on Windows Terminal's
 not-found range, ends the search with what it found. The program is
-built for each search, as the text sought is part of it, about 20
-instructions a match.
+built for each search, as the text sought is part of it, about 15
+instructions a `FindText` call: 1,535 executed at the call bound,
+measured against mockapp on 2026-10-26.
 
 ## Layer 3: the caret read
 

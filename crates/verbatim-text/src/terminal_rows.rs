@@ -633,6 +633,9 @@ struct Screen {
     /// The command marks, oldest first, at most [`MARKS`] ("Features and
     /// settings").
     marks: Vec<Anchor>,
+    /// The command mark set last, followed as the marks are, `None` once
+    /// it is dropped ([`TerminalMemory::newest_mark`]).
+    newest_mark: Option<Anchor>,
     /// The places the caller keeps, each by its number
     /// ([`TerminalMemory::add_place`]).
     places: Vec<(u64, Anchor)>,
@@ -677,20 +680,21 @@ impl Screen {
     /// counted from the read's end ("Starting again"), or else kept at that
     /// place, to be found by its text when a command looks for it
     /// ("Features and settings"); a mark that would lie above the
-    /// document's start, when this read starts there, is dropped.
-    fn keep_marks(&mut self, marks: &[Anchor], total: usize) {
+    /// document's start, when this read starts there, is dropped; the
+    /// newest mark, `newest`, likewise.
+    fn keep_marks(&mut self, marks: &[Anchor], newest: Option<Anchor>, total: usize) {
         let shift = isize_of(self.total()) - isize_of(total);
         let at_start = self.at_document_start;
-        self.marks = marks
-            .iter()
-            .map(|mark| {
-                refind(*mark, total, 0, &self.rows).unwrap_or(Anchor {
-                    row: mark.row + shift,
-                    ..*mark
-                })
-            })
+        let kept = |mark: &Anchor| {
+            Some(refind(*mark, total, 0, &self.rows).unwrap_or(Anchor {
+                row: mark.row + shift,
+                ..*mark
+            }))
             .filter(|mark| !at_start || mark.row >= 0)
-            .collect();
+        };
+        let marks = marks.iter().filter_map(kept).collect();
+        self.newest_mark = newest.as_ref().and_then(kept);
+        self.marks = marks;
     }
 
     /// Keeps only a screen above the next read's start and the rows below
@@ -983,7 +987,16 @@ impl TerminalMemory {
             }
             screen.marks.push(mark);
         }
+        screen.newest_mark = Some(mark);
         Some(mark)
+    }
+
+    /// The command mark [`TerminalMemory::add_mark`] set or returned last,
+    /// where it is now: followed across reads as every mark is, and `None`
+    /// once it is dropped, by a read or [`TerminalMemory::replace_mark`].
+    #[must_use]
+    pub fn newest_mark(&self) -> Option<Anchor> {
+        self.screen.as_ref()?.newest_mark
     }
 
     /// Puts command mark `mark` at `to`, where its line was found when a
@@ -996,6 +1009,9 @@ impl TerminalMemory {
         let Some(at) = screen.marks.iter().position(|kept| *kept == mark) else {
             return;
         };
+        if screen.newest_mark == Some(mark) {
+            screen.newest_mark = to;
+        }
         match to {
             Some(to) => screen.marks[at] = to,
             None => {
@@ -1246,7 +1262,7 @@ impl TerminalMemory {
         let mut next = Screen::fresh(rows, read, (width, height), current.height);
         next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
         if let Some(back) = back {
-            next.keep_marks(&back.marks, back.total);
+            next.keep_marks(&back.marks, None, back.total);
         }
         let screen = next.screen_start();
         let kinds = (0..next.rows.len())
@@ -1297,7 +1313,7 @@ impl TerminalMemory {
             .iter()
             .filter_map(|(number, anchor)| Some((*number, found(anchor)?)))
             .collect();
-        next.keep_marks(&current.marks, total);
+        next.keep_marks(&current.marks, current.newest_mark, total);
         let outcome = Outcome {
             rows: vec![NewRow::New; next.rows.len()],
             old: vec![OldRow::Gone { lingering: false }; total],
@@ -2158,6 +2174,7 @@ fn remember(
         lingering,
         review: None,
         marks: Vec::new(),
+        newest_mark: None,
         places: Vec::new(),
         continued: false,
     };
@@ -2174,6 +2191,9 @@ fn remember(
         .iter()
         .filter_map(|&mark| map_mark(mark, &fates, place, (&next.rows, read.at_document_start)))
         .collect();
+    next.newest_mark = memory
+        .newest_mark
+        .and_then(|mark| map_mark(mark, &fates, place, (&next.rows, read.at_document_start)));
     next.places = memory
         .places
         .iter()

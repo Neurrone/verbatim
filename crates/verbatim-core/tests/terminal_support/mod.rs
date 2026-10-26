@@ -364,6 +364,9 @@ pub struct Session {
     /// Whether the outpost holds back Core's colours requests, as they
     /// travel to it, until [`Session::deliver_colours`].
     pub hold_colours: bool,
+    /// Whether the outpost answers Core's searches unanswered, as its
+    /// worker does when the terminal lost the focus before searching.
+    pub unanswered_finds: bool,
     held_colours: VecDeque<(QueryId, TextOp)>,
     /// Requests not yet answered, in the order Core made them: the outpost
     /// answers each once Core's step is done, in order.
@@ -397,6 +400,7 @@ impl Session {
             held: None,
             caret_read: None,
             hold_colours: false,
+            unanswered_finds: false,
             held_colours: VecDeque::new(),
             pending: VecDeque::new(),
             queued: VecDeque::new(),
@@ -436,7 +440,9 @@ impl Session {
     /// The outpost's answer to `op`, and the read it took at once for it,
     /// if any, sent as a live read.
     fn answer(&mut self, query_id: QueryId, op: &TextOp) {
-        if let Some(reply) = self.outpost.answer(op, self.at_ms) {
+        if self.unanswered_finds && matches!(op, TextOp::TerminalFind { .. }) {
+            self.reply(query_id, TextReply::Unanswered);
+        } else if let Some(reply) = self.outpost.answer(op, self.at_ms) {
             self.reply(query_id, reply);
         }
         if let Some(snapshot) = self.outpost.reread.take() {

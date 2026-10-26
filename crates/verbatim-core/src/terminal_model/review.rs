@@ -769,10 +769,11 @@ fn wraps_at(model: &TerminalModel, row: isize) -> bool {
 /// Where command mark `mark`'s line is now: within the memory, the line
 /// starting at its row with its hash, or else the nearest line start with
 /// it, the higher at one distance; otherwise, unless the memory holds the
-/// whole document, the first match of the outpost's search for its first
-/// row whose line has its hash ([`mark_search`]), searched backward from a
-/// screen below its place for a move up and forward from a screen above it
-/// for a move down.
+/// whole document, the match of the outpost's search for its first row
+/// ([`mark_search`]) whose line has its hash nearest its place, the higher
+/// at one distance, a match within the memory only where a line starts;
+/// searched backward from a screen below its place for a move up and
+/// forward from a screen above it for a move down.
 fn resolve_mark(model: &TerminalModel, mark: Anchor, forward: bool) -> Resolved {
     let rows = model.reader.memory().rows();
     let first_kept = isize_of(rows.first_kept());
@@ -817,19 +818,20 @@ fn resolve_mark(model: &TerminalModel, mark: Anchor, forward: bool) -> Resolved 
     let start = isize_of(model.reader.memory().rows().len())
         - isize_of(usize::try_from(model.height).unwrap_or(0));
     let start = start.max(0);
+    // The search starts a screen beyond the mark's place, so a later line
+    // with the same text may come first: the match nearest the place is
+    // the mark's, as within the memory.
     matches
         .iter()
-        .find_map(|found| {
+        .filter_map(|found| {
             let first = rows_of(&found.text, model.width).into_iter().next()?;
-            (first.line_hash == mark.line_hash)
-                .then(|| (start - isize::try_from(found.above).unwrap_or(0), first))
+            let row = start - isize::try_from(found.above).unwrap_or(0);
+            (first.line_hash == mark.line_hash && (row < first_kept || starts(row)))
+                .then_some((row, first))
         })
+        .min_by_key(|(row, _)| (row.abs_diff(mark.row), *row))
         .map_or(Resolved::Gone, |(row, first)| {
-            if row >= first_kept && !starts(row) {
-                Resolved::Gone
-            } else {
-                Resolved::Found(row, Line::from(&first))
-            }
+            Resolved::Found(row, Line::from(&first))
         })
 }
 

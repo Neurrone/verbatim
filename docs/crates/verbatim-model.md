@@ -538,7 +538,7 @@ older one, whose answer Core then drops. The operations (`TextOp`):
 - `TerminalFind { needle, from, backward, rows }`: a command mark's line
   sought by its first row's text from the row `from` rows above the
   next read's start, backward or forward, at most 20 matches that start
-  a row, `rows` rows read from each (answer `TerminalFound`, a
+  a row over a bounded number of `FindText` calls, `rows` rows read from each (answer `TerminalFound`, a
   `TerminalMatch` for each, its rows above that start and its text).
 - `TerminalColours { from_ms, until_ms }`: a key reached the program at
   `from_ms` and its window ends at `until_ms`, so every read that begins

@@ -121,7 +121,8 @@ model").
   `MARKS` (1,000), the oldest dropped first, each an `Anchor` (a row
   counted from the last read's first row, negative in the history above
   it, a column in characters, and its line's hash), set only on a row the
-  memory keeps; `set_review_anchor` puts the review position at any
+  memory keeps, and `newest_mark` the mark set last, followed across
+  reads as the others are, or none once it is dropped; `set_review_anchor` puts the review position at any
   anchor, a history row above the rows kept among them, whose line's hash
   the caller read, and `anchor` makes one on a row the memory keeps.
   `add_place`, `place` and `drop_place` keep places, numbered anchors the

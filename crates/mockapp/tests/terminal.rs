@@ -500,6 +500,77 @@ fn a_failing_search_finds_nothing_classic() {
     a_failing_search_finds_nothing(false);
 }
 
+/// The outpost's search for `needle` over every row of `rows`, backward
+/// from below the screen, on a screen of three rows.
+fn search(rows: &[&str], needle: &str, remote: bool) -> Vec<verbatim_model::TerminalMatch> {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-find");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    common::apply(&mut app, hwnd, "screen term 3");
+    show(&mut app, hwnd, rows);
+    let source = source(&uia, hwnd, remote);
+    let mut terminal = Terminal::new();
+    let _ = read_terminal(&uia, &source, &mut terminal, (None, remote));
+    let found = verbatim_outpost::terminal::find(
+        &uia,
+        (source.element(), source.pattern()),
+        &terminal,
+        (needle, -10, true, 1),
+        remote,
+    )
+    .expect("the terminal is searched");
+    app.quit();
+    found
+}
+
+/// A short needle found within rows far more often than at a row's start,
+/// as a short command's text is: only the rows that start with it are
+/// matches, nearest first, a longer row starting with it among them for
+/// Core to check by its line's hash, and the hits within rows do not use
+/// up the matches a search takes.
+fn the_search_takes_rows_starting_with_the_needle(remote: bool) {
+    let within = " y y y y y y";
+    let mut rows = vec!["y", "yes"];
+    rows.extend([within; 5]);
+    rows.push("ready>");
+    let found = search(&rows, "y", remote);
+    let row = |above: i32, text: &str| verbatim_model::TerminalMatch {
+        above,
+        text: format!("{text:WIDTH$}\r\n"),
+    };
+    assert_eq!(found, [row(5, "yes"), row(6, "y")]);
+}
+
+fn the_search_takes_rows_starting_with_the_needle_remote() {
+    the_search_takes_rows_starting_with_the_needle(true);
+}
+
+fn the_search_takes_rows_starting_with_the_needle_classic() {
+    the_search_takes_rows_starting_with_the_needle(false);
+}
+
+/// A needle found within rows more often than the search's `FindText`
+/// calls allow ends the search before a row starting with it, further
+/// away, is reached.
+fn the_search_ends_after_its_calls(remote: bool) {
+    let within = " y y y y y y";
+    let mut rows = vec!["y"];
+    // Six hits a row, a row more than the calls allow.
+    rows.extend(vec![within; verbatim_uia_rops::FIND_CALLS / 6 + 1]);
+    rows.push("ready>");
+    assert_eq!(search(&rows, "y", remote), []);
+}
+
+fn the_search_ends_after_its_calls_remote() {
+    the_search_ends_after_its_calls(true);
+}
+
+fn the_search_ends_after_its_calls_classic() {
+    the_search_ends_after_its_calls(false);
+}
+
 /// The node Core knows mockapp's terminal by.
 fn terminal_node() -> NodeId {
     NodeId::in_outpost(OutpostId(1), 1)
@@ -614,6 +685,22 @@ fn main() {
         (
             "a_failing_search_finds_nothing_classic",
             a_failing_search_finds_nothing_classic,
+        ),
+        (
+            "the_search_takes_rows_starting_with_the_needle_remote",
+            the_search_takes_rows_starting_with_the_needle_remote,
+        ),
+        (
+            "the_search_takes_rows_starting_with_the_needle_classic",
+            the_search_takes_rows_starting_with_the_needle_classic,
+        ),
+        (
+            "the_search_ends_after_its_calls_remote",
+            the_search_ends_after_its_calls_remote,
+        ),
+        (
+            "the_search_ends_after_its_calls_classic",
+            the_search_ends_after_its_calls_classic,
         ),
     ]);
 }

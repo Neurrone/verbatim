@@ -4,15 +4,16 @@
 //! `conhost_command_marks` in the console host. The shared setup is
 //! described in the `terminal` module.
 //!
-//! Three commands are entered: `echo one`, the written script `long.ps1`,
-//! which prints "long line 1" to "long line 100", more than three screens,
-//! heard through the flood policy, and `echo three`. Enter on each typed
-//! line marks it. Verbatim+Alt+Up Arrow three times then moves the review
-//! cursor to each command's line and speaks it, newest first: "echo
-//! three", the script's line, and "echo one", which output has carried
-//! above the rows Core keeps, so it is found by the outpost's search. A
-//! fourth press says nothing, past the oldest mark, and Verbatim+Alt+Down
-//! Arrow goes back to the script's line. In Windows Terminal, `cls` then
+//! Four commands are entered: `echo one` twice, the written script
+//! `long.ps1`, which prints "long line 1" to "long line 100", more than
+//! three screens, heard through the flood policy, and `echo three`. Enter
+//! on each typed line marks it. Verbatim+Alt+Up Arrow four times then
+//! moves the review cursor to each command's line and speaks it, newest
+//! first: "echo three", the script's line, and "echo one" twice, which
+//! output has carried above the rows Core keeps, so each is found by the
+//! outpost's search, the match nearest its own mark. A fifth press says
+//! nothing, past the oldest mark, and Verbatim+Alt+Down Arrow goes back to
+//! the newer "echo one", then to the script's line. In Windows Terminal, `cls` then
 //! erases the history, and Verbatim+Alt+Up Arrow says nothing. NVDA has no
 //! such command, so each press is Verbatim's own
 //! (`docs/parity/terminals.md`, "Reading a terminal on demand").
@@ -57,8 +58,10 @@ const DOWN: &str = "kb:verbatim+alt+downarrow";
 
 /// The steps once the prompt has been read.
 fn steps(scenario: &mut Scenario) {
-    terminal::type_with_echo(scenario, "echo one", terminal::Echo::Shown);
-    scenario.speech().expect(&["one", PROMPT]);
+    for _ in 0..2 {
+        terminal::type_with_echo(scenario, "echo one", terminal::Echo::Shown);
+        scenario.speech().expect(&["one", PROMPT]);
+    }
     terminal::type_with_echo(scenario, r".\long.ps1", terminal::Echo::Shown);
     // The flood policy, which NVDA does not have: the 100 lines and the
     // prompt, 30 whole, 41 skipped, and the last 30.
@@ -74,7 +77,9 @@ fn steps(scenario: &mut Scenario) {
     mark(scenario, UP, Some("ready> echo three"));
     mark(scenario, UP, Some(r"ready> .\long.ps1"));
     mark(scenario, UP, Some("ready> echo one"));
+    mark(scenario, UP, Some("ready> echo one"));
     mark(scenario, UP, None);
+    mark(scenario, DOWN, Some("ready> echo one"));
     mark(scenario, DOWN, Some(r"ready> .\long.ps1"));
 }
 

@@ -92,7 +92,8 @@ pub use path::{
 };
 pub use terminal_colours::{COLOUR_BUDGET, COLOUR_CHUNK, ColourRun, row_width, screen_height};
 pub use terminal_find::{
-    FIND_MATCHES, FindMatch, FindQuery, terminal_find, terminal_find_classic, terminal_find_remote,
+    FIND_CALLS, FIND_MATCHES, FindMatch, FindQuery, terminal_find, terminal_find_classic,
+    terminal_find_remote,
 };
 pub use terminal_rows::{
     MOST_RUNS, RowsAnswer, RowsQuery, TerminalRowsFn, terminal_rows, terminal_rows_classic,

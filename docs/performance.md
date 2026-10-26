@@ -2863,16 +2863,29 @@ program keeps a range where the next read starts and never searches.
 Moving to a command mark above the rows Core keeps does
 (`verbatim_uia_rops::terminal_find`; Dickson, 2026-10-26): the mark's
 line's first row, without its padding, from a screen past its place,
-in one remote operation, at most the same 20 matches, each checked by
-its line's hash in Core, since the console host also matches a longer
-row with the same start; any failing call on a match ends the search
-as not found, Windows Terminal's not-found range included.
+in one remote operation, at most the same 20 matches that start a row,
+each checked by its line's hash in Core, since the console host also
+matches a longer row with the same start; any failing call on a match
+ends the search as not found, Windows Terminal's not-found range
+included. A hit within a row is passed over and not counted, so the
+search is bounded separately at 100 `FindText` calls
+(`verbatim_uia_rops::FIND_CALLS`), five for each match it takes: a
+needle such as a one-letter input, found within rows far more often
+than at a row's start, would otherwise walk the whole history. At that
+bound the program executed 1,535 instructions against mockapp
+(2026-10-26), well under the remote operation's limit; its time in a
+real terminal was not measured, and is estimated below.
 
 Measured on 2026-10-07 for the tail read this replaced, against Windows
 Terminal and the console host each with a full scrollback of 9,001 lines:
 one `FindText` costs 0.1 to 0.2 milliseconds classically wherever the
-text is, and about 3 inside a program on a range the program made, so a
-search costs about 3 milliseconds a match remotely; a walk up line by
+text is, and about 3 inside a program on a range the program made. The
+command mark search was not measured in a real terminal; from those
+figures it is estimated at about 3 milliseconds a `FindText` call
+remotely, so about 60 milliseconds for 20 calls and about 300 at its
+bound of 100. Against mockapp, whose provider is in-process and fast, a
+search at the bound took 1.9 milliseconds remotely and 76 classically
+in a debug build (2026-10-26). A walk up line by
 line, the earlier search, cost 0.01 milliseconds a line remotely and
 could not look further than its bound. In a console host whose
 scrollback is not yet full, lines are slow to walk one at a time (about
@@ -2903,12 +2916,20 @@ microseconds, until the quiet period after the Enter passes. A move
 between marks costs one fresh read per press, the read every review
 command takes, and a walk over the marks and the memory's rows in the
 reducer; a mark above the rows Core keeps adds one search per mark
-tried, one remote operation of about 3 milliseconds a match remotely and
-0.1 to 0.2 milliseconds a `FindText` classically ("A terminal's upward
-search"), at most 20 matches, so at most about 60 milliseconds for one
-mark, more only for marks whose lines are gone, each dropped once
-tried. No mark's line is looked for during reads, and nothing is added
-to the event or speech path (Dickson, 2026-10-26).
+tried, one remote operation of at most 100 `FindText` calls, an
+estimated 3 milliseconds a call remotely and 0.1 to 0.2 milliseconds
+classically ("A terminal's upward search"), so an estimated 60
+milliseconds when the line is the nearest of 20 rows starting with its
+text and at most about 300 when its text is mostly found within rows,
+more only for marks whose lines are gone, each dropped once tried. A
+search is answered relative to where the next read starts, so a live
+read that moves that start while a search is out makes the answer stale
+and the same mark is sought again: while a program keeps printing, a
+move can repeat its search once for each read that arrives during the
+previous search, with no bound but the output stopping. This follows
+from the code and was not measured. No mark's line is looked for during
+reads, and nothing is added to the event or speech path (Dickson,
+2026-10-26).
 
 ### A terminal's status bar
 

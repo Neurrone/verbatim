@@ -7,8 +7,10 @@
 //! as many rows from it as the mark's line holds, for the caller to verify
 //! by its line's hash, since the console host's `FindText` also matches a
 //! longer row with the same start ("flood line 14" in "flood line 140"). At
-//! most [`FIND_MATCHES`] matches are taken, the bound the console host's
-//! search needed (`docs/performance.md`, "A terminal's upward search").
+//! most [`FIND_MATCHES`] matches that start a row are taken, the bound the
+//! console host's search needed, over at most [`FIND_CALLS`] `FindText`
+//! calls, so that a needle found mostly within rows cannot walk the whole
+//! history (`docs/performance.md`, "A terminal's upward search").
 //!
 //! A `FindText` that fails, or whose range's calls fail, as Windows
 //! Terminal's not-found range does (a range rather than null, whose
@@ -31,9 +33,18 @@ use crate::focus::Path;
 use crate::opcode::Comparison;
 use crate::operation::Value;
 
-/// How many matches a search takes at most (`docs/performance.md`, "A
-/// terminal's upward search").
+/// How many matches that start a row a search takes at most
+/// (`docs/performance.md`, "A terminal's upward search").
 pub const FIND_MATCHES: usize = 20;
+
+/// How many `FindText` calls a search makes at most, counting the hits
+/// within a row it passes over: five for each match it takes, so a needle
+/// with up to four hits within rows for each row it starts still gets all
+/// [`FIND_MATCHES`], while one found mostly within rows, such as a short
+/// input, ends after about 300 milliseconds at the estimated 3 a call
+/// remotely rather than walking the whole history (`docs/performance.md`,
+/// "A terminal's upward search").
+pub const FIND_CALLS: usize = 5 * FIND_MATCHES;
 
 /// More rows than any terminal holds, for counting rows to the end.
 const FAR: i32 = 1_000_000;
@@ -70,8 +81,9 @@ pub struct FindMatch {
     pub text: String,
 }
 
-/// The matches of `query`, nearest first in the search's direction, at most
-/// [`FIND_MATCHES`]: the remote program when `remote` is true, falling back
+/// The matches of `query` that start a row, nearest first in the search's
+/// direction, at most [`FIND_MATCHES`] of them over at most [`FIND_CALLS`]
+/// `FindText` calls: the remote program when `remote` is true, falling back
 /// to the classic implementation for this call when the program fails, and
 /// the classic implementation alone when `remote` is false. Says which path
 /// answered.
@@ -159,15 +171,21 @@ fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<
     let aboves = b.add_to_results(aboves);
     let texts = b.new_array();
     let texts = b.add_to_results(texts);
-    let tries = b.new_int(0);
+    let calls = b.new_int(0);
+    let most_calls = b.int(i32::try_from(FIND_CALLS).unwrap_or(i32::MAX));
+    let taken = b.new_int(0);
     let most = b.int(i32::try_from(FIND_MATCHES).unwrap_or(i32::MAX));
     // A failure is not found: the search ends with what it has.
     b.try_catch(
         |b| {
             b.while_(
-                |b| b.compare(tries, most, Comparison::LessThan),
                 |b| {
-                    b.add_assign(tries, one);
+                    let more = b.compare(taken, most, Comparison::LessThan);
+                    let calls_left = b.compare(calls, most_calls, Comparison::LessThan);
+                    b.and(more, calls_left)
+                },
+                |b| {
+                    b.add_assign(calls, one);
                     let hit = b.text_range_find_text(span, needle, backward, ignore_case);
                     let missing = b.is_null(hit);
                     b.if_(missing, Builder::break_loop);
@@ -190,6 +208,7 @@ fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<
                         let text = b.text_range_get_text(from, all);
                         b.array_append(aboves, above);
                         b.array_append(texts, text);
+                        b.add_assign(taken, one);
                     });
                 },
             );
@@ -244,7 +263,10 @@ pub fn terminal_find_classic(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<Fi
             text: String::from_utf16_lossy(&row.text(-1)?),
         })))
     };
-    for _ in 0..FIND_MATCHES {
+    for _ in 0..FIND_CALLS {
+        if found.len() >= FIND_MATCHES {
+            break;
+        }
         // A failure is not found: the search ends with what it has.
         match next() {
             Ok(Some(Some(found_one))) => found.push(found_one),
