@@ -8,11 +8,13 @@
 //! created, destroyed, shown, hidden, renamed, cloaked or uncloaked,
 //! minimized or restored, or brought to the foreground) and checks again
 //! each time one arrives. Nothing is polled and nothing sleeps: between
-//! events the thread blocks in `GetMessageW`, and a thread timer bounds a
-//! wait that never sees its evidence.
+//! events the thread blocks in `MsgWaitForMultipleObjectsEx` until a
+//! message comes or the wait's time runs out. No thread timer bounds it,
+//! since `KillTimer` leaves a `WM_TIMER` already in the queue, which ended
+//! the next wait at once when a wait ended on an event as its timer fired.
 
 use std::cell::Cell;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
@@ -20,9 +22,9 @@ use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWi
 use windows::Win32::UI::WindowsAndMessaging::{
     CHILDID_SELF, DispatchMessageW, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_CREATE, EVENT_OBJECT_HIDE,
     EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND,
-    EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, GetMessageW, KillTimer, MSG,
-    OBJID_WINDOW, PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SetTimer, WINEVENT_OUTOFCONTEXT,
-    WM_APP, WM_TIMER,
+    EVENT_SYSTEM_MINIMIZEEND, EVENT_SYSTEM_MINIMIZESTART, MSG, MWMO_INPUTAVAILABLE,
+    MsgWaitForMultipleObjectsEx, OBJID_WINDOW, PM_NOREMOVE, PM_REMOVE, PeekMessageW,
+    PostThreadMessageW, QS_ALLINPUT, WINEVENT_OUTOFCONTEXT, WM_APP,
 };
 
 /// The message an event hook posts to wake the waiting thread.
@@ -120,27 +122,18 @@ pub fn until(mut met: impl FnMut() -> bool, timeout: Duration) -> bool {
     if met() {
         return true;
     }
-    let milliseconds = u32::try_from(timeout.as_millis())
-        .unwrap_or(u32::MAX)
-        .max(1);
-    // SAFETY: a thread timer with no window and no callback; it posts
-    // WM_TIMER to this thread and is killed below.
-    let timer = unsafe { SetTimer(None, 0, milliseconds, None) };
-    let held = loop {
+    let deadline = Instant::now() + timeout;
+    let held = 'wait: loop {
+        // Every message waiting is read first: the hooks' events are
+        // delivered as they are.
         // SAFETY: `msg` is an owned buffer; no window filter.
-        let read = unsafe { GetMessageW(&raw mut msg, None, 0, 0) };
-        if read.0 <= 0 {
-            break met();
-        }
-        match msg.message {
-            WM_TIMER if msg.wParam.0 == timer => break met(),
-            WM_CHANGED => {
+        while unsafe { PeekMessageW(&raw mut msg, None, 0, 0, PM_REMOVE) }.as_bool() {
+            if msg.message == WM_CHANGED {
                 WAKE_POSTED.with(|posted| posted.set(false));
                 if met() {
-                    break true;
+                    break 'wait true;
                 }
-            }
-            _ => {
+            } else {
                 // SAFETY: a message this thread read; dispatching it runs
                 // nothing of this module's but the event procedure.
                 unsafe {
@@ -148,11 +141,18 @@ pub fn until(mut met: impl FnMut() -> bool, timeout: Duration) -> bool {
                 }
             }
         }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break met();
+        }
+        let milliseconds = u32::try_from(left.as_millis()).unwrap_or(u32::MAX).max(1);
+        // SAFETY: no handles; returns when a message is in the queue or the
+        // time is up, and a message already there counts.
+        unsafe {
+            let _ =
+                MsgWaitForMultipleObjectsEx(None, milliseconds, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
     };
-    // SAFETY: the timer set above.
-    unsafe {
-        let _ = KillTimer(None, timer);
-    }
     drop(hooks);
     // A wake-up posted after the last read is left for the next wait to
     // read, which treats it as a reason to check.
@@ -167,6 +167,33 @@ mod tests {
     #[test]
     fn a_condition_that_holds_at_once_needs_no_event() {
         assert!(until(|| true, Duration::from_millis(1)));
+    }
+
+    #[test]
+    fn a_timer_message_left_in_the_queue_does_not_end_a_wait() {
+        // A `WM_TIMER` already in the queue, as `KillTimer` leaves one.
+        // SAFETY: no preconditions.
+        let thread = unsafe { GetCurrentThreadId() };
+        let mut msg = MSG::default();
+        // SAFETY: creates this thread's queue; nothing is removed.
+        unsafe {
+            let _ = PeekMessageW(&raw mut msg, None, 0, 0, PM_NOREMOVE);
+        }
+        for id in 0..8 {
+            // SAFETY: a plain message to this thread's own queue.
+            unsafe {
+                let _ = PostThreadMessageW(
+                    thread,
+                    windows::Win32::UI::WindowsAndMessaging::WM_TIMER,
+                    WPARAM(id),
+                    LPARAM(0),
+                );
+            }
+        }
+        let timeout = Duration::from_millis(100);
+        let started = Instant::now();
+        assert!(!until(|| false, timeout));
+        assert!(started.elapsed() >= timeout, "{:?}", started.elapsed());
     }
 
     #[test]

@@ -45,13 +45,19 @@ Public API:
     top-level windows, each with its handle, owning pid, title, class,
     program, whether it is cloaked or minimized, whether Windows judges it not responding, `hung`, whether it has `WS_EX_NOACTIVATE`, so Windows never brings it to the foreground, `no_activate`, and whether it is hidden, `hidden`, which only the foreground window can be), `SetForeground`
     (restoring a window from minimized, minimizing it first, without
-    activating another window, when it is restored and not in front, then `SetForegroundWindow`, injecting no
-    input, so it works whatever input came last, and answering whether the
-    window is in front once `SetForegroundWindow` returns; each call
-    logs, at info, the window's title and when each step finished,
-    measured from the call's start: the minimize requested and observed,
-    the restore, and `SetForegroundWindow`'s answer, with whether it
-    accepted the window and whether the window was then in front),
+    activating another window, when it is restored and not in front, then
+    `SetForegroundWindow`, injecting no input; the minimize and the
+    restore are posted to the window's thread (`ShowWindowAsync`) and
+    each waited for on the window's minimized state, a request that is
+    not posted failing the call at once, and a request whose wait fails
+    logged as still queued, to be carried out whenever the window
+    answers; the answer is whether the window is in front, waited for
+    when `SetForegroundWindow` accepts it and read at once when it
+    refuses; each call logs, at info, the window's title and when each
+    step finished, measured from the call's start: the minimize requested
+    and observed, the restore observed, and `SetForegroundWindow`'s
+    answer, with whether it accepted the window and whether the window
+    was then in front),
     `WaitForWindow` with a `WindowCondition` (`Foreground`, optionally
     requiring the title to mark unsaved changes or not; `Present`; `Absent`; `AllMinimized`), where a cloaked window, kept but
     not shown, counts as not shown in every condition, as it does for
@@ -259,8 +265,10 @@ waits (private `wait` module) check their condition once, then install
 out-of-context WinEvent hooks for the events that can change it (a
 top-level window created, destroyed, shown, hidden, renamed, cloaked or
 uncloaked, minimized or restored, or brought to the foreground) and check
-again on each, blocking in `GetMessageW` between them, with a thread timer
-bounding the wait. Process exits are recorded from each launched child's
+again on each, blocking in `MsgWaitForMultipleObjectsEx` between them
+until a message comes or the wait's time is up. No thread timer bounds
+the wait, since `KillTimer` leaves a `WM_TIMER` already queued, which
+ended the next wait at once. Process exits are recorded from each launched child's
 job object completion port (private `jobs` module), file waits use
 `FindFirstChangeNotification`, and event waits use the event's handle.
 Nothing polls or sleeps.

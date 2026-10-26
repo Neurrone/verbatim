@@ -119,9 +119,17 @@ taskbar, and Verbatim announced its Start button), waits on window
 events until it is minimized, and only then restores it and sets it as
 the foreground: `SetForegroundWindow` on a restored background window
 needs the agent's right, while a window restored from minimized takes the
-foreground at once. Each such window is logged by the agent at info. A window restored from minimized and set as the
-foreground is in front when `SetForegroundWindow` returns (37 of 37,
-measured 2026-10-09), so `SetForeground` reads the foreground then.
+foreground at once. Each such window is logged by the agent at info. The
+minimize and the restore are posted to the window's thread, so a hung
+window cannot block the agent, and the switch then completes on that
+thread after `SetForegroundWindow` returns, so `SetForeground` waits for
+the window to be in front when the call accepts it. On 2026-10-26, six
+runs of `windows_terminal_up_typing` each passed with the posted requests,
+and four of six failed with synchronous `ShowWindow` calls instead,
+though a posted minimize is carried out later: the console host's from
+16 to 126 milliseconds after it was posted, and Character Map carried
+out none of ten within 700, where a synchronous one is done when the
+call returns.
 Every `SetForeground` logs a "bring forward steps" line at info, with the
 window's title and when each step finished from the call's start (the
 minimize requested and observed, the restore, and

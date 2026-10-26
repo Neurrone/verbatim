@@ -228,30 +228,36 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// `SetForegroundWindow`; both the minimize and the restore are posted to
 /// the window's thread (`ShowWindowAsync`), so a hung window cannot block
 /// the agent, and each is waited for on its evidence, the window's
-/// minimized state, up to [`MINIMIZE_LIMIT`]; Windows gives a window it restores from
-/// minimized the foreground whatever input came last. A restored window
-/// that is not already in front is minimized first, without activating
-/// another window (`SW_SHOWMINNOACTIVE`), and restored once it is.
-/// `SW_MINIMIZE` would activate the next top-level window in Z order: in a
-/// local run on 2026-10-17 that was the taskbar, whose Start button
-/// Verbatim then announced. `SetForegroundWindow` alone succeeds only while the agent may set
-/// the foreground, which it may only after injecting the last input
-/// (`docs/tooling/troubleshooting.md`, "Windows' foreground lock keeps launched
-/// applications behind"). msinfo32 is such a window: it ignores the
-/// minimized show state it is launched with and opens restored and
-/// inactive (found 2026-10-09). Such a window is logged, at info.
+/// minimized state, up to [`MINIMIZE_LIMIT`]. A request that is not
+/// posted, as for a destroyed window, fails the call at once. A request
+/// whose wait fails stays posted: a window that answers later carries it
+/// out then, during whatever comes next, so the failure is logged with
+/// that consequence named, and the next call reads the window's state
+/// afresh before doing anything. A restored window that is not already in
+/// front is minimized first, without activating another window
+/// (`SW_SHOWMINNOACTIVE`), and restored once it is. `SW_MINIMIZE` would
+/// activate the next top-level window in Z order: in a local run on
+/// 2026-10-17 that was the taskbar, whose Start button Verbatim then
+/// announced. `SetForegroundWindow` alone succeeds only while the agent
+/// may set the foreground, which it may only after injecting the last
+/// input (`docs/tooling/troubleshooting.md`, "Windows' foreground lock
+/// keeps launched applications behind"). msinfo32 is such a window: it
+/// ignores the minimized show state it is launched with and opens restored
+/// and inactive (found 2026-10-09). Such a window is logged, at info.
 ///
-/// The answer is the window being the foreground, waited for on window
-/// events up to [`MINIMIZE_LIMIT`]: with the restore posted rather than
-/// handled before `SetForegroundWindow`, the switch completes on the
-/// window's thread after the call returns (`conhost_leave_flood` on
-/// 2026-10-26: accepted, and not yet in front as the call returned).
+/// The answer is the window being the foreground. When
+/// `SetForegroundWindow` refuses and the window is not in front, the call
+/// fails at once; when it accepts, the window is waited for on window
+/// events up to [`MINIMIZE_LIMIT`], since with the restore posted rather
+/// than handled before the call, the switch completes on the window's
+/// thread after the call returns (`conhost_leave_flood` on 2026-10-26:
+/// accepted, and not yet in front as the call returned).
 ///
 /// Each call logs, at info, how long each step took from the call's
 /// start: the minimize requested, the minimize observed, the restore
-/// observed, and
-/// `SetForegroundWindow`'s answer, and whether the window was then in
-/// front, so a slow switch can be explained from the agent's log.
+/// observed, and `SetForegroundWindow`'s answer, and whether the window
+/// was then in front, so a slow switch can be explained from the agent's
+/// log.
 #[must_use]
 pub fn set_foreground(window: u64) -> bool {
     let started = Instant::now();
@@ -268,36 +274,55 @@ pub fn set_foreground(window: u64) -> bool {
             "a window to bring forward was restored and not in front; minimized before it is restored"
         );
         // SAFETY: tolerates any handle; the minimize is posted to the
-        // window's thread, and its answer is not waited for.
-        let _ = unsafe { ShowWindowAsync(window, SW_SHOWMINNOACTIVE) };
+        // window's thread, and false means it was not posted.
+        let posted = unsafe { ShowWindowAsync(window, SW_SHOWMINNOACTIVE) }.as_bool();
         steps.minimize_requested = Some(started.elapsed());
+        if !posted {
+            tracing::info!("the minimize was not posted to the window");
+            steps.log(window, started, false, false);
+            return false;
+        }
         let minimized = wait::until(|| is_minimized(window), MINIMIZE_LIMIT);
         steps.minimized = minimized.then(|| started.elapsed());
         if !minimized {
+            tracing::warn!(
+                "the window was not minimized in time; the posted minimize stays queued and \
+                 minimizes it whenever the window answers"
+            );
             steps.log(window, started, false, false);
             return false;
         }
     }
     if is_minimized(window) {
         // SAFETY: tolerates any handle; the restore is posted to the
-        // window's thread, and its answer is not waited for.
-        let _ = unsafe { ShowWindowAsync(window, SW_RESTORE) };
+        // window's thread, and false means it was not posted.
+        let posted = unsafe { ShowWindowAsync(window, SW_RESTORE) }.as_bool();
+        if !posted {
+            tracing::info!("the restore was not posted to the window");
+            steps.log(window, started, false, false);
+            return false;
+        }
         let restored = wait::until(|| !is_minimized(window), MINIMIZE_LIMIT);
         steps.restored = restored.then(|| started.elapsed());
         if !restored {
+            tracing::warn!(
+                "the window was not restored in time; the posted restore stays queued and \
+                 restores it whenever the window answers"
+            );
             steps.log(window, started, false, false);
             return false;
         }
     }
-    // SAFETY: tolerates any handle; a stale one fails. Its answer is only
-    // logged: whether the window is in front is read below.
+    // SAFETY: tolerates any handle; a stale one fails.
     let accepted = unsafe { SetForegroundWindow(window) }.as_bool();
     steps.set_foreground = Some(started.elapsed());
     // SAFETY: GetForegroundWindow has no preconditions.
-    let in_front = wait::until(
-        || unsafe { GetForegroundWindow() } == window,
-        MINIMIZE_LIMIT,
-    );
+    let in_front_now = || unsafe { GetForegroundWindow() } == window;
+    let in_front = if accepted {
+        wait::until(in_front_now, MINIMIZE_LIMIT)
+    } else {
+        in_front_now()
+    };
     steps.log(window, started, accepted, in_front);
     in_front
 }
