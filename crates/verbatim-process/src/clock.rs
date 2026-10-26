@@ -1,7 +1,7 @@
 //! The clock every Verbatim process stamps the times it compares across
 //! processes with: a key's press in the hook, a read's start in an
 //! outpost, a reply's arrival in Core (`docs/design/terminal-model.md`,
-//! section 3.3). It is the performance counter, which is monotonic and the
+//! "Keys"). It is the performance counter, which is monotonic and the
 //! same in every process on Windows 10 and later, plus one offset that
 //! makes it read as microseconds since the Unix epoch. The offset is taken
 //! once, by the first Verbatim process to need it, and handed to every

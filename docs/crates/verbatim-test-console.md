@@ -33,7 +33,7 @@ The crate's binary, `verbatim-stream-test` (`src/bin/verbatim-stream-test`),
 is a program of Verbatim's own that streams text into the terminal it runs
 in, each way programs stream it, at up to 60 frames a second, beside a
 redrawn status row with Pi's spinner and a timer, and a prompt that takes
-typing (`docs/design/terminal-model.md`, section 12, item 13). It lives
+typing (`docs/roadmap.md`, "The terminal redesign"). It lives
 here because it is a console program for the tests that needs the Windows
 bindings this crate already has, and no other crate's tests depend on it.
 

@@ -14,7 +14,7 @@
 //! word that changed: "20%", "30%", and so on. Steps come less than 2
 //! seconds apart, so from the third the row is volatile: each step is held
 //! until the row has been still for the quiet period, and then spoken
-//! (`docs/design/terminal-model.md`, sections 5.4 and 5.14), before the
+//! (`docs/design/terminal-model.md`, "Reading rules", rule 17), before the
 //! scenario writes the next. The script ends the line and the shell
 //! prints the prompt just after the last step, so the prompt, new output,
 //! is spoken at once and "100%" after it, once the quiet period passes.

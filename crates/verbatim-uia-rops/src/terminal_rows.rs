@@ -1,5 +1,5 @@
 //! Runs of a terminal's history rows read by their place
-//! (`docs/design/terminal-model.md`, section 4.3, item 5): when a candidate
+//! (`docs/design/terminal-model.md`, "Reading rules", rule 4): when a candidate
 //! rotation puts the history's block above the snapshot just read, the rows
 //! it predicts there are read from the same start the snapshot was asked
 //! for, each run moved up by its rows, so one round trip checks every

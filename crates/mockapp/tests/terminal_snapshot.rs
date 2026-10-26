@@ -1,5 +1,5 @@
 //! The terminal read program (`verbatim-uia-rops`'s `terminal_snapshot`,
-//! `docs/design/terminal-model.md`, section 4.2) against mockapp's UIA text
+//! `docs/design/terminal-model.md`, "The read") against mockapp's UIA text
 //! provider, whose `set-text` command rewrites the terminal's text and whose
 //! `screen` command puts only the text's last lines on screen. Every read is
 //! taken by the remote program and by the classic implementation, which

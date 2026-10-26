@@ -6,7 +6,7 @@
 //! A written script prints one short line, "ab", far shorter than the
 //! terminal's width. Both terminals pad every row to the width, and
 //! padding is never reviewed: a row's line ends at its last character
-//! (`docs/design/terminal-model.md`, section 5.12). Numpad 7 from the
+//! (`docs/design/terminal-model.md`, "Features and settings"). Numpad 7 from the
 //! prompt's line reads "ab", the start of the line says "a", numpad 3 says
 //! "b", and numpad 3 again is at the line's edge, "Right b", where the
 //! review cursor once moved on into the padding, saying "blank" for each

@@ -721,8 +721,8 @@ fn terminal_snapshots_execute_exactly() {
     assert!(started < LIMIT / 2);
 }
 
-/// A terminal's rows read by their place (section 4.3, item 5 of
-/// `docs/design/terminal-model.md`): at its largest input, as many runs as
+/// A terminal's rows read by their place (`docs/design/terminal-model.md`,
+/// "Reading rules", rule 4): at its largest input, as many runs as
 /// one read takes, each reaching its rows, and for one run, as a single
 /// candidate rotation whose block left the read asks. The program has no
 /// loop, so each run costs the same instructions however far up it reads.

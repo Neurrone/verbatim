@@ -628,7 +628,7 @@ pub enum TextOp {
     /// or as [`TextOp::Read`] is when the first unit cannot be read.
     ReadAhead(TextReadAhead),
     /// A focused terminal's on-demand reading (`docs/design/terminal-model.md`,
-    /// section 5.1): Core's output queue is full, so the outpost
+    /// "Reading rules", rule 1): Core's output queue is full, so the outpost
     /// only notes that the terminal's text changed from now on, without
     /// reading it. Answered [`TextReply::Done`].
     TerminalHold,

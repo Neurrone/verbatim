@@ -1,6 +1,6 @@
 //! `cargo xtask record-terminal-streams [--recipe <name>]...`: records what
 //! real programs write to a terminal, for the simulated terminal's
-//! conformance corpus (`docs/design/terminal-model.md`, section 9). Each
+//! conformance corpus (`docs/design/terminal-model.md`, "Testing"). Each
 //! recipe in `crates/verbatim-term-sim/conformance/recipes` names a command
 //! and the input to type into it; the program runs in a pseudoconsole of
 //! 120 by 30, the input is written to it step by step, and everything it

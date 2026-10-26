@@ -88,8 +88,8 @@ pub(crate) fn run(
     match navigator.text.clone() {
         // A terminal's review cursor is a place in the outpost's memory of
         // its rows, which output can move: every command first reads the
-        // line where it is now (`docs/design/terminal-model.md`, section
-        // 5.6).
+        // line where it is now (`docs/design/terminal-model.md`, "The
+        // review cursor").
         ReviewText::At(position) if grid => Outcome::Done(seed(
             state,
             node,
@@ -335,7 +335,7 @@ fn execute(
             let character = text::character_at(&line.text, position.offset, grid);
             if grid {
                 // Cells, up to the row's last character: padding is never
-                // reviewed (`docs/design/terminal-model.md`, section 5.12).
+                // reviewed (`docs/design/terminal-model.md`, "Features and settings").
                 // A cell past the text, where moving down a column leaves
                 // the cursor, is at the edge already.
                 let next = position.column

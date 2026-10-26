@@ -30,7 +30,7 @@ scenarios follow it as the model's order of work brings them back.
 
 - Each read is aligned with the rows last read, row by row, so that
   every row is new, kept wherever it moved, or rewritten (Dickson,
-  2026-10-23; `docs/design/terminal-model.md`, section 4), where NVDA
+  2026-10-23; `docs/design/terminal-model.md`, "The model"), where NVDA
   diffs the whole document by character. As NVDA's diff speaks only
   what was inserted, lines only deleted, and a line that only lost text
   or gained white space, say nothing.
@@ -231,8 +231,8 @@ scenarios follow it as the model's order of work brings them back.
 With "review follows caret" on, the review cursor follows the caret only
 when a key moved the caret or the focus arrived, and otherwise stays on
 its text, moving with it as output scrolls; with it off, only the user
-moves it (Dickson, 2026-10-23; `docs/design/terminal-model.md`, section
-5.6). So reviewing a line above the caret and letting a script print two
+moves it (Dickson, 2026-10-23; `docs/design/terminal-model.md`, "The review
+cursor"). So reviewing a line above the caret and letting a script print two
 lines leaves Verbatim's review cursor on the line reviewed, where NVDA
 follows the caret to the prompt (different; `*_review_output` takes this
 expectation when the model is built).

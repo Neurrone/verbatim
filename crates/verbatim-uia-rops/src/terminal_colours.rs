@@ -1,5 +1,5 @@
-//! A terminal's colours (`docs/design/terminal-model.md`, sections 5.7 and
-//! 10): each screen row's runs of one foreground and background, from the
+//! A terminal's colours (`docs/design/terminal-model.md`, "Lists and
+//! colours" and "Costs"): each screen row's runs of one foreground and background, from the
 //! screen's top to the document's end, read in the reads in a key's window.
 //!
 //! What the providers answer, measured in both terminals on 2026-10-24:

@@ -1,5 +1,5 @@
 //! A focused terminal's on-demand reading (`docs/design/terminal-model.md`,
-//! section 5.1) through a real outpost's worker, against mockapp's UIA text
+//! "Reading rules", rule 1) through a real outpost's worker, against mockapp's UIA text
 //! provider presenting a Windows Terminal control (UIA class
 //! `TermControl`), its text given as a terminal gives it, every row padded
 //! to the width and ended by a carriage return and line feed: each

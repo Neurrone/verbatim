@@ -1760,7 +1760,7 @@ fn the_review_cursor_meets_each_character_of_a_line_break() {
 }
 
 /// A terminal row's line ends at its last character: padding is never
-/// reviewed (`docs/design/terminal-model.md`, section 5.12), so moving on
+/// reviewed (`docs/design/terminal-model.md`, "Features and settings"), so moving on
 /// from the last character is at the edge, padded or not.
 #[test]
 fn a_terminal_rows_line_ends_at_its_last_character() {
@@ -1802,7 +1802,7 @@ fn a_terminal_keeps_a_cell_column_and_reads_past_the_text_as_blank() {
     settle(&mut state, line("ab中文cd    \r\n", 200, 2));
     // Every review command in a terminal reads the review cursor's line
     // again first, where the cursor is (`docs/design/terminal-model.md`,
-    // section 5.6); a line read the same keeps its cell column.
+    // "The review cursor"); a line read the same keeps its cell column.
     let seeded = |state: &mut SrState, command: ReviewCommand, chunk: TextChunk| {
         let effects = reduce(state, &self::command(command, 0));
         let read = request(&effects);

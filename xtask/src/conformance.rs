@@ -3,7 +3,7 @@
 //! host and the end-to-end suite's pinned Windows Terminal, reads each
 //! after every chunk with Verbatim's own read program, and saves what it
 //! answered as the expectations the simulated terminal is tested against
-//! (`docs/design/terminal-model.md`, section 9). Every read also takes the
+//! (`docs/design/terminal-model.md`, "Testing"). Every read also takes the
 //! read program's colours, which must equal the colours read cell by cell,
 //! or the run fails. It opens terminal windows, so it runs on demand on a
 //! desktop, never in continuous integration.

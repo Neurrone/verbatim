@@ -98,7 +98,7 @@ Related items:
   ([the model](design/terminal-model.md), "The terminals"); if a measurement
   on the installed build confirms it, follow NVDA, which has the same gap.
   A flood of identical lines cannot be counted whenever the history is
-  full, a limitation in the model's section 6.
+  full, a limitation in the model's "Limits".
 - Windows Terminal and `FindText`: on 2026-10-24, in the pinned Windows
   Terminal 1.24.12741, a `FindText` that finds nothing returned a
   non-null range whose `GetText`, `CompareEndpoints` and
@@ -116,7 +116,7 @@ Related items:
   change). First settle whether Windows Terminal or UIA loses the event,
   with about 60 runs and a second, independent UIA client listening. The
   model reads on Windows Terminal's caret events as well as its text
-  changes ([the model](design/terminal-model.md), "When to read"), which
+  changes ([the model](design/terminal-model.md), "Reading rules", rule 1), which
   comes back with the outpost and Core step (Dickson, 2026-10-17: part of
   this redesign).
 - The terminal scenario the lock-free listener's first step lets fail

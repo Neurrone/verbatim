@@ -1,4 +1,4 @@
-//! A terminal's snapshot (`docs/design/terminal-model.md`, section 4.2):
+//! A terminal's snapshot (`docs/design/terminal-model.md`, "The read"):
 //! the text from where the last read said to start to the end of the
 //! document, read in one `GetText`, which the terminal answers from one
 //! locked state of its buffer (measured in both terminals, 2026-10-23), so
@@ -101,7 +101,7 @@ fn text_of(range: &IUIAutomationTextRange) -> Result<String, Error> {
 }
 
 /// What [`terminal_snapshot`] and its two implementations are asked
-/// (`docs/design/terminal-model.md`, section 4.2).
+/// (`docs/design/terminal-model.md`, "The read").
 #[derive(Clone, Copy)]
 pub struct SnapshotQuery<'a> {
     /// The element with the text.
@@ -116,12 +116,12 @@ pub struct SnapshotQuery<'a> {
     pub screen_rows: u32,
     /// Whether to read the whole text instead, from the document's start:
     /// the fallback when the screen as last read is not in a snapshot
-    /// (`docs/design/terminal-model.md`, section 4.2).
+    /// (`docs/design/terminal-model.md`, "The read").
     pub whole: bool,
     /// How many rows above the start to begin the read, as far as the
     /// document's start allows: the history rows whose place shows how far
-    /// a full history rotated (`docs/design/terminal-model.md`, section 4.3,
-    /// item 5). Ignored with `whole`.
+    /// a full history rotated (`docs/design/terminal-model.md`, "Reading
+    /// rules", rule 4). Ignored with `whole`.
     pub above: u32,
     /// The caret and its line to read too, in the same round trip.
     pub caret: Option<CaretLineQuery<'a>>,
@@ -174,12 +174,12 @@ pub struct Snapshot {
     pub caret_rows_to_end: u32,
     /// The document's first row, as the provider gave it: when it reads
     /// otherwise, the history rotated (`docs/design/terminal-model.md`,
-    /// section 2.1).
+    /// "The terminals").
     pub first_row: String,
     /// Where the next read starts: the document's end moved back by the
     /// screen's height, so the top of the screen output is written to,
     /// wherever the user has scrolled the view (`docs/design/terminal-model.md`,
-    /// section 4.2); the screen's top when the height is not known.
+    /// "The read"); the screen's top when the height is not known.
     pub next_start: Option<IUIAutomationTextRange>,
     /// How many rows the snapshot holds above its start: the query's
     /// `above`, or fewer when the document's start came first.

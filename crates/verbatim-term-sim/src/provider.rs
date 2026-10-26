@@ -5,7 +5,7 @@
 //! document ending at the end of the lower of the last row with text and
 //! the cursor's; rows joined by line breaks, none after the last, and none
 //! after a row whose line wraps onto the next (`docs/design/terminal-model.md`,
-//! sections 2.1 and 3.3). The conformance expectations check every answer
+//! "The terminals"). The conformance expectations check every answer
 //! against the real terminals.
 
 use crate::grid::Grid;

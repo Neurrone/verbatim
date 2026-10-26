@@ -1229,8 +1229,8 @@ pub(crate) fn caret_moved_by_core(state: &mut SrState, node: NodeId, line: TextC
 /// A terminal's review cursor follows the caret only when its reading rules
 /// find that a key moved the caret, which its outpost tells
 /// (`crate::terminal`), never on a caret report alone, since a program
-/// moves the cursor as it draws (`docs/design/terminal-model.md`, section
-/// 5.6).
+/// moves the cursor as it draws (`docs/design/terminal-model.md`,
+/// "Reading rules", rule 24).
 fn follow_caret(state: &mut SrState, node: NodeId) {
     if state.settings.follow_caret
         && let Some(navigator) = state.navigator.as_mut()

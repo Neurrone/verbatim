@@ -1918,7 +1918,7 @@ impl Worker<'_> {
     /// nothing, since what it held before the focus arrived is not new
     /// output. That read waits until the subscription has moved to the
     /// terminal, so output written after the read began raises a change
-    /// that reads it (`docs/design/terminal-model.md`, section 5.10), where
+    /// that reads it (`docs/design/terminal-model.md`, "Reading rules", rule 15), where
     /// output written before the handlers were registered raised nothing
     /// and went unspoken.
     fn follow_text(

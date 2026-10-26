@@ -428,7 +428,7 @@ equal.
 `terminal_snapshot_remote` and `terminal_snapshot_classic` share one
 signature (`TerminalSnapshotFn`), and `terminal_snapshot(uia, query,
 remote)` chooses between them as `focus_ancestry` does, answering with a
-`Path`. It is the read of `docs/design/terminal-model.md`, section 4.2:
+`Path`. It is the read of `docs/design/terminal-model.md`, "The read":
 the outpost reads every focused terminal with it, and
 `cargo xtask regenerate-terminal-conformance-expectations` reads the real
 terminals with it. A `SnapshotQuery` names the element and its
@@ -492,7 +492,7 @@ and ends its text is recorded by the conformance expectations
   its two colours as `0x00BBGGRR`), from the screen's top to the
   earlier of the document's end and the screen's, the form the terminal
   reading rules take (`verbatim-text`'s `terminal_reading::ColourRun`,
-  `docs/design/terminal-model.md` section 5.7). Read after the text, so a
+  `docs/design/terminal-model.md`, "Lists and colours"). Read after the text, so a
   hint like the rest.
 
 Without colours the program has no loop, so its cost does not grow with

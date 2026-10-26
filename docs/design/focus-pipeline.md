@@ -914,7 +914,7 @@ There is one kind of process, the outpost; a spare is an outpost not yet given a
 
 ### 19.1 What a spare saves, case by case
 
-Starting an outpost takes about 40 ms in a debug build before it can take its first event (`docs/performance.md`, the outpost's start); the supervisor holds the application's facts meanwhile (`HeldFacts`, `crates/verbatim-outpost/src/supervisor/policy.rs`). How much of that is on the way to speech depends on the fact that starts the outpost:
+Starting an outpost takes about 40 ms in a debug build before it can take its first event (`docs/performance.md`, "verbatim.exe's relay"); the supervisor holds the application's facts meanwhile (`HeldFacts`, `crates/verbatim-outpost/src/supervisor/policy.rs`). How much of that is on the way to speech depends on the fact that starts the outpost:
 
 - A foreground change or an MSAA focus first: the whole start. The commonest case is a return to an application whose outpost was retired after two minutes without attention (`supervisor/mod.rs`, the retirement interval), such as Alt+Tab back to it.
 - A UIA focus first: the start less the listener's read, since the listener's focus marker starts the outpost before the reading thread reads (`listener.rs`, the marker sent from the callback), and the two run at once. Against mockapp's read of about 10 ms that is up to about 30 ms; for a slow provider, nothing.

@@ -4,8 +4,8 @@
 
 use std::fmt::Write as _;
 
-/// A way a program streams text (`docs/design/terminal-model.md`, section
-/// 12, item 13).
+/// A way a program streams text (`docs/roadmap.md`, "The terminal
+/// redesign").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Way {
     /// Each token appended to the last line where it ends, split anywhere,
