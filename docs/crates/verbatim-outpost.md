@@ -2456,8 +2456,8 @@ abandon a hung worker.
   (for a property change, the same property; for a focus, the same kind of
   focus) and goes to the back, unless the waiting one is a caret report
   carrying selection changes with a reply after it, when both are kept in
-  order. What a terminal says follows what it said still waiting, in one
-  message, in order; Core's flood policy then treats it as any other.
+  order. A terminal's read is never merged with a newer one, since each
+  starts where the one before it said to start ("Terminals").
 - Answers to Core's requests are never merged and keep their order, and
   so do notifications, each of which says something of its own, and
   faults. A cancelled query's `NotStarted` answer takes its place among
@@ -2593,7 +2593,7 @@ The outpost's side (`Outpost::shutdown`), in order:
    nothing more is abandoned. No call is cut off: a call into an application that does
    not answer is ended by UIA's own timeouts.
 5. Every object held is released: every node leaves both registries, with
-   its text patterns, anchors, and terminal memory.
+   its text patterns, anchors, and a terminal's kept read start.
 6. What waits is written, the answer to the call that was in progress
    included, every write in flight completes, and the pipe is closed. The
    outpost never exits with a write in flight, since its exit would cancel
@@ -2708,7 +2708,7 @@ it.
   for every character typed.
 - Sending. A live read is sent as `NormalizedEvent::TerminalSnapshot`
   unless it is identical, field for field, to the last read sent but for
-  when it began and its caret report (`Terminal::sends`), a read that
+  when it began and ended and its caret report (`Terminal::sends`), a read that
   waited for Core's speech queue excepted, since the reading rules count
   reads in a row of which the second waited ("Volatile rows"). An answer
   to Core's request is always sent, as `TextReply::TerminalSnapshot`.
@@ -2754,8 +2754,9 @@ it.
   the focus-following subscription is moved to it and the worker waits
   for the move (`Registration::settle`) before the first read, so output
   written after that read began raises a change that reads it. That first
-  read is sent as any live read; Core's rules, told of the focus, speak
-  nothing of it.
+  read is sent even when identical to the last read sent
+  (`Terminal::focused`), since Core's rules, told of the focus, take it as
+  the read that speaks nothing.
 - On-demand reading (`terminal::reading`), a pure transition function the
   worker drives. Live, the default, a text change of the focused terminal
   is read at once and sent. Core's text requests change it:
@@ -2812,13 +2813,17 @@ it.
   by a newer one from the same element with the same kind, processing,
   and activity id, whatever its text, as NVDA's UIA limiter keys one.
 - The unit tests: `terminal/reading.rs` holds every state and event of
-  on-demand reading; `terminal/tests.rs` drives a `Terminal` over the
-  simulated terminal (`verbatim-term-sim`) as the worker does: the rules'
-  speech as Core takes it, a message too large split in order, Core's key
-  as the rules' key, new output line by line, the review position moving
-  with its row as output scrolls it into the history, the history read up
-  to the document's start, a row ending at its text and a range joining
-  lines, and the review reading at the caret. mockapp's `terminal` test
+  on-demand reading; `terminal/tests.rs` drives the decision to send a
+  read (`Terminal::sends`) over the simulated terminal
+  (`verbatim-term-sim`), giving the reads sent to the reading rules as
+  Core gives them: a read identical to the last sent is not sent unless
+  it waited, a waited one is, so a row changed around it is not made
+  volatile, and the first read after the focus returns is sent though
+  identical; and it checks that a read's text converted in one pass
+  (`terminal::unpadded_utf16`) is exactly what two copies made, unpaired
+  surrogates and line ends included. Its ignored `measure_conversion`
+  times that conversion in a release build (`docs/performance.md`, "A
+  terminal's reads in Core"). mockapp's `terminal` test
   reads its UIA terminal provider through the module (new output said line
   by line, one call remotely; typing echoed as the terminal shows it and
   Backspace saying what it deleted, through Core), and `terminal_reading`

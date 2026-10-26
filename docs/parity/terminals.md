@@ -17,6 +17,7 @@ change of any kind.
 
 Verbatim: **different** (`docs/design/phase6-design.md`, "Terminal
 reading by diffing the screen"; `docs/design/terminal-model.md`;
+`docs/crates/verbatim-core.md`, "Core's terminal model";
 `docs/crates/verbatim-outpost.md`, "Terminals"), case by case below,
 some matched and some deliberately different. The terminal scenarios
 pin it: the `conhost_` and `windows_terminal_` scenarios named below,

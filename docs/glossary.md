@@ -122,6 +122,10 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   `--listener`, as the focus listener. Each process incarnation has an
   **outpost id**, which every node id it issues carries.
   [verbatim-outpost](crates/verbatim-outpost.md).
+- **Pending key** — a key Core has taken in for a terminal and not yet
+  given to its reading rules, because no read or timer at or after the
+  key's time has come yet. [verbatim-core](crates/verbatim-core.md),
+  "Core's terminal model".
 - **Presentable container** — an ancestor that qualifies for a
   focus-entry announcement under the NVDA-parity exclusion filter.
   [verbatim-core](crates/verbatim-core.md); NVDA's rule is in
@@ -151,6 +155,19 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   state, text run) per D12; turned into words, a sound, both, or
   nothing by the active **theme** at the last pipeline stage.
   [verbatim-speech](crates/verbatim-speech.md).
+- **Speech key** — the key whose trace a terminal read's speech goes out
+  under: the newest key given to the reading rules whose window holds
+  the read, so a later key's cut treats that speech as the key's.
+  [verbatim-core](crates/verbatim-core.md), "Core's terminal model".
+- **Terminal snapshot** — one read of a terminal as its outpost sends it
+  to Core (`TerminalSnapshot`): the text from where the read started to
+  the document's end, without its lines' padding, the screen, the caret,
+  and the read program's flags. A live read is one the outpost takes on
+  its own, on a text change or caret event; a whole read is the whole
+  document, which the reading rules ask for after a lost read; a
+  history-block read is a terminal's first read taken again with a
+  screen of rows above its screen. [verbatim-model](crates/verbatim-model.md);
+  [How Verbatim reads terminals](design/terminal-model.md).
 - **Theme** — a complete collection of indications and how each is
   reported (off, speech, sound, or speech and sound), with its sounds,
   replacement words, and voice styles; verbosity, speech, and sounds in

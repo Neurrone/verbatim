@@ -514,8 +514,8 @@ older one, whose answer Core then drops. The operations (`TextOp`):
 - `Location(point)`: the point's screen position, answered `Location { x,
   y }` in pixels, or `Unsupported`.
 - `TerminalHold`, `TerminalRead { hold }`, and `TerminalCancel`: a focused
-  terminal's on-demand reading (`docs/design/terminal-model.md`, section
-  5.1). Hold: Core's output queue is full, so the outpost only notes
+  terminal's on-demand reading (`docs/design/terminal-model.md`, "Where
+  it runs"). Hold: Core's output queue is full, so the outpost only notes
   changes (answer `Done`). Read: what the terminal says now, read only
   when the text changed since the last read, then holding or reading each
   change at once again (answer `TerminalSnapshot`, the read, or
@@ -541,9 +541,6 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   them).
 - `TerminalShape { height, width }`: the screen's shape as the rules found
   it, for the outpost's next reads (answer `Done`).
-
-Once the outpost reads for Core, `TerminalRead` and `TerminalCancel` are
-answered `TerminalSnapshot`, or `TerminalUnchanged` when nothing changed.
 
 Any request can also be answered `NoText` (the node has no text interface
 at all; Core then reviews its value or name as flat text, as NVDA's object

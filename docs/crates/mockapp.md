@@ -599,6 +599,26 @@ out of a range's answer, and one with a blue cell at the second chunk's
 start) it pins the colours as exact runs both ways, read at the width the
 last read found, at none known, and at a stale one.
 
+`terminal.rs` reads `terminal.json`'s terminal through the outpost's
+`terminal` module and gives each read to Core's reducer, as the worker
+and Core do: new output is said line by line with one UIA call a read
+remotely, and classically, and Backspace says what it deleted with no
+caret event. `terminal_reading.rs` drives a real outpost's worker over
+the same terminal and asserts the reads and answers it sends Core: a
+focus-now terminal reporting its output, a terminal followed through a
+foreground report, each on-demand reading request (hold, read, cancel)
+and its answer, a caret event read with the text change after it, a
+held terminal's caret event read with the text, the console host's caret
+coming from its console and a console caret move with no text change
+read, the system caret not taken for the console's, a read that covers
+a caret event answering a caret key's watch with no caret, an identical read
+not sent again, the hooks' change events waiting for a window read
+through MSAA, a caret key's watch read while the terminal writes waiting
+for its change, a fresh read taken while held, the whole document and a
+history block read when asked, history above the next read's start read
+by place, a colours request after a read without them read at once, and
+the read before a held key a read with its caret.
+
 `remote_ops.rs` runs `verbatim-uia-rops`'s remote and
 classic focus ancestry over `ancestry.json` (a five-level chain, a list
 and a tab control with selected children) and asserts they return the

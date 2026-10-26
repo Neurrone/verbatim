@@ -519,8 +519,8 @@ Inside, an outpost follows NVDA's model of one thread doing all the work
 for an application (the outpost redesign, 2026-10-01). What it says to
 Core waits in one queue, written by a thread of its own; queuing never
 waits, nothing is queued while a lock the watchdog takes is held, and
-waiting messages are merged by object and kind, a terminal's output
-combined under the flood policy, while answers to Core's requests keep
+waiting messages are merged by object and kind, but never a terminal's
+reads, each of which starts where the last said to, while answers to Core's requests keep
 their order. Intake callbacks
 only add entries to one queue, which applies NVDA's limiter rules (one
 waiting entry per object and event kind, and for an MSAA event other than
@@ -862,9 +862,11 @@ M13) for Java applications.
   attribute runs, terminal text-range walking, and browse-mode buffer batch
   fetches. ARM64 behavior is still to be verified (R3, deferred on
   2026-10-06).
-- **Terminals.** TextPattern plus remote ops. Each read diffs the visible
-  screen with the screen last read, and what was inserted is spoken, in
-  order, one line per utterance; newer output never cancels older output
+- **Terminals.** TextPattern plus remote ops. The outpost reads the
+  terminal and sends each read to Core, whose terminal memory aligns it
+  with the last read and whose reading rules decide what it says
+  (`docs/design/terminal-model.md`); new output is spoken in order, one
+  line per utterance; newer output never cancels older output
   still waiting (decided 2026-10-06, since that rule is what broke NVDA's
   2026.3 beta). The flood policy works by groups: the first "Lines spoken
   in full" lines of a burst (30 by default) are spoken whole, and once

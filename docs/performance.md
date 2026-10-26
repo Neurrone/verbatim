@@ -2213,9 +2213,9 @@ anchors.
 
 ### A terminal output line
 
-A focused terminal's text changed, and the outpost reads it and gives the
-read to its reading rules (`docs/crates/verbatim-outpost.md`,
-"Terminals"): one snapshot (`verbatim_uia_rops::terminal_snapshot`), the
+A focused terminal's text changed, and the outpost reads it and sends the
+read to Core, whose reading rules judge it (`docs/crates/verbatim-outpost.md`,
+"Terminals"; `docs/crates/verbatim-core.md`, "Core's terminal model"): one snapshot (`verbatim_uia_rops::terminal_snapshot`), the
 text from a screen above the screen's top as last read to the
 document's end in one `GetText`, with the screen, where the next read
 starts, the document's first row, the caret's distance to the end, and the
@@ -2253,8 +2253,10 @@ host raises its caret events on a schedule of its own, so a character
 echoed between two of them leaves Core's copy of the caret behind. So each
 read of a focused terminal reads the caret and its line too
 (`verbatim_uia_rops::SnapshotQuery::caret`), in the same program, and the
-outpost reports it with what the read says, stamped as read when the
-read began; Windows Terminal's caret events read the terminal itself.
+snapshot carries it as its caret report, which Core takes as its caret,
+stamped with when the read ended. A caret event of either terminal, the
+console host's included, reads the terminal itself, so a caret move with
+no text change reaches the reading rules in a read.
 
 - Minimum: no call more, since it goes in the program the text's read
   already runs.
@@ -2658,6 +2660,121 @@ the freeing of the read's rows and lines, about 0.2 to 0.5 milliseconds.
 A 2,000-line console-host flood read in 1,054 reads, as measured live on
 2026-10-08, moves 2.17 MB of snapshots (12.5 MB padded), about 2.1 KB a
 read.
+
+The outpost's conversion of a read into the snapshot it sends, in one
+pass into kept buffers (`terminal::unpadded_utf16`, measured by the
+ignored `measure_conversion` in `crates/verbatim-outpost/src/terminal/tests.rs`
+in a release build, 50 reads after one to warm up, three runs on
+2026-10-26): a whole document of 9,031 rows of 120 cells 1,986 to 2,620
+microseconds and no page fault, against 2,827 to 3,341 microseconds and
+273 to 404 page faults with the two copies it replaced; an ordinary read
+of two screens 19 to 29 microseconds, against 26 to 30. The buffers kept
+after a whole document are 132,096 bytes, against 524,288.
+
+#### Live, against the build before
+
+Measured on 2026-10-26 on Dickson's x64 machine with release builds of
+commit 0dbf9ad2, the last before the outpost sent its reads to Core
+(before), and of ffce203b (after), each with two temporary debug logs
+that were not committed, the size of every frame an outpost writes and
+the reducer's time for every input. One run of each scenario with the
+harness's logging (the outposts at debug), and wake-ups traced at info
+level (`cargo xtask trace scenario`) over the same window in both
+builds. The figures are before, then after.
+
+Bytes and messages from the terminal's outpost over the whole scenario,
+with the reads it took:
+
+- `conhost_flood`: 2,118 messages and 2.31 MB, then 1,911 and 6.01 MB;
+  1,581 reads, then 1,826.
+- `windows_terminal_flood`: 222 messages and 0.30 MB, then 252 and 0.69
+  MB; 145 reads, then 132.
+- `conhost_full_history_flood`: 3,704 messages and 4.11 MB, then 3,906 and
+  12.33 MB; 3,446 reads, then 3,857.
+- `windows_terminal_full_history_flood`: 138 messages and 0.18 MB, then 154
+  and 0.81 MB; 104 reads, then 90.
+- `conhost_scrollback_overflow`: 86 messages and 0.33 MB, then 89 and 0.44
+  MB; `windows_terminal_scrollback_overflow`: 89 and 0.33 MB, then 105 and
+  0.45 MB.
+- `conhost_pager_history`: 138 messages and 0.11 MB, then 126 and 0.22 MB;
+  `windows_terminal_pager_history`: 109 and 0.08 MB, then 122 and 0.20 MB;
+  `windows_terminal_cleared_flood`: 96 and 0.08 MB, then 112 and 0.18 MB.
+- `measure_keys_conhost`: 2,370 messages and 2.29 MB, then 2,420 and 5.92
+  MB; 1,202 reads, then 1,716. `measure_keys_windows_terminal`: 2,366 and
+  2.32 MB, then 2,991 and 6.30 MB; 1,930 reads, then 1,874.
+
+So the number of messages hardly changes: before, a read whose caret had
+moved already sent a caret report of about 1 KB, its line included, and
+during a flood the caret moves with every line. Each message is now the
+read itself, about 1.6 to 3.3 KB for an ordinary read, so the bytes
+crossing the pipe rise 2 to 4.5 times.
+
+The reducer's time for each input that carries a terminal's read: a live
+read 101 to 116 microseconds at the median and 182 to 406 at the 99th
+percentile, an answer to Core's request 53 to 83 at the median, against 1
+to 6 microseconds before for a caret report or a read's speech. Over a
+whole scenario that is 234 milliseconds against 7 in `conhost_flood`, 148
+against 8 in `measure_keys_conhost`, and 175 against 11 in
+`measure_keys_windows_terminal`. Steps over the 2 milliseconds of the
+reducer's budget: the whole document read after a lost read, one a
+scenario, 2.0 to 2.3 milliseconds in the full-history flood and the
+scrollback overflows; and 3 of the 1,822 reads of `conhost_flood`, the
+largest 4.7 milliseconds. No key scenario's step reached 2 milliseconds
+(the largest 1.35).
+
+Wake-ups and processor time, all of Verbatim's processes, then the
+reducer thread and the relay thread:
+
+- `conhost_flood`, 58 to 73 seconds in (floods 2 to 4): 40,605 wake-ups and
+  2,126 milliseconds, then 41,677 and 2,283 (2.6 percent more wake-ups);
+  the reducer 1,270 wake-ups and 129 milliseconds, then 1,512 and 330; the
+  relay 1,214, then 1,474. The outpost's worker 3,777, then 3,710.
+- `windows_terminal_flood`, 58 to 73 seconds in: 5,600 and 600
+  milliseconds, then 5,740 and 602 (2.5 percent more); the reducer 224 and
+  23 milliseconds, then 244 and 46; the relay 118, then 190. Over its first
+  flood, 8 to 18 seconds in: 3,168, then 3,206; the reducer 61, then 89;
+  the relay 31, then 57.
+- `measure_keys_conhost`, 10 to 40 seconds in: 16,838 and 1,636
+  milliseconds, then 16,660 and 1,625; the reducer 1,360 and 131
+  milliseconds, then 1,302 and 188; the relay 900, then 1,116.
+- `measure_keys_windows_terminal`, 10 to 40 seconds in: 17,745 and 1,769
+  milliseconds, then 17,391 and 1,648; the reducer 1,418 and 153
+  milliseconds, then 1,619 and 208; the relay 950, then 1,216.
+
+Reads that say nothing, with a clock rewriting one line once a second for
+30 seconds, Verbatim started by hand in each terminal: the console host
+read the terminal 59 times before and 117 after, since its caret event now
+reads the terminal too, and the second read of each tick, identical to the
+first, is not sent; Windows Terminal 58 times in both. The terminal's
+outpost sent 79 messages before and 78 after, so the reducer woke 94 times
+in both builds in the console host and 101 in Windows Terminal, and the
+relay 54 then 47, and 56 then 44: no rise, because the read of each tick
+already sent the moved caret before. Pi is not installed on this
+machine; Claude Code is, but runs in its screen reader mode from
+Dickson's settings, which appends plain text instead of redrawing, and it
+streamed no reply within the traced window, so neither stream was
+measured.
+
+The colours: of 911 keys in `measure_keys_conhost`, the colours request
+found that a read had ended at or after the key without colours 439 times
+and read again at once; 39 of 911 in `measure_keys_windows_terminal`. That
+is about one remote operation and one message more for every other key in
+the console host.
+
+The time from a key to its typing echo queued for speech, from the
+latency ledger (minimum, P50, P95, P99, maximum, in milliseconds):
+`measure_keys_conhost` 1.3, 3.4, 4.8, 7.0, 13.2 before, and 0.3, 3.5, 4.8,
+55.0, 226.3 after; `measure_keys_windows_terminal` 1.4, 4.1, 6.4, 8.2, 23.3
+before, and 1.1, 24.0, 41.3, 48.0, 70.6 after. The two builds' figures are
+not the same measurement: before, the outpost's speech for an echo began
+its line at the read that showed it, so the wait for the terminal to show
+the key was in no stage; now Core speaks the echo for the key itself, and
+the line runs from the key, so it includes that wait. In Windows Terminal
+the text change after a key came about 19 milliseconds after it, one
+frame, and the echo's read 1 to 2 milliseconds after that, in the after
+build's outpost log; the before build's ledger has no stage for that
+wait. The console host's tail (P99 55, maximum 226) has not been
+explained.
 
 ### A terminal's upward search
 
@@ -3275,8 +3392,8 @@ machine with 12 virtual processors of an AMD Ryzen 7 5700G and 16 GB of
 memory, running Windows 11 Pro build 26200, with a release build of
 commit 975fb269 and its default settings, speaking through eSpeak NG in
 its synthesizer host. It is the baseline for the terminal memory of
-`docs/design/terminal-model.md`, section 4.1, which the terminal outposts
-do not keep yet. A script sampled every process run from the build's
+`docs/design/terminal-model.md` ("The memory"), measured before any
+process kept it. A script sampled every process run from the build's
 folder four times a second with `Get-Process`: private bytes (the
 process's commit), working set, and the peak working set and peak commit
 Windows keeps for the process's lifetime. Steady is a workload's median,
@@ -3341,19 +3458,20 @@ The processes and their figures:
 In total, Verbatim's processes held about 23 MB of private bytes idle at
 its own dialog, about 28 MB with both terminals open, and about 24 MB
 after leaving them. The terminals cost little: neither a full history nor
-a flood moved a terminal's outpost by more than 0.3 MB, since today's
-outpost reads only the screen and the rows written since its last read,
-keeps nothing of the history, and frees each read once it is reported.
+a flood moved a terminal's outpost by more than 0.3 MB, since the outpost
+of that build read only the screen and the rows written since its last
+read, kept nothing of the history, and freed each read once it was
+reported.
 
 ### The terminal memory's cost, estimated
 
-The terminal memory of section 4.1 (`TerminalMemory` in
+The terminal memory (`TerminalMemory` in
 `crates/verbatim-text/src/terminal_rows.rs`) and the reading rules'
-per-row state beside it (`TerminalReader` in `terminal_reading.rs`) will
-be kept by the outpost of the terminal's application, where the reads are
-made (`docs/design/terminal-model.md`, section 12), one of each for every
-terminal. Windows Terminal's tabs share one process, so its outpost will
-hold one memory for each tab, under the outpost's memory cap of 200 MB.
+per-row state beside it (`TerminalReader` in `terminal_reading.rs`) are
+kept by Core, in `verbatim.exe` (`SrState::terminals`;
+`docs/design/terminal-model.md`, "Where it runs"), one of each for every
+terminal Core has read, each tab of Windows Terminal a terminal of its
+own, at most 16, the least recently read forgotten first.
 
 The sizes, on x64, for a row of 120 columns: a kept row's text is a
 string of its own of 136 bytes of heap (the 120 bytes and two counts),
@@ -3396,10 +3514,15 @@ cell short of the width: the read's rows (9,001 of 56 bytes, and their
 texts in strings of about 64 KB), its lines (72 bytes each, a line's text
 a stretch of the same strings), the outcome, the speech, and a 72-byte
 state for each row, with no line state for the lines above the rows that
-will be kept. The outpost also holds the read's text (1.1 MB as UTF-8,
-and the 2.2 MB UTF-16 string UI Automation returned), so its peak rises by
-about 7 to 9 MB for that read, and falls back once the read is handled.
-An ordinary read raises the peak by 27 KB. The reading rules take about
+will be kept. Core holds the snapshot too while it is aligned, its text
+without its padding, 72 to 160 KB. The outpost holds, for that read, the
+2.2 MB UTF-16 string UI Automation returned and the read converted from
+it, the same 72 to 160 KB, and gives its buffers back once the read is
+written, each spare buffer and the pipe's write buffer kept to 64 KiB.
+An ordinary read raises the peak by 27 KB. The flight recorder holds the
+snapshots among the inputs it keeps, an ordinary read about 1.1 KB and a
+whole read 72 to 160 KB, so its byte bound of 8 MiB holds fewer than its
+1,024 inputs only after several whole reads. The reading rules take about
 50 microseconds for an ordinary read of one line more and 1.1 to 2.5
 milliseconds for a whole-document read ("A terminal's rotation").
 

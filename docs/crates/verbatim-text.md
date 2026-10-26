@@ -79,8 +79,9 @@ memory and alignment (`docs/design/terminal-model.md`, "The model", "The
 read", "The alignment", "Lingering", "A read with no text", "Screens" and
 "Starting again"), written from that design. It classifies; it does not
 speak: the reading rules (`terminal_reading`, below) are built on its
-`Outcome`. The outpost reads every focused terminal through both
-(`docs/crates/verbatim-outpost.md`, "Terminals").
+`Outcome`. Core's terminal model runs both on every read a focused
+terminal's outpost sends (`docs/crates/verbatim-core.md`, "Core's terminal
+model").
 
 ### Public API
 
@@ -123,7 +124,7 @@ speak: the reading rules (`terminal_reading`, below) are built on its
   anchor, a history row above the rows kept among them, whose line's hash
   the caller read, and `anchor` makes one on a row the memory keeps.
   `add_place`, `place` and `drop_place` keep places, numbered anchors the
-  caller holds in the text (the outpost's review answers' rows), which
+  caller holds in the text (Core's review answers' rows), which
   move with their rows as the review position does, and are dropped when
   their row cannot be followed. `restart(&Read)` takes a read for which the memory
   asked for the whole document without that read, for a caller that does
@@ -572,7 +573,7 @@ line. Keys are still answered.
 
 With the optional `serde` feature, which `verbatim-core` enables, the
 reader, its memory and every type they hold serialize and deserialize
-(Claude, 2026-10-25, pending Dickson's acceptance), so Core's state, which
+(Dickson, 2026-10-26), so Core's state, which
 holds a terminal's reader, is dumped and replayed by the flight recorder
 whole. A row's text is written as its text alone, and restored as a
 string of its own; the segmenter holds no state and is made afresh. The

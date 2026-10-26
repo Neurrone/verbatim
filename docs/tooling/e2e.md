@@ -220,8 +220,8 @@ More environment variables matter for less common cases:
   each snapshot then logs `terminal snapshot timing` (the path, its time
   in microseconds, its calls, whether it read the whole document, the
   rows above its start, its text's length, and its flags), each read
-  `terminal read timing` (its time, how long its event waited in the
-  queue, and what the reading rules said), and each
+  `terminal read timing` (its time and how long its event waited in the
+  queue), and each
   caret read `caret read timing`. The console
   host's outpost log then grows past the agent's 8 MB file limit, so
   read it from `target\e2e-stage\logs\<Verbatim's pid>` rather than from

@@ -1037,7 +1037,7 @@ they make.
   outpost answers in order, so each began before the read owed, which
   holds all it showed. A snapshot answering the flood policy's
   `TerminalRead` or `TerminalCancel` is aligned the same way and its
-  speech taken in by the policy as an answer is today;
+  speech taken in by the policy as an answer;
   `TextReply::TerminalUnchanged` says nothing. A snapshot answering a
   colours request is taken as a live read. The read's caret report, when
   it carries one, becomes Core's caret, stamped with the read's time;
@@ -1072,7 +1072,7 @@ they make.
 
 `tests/terminal_reading.rs` drives `reduce` with snapshots of the
 simulated terminal (`tests/terminal_support`), whose outpost reads as the
-outpost will for Core: it keeps the start of the last read whose screen
+real outpost does: it keeps the start of the last read whose screen
 showed text, reads at the height Core told, takes colours in the first
 read from a key's time, and answers Core's reads, history and shape. It
 checks new output spoken line by line; the review position moving with
