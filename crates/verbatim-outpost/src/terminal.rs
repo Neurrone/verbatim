@@ -5,13 +5,13 @@
 //! The reading rules run in Core. The outpost only reads: each read is one
 //! snapshot of the terminal's text, from a screen above where the last read
 //! said to start to the document's end, taken in one remote program with the
-//! screen, the caret and its line, and, when a key reached the terminal
-//! since the last read, the screen's colours
+//! screen, the caret and its line, and, when it begins within a key's
+//! window Core asked colours for, the screen's colours
 //! ([`verbatim_uia_rops::terminal_snapshot`]). It is sent to Core as it is,
 //! without its lines' padding ([`TerminalSnapshot`]). Between reads the
 //! outpost keeps only where the next read starts, the screen's height and
-//! width as Core last told them, whether colours are due, and the on-demand
-//! reading's state ([`reading`]).
+//! width as Core last told them, the keys' windows that take colours, and
+//! the on-demand reading's state ([`reading`]).
 
 pub mod reading;
 
@@ -47,9 +47,14 @@ pub struct Terminal {
     /// them ([`verbatim_model::TextOp::TerminalShape`]); 0 before it did.
     height: u32,
     width: u32,
-    /// Whether the next read takes the colours: a key reached the terminal
-    /// since the last read ("Colours").
-    colours_due: bool,
+    /// The latest end of a key's window Core asked colours for, in
+    /// milliseconds on the shared clock; 0 before any ("Colours"). Every
+    /// read that begins at or before it takes the colours.
+    colours_until: u64,
+    /// Whether the next read takes the colours whenever it begins: the read
+    /// taken at once for a colours request, which counts as inside its
+    /// key's window even when the request came after the window's end.
+    colours_now: bool,
     /// On-demand reading.
     pub reading: Reading,
     /// When the last read began, in milliseconds on the shared clock, and
@@ -109,18 +114,25 @@ impl Terminal {
         self.width = width;
     }
 
-    /// A key reached the terminal at `since_ms`
-    /// ([`verbatim_model::TextOp::TerminalColours`]): the next read takes
-    /// the colours. Returns whether a read is to be taken at once instead:
-    /// one ended at or after `since_ms` without them, so Core may give the
-    /// key to its reading rules before it, and the key's window then has a
-    /// read without colours and none with them yet. A read that ended then
-    /// with colours does not stand in for the next: Core may have taken it
-    /// before the key, whose report can reach Core after a read in the
-    /// same millisecond.
-    pub fn colours(&mut self, since_ms: u64) -> bool {
-        self.colours_due = true;
-        self.read_ended_ms >= since_ms && self.read_ended_ms != 0 && !self.read_colours
+    /// A key reached the terminal at `from_ms`, its window lasting until
+    /// `until_ms` ([`verbatim_model::TextOp::TerminalColours`]): every read
+    /// that begins by the window's end takes the colours. Returns whether a
+    /// read is to be taken at once with them, which the next read then
+    /// does: the last read ended at or after the key without them, because
+    /// this request had not yet come, so what the key did may show only in
+    /// a read without colours.
+    pub fn colours(&mut self, (from_ms, until_ms): (u64, u64)) -> bool {
+        self.colours_until = self.colours_until.max(until_ms);
+        self.colours_now =
+            self.read_ended_ms != 0 && self.read_ended_ms >= from_ms && !self.read_colours;
+        self.colours_now
+    }
+
+    /// Whether a read beginning at `started_ms` takes the colours: one
+    /// taken at once for a colours request, or one that begins by the end
+    /// of a key's window, and so may show what the key did.
+    fn takes_colours(&self, started_ms: u64) -> bool {
+        self.colours_now || started_ms <= self.colours_until
     }
 
     /// Whether `snapshot` is to be sent to Core as a live read, noting it
@@ -406,7 +418,9 @@ pub fn read<'a>(
     let clock_us = crate::protocol::now_us();
     let started_ms = clock_us / 1_000;
     let start = terminal.start_range();
-    let colours = terminal.colours_due.then_some(terminal.width as usize);
+    let colours = terminal
+        .takes_colours(started_ms)
+        .then_some(terminal.width as usize);
     let height = terminal.height;
     let query = match scope {
         Some(TerminalScope::Whole) => SnapshotQuery {
@@ -488,9 +502,7 @@ pub fn read<'a>(
     terminal.read_started_us = clock_us;
     terminal.read_ended_ms = wire.ended_ms;
     terminal.read_colours = wire.colours.is_some();
-    if wire.colours.is_some() {
-        terminal.colours_due = false;
-    }
+    terminal.colours_now = false;
     Ok(ReadAnswer {
         snapshot: wire,
         caret: snapshot.caret.take(),

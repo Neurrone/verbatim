@@ -8,22 +8,23 @@ use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
 use super::{
-    ColourRun, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit, Withheld,
+    ColourRun, KEY_WINDOW_MS, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit,
+    Withheld,
 };
 use crate::terminal_rows::{Anchor, Lost, Read, ReadText, Text, hash};
 
 /// A terminal read as the outpost reads it: each read starts where the last
 /// said, a screen above it, the whole document is read when the reader
-/// asks, and the first read after a key takes the screen's colours.
+/// asks, and every read in a key's window takes the screen's colours.
 struct Term {
     terminal: Terminal,
     reader: TerminalReader,
     query: Query,
     /// Whether the last read moved the review position to the caret.
     followed: bool,
-    /// Whether a key came since the last read, so the next read takes the
-    /// screen's colours.
-    colours_due: bool,
+    /// The keys' windows joined, from the first key's time to the last
+    /// window's end: a read within it takes the screen's colours.
+    colours_window: Option<(u64, u64)>,
 }
 
 impl Term {
@@ -44,7 +45,7 @@ impl Term {
             reader: TerminalReader::new(settings),
             query: Query::default(),
             followed: false,
-            colours_due: false,
+            colours_window: None,
         };
         let first = term.read(0);
         assert_eq!(first, quiet(None), "the first read speaks nothing");
@@ -57,8 +58,8 @@ impl Term {
         self.read(at_ms)
     }
 
-    /// Writes `bytes` and reads at `at_ms` with the screen's colours, as the
-    /// first read after a key does.
+    /// Writes `bytes` and reads at `at_ms` with the screen's colours, as a
+    /// read in a key's window does.
     fn write_coloured(&mut self, bytes: &str, at_ms: u64) -> Step {
         self.terminal.write(bytes.as_bytes());
         let colours = self.colours();
@@ -87,18 +88,23 @@ impl Term {
         self.take(at_ms, false, None)
     }
 
-    /// One read at `at_ms` without the screen's colours, even after a key.
+    /// One read at `at_ms` without the screen's colours, even in a key's
+    /// window, as the outpost takes one before Core's request for them
+    /// comes.
     fn read_colourless(&mut self, at_ms: u64) -> Step {
-        self.colours_due = false;
-        self.take(at_ms, false, None)
+        let window = self.colours_window.take();
+        let step = self.take(at_ms, false, None);
+        self.colours_window = window;
+        step
     }
 
     /// One read at `at_ms`, the whole document read again when asked, with
-    /// `colours`, or the screen's own when a key came since the last read.
+    /// `colours`, or the screen's own when a key's window holds it.
     fn take(&mut self, at_ms: u64, waited: bool, colours: Option<&[Vec<ColourRun>]>) -> Step {
-        let due = (colours.is_none() && self.colours_due).then(|| self.colours());
+        let due = (colours.is_none()
+            && self.colours_window.is_some_and(|(_, until)| at_ms <= until))
+        .then(|| self.colours());
         let colours = colours.or(due.as_deref());
-        self.colours_due = false;
         let mut query = self.query;
         let mut taken = 0;
         loop {
@@ -164,7 +170,11 @@ impl Term {
     }
 
     fn key(&mut self, kind: KeyKind, at_ms: u64) -> Step {
-        self.colours_due = true;
+        let until = at_ms + KEY_WINDOW_MS;
+        self.colours_window = Some(match self.colours_window {
+            Some((from, last)) if at_ms <= last => (from, last.max(until)),
+            _ => (at_ms, until),
+        });
         self.reader.key(Key { kind, at_ms })
     }
 
@@ -1426,19 +1436,58 @@ fn escape_restoring_a_menu_completed_word_says_what_it_removed() {
     );
 }
 
-// "Colours": the keys' colours are those of the first read with colours in
-// their window.
+// "Colours": every read in the keys' window has the colours but one the
+// outpost took before Core's request for them came, which echoes the
+// typing and leaves the suggestion, text after the caret that was not
+// typed and the emphasis to the next read with colours.
 
 #[test]
-fn a_colourless_read_in_a_keys_window_leaves_the_suggestion_to_the_next_read_with_colours() {
+fn a_colourless_read_in_a_keys_window_echoes_and_leaves_the_suggestion_to_the_next_read_with_colours()
+ {
     let mut term = Term::new(20, 3, 10);
     term.write("$ e", 100);
     term.typed("c", 1000);
     term.terminal.write(b"c\x1b[90mho hi\x1b[0m\x1b[5D");
-    assert_eq!(term.read_colourless(1050), quiet(None));
+    assert_eq!(
+        term.read_colourless(1050),
+        step(vec![echo(0, "c")], Vec::new(), Some(1300))
+    );
     let colours = term.colours();
     assert_eq!(
         term.take(1100, false, Some(&colours)),
+        says(vec![Speech::Suggestion {
+            row: 0,
+            text: "ho hi".to_owned()
+        }])
+    );
+}
+
+#[test]
+fn text_after_the_caret_held_for_colours_is_gained_when_the_window_ends_without_them() {
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ e", 100);
+    term.typed("c", 1000);
+    term.terminal.write(b"cho hi\x1b[5D");
+    assert_eq!(
+        term.read_colourless(1050),
+        step(vec![echo(0, "c")], Vec::new(), Some(1300))
+    );
+    assert_eq!(
+        term.reader.timer(1300),
+        says(vec![Speech::Gained {
+            row: 0,
+            text: "ho hi".to_owned()
+        }])
+    );
+}
+
+#[test]
+fn a_suggestion_typed_along_in_a_colourless_read_is_carried_and_not_spoken_again() {
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ e", 100);
+    term.typed("c", 1000);
+    assert_eq!(
+        term.write_coloured("c\x1b[90mho hi\x1b[0m\x1b[5D", 1050),
         says(vec![
             echo(0, "c"),
             Speech::Suggestion {
@@ -1447,6 +1496,11 @@ fn a_colourless_read_in_a_keys_window_leaves_the_suggestion_to_the_next_read_wit
             }
         ])
     );
+    term.typed("h", 2000);
+    term.terminal.write(b"h");
+    assert_eq!(term.read_colourless(2050), says(vec![echo(0, "h")]));
+    let colours = term.colours();
+    assert_eq!(term.take(2100, false, Some(&colours)), quiet(None));
 }
 
 #[test]
@@ -1467,6 +1521,38 @@ fn a_colourless_read_in_a_keys_window_leaves_the_emphasis_to_the_next_read_with_
     };
     term.key(KeyKind::Other, 1000);
     assert_eq!(term.read_colourless(1050), quiet(None));
+    let colours = vec![
+        vec![plain(20)],
+        vec![lit(5), plain(15)],
+        vec![plain(20)],
+        vec![plain(20)],
+    ];
+    assert_eq!(
+        term.take(1100, false, Some(&colours)),
+        says(vec![answer(1, "apple")])
+    );
+}
+
+#[test]
+fn a_rows_emphasis_drawn_after_the_keys_first_read_with_colours_is_their_answer() {
+    let mut term = Term::new(20, 5, 10);
+    term.write("fruits:\r\napple\r\nbanana\r\n$ ", 100);
+    let plain = |length| ColourRun {
+        column: 0,
+        length,
+        foreground: 0x00cc_cccc,
+        background: 0,
+    };
+    let lit = |length| ColourRun {
+        column: 0,
+        length,
+        foreground: 0,
+        background: 0x00cc_cccc,
+    };
+    let unlit = vec![vec![plain(20)]; 4];
+    term.key(KeyKind::Other, 1000);
+    // A read with colours before the program drew the key's answer.
+    assert_eq!(term.take(1010, false, Some(&unlit)), quiet(None));
     let colours = vec![
         vec![plain(20)],
         vec![lit(5), plain(15)],

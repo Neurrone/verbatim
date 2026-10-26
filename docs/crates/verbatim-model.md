@@ -535,10 +535,12 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   for a review answer above Core's memory (answer `TerminalHistory {
   text, above }`, the text with its padding and the rows it holds above
   that start).
-- `TerminalColours { since_ms }`: a key reached the program at `since_ms`,
-  so the next read takes the screen's colours (answer `Done`, or, when a
-  read ended at or after it without colours, a read taken at once with
-  them).
+- `TerminalColours { from_ms, until_ms }`: a key reached the program at
+  `from_ms` and its window ends at `until_ms`, so every read that begins
+  by the latest such end takes the screen's colours; when the last read
+  ended at or after `from_ms` without them, a read is taken at once with
+  them, whenever the request came, and sent as a live read (answer
+  `Done`).
 - `TerminalShape { height, width }`: the screen's shape as the rules found
   it, for the outpost's next reads (answer `Done`).
 

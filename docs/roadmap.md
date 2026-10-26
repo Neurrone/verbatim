@@ -60,7 +60,7 @@ recordings, the oracle, and the core's memory, alignment and reading
 rules in `verbatim-text` are committed. What remains, in section 12's
 order:
 
-- The read program's colours, read in the first read after each key, and
+- The read program's colours, read in the reads in each key's window, and
   the remote operations audit.
 - The outpost and Core: reading moved onto the core; the review position
   as an anchor; following the caret only within a key's window; the key's

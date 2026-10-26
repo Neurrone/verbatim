@@ -112,13 +112,19 @@ struct Session<'a> {
 impl Session<'_> {
     /// A live read, sent to Core as the outpost sends it.
     fn live(&mut self) {
+        let input = self.live_input();
+        self.input(&input);
+    }
+
+    /// A live read, as the input that brings it to Core.
+    fn live_input(&mut self) -> Input {
         let snapshot = read_terminal(
             self.uia,
             &self.source,
             &mut self.terminal,
             (None, self.remote),
         );
-        let input = Input::Event {
+        Input::Event {
             trace_id: TraceId::mint(),
             observed_at_ms: snapshot.started_ms,
             observed_at_us: 0,
@@ -129,8 +135,7 @@ impl Session<'_> {
                 node_id: terminal_node(),
                 snapshot: Box::new(snapshot),
             },
-        };
-        self.input(&input);
+        }
     }
 
     /// Gives Core `input`, and handles what it does.
@@ -184,17 +189,13 @@ impl Session<'_> {
                         (Some(*scope), self.remote),
                     )))
                 }
-                TextOp::TerminalColours { since_ms } => {
-                    if self.terminal.colours(*since_ms) {
-                        TextReply::TerminalSnapshot(Box::new(read_terminal(
-                            self.uia,
-                            &self.source,
-                            &mut self.terminal,
-                            (None, self.remote),
-                        )))
-                    } else {
-                        TextReply::Done
+                TextOp::TerminalColours { from_ms, until_ms } => {
+                    // A read at once is sent as a live read; the request's
+                    // own answer, done, says nothing to Core.
+                    if self.terminal.colours((*from_ms, *until_ms)) {
+                        return Some(self.live_input());
                     }
+                    TextReply::Done
                 }
                 op => panic!("Core asked the terminal {op:?}"),
             }

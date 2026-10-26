@@ -661,15 +661,19 @@ pub enum TextOp {
         /// Whether to read the whole document instead.
         whole: bool,
     },
-    /// A key reached the focused terminal at `since_ms`: the first read
-    /// that begins at or after it takes the screen's colours. Answered
-    /// [`TextReply::Done`], or, when a read began at or after `since_ms`
-    /// without colours, with a read taken at once with them
-    /// ([`TextReply::TerminalSnapshot`]).
+    /// A key reached the focused terminal at `from_ms`, and its window, as
+    /// Core knows it, lasts until `until_ms`: every read that begins by
+    /// the latest such end takes the screen's colours. When the last read
+    /// ended at or after `from_ms` without them, because this request had
+    /// not yet come, a read is taken at once with them, whenever the
+    /// request came, and sent as a live read. Answered
+    /// [`TextReply::Done`].
     TerminalColours {
         /// When the key reached the program, in milliseconds on the clock
         /// every process of a run shares.
-        since_ms: u64,
+        from_ms: u64,
+        /// When the key's window ends, on the same clock.
+        until_ms: u64,
     },
     /// The screen's height and width as the reading rules found them, for
     /// the outpost's next reads. Answered [`TextReply::Done`].
@@ -736,8 +740,7 @@ pub enum TextReply {
     /// the rule [`CaretReply`] describes for its `selection_changes`.
     Selected(Vec<SelectionChange>),
     /// A read of a terminal: the answer to [`TextOp::TerminalReadNow`], to
-    /// [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`], to
-    /// [`TextOp::TerminalColours`] when it reads at once, and to
+    /// [`TextOp::TerminalRead`] and [`TextOp::TerminalCancel`], and to
     /// [`TextOp::ReadCaret`] in a terminal, the read before a held key,
     /// whose caret answers it.
     TerminalSnapshot(Box<crate::TerminalSnapshot>),

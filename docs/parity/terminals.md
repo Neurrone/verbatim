@@ -335,7 +335,7 @@ expectation when the model is built).
   the quiet period (Dickson, 2026-10-23; section 5.7). So fzf says the
   current entry after each typed character and its count when typing
   pauses.
-- Colours are read with the first read after each key, in the same
+- Colours are read with the reads in each key's window, in the same
   remote operation as the text, and never before a key, so a list shown
   only by colour says the row that gained the highlight (Dickson,
   2026-10-23; section 5.7).

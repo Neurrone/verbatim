@@ -436,7 +436,7 @@ the memory, which the reader lends out. Floods are Core's to split
   `Settings` holds "report new output" and "review follows caret".
 - The inputs, each returning a `Step`:
   - `read(&Read, waited, colours)`: a read of the terminal, with whether
-    it waited for Core's speech queue and, for the first read after a key,
+    it waited for Core's speech queue and, for a read in a key's window,
     the screen's colour runs (`ColourRun`), row by row from the screen's
     top to the document's end.
   - `key(Key)`: a key as it reached the program, with when. `KeyKind` is a
@@ -552,12 +552,17 @@ newest key, the caret's line is not answered, and what changed is read as
 output. With "review follows caret" on, a key that moved the
 caret moves the review position to it; the focus arriving does so too.
 
-Colours are compared only in the first read with colours in a key's
-window, which the caller takes as the first read after each key: a read in
-the window before it, without colours, leaves the caret's line unanswered
-and its line before the keys as it was, so that read answers the keys,
-their echo included, as the design's echo waits for the colours; a new
-line at the caret is output either way. Among rows whose
+Colours are compared in every read with colours in a key's window,
+which the caller takes as every read that begins in it. A read in the
+window without colours, taken before the caller asked for them, answers
+the caret's line as any other does, the echo included, with the last
+suggestion carried where it still shows after the caret, less what was
+typed along it; text after the caret on its row that was not typed, when
+the line with it blanked is the typing or a move, is held (a hold of its
+own beside the volatile row's, the unfinished word's and the keys'
+pause) for the next read with colours in the window, which speaks it as
+a suggestion or as text gained, and is spoken as gained when the window
+ends without one. Among rows whose
 text did not change, the one row whose colours changed, or with no colours
 read before the one row that differs from both its neighbours, is the
 answer, when exactly one stands out. Text after the caret in other colours
@@ -611,10 +616,12 @@ screen; Windows Terminal's clear; a resize; output in the background;
 flood; Pi streaming above its status row, Ink's region drawn again with a
 changed cost, and several progress lines settling.
 
-The harness reads as the outpost does, the first read after a key with the
-screen's colours. Two tests take a read without colours in a key's window
-and show the suggestion and the emphasis left to the next read with
-colours. A reader serialized after each input of a session and restored
+The harness reads as the outpost does, every read that begins in a key's
+window with the screen's colours. Tests take a read without colours in a
+key's window and show the echo spoken at once, the suggestion and the
+emphasis left to the next read with colours, text after the caret spoken
+as gained when the window ends without one, and a suggestion typed along
+carried through it unspoken. A reader serialized after each input of a session and restored
 gives the same steps as the reader never serialized. And every stream of
 the conformance corpus, in both terminals, with each read followed by
 another taken with nothing written between, at the time of the read after

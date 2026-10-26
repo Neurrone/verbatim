@@ -3858,21 +3858,21 @@ impl Worker<'_> {
                 self.reply_text(request, reply);
                 return true;
             }
-            TextOp::TerminalColours { since_ms } => {
+            TextOp::TerminalColours { from_ms, until_ms } => {
                 let now = focused
                     && self
                         .context
                         .terminals()
                         .entry(node_id.number())
                         .or_default()
-                        .colours(*since_ms);
+                        .colours((*from_ms, *until_ms));
                 if now {
-                    // A read began after the key without the colours: one
-                    // is taken at once with them ("Colours").
-                    self.read_terminal(node_id, Some(request), (None, false), trace);
-                } else {
-                    self.reply_text(request, TextReply::Done);
+                    // The last read ended at or after the key without the
+                    // colours: one is taken at once with them, sent as a
+                    // live read ("Colours").
+                    self.read_terminal(node_id, None, (None, false), trace);
                 }
+                self.reply_text(request, TextReply::Done);
                 return true;
             }
             TextOp::TerminalShape { height, width } => {

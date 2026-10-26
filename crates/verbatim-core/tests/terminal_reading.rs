@@ -8,8 +8,10 @@
 //! window holds it; reads owed are waited for; the timer gives the keys
 //! first; the review cursor's requests are answered from the memory, a
 //! place moving with its row, rows above the memory read from the history;
-//! a snapshot rebuilds its read exactly; and a terminal session survives a
-//! flight recorder's dump and replay.
+//! a snapshot rebuilds its read exactly; a terminal session survives a
+//! flight recorder's dump and replay; and the colours of a key's window
+//! reach the echo's read whatever reads the outpost leaves unsent or takes
+//! at once.
 
 mod terminal_support;
 
@@ -213,7 +215,10 @@ fn a_key_whose_time_is_after_a_reads_start_is_given_to_the_rules_after_that_read
     session.input(&input);
     assert_eq!(
         session.requests(),
-        [TextOp::TerminalColours { since_ms: 1000 }]
+        [TextOp::TerminalColours {
+            from_ms: 1000,
+            until_ms: 1300
+        }]
     );
     // The program's own output, in a read that began before the key: no
     // key's window holds it.
@@ -467,7 +472,13 @@ fn the_read_before_a_held_key_is_aligned_and_its_caret_answers_it() {
     // colours asked for from then and its watch opened from then.
     let requests = session.requests();
     assert_eq!(requests.len(), 2, "{requests:?}");
-    assert_eq!(requests[0], TextOp::TerminalColours { since_ms: 301 });
+    assert_eq!(
+        requests[0],
+        TextOp::TerminalColours {
+            from_ms: 301,
+            until_ms: 601
+        }
+    );
     assert!(
         matches!(&requests[1], TextOp::AwaitCaret(watch) if watch.pressed_at_ms == 301),
         "{requests:?}"
@@ -512,12 +523,24 @@ fn a_key_deferred_behind_a_held_key_reaches_the_rules_at_the_held_keys_pass() {
     );
     let requests = session.requests();
     assert_eq!(requests.len(), 3, "{requests:?}");
-    assert_eq!(requests[0], TextOp::TerminalColours { since_ms: 301 });
+    assert_eq!(
+        requests[0],
+        TextOp::TerminalColours {
+            from_ms: 301,
+            until_ms: 601
+        }
+    );
     assert!(
         matches!(&requests[1], TextOp::AwaitCaret(watch) if watch.pressed_at_ms == 301),
         "{requests:?}"
     );
-    assert_eq!(requests[2], TextOp::TerminalColours { since_ms: 301 });
+    assert_eq!(
+        requests[2],
+        TextOp::TerminalColours {
+            from_ms: 301,
+            until_ms: 601
+        }
+    );
 }
 
 #[test]
@@ -562,4 +585,48 @@ fn a_key_that_reached_the_program_while_a_read_was_taken_is_given_before_it() {
         },
     ));
     assert_eq!(session.heard(), [said(Some(key), "l")]);
+}
+
+// "Colours": every read that begins in a key's window takes the colours, so
+// neither a read the outpost does not send nor one it takes at once uses
+// them up.
+
+#[test]
+fn a_read_not_sent_as_the_last_one_again_leaves_the_colours_to_the_echos_read() {
+    // A caret event's read in the key's window, with the colours but
+    // identical to the last read sent, is not sent; the echo's read after
+    // it has the colours too, and the echo is spoken.
+    let mut session = showing(20, 4, 100, "$ ");
+    let (_, input) = typed("a", 1000);
+    session.input(&input);
+    session.write("a", 1010);
+    let _ = session.heard();
+    let (b, input) = typed("b", 2000);
+    session.input(&input);
+    let inputs = session.log.len();
+    session.live(2001);
+    assert_eq!(session.log.len(), inputs, "the read is the last one again");
+    session.write("b", 2010);
+    assert_eq!(session.heard(), [said(Some(b), "b")]);
+}
+
+#[test]
+fn a_read_taken_at_once_before_the_program_draws_the_key_leaves_the_echo_to_the_next() {
+    // The key's colours request reaches the outpost after a read without
+    // colours ended in the key's window, so a read is taken at once with
+    // them, before the program has drawn the key; the read that shows the
+    // echo and the suggestion after it has the colours too, and tells them
+    // apart.
+    let mut session = showing(20, 3, 10, "$ e");
+    session.hold_colours = true;
+    let (c, input) = typed("c", 1000);
+    session.input(&input);
+    session.live(1001);
+    session.deliver_colours(1002);
+    assert_eq!(session.heard(), []);
+    session.write("c\x1b[90mho hi\x1b[0m\x1b[5D", 1010);
+    assert_eq!(
+        session.heard(),
+        [said(Some(c), "c"), said(Some(c), "ho hi")]
+    );
 }

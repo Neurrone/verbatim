@@ -125,8 +125,8 @@ pub struct SnapshotQuery<'a> {
     pub above: u32,
     /// The caret and its line to read too, in the same round trip.
     pub caret: Option<CaretLineQuery<'a>>,
-    /// Whether to read the screen's colours too, the first read after a
-    /// key (`docs/design/terminal-model.md`, section 5.7), with the
+    /// Whether to read the screen's colours too, a read in a key's window
+    /// (`docs/design/terminal-model.md`, "Lists and colours"), with the
     /// screen's width in cells as the last read found it, 0 when not
     /// known: the first rows' colours are read in the snapshot's own
     /// program at that width, and read again at this read's width, its top

@@ -1002,7 +1002,7 @@ they make.
   waiting, and the history rows that came for the answer in progress; the
   review places; the caret, the screen's shape and whether the last read
   began at the document's start; the shape told to the outpost; the
-  quiet-period timer's due time; and the colours requests unanswered. A
+  quiet-period timer's due time. A
   model is made with a terminal's first snapshot, while it has the focus.
 - Keys. Every key input Core takes in while the focus is a terminal it
   models is kept (`key_input` and, for a held key, `editing::pass_held`):
@@ -1011,9 +1011,11 @@ they make.
   as `Forget` followed by the caret key the hook sends after it as
   `Other`; a key deferred behind a held key is kept when Core handles it,
   with its time taken as no earlier than the held key's pass. With each,
-  Core asks the outpost for the screen's colours from the key's time
-  (`TextOp::TerminalColours`), for a held key before its watch and its
-  pass. A read is taken as of when it ended (`read_at`): the terminal
+  Core asks the outpost for the screen's colours over the key's window,
+  from its time to `KEY_WINDOW_MS` after it (`TextOp::TerminalColours`),
+  for a held key before its watch and its pass; the answer is always
+  `Done`, and a read the outpost takes at once for it comes as a live
+  read. A read is taken as of when it ended (`read_at`): the terminal
   answered it at some moment before then, so a key whose effect it shows
   reached the program no later. Before a read taken at S is given to the
   rules, they are given every kept key whose time is at or before S, in

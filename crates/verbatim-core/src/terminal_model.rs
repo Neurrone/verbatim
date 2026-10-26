@@ -21,8 +21,11 @@
 //!   effect it shows reached the program no later. Before the timer at T,
 //!   likewise up to T. The
 //!   arrival of a message decides nothing. With each key Core asks the
-//!   outpost for the screen's colours in the first read from the key's time
-//!   ([`TextOp::TerminalColours`]).
+//!   outpost for the screen's colours in every read that begins within the
+//!   key's window, from the key's time to `KEY_WINDOW_MS` after it
+//!   ([`TextOp::TerminalColours`]), and takes the answer, which is always
+//!   done, as nothing: a read the outpost takes at once for it comes as a
+//!   live read.
 //! - A read's speech key: once the keys up to its time are given, the
 //!   newest key given, when its window (`KEY_WINDOW_MS` after it) holds
 //!   the read's time. The read's speech is spoken under that key's trace
@@ -79,9 +82,6 @@ const MODELS: usize = 16;
 /// the rules at once, so the state stays bounded however long no read
 /// comes.
 const PENDING_KEYS: usize = 256;
-
-/// How many colours requests Core waits on the answer to at most.
-const COLOURS_ASKED: usize = 16;
 
 /// The text anchors Core mints for a terminal's review answers have this
 /// bit set; an outpost's never do.
@@ -171,8 +171,6 @@ pub(crate) struct TerminalModel {
     told: Option<(u32, u32)>,
     /// When the rules' quiet-period timer is due.
     due_ms: Option<u64>,
-    /// The colours requests not yet answered.
-    colours_asked: VecDeque<QueryId>,
 }
 
 /// The reader held behind an `Arc`, serialized as itself.
@@ -215,7 +213,6 @@ impl TerminalModel {
             width: 0,
             told: None,
             due_ms: None,
-            colours_asked: VecDeque::new(),
         }
     }
 
@@ -315,7 +312,7 @@ fn timer_effect(state: &SrState, node: NodeId, before: Option<u64>) -> Option<Ef
 
 /// A key of `kind` that reached the focused terminal at `at_ms`, with its
 /// trace: kept until a read taken at or after it, and the colours
-/// asked for from its time. Nothing when Core does not read the focus.
+/// asked for over its window. Nothing when Core does not read the focus.
 pub(crate) fn key(
     state: &mut SrState,
     kind: TerminalKeyKind,
@@ -325,7 +322,14 @@ pub(crate) fn key(
     let Some(node) = focused(state) else {
         return Vec::new();
     };
-    let (query_id, effect) = request(state, node, TextOp::TerminalColours { since_ms: at_ms });
+    let (_, effect) = request(
+        state,
+        node,
+        TextOp::TerminalColours {
+            from_ms: at_ms,
+            until_ms: at_ms + KEY_WINDOW_MS,
+        },
+    );
     let Some(model) = model_mut(state, node) else {
         return Vec::new();
     };
@@ -336,10 +340,6 @@ pub(crate) fn key(
         model.give(&oldest);
     }
     model.pending.push_back(PendingKey { kind, at_ms, trace });
-    if model.colours_asked.len() >= COLOURS_ASKED {
-        model.colours_asked.pop_front();
-    }
-    model.colours_asked.push_back(query_id);
     let mut effects = vec![effect];
     effects.extend(timer_effect(state, node, before));
     effects
@@ -728,7 +728,6 @@ pub(crate) fn is_pending(state: &SrState, query_id: QueryId) -> bool {
             || model
                 .history_asked
                 .is_some_and(|(asked, ..)| asked == query_id)
-            || model.colours_asked.contains(&query_id)
     })
 }
 
@@ -745,7 +744,6 @@ pub(crate) fn reply(
             || model
                 .history_asked
                 .is_some_and(|(asked, ..)| asked == query_id)
-            || model.colours_asked.contains(&query_id)
     }) else {
         return Vec::new();
     };
@@ -768,15 +766,6 @@ pub(crate) fn reply(
             effects.extend(answer_reviews(state, node, trace_id));
         }
         return effects;
-    }
-    if model.colours_asked.contains(&query_id) {
-        model.colours_asked.retain(|asked| *asked != query_id);
-        return match reply {
-            TextReply::TerminalSnapshot(snapshot) => {
-                snapshot_event(state, trace_id, node, &snapshot)
-            }
-            _ => Vec::new(),
-        };
     }
     let mut effects = Vec::new();
     if model.fresh == Some(query_id) {

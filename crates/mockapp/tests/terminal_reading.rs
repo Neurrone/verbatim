@@ -914,26 +914,43 @@ fn history_above_the_next_reads_start_is_read_by_place() {
     app.quit();
 }
 
-/// A key's colours request (`TerminalColours`) when a read began after the
-/// key without the colours is answered at once with a read that has them;
-/// one for a key after the last read is answered done, and the next read
+/// A key's colours request (`TerminalColours`) that comes after a read
+/// that ended at or after its key without the colours is answered done
+/// after a read at once that has them, sent as a live read, even when the
+/// request came after its window ended; one whose key came after the last
+/// read is answered done, and every read that begins within its window
 /// takes them.
 fn a_colours_request_after_a_read_without_them_reads_at_once() {
     let (mut app, mut outpost, term) = start("mockapp-terminal-colours");
-    let colours = ask(&mut outpost, term, TextOp::TerminalColours { since_ms: 0 });
-    let answer = read_answer(&outpost, colours);
-    assert!(answer.colours.is_some());
+    let colours = ask(
+        &mut outpost,
+        term,
+        TextOp::TerminalColours {
+            from_ms: 0,
+            until_ms: 1,
+        },
+    );
+    assert!(reported(&outpost, term).colours.is_some());
+    assert_eq!(answer_to(&outpost, colours), TextReply::Done);
     outpost.settled();
     let later = verbatim_outpost::protocol::now_us() / 1_000 + 1;
     let colours = ask(
         &mut outpost,
         term,
-        TextOp::TerminalColours { since_ms: later },
+        TextOp::TerminalColours {
+            from_ms: later,
+            until_ms: later + 60_000,
+        },
     );
     assert_eq!(answer_to(&outpost, colours), TextReply::Done);
     write(&mut app, &outpost, &["three"]);
     let read = reported(&outpost, term);
     assert_eq!(text(&read), after(&["three"]));
+    assert!(read.colours.is_some());
+    outpost.settled();
+    write(&mut app, &outpost, &["three", "four"]);
+    let read = reported(&outpost, term);
+    assert_eq!(text(&read), rows(&["two", "ready>", "three", "four"]));
     assert!(read.colours.is_some());
     outpost.settled();
     drop(outpost);

@@ -62,7 +62,11 @@ pub fn focus() -> Input {
 /// The simulated terminal read as the outpost reads it for Core: each read
 /// starts where the last read whose screen showed text said to start, a
 /// screen of rows above it, at the height Core told; the first read takes
-/// the screen alone; and the first read after a key takes the colours.
+/// the screen alone; every read that begins by the latest end of a key's
+/// window Core asked colours for takes them, and a request that comes after
+/// a read ended at or after its key without them has a read taken at once
+/// with them, sent as a live read; and a live read identical to the last
+/// read sent, but for its times and caret, is not sent.
 pub struct Outpost {
     pub sim: Terminal,
     /// Where the next read starts.
@@ -71,9 +75,16 @@ pub struct Outpost {
     height: u32,
     /// Whether the last read kept for its start showed text.
     showed_text: bool,
-    /// The earliest time a key reached the program since the last read
-    /// with colours: the first read that begins at or after it takes them.
-    colours_since: Option<u64>,
+    /// The latest end of a key's window Core asked colours for.
+    colours_until: u64,
+    /// Whether the next read takes the colours whenever it begins.
+    colours_now: bool,
+    /// When the last read ended, and whether it took the colours.
+    read_ended: Option<(u64, bool)>,
+    /// The last read sent, its times and caret cleared.
+    sent: Option<TerminalSnapshot>,
+    /// A read taken at once for a colours request, for Core as a live read.
+    pub reread: Option<TerminalSnapshot>,
 }
 
 impl Outpost {
@@ -84,8 +95,38 @@ impl Outpost {
             start: None,
             height: 0,
             showed_text: false,
-            colours_since: None,
+            colours_until: 0,
+            colours_now: false,
+            read_ended: None,
+            sent: None,
+            reread: None,
         }
+    }
+
+    /// A snapshot as compared with the last sent: without its times and
+    /// caret.
+    fn compared(snapshot: &TerminalSnapshot) -> TerminalSnapshot {
+        TerminalSnapshot {
+            started_ms: 0,
+            ended_ms: 0,
+            caret: None,
+            ..snapshot.clone()
+        }
+    }
+
+    /// Whether a live read is sent, noting it as the last sent when it is.
+    pub fn sends(&mut self, snapshot: &TerminalSnapshot) -> bool {
+        let compared = Self::compared(snapshot);
+        if !snapshot.waited && self.sent.as_ref() == Some(&compared) {
+            return false;
+        }
+        self.sent = Some(compared);
+        true
+    }
+
+    /// Notes an answer, which is always sent, as the last sent.
+    pub fn answered(&mut self, snapshot: &TerminalSnapshot) {
+        self.sent = Some(Self::compared(snapshot));
     }
 
     /// The read the rules take of a read of `scope` begun at `at_ms`, and
@@ -136,10 +177,9 @@ impl Outpost {
             self.start = Some(snapshot.next_start);
             self.showed_text = shows;
         }
-        let colours = self
-            .colours_since
-            .take_if(|since| *since <= at_ms)
-            .map(|_| self.colours());
+        let colours = (self.colours_now || at_ms <= self.colours_until).then(|| self.colours());
+        self.colours_now = false;
+        self.read_ended = Some((at_ms, colours.is_some()));
         let wire = snapshot_of(&read, false, colours.as_deref());
         (read, wire)
     }
@@ -167,7 +207,9 @@ impl Outpost {
     pub fn answer(&mut self, op: &TextOp, at_ms: u64) -> Option<TextReply> {
         Some(match op {
             TextOp::TerminalReadNow(scope) => {
-                TextReply::TerminalSnapshot(Box::new(self.read(Some(*scope), at_ms).1))
+                let (_, snapshot) = self.read(Some(*scope), at_ms);
+                self.answered(&snapshot);
+                TextReply::TerminalSnapshot(Box::new(snapshot))
             }
             TextOp::TerminalHistory { above, whole } => {
                 let query = Query {
@@ -186,11 +228,15 @@ impl Outpost {
                 self.height = *height;
                 TextReply::Done
             }
-            TextOp::TerminalColours { since_ms } => {
-                self.colours_since = Some(
-                    self.colours_since
-                        .map_or(*since_ms, |since| since.min(*since_ms)),
-                );
+            TextOp::TerminalColours { from_ms, until_ms } => {
+                self.colours_until = self.colours_until.max(*until_ms);
+                if self
+                    .read_ended
+                    .is_some_and(|(ended, colours)| ended >= *from_ms && !colours)
+                {
+                    self.colours_now = true;
+                    self.reread = Some(self.read(None, at_ms).1);
+                }
                 TextReply::Done
             }
             _ => return None,
@@ -251,6 +297,10 @@ pub struct Session {
     /// The caret read before a held key, held back until
     /// [`Session::release_held`].
     caret_read: Option<QueryId>,
+    /// Whether the outpost holds back Core's colours requests, as they
+    /// travel to it, until [`Session::deliver_colours`].
+    pub hold_colours: bool,
+    held_colours: VecDeque<(QueryId, TextOp)>,
     /// Requests not yet answered, in the order Core made them: the outpost
     /// answers each once Core's step is done, in order.
     pending: VecDeque<(QueryId, TextOp)>,
@@ -282,6 +332,8 @@ impl Session {
             hold_whole: false,
             held: None,
             caret_read: None,
+            hold_colours: false,
+            held_colours: VecDeque::new(),
             pending: VecDeque::new(),
             queued: VecDeque::new(),
             at_ms: 0,
@@ -313,10 +365,28 @@ impl Session {
     fn run(&mut self, effects: Vec<Effect>) {
         self.take(effects, None);
         while let Some((query_id, op)) = self.pending.pop_front() {
-            if let Some(reply) = self.outpost.answer(&op, self.at_ms) {
-                self.reply(query_id, reply);
-            }
+            self.answer(query_id, &op);
         }
+    }
+
+    /// The outpost's answer to `op`, and the read it took at once for it,
+    /// if any, sent as a live read.
+    fn answer(&mut self, query_id: QueryId, op: &TextOp) {
+        if let Some(reply) = self.outpost.answer(op, self.at_ms) {
+            self.reply(query_id, reply);
+        }
+        if let Some(snapshot) = self.outpost.reread.take() {
+            self.send(snapshot);
+        }
+    }
+
+    /// Delivers the colours requests held back, arriving at `at_ms`.
+    pub fn deliver_colours(&mut self, at_ms: u64) {
+        self.at_ms = at_ms;
+        while let Some((query_id, op)) = self.held_colours.pop_front() {
+            self.answer(query_id, &op);
+        }
+        self.play();
     }
 
     /// Writes `bytes` to the terminal, then a live read begun at `at_ms`.
@@ -329,10 +399,17 @@ impl Session {
     pub fn live(&mut self, at_ms: u64) {
         self.at_ms = at_ms;
         let (_, snapshot) = self.outpost.read(None, at_ms);
-        self.input(&event(NormalizedEvent::TerminalSnapshot {
-            node_id: node(),
-            snapshot: Box::new(snapshot),
-        }));
+        self.send(snapshot);
+    }
+
+    /// Sends a live read to Core, unless it is the one last sent.
+    fn send(&mut self, snapshot: TerminalSnapshot) {
+        if self.outpost.sends(&snapshot) {
+            self.input(&event(NormalizedEvent::TerminalSnapshot {
+                node_id: node(),
+                snapshot: Box::new(snapshot),
+            }));
+        }
     }
 
     /// Answers the whole read held back.
@@ -363,6 +440,7 @@ impl Session {
         self.at_ms = at_ms;
         let (_, mut snapshot) = self.outpost.read(None, at_ms);
         snapshot.caret = Some(caret);
+        self.outpost.answered(&snapshot);
         let effects = self.completed(query_id, TextReply::TerminalSnapshot(Box::new(snapshot)));
         self.run(effects);
         self.play();
@@ -420,6 +498,9 @@ impl Session {
                             self.held = Some((query_id, scope));
                         }
                         TextOp::ReadCaret => self.caret_read = Some(query_id),
+                        op @ TextOp::TerminalColours { .. } if self.hold_colours => {
+                            self.held_colours.push_back((query_id, op));
+                        }
                         op => self.pending.push_back((query_id, op)),
                     }
                 }
