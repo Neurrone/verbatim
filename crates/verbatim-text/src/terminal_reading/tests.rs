@@ -1230,6 +1230,28 @@ fn typing_onto_a_second_row_and_escape_on_it() {
 }
 
 #[test]
+fn typing_past_the_right_margin_after_a_pause_is_echoed() {
+    // "Typing echo": the caret held on the margin's last cell, its wrap
+    // pending, is where the next character goes, kept with the last read's
+    // caret, so a character typed after the keys' window closed is echoed
+    // too.
+    let mut term = Term::new(20, 5, 10);
+    term.write("$ ", 100);
+    let mut at = 1000;
+    for c in "echo aaaaaaaaaaaaa".chars() {
+        term.typed(&c.to_string(), at);
+        assert_eq!(
+            term.write(&c.to_string(), at + 10),
+            says(vec![echo(0, &c.to_string())]),
+            "{c} at {at}"
+        );
+        at += 80;
+    }
+    term.typed("x", at + 1000);
+    assert_eq!(term.write("x", at + 1010), says(vec![echo(0, "x")]));
+}
+
+#[test]
 fn a_read_inside_a_programs_redraw_speaks_the_line_its_cursor_passes() {
     // A key the program reads unshown rewrites row 2, and a read lands
     // before the program parks its cursor back on the status row: within

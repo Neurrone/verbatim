@@ -379,6 +379,13 @@ struct Caret {
     text: String,
     /// Its place in the line, in characters.
     column: usize,
+    /// Its line's text as the typing shows it: a suggestion after the
+    /// caret blanked ("Suggestions").
+    shown: String,
+    /// Where the next character typed goes, in characters: the caret, but
+    /// for a caret held on the last cell of a row the typing filled, its
+    /// wrap pending, which the next character follows ("Typing echo").
+    typing: usize,
 }
 
 /// The reader's view of one read: its rows from `skipped` on, the rows
@@ -451,9 +458,6 @@ struct Keys {
     last_ms: u64,
     /// The keys, oldest first.
     kinds: Vec<KeyKind>,
-    /// The caret's line before them, or as the last read in their window
-    /// left it.
-    before: Option<Caret>,
     /// The caret's line before them, mapped through each read: a caret back
     /// there, on its line unchanged, is where the keys left it, whatever
     /// the program did with its cursor as it drew in between ("Keys and their window").
@@ -573,22 +577,11 @@ impl TerminalReader {
             .as_ref()
             .is_some_and(|keys| key.at_ms <= keys.last_ms + KEY_WINDOW_MS);
         if !open {
-            // The caret's line before the keys, without a suggestion after
-            // the caret, which is not the line's text ("A key's answer").
-            let before = self.screen.caret.clone().map(|mut caret| {
-                if let Some(suggested) = &self.suggestion
-                    && let Some(shown) = caret.text.strip_suffix(suggested.as_str())
-                {
-                    caret.text = shown.trim_end().to_owned();
-                }
-                caret
-            });
             self.keys = Some(Keys {
                 last_ms: key.at_ms,
                 kinds: Vec::new(),
-                origin: before.clone(),
+                origin: self.screen.caret.clone(),
                 followed: false,
-                before,
                 typed: Vec::new(),
             });
         }
@@ -848,20 +841,30 @@ impl TerminalReader {
                 screen.starts[row] = line.rows.start;
             }
         }
-        let caret = outcome.caret.and_then(|row| {
+        let mut caret = outcome.caret.and_then(|row| {
             let line = outcome.lines.iter().find(|line| line.rows.contains(&row))?;
             let before: usize = rows[line.rows.start..row]
                 .iter()
                 .map(|row| row.text.chars().count())
                 .sum();
+            let text = line.text.to_string();
+            // Without a suggestion after the caret, which is not the line's
+            // text ("Suggestions").
+            let shown = self
+                .suggestion
+                .as_ref()
+                .and_then(|suggested| text.strip_suffix(suggested.as_str()))
+                .map_or_else(|| text.clone(), |shown| shown.trim_end().to_owned());
+            let column = before + read.caret_column;
             Some(Caret {
                 row,
                 line: line.rows.start,
-                text: line.text.to_string(),
-                column: before + read.caret_column,
+                text,
+                column,
+                shown,
+                typing: column,
             })
         });
-        screen.caret.clone_from(&caret);
         let new_colours: Option<Vec<Option<&Vec<ColourRun>>>> = colours.map(|colours| {
             let skip = rows.len().saturating_sub(colours.len());
             (0..rows.len())
@@ -878,25 +881,25 @@ impl TerminalReader {
             .keys
             .as_ref()
             .is_some_and(|keys| now >= keys.last_ms && now <= keys.last_ms + KEY_WINDOW_MS);
+        // The last read's caret, mapped through the alignment: when the
+        // caret's row went but its line's first row stayed, as when a
+        // wrapped line is erased, the caret was on that line, at its column.
+        let mapped = |caret: &Caret| match (outcome.old.get(caret.row), outcome.old.get(caret.line))
+        {
+            (Some(OldRow::Kept(to) | OldRow::Rewritten(to)), _)
+            | (_, Some(OldRow::Kept(to) | OldRow::Rewritten(to))) => Some(Caret {
+                row: *to,
+                line: screen.starts[*to],
+                ..caret.clone()
+            }),
+            _ => None,
+        };
+        let before = previous.caret.as_ref().and_then(mapped);
         if let Some(keys) = &mut self.keys {
             // Typing not shown within its limit is dropped unspoken.
             keys.typed
                 .retain(|(_, at)| now <= at.saturating_add(TYPED_LIMIT_MS));
-            for kept in [&mut keys.before, &mut keys.origin] {
-                if let Some(before) = kept {
-                    // When the caret's row went but its line's first row
-                    // stayed, as when a wrapped line is erased, the caret
-                    // was on that line, at its column.
-                    match (outcome.old.get(before.row), outcome.old.get(before.line)) {
-                        (Some(OldRow::Kept(to) | OldRow::Rewritten(to)), _)
-                        | (_, Some(OldRow::Kept(to) | OldRow::Rewritten(to))) => {
-                            before.row = *to;
-                            before.line = screen.starts[*to];
-                        }
-                        _ => *kept = None,
-                    }
-                }
-            }
+            keys.origin = keys.origin.as_ref().and_then(mapped);
         }
         // The caret back where the keys found it, on its line unchanged,
         // from another line the last read left it on: the keys moved
@@ -906,14 +909,14 @@ impl TerminalReader {
         let at_origin = match (
             &caret,
             self.keys.as_ref().and_then(|keys| keys.origin.as_ref()),
-            self.keys.as_ref().and_then(|keys| keys.before.as_ref()),
         ) {
-            (Some(caret), Some(origin), before) => {
+            (Some(caret), Some(origin)) => {
                 caret.row == origin.row
-                    && caret.column == origin.column
-                    && caret.text == origin.text
-                    && before
-                        .is_none_or(|before| before.line != caret.line || before.text == caret.text)
+                    && caret.column == origin.typing
+                    && caret.text == origin.shown
+                    && before.as_ref().is_none_or(|before| {
+                        before.line != caret.line || before.shown == caret.text
+                    })
             }
             _ => false,
         };
@@ -934,7 +937,6 @@ impl TerminalReader {
             && at_origin
             && let Some(caret) = &caret
         {
-            self.set_before(caret);
             // A review position that followed the program's cursor while it
             // drew comes back with the caret.
             if self.keys.as_ref().is_some_and(|keys| keys.followed) {
@@ -942,18 +944,15 @@ impl TerminalReader {
                 reviews.push((caret.row, read.caret_column));
             }
         } else if window && !silent {
-            let moved = match (
-                &caret,
-                self.keys.as_ref().and_then(|keys| keys.before.as_ref()),
-            ) {
+            let moved = match (&caret, &before) {
                 (Some(caret), Some(before)) => {
-                    before.row != caret.row || before.column != caret.column
+                    before.row != caret.row || before.typing != caret.column
                 }
                 (Some(_), None) => true,
                 _ => false,
             };
             (answered, colours_held) = self.answer_caret(
-                caret.as_ref(),
+                (caret.as_mut(), before.as_ref()),
                 &outcome,
                 (rows, new_colours.as_deref()),
                 &mut key_speech,
@@ -969,6 +968,7 @@ impl TerminalReader {
                 }
             }
         }
+        screen.caret.clone_from(&caret);
         if self.fresh
             && let Some(caret) = &caret
         {
@@ -1483,7 +1483,7 @@ impl TerminalReader {
     /// ("Colours").
     fn answer_caret(
         &mut self,
-        caret: Option<&Caret>,
+        (caret, before): (Option<&mut Caret>, Option<&Caret>),
         outcome: &Outcome,
         (rows, colours): (&[Row], RowColours<'_>),
         speech: &mut Vec<Speech>,
@@ -1497,10 +1497,8 @@ impl TerminalReader {
         // as output, and a line the caret moved onto, such as the screen's
         // first row a clear homes it to before it erases, says nothing.
         if keys.kinds.last() == Some(&KeyKind::Enter) {
-            self.set_before(caret);
             return (None, None);
         }
-        let before = keys.before.clone();
         let line_rows = caret.line
             ..rows.len().min(
                 outcome
@@ -1564,7 +1562,6 @@ impl TerminalReader {
         if !same {
             if fresh {
                 // A new line at the caret is output (Enter, a new prompt).
-                self.set_before(caret);
                 return (None, None);
             }
             // The caret ended on another line that was already there: that
@@ -1574,7 +1571,7 @@ impl TerminalReader {
                 speech.push(self.unit_at(caret, unit.unwrap_or(Unit::Line)));
                 answer = Some(caret.line);
             }
-        } else if let Some(before) = &before {
+        } else if let Some(before) = before {
             let (mut at, mut compared) = compare(before, &shown, caret.column, &typed);
             // Without colours, text after the caret on its row that was not
             // typed may be a suggestion: when the line with it blanked is
@@ -1633,7 +1630,7 @@ impl TerminalReader {
                     if let Some(keys) = &mut self.keys {
                         keys.typed.clear();
                     }
-                    let old = padded(&before.text, before.column);
+                    let old = padded(&before.shown, before.typing);
                     let new = padded(&shown, caret.column);
                     let (prefix, removed, inserted) = difference(&old, &new);
                     if line_key && !typed_after {
@@ -1656,7 +1653,7 @@ impl TerminalReader {
                                 text: removed.trim().to_owned(),
                             });
                         }
-                    } else if let Some(start) = self.changed_start(&[&before.text], &shown) {
+                    } else if let Some(start) = self.changed_start(&[&before.shown], &shown) {
                         speech.push(Speech::Changed {
                             row: caret.line,
                             text: shown[start..].to_owned(),
@@ -1666,11 +1663,8 @@ impl TerminalReader {
                 }
             }
         }
-        let before = Caret {
-            text: shown,
-            column,
-            ..caret.clone()
-        };
+        caret.shown = shown;
+        caret.typing = column;
         if let Some(suggested) = suggestion {
             // A suggestion carried through a read without colours is the
             // last one still showing: nothing to say, nothing to keep.
@@ -1691,7 +1685,6 @@ impl TerminalReader {
         } else if colours.is_some() {
             self.suggestion = None;
         }
-        self.set_before(&before);
         (answer, held)
     }
 
@@ -1705,12 +1698,6 @@ impl TerminalReader {
             .map(|(at, _)| at)
             .find(|&at| typed.ends_with(&last[..at]) && after.starts_with(&last[at..]))
             .map(|at| last[at..].to_owned())
-    }
-
-    fn set_before(&mut self, caret: &Caret) {
-        if let Some(keys) = &mut self.keys {
-            keys.before = Some(caret.clone());
-        }
     }
 
     /// The caret's line spoken in `unit` at the caret.
@@ -1744,7 +1731,7 @@ impl TerminalReader {
     fn landing(&self, caret: &Caret, before: &Caret) -> Speech {
         let length = caret.text.chars().count();
         let column = caret.column;
-        let moved = column.abs_diff(before.column);
+        let moved = column.abs_diff(before.typing);
         let unit = if moved == 1 || column == 0 || column >= length {
             Unit::Character
         } else {
@@ -1960,29 +1947,29 @@ impl Compared {
 /// cell of a row the typing filled, its wrap pending, which the next
 /// character follows ("Typing echo", typing past the margin).
 fn compare(before: &Caret, shown: &str, column: usize, typed: &str) -> (usize, Compared) {
-    let old = padded(&before.text, before.column);
+    let old = padded(&before.shown, before.typing);
     let new = padded(shown, column);
     let mut at = column;
     // At the right margin the terminal writes the character at the caret
     // and keeps the caret there, its wrap pending: the typing went in at
     // the caret.
-    if column == before.column
+    if column == before.typing
         && !typed.is_empty()
         && shown.chars().count() == column + 1
-        && before.text.chars().count() <= column
+        && before.shown.chars().count() <= column
     {
         at = column + 1;
     }
     // Typing that moved the caret over text already shown is matched as
     // typing, below.
-    let typing_over = at > before.column && !typed.is_empty();
+    let typing_over = at > before.typing && !typed.is_empty();
     let compared = if old.trim_end() == new.trim_end() && !typing_over {
-        if column == before.column {
+        if column == before.typing {
             Compared::Unchanged
         } else {
             Compared::Moved
         }
-    } else if let Some((echoed, rest)) = echo(&old, &new, before.column, at, typed) {
+    } else if let Some((echoed, rest)) = echo(&old, &new, before.typing, at, typed) {
         Compared::Echo { echoed, rest }
     } else {
         Compared::Other

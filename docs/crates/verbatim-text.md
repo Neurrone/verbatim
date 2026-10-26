@@ -536,9 +536,14 @@ Each read, line by line, top to bottom:
   other output.
 
 Keys open a window of 300 milliseconds after the last of them reached the
-program; a key arriving while a window is open joins it. The caret's line
-before the window's first key, without any suggestion, is what its first
-read compares with. At a read in the window, the caret's line is the keys'
+program; a key arriving while a window is open joins it. Each read in the
+window compares the caret's line with the last read's caret, mapped through
+the alignment, which every read keeps with its line as the typing shows it
+(a suggestion after the caret blanked) and the column the next character
+typed goes to (one past the caret held on the margin's last cell, its wrap
+pending); the caret where the window's first key found it is kept too, so a
+cursor the program moves while it draws and parks back says nothing. At a
+read in the window, the caret's line is the keys'
 answer and is not output: typing shown at the caret is echoed, and typing
 not shown within 300 milliseconds of reaching the program is dropped
 unspoken; a caret moved with no text change says a caret key's unit, or
