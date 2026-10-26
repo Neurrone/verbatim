@@ -256,10 +256,10 @@ fn a_reads_speech_goes_out_for_the_newest_key_whose_window_holds_it() {
 }
 
 #[test]
-fn a_character_shown_after_the_recalled_line_follows_the_typing_echo_settings() {
+fn a_character_shown_after_the_recalled_line_is_heard_with_typing_echo_off() {
     // Up Arrow, then "x" typed before the recalled line is read: the line
-    // is spoken, and the "x", shown by a later read, is typing, echoed by
-    // the typing echo settings, here off.
+    // is spoken, and the "x", shown by a later read, is output, heard with
+    // the typing echo off (a limit of the terminal design).
     let mut session = showing(20, 3, 10, "$ ");
     session.input(&Input::Settings(ReaderSettings {
         speak_typed_characters: TypingEcho::Off,
@@ -279,7 +279,7 @@ fn a_character_shown_after_the_recalled_line_follows_the_typing_echo_settings() 
     session.write("echo one", 220);
     assert_eq!(session.heard(), [said(Some(x), "echo one")]);
     session.write("x", 250);
-    assert_eq!(session.heard(), []);
+    assert_eq!(session.heard(), [said(Some(x), "x")]);
 }
 
 #[test]

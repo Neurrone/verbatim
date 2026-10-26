@@ -137,11 +137,9 @@ scenarios follow it as the model's order of work brings them back.
 - In place of NVDA's rule dropping a change of one or two characters,
   the typing Core holds is echoed when the terminal shows it at the end
   of the line and not spoken again as output, and a line changed some
-  other way (a password prompt's asterisks) speaks what it shows and
-  keeps pending only the typing it does not show yet, dropped unspoken
-  300 milliseconds after it was typed, so a tab completion's added text
-  is read and a password is never spoken (different; Dickson,
-  2026-10-26). A line of one or two characters is output
+  other way (a password prompt's asterisks) drops the held typing
+  unspoken, so a tab completion's added text is read and a password is
+  never spoken (different). A line of one or two characters is output
   like any other (`*_short_output`).
 - A line rewritten in place echoes the typing only when what it gained
   is exactly the typing (a character typed in the middle of a command),

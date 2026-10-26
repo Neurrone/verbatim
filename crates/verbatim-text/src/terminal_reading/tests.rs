@@ -613,10 +613,10 @@ fn up_arrow_and_a_character_at_once_speak_the_recalled_line_with_it_once() {
 }
 
 #[test]
-fn a_character_typed_after_up_arrow_and_shown_after_the_recalled_line_is_echoed() {
-    // "Typing echo": the recalled line, a change other than the typing,
-    // does not show the "x" yet, so the "x" stays pending and is echoed at
-    // the read that shows it.
+fn a_character_typed_after_up_arrow_and_shown_after_the_recalled_line_is_output() {
+    // "Limits": the recalled line, a change other than the typing, drops
+    // the held "x" ("Typing echo"), so the read that shows it speaks it as
+    // text gained.
     let mut term = Term::new(20, 3, 10);
     term.write("$ ", 100);
     term.key(KeyKind::Caret(Unit::Line), 200);
@@ -628,7 +628,13 @@ fn a_character_typed_after_up_arrow_and_shown_after_the_recalled_line_is_echoed(
             text: "echo one".to_owned()
         }])
     );
-    assert_eq!(term.write("x", 250), says(vec![echo(0, "x")]));
+    assert_eq!(
+        term.write("x", 250),
+        says(vec![Speech::Gained {
+            row: 0,
+            text: "x".to_owned()
+        }])
+    );
 }
 
 #[test]
@@ -1650,6 +1656,34 @@ fn text_held_for_colours_and_still_shown_in_the_typings_colours_is_gained() {
             row: 0,
             text: "ho hi".to_owned()
         }])
+    );
+    assert_eq!(term.reader.timer(1400), quiet(None));
+}
+
+#[test]
+fn text_held_for_colours_and_still_shown_in_other_colours_is_a_suggestion() {
+    // "Colours": Enter leaves the caret's line unanswered, and the read
+    // with colours finds the held text in other colours, a suggestion
+    // ("Suggestions"), spoken as an answer to the keys before the output.
+    let mut term = Term::new(20, 4, 10);
+    term.write("$ e", 100);
+    term.typed("c", 1000);
+    term.terminal.write(b"c\x1b[90mho hi\x1b[0m\x1b[5D");
+    assert_eq!(
+        term.read_colourless(1050),
+        step(vec![echo(0, "c")], Vec::new(), Some(1300))
+    );
+    term.key(KeyKind::Enter, 1100);
+    assert_eq!(
+        term.write_coloured("\r\nok\r\n$ ", 1150),
+        says(vec![
+            Speech::Suggestion {
+                row: 0,
+                text: "ho hi".to_owned()
+            },
+            line(1, "ok"),
+            line(2, "$")
+        ])
     );
     assert_eq!(term.reader.timer(1400), quiet(None));
 }
