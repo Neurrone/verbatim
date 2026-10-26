@@ -68,7 +68,7 @@ scenarios follow it as the model's order of work brings them back.
   that changed (vim's ruler, "2,1 Top"; tig's commit count), where NVDA
   drops a change of one or two characters on one line as probably typed.
 - A redrawn row that keeps changing (a volatile row: one that changed
-  twice within 2 seconds other than as a key's answer) has its first
+  twice within 2 seconds, each a change the program owns) has its first
   change heard, so the user knows it exists, and is then silent until it
   has been unchanged for the quiet period, 1 second or 1.5 times the
   interval between its last two changes if that is longer, when its text
@@ -329,7 +329,7 @@ expectation when the model is built).
   output (Dickson, 2026-10-23; section 5.5). It answers the key with
   the caret's line, or with what the line gained or lost. One rule
   covers the other rows for every key: a row away from the caret that
-  gained text or emphasis within the key's window is the key's answer,
+  gained text or emphasis and that the keys own (Dickson, 2026-10-26),
   spoken whole at once; every other row the keys changed is spoken
   once, from the word that changed, when no key has been pressed for
   the quiet period (Dickson, 2026-10-23; section 5.7). So fzf says the

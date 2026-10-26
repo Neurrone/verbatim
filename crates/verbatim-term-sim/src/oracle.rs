@@ -216,7 +216,7 @@ pub enum Reason {
     /// one's and is shorter, each such line justifying one claim.
     UnfinishedWord,
     /// A hold: a row a key changed away from the caret waits while keys
-    /// keep coming, and is spoken once they pause ("Held for keys"). Premise: a
+    /// keep coming, and is spoken once they pause ("Rows the keys own"). Premise: a
     /// key was pressed; the oracle's streams press none, so this premise is
     /// never true yet.
     HeldForKeys,

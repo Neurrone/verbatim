@@ -140,7 +140,7 @@ pub enum Reason {
     /// past it, the cursor leaves it, or the quiet period passes ("Growing lines").
     UnfinishedWord,
     /// A row a key changed away from the caret, held until the keys pause
-    /// ("A key's answer").
+    /// ("Rows the keys own").
     HeldForKeys,
     /// A spinner's symbol replaced alone ("Changed rows").
     Spinner,
@@ -231,7 +231,7 @@ pub enum Speech {
         text: String,
     },
     /// A row away from the caret that gained text or emphasis within a
-    /// key's window: the key's answer, whole ("A key's answer").
+    /// key's window: the key's answer, whole ("Rows the keys own").
     Answer {
         /// The line's first row.
         row: usize,
@@ -1352,7 +1352,7 @@ impl TerminalReader {
                 continue;
             }
             // A redrawn row ("Changed rows"), or a row a key changed away from
-            // the caret ("A key's answer"), compared once.
+            // the caret ("Rows the keys own"), compared once.
             let difference = Difference::new(&old_text, text);
             state.redrawn = true;
             let caret_line = caret.as_ref().is_some_and(|caret| caret.line == start);
@@ -1442,7 +1442,7 @@ impl TerminalReader {
             put(&mut screen, &line.rows, keep_from, state);
         }
         // Gained emphasis: a row whose colours changed while its text did
-        // not ("A key's answer").
+        // not ("Rows the keys own").
         if window_colours
             && !silent
             && let Some(new_colours) = &new_colours
@@ -1891,7 +1891,7 @@ impl TerminalReader {
     }
 
     /// The row that gained emphasis among `candidates`, lines whose text
-    /// did not change ("A key's answer"): of those whose colours changed,
+    /// did not change ("Rows the keys own"): of those whose colours changed,
     /// or were read for the first time, the one whose colours now differ
     /// from both its neighbours'.
     fn emphasis(

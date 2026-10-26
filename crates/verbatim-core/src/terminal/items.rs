@@ -50,10 +50,10 @@ pub(crate) enum TerminalItem {
     /// Text the caret's line lost next to the caret ("Keys and their window").
     Lost(String),
     /// A row away from the caret that gained text or emphasis within a
-    /// key's window: the key's answer, whole ("A key's answer").
+    /// key's window: the key's answer, whole ("Rows the keys own").
     Answer(String),
     /// A suggestion after the caret, in other colours than the typing
-    /// ("A key's answer").
+    /// ("Rows the keys own").
     Suggestion(String),
 }
 

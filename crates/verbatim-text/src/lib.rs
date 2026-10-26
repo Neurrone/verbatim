@@ -108,7 +108,7 @@ pub(crate) fn squeezed(text: &str) -> String {
 
 /// Whether a terminal line `new` only lost text from `old`: compared
 /// without spaces, `old` contains it and is longer
-/// (`docs/design/terminal-model.md`, "A key's answer" and "The alignment").
+/// (`docs/design/terminal-model.md`, "Rows the keys own" and "The alignment").
 pub(crate) fn lost_text(old: &str, new: &str) -> bool {
     let (old, new) = (squeezed(old), squeezed(new));
     old.len() > new.len() && old.contains(&new)

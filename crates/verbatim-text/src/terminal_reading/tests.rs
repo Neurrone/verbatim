@@ -674,7 +674,7 @@ fn the_focus_arriving_moves_the_review_cursor_to_the_caret() {
     assert_eq!(term.review(), Some(2));
 }
 
-// "A key's answer": rows away from the caret that keys change.
+// "Rows the keys own": rows away from the caret that keys change.
 
 #[test]
 fn the_row_that_gained_the_marker_is_the_keys_answer() {
@@ -784,7 +784,7 @@ fn other_rows_a_key_changed_are_spoken_once_the_keys_pause() {
 fn filtering_a_list_says_the_echo_then_the_current_entry_and_the_count_when_typing_pauses() {
     let mut term = Term::new(20, 6, 10);
     // "e" keeps apple and cherry: cherry moves up into banana's row, a
-    // kept row that moved, silent ("A key's answer"), with no history above the
+    // kept row that moved, silent ("Rows the keys own"), with no history above the
     // screen to rotate.
     term.write("  apple\r\n> banana\r\n  cherry\r\n  3/3\r\n> ", 100);
     term.typed("e", 1000);
