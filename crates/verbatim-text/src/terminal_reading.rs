@@ -14,7 +14,9 @@
 //! when the timer it asked for comes due.
 
 use crate::terminal_rows::{Lost, NewRow, OldRow, Outcome, Read, Row, TerminalMemory, Text};
-use crate::{Segmenter, WordRules, graphemes, is_space, lost_text, squeezed};
+use std::borrow::Cow;
+
+use crate::{Segmenter, WordRules, graphemes, is_space, squeezed};
 
 pub use crate::terminal_rows::LINGERING_MS;
 
@@ -717,8 +719,15 @@ impl TerminalReader {
         let first = before
             .iter()
             .filter(|old| **old != new)
-            .map(|old| common_prefix(old, new))
+            .map(|old| Difference::new(old, new).start)
             .min()?;
+        self.word_start(new, first)
+    }
+
+    /// The start of the word holding byte `first` of `new`, where it first
+    /// differs from what it is compared with ("Changed rows"); `None` when
+    /// that is its end.
+    fn word_start(&self, new: &str, first: usize) -> Option<usize> {
         if first >= new.len() {
             return None;
         }
@@ -1150,7 +1159,7 @@ impl TerminalReader {
                 } else if let Some(old) = split.filter(|old| old != text) {
                     // Kept rows split off a line: silent when that line held
                     // their text, spoken as a change otherwise.
-                    if lost_text(&old, text) {
+                    if Difference::new(&old, text).lost {
                         step.withheld.push(Withheld {
                             row: start,
                             reason: Reason::LostText,
@@ -1180,7 +1189,7 @@ impl TerminalReader {
                 // only lost text is silent too, and rows joined into a
                 // line no read held speak it.
                 if old_text != *text {
-                    if lost_text(&old_text, text) {
+                    if Difference::new(&old_text, text).lost {
                         step.withheld.push(Withheld {
                             row: start,
                             reason: lost_reason,
@@ -1284,7 +1293,8 @@ impl TerminalReader {
                 continue;
             }
             // A redrawn row ("Changed rows"), or a row a key changed away from
-            // the caret ("A key's answer").
+            // the caret ("A key's answer"), compared once.
+            let difference = Difference::new(&old_text, text);
             state.redrawn = true;
             let caret_line = caret.as_ref().is_some_and(|caret| caret.line == start);
             let prompted = window
@@ -1294,14 +1304,14 @@ impl TerminalReader {
                     .zip(unprompted_before)
                     .is_none_or(|(at, since)| at < since);
             if prompted {
-                if gained_text(&old_text, text) {
+                if difference.gained {
                     key_speech.push(Speech::Answer {
                         row: start,
                         text: part(0),
                     });
                     state.said.clone_from(text);
                     state.hold = None;
-                } else if lost_text(&old_text, text) {
+                } else if difference.lost {
                     step.withheld.push(Withheld {
                         row: start,
                         reason: lost_reason,
@@ -1317,7 +1327,7 @@ impl TerminalReader {
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
-            if lost_text(&old_text, text) {
+            if difference.lost {
                 step.withheld.push(Withheld {
                     row: start,
                     reason: lost_reason,
@@ -1326,7 +1336,7 @@ impl TerminalReader {
                 put(&mut screen, &line.rows, keep_from, state);
                 continue;
             }
-            if spinner_step(&old_text, text) {
+            if difference.spinner() {
                 step.withheld.push(Withheld {
                     row: start,
                     reason: Reason::Spinner,
@@ -1352,7 +1362,18 @@ impl TerminalReader {
                     reason: Reason::Volatile,
                 });
             } else {
-                if let Some(at) = self.changed_start(&[&*state.said, &*old_text], text) {
+                // From where it first differs from what it last said or
+                // from its last read, whichever is earlier.
+                let from_read = (old_text != *text).then_some(difference.start);
+                let from_said = (*state.said != **text).then(|| {
+                    if state.said == old_text {
+                        difference.start
+                    } else {
+                        Difference::new(&state.said, text).start
+                    }
+                });
+                let first = from_read.into_iter().chain(from_said).min();
+                if let Some(at) = first.and_then(|first| self.word_start(text, first)) {
                     items.push((
                         start,
                         Speech::Changed {
@@ -1626,13 +1647,15 @@ impl TerminalReader {
                     }
                     answer = Some(caret.line);
                 }
-                Compared::Other => {
+                Compared::Other(difference) => {
                     if let Some(keys) = &mut self.keys {
                         keys.typed.clear();
                     }
-                    let old = padded(&before.shown, before.typing);
-                    let new = padded(&shown, caret.column);
-                    let (prefix, removed, inserted) = difference(&old, &new);
+                    let (prefix, removed, inserted) = (
+                        difference.start_chars(),
+                        difference.removed(),
+                        difference.inserted(),
+                    );
                     if line_key && !typed_after {
                         speech.push(self.unit_at(caret, Unit::Line));
                     } else if removed.is_empty() && !inserted.trim().is_empty() {
@@ -1793,7 +1816,11 @@ impl TerminalReader {
             .map(|keys| keys.typed.iter().map(|(text, _)| text.as_str()).collect())
             .unwrap_or_default();
         let with_typing = {
-            let mut line = padded(&old.text, old.column);
+            let mut line = old.text.clone();
+            line.extend(std::iter::repeat_n(
+                ' ',
+                old.column.saturating_sub(old.text.chars().count()),
+            ));
             let at = byte_offset(&line, old.column).unwrap_or(line.len());
             line.insert_str(at, &typed);
             line.trim_end().to_owned()
@@ -1869,52 +1896,158 @@ fn drop_word(state: &mut LineState) {
     }
 }
 
-/// The byte length of the longest start `old` and `new` share, by whole
-/// graphemes.
-fn common_prefix(old: &str, new: &str) -> usize {
-    let (old_graphemes, new_graphemes) = (graphemes(old), graphemes(new));
-    old_graphemes
-        .iter()
-        .zip(&new_graphemes)
-        .take_while(|(a, b)| old[(*a).clone()] == new[(*b).clone()])
-        .last()
-        .map_or(0, |(_, b)| b.end)
+/// How a line's text changed from `old` to `new`, computed once for a
+/// rewritten line ("Changed rows", "The caret's line"): the start they
+/// share, by whole graphemes; the end they share after it; what `old` had
+/// between and what `new` has there; and, compared without spaces, whether
+/// `new` gained text other than at its end and whether it only lost text.
+struct Difference<'a> {
+    old: Cow<'a, str>,
+    new: Cow<'a, str>,
+    /// The bytes the two share at their start, by whole graphemes.
+    start: usize,
+    /// The bytes they share at their end, after `start`, by whole
+    /// graphemes.
+    end: usize,
+    /// Compared without spaces, `old` is a part of `new` in order and
+    /// `new` adds more, not only after it: "[x]" for "[ ]", a marker before
+    /// an entry ("Rows the keys own").
+    gained: bool,
+    /// Compared without spaces, `old` contains `new` and is longer: `new`
+    /// only lost text ("New text").
+    lost: bool,
 }
 
-/// Whether `new` gained text over `old` other than at its end: compared
-/// without spaces, `old` is a part of it in order and it adds more, not
-/// only after `old` ("A key's answer": "[x]" for "[ ]", a marker before an
-/// entry).
-fn gained_text(old: &str, new: &str) -> bool {
-    let (old, new) = (squeezed(old), squeezed(new));
-    if new.len() <= old.len() || new.starts_with(&old) {
-        return false;
+impl<'a> Difference<'a> {
+    /// The difference from `old` to `new`.
+    fn new(old: &'a str, new: &'a str) -> Self {
+        Self::of(Cow::Borrowed(old), Cow::Borrowed(new))
     }
-    let mut rest = new.chars();
-    old.chars().all(|c| rest.any(|n| n == c))
-}
 
-/// Whether `old` and `new` differ in exactly one character, neither a
-/// letter nor a digit: a spinner's step ("Changed rows").
-fn spinner_step(old: &str, new: &str) -> bool {
-    let (old, new): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
-    if old.len() != new.len() {
-        return false;
+    /// The difference between the caret's line before and after keys, each
+    /// with spaces after it up to its caret's column, so a caret past its
+    /// end has its place.
+    fn at_caret((old, old_column): (&str, usize), (new, new_column): (&str, usize)) -> Self {
+        let padded = |text: &str, column: usize| {
+            let length = text.chars().count();
+            let mut padded = text.to_owned();
+            padded.extend(std::iter::repeat_n(' ', column.saturating_sub(length)));
+            padded
+        };
+        Self::of(
+            Cow::Owned(padded(old, old_column)),
+            Cow::Owned(padded(new, new_column)),
+        )
     }
-    let mut differing = old.iter().zip(&new).filter(|(a, b)| a != b);
-    matches!(
-        (differing.next(), differing.next()),
-        (Some((a, b)), None) if !a.is_alphanumeric() && !b.is_alphanumeric()
-    )
-}
 
-/// `text` with spaces after it up to `column` characters, so a caret past
-/// its end has its place.
-fn padded(text: &str, column: usize) -> String {
-    let length = text.chars().count();
-    let mut padded = text.to_owned();
-    padded.extend(std::iter::repeat_n(' ', column.saturating_sub(length)));
-    padded
+    fn of(old: Cow<'a, str>, new: Cow<'a, str>) -> Self {
+        let (old_graphemes, new_graphemes) = (graphemes(&old), graphemes(&new));
+        let shared = old_graphemes
+            .iter()
+            .zip(&new_graphemes)
+            .take_while(|(a, b)| old[(*a).clone()] == new[(*b).clone()])
+            .count();
+        let start = new_graphemes
+            .get(..shared)
+            .and_then(<[_]>::last)
+            .map_or(0, |last| last.end);
+        let longest = old_graphemes.len().min(new_graphemes.len()) - shared;
+        let end_graphemes = old_graphemes
+            .iter()
+            .rev()
+            .zip(new_graphemes.iter().rev())
+            .take(longest)
+            .take_while(|(a, b)| old[(*a).clone()] == new[(*b).clone()])
+            .count();
+        let end = new_graphemes[new_graphemes.len() - end_graphemes..]
+            .first()
+            .map_or(0, |first| new.len() - first.start);
+        let (old_squeezed, new_squeezed) = (squeezed(&old), squeezed(&new));
+        let gained = new_squeezed.len() > old_squeezed.len()
+            && !new_squeezed.starts_with(&old_squeezed)
+            && {
+                let mut rest = new_squeezed.chars();
+                old_squeezed.chars().all(|c| rest.any(|n| n == c))
+            };
+        let lost = old_squeezed.len() > new_squeezed.len() && old_squeezed.contains(&new_squeezed);
+        Self {
+            old,
+            new,
+            start,
+            end,
+            gained,
+            lost,
+        }
+    }
+
+    /// What `old` had between the shared start and end.
+    fn removed(&self) -> &str {
+        &self.old[self.start..self.old.len() - self.end]
+    }
+
+    /// What `new` has there.
+    fn inserted(&self) -> &str {
+        &self.new[self.start..self.new.len() - self.end]
+    }
+
+    /// The characters the two share at their start.
+    fn start_chars(&self) -> usize {
+        self.new[..self.start].chars().count()
+    }
+
+    /// Whether exactly one character changed, neither a letter nor a
+    /// digit: a spinner's step ("Changed rows").
+    fn spinner(&self) -> bool {
+        let mut removed = self.removed().chars();
+        let mut inserted = self.inserted().chars();
+        matches!(
+            (removed.next(), removed.next(), inserted.next(), inserted.next()),
+            (Some(a), None, Some(b), None) if !a.is_alphanumeric() && !b.is_alphanumeric()
+        )
+    }
+
+    /// The typing shown ("Typing echo"): `new` is `old` with the start of
+    /// `typed` written at character `from`, inserted or over text that
+    /// showed it already, and the caret moved to `to` past it. Returns the
+    /// typing shown and any text gained after it.
+    fn typed(&self, from: usize, to: usize, typed: &str) -> Option<(String, String)> {
+        let (old, new) = (&*self.old, &*self.new);
+        if typed.is_empty() || to <= from {
+            return None;
+        }
+        let count = to - from;
+        let typed: Vec<char> = typed.chars().collect();
+        let old_chars: Vec<char> = old.chars().collect();
+        let new_chars: Vec<char> = new.chars().collect();
+        let shown: String = typed.iter().take(count).collect();
+        if shown.chars().count() != count {
+            // The caret moved past more than the typing: what follows it is
+            // text gained.
+            let all: String = typed.iter().collect();
+            let mut expected: Vec<char> = old_chars[..from.min(old_chars.len())].to_vec();
+            expected.extend(all.chars());
+            if new_chars.len() >= expected.len() && new_chars[..expected.len()] == expected[..] {
+                let rest: String = new_chars[expected.len()..to.min(new_chars.len())]
+                    .iter()
+                    .collect();
+                let after: String = new_chars[to.min(new_chars.len())..].iter().collect();
+                let old_after: String = old_chars[from.min(old_chars.len())..].iter().collect();
+                if after.trim_end() == old_after.trim_end() {
+                    return Some((all, rest));
+                }
+            }
+            return None;
+        }
+        let head: String = old_chars[..from.min(old_chars.len())].iter().collect();
+        let tail: String = old_chars[from.min(old_chars.len())..].iter().collect();
+        let inserted = format!("{head}{shown}{tail}");
+        let over: String = {
+            let skip: String = tail.chars().skip(count).collect();
+            format!("{head}{shown}{skip}")
+        };
+        (new.trim_end() == inserted.trim_end() || new.trim_end() == over.trim_end())
+            .then(|| (shown, String::new()))
+    }
 }
 
 /// How the caret's line, as the typing shows it, compares with the line
@@ -1926,8 +2059,8 @@ enum Compared {
     Moved,
     /// The typing shown, and any text gained after it.
     Echo { echoed: String, rest: String },
-    /// The line changed some other way.
-    Other,
+    /// The line changed some other way, and how.
+    Other(Difference<'static>),
 }
 
 impl Compared {
@@ -1936,7 +2069,7 @@ impl Compared {
         match self {
             Self::Unchanged | Self::Moved => true,
             Self::Echo { rest, .. } => rest.trim().is_empty(),
-            Self::Other => false,
+            Self::Other(_) => false,
         }
     }
 }
@@ -1947,8 +2080,8 @@ impl Compared {
 /// cell of a row the typing filled, its wrap pending, which the next
 /// character follows ("Typing echo", typing past the margin).
 fn compare(before: &Caret, shown: &str, column: usize, typed: &str) -> (usize, Compared) {
-    let old = padded(&before.shown, before.typing);
-    let new = padded(shown, column);
+    let difference = Difference::at_caret((&before.shown, before.typing), (shown, column));
+    let (old, new) = (&*difference.old, &*difference.new);
     let mut at = column;
     // At the right margin the terminal writes the character at the caret
     // and keeps the caret there, its wrap pending: the typing went in at
@@ -1969,10 +2102,10 @@ fn compare(before: &Caret, shown: &str, column: usize, typed: &str) -> (usize, C
         } else {
             Compared::Moved
         }
-    } else if let Some((echoed, rest)) = echo(&old, &new, before.typing, at, typed) {
+    } else if let Some((echoed, rest)) = difference.typed(before.typing, at, typed) {
         Compared::Echo { echoed, rest }
     } else {
-        Compared::Other
+        Compared::Other(difference)
     };
     (at, compared)
 }
@@ -2020,69 +2153,6 @@ fn character_at(text: &str, column: usize) -> String {
         .and_then(|at| crate::grapheme_at(text, at))
         .map(|range| text[range].to_owned())
         .unwrap_or_default()
-}
-
-/// Where `new` differs from `old`: the characters they share at the start,
-/// what `old` had between that and their shared end, and what `new` has
-/// there.
-fn difference(old: &str, new: &str) -> (usize, String, String) {
-    let (old, new): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
-    let prefix = old.iter().zip(&new).take_while(|(a, b)| a == b).count();
-    let longest = old.len().min(new.len()) - prefix;
-    let suffix = old
-        .iter()
-        .rev()
-        .zip(new.iter().rev())
-        .take(longest)
-        .take_while(|(a, b)| a == b)
-        .count();
-    (
-        prefix,
-        old[prefix..old.len() - suffix].iter().collect(),
-        new[prefix..new.len() - suffix].iter().collect(),
-    )
-}
-
-/// The typing shown on the caret's line ("Typing echo"): `new` is `old`
-/// with the start of `typed` written at `from`, inserted or over text that
-/// showed it already, and the caret moved past it. Returns the typing
-/// shown and any text gained after it.
-fn echo(old: &str, new: &str, from: usize, to: usize, typed: &str) -> Option<(String, String)> {
-    if typed.is_empty() || to <= from {
-        return None;
-    }
-    let count = to - from;
-    let typed: Vec<char> = typed.chars().collect();
-    let old_chars: Vec<char> = old.chars().collect();
-    let new_chars: Vec<char> = new.chars().collect();
-    let shown: String = typed.iter().take(count).collect();
-    if shown.chars().count() != count {
-        // The caret moved past more than the typing: what follows it is
-        // text gained.
-        let all: String = typed.iter().collect();
-        let mut expected: Vec<char> = old_chars[..from.min(old_chars.len())].to_vec();
-        expected.extend(all.chars());
-        if new_chars.len() >= expected.len() && new_chars[..expected.len()] == expected[..] {
-            let rest: String = new_chars[expected.len()..to.min(new_chars.len())]
-                .iter()
-                .collect();
-            let after: String = new_chars[to.min(new_chars.len())..].iter().collect();
-            let old_after: String = old_chars[from.min(old_chars.len())..].iter().collect();
-            if after.trim_end() == old_after.trim_end() {
-                return Some((all, rest));
-            }
-        }
-        return None;
-    }
-    let head: String = old_chars[..from.min(old_chars.len())].iter().collect();
-    let tail: String = old_chars[from.min(old_chars.len())..].iter().collect();
-    let inserted = format!("{head}{shown}{tail}");
-    let over: String = {
-        let skip: String = tail.chars().skip(count).collect();
-        format!("{head}{shown}{skip}")
-    };
-    (new.trim_end() == inserted.trim_end() || new.trim_end() == over.trim_end())
-        .then(|| (shown, String::new()))
 }
 
 /// The suggestion on the caret's row: its text after the caret in colours

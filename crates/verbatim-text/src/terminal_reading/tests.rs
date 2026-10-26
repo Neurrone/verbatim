@@ -8,8 +8,8 @@ use verbatim_term_sim::conformance::{Stream, history, streams};
 use verbatim_term_sim::{Flavor, Query, Terminal};
 
 use super::{
-    ColourRun, KEY_WINDOW_MS, Key, KeyKind, Reason, Settings, Speech, Step, TerminalReader, Unit,
-    Withheld,
+    ColourRun, Difference, KEY_WINDOW_MS, Key, KeyKind, Reason, Settings, Speech, Step,
+    TerminalReader, Unit, Withheld,
 };
 use crate::terminal_rows::{Anchor, Lost, Read, ReadText, Text, hash};
 
@@ -838,6 +838,33 @@ fn a_suggestion_followed_by_text_in_the_typings_colours_is_spoken() {
                 text: "ho hi".to_owned()
             }
         ])
+    );
+}
+
+// "Changed rows": a rewritten line compared once.
+
+#[test]
+fn a_lines_difference_gives_its_shared_ends_and_what_it_gained_or_lost() {
+    // The shared start ends on a whole grapheme: "é" written as "e" and
+    // a combining accent is not split.
+    let accent = Difference::new("cafe\u{301} 1s", "cafe\u{301} 2s");
+    assert_eq!(
+        (accent.start, accent.removed(), accent.inserted()),
+        ("cafe\u{301} ".len(), "1", "2")
+    );
+    let marker = Difference::new("  banana", "> banana");
+    assert_eq!(
+        (marker.gained, marker.lost, marker.spinner()),
+        (true, false, true)
+    );
+    let unmarked = Difference::new("> apple", "  apple");
+    assert_eq!((unmarked.gained, unmarked.lost), (false, true));
+    let grown = Difference::new("ab", "abc");
+    assert_eq!((grown.gained, grown.lost), (false, false));
+    let caret = Difference::at_caret(("$ echo hello", 12), ("$ echo", 7));
+    assert_eq!(
+        (caret.start_chars(), caret.removed(), caret.inserted()),
+        (7, "hello", "")
     );
 }
 

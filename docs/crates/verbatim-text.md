@@ -513,7 +513,13 @@ Each read, line by line, top to bottom:
   the caret is at its end after a character that is not a space, the last
   word is held (`UnfinishedWord`) and spoken when the line grows past it,
   when the caret leaves the line, or after the quiet period.
-- A line rewritten in place is a redrawn row. Within a key's window, away
+- A line rewritten in place is a redrawn row, compared with its last read
+  once: one record of the start the two share by whole graphemes, the end
+  they share after it, what was removed and inserted between, and,
+  compared without spaces, whether it gained text other than at its end
+  and whether it only lost text. Every rule below reads that record, and
+  the caret's line is compared the same way, each side padded to its
+  caret's column. Within a key's window, away
   from the caret, and with no change of its own in the 2 seconds before
   the key, it is the key's: one that gained text other than at its end is
   the answer, spoken whole; one that only lost text is silent; any other is
