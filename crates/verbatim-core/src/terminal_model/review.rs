@@ -23,8 +23,8 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, TextAnchor, TextChunk, TextMovement,
-    TextOp, TextPoint, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit,
+    MAX_RANGE_BYTES, MAX_READ_AHEAD, MAX_READ_AHEAD_TEXT, TerminalMatch, TextAnchor, TextChunk,
+    TextMovement, TextOp, TextPoint, TextRead, TextReadAhead, TextReply, TextThrough, TextUnit,
 };
 use verbatim_text::terminal_rows::{Anchor, Row, rows_of};
 
@@ -639,14 +639,41 @@ fn read_range(
     Ok(Plan::Reply(TextReply::Range { text, truncated }))
 }
 
+/// How many searches one move between command marks makes at most: a mark
+/// whose line is gone costs one search before it is dropped, and a press
+/// that reaches this bound without finding a mark says nothing, the marks
+/// not yet tried kept for the next press. Each search costs an estimated 60
+/// milliseconds when its line is the nearest of 20 rows starting with its
+/// text and at most about 300 when its text is mostly found within rows
+/// (`docs/performance.md`, "A terminal's command marks"), so a press waits
+/// at most about 900 milliseconds for its searches.
+pub(crate) const MARK_SEARCHES: u32 = 3;
+
+/// The search a command mark's move needs for a mark above the rows Core
+/// keeps: the request, and the hash of the mark's line.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Search {
+    pub(crate) op: TextOp,
+    pub(crate) hash: u64,
+}
+
+/// A search's answer, its rows placed among the memory's when it came
+/// ([`placed`]): the hash of the line sought, and the rows of its matches
+/// whose lines have that hash, each with its first row; `None` when the
+/// rows could not be placed, the search having been counted from a read
+/// the memory did not take.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Placed {
+    pub(crate) hash: u64,
+    pub(crate) rows: Option<Vec<(isize, Row)>>,
+}
+
 /// What became of one command mark a move looked at.
 enum Resolved {
     /// Its line is on this row, whose first row's text is this.
     Found(isize, Line),
     /// Its line is nowhere: the mark is dropped.
     Gone,
-    /// The search for its line above the memory has not been answered.
-    Need(TextOp),
 }
 
 /// Moves the review cursor to the nearest command mark strictly above
@@ -654,10 +681,12 @@ enum Resolved {
 /// (`docs/design/terminal-model.md`, "Features and settings"), after the
 /// fresh read: each mark, nearest first, is found by its line's text,
 /// within the memory near its place, and above the memory by the search
-/// the outpost runs ([`TextOp::TerminalFind`]); a mark not found is
-/// dropped, and the next one tried, with nothing said. The answer is a
-/// line move's ([`TextReply::Read`] at the start of the mark's row), the
-/// review position going there; `None` when no mark is left that way.
+/// the outpost runs ([`TextOp::TerminalFind`]), outward from its place; a
+/// mark not found is dropped, and the next one tried, with nothing said.
+/// The answer is a line move's ([`TextReply::Read`] at the start of the
+/// mark's row), the review position going there; `None` when no mark is
+/// left that way, when the move has made [`MARK_SEARCHES`] searches, or
+/// when a search's rows could not be placed, the marks not found kept.
 ///
 /// # Errors
 ///
@@ -669,7 +698,7 @@ pub(crate) fn mark(
     (forward, from): (bool, &TextPoint),
     next_anchor: &mut u64,
     held: &HashSet<u64>,
-) -> Result<Option<TextReply>, TextOp> {
+) -> Result<Option<TextReply>, Search> {
     let review = match from {
         TextPoint::At(position) => place_of(model, position.anchor)
             .and_then(|place| model.reader.memory().place(place))
@@ -708,7 +737,26 @@ pub(crate) fn mark(
         candidates.sort_by_key(|mark| std::cmp::Reverse(mark.row));
     }
     for candidate in candidates {
-        match resolve_mark(model, candidate, forward) {
+        let resolved = match within_memory(model, candidate) {
+            Ok(resolved) => resolved,
+            Err(op) => match model.found.take() {
+                Some(found) if found.hash == candidate.line_hash => match found.rows {
+                    Some(rows) => from_search(&rows, candidate),
+                    // Counted from a read the memory did not take: the
+                    // move ends, saying nothing, the mark kept.
+                    None => return Ok(None),
+                },
+                _ if model.mark_searches >= MARK_SEARCHES => return Ok(None),
+                _ => {
+                    model.mark_searches += 1;
+                    return Err(Search {
+                        op,
+                        hash: candidate.line_hash,
+                    });
+                }
+            },
+        };
+        match resolved {
             Resolved::Found(row, line) if beyond(row) => {
                 let mark = Anchor {
                     row,
@@ -752,7 +800,6 @@ pub(crate) fn mark(
                     .replace_mark(candidate, Some(mark));
             }
             Resolved::Gone => model.rules().memory_mut().replace_mark(candidate, None),
-            Resolved::Need(op) => return Err(op),
         }
     }
     Ok(None)
@@ -766,97 +813,114 @@ fn wraps_at(model: &TerminalModel, row: isize) -> bool {
         .is_some_and(|found| found.wraps)
 }
 
-/// Where command mark `mark`'s line is now: within the memory, the line
+/// Whether a line with hash `hash` starts at row `row` of the memory.
+fn starts_at(model: &TerminalModel, row: isize, hash: u64) -> bool {
+    let rows = model.reader.memory().rows();
+    let first_kept = isize_of(rows.first_kept());
+    usize::try_from(row)
+        .ok()
+        .and_then(|at| rows.get(at))
+        .is_some_and(|found| found.line_hash == hash)
+        && (row == first_kept || !wraps_at(model, row - 1))
+}
+
+/// Where command mark `mark`'s line is now, within the memory: the line
 /// starting at its row with its hash, or else the nearest line start with
-/// it, the higher at one distance; otherwise, unless the memory holds the
-/// whole document, the match of the outpost's search for its first row
-/// ([`mark_search`]) whose line has its hash nearest its place, the higher
-/// at one distance, a match within the memory only where a line starts;
-/// searched backward from a screen below its place for a move up and
-/// forward from a screen above it for a move down.
-fn resolve_mark(model: &TerminalModel, mark: Anchor, forward: bool) -> Resolved {
+/// it, the higher at one distance; gone when the memory holds the whole
+/// document or its line's text is not known. Otherwise the search for it
+/// above the memory ([`mark_search`]).
+fn within_memory(model: &TerminalModel, mark: Anchor) -> Result<Resolved, TextOp> {
     let rows = model.reader.memory().rows();
     let first_kept = isize_of(rows.first_kept());
     let len = isize_of(rows.len());
-    let starts = |row: isize| {
-        usize::try_from(row)
-            .ok()
-            .and_then(|at| rows.get(at))
-            .is_some_and(|found| found.line_hash == mark.line_hash)
-            && (row == first_kept || !wraps_at(model, row - 1))
-    };
-    let line = |row: isize| {
-        usize::try_from(row)
-            .ok()
-            .and_then(|at| rows.get(at))
-            .map(Line::from)
-    };
     if mark.row >= first_kept {
         let nearest = (0..len)
             .flat_map(|distance| [mark.row - distance, mark.row + distance])
-            .find(|&row| row >= first_kept && row < len && starts(row));
+            .find(|&row| row >= first_kept && row < len && starts_at(model, row, mark.line_hash));
+        let line = |row: isize| {
+            usize::try_from(row)
+                .ok()
+                .and_then(|at| rows.get(at))
+                .map(Line::from)
+        };
         if let Some((row, line)) = nearest.and_then(|row| Some((row, line(row)?))) {
-            return Resolved::Found(row, line);
+            return Ok(Resolved::Found(row, line));
         }
         if first_kept == 0 && model.at_document_start {
-            return Resolved::Gone;
+            return Ok(Resolved::Gone);
         }
     } else if model.at_document_start && mark.row < 0 {
-        return Resolved::Gone;
+        return Ok(Resolved::Gone);
     }
     let Some(sought) = model
         .mark_lines
         .iter()
         .find(|line| line.hash == mark.line_hash)
     else {
-        return Resolved::Gone;
+        return Ok(Resolved::Gone);
     };
-    let op = mark_search(model, mark.row, sought, forward);
-    let Some((_, matches)) = model.found.iter().find(|(asked, _)| *asked == op) else {
-        return Resolved::Need(op);
-    };
-    let start = isize_of(model.reader.memory().rows().len())
-        - isize_of(usize::try_from(model.height).unwrap_or(0));
-    let start = start.max(0);
-    // The search starts a screen beyond the mark's place, so a later line
-    // with the same text may come first: the match nearest the place is
-    // the mark's, as within the memory.
-    matches
-        .iter()
-        .filter_map(|found| {
-            let first = rows_of(&found.text, model.width).into_iter().next()?;
-            let row = start - isize::try_from(found.above).unwrap_or(0);
-            (first.line_hash == mark.line_hash && (row < first_kept || starts(row)))
-                .then_some((row, first))
-        })
+    Err(mark_search(model, mark.row, sought))
+}
+
+/// Where command mark `mark`'s line is among the rows a search for it
+/// found, placed when it came ([`placed`]): the row nearest the mark's
+/// place, the higher at one distance; gone when there is none.
+fn from_search(rows: &[(isize, Row)], mark: Anchor) -> Resolved {
+    rows.iter()
         .min_by_key(|(row, _)| (row.abs_diff(mark.row), *row))
         .map_or(Resolved::Gone, |(row, first)| {
-            Resolved::Found(row, Line::from(&first))
+            Resolved::Found(*row, Line::from(first))
         })
 }
 
 /// The search for command mark `sought`'s line, whose mark is on row `row`
-/// above the memory: its first row's text, from a screen below the place
-/// backward for a move up, or from a screen above it forward for a move
-/// down, counted in rows above where the next read starts.
-fn mark_search(
-    model: &TerminalModel,
-    row: isize,
-    sought: &super::MarkLine,
-    forward: bool,
-) -> TextOp {
-    let screen = isize_of(usize::try_from(model.height).unwrap_or(0)).max(1);
-    let start = (isize_of(model.reader.memory().rows().len()) - screen).max(0);
-    let boundary = if forward {
-        row - screen
-    } else {
-        row + screen + 1
-    };
+/// above the memory: its first row's text, outward from the mark's row,
+/// counted in rows above where the next read starts.
+fn mark_search(model: &TerminalModel, row: isize, sought: &super::MarkLine) -> TextOp {
     TextOp::TerminalFind {
         needle: sought.text.clone(),
-        from: i32::try_from(start - boundary).unwrap_or(i32::MAX),
-        backward: !forward,
+        from: i32::try_from(start_row(model) - row).unwrap_or(i32::MAX),
         rows: sought.rows,
+    }
+}
+
+/// The row of the memory's last read where the next read starts: the
+/// screen's top.
+fn start_row(model: &TerminalModel) -> isize {
+    let screen = isize_of(usize::try_from(model.height).unwrap_or(0));
+    (isize_of(model.reader.memory().rows().len()) - screen).max(0)
+}
+
+/// The answer to the search for the line with hash `hash`, its `matches`
+/// counted from the start of read `read`, placed among the memory's rows
+/// as they are when it comes: each match whose line has the hash, on its
+/// row of the memory's last read, a match within the memory only where a
+/// line starts. The rows are placed only when the memory's last read is
+/// read `read`, as it is whenever the memory took every read the outpost
+/// took before searching, since the outpost answers after them.
+pub(crate) fn placed(
+    model: &TerminalModel,
+    hash: u64,
+    matches: &[TerminalMatch],
+    read: u64,
+) -> Placed {
+    if model.read != read {
+        return Placed { hash, rows: None };
+    }
+    let first_kept = isize_of(model.reader.memory().rows().first_kept());
+    let start = start_row(model);
+    let rows = matches
+        .iter()
+        .filter_map(|found| {
+            let first = rows_of(&found.text, model.width).into_iter().next()?;
+            let row = start - isize::try_from(found.above).unwrap_or(0);
+            (first.line_hash == hash && (row < first_kept || starts_at(model, row, hash)))
+                .then_some((row, first))
+        })
+        .collect();
+    Placed {
+        hash,
+        rows: Some(rows),
     }
 }
 

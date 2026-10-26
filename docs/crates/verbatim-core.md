@@ -1089,10 +1089,19 @@ they make.
   (`Review::Mark`): after the fresh read, `review::mark` tries the marks
   beyond the review position, nearest first, finding each by its line's
   hash near its place in the memory, and above the memory with
-  `TextOp::TerminalFind`, the outpost's search, whose matches it checks
-  by their line's hash; a mark not found is dropped, and the answer is
-  the row as `TextReply::Read`, landed as a line move lands, or nothing
-  past the last mark.
+  `TextOp::TerminalFind`, the outpost's search outward from the mark's
+  place, whose matches it checks by their line's hash; a mark not found
+  is dropped, and the answer is the row as `TextReply::Read`, landed as
+  a line move lands, or nothing past the last mark. The model keeps the
+  number of the read its memory last took, and places a search's
+  matches among the memory's rows when the answer comes
+  (`review::placed`), counted from the start of the read the answer
+  names: when that is the memory's last read, as it is whenever the
+  memory took every read the outpost took before searching, output that
+  scrolled the rows while the search was out moves nothing; otherwise
+  the move ends, saying nothing, the mark kept. A press makes at most
+  `review::MARK_SEARCHES` (3) searches, saying nothing once they are
+  spent.
 - Settings: "report new output" and "review follows caret" are given to
   every model's rules whenever they change, whichever way they changed.
 

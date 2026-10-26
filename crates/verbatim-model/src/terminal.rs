@@ -60,6 +60,12 @@ pub struct TerminalSnapshot {
     pub ended_ms: u64,
     /// Whether the read waited for Core's speech queue ("Volatile rows").
     pub waited: bool,
+    /// The read's number among the terminal's reads, counted by its
+    /// outpost from 1, by which a search's answer names the read its rows
+    /// are counted from ([`crate::TextReply::TerminalFound`]); 0 when not
+    /// numbered.
+    #[serde(default)]
+    pub read: u64,
     /// The screen's colour runs, row by row from the screen's top to the
     /// document's end, when the read took them.
     #[serde(default, skip_serializing_if = "Option::is_none")]

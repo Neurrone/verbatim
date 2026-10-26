@@ -3918,18 +3918,13 @@ impl Worker<'_> {
                 self.reply_text(request, reply);
                 return true;
             }
-            TextOp::TerminalFind {
-                needle,
-                from,
-                backward,
-                rows,
-            } => {
+            TextOp::TerminalFind { needle, from, rows } => {
                 let reply = match self.client.uia() {
                     Some(uia) if focused => text_reads::terminal_find(
                         self.context,
                         uia,
                         node_id,
-                        (needle, *from, *backward, *rows),
+                        (needle, *from, *rows),
                     ),
                     _ => TextReply::Unanswered,
                 };

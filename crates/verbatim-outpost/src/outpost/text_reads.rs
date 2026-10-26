@@ -895,7 +895,7 @@ pub(super) fn terminal_find(
     context: &Context,
     uia: &verbatim_uia::Uia,
     node_id: NodeId,
-    (needle, from, backward, rows): (&str, i32, bool, u32),
+    (needle, from, rows): (&str, i32, u32),
 ) -> TextReply {
     let Ok(source) = uia_source(context, node_id) else {
         return TextReply::Unanswered;
@@ -909,10 +909,13 @@ pub(super) fn terminal_find(
         uia,
         (source.element(), source.pattern()),
         terminal,
-        (needle, from, backward, rows),
+        (needle, from, rows),
         remote,
     ) {
-        Ok(found) => TextReply::TerminalFound(found),
+        Ok(found) => TextReply::TerminalFound {
+            matches: found.matches,
+            read: found.read,
+        },
         Err(TextError::Gone) => TextReply::Gone,
         Err(TextError::Failed(reason)) => {
             tracing::debug!(reason, "a terminal could not be searched");

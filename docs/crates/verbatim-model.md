@@ -362,7 +362,9 @@ the contract the Windows side implements.
   it holds above the start it was asked for; `started_ms` and `ended_ms`,
   when the read began and ended on the shared clock, the terminal having
   answered it at some moment between (`ended_ms` 0 when not known); `waited`, whether it waited for Core's speech
-  queue; the screen's `colours` when it took them, rows of
+  queue; `read`, its number among the terminal's reads, counted by its
+  outpost from 1, by which a search's answer names the read it counted
+  from; the screen's `colours` when it took them, rows of
   `TerminalColourRun` (`column`, `length`, `foreground`, `background`);
   and the `caret` as a caret report. A `TerminalText` is a text without
   the spaces that pad its lines (`text`) and each line's padded length in
@@ -535,11 +537,14 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   for a review answer above Core's memory (answer `TerminalHistory {
   text, above }`, the text with its padding and the rows it holds above
   that start).
-- `TerminalFind { needle, from, backward, rows }`: a command mark's line
-  sought by its first row's text from the row `from` rows above the
-  next read's start, backward or forward, at most 20 matches that start
-  a row over a bounded number of `FindText` calls, `rows` rows read from each (answer `TerminalFound`, a
-  `TerminalMatch` for each, its rows above that start and its text).
+- `TerminalFind { needle, from, rows }`: a command mark's line sought
+  by its first row's text outward from the row `from` rows above the
+  next read's start, alternately the next match at or below it and the
+  next above it, at most 20 matches that start a row over a bounded
+  number of `FindText` calls, `rows` rows read from each (answer
+  `TerminalFound { matches, read }`, a `TerminalMatch` for each, its
+  rows above that start and its text, and the number of the read whose
+  start they are counted from).
 - `TerminalColours { from_ms, until_ms }`: a key reached the program at
   `from_ms` and its window ends at `until_ms`, so every read that begins
   by the latest such end takes the screen's colours; when the last read

@@ -108,6 +108,10 @@ struct Session<'a> {
     state: SrState,
     /// What Core said, each utterance's segments but its index marks.
     spoken: Vec<Vec<SegmentContent>>,
+    /// Rows the terminal shows before the next search Core asks for, read
+    /// by a live read sent to Core before the search runs, as when a
+    /// program keeps printing while a search is on its way.
+    before_find: Option<(&'a mut common::MockApp, HWND, Vec<String>)>,
 }
 
 impl Session<'_> {
@@ -178,6 +182,18 @@ impl Session<'_> {
         let reply = match effect {
             Effect::Text(request) => match &request.op {
                 TextOp::AwaitCaret(_) => TextReply::WatchEnded,
+                // The session reads only when a test or Core asks.
+                TextOp::TerminalHold => TextReply::Done,
+                TextOp::TerminalHistory { above, whole } => {
+                    let (text, above) = verbatim_outpost::terminal::history(
+                        self.uia,
+                        (self.source.element(), self.source.pattern()),
+                        &self.terminal,
+                        (*above, *whole, self.remote),
+                    )
+                    .expect("the history is read");
+                    TextReply::TerminalHistory { text, above }
+                }
                 TextOp::TerminalShape { height, width } => {
                     self.terminal.shape(*height, *width);
                     TextReply::Done
@@ -198,21 +214,28 @@ impl Session<'_> {
                     }
                     TextReply::Done
                 }
-                TextOp::TerminalFind {
-                    needle,
-                    from,
-                    backward,
-                    rows,
-                } => TextReply::TerminalFound(
-                    verbatim_outpost::terminal::find(
+                TextOp::TerminalFind { needle, from, rows } => {
+                    if let Some((app, hwnd, shown)) = self.before_find.take() {
+                        let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
+                        show(app, hwnd, &shown);
+                        self.live();
+                    }
+                    let found = verbatim_outpost::terminal::find(
                         self.uia,
                         (self.source.element(), self.source.pattern()),
                         &self.terminal,
-                        (needle, *from, *backward, *rows),
+                        (needle, *from, *rows),
                         self.remote,
                     )
-                    .expect("the terminal is searched"),
-                ),
+                    .expect("the terminal is searched");
+                    // The path asked for answered, never the fallback.
+                    let path = found.path.name();
+                    assert_eq!(path, if self.remote { "remote" } else { "classic" });
+                    TextReply::TerminalFound {
+                        matches: found.matches,
+                        read: found.read,
+                    }
+                }
                 op => panic!("Core asked the terminal {op:?}"),
             }
             .into_input(request.query_id),
@@ -310,6 +333,7 @@ fn new_output_is_said_line_by_line(remote: bool) {
         remote,
         state: SrState::new(),
         spoken: Vec::new(),
+        before_find: None,
     };
     session.input(&focus());
     session.spoken.clear();
@@ -370,6 +394,7 @@ fn session(uia: &Uia, hwnd: HWND, remote: bool) -> Session<'_> {
         remote,
         state: SrState::new(),
         spoken: Vec::new(),
+        before_find: None,
     };
     session.input(&focus());
     session.live();
@@ -425,31 +450,7 @@ fn command_marks_move_the_review_cursor(remote: bool) {
     let mut app = common::spawn("terminal.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
-    common::apply(&mut app, hwnd, "screen term 4");
-    show(&mut app, hwnd, &["one", "ready>"]);
-    let mut session = session(&uia, hwnd, remote);
-    let mut prompt = "ready>".to_owned();
-    for character in ["l", "s", "\r"] {
-        session.input(&Input::CharacterTyped {
-            trace_id: TraceId::mint(),
-            text: character.to_owned(),
-            at_ms: now_us() / 1_000,
-        });
-        if character == "\r" {
-            show(&mut app, hwnd, &["one", &prompt, "a.txt", "ready>"]);
-        } else {
-            prompt.push_str(character);
-            show(&mut app, hwnd, &["one", &prompt]);
-        }
-        session.live();
-    }
-    let mut rows = vec!["one", "ready>ls", "a.txt"];
-    let lines: Vec<String> = (1..=10).map(|line| format!("line {line}")).collect();
-    rows.extend(lines.iter().map(String::as_str));
-    rows.push("ready>");
-    show(&mut app, hwnd, &rows);
-    session.live();
-    session.spoken.clear();
+    let mut session = session_with_a_command(&uia, &mut app, hwnd, remote);
     session.input(&command(ReviewCommand::PreviousCommandMark, 0));
     let text = |text: &str| SegmentContent::Text(text.to_owned());
     assert_eq!(session.spoken, [vec![text("ready>ls")]]);
@@ -467,6 +468,118 @@ fn command_marks_move_the_review_cursor_classic() {
     command_marks_move_the_review_cursor(false);
 }
 
+/// The rows of [`session_with_a_command`]'s terminal: `ls` entered, and
+/// `lines` lines of output after its answer.
+fn rows_after_ls(lines: u32) -> Vec<String> {
+    let mut rows: Vec<String> = ["one", "ready>ls", "a.txt"].map(str::to_owned).into();
+    rows.extend((1..=lines).map(|line| format!("line {line}")));
+    rows.push("ready>".to_owned());
+    rows
+}
+
+/// As [`command_marks_move_the_review_cursor`], but the program prints five
+/// more lines before the outpost searches, read and sent to Core first: the
+/// search's answer is counted from that newer read, and the move still
+/// lands on the command's line, then says nothing past it.
+fn command_marks_are_found_while_output_scrolls(remote: bool) {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-marks-scrolling");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    {
+        let mut session = session_with_a_command(&uia, &mut app, hwnd, remote);
+        session.before_find = Some((&mut app, hwnd, rows_after_ls(15)));
+        session.input(&command(ReviewCommand::PreviousCommandMark, 0));
+        let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
+        assert!(session.before_find.is_none(), "the mark was searched for");
+        // The new output waits in the flood policy's queue behind the
+        // earlier output, which this session never plays.
+        assert_eq!(session.spoken, [text("ready>ls")]);
+        session.spoken.clear();
+        session.input(&command(ReviewCommand::ReviewNextLine, 0));
+        assert_eq!(session.spoken, [text("a.txt")]);
+    }
+    app.quit();
+}
+
+fn command_marks_are_found_while_output_scrolls_remote() {
+    command_marks_are_found_while_output_scrolls(true);
+}
+
+fn command_marks_are_found_while_output_scrolls_classic() {
+    command_marks_are_found_while_output_scrolls(false);
+}
+
+/// A session on a terminal of four rows where `ls` was typed at the prompt
+/// and entered, so Core marked its line, and ten lines of output then
+/// carried it above the rows Core keeps.
+fn session_with_a_command<'a>(
+    uia: &'a Uia,
+    app: &mut common::MockApp,
+    hwnd: HWND,
+    remote: bool,
+) -> Session<'a> {
+    common::apply(app, hwnd, "screen term 4");
+    show(app, hwnd, &["one", "ready>"]);
+    let mut session = session(uia, hwnd, remote);
+    let mut prompt = "ready>".to_owned();
+    for character in ["l", "s", "\r"] {
+        session.input(&Input::CharacterTyped {
+            trace_id: TraceId::mint(),
+            text: character.to_owned(),
+            at_ms: now_us() / 1_000,
+        });
+        if character == "\r" {
+            show(app, hwnd, &["one", &prompt, "a.txt", "ready>"]);
+        } else {
+            prompt.push_str(character);
+            show(app, hwnd, &["one", &prompt]);
+        }
+        session.live();
+    }
+    let rows = rows_after_ls(10);
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    show(app, hwnd, &rows);
+    session.live();
+    session.spoken.clear();
+    session
+}
+
+/// The outpost's search for `needle` in `terminal`'s text, outward from the
+/// row `from` rows above where its next read starts, on the path under
+/// test alone: the remote program, never falling back, or the classic one.
+fn find_on_path(
+    uia: &Uia,
+    source: &UiaText,
+    terminal: &Terminal,
+    (needle, from): (&str, i32),
+    remote: bool,
+) -> Vec<verbatim_model::TerminalMatch> {
+    let start = terminal.start_range().expect("a read placed the start");
+    let query = verbatim_uia_rops::FindQuery {
+        element: source.element(),
+        pattern: source.pattern(),
+        start: &start,
+        needle,
+        from,
+        rows: 1,
+    };
+    let found = if remote {
+        verbatim_uia_rops::terminal_find_remote(uia, &query)
+    } else {
+        verbatim_uia_rops::terminal_find_classic(uia, &query)
+    };
+    found
+        .expect("the search runs on its path")
+        .into_iter()
+        .map(|found| verbatim_model::TerminalMatch {
+            above: found.above,
+            text: found.text,
+        })
+        .collect()
+}
+
 /// A provider whose `FindText` fails (`terminal_find_fails.json`), as
 /// Windows Terminal's not-found range does: the search finds nothing, and
 /// is no error.
@@ -480,14 +593,7 @@ fn a_failing_search_finds_nothing(remote: bool) {
     let source = source(&uia, hwnd, remote);
     let mut terminal = Terminal::new();
     let _ = read_terminal(&uia, &source, &mut terminal, (None, remote));
-    let found = verbatim_outpost::terminal::find(
-        &uia,
-        (source.element(), source.pattern()),
-        &terminal,
-        ("two", -10, true, 1),
-        remote,
-    )
-    .expect("a failing search is not an error");
+    let found = find_on_path(&uia, &source, &terminal, ("two", 1), remote);
     assert_eq!(found, []);
     app.quit();
 }
@@ -500,9 +606,14 @@ fn a_failing_search_finds_nothing_classic() {
     a_failing_search_finds_nothing(false);
 }
 
-/// The outpost's search for `needle` over every row of `rows`, backward
-/// from below the screen, on a screen of three rows.
-fn search(rows: &[&str], needle: &str, remote: bool) -> Vec<verbatim_model::TerminalMatch> {
+/// The outpost's search for `needle` over every row of `rows`, outward
+/// from the row `from` rows above where the next read starts, on a screen
+/// of three rows.
+fn search(
+    rows: &[&str],
+    (needle, from): (&str, i32),
+    remote: bool,
+) -> Vec<verbatim_model::TerminalMatch> {
     common::init_com();
     let title = common::unique_title("mockapp-terminal-find");
     let mut app = common::spawn("terminal.json", "uia", &title);
@@ -513,34 +624,31 @@ fn search(rows: &[&str], needle: &str, remote: bool) -> Vec<verbatim_model::Term
     let source = source(&uia, hwnd, remote);
     let mut terminal = Terminal::new();
     let _ = read_terminal(&uia, &source, &mut terminal, (None, remote));
-    let found = verbatim_outpost::terminal::find(
-        &uia,
-        (source.element(), source.pattern()),
-        &terminal,
-        (needle, -10, true, 1),
-        remote,
-    )
-    .expect("the terminal is searched");
+    let found = find_on_path(&uia, &source, &terminal, (needle, from), remote);
     app.quit();
     found
 }
 
+/// A match: its rows above the start, and its row's text as read.
+fn found_row(above: i32, text: &str) -> verbatim_model::TerminalMatch {
+    verbatim_model::TerminalMatch {
+        above,
+        text: format!("{text:WIDTH$}\r\n"),
+    }
+}
+
 /// A short needle found within rows far more often than at a row's start,
-/// as a short command's text is: only the rows that start with it are
-/// matches, nearest first, a longer row starting with it among them for
-/// Core to check by its line's hash, and the hits within rows do not use
-/// up the matches a search takes.
+/// as a short command's text is, sought up from below the document's end:
+/// only the rows that start with it are matches, nearest first, a longer
+/// row starting with it among them for Core to check by its line's hash,
+/// and the hits within rows do not use up the matches a search takes.
 fn the_search_takes_rows_starting_with_the_needle(remote: bool) {
     let within = " y y y y y y";
     let mut rows = vec!["y", "yes"];
     rows.extend([within; 5]);
     rows.push("ready>");
-    let found = search(&rows, "y", remote);
-    let row = |above: i32, text: &str| verbatim_model::TerminalMatch {
-        above,
-        text: format!("{text:WIDTH$}\r\n"),
-    };
-    assert_eq!(found, [row(5, "yes"), row(6, "y")]);
+    let found = search(&rows, ("y", -10), remote);
+    assert_eq!(found, [found_row(5, "yes"), found_row(6, "y")]);
 }
 
 fn the_search_takes_rows_starting_with_the_needle_remote() {
@@ -549,6 +657,34 @@ fn the_search_takes_rows_starting_with_the_needle_remote() {
 
 fn the_search_takes_rows_starting_with_the_needle_classic() {
     the_search_takes_rows_starting_with_the_needle(false);
+}
+
+/// From a row in the middle, the search takes that row's match first, then
+/// alternately the next above and the next below.
+fn the_search_works_outward_from_its_row(remote: bool) {
+    let rows = ["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"];
+    // The document's seven rows end with an empty line, and the start is
+    // the screen's top, three rows from the end: "y 3", on row 2, is two
+    // rows above it.
+    let found = search(&rows, ("y", 2), remote);
+    assert_eq!(
+        found,
+        [
+            found_row(2, "y 3"),
+            found_row(3, "y 2"),
+            found_row(1, "y 4"),
+            found_row(4, "y 1"),
+            found_row(0, "y 5"),
+        ]
+    );
+}
+
+fn the_search_works_outward_from_its_row_remote() {
+    the_search_works_outward_from_its_row(true);
+}
+
+fn the_search_works_outward_from_its_row_classic() {
+    the_search_works_outward_from_its_row(false);
 }
 
 /// A needle found within rows more often than the search's `FindText`
@@ -560,7 +696,7 @@ fn the_search_ends_after_its_calls(remote: bool) {
     // Six hits a row, a row more than the calls allow.
     rows.extend(vec![within; verbatim_uia_rops::FIND_CALLS / 6 + 1]);
     rows.push("ready>");
-    assert_eq!(search(&rows, "y", remote), []);
+    assert_eq!(search(&rows, ("y", -10), remote), []);
 }
 
 fn the_search_ends_after_its_calls_remote() {
@@ -595,6 +731,7 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
         remote,
         state: SrState::new(),
         spoken: Vec::new(),
+        before_find: None,
     };
     session.input(&focus());
     session.live();
@@ -677,6 +814,22 @@ fn main() {
         (
             "command_marks_move_the_review_cursor_classic",
             command_marks_move_the_review_cursor_classic,
+        ),
+        (
+            "command_marks_are_found_while_output_scrolls_remote",
+            command_marks_are_found_while_output_scrolls_remote,
+        ),
+        (
+            "command_marks_are_found_while_output_scrolls_classic",
+            command_marks_are_found_while_output_scrolls_classic,
+        ),
+        (
+            "the_search_works_outward_from_its_row_remote",
+            the_search_works_outward_from_its_row_remote,
+        ),
+        (
+            "the_search_works_outward_from_its_row_classic",
+            the_search_works_outward_from_its_row_classic,
         ),
         (
             "a_failing_search_finds_nothing_remote",

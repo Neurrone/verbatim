@@ -589,11 +589,10 @@ fn enter(session: &mut Session, command: &str, output: &str, at_ms: u64) -> u64 
 }
 
 /// The search for a mark's line Core asks for.
-fn find(needle: &str, from: i32, backward: bool) -> TextOp {
+fn find(needle: &str, from: i32) -> TextOp {
     TextOp::TerminalFind {
         needle: needle.to_owned(),
         from,
-        backward,
         rows: 1,
     }
 }
@@ -758,17 +757,15 @@ fn a_mark_above_the_memory_is_found_by_one_search() {
     let _ = session.heard();
     session.input(&command(UP));
     assert_eq!(session.heard(), plain(&["$ echo one"]));
-    // The document's 23 rows: the next read starts at row 19, 19 rows below
-    // the mark, and the search runs back from a screen below the mark, the
-    // row 14 rows above that start.
-    assert_eq!(session.requests(), [FRESH, find("$ echo one", 14, true)]);
+    // The document's 23 rows: the next read starts at row 19, and the
+    // search works outward from the mark's own row, 19 rows above it.
+    assert_eq!(session.requests(), [FRESH, find("$ echo one", 19)]);
 }
 
 #[test]
 fn a_command_entered_twice_above_the_memory_is_found_at_each_mark() {
-    // The search for the older mark starts a screen below its place, where
-    // the newer line with the same text lies too: the match nearest the
-    // mark's place is its line.
+    // The search for each mark finds the other line with the same text too:
+    // the match nearest the mark's place is its line.
     let mut session = showing(30, 4, 100, "$ ");
     let at_ms = enter(&mut session, "ls", "a\r\n", 1000);
     enter(&mut session, "ls", "a\r\n", at_ms);
@@ -784,6 +781,137 @@ fn a_command_entered_twice_above_the_memory_is_found_at_each_mark() {
     assert_eq!(session.heard(), plain(&["$ ls"]));
     session.input(&command(DOWN));
     assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn every_copy_of_a_command_entered_many_times_is_reached() {
+    // More rows start with the command's text than one search takes: each
+    // press searches outward from the next mark's own place, so each is
+    // found, the oldest included.
+    let mut session = showing(30, 30, 1000, "$ ");
+    let mut at_ms = 1000;
+    for _ in 0..22 {
+        at_ms = enter(&mut session, "x", "", at_ms);
+    }
+    session.write(&numbered(1..=100), at_ms);
+    let _ = session.heard();
+    let _ = session.requests();
+    for press in 0..22 {
+        session.input(&command(UP));
+        assert_eq!(session.heard(), plain(&["$ x"]), "press {press}");
+        // Each mark lies above the rows Core keeps, found by one search.
+        let finds = session
+            .requests()
+            .iter()
+            .filter(|op| matches!(op, TextOp::TerminalFind { .. }))
+            .count();
+        assert_eq!(finds, 1, "press {press}");
+        // The line below is the next copy's, or the output's for the newest.
+        session.input(&command(ReviewCommand::ReviewNextLine));
+        let below = if press == 0 { "$ line 1" } else { "$ x" };
+        assert_eq!(session.heard(), plain(&[below]), "press {press}");
+        session.input(&command(ReviewCommand::ReviewPreviousLine));
+        let _ = session.heard();
+        let _ = session.requests();
+    }
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn a_marks_line_printed_again_nearer_the_review_position_is_passed_over() {
+    // A program prints the command's line again below it, unmarked: Up goes
+    // to the mark's own line, whose output follows it, not to the copy.
+    let mut session = showing(30, 4, 100, "$ ");
+    let at_ms = enter(&mut session, "echo hi", "hi\r\n", 1000);
+    session.write(&format!("$ echo hi\r\ncopy\r\n{}", numbered(1..=20)), at_ms);
+    let _ = session.heard();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ echo hi"]));
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(session.heard(), plain(&["hi"]));
+    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    let _ = session.heard();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn output_arriving_while_a_search_is_out_moves_to_the_mark_with_one_search() {
+    // The program keeps printing: before the outpost searches, more output
+    // has scrolled the rows and been read, so the answer is counted from
+    // that newer read. Each press still lands on its mark's own line, with
+    // one search.
+    let mut session = showing(30, 4, 100, "$ ");
+    let mut at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
+    at_ms = enter(&mut session, "echo two", "two\r\n", at_ms);
+    session.write(&numbered(1..=20), at_ms);
+    let _ = session.heard();
+    let _ = session.requests();
+    session.output_before_finds = [
+        (numbered(21..=25), at_ms + 1000),
+        (numbered(26..=30), at_ms + 2000),
+    ]
+    .into();
+    // The output read before the search is spoken as any output is.
+    let spoken = |range: std::ops::RangeInclusive<u32>, mark: &str| {
+        let mut spoken: Vec<String> = range.map(|line| format!("line {line}")).collect();
+        spoken.push(mark.to_owned());
+        spoken
+    };
+    session.input(&command(UP));
+    let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
+    assert_eq!(heard, spoken(21..=25, "$ echo two"));
+    let searched = |requests: &[TextOp]| {
+        requests
+            .iter()
+            .filter(|op| matches!(op, TextOp::TerminalFind { .. }))
+            .count()
+    };
+    assert_eq!(searched(&session.requests()), 1);
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(session.heard(), plain(&["two"]));
+    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    let _ = session.heard();
+    let _ = session.requests();
+    session.input(&command(UP));
+    let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
+    assert_eq!(heard, spoken(26..=30, "$ echo one"));
+    assert_eq!(searched(&session.requests()), 1);
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(session.heard(), plain(&["one"]));
+}
+
+#[test]
+fn a_press_makes_at_most_three_searches() {
+    // Four marks above the memory, the newest three's lines gone: the first
+    // press drops those three with a search each and says nothing; the
+    // next finds the oldest with one more.
+    let mut session = showing(30, 4, 100, "$ ");
+    let mut at_ms = 1000;
+    for name in ["a", "b", "c", "d"] {
+        at_ms = enter(&mut session, &format!("echo {name}"), "\r\n", at_ms);
+    }
+    session.write(&numbered(1..=20), at_ms);
+    session.write(
+        &format!("\x1b[2J\x1b[3J\x1b[H$ echo a\r\n\r\n{}$ ", numbered(1..=20)),
+        at_ms + 1000,
+    );
+    let _ = session.heard();
+    let _ = session.requests();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+    let needles: Vec<String> = session
+        .requests()
+        .into_iter()
+        .filter_map(|op| match op {
+            TextOp::TerminalFind { needle, .. } => Some(needle),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(needles, ["$ echo d", "$ echo c", "$ echo b"]);
+    session.input(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ echo a"]));
 }
 
 #[test]

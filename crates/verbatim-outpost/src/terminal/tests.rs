@@ -65,6 +65,7 @@ impl Watch {
             started_ms: at_ms,
             ended_ms: at_ms,
             waited,
+            read: 0,
             colours: None,
             caret: None,
         };
@@ -319,6 +320,7 @@ fn measure_conversion() {
             started_ms: 0,
             ended_ms: 0,
             waited: false,
+            read: 0,
             colours: None,
             caret: None,
         };

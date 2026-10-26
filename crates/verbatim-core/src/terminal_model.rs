@@ -61,9 +61,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalMatch,
-    TerminalScope, TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest,
-    TraceId,
+    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalScope,
+    TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest, TraceId,
 };
 use verbatim_text::terminal_reading::{
     ColourRun, KEY_WINDOW_MS, Key, KeyKind, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
@@ -183,10 +182,19 @@ pub(crate) struct TerminalModel {
     history_asked: Option<(QueryId, u32, bool)>,
     /// The history reads that came for the review answer in progress.
     pub(crate) history: Vec<HistoryRead>,
-    /// The search asked for by the command mark move in progress.
-    find_asked: Option<(QueryId, TextOp)>,
-    /// The searches that came for the command mark move in progress.
-    pub(crate) found: Vec<(TextOp, Vec<TerminalMatch>)>,
+    /// The search asked for by the command mark move in progress, and the
+    /// hash of the line it seeks.
+    find_asked: Option<(QueryId, u64)>,
+    /// The search that came for the command mark move in progress and has
+    /// not yet been used, its rows placed when it came.
+    pub(crate) found: Option<review::Placed>,
+    /// How many searches the command mark move in progress has asked for
+    /// ([`review::MARK_SEARCHES`]).
+    pub(crate) mark_searches: u32,
+    /// The number of the read the memory last took
+    /// ([`verbatim_model::TerminalSnapshot::read`]), by which a search's
+    /// answer is placed; 0 before any.
+    pub(crate) read: u64,
     /// The lines of the command marks set, newest last, at most twice
     /// [`MARKS`], for the marks the memory and the aside screen keep.
     pub(crate) mark_lines: VecDeque<MarkLine>,
@@ -246,7 +254,9 @@ impl TerminalModel {
             history_asked: None,
             history: Vec::new(),
             find_asked: None,
-            found: Vec::new(),
+            found: None,
+            mark_searches: 0,
+            read: 0,
             mark_lines: VecDeque::new(),
             pending_mark: None,
             places: VecDeque::new(),
@@ -597,6 +607,7 @@ pub fn snapshot_of(
         started_ms: read.at_ms,
         ended_ms: read.at_ms,
         waited,
+        read: 0,
         colours: colours.map(|rows| {
             rows.iter()
                 .map(|runs| {
@@ -736,6 +747,7 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
         });
         if !outcome.blank {
             model.settle_mark(&outcome.rows, at_ms);
+            model.read = snapshot.read;
         }
         let width = u32::try_from(outcome.width).unwrap_or(u32::MAX);
         if model.told != Some((height, width)) && !outcome.blank {
@@ -941,9 +953,11 @@ pub(crate) fn reply(
             text,
             rows_above,
         });
-    } else if let Some((_, op)) = model.find_asked.take() {
+    } else if let Some((_, hash)) = model.find_asked.take() {
         match reply {
-            TextReply::TerminalFound(matches) => model.found.push((op, matches)),
+            TextReply::TerminalFound { matches, read } => {
+                model.found = Some(review::placed(model, hash, &matches, read));
+            }
             // A search that never ran, as when the terminal lost the focus:
             // only a search that ran drops a mark, so the move is abandoned,
             // saying nothing, and the marks are kept.
@@ -961,7 +975,8 @@ fn abandon_mark(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Eff
     let Some(model) = model_mut(state, node) else {
         return Vec::new();
     };
-    model.found.clear();
+    model.found = None;
+    model.mark_searches = 0;
     let Some(Waiting {
         trace,
         review: Review::Mark { query_id, .. },
@@ -1155,7 +1170,7 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
         };
         let Some(waiting) = model.reviews.front().cloned() else {
             model.history.clear();
-            model.found.clear();
+            model.found = None;
             break;
         };
         let trace = waiting.trace.unwrap_or(trace_id);
@@ -1178,7 +1193,8 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
                     Ok(reply) => {
                         if let Some(model) = model_mut(state, node) {
                             model.reviews.pop_front();
-                            model.found.clear();
+                            model.found = None;
+                            model.mark_searches = 0;
                         }
                         // No mark that way: the line move says nothing.
                         let reply = reply.unwrap_or(TextReply::NoText);
@@ -1186,10 +1202,10 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
                         effects.extend(queue_only(state, caused, trace));
                         continue;
                     }
-                    Err(op) => {
-                        let (asked, effect) = request(state, node, op.clone());
+                    Err(search) => {
+                        let (asked, effect) = request(state, node, search.op);
                         if let Some(model) = model_mut(state, node) {
-                            model.find_asked = Some((asked, op));
+                            model.find_asked = Some((asked, search.hash));
                         }
                         effects.push(effect);
                         break;

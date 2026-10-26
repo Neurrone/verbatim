@@ -2803,7 +2803,12 @@ it.
   looked for when Core asks (`TextOp::TerminalFind`), by
   `terminal::find` with `verbatim_uia_rops::terminal_find`, answered
   `TextReply::TerminalFound` with each match's rows above that start and
-  its text; Core decides which match, if any, is the mark's. A request
+  its text, and the number of the read whose start they are counted
+  from; Core decides which match, if any, is the mark's. The outpost
+  numbers each read (`TerminalSnapshot::read`) and keeps the number of
+  the read whose start it kept; when that read is not sent, being
+  identical to the last one sent, the last one sent's number stands for
+  it, since its start is the same. A request
   naming an anchor of the outpost's own, such as a caret report's, is
   answered as any text's.
 - A read waiting in the outbound queue is never merged with a newer one:

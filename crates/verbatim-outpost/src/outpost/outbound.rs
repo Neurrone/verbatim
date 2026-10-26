@@ -545,6 +545,7 @@ mod tests {
                 started_ms: 0,
                 ended_ms: 0,
                 waited: false,
+                read: 0,
                 colours: coloured.then(|| {
                     vec![vec![TerminalColourRun {
                         column: 0,

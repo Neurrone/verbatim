@@ -40,6 +40,14 @@ use reading::Reading;
 pub struct Terminal {
     /// Where the next read starts ([`Snapshot::next_start`]).
     start: Option<AgileReference<IUIAutomationTextRange>>,
+    /// The reads taken, which number each ([`TerminalSnapshot::read`]).
+    reads: u64,
+    /// The read whose start is kept, as Core knows it: the number of the
+    /// last read sent when the read that set it was not sent, being
+    /// identical to it, so its start is the same; 0 before any.
+    start_read: u64,
+    /// The number of the last read sent.
+    sent_read: u64,
     /// Whether the screen of the last read whose start was kept showed
     /// text ("A read with no text").
     showed_text: bool,
@@ -145,9 +153,13 @@ impl Terminal {
     pub fn sends(&mut self, snapshot: &TerminalSnapshot) -> bool {
         let hash = fingerprint(snapshot);
         if !snapshot.waited && self.sent == Some(hash) {
+            if self.start_read == snapshot.read {
+                self.start_read = self.sent_read;
+            }
             return false;
         }
         self.sent = Some(hash);
+        self.sent_read = snapshot.read;
         true
     }
 
@@ -163,11 +175,12 @@ impl Terminal {
     /// as the last sent.
     pub fn answered(&mut self, snapshot: &TerminalSnapshot) {
         self.sent = Some(fingerprint(snapshot));
+        self.sent_read = snapshot.read;
     }
 }
 
-/// A hash of every field of `snapshot` but when it began and ended and the
-/// caret read with it.
+/// A hash of every field of `snapshot` but when it began and ended, its
+/// number, and the caret read with it.
 fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
     let TerminalSnapshot {
         text,
@@ -184,6 +197,7 @@ fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
         started_ms: _,
         ended_ms: _,
         waited,
+        read: _,
         colours,
         caret: _,
     } = snapshot;
@@ -350,6 +364,7 @@ pub fn snapshot_of(snapshot: &Snapshot, started_ms: u64, waited: bool) -> Termin
         started_ms,
         ended_ms: started_ms,
         waited,
+        read: 0,
         colours: snapshot.colours.as_ref().map(|rows| {
             rows.iter()
                 .map(|runs| {
@@ -490,12 +505,15 @@ pub fn read<'a>(
     );
     let mut wire = snapshot_of(&snapshot, started_ms, waited);
     wire.ended_ms = (crate::protocol::now_us() / 1_000).max(started_ms);
+    terminal.reads += 1;
+    wire.read = terminal.reads;
     let shows = verbatim_text::terminal_rows::shows_text(&wire.screen.text);
     if shows || !terminal.showed_text {
         terminal.start = snapshot
             .next_start
             .take()
             .and_then(|range| AgileReference::new(&range).ok());
+        terminal.start_read = terminal.reads;
         terminal.showed_text = shows;
     }
     terminal.read_started_ms = started_ms;
@@ -547,12 +565,24 @@ pub fn history(
     Ok((String::from_utf16_lossy(&snapshot.text), snapshot.above))
 }
 
+/// What [`find`] found: the matches, the read whose start their rows are
+/// counted from ([`verbatim_model::TerminalSnapshot::read`]), and which
+/// path answered.
+pub struct Found {
+    /// The matches.
+    pub matches: Vec<verbatim_model::TerminalMatch>,
+    /// The read whose start the rows are counted from; 0 before any.
+    pub read: u64,
+    /// Which implementation answered.
+    pub path: Path,
+}
+
 /// Searches `terminal`'s text for a command mark's line, as Core asks
-/// ([`verbatim_model::TextOp::TerminalFind`]): `needle` from the row
-/// `from` rows above where its next read starts, backward or forward,
-/// reading `rows` rows from each match, in one remote operation. No
-/// matches before the terminal's first read, which places that start.
-/// Core decides which match, if any, is the mark's line.
+/// ([`verbatim_model::TextOp::TerminalFind`]): `needle` outward from the
+/// row `from` rows above where its next read starts, reading `rows` rows
+/// from each match, in one remote operation. No matches before the
+/// terminal's first read, which places that start. Core decides which
+/// match, if any, is the mark's line.
 ///
 /// # Errors
 ///
@@ -561,11 +591,15 @@ pub fn find(
     uia: &Uia,
     (element, pattern): (&IUIAutomationElement, &IUIAutomationTextPattern),
     terminal: &Terminal,
-    (needle, from, backward, rows): (&str, i32, bool, u32),
+    (needle, from, rows): (&str, i32, u32),
     remote: bool,
-) -> Result<Vec<verbatim_model::TerminalMatch>, TextError> {
+) -> Result<Found, TextError> {
     let Some(start) = terminal.start_range() else {
-        return Ok(Vec::new());
+        return Ok(Found {
+            matches: Vec::new(),
+            read: terminal.start_read,
+            path: if remote { Path::Remote } else { Path::Classic },
+        });
     };
     let query = FindQuery {
         element,
@@ -573,23 +607,26 @@ pub fn find(
         start: &start,
         needle,
         from,
-        backward,
         rows,
     };
-    let (found, _) = terminal_find(uia, &query, remote).map_err(|error| {
+    let (found, path) = terminal_find(uia, &query, remote).map_err(|error| {
         if is_gone(&error) {
             TextError::Gone
         } else {
             TextError::Failed(error.to_string())
         }
     })?;
-    Ok(found
-        .into_iter()
-        .map(|found| verbatim_model::TerminalMatch {
-            above: found.above,
-            text: found.text,
-        })
-        .collect())
+    Ok(Found {
+        matches: found
+            .into_iter()
+            .map(|found| verbatim_model::TerminalMatch {
+                above: found.above,
+                text: found.text,
+            })
+            .collect(),
+        read: terminal.start_read,
+        path,
+    })
 }
 
 #[cfg(test)]

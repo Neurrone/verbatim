@@ -662,21 +662,19 @@ pub enum TextOp {
         whole: bool,
     },
     /// Search the focused terminal's text for `needle`, a row's text with
-    /// no line break, from the row `from` rows above where the next read
-    /// starts (negative below it): backward over the rows above that row,
-    /// or forward over it and the rows below, nearest first, at most 20
-    /// matches that start a row, reading `rows` rows of text from each,
+    /// no line break, outward from the row `from` rows above where the next
+    /// read starts (negative below it): alternately the next match at or
+    /// below that row and the next above it, that row's own first, at most
+    /// 20 matches that start a row, reading `rows` rows of text from each,
     /// over a bounded number of `FindText` calls.
     /// For a command mark above the rows Core keeps ("Features and
-    /// settings"). A search that fails ends with the matches it found.
-    /// Answered [`TextReply::TerminalFound`].
+    /// settings"). A failing search in one direction finds nothing more
+    /// there. Answered [`TextReply::TerminalFound`].
     TerminalFind {
         /// The text sought.
         needle: String,
         /// The row the search starts at, in rows above the start.
         from: i32,
-        /// Whether to search toward the document's start.
-        backward: bool,
         /// How many rows to read from each match.
         rows: u32,
     },
@@ -775,8 +773,15 @@ pub enum TextReply {
         /// Rows above the start.
         above: u32,
     },
-    /// The answer to [`TextOp::TerminalFind`]: the matches, nearest first.
-    TerminalFound(Vec<crate::TerminalMatch>),
+    /// The answer to [`TextOp::TerminalFind`].
+    TerminalFound {
+        /// The matches, alternately below and above the row sought from,
+        /// nearest first in each direction.
+        matches: Vec<crate::TerminalMatch>,
+        /// The read whose start the matches' rows are counted from
+        /// ([`crate::TerminalSnapshot::read`]); 0 before the first.
+        read: u64,
+    },
     /// The answer to [`TextOp::Location`]: screen coordinates of the point,
     /// in pixels.
     Location {

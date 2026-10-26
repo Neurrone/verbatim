@@ -584,10 +584,11 @@ regardless costs as much and an ordinary screen would cost it too.
 
 `terminal_find(uia, query, remote)` (`terminal_find_remote` and
 `terminal_find_classic` behind it) looks for a command mark's line by
-its first row's text (`FindQuery`): from the row `from` rows above where
-the next read starts, backward over the rows above it or forward from
-it, nearest first, at most `FIND_MATCHES` (20) matches that start a
-row, the console host's bound, over at most `FIND_CALLS` (100)
+its first row's text (`FindQuery`): outward from the row `from` rows
+above where the next read starts, alternately the next match at or below
+it and the next above it, that row's own first, at most `FIND_MATCHES`
+(20) matches that start a row, the console host's bound, over at most
+`FIND_CALLS` (100)
 `FindText` calls, hits within rows included, so that a needle found
 mostly within rows ends rather than walking the whole history ("A
 terminal's upward search" in `docs/performance.md`).
@@ -595,9 +596,10 @@ Each match that starts a row gives a `FindMatch`: its rows above that
 start, counted by moving its row and the start to the document's end,
 and the text of `rows` rows from it, for the caller to check by its
 line's hash. A failing call on a match, as on Windows Terminal's
-not-found range, ends the search with what it found. The program is
-built for each search, as the text sought is part of it, about 15
-instructions a `FindText` call: 1,535 executed at the call bound,
+not-found range, means nothing more is found in that direction, and the
+search goes on in the other. The program is built for each search, as
+the text sought is part of it, about 30 instructions a `FindText` call:
+3,065 executed at the call bound with 19 matches taken, its worst case,
 measured against mockapp on 2026-10-26.
 
 ## Layer 3: the caret read

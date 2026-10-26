@@ -989,6 +989,38 @@ fn command_marks_are_capped_the_oldest_dropped_first() {
 }
 
 #[test]
+fn the_newest_mark_is_followed_until_dropped() {
+    let mut watch = Watch::console(10, 3, 2_000);
+    watch.write("$ one");
+    let set = watch.memory.add_mark(0);
+    assert_eq!(watch.memory.newest_mark(), set);
+    // Followed across a read, as every mark is.
+    for line in 1..=20 {
+        watch.write(&format!("\r\nl{line}"));
+    }
+    let moved = watch.memory.marks()[0];
+    assert_ne!(Some(moved), set);
+    assert_eq!(watch.memory.newest_mark(), Some(moved));
+    // Dropped.
+    watch.memory.replace_mark(moved, None);
+    assert_eq!(watch.memory.newest_mark(), None);
+    // The cap evicts the oldest mark, never the one just set.
+    let last = watch.memory.rows().len() - 1;
+    for number in 1..=super::MARKS {
+        let mark = watch.memory.add_mark(last).expect("the row is kept");
+        let above = Anchor {
+            row: -isize::try_from(number).expect("a count"),
+            ..mark
+        };
+        watch.memory.replace_mark(mark, Some(above));
+    }
+    let newest = watch.memory.add_mark(last);
+    assert_eq!(watch.memory.marks().len(), super::MARKS);
+    assert_eq!(watch.memory.newest_mark(), newest);
+    assert_eq!(watch.memory.marks().last().copied(), newest);
+}
+
+#[test]
 fn a_command_mark_survives_a_full_screen_program() {
     // A mark is set aside with the shell's screen while a full-screen
     // program shows its own, and comes back at its place, counted from the

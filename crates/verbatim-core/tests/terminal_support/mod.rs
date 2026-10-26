@@ -73,6 +73,13 @@ pub struct Outpost {
     width: usize,
     /// Where the next read starts.
     start: Option<Range>,
+    /// The reads taken, which number each.
+    reads: u64,
+    /// The read whose start is kept, as Core knows it: the last read sent
+    /// when the read that set it was not sent, being identical to it.
+    start_read: u64,
+    /// The number of the last read sent.
+    sent_read: u64,
     /// The screen's height Core told, 0 before it did.
     height: u32,
     /// Whether the last read kept for its start showed text.
@@ -96,6 +103,9 @@ impl Outpost {
             sim: Terminal::new(flavor, width, height, history),
             width,
             start: None,
+            reads: 0,
+            start_read: 0,
+            sent_read: 0,
             height: 0,
             showed_text: false,
             colours_until: 0,
@@ -106,12 +116,13 @@ impl Outpost {
         }
     }
 
-    /// A snapshot as compared with the last sent: without its times and
-    /// caret.
+    /// A snapshot as compared with the last sent: without its times, its
+    /// number and its caret.
     fn compared(snapshot: &TerminalSnapshot) -> TerminalSnapshot {
         TerminalSnapshot {
             started_ms: 0,
             ended_ms: 0,
+            read: 0,
             caret: None,
             ..snapshot.clone()
         }
@@ -121,15 +132,20 @@ impl Outpost {
     pub fn sends(&mut self, snapshot: &TerminalSnapshot) -> bool {
         let compared = Self::compared(snapshot);
         if !snapshot.waited && self.sent.as_ref() == Some(&compared) {
+            if self.start_read == snapshot.read {
+                self.start_read = self.sent_read;
+            }
             return false;
         }
         self.sent = Some(compared);
+        self.sent_read = snapshot.read;
         true
     }
 
     /// Notes an answer, which is always sent, as the last sent.
     pub fn answered(&mut self, snapshot: &TerminalSnapshot) {
         self.sent = Some(Self::compared(snapshot));
+        self.sent_read = snapshot.read;
     }
 
     /// The read the rules take of a read of `scope` begun at `at_ms`, and
@@ -176,29 +192,27 @@ impl Outpost {
         // A read whose screen shows no text where the last kept read's did
         // leaves where the next read starts ("A read with no text").
         let shows = shows_text(&read.screen);
+        self.reads += 1;
         if shows || !self.showed_text {
             self.start = Some(snapshot.next_start);
+            self.start_read = self.reads;
             self.showed_text = shows;
         }
         let colours = (self.colours_now || at_ms <= self.colours_until).then(|| self.colours());
         self.colours_now = false;
         self.read_ended = Some((at_ms, colours.is_some()));
-        let wire = snapshot_of(&read, false, colours.as_deref());
+        let mut wire = snapshot_of(&read, false, colours.as_deref());
+        wire.read = self.reads;
         (read, wire)
     }
 
     /// The search the outpost's find program makes
     /// (`verbatim_uia_rops::terminal_find`): the rows starting with
-    /// `needle`, from the row `from` rows above where the next read starts,
-    /// backward over the rows above it or forward from it, nearest first,
-    /// at most 20, each with `rows` rows of text read from it.
-    fn find(
-        &self,
-        needle: &str,
-        from: i32,
-        backward: bool,
-        rows: u32,
-    ) -> Vec<verbatim_model::TerminalMatch> {
+    /// `needle`, outward from the row `from` rows above where the next read
+    /// starts, alternately the next at or below it and the next above it,
+    /// at most 20, each with `rows` rows of text read from it, and the read
+    /// whose start they are counted from.
+    fn find(&self, needle: &str, from: i32, rows: u32) -> TextReply {
         // The document from its start, and how many rows lie above the
         // start, read by moving that far up from it.
         let query = Query {
@@ -221,25 +235,39 @@ impl Outpost {
             }
             text
         };
-        let candidates: Vec<usize> = if backward {
-            (0..all.len())
-                .rev()
-                .filter(|&row| i64::try_from(row).expect("rows") < boundary)
-                .collect()
-        } else {
-            (0..all.len())
-                .filter(|&row| i64::try_from(row).expect("rows") >= boundary)
-                .collect()
-        };
-        candidates
-            .into_iter()
-            .filter(|&row| all[row].text.starts_with(needle))
-            .take(20)
-            .map(|row| verbatim_model::TerminalMatch {
-                above: i32::try_from(start - i64::try_from(row).expect("rows")).expect("rows"),
-                text: text_of(row),
-            })
-            .collect()
+        let at = |row: &usize| i64::try_from(*row).expect("rows");
+        let starts = |row: &usize| all[*row].text.starts_with(needle);
+        let mut below = (0..all.len())
+            .filter(|row| at(row) >= boundary)
+            .filter(starts);
+        let mut above = (0..all.len())
+            .rev()
+            .filter(|row| at(row) < boundary)
+            .filter(starts);
+        let mut taken = Vec::new();
+        let mut going_down = true;
+        while taken.len() < 20 {
+            let next = if going_down {
+                below.next().or_else(|| above.next())
+            } else {
+                above.next().or_else(|| below.next())
+            };
+            let Some(row) = next else {
+                break;
+            };
+            taken.push(row);
+            going_down = !going_down;
+        }
+        TextReply::TerminalFound {
+            matches: taken
+                .into_iter()
+                .map(|row| verbatim_model::TerminalMatch {
+                    above: i32::try_from(start - at(&row)).expect("rows"),
+                    text: text_of(row),
+                })
+                .collect(),
+            read: self.start_read,
+        }
     }
 
     /// The screen's colours as the read program gives them.
@@ -282,12 +310,7 @@ impl Outpost {
                     above: snapshot.above,
                 }
             }
-            TextOp::TerminalFind {
-                needle,
-                from,
-                backward,
-                rows,
-            } => TextReply::TerminalFound(self.find(needle, *from, *backward, *rows)),
+            TextOp::TerminalFind { needle, from, rows } => self.find(needle, *from, *rows),
             TextOp::TerminalShape { height, .. } => {
                 self.height = *height;
                 TextReply::Done
@@ -367,6 +390,11 @@ pub struct Session {
     /// Whether the outpost answers Core's searches unanswered, as its
     /// worker does when the terminal lost the focus before searching.
     pub unanswered_finds: bool,
+    /// Output the terminal prints before each search Core asks for, the
+    /// next taken for each: written, and read by a live read sent to Core,
+    /// at its time, before the outpost searches, as when a program keeps
+    /// printing while a search is on its way.
+    pub output_before_finds: VecDeque<(String, u64)>,
     held_colours: VecDeque<(QueryId, TextOp)>,
     /// Requests not yet answered, in the order Core made them: the outpost
     /// answers each once Core's step is done, in order.
@@ -401,6 +429,7 @@ impl Session {
             caret_read: None,
             hold_colours: false,
             unanswered_finds: false,
+            output_before_finds: VecDeque::new(),
             held_colours: VecDeque::new(),
             pending: VecDeque::new(),
             queued: VecDeque::new(),
@@ -440,6 +469,11 @@ impl Session {
     /// The outpost's answer to `op`, and the read it took at once for it,
     /// if any, sent as a live read.
     fn answer(&mut self, query_id: QueryId, op: &TextOp) {
+        if matches!(op, TextOp::TerminalFind { .. })
+            && let Some((output, at_ms)) = self.output_before_finds.pop_front()
+        {
+            self.write(&output, at_ms);
+        }
         if self.unanswered_finds && matches!(op, TextOp::TerminalFind { .. }) {
             self.reply(query_id, TextReply::Unanswered);
         } else if let Some(reply) = self.outpost.answer(op, self.at_ms) {

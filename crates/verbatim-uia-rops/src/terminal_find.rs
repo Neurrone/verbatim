@@ -1,24 +1,27 @@
 //! A command mark's line sought in a terminal's history by its text
 //! (`docs/design/terminal-model.md`, "Features and settings", moving by
-//! command): `FindText` for the line's first row, from a boundary row
-//! counted from where the next read starts, backward to the document's
-//! start or forward to its end, nearest first. Each match that starts a row
-//! is answered with how many rows above that start it lies and the text of
-//! as many rows from it as the mark's line holds, for the caller to verify
-//! by its line's hash, since the console host's `FindText` also matches a
-//! longer row with the same start ("flood line 14" in "flood line 140"). At
-//! most [`FIND_MATCHES`] matches that start a row are taken, the bound the
-//! console host's search needed, over at most [`FIND_CALLS`] `FindText`
-//! calls, so that a needle found mostly within rows cannot walk the whole
-//! history (`docs/performance.md`, "A terminal's upward search").
+//! command): `FindText` for the line's first row, outward from the mark's
+//! own row, counted from where the next read starts: alternately the next
+//! match at or below that row and the next above it, the row itself first,
+//! so that the mark's own line is the first match whenever it is still
+//! there. Each match that starts a row is answered with how many rows above
+//! that start it lies and the text of as many rows from it as the mark's
+//! line holds, for the caller to verify by its line's hash, since the
+//! console host's `FindText` also matches a longer row with the same start
+//! ("flood line 14" in "flood line 140"). At most [`FIND_MATCHES`] matches
+//! that start a row are taken, the bound the console host's search needed,
+//! over at most [`FIND_CALLS`] `FindText` calls, so that a needle found
+//! mostly within rows cannot walk the whole history (`docs/performance.md`,
+//! "A terminal's upward search").
 //!
 //! A `FindText` that fails, or whose range's calls fail, as Windows
 //! Terminal's not-found range does (a range rather than null, whose
 //! `GetText`, `CompareEndpoints` and `MoveEndpointByRange` fail with
-//! `E_FAIL` or `E_INVALIDARG`; `docs/roadmap.md`, 2026-10-24), ends the
-//! search with what it found: not found, never an error. A remote program
-//! does it in one round trip and a classic implementation call by call;
-//! [`terminal_find`] is the one function callers use.
+//! `E_FAIL` or `E_INVALIDARG`; `docs/roadmap.md`, 2026-10-24), means not
+//! found in that direction, never an error: the search goes on in the
+//! other direction only. A remote program does it in one round trip and a
+//! classic implementation call by call; [`terminal_find`] is the one
+//! function callers use.
 
 use windows::Win32::UI::Accessibility::{
     IUIAutomationElement, IUIAutomationTextPattern, IUIAutomationTextRange, TextUnit_Line,
@@ -61,11 +64,10 @@ pub struct FindQuery<'a> {
     /// The text sought: a row's text, with no line break.
     pub needle: &'a str,
     /// The row the search starts at, counted in rows above `start`
-    /// (negative below it): backward, the search covers the rows above it;
-    /// forward, that row and the rows below it.
+    /// (negative below it): it works outward from that row, alternately
+    /// the next match at or below it and the next above it, the row's own
+    /// match first.
     pub from: i32,
-    /// Whether to search backward, toward the document's start.
-    pub backward: bool,
     /// How many rows of text to read from each match's row.
     pub rows: u32,
 }
@@ -81,12 +83,12 @@ pub struct FindMatch {
     pub text: String,
 }
 
-/// The matches of `query` that start a row, nearest first in the search's
-/// direction, at most [`FIND_MATCHES`] of them over at most [`FIND_CALLS`]
-/// `FindText` calls: the remote program when `remote` is true, falling back
-/// to the classic implementation for this call when the program fails, and
-/// the classic implementation alone when `remote` is false. Says which path
-/// answered.
+/// The matches of `query` that start a row, outward from its row,
+/// alternately the next at or below it and the next above it, at most
+/// [`FIND_MATCHES`] of them over at most [`FIND_CALLS`] `FindText` calls:
+/// the remote program when `remote` is true, falling back to the classic
+/// implementation for this call when the program fails, and the classic
+/// implementation alone when `remote` is false. Says which path answered.
 ///
 /// # Errors
 ///
@@ -132,6 +134,97 @@ pub fn terminal_find_remote(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<Fin
         .collect())
 }
 
+/// One direction of the search program: the span it searches, whether
+/// up, toward the document's start, and whether it may still find a match.
+#[derive(Clone, Copy)]
+struct Direction {
+    span: Reg<kind::TextRange>,
+    up: bool,
+    backward: Reg<kind::Bool>,
+    open: Reg<kind::Bool>,
+}
+
+/// The registers each `FindText` call of the search program uses.
+#[derive(Clone, Copy)]
+struct Search {
+    start_end: Reg<kind::Int>,
+    end_end: Reg<kind::Int>,
+    line: Reg<kind::Int>,
+    all: Reg<kind::Int>,
+    zero: Reg<kind::Int>,
+    one: Reg<kind::Int>,
+    far: Reg<kind::Int>,
+    closed: Reg<kind::Bool>,
+    needle: Reg<kind::Str>,
+    ignore_case: Reg<kind::Bool>,
+    rows: Reg<kind::Int>,
+    start_to_end: Reg<kind::Int>,
+    aboves: Reg<kind::Array>,
+    texts: Reg<kind::Array>,
+    taken: Reg<kind::Int>,
+    going_down: Reg<kind::Bool>,
+}
+
+/// A copy of `range` collapsed to its start.
+fn collapsed(
+    b: &mut Builder,
+    range: Reg<kind::TextRange>,
+    (start_end, end_end): (Reg<kind::Int>, Reg<kind::Int>),
+) -> Reg<kind::TextRange> {
+    let copy = b.text_range_clone(range);
+    b.text_range_move_endpoint_by_range(copy, end_end, copy, start_end);
+    copy
+}
+
+/// One `FindText` call in `way`: a match that starts a row is taken and
+/// the other direction searched next; a hit within a row is passed over;
+/// none, or a failure, closes this direction and turns to the other.
+fn find_once(b: &mut Builder, s: Search, way: Direction) {
+    b.try_catch(
+        |b| {
+            let hit = b.text_range_find_text(way.span, s.needle, way.backward, s.ignore_case);
+            let missing = b.is_null(hit);
+            b.if_else(
+                missing,
+                |b| {
+                    b.set(way.open, s.closed);
+                    b.not_assign(s.going_down);
+                },
+                |b| {
+                    let row = b.text_range_clone(hit);
+                    b.text_range_expand_to_enclosing_unit(row, s.line);
+                    let order = b.text_range_compare_endpoints(row, s.start_end, hit, s.start_end);
+                    // The next search in this direction, past this hit.
+                    if way.up {
+                        b.text_range_move_endpoint_by_range(way.span, s.end_end, hit, s.start_end);
+                    } else {
+                        b.text_range_move_endpoint_by_range(way.span, s.start_end, hit, s.end_end);
+                    }
+                    let starts = b.equal(order, s.zero);
+                    b.if_(starts, |b| {
+                        let from = collapsed(b, row, (s.start_end, s.end_end));
+                        let walker = b.text_range_clone(from);
+                        let to_end = b.text_range_move(walker, s.line, s.far);
+                        let above = b.subtract(to_end, s.start_to_end);
+                        let _ = b.text_range_move_endpoint_by_unit(from, s.end_end, s.line, s.rows);
+                        let text = b.text_range_get_text(from, s.all);
+                        b.array_append(s.aboves, above);
+                        b.array_append(s.texts, text);
+                        b.add_assign(s.taken, s.one);
+                        b.not_assign(s.going_down);
+                    });
+                },
+            );
+        },
+        // Not found in this direction, Windows Terminal's not-found range
+        // included: the other goes on.
+        |b, _| {
+            b.set(way.open, s.closed);
+            b.not_assign(s.going_down);
+        },
+    );
+}
+
 /// The search program: two arrays, each match's rows above the start and
 /// its text.
 fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<kind::Array>) {
@@ -140,80 +233,80 @@ fn build_find(b: &mut Builder, query: &FindQuery<'_>) -> (Reg<kind::Array>, Reg<
     let start_end = b.int(0);
     let end_end = b.int(1);
     let line = b.int(TextUnit_Line.0);
-    let all = b.int(-1);
-    let zero = b.int(0);
-    let one = b.int(1);
     let far = b.int(FAR);
-    let collapsed = |b: &mut Builder, range: Reg<kind::TextRange>| {
-        let copy = b.text_range_clone(range);
-        b.text_range_move_endpoint_by_range(copy, end_end, copy, start_end);
-        copy
-    };
     let pattern = b.get_text_pattern(element, false);
     let document = b.text_pattern_get_document_range(pattern);
-    let start = collapsed(b, kept);
+    let start = collapsed(b, kept, (start_end, end_end));
     let boundary = b.text_range_clone(start);
     let back = b.int(-query.from);
     let _ = b.text_range_move(boundary, line, back);
-    let span = b.text_range_clone(document);
-    if query.backward {
-        b.text_range_move_endpoint_by_range(span, end_end, boundary, start_end);
-    } else {
-        b.text_range_move_endpoint_by_range(span, start_end, boundary, start_end);
-    }
+    let below = b.text_range_clone(document);
+    b.text_range_move_endpoint_by_range(below, start_end, boundary, start_end);
+    let above = b.text_range_clone(document);
+    b.text_range_move_endpoint_by_range(above, end_end, boundary, start_end);
     let walker = b.text_range_clone(start);
     let start_to_end = b.text_range_move(walker, line, far);
-    let needle = b.string(query.needle);
-    let backward = b.bool(query.backward);
-    let ignore_case = b.bool(false);
-    let rows = b.int(i32::try_from(query.rows.max(1)).unwrap_or(i32::MAX));
     let aboves = b.new_array();
-    let aboves = b.add_to_results(aboves);
     let texts = b.new_array();
-    let texts = b.add_to_results(texts);
+    let s = Search {
+        start_end,
+        end_end,
+        line,
+        all: b.int(-1),
+        zero: b.int(0),
+        one: b.int(1),
+        far,
+        closed: b.bool(false),
+        needle: b.string(query.needle),
+        ignore_case: b.bool(false),
+        rows: b.int(i32::try_from(query.rows.max(1)).unwrap_or(i32::MAX)),
+        start_to_end,
+        aboves: b.add_to_results(aboves),
+        texts: b.add_to_results(texts),
+        taken: b.new_int(0),
+        going_down: b.new_bool(true),
+    };
+    let (aboves, texts, taken, going_down, one) = (s.aboves, s.texts, s.taken, s.going_down, s.one);
     let calls = b.new_int(0);
     let most_calls = b.int(i32::try_from(FIND_CALLS).unwrap_or(i32::MAX));
-    let taken = b.new_int(0);
     let most = b.int(i32::try_from(FIND_MATCHES).unwrap_or(i32::MAX));
-    // A failure is not found: the search ends with what it has.
-    b.try_catch(
+    let down = Direction {
+        span: below,
+        up: false,
+        backward: b.bool(false),
+        open: b.new_bool(true),
+    };
+    let up = Direction {
+        span: above,
+        up: true,
+        backward: b.bool(true),
+        open: b.new_bool(true),
+    };
+    b.while_(
         |b| {
-            b.while_(
-                |b| {
-                    let more = b.compare(taken, most, Comparison::LessThan);
-                    let calls_left = b.compare(calls, most_calls, Comparison::LessThan);
-                    b.and(more, calls_left)
-                },
-                |b| {
-                    b.add_assign(calls, one);
-                    let hit = b.text_range_find_text(span, needle, backward, ignore_case);
-                    let missing = b.is_null(hit);
-                    b.if_(missing, Builder::break_loop);
-                    let row = b.text_range_clone(hit);
-                    b.text_range_expand_to_enclosing_unit(row, line);
-                    let order = b.text_range_compare_endpoints(row, start_end, hit, start_end);
-                    // The next search, past this match.
-                    if query.backward {
-                        b.text_range_move_endpoint_by_range(span, end_end, hit, start_end);
-                    } else {
-                        b.text_range_move_endpoint_by_range(span, start_end, hit, end_end);
-                    }
-                    let starts = b.equal(order, zero);
-                    b.if_(starts, |b| {
-                        let from = collapsed(b, row);
-                        let walker = b.text_range_clone(from);
-                        let to_end = b.text_range_move(walker, line, far);
-                        let above = b.subtract(to_end, start_to_end);
-                        let _ = b.text_range_move_endpoint_by_unit(from, end_end, line, rows);
-                        let text = b.text_range_get_text(from, all);
-                        b.array_append(aboves, above);
-                        b.array_append(texts, text);
-                        b.add_assign(taken, one);
-                    });
-                },
+            let more = b.compare(taken, most, Comparison::LessThan);
+            let calls_left = b.compare(calls, most_calls, Comparison::LessThan);
+            let open = b.or(down.open, up.open);
+            let going = b.and(more, calls_left);
+            b.and(going, open)
+        },
+        |b| {
+            // A closed direction gives way to the other, which the loop's
+            // condition says is open.
+            let down_closed = b.not(down.open);
+            let up_closed = b.not(up.open);
+            let going_up = b.not(going_down);
+            let stuck_down = b.and(going_down, down_closed);
+            let stuck_up = b.and(going_up, up_closed);
+            let stuck = b.or(stuck_down, stuck_up);
+            b.if_(stuck, |b| b.not_assign(going_down));
+            b.add_assign(calls, one);
+            b.if_else(
+                going_down,
+                |b| find_once(b, s, down),
+                |b| find_once(b, s, up),
             );
         },
-        |_, _| {},
     );
     (aboves, texts)
 }
@@ -230,24 +323,24 @@ pub fn terminal_find_classic(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<Fi
     start.move_endpoint_to(Endpoint::End, &start, Endpoint::Start)?;
     let boundary = start.clone_range()?;
     boundary.move_by(TextUnit_Line, -query.from)?;
-    let span = document.clone_range()?;
-    if query.backward {
-        span.move_endpoint_to(Endpoint::End, &boundary, Endpoint::Start)?;
-    } else {
-        span.move_endpoint_to(Endpoint::Start, &boundary, Endpoint::Start)?;
-    }
+    let below = document.clone_range()?;
+    below.move_endpoint_to(Endpoint::Start, &boundary, Endpoint::Start)?;
+    let above = document.clone_range()?;
+    above.move_endpoint_to(Endpoint::End, &boundary, Endpoint::Start)?;
     let start_to_end = start.clone_range()?.move_by(TextUnit_Line, FAR)?;
     let rows = i32::try_from(query.rows.max(1)).unwrap_or(i32::MAX);
     let mut found = Vec::new();
-    // One match: `None` when there are no more.
-    let next = || -> Result<Option<Option<FindMatch>>, Error> {
-        let Some(hit) = span.find_text(query.needle, query.backward)? else {
+    // One call in a direction: `None` when it has no more matches.
+    let next = |span: &IUIAutomationTextRange,
+                backward: bool|
+     -> Result<Option<Option<FindMatch>>, Error> {
+        let Some(hit) = span.find_text(query.needle, backward)? else {
             return Ok(None);
         };
         let row = hit.clone_range()?;
         row.expand(TextUnit_Line)?;
         let order = row.compare_endpoints(Endpoint::Start, &hit, Endpoint::Start)?;
-        if query.backward {
+        if backward {
             span.move_endpoint_to(Endpoint::End, &hit, Endpoint::Start)?;
         } else {
             span.move_endpoint_to(Endpoint::Start, &hit, Endpoint::End)?;
@@ -263,15 +356,27 @@ pub fn terminal_find_classic(_uia: &Uia, query: &FindQuery<'_>) -> Result<Vec<Fi
             text: String::from_utf16_lossy(&row.text(-1)?),
         })))
     };
+    let mut open = [true, true];
+    let mut going_down = true;
     for _ in 0..FIND_CALLS {
-        if found.len() >= FIND_MATCHES {
+        if found.len() >= FIND_MATCHES || open == [false, false] {
             break;
         }
-        // A failure is not found: the search ends with what it has.
-        match next() {
-            Ok(Some(Some(found_one))) => found.push(found_one),
+        if !open[usize::from(!going_down)] {
+            going_down = !going_down;
+        }
+        let (span, way) = if going_down { (&below, 0) } else { (&above, 1) };
+        // A failure is not found in this direction: the other goes on.
+        match next(span, !going_down) {
+            Ok(Some(Some(found_one))) => {
+                found.push(found_one);
+                going_down = !going_down;
+            }
             Ok(Some(None)) => {}
-            Ok(None) | Err(_) => break,
+            Ok(None) | Err(_) => {
+                open[way] = false;
+                going_down = !going_down;
+            }
         }
     }
     Ok(found)
