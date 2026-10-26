@@ -20,6 +20,7 @@ All documentation, comments, and commit messages in this repo must read well wit
 - No ASCII-art diagrams, box drawings, or arrow chains.
 - Prefer prose and lists over pipe tables.
 - Documents describe the present. When a mechanism changes, replace its description rather than appending a dated note or keeping the old text beside the new; history lives in git and the commit messages. A decision of record keeps its date and an amended-on line, but one current statement. A rule that exists because something went wrong keeps one sentence of why, not the narrative. A superseded design record is archived or deleted, never kept in place with a banner.
+- Design documents state the current model, its rules each with a brief reason, its limitations, and the important performance figures such as latency and memory; evidence lives in `experiments/` and history in git, so that a document stays short enough to be read whole.
 - Reports to Dickson define any invented term on first use or avoid it, lead with the decision he needs to make, and keep status updates short, because in past sessions a third of his messages asked what a term meant.
 
 ## Standing rules
@@ -40,6 +41,10 @@ These hold for every session and every subagent; a subagent brief points here ra
 - Do not stop while work in scope remains; record a question for Dickson and continue with everything it does not block, because a turn that ends on a question idles until he reads it.
 - Keep ported NVDA code in the Windows-specific crates and write the platform-neutral crates from the parity docs (see "NVDA provenance"), so that the platform-neutral tier's licensing does not depend on NVDA's.
 - At most two subagents build at once on Dickson's machine, each in its own target directory, because more exhausts its disk and memory.
+- Settle a design before building on it, including where each part runs and the exact speech expected; while a design study or decision is open, build nothing that depends on it.
+- A subagent that finds its brief's design cannot work, or that wants to do anything beyond its brief, stops and reports instead of improvising, and the parent never commits such a choice for later acceptance, because improvised choices committed as "pending" each cost a review and often a reversal.
+- Builder subagents end at unit tests and `cargo xtask ci`; the parent runs the end-to-end scenarios, one batch at a time from one background script, because agents that waited on the desktop with a large context spent hours polling and fought over it.
+- Split a step that would take a subagent more than about a hundred tool calls into steps handed over by a short written note, because a subagent's cost grows with its length times its context.
 
 ## NVDA provenance
 
