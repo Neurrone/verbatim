@@ -79,14 +79,14 @@ pub enum GuiEvent {
     /// how to shut down and then sends [`GuiCommand::Shutdown`] back.
     QuitRequested,
     /// The tray icon or taskbar button with this name, chosen in the list
-    /// dialog, was not there to click when the click was made, so nothing
-    /// was clicked; the app says so.
+    /// dialog, was not there to click when the click was made, or had
+    /// gone off the screen since the list was made, so nothing was
+    /// clicked; the app says so.
     ShellItemGone(String),
     /// The tray icon or taskbar button with this name, chosen in the list
     /// dialog, was there when the click was made but with no rectangle or
     /// an empty one, which the list cannot leave out since it reads no
-    /// rectangles, or off the screen since the list was made, so nothing
-    /// was clicked; the app says so.
+    /// rectangles, so nothing was clicked; the app says so.
     ShellItemUnclickable(String),
 }
 

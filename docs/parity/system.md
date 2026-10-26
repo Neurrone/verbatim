@@ -142,13 +142,13 @@ read the rectangle of each button with the chosen item's UIA runtime id or
 name, and Core takes the one with its runtime id, or else the only one
 with its name when no other item of the list had that name and the walk
 read every button, and clicks its center there, as the add-on clicks the
-center. An item that cannot be found this way is not clicked, and
-Verbatim says "is no longer there" after its name. The list leaves out a
+center. An item that cannot be found this way, or is found off the
+screen since the list was made, is not clicked, and Verbatim says "is no
+longer there" after its name (Dickson, 2026-10-26). The list leaves out a
 button off the screen, as the add-on does; one with no rectangle or an
 empty one, which the add-on also leaves out, is listed, since the list
 reads no rectangles, and is not clicked, and Verbatim says "cannot be
-clicked" after its name (Dickson, 2026-10-25), as it does for a listed
-item found off the screen since the list was made (`verbatim-gui`'s
+clicked" after its name (Dickson, 2026-10-25) (`verbatim-gui`'s
 `tray_list` and `shell_items`). The items are read by the outpost of File Explorer's
 taskbar process within its own application, where the add-on reads them
 from NVDA's process (`verbatim-outpost`'s `shell_items`).

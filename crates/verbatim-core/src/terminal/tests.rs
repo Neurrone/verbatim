@@ -791,6 +791,53 @@ fn a_cut_while_held_reads_to_the_end_without_speaking() {
 }
 
 #[test]
+fn a_read_a_cut_overtakes_speaks_only_its_answers_to_keys() {
+    // A key cuts speech while Core's request for what is new is out: the
+    // cancel overtakes it, and the outpost answers it first, from a read
+    // made before it took the cancel. That read's output was read before
+    // the cut and is not spoken; its answer to the key is.
+    let mut state = terminal();
+    let mut playback = Playback {
+        answer_late: true,
+        ..Playback::default()
+    };
+    playback.feed(&mut state, &output(lines(1..=30)));
+    playback.feed(&mut state, &output(lines(31..=40)));
+    for _ in 0..28 {
+        assert!(playback.play_one(&mut state));
+    }
+    playback.queued.clear();
+    playback.heard.clear();
+    playback.feed(&mut state, &Input::SpeechCancelled { at_ms: 0 });
+    assert_eq!(
+        playback.requests,
+        [
+            TextOp::TerminalHold,
+            TextOp::TerminalRead { hold: true },
+            TextOp::TerminalCancel
+        ]
+    );
+    let overtaken = playback
+        .late
+        .take()
+        .expect("the request the cancel overtook");
+    let read = TerminalSpeech {
+        items: vec![
+            TerminalItem::Output("line 41".to_owned()),
+            TerminalItem::Answer("> banana".to_owned()),
+        ],
+        followed: false,
+    };
+    playback.answer_with(&mut state, overtaken, read);
+    let cancel = playback
+        .late_cancel
+        .take()
+        .expect("the cancel, answered after");
+    playback.answer_with(&mut state, cancel, TerminalSpeech::default());
+    assert_eq!(playback.play_all(&mut state), ["> banana"]);
+}
+
+#[test]
 fn output_read_before_a_cut_is_not_spoken() {
     let mut state = terminal();
     let mut playback = Playback::default();

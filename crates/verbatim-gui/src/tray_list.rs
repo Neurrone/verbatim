@@ -48,13 +48,13 @@ use crate::shell_items::{
 /// Why an item chosen was not clicked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Missed {
-    /// It is not there, its name no longer tells it apart, or the request
-    /// failed.
+    /// It is not there, its name no longer tells it apart, the request
+    /// failed, or it has gone off the screen since the list, which leaves
+    /// off-screen buttons out, was made (Dickson, 2026-10-26).
     Gone,
     /// It is there but has no point to click: it has no rectangle or an
     /// empty one, which the list cannot leave out since it reads no
-    /// rectangles, or it has gone off the screen since the list, which
-    /// leaves off-screen buttons out, was made.
+    /// rectangles.
     Unclickable,
 }
 
@@ -185,6 +185,7 @@ fn target(
 ) -> Result<Rect, Missed> {
     let candidate = found
         .and_then(|found| refind(chosen, name_unique, found))
+        .filter(|candidate| !candidate.offscreen)
         .ok_or(Missed::Gone)?;
     usable_position(candidate).ok_or(Missed::Unclickable)
 }
@@ -273,14 +274,23 @@ mod tests {
     }
 
     #[test]
-    fn a_found_item_with_no_point_to_click_is_unclickable_not_gone() {
+    fn a_found_item_with_no_rectangle_or_an_empty_one_is_unclickable_not_gone() {
         assert_eq!(
             target(&chosen(), true, Some(&clock(false, None))),
             Err(Missed::Unclickable)
         );
+        let empty = Rect { width: 0, ..AT };
+        assert_eq!(
+            target(&chosen(), true, Some(&clock(false, Some(empty)))),
+            Err(Missed::Unclickable)
+        );
+    }
+
+    #[test]
+    fn a_found_item_gone_off_the_screen_is_no_longer_there() {
         assert_eq!(
             target(&chosen(), true, Some(&clock(true, Some(AT)))),
-            Err(Missed::Unclickable)
+            Err(Missed::Gone)
         );
     }
 
