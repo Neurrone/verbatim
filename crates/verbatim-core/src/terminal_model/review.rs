@@ -639,6 +639,225 @@ fn read_range(
     Ok(Plan::Reply(TextReply::Range { text, truncated }))
 }
 
+/// What became of one command mark a move looked at.
+enum Resolved {
+    /// Its line is on this row, whose first row's text is this.
+    Found(isize, Line),
+    /// Its line is nowhere: the mark is dropped.
+    Gone,
+    /// The search for its line above the memory has not been answered.
+    Need(TextOp),
+}
+
+/// Moves the review cursor to the nearest command mark strictly above
+/// (`forward` false) or below the review position at `from`, or the caret
+/// (`docs/design/terminal-model.md`, "Features and settings"), after the
+/// fresh read: each mark, nearest first, is found by its line's text,
+/// within the memory near its place, and above the memory by the search
+/// the outpost runs ([`TextOp::TerminalFind`]); a mark not found is
+/// dropped, and the next one tried, with nothing said. The answer is a
+/// line move's ([`TextReply::Read`] at the start of the mark's row), the
+/// review position going there; `None` when no mark is left that way.
+///
+/// # Errors
+///
+/// The search a mark above the memory needs, when it has not been
+/// answered: the marks dropped so far stay dropped, and the move is worked
+/// out again once the answer comes.
+pub(crate) fn mark(
+    model: &mut TerminalModel,
+    (forward, from): (bool, &TextPoint),
+    next_anchor: &mut u64,
+    held: &HashSet<u64>,
+) -> Result<Option<TextReply>, TextOp> {
+    let review = match from {
+        TextPoint::At(position) => place_of(model, position.anchor)
+            .and_then(|place| model.reader.memory().place(place))
+            .map(|anchor| anchor.row),
+        _ => None,
+    };
+    let rows = model.reader.memory().rows();
+    let len = isize_of(rows.len());
+    let first_kept = isize_of(rows.first_kept());
+    let review = review
+        .or_else(|| model.caret.map(|caret| isize_of(caret.row)))
+        .unwrap_or(len - 1);
+    // Up goes above the review position's line, not its own first row.
+    let mut review_start = review;
+    while review_start > first_kept && wraps_at(model, review_start - 1) {
+        review_start -= 1;
+    }
+    let beyond = |row: isize| {
+        if forward {
+            row > review
+        } else {
+            row < review_start
+        }
+    };
+    let mut candidates: Vec<Anchor> = model
+        .reader
+        .memory()
+        .marks()
+        .iter()
+        .copied()
+        .filter(|mark| beyond(mark.row))
+        .collect();
+    if forward {
+        candidates.sort_by_key(|mark| mark.row);
+    } else {
+        candidates.sort_by_key(|mark| std::cmp::Reverse(mark.row));
+    }
+    for candidate in candidates {
+        match resolve_mark(model, candidate, forward) {
+            Resolved::Found(row, line) if beyond(row) => {
+                let mark = Anchor {
+                    row,
+                    column: 0,
+                    line_hash: candidate.line_hash,
+                };
+                model
+                    .rules()
+                    .memory_mut()
+                    .replace_mark(candidate, Some(mark));
+                let chunked = Chunked {
+                    row,
+                    first: model.at_document_start && row == 0,
+                    last: row == len - 1,
+                    line,
+                    offset: 0,
+                };
+                let moved = if forward { 1 } else { -1 };
+                let mut mint = || {
+                    *next_anchor += 1;
+                    TERMINAL_ANCHORS | *next_anchor
+                };
+                return Ok(Some(finish(
+                    model,
+                    Plan::Read(moved, chunked),
+                    &mut mint,
+                    held,
+                )));
+            }
+            // Its line is on the other side of the review position: the
+            // mark is kept there, and the next one tried.
+            Resolved::Found(row, _) => {
+                let mark = Anchor {
+                    row,
+                    column: 0,
+                    line_hash: candidate.line_hash,
+                };
+                model
+                    .rules()
+                    .memory_mut()
+                    .replace_mark(candidate, Some(mark));
+            }
+            Resolved::Gone => model.rules().memory_mut().replace_mark(candidate, None),
+            Resolved::Need(op) => return Err(op),
+        }
+    }
+    Ok(None)
+}
+
+/// Whether row `row` of the memory continues onto the next.
+fn wraps_at(model: &TerminalModel, row: isize) -> bool {
+    usize::try_from(row)
+        .ok()
+        .and_then(|row| model.reader.memory().rows().get(row))
+        .is_some_and(|found| found.wraps)
+}
+
+/// Where command mark `mark`'s line is now: within the memory, the line
+/// starting at its row with its hash, or else the nearest line start with
+/// it, the higher at one distance; otherwise, unless the memory holds the
+/// whole document, the first match of the outpost's search for its first
+/// row whose line has its hash ([`mark_search`]), searched backward from a
+/// screen below its place for a move up and forward from a screen above it
+/// for a move down.
+fn resolve_mark(model: &TerminalModel, mark: Anchor, forward: bool) -> Resolved {
+    let rows = model.reader.memory().rows();
+    let first_kept = isize_of(rows.first_kept());
+    let len = isize_of(rows.len());
+    let starts = |row: isize| {
+        usize::try_from(row)
+            .ok()
+            .and_then(|at| rows.get(at))
+            .is_some_and(|found| found.line_hash == mark.line_hash)
+            && (row == first_kept || !wraps_at(model, row - 1))
+    };
+    let line = |row: isize| {
+        usize::try_from(row)
+            .ok()
+            .and_then(|at| rows.get(at))
+            .map(Line::from)
+    };
+    if mark.row >= first_kept {
+        let nearest = (0..len)
+            .flat_map(|distance| [mark.row - distance, mark.row + distance])
+            .find(|&row| row >= first_kept && row < len && starts(row));
+        if let Some((row, line)) = nearest.and_then(|row| Some((row, line(row)?))) {
+            return Resolved::Found(row, line);
+        }
+        if first_kept == 0 && model.at_document_start {
+            return Resolved::Gone;
+        }
+    } else if model.at_document_start && mark.row < 0 {
+        return Resolved::Gone;
+    }
+    let Some(sought) = model
+        .mark_lines
+        .iter()
+        .find(|line| line.hash == mark.line_hash)
+    else {
+        return Resolved::Gone;
+    };
+    let op = mark_search(model, mark.row, sought, forward);
+    let Some((_, matches)) = model.found.iter().find(|(asked, _)| *asked == op) else {
+        return Resolved::Need(op);
+    };
+    let start = isize_of(model.reader.memory().rows().len())
+        - isize_of(usize::try_from(model.height).unwrap_or(0));
+    let start = start.max(0);
+    matches
+        .iter()
+        .find_map(|found| {
+            let first = rows_of(&found.text, model.width).into_iter().next()?;
+            (first.line_hash == mark.line_hash)
+                .then(|| (start - isize::try_from(found.above).unwrap_or(0), first))
+        })
+        .map_or(Resolved::Gone, |(row, first)| {
+            if row >= first_kept && !starts(row) {
+                Resolved::Gone
+            } else {
+                Resolved::Found(row, Line::from(&first))
+            }
+        })
+}
+
+/// The search for command mark `sought`'s line, whose mark is on row `row`
+/// above the memory: its first row's text, from a screen below the place
+/// backward for a move up, or from a screen above it forward for a move
+/// down, counted in rows above where the next read starts.
+fn mark_search(
+    model: &TerminalModel,
+    row: isize,
+    sought: &super::MarkLine,
+    forward: bool,
+) -> TextOp {
+    let screen = isize_of(usize::try_from(model.height).unwrap_or(0)).max(1);
+    let start = (isize_of(model.reader.memory().rows().len()) - screen).max(0);
+    let boundary = if forward {
+        row - screen
+    } else {
+        row + screen + 1
+    };
+    TextOp::TerminalFind {
+        needle: sought.text.clone(),
+        from: i32::try_from(start - boundary).unwrap_or(i32::MAX),
+        backward: !forward,
+        rows: sought.rows,
+    }
+}
+
 /// The footer "Report status bar" reads (`docs/design/terminal-model.md`,
 /// "Features and settings"), as the last read found the screen: the lines
 /// below the caret's line; with none, the run of rows at the screen's

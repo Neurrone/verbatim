@@ -563,6 +563,221 @@ fn outside_a_terminal_no_status_line_is_found() {
     );
 }
 
+// Moving by command.
+
+const UP: ReviewCommand = ReviewCommand::PreviousCommandMark;
+const DOWN: ReviewCommand = ReviewCommand::NextCommandMark;
+
+/// Types `command` at the prompt from `at_ms`, a character every 10
+/// milliseconds, each shown by a read, then presses Enter and shows
+/// `output` and a new prompt; returns when the next key may come.
+fn enter(session: &mut Session, command: &str, output: &str, at_ms: u64) -> u64 {
+    let mut at_ms = at_ms;
+    for character in command.chars() {
+        let (_, input) = typed(&character.to_string(), at_ms);
+        session.input(&input);
+        session.write(&character.to_string(), at_ms + 5);
+        at_ms += 10;
+    }
+    let (_, input) = typed("\r", at_ms);
+    session.input(&input);
+    session.write(&format!("\r\n{output}$ "), at_ms + 5);
+    let _ = session.heard();
+    let _ = session.requests();
+    at_ms + 2000
+}
+
+/// The search for a mark's line Core asks for.
+fn find(needle: &str, from: i32, backward: bool) -> TextOp {
+    TextOp::TerminalFind {
+        needle: needle.to_owned(),
+        from,
+        backward,
+        rows: 1,
+    }
+}
+
+#[test]
+fn enter_on_a_typed_line_marks_it_and_a_bare_enter_does_not() {
+    let mut session = showing(30, 6, 100, "$ ");
+    let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
+    // A bare Enter: a new prompt, no mark.
+    let (_, input) = typed("\r", at_ms);
+    session.input(&input);
+    session.write("\r\n$ ", at_ms + 5);
+    let _ = session.heard();
+    let _ = session.requests();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ echo one"]));
+    // Past the oldest mark nothing is said.
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+    assert_eq!(session.requests(), [FRESH, FRESH]);
+}
+
+#[test]
+fn a_line_recalled_with_up_arrow_and_entered_is_marked() {
+    let mut session = showing(30, 8, 100, "$ ");
+    let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
+    session.input(&Input::CaretKey {
+        trace_id: TraceId::mint(),
+        key: CaretKey {
+            motion: CaretMotion::PreviousLine,
+            select: false,
+        },
+        pressed_at_ms: at_ms,
+    });
+    session.write("echo one", at_ms + 5);
+    let (_, input) = typed("\r", at_ms + 1000);
+    session.input(&input);
+    session.write("\r\none\r\n$ ", at_ms + 1005);
+    let _ = session.heard();
+    for _ in 0..2 {
+        session.input(&command(UP));
+        assert_eq!(session.heard(), plain(&["$ echo one"]));
+    }
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn up_and_down_move_between_the_marks_and_say_nothing_past_them() {
+    let mut session = showing(30, 10, 100, "$ ");
+    let mut at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
+    at_ms = enter(&mut session, "echo two", "two\r\n", at_ms);
+    enter(&mut session, "echo three", "three\r\n", at_ms);
+    for line in ["$ echo three", "$ echo two", "$ echo one"] {
+        session.input(&command(UP));
+        assert_eq!(session.heard(), plain(&[line]));
+    }
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+    for line in ["$ echo two", "$ echo three"] {
+        session.input(&command(DOWN));
+        assert_eq!(session.heard(), plain(&[line]));
+    }
+    session.input(&command(DOWN));
+    assert_eq!(session.heard(), []);
+    // The review cursor is on the mark's line, as a line move leaves it.
+    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    assert_eq!(session.heard(), plain(&["two"]));
+}
+
+#[test]
+fn input_printed_lower_is_marked_on_its_new_row() {
+    // Pi's regular mode: the editor between two rules, the input typed on
+    // its own row; Enter clears the editor and prints the input into the
+    // transcript above it.
+    let mut session = showing(
+        30,
+        8,
+        100,
+        "transcript\r\n---\r\n\r\n---\r\nfooter\x1b[3;1H",
+    );
+    let mut at_ms = 1000;
+    for character in "hi there".chars() {
+        let (_, input) = typed(&character.to_string(), at_ms);
+        session.input(&input);
+        session.write(&character.to_string(), at_ms + 5);
+        at_ms += 10;
+    }
+    let (_, input) = typed("\r", at_ms);
+    session.input(&input);
+    session.write("\x1b[2K\x1b[2;1H\x1b[Lhi there\x1b[4;1H", at_ms + 200);
+    let _ = session.heard();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), plain(&["hi there"]));
+}
+
+#[test]
+fn input_printed_after_the_quiet_period_is_not_marked() {
+    let mut session = showing(
+        30,
+        8,
+        100,
+        "transcript\r\n---\r\n\r\n---\r\nfooter\x1b[3;1H",
+    );
+    let mut at_ms = 1000;
+    for character in "hi there".chars() {
+        let (_, input) = typed(&character.to_string(), at_ms);
+        session.input(&input);
+        session.write(&character.to_string(), at_ms + 5);
+        at_ms += 10;
+    }
+    let (_, input) = typed("\r", at_ms);
+    session.input(&input);
+    // The editor clears at once; the input is printed only after the quiet
+    // period.
+    session.write("\x1b[2K\r", at_ms + 100);
+    session.write("\x1b[2;1H\x1b[Lhi there\x1b[4;1H", at_ms + 1500);
+    let _ = session.heard();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn a_mark_above_the_memory_is_found_by_one_search() {
+    let mut session = showing(30, 4, 100, "$ ");
+    enter(&mut session, "echo one", "one\r\n", 1000);
+    session.write(&numbered(1..=20), 5000);
+    let _ = session.heard();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ echo one"]));
+    // The document's 23 rows: the next read starts at row 19, 19 rows below
+    // the mark, and the search runs back from a screen below the mark, the
+    // row 14 rows above that start.
+    assert_eq!(session.requests(), [FRESH, find("$ echo one", 14, true)]);
+}
+
+#[test]
+fn a_mark_whose_line_is_gone_is_dropped_and_the_next_one_tried() {
+    // The program erases the screen and its history and prints the history
+    // again without the second command, as Pi's Control+O prints its
+    // transcript again: the second mark's line is nowhere, and the first's
+    // is found.
+    let mut session = showing(30, 4, 100, "$ ");
+    let at_ms = enter(&mut session, "echo one", "one\r\n", 1000);
+    enter(&mut session, "echo two", "two\r\n", at_ms);
+    session.write(&numbered(1..=20), 6000);
+    session.write(
+        &format!(
+            "\x1b[2J\x1b[3J\x1b[H$ echo one\r\none\r\n{}$ ",
+            numbered(1..=20)
+        ),
+        7000,
+    );
+    let _ = session.heard();
+    let _ = session.requests();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), plain(&["$ echo one"]));
+    let requests = session.requests();
+    assert_eq!(requests.len(), 3, "{requests:?}");
+    assert!(matches!(&requests[1], TextOp::TerminalFind { needle, .. } if needle == "$ echo two"));
+    assert!(matches!(&requests[2], TextOp::TerminalFind { needle, .. } if needle == "$ echo one"));
+    // The dropped mark is not looked for again.
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+}
+
+#[test]
+fn a_mark_above_windows_terminals_clear_is_dropped() {
+    // Windows Terminal's clear, followed by more than a screen of output
+    // before the next read: the read's start is refused, and the whole
+    // document read after it starts at the document's start, which the
+    // mark's place lies above, so the mark is dropped, and the command
+    // says nothing and needs no search.
+    let mut outpost = Outpost::new(Flavor::WindowsTerminal, 30, 4, 100);
+    outpost.sim.write(b"$ ");
+    let mut session = Session::with(outpost);
+    enter(&mut session, "echo one", "one\r\n", 1000);
+    session.write(&format!("\x1b[H\x1b[2J\x1b[3J{}$ ", numbered(1..=10)), 5000);
+    let _ = session.heard();
+    let _ = session.requests();
+    session.input(&command(UP));
+    assert_eq!(session.heard(), []);
+    assert_eq!(session.requests(), [FRESH]);
+}
+
 // The flight recorder.
 
 #[test]

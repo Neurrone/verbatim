@@ -2860,6 +2860,13 @@ range for such a needle whose text then cannot be read, and Windows
 Terminal's matches none (measured 2026-10-08). The redesigned reading
 (`docs/design/terminal-model.md`) does not use `FindText`: its read
 program keeps a range where the next read starts and never searches.
+Moving to a command mark above the rows Core keeps does
+(`verbatim_uia_rops::terminal_find`; Dickson, 2026-10-26): the mark's
+line's first row, without its padding, from a screen past its place,
+in one remote operation, at most the same 20 matches, each checked by
+its line's hash in Core, since the console host also matches a longer
+row with the same start; any failing call on a match ends the search
+as not found, Windows Terminal's not-found range included.
 
 Measured on 2026-10-07 for the tail read this replaced, against Windows
 Terminal and the console host each with a full scrollback of 9,001 lines:
@@ -2886,6 +2893,22 @@ paid only on a review command above the last read, never on the event or
 speech path. The design had estimated two screens of rows at about 0.24
 milliseconds against 0.12 for one, assuming a read of one screen; the
 read's size is unchanged by the search and was not measured again.
+
+### A terminal's command marks
+
+Setting a mark costs nothing on a read: Enter on a line that holds
+input adds an anchor to the memory, and while a command's line waits to
+be marked, each read compares the hashes of its new rows, a few
+microseconds, until the quiet period after the Enter passes. A move
+between marks costs one fresh read per press, the read every review
+command takes, and a walk over the marks and the memory's rows in the
+reducer; a mark above the rows Core keeps adds one search per mark
+tried, one remote operation of about 3 milliseconds a match remotely and
+0.1 to 0.2 milliseconds a `FindText` classically ("A terminal's upward
+search"), at most 20 matches, so at most about 60 milliseconds for one
+mark, more only for marks whose lines are gone, each dropped once
+tried. No mark's line is looked for during reads, and nothing is added
+to the event or speech path (Dickson, 2026-10-26).
 
 ### A terminal's status bar
 
@@ -3293,9 +3316,9 @@ those reads, so their counts are unchanged.
   are bounded by lines (judged fine by Dickson).
 - A failed attribute read is "not supported" on both paths, and "mixed"
   is now told apart from it (above).
-- A terminal's search uses `FindText` both ways ("A terminal's upward
-  search" above), with its text trimmed of the padding and
-  line breaks Windows Terminal cannot match.
+- A terminal's search for a command mark's line uses `FindText` both
+  ways ("A terminal's upward search" above), with its text trimmed of
+  the padding and line breaks Windows Terminal cannot match.
 - Not detected: a provider without a unit silently uses the next larger
   one (`ITextRangeProvider::Move`), so a word move in such a provider
   moves by lines. No call tells it apart; only the terminals' paragraph

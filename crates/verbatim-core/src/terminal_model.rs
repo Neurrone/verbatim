@@ -61,13 +61,14 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use verbatim_model::{
-    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalScope,
-    TerminalSnapshot, TerminalText, TextOp, TextReply, TextRequest, TraceId,
+    CaretReply, Effect, Input, NodeId, OutpostId, QueryId, TerminalColourRun, TerminalMatch,
+    TerminalScope, TerminalSnapshot, TerminalText, TextOp, TextPoint, TextReply, TextRequest,
+    TraceId,
 };
 use verbatim_text::terminal_reading::{
-    ColourRun, KEY_WINDOW_MS, Key, KeyKind, Settings, Speech, Step, TerminalReader, Unit,
+    ColourRun, KEY_WINDOW_MS, Key, KeyKind, QUIET_MS, Settings, Speech, Step, TerminalReader, Unit,
 };
-use verbatim_text::terminal_rows::{Lost, Read, ReadText};
+use verbatim_text::terminal_rows::{Anchor, Lost, MARKS, NewRow, Read, ReadText};
 
 use crate::state::SrState;
 use crate::terminal::{Said, SaidItem, Skipped, TerminalItem, TerminalKeyKind, TerminalUnit};
@@ -120,6 +121,23 @@ enum Review {
     Text { query_id: QueryId, op: TextOp },
     /// "Report status bar", with the press's repeat count.
     StatusBar { repeat: u8 },
+    /// A move to the previous or next command mark, from the review
+    /// position at `from`, answered as the line move whose request it is.
+    Mark {
+        query_id: QueryId,
+        forward: bool,
+        from: TextPoint,
+    },
+}
+
+/// A command mark's line as it was when the mark was set: the text of its
+/// first row, which a search above the memory looks for, and how many rows
+/// it held ("Features and settings").
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct MarkLine {
+    pub(crate) hash: u64,
+    pub(crate) text: String,
+    pub(crate) rows: u32,
 }
 
 /// A review command waiting for an answer from the memory.
@@ -165,6 +183,18 @@ pub(crate) struct TerminalModel {
     history_asked: Option<(QueryId, u32, bool)>,
     /// The history reads that came for the review answer in progress.
     pub(crate) history: Vec<HistoryRead>,
+    /// The search asked for by the command mark move in progress.
+    find_asked: Option<(QueryId, TextOp)>,
+    /// The searches that came for the command mark move in progress.
+    pub(crate) found: Vec<(TextOp, Vec<TerminalMatch>)>,
+    /// The lines of the command marks set, newest last, at most twice
+    /// [`MARKS`], for the marks the memory and the aside screen keep.
+    pub(crate) mark_lines: VecDeque<MarkLine>,
+    /// The line hash of a command entered and when the quiet period after
+    /// its Enter ends: until a read shows the line marked, or the period
+    /// ends, a new row starting a line with that hash is marked, as where
+    /// Pi and Claude Code print the input they cleared.
+    pending_mark: Option<(u64, u64)>,
     /// The places the review answers minted, each a text anchor's number
     /// and the memory's place for it, oldest first.
     pub(crate) places: VecDeque<(u64, u64)>,
@@ -215,6 +245,10 @@ impl TerminalModel {
             reviews: VecDeque::new(),
             history_asked: None,
             history: Vec::new(),
+            find_asked: None,
+            found: Vec::new(),
+            mark_lines: VecDeque::new(),
+            pending_mark: None,
             places: VecDeque::new(),
             caret: None,
             at_document_start: false,
@@ -245,9 +279,99 @@ impl TerminalModel {
     }
 
     fn give(&mut self, key: &PendingKey) {
+        if key.kind == TerminalKeyKind::Enter && self.reader.caret_line_input() {
+            self.mark_caret_line(key.at_ms);
+        }
         let step = self.rules().key(rules_key(&key.kind, key.at_ms));
         self.due_ms = step.timer;
         self.last_key = Some((key.trace, key.at_ms));
+    }
+
+    /// Enter at `at_ms` on the caret's line, which holds input: the line is
+    /// marked at its first row, unless it is already, and noted until the
+    /// quiet period after the key ends, so that the read that shows the
+    /// input printed elsewhere marks it there ("Features and settings").
+    fn mark_caret_line(&mut self, at_ms: u64) {
+        let Some(caret) = self.caret else {
+            return;
+        };
+        let Some(mark) = self.rules().memory_mut().add_mark(caret.row) else {
+            return;
+        };
+        self.keep_mark_line(mark);
+        self.pending_mark = Some((mark.line_hash, at_ms + QUIET_MS));
+    }
+
+    /// Keeps the line of `mark`, just set on a row the memory keeps.
+    fn keep_mark_line(&mut self, mark: Anchor) {
+        let rows = self.reader.memory().rows();
+        let Some(first) = usize::try_from(mark.row).ok().and_then(|row| rows.get(row)) else {
+            return;
+        };
+        let mut count = 1;
+        let mut row = usize::try_from(mark.row).unwrap_or(0);
+        while rows.get(row).is_some_and(|found| found.wraps) && row + 1 < rows.len() {
+            row += 1;
+            count += 1;
+        }
+        let line = MarkLine {
+            hash: mark.line_hash,
+            text: first.text.to_string(),
+            rows: count,
+        };
+        self.mark_lines.retain(|kept| kept.hash != line.hash);
+        if self.mark_lines.len() >= 2 * MARKS {
+            self.mark_lines.pop_front();
+        }
+        self.mark_lines.push_back(line);
+    }
+
+    /// After a read at `at_ms` that `rows` describes, the command entered
+    /// last: forgotten once the read is past the quiet period after its
+    /// Enter; else marked where the read shows it, as when the line it was
+    /// entered on survived, or else on the new row starting a line with its
+    /// hash nearest the caret.
+    fn settle_mark(&mut self, rows: &[NewRow], at_ms: u64) {
+        let Some((hash, until_ms)) = self.pending_mark else {
+            return;
+        };
+        if at_ms > until_ms {
+            self.pending_mark = None;
+            return;
+        }
+        let memory = self.reader.memory();
+        if memory.marks().iter().any(|mark| mark.line_hash == hash) {
+            self.pending_mark = None;
+            return;
+        }
+        let kept = memory.rows();
+        let caret = self.caret.map_or(kept.len(), |caret| caret.row);
+        let found = (0..rows.len())
+            .filter(|&row| {
+                rows[row] == NewRow::New
+                    && kept.get(row).is_some_and(|found| found.line_hash == hash)
+                    && (row == 0 || kept.get(row - 1).is_some_and(|above| !above.wraps))
+            })
+            .min_by_key(|&row| row.abs_diff(caret));
+        if let Some(row) = found {
+            if let Some(mark) = self.rules().memory_mut().add_mark(row) {
+                self.keep_mark_line(mark);
+            }
+            self.pending_mark = None;
+        }
+    }
+
+    /// Whether `query_id` is a request of this model's that Core waits on.
+    fn asked(&self, query_id: QueryId) -> bool {
+        self.owed.is_some_and(|owed| owed.query() == query_id)
+            || self.fresh == Some(query_id)
+            || self
+                .history_asked
+                .is_some_and(|(asked, ..)| asked == query_id)
+            || self
+                .find_asked
+                .as_ref()
+                .is_some_and(|(asked, _)| *asked == query_id)
     }
 
     /// The key a read taken at `at_ms` ([`read_at`]) is spoken under: the
@@ -603,6 +727,9 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
             row,
             column: read.caret_column,
         });
+        if !outcome.blank {
+            model.settle_mark(&outcome.rows, at_ms);
+        }
         let width = u32::try_from(outcome.width).unwrap_or(u32::MAX);
         if model.told != Some((height, width)) && !outcome.blank {
             model.told = Some((height, width));
@@ -731,13 +858,7 @@ pub(crate) fn before_key(
 
 /// Whether `query_id` is a request of a terminal model Core waits on.
 pub(crate) fn is_pending(state: &SrState, query_id: QueryId) -> bool {
-    state.terminals.iter().any(|model| {
-        model.owed.is_some_and(|owed| owed.query() == query_id)
-            || model.fresh == Some(query_id)
-            || model
-                .history_asked
-                .is_some_and(|(asked, ..)| asked == query_id)
-    })
+    state.terminals.iter().any(|model| model.asked(query_id))
 }
 
 /// Handles the answer to a terminal model's request.
@@ -747,13 +868,11 @@ pub(crate) fn reply(
     query_id: QueryId,
     reply: TextReply,
 ) -> Vec<Effect> {
-    let Some(model) = state.terminals.iter_mut().find(|model| {
-        model.owed.is_some_and(|owed| owed.query() == query_id)
-            || model.fresh == Some(query_id)
-            || model
-                .history_asked
-                .is_some_and(|(asked, ..)| asked == query_id)
-    }) else {
+    let Some(model) = state
+        .terminals
+        .iter_mut()
+        .find(|model| model.asked(query_id))
+    else {
         return Vec::new();
     };
     let node = model.node;
@@ -770,6 +889,7 @@ pub(crate) fn reply(
             model.owed.is_none()
                 && model.fresh.is_none()
                 && model.history_asked.is_none()
+                && model.find_asked.is_none()
                 && !model.reviews.is_empty()
         }) {
             effects.extend(answer_reviews(state, node, trace_id));
@@ -814,6 +934,12 @@ pub(crate) fn reply(
             text,
             rows_above,
         });
+    } else if let Some((_, op)) = model.find_asked.take() {
+        let matches = match reply {
+            TextReply::TerminalFound(matches) => matches,
+            _ => Vec::new(),
+        };
+        model.found.push((op, matches));
     }
     effects.extend(answer_reviews(state, node, trace_id));
     effects
@@ -892,7 +1018,7 @@ fn queue(state: &mut SrState, node: NodeId, waiting: Waiting) -> Vec<Effect> {
             return Vec::new();
         };
         model.reviews.push_back(waiting);
-        model.fresh.is_none() && model.history_asked.is_none()
+        model.fresh.is_none() && model.history_asked.is_none() && model.find_asked.is_none()
     };
     if !fresh {
         return Vec::new();
@@ -924,6 +1050,32 @@ pub(crate) fn report_status_bar(state: &mut SrState, trace_id: TraceId, repeat: 
             review: Review::StatusBar { repeat },
         },
     )
+}
+
+/// A move to the previous or next command mark in terminal `node`
+/// (`docs/design/terminal-model.md`, "Features and settings"), the review
+/// position at `from`: answered as request `query_id`, the line move the
+/// caller waits on, after a fresh read. `None` when Core does not model
+/// the terminal.
+pub(crate) fn command_mark(
+    state: &mut SrState,
+    node: NodeId,
+    trace_id: TraceId,
+    (query_id, forward, from): (QueryId, bool, TextPoint),
+) -> Option<Vec<Effect>> {
+    model_of(state, node)?;
+    Some(queue(
+        state,
+        node,
+        Waiting {
+            trace: Some(trace_id),
+            review: Review::Mark {
+                query_id,
+                forward,
+                from,
+            },
+        },
+    ))
 }
 
 /// What "Report status bar" says of `footer`, its lines, on press
@@ -972,6 +1124,7 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
         };
         let Some(waiting) = model.reviews.front().cloned() else {
             model.history.clear();
+            model.found.clear();
             break;
         };
         let trace = waiting.trace.unwrap_or(trace_id);
@@ -982,6 +1135,35 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
                 model.reviews.pop_front();
                 effects.push(status_bar(trace, repeat, &footer));
                 continue;
+            }
+            Review::Mark {
+                query_id,
+                forward,
+                from,
+            } => {
+                let moved = review::mark(model, (forward, &from), &mut mint, &held);
+                state.next_terminal_anchor = mint;
+                match moved {
+                    Ok(reply) => {
+                        if let Some(model) = model_mut(state, node) {
+                            model.reviews.pop_front();
+                            model.found.clear();
+                        }
+                        // No mark that way: the line move says nothing.
+                        let reply = reply.unwrap_or(TextReply::NoText);
+                        let caused = crate::reduce::text_completed(state, trace, query_id, reply);
+                        effects.extend(queue_only(state, caused, trace));
+                        continue;
+                    }
+                    Err(op) => {
+                        let (asked, effect) = request(state, node, op.clone());
+                        if let Some(model) = model_mut(state, node) {
+                            model.find_asked = Some((asked, op));
+                        }
+                        effects.push(effect);
+                        break;
+                    }
+                }
             }
         };
         let answer = review::answer(model, &op, &mut mint, &held);

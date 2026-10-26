@@ -69,6 +69,8 @@ pub fn focus() -> Input {
 /// read sent, but for its times and caret, is not sent.
 pub struct Outpost {
     pub sim: Terminal,
+    /// The screen's width in cells.
+    width: usize,
     /// Where the next read starts.
     start: Option<Range>,
     /// The screen's height Core told, 0 before it did.
@@ -92,6 +94,7 @@ impl Outpost {
     pub fn new(flavor: Flavor, width: usize, height: usize, history: usize) -> Self {
         Self {
             sim: Terminal::new(flavor, width, height, history),
+            width,
             start: None,
             height: 0,
             showed_text: false,
@@ -184,6 +187,61 @@ impl Outpost {
         (read, wire)
     }
 
+    /// The search the outpost's find program makes
+    /// (`verbatim_uia_rops::terminal_find`): the rows starting with
+    /// `needle`, from the row `from` rows above where the next read starts,
+    /// backward over the rows above it or forward from it, nearest first,
+    /// at most 20, each with `rows` rows of text read from it.
+    fn find(
+        &self,
+        needle: &str,
+        from: i32,
+        backward: bool,
+        rows: u32,
+    ) -> Vec<verbatim_model::TerminalMatch> {
+        // The document from its start, and how many rows lie above the
+        // start, read by moving that far up from it.
+        let query = Query {
+            start: self.start,
+            screen_rows: self.height,
+            whole: false,
+            above: u32::MAX / 2,
+        };
+        let snapshot = self.sim.snapshot(&query).expect("a simulated read");
+        let all = verbatim_text::terminal_rows::rows_of(&snapshot.text, self.width);
+        let start = i64::from(snapshot.above);
+        let boundary = start - i64::from(from);
+        let text_of = |row: usize| {
+            let mut text = String::new();
+            for found in all.iter().skip(row).take(rows as usize) {
+                text.push_str(&found.text);
+                if !found.wraps {
+                    text.push_str("\r\n");
+                }
+            }
+            text
+        };
+        let candidates: Vec<usize> = if backward {
+            (0..all.len())
+                .rev()
+                .filter(|&row| i64::try_from(row).expect("rows") < boundary)
+                .collect()
+        } else {
+            (0..all.len())
+                .filter(|&row| i64::try_from(row).expect("rows") >= boundary)
+                .collect()
+        };
+        candidates
+            .into_iter()
+            .filter(|&row| all[row].text.starts_with(needle))
+            .take(20)
+            .map(|row| verbatim_model::TerminalMatch {
+                above: i32::try_from(start - i64::try_from(row).expect("rows")).expect("rows"),
+                text: text_of(row),
+            })
+            .collect()
+    }
+
     /// The screen's colours as the read program gives them.
     fn colours(&self) -> Vec<Vec<verbatim_text::terminal_reading::ColourRun>> {
         self.sim
@@ -224,6 +282,12 @@ impl Outpost {
                     above: snapshot.above,
                 }
             }
+            TextOp::TerminalFind {
+                needle,
+                from,
+                backward,
+                rows,
+            } => TextReply::TerminalFound(self.find(needle, *from, *backward, *rows)),
             TextOp::TerminalShape { height, .. } => {
                 self.height = *height;
                 TextReply::Done

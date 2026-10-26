@@ -117,7 +117,8 @@ model").
   its whole line, and whether a program has rewritten it). `trim` keeps only the screen above the screen and the rows below
   it, and `first_kept` says before it from which row it will keep.
   `review` and `set_review` give the review position,
-  and `marks` and `add_mark` the command marks, each an `Anchor` (a row
+  and `marks`, `add_mark` and `replace_mark` the command marks, at most
+  `MARKS` (1,000), the oldest dropped first, each an `Anchor` (a row
   counted from the last read's first row, negative in the history above
   it, a column in characters, and its line's hash), set only on a row the
   memory keeps; `set_review_anchor` puts the review position at any
@@ -298,8 +299,10 @@ A read that keeps and pairs nothing of the last read, rows below the caret
 included, is a new screen (`Switch::New`) when its own screen starts at
 the document's start or when the aside screen is found in it: its visible
 rows are new, the rows above them `Shown`, the review position goes to
-the caret, and the command marks wait for their lines. A refused start
-with neither is a lost read.
+the caret, and the command marks are set aside with the screen they were
+on, by their places counted from its end, and come back with it, found
+again by their line's hash or else at their places. A refused start with
+neither is a lost read.
 
 A new screen sets aside the screen it replaced, the last read's screen and
 history block, as a map from each row's hash to the least distance from
@@ -320,9 +323,10 @@ A changed width or height starts the memory again from the read, nothing
 aligned: each anchor is found again by its line's hash nearest its old
 place, from the read's end, at its character position within its line, so
 a resize keeps the review cursor on its character however the line
-rewraps; the review position not found goes to the caret, and a mark or a
-place not found is dropped. A lost read with "report new output" off
-starts again the same way (`restart`).
+rewraps; the review position not found goes to the caret, a place not
+found is dropped, and a mark not found keeps its place, counted from the
+read's end. A lost read with "report new output" off starts again the
+same way (`restart`).
 
 Anchors move with the alignment: a kept or rewritten row carries its
 anchor to its new place, the column clamped to the text; a gone row passes
@@ -334,8 +338,15 @@ having shrunk beneath them: an anchor there is found again by its line's
 hash nearest its old place, from the read's end, or the review position
 goes to the caret, and a gone row's search for a surviving row above
 stops at the read's first row.
-A command mark moves to the first row of its line, and is dropped when its
-row was rewritten or is gone.
+A command mark moves with its row, onto the first row of its line while
+the row holds its line, and is dropped when its row was rewritten or is
+gone; above the read it keeps its place, above a refused start too,
+unless the read starts at the document's start and the place lies above
+it. A mark is resolved by its line's text only when a command looks for
+it (Core's `terminal_model/review.rs`), which drops it when its line is
+nowhere. `TerminalReader::caret_line_input` says whether the caret's line
+holds input, a key having changed it since it appeared, for Core to mark
+it on Enter.
 
 ### What the memory keeps
 

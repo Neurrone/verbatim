@@ -93,6 +93,10 @@ Public API:
   Verbatim+End in the desktop layout and Verbatim+Shift+End in the
   laptop layout, whose Verbatim+End stays the review cursor's end of
   line.
+- The previous and next command entered in a terminal
+  (`ScriptAction::PreviousCommand` and `NextCommand`), Verbatim+Alt+Up
+  Arrow and Verbatim+Alt+Down Arrow in every layout, Verbatim's own,
+  where NVDA pans its magnifier.
 - `ScriptAction::review_command` — the reducer command an action runs, or
   `None` for speak time and the tray list, which the router handles; the
   one place the two vocabularies meet.

@@ -1088,12 +1088,12 @@ fn with_report_new_output_off_output_is_silent_and_keys_are_answered() {
 }
 
 #[test]
-fn with_output_off_a_flood_through_a_full_history_drops_marks_whose_lines_are_not_found() {
+fn with_output_off_a_flood_through_a_full_history_keeps_marks_at_their_places() {
     // Ten lines rotate a full history of twenty past the last screen, which
     // would have the whole document read; with nothing reported the memory
-    // starts again from the read, and each command mark is looked for by its
-    // line's text, and dropped when the read does not show it ("Starting
-    // again").
+    // starts again from the read, and each command mark keeps its place,
+    // counted from the read's end, to be found by its line's text when a
+    // command looks for it ("Starting again"; Dickson, 2026-10-26).
     let settings = Settings {
         report_new_output: false,
         ..Settings::default()
@@ -1122,13 +1122,29 @@ fn with_output_off_a_flood_through_a_full_history_drops_marks_whose_lines_are_no
     );
     let two = row_of(&term, "$ two");
     term.reader.memory_mut().add_mark(two);
+    let before: Vec<Anchor> = term.reader.memory().marks().to_vec();
+    let total = term.reader.memory().rows().len();
     let flood: String = (1..=10)
         .flat_map(|number| ["\r\n".to_owned(), number.to_string()])
         .collect();
     assert_eq!(term.write(&flood, 200), quiet(None));
     // The read starts a screen above the last screen's top, and neither
-    // "f5" nor "$ two" is in it.
-    assert_eq!(term.reader.memory().marks(), []);
+    // "f5" nor "$ two" is in it: each mark is as far from the read's end
+    // as it was from the last read's.
+    let shift = isize::try_from(term.reader.memory().rows().len()).unwrap()
+        - isize::try_from(total).unwrap();
+    let kept: Vec<Anchor> = before
+        .iter()
+        .map(|mark| Anchor {
+            row: mark.row + shift,
+            ..*mark
+        })
+        .collect();
+    assert_eq!(term.reader.memory().marks(), kept);
+    assert_eq!(
+        kept.iter().map(|mark| mark.line_hash).collect::<Vec<_>>(),
+        [hash("f5"), hash("$ two")]
+    );
 }
 
 // "Evidence": programs.

@@ -27,8 +27,8 @@ use windows::core::AgileReference;
 use verbatim_model::{TerminalColourRun, TerminalScope, TerminalSnapshot, TerminalText};
 use verbatim_uia::Uia;
 use verbatim_uia_rops::{
-    CaretAnswer, CaretLineQuery, Error as RopsError, Path, Snapshot, SnapshotQuery,
-    terminal_snapshot,
+    CaretAnswer, CaretLineQuery, Error as RopsError, FindQuery, Path, Snapshot, SnapshotQuery,
+    terminal_find, terminal_snapshot,
 };
 
 use crate::text::TextError;
@@ -545,6 +545,51 @@ pub fn history(
         }
     })?;
     Ok((String::from_utf16_lossy(&snapshot.text), snapshot.above))
+}
+
+/// Searches `terminal`'s text for a command mark's line, as Core asks
+/// ([`verbatim_model::TextOp::TerminalFind`]): `needle` from the row
+/// `from` rows above where its next read starts, backward or forward,
+/// reading `rows` rows from each match, in one remote operation. No
+/// matches before the terminal's first read, which places that start.
+/// Core decides which match, if any, is the mark's line.
+///
+/// # Errors
+///
+/// [`TextError::Failed`] when a call before the search failed.
+pub fn find(
+    uia: &Uia,
+    (element, pattern): (&IUIAutomationElement, &IUIAutomationTextPattern),
+    terminal: &Terminal,
+    (needle, from, backward, rows): (&str, i32, bool, u32),
+    remote: bool,
+) -> Result<Vec<verbatim_model::TerminalMatch>, TextError> {
+    let Some(start) = terminal.start_range() else {
+        return Ok(Vec::new());
+    };
+    let query = FindQuery {
+        element,
+        pattern,
+        start: &start,
+        needle,
+        from,
+        backward,
+        rows,
+    };
+    let (found, _) = terminal_find(uia, &query, remote).map_err(|error| {
+        if is_gone(&error) {
+            TextError::Gone
+        } else {
+            TextError::Failed(error.to_string())
+        }
+    })?;
+    Ok(found
+        .into_iter()
+        .map(|found| verbatim_model::TerminalMatch {
+            above: found.above,
+            text: found.text,
+        })
+        .collect())
 }
 
 #[cfg(test)]

@@ -386,8 +386,10 @@ own commands for a terminal, so no capture is taken:
   and settings").
 - Verbatim+Alt+Up Arrow and Verbatim+Alt+Down Arrow move the review
   cursor to the previous and next command the user entered and speak
-  its line, from marks Verbatim sets when Enter is pressed on a line a
-  key changed; commands entered before Verbatim watched the terminal
-  have none, and no prompt is guessed (Dickson, 2026-10-23; section
-  5.13). NVDA has no such command, and uses NVDA+Alt+Up and Down Arrow
-  to pan its magnifier.
+  its line, as a line move does, from marks Verbatim sets when Enter is
+  pressed on a line a key changed; a mark whose line is gone is dropped
+  and the next one tried, nothing is said past the oldest or newest,
+  commands entered before Verbatim watched the terminal have none, and
+  no prompt is guessed (Dickson, 2026-10-23 and 2026-10-26). NVDA has
+  no such command, and uses NVDA+Alt+Up and Down Arrow to pan its
+  magnifier.

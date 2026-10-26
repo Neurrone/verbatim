@@ -661,6 +661,24 @@ pub enum TextOp {
         /// Whether to read the whole document instead.
         whole: bool,
     },
+    /// Search the focused terminal's text for `needle`, a row's text with
+    /// no line break, from the row `from` rows above where the next read
+    /// starts (negative below it): backward over the rows above that row,
+    /// or forward over it and the rows below, nearest first, at most 20
+    /// matches that start a row, reading `rows` rows of text from each.
+    /// For a command mark above the rows Core keeps ("Features and
+    /// settings"). A search that fails ends with the matches it found.
+    /// Answered [`TextReply::TerminalFound`].
+    TerminalFind {
+        /// The text sought.
+        needle: String,
+        /// The row the search starts at, in rows above the start.
+        from: i32,
+        /// Whether to search toward the document's start.
+        backward: bool,
+        /// How many rows to read from each match.
+        rows: u32,
+    },
     /// A key reached the focused terminal at `from_ms`, and its window, as
     /// Core knows it, lasts until `until_ms`: every read that begins by
     /// the latest such end takes the screen's colours. When the last read
@@ -756,6 +774,8 @@ pub enum TextReply {
         /// Rows above the start.
         above: u32,
     },
+    /// The answer to [`TextOp::TerminalFind`]: the matches, nearest first.
+    TerminalFound(Vec<crate::TerminalMatch>),
     /// The answer to [`TextOp::Location`]: screen coordinates of the point,
     /// in pixels.
     Location {

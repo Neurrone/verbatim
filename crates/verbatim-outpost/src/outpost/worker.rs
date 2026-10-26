@@ -3918,6 +3918,24 @@ impl Worker<'_> {
                 self.reply_text(request, reply);
                 return true;
             }
+            TextOp::TerminalFind {
+                needle,
+                from,
+                backward,
+                rows,
+            } => {
+                let reply = match self.client.uia() {
+                    Some(uia) if focused => text_reads::terminal_find(
+                        self.context,
+                        uia,
+                        node_id,
+                        (needle, *from, *backward, *rows),
+                    ),
+                    _ => TextReply::Unanswered,
+                };
+                self.reply_text(request, reply);
+                return true;
+            }
             TextOp::TerminalColours { from_ms, until_ms } => {
                 let now = focused
                     && self

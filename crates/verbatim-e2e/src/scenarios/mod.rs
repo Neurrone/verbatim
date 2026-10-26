@@ -49,6 +49,7 @@ pub(crate) mod switch_to_onecore;
 pub(crate) mod synth_host_crash_recovery;
 pub(crate) mod system_information_tree;
 pub(crate) mod terminal;
+pub(crate) mod terminal_command_marks;
 pub(crate) mod terminal_commands;
 pub(crate) mod terminal_editing;
 pub(crate) mod terminal_flood;

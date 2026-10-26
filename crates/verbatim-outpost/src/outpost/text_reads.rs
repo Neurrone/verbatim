@@ -889,6 +889,38 @@ pub(super) fn terminal_history(
     }
 }
 
+/// Searches the focused terminal `node_id` for a command mark's line, for
+/// Core's command ([`verbatim_model::TextOp::TerminalFind`]).
+pub(super) fn terminal_find(
+    context: &Context,
+    uia: &verbatim_uia::Uia,
+    node_id: NodeId,
+    (needle, from, backward, rows): (&str, i32, bool, u32),
+) -> TextReply {
+    let Ok(source) = uia_source(context, node_id) else {
+        return TextReply::Unanswered;
+    };
+    let remote = context.tries_remote(context.tracking().window());
+    let terminals = context.terminals();
+    let Some(terminal) = terminals.get(&node_id.number()) else {
+        return TextReply::Unanswered;
+    };
+    match crate::terminal::find(
+        uia,
+        (source.element(), source.pattern()),
+        terminal,
+        (needle, from, backward, rows),
+        remote,
+    ) {
+        Ok(found) => TextReply::TerminalFound(found),
+        Err(TextError::Gone) => TextReply::Gone,
+        Err(TextError::Failed(reason)) => {
+            tracing::debug!(reason, "a terminal could not be searched");
+            TextReply::Unanswered
+        }
+    }
+}
+
 /// The position in `node_id`'s text where `range`, the range an active text
 /// position change carried, starts: a new anchor there, read from nothing,
 /// so it costs no call.

@@ -609,6 +609,21 @@ impl TerminalReader {
         &mut self.memory
     }
 
+    /// Whether the caret's line, as the last read left it, holds input: a
+    /// key changed it since it appeared. Enter on such a line sets a
+    /// command mark ("Features and settings").
+    #[must_use]
+    pub fn caret_line_input(&self) -> bool {
+        let screen = &self.screen;
+        screen
+            .caret
+            .as_ref()
+            .and_then(|caret| caret.line.checked_sub(screen.skipped))
+            .and_then(|index| screen.rows.get(index))
+            .and_then(|row| row.line.as_ref())
+            .is_some_and(|line| line.input)
+    }
+
     /// The settings.
     #[must_use]
     pub fn settings(&self) -> Settings {

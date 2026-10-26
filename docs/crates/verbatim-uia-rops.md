@@ -14,7 +14,7 @@ The design of record is phase 6's "UIA remote operations" section.
 
 The crate has three layers: the instruction set and a typed builder,
 execution, and algorithms. The algorithms are the focus ancestry, for
-terminals `terminal_snapshot` and `terminal_rows`, for caret reports `caret_read`,
+terminals `terminal_snapshot`, `terminal_rows` and `terminal_find`, for caret reports `caret_read`,
 for the text protocol's other requests `text_units`, `text_range`, and
 `text_location`, for object navigation `navigation_step`, and for a
 selection inside an element the focus controls `controlled_selection`
@@ -579,6 +579,22 @@ colours differing from its neighbours' with reverse video and true
 colour, six programs of about 4,100 instructions, 72 milliseconds in the
 console host and 31 in Windows Terminal, where reading every cell
 regardless costs as much and an ordinary screen would cost it too.
+
+### A command mark's line
+
+`terminal_find(uia, query, remote)` (`terminal_find_remote` and
+`terminal_find_classic` behind it) looks for a command mark's line by
+its first row's text (`FindQuery`): from the row `from` rows above where
+the next read starts, backward over the rows above it or forward from
+it, nearest first, at most `FIND_MATCHES` (20) matches, the console
+host's bound ("A terminal's upward search" in `docs/performance.md`).
+Each match that starts a row gives a `FindMatch`: its rows above that
+start, counted by moving its row and the start to the document's end,
+and the text of `rows` rows from it, for the caller to check by its
+line's hash. A failing call on a match, as on Windows Terminal's
+not-found range, ends the search with what it found. The program is
+built for each search, as the text sought is part of it, about 20
+instructions a match.
 
 ## Layer 3: the caret read
 

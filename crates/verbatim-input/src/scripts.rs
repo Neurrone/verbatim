@@ -132,6 +132,11 @@ pub enum ScriptAction {
     ReportFocus,
     /// Report the status bar; repeated presses spell then copy it.
     ReportStatusBar,
+    /// Move the review cursor to the previous command entered in a
+    /// terminal.
+    PreviousCommand,
+    /// Move the review cursor to the next command entered in a terminal.
+    NextCommand,
 }
 
 impl ScriptAction {
@@ -179,6 +184,8 @@ impl ScriptAction {
             Self::ReportReviewLocation => ReviewCommand::ReportReviewLocation,
             Self::ReportFocus => ReviewCommand::ReportFocus,
             Self::ReportStatusBar => ReviewCommand::ReportStatusBar,
+            Self::PreviousCommand => ReviewCommand::PreviousCommandMark,
+            Self::NextCommand => ReviewCommand::NextCommandMark,
             Self::SpeakTime | Self::ShowTrayList => return None,
         })
     }
@@ -192,6 +199,8 @@ type RawBinding = (&'static str, ScriptAction);
 /// (object navigation, then review-cursor text reading, then time and tray
 /// list), then M4's, then report focus. NVDA binds each of these for all layouts (`kb:` rather
 /// than `kb(desktop):`), so a laptop-layout user with a numpad keeps them.
+/// Last, moving between the commands entered in a terminal, Verbatim's
+/// own, on Verbatim+Alt+Up and Down Arrow, which NVDA gives its magnifier.
 const COMMON_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+numpad5", ScriptAction::ReportCurrentObject),
     ("kb:verbatim+numpad8", ScriptAction::MoveToParent),
@@ -232,6 +241,8 @@ const COMMON_BINDINGS: &[RawBinding] = &[
     ("kb:verbatim+3", ScriptAction::ToggleTypedWords),
     ("kb:verbatim+5", ScriptAction::ToggleReportNewOutput),
     ("kb:verbatim+tab", ScriptAction::ReportFocus),
+    ("kb:verbatim+alt+uparrow", ScriptAction::PreviousCommand),
+    ("kb:verbatim+alt+downarrow", ScriptAction::NextCommand),
 ];
 
 /// The desktop layout's own M4 bindings, NVDA's `kb(desktop):` ones: keys
@@ -471,10 +482,10 @@ mod tests {
 
     use super::*;
 
-    /// Every layout's 33 bindings, NVDA's gestures for these commands: M3's
+    /// Every layout's 35 bindings, NVDA's gestures for these commands: M3's
     /// 7 object-navigation, 13 review-cursor, and 2 for time and the tray
-    /// list; M4's 10; and report focus.
-    const EVERY_LAYOUT: [(&str, ScriptAction); 33] = [
+    /// list; M4's 10; report focus; and the previous and next command.
+    const EVERY_LAYOUT: [(&str, ScriptAction); 35] = [
         ("kb:verbatim+numpad5", ScriptAction::ReportCurrentObject),
         ("kb:verbatim+numpad8", ScriptAction::MoveToParent),
         ("kb:verbatim+numpad6", ScriptAction::MoveToNextSibling),
@@ -514,6 +525,8 @@ mod tests {
         ("kb:verbatim+3", ScriptAction::ToggleTypedWords),
         ("kb:verbatim+5", ScriptAction::ToggleReportNewOutput),
         ("kb:verbatim+tab", ScriptAction::ReportFocus),
+        ("kb:verbatim+alt+uparrow", ScriptAction::PreviousCommand),
+        ("kb:verbatim+alt+downarrow", ScriptAction::NextCommand),
     ];
 
     /// `own` then [`EVERY_LAYOUT`], parsed.
@@ -526,7 +539,7 @@ mod tests {
 
     #[test]
     fn desktop_table_binds_exactly_the_documented_gestures() {
-        // The desktop's own 6, then the 33 of every layout.
+        // The desktop's own 6, then the 35 of every layout.
         assert_eq!(
             bindings_for(KeyboardLayout::Desktop),
             expected_table(&[
@@ -549,7 +562,7 @@ mod tests {
     #[test]
     fn laptop_table_binds_exactly_the_documented_gestures() {
         // Its own 27 (M3's 7 object-navigation and 13 review-cursor, M4's
-        // 6, and report status bar), then the 33 of every layout.
+        // 6, and report status bar), then the 35 of every layout.
         assert_eq!(
             bindings_for(KeyboardLayout::Laptop),
             expected_table(&[

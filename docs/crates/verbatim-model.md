@@ -149,7 +149,7 @@ Public API:
   and next page, the selection's start and end, say-all from the review
   cursor or the caret, the start marker and select then copy, the follow
   caret and typing echo toggles, and the caret's and review cursor's
-  locations; and report focus; and report status bar) the keyboard layer's scripts map onto, so the reducer never
+  locations; and report focus; and report status bar and the previous and next command mark) the keyboard layer's scripts map onto, so the reducer never
   depends on input-crate types.
 - `Utterance`, `UtteranceSegment`, `SegmentContent`, `UtteranceSource`,
   `SpeechPriority` — structured speech per decision D12. Segments are
@@ -535,6 +535,11 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   for a review answer above Core's memory (answer `TerminalHistory {
   text, above }`, the text with its padding and the rows it holds above
   that start).
+- `TerminalFind { needle, from, backward, rows }`: a command mark's line
+  sought by its first row's text from the row `from` rows above the
+  next read's start, backward or forward, at most 20 matches that start
+  a row, `rows` rows read from each (answer `TerminalFound`, a
+  `TerminalMatch` for each, its rows above that start and its text).
 - `TerminalColours { from_ms, until_ms }`: a key reached the program at
   `from_ms` and its window ends at `until_ms`, so every read that begins
   by the latest such end takes the screen's colours; when the last read

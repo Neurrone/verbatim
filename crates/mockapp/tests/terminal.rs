@@ -198,6 +198,21 @@ impl Session<'_> {
                     }
                     TextReply::Done
                 }
+                TextOp::TerminalFind {
+                    needle,
+                    from,
+                    backward,
+                    rows,
+                } => TextReply::TerminalFound(
+                    verbatim_outpost::terminal::find(
+                        self.uia,
+                        (self.source.element(), self.source.pattern()),
+                        &self.terminal,
+                        (needle, *from, *backward, *rows),
+                        self.remote,
+                    )
+                    .expect("the terminal is searched"),
+                ),
                 op => panic!("Core asked the terminal {op:?}"),
             }
             .into_input(request.query_id),
@@ -400,6 +415,91 @@ fn the_status_bar_is_read_below_the_caret_classic() {
     the_status_bar_is_read_below_the_caret(false);
 }
 
+/// A command is typed at the prompt and entered, so Core marks its line;
+/// output carries it above the rows Core keeps; Verbatim+Alt+Up Arrow then
+/// finds it with the outpost's search, moves the review cursor there and
+/// speaks it, and a second press, with no mark above, says nothing.
+fn command_marks_move_the_review_cursor(remote: bool) {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-marks");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    common::apply(&mut app, hwnd, "screen term 4");
+    show(&mut app, hwnd, &["one", "ready>"]);
+    let mut session = session(&uia, hwnd, remote);
+    let mut prompt = "ready>".to_owned();
+    for character in ["l", "s", "\r"] {
+        session.input(&Input::CharacterTyped {
+            trace_id: TraceId::mint(),
+            text: character.to_owned(),
+            at_ms: now_us() / 1_000,
+        });
+        if character == "\r" {
+            show(&mut app, hwnd, &["one", &prompt, "a.txt", "ready>"]);
+        } else {
+            prompt.push_str(character);
+            show(&mut app, hwnd, &["one", &prompt]);
+        }
+        session.live();
+    }
+    let mut rows = vec!["one", "ready>ls", "a.txt"];
+    let lines: Vec<String> = (1..=10).map(|line| format!("line {line}")).collect();
+    rows.extend(lines.iter().map(String::as_str));
+    rows.push("ready>");
+    show(&mut app, hwnd, &rows);
+    session.live();
+    session.spoken.clear();
+    session.input(&command(ReviewCommand::PreviousCommandMark, 0));
+    let text = |text: &str| SegmentContent::Text(text.to_owned());
+    assert_eq!(session.spoken, [vec![text("ready>ls")]]);
+    session.spoken.clear();
+    session.input(&command(ReviewCommand::PreviousCommandMark, 0));
+    assert_eq!(session.spoken, Vec::<Vec<SegmentContent>>::new());
+    app.quit();
+}
+
+fn command_marks_move_the_review_cursor_remote() {
+    command_marks_move_the_review_cursor(true);
+}
+
+fn command_marks_move_the_review_cursor_classic() {
+    command_marks_move_the_review_cursor(false);
+}
+
+/// A provider whose `FindText` fails (`terminal_find_fails.json`), as
+/// Windows Terminal's not-found range does: the search finds nothing, and
+/// is no error.
+fn a_failing_search_finds_nothing(remote: bool) {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-find-fails");
+    let mut app = common::spawn("terminal_find_fails.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    common::apply(&mut app, hwnd, "screen term 3");
+    let source = source(&uia, hwnd, remote);
+    let mut terminal = Terminal::new();
+    let _ = read_terminal(&uia, &source, &mut terminal, (None, remote));
+    let found = verbatim_outpost::terminal::find(
+        &uia,
+        (source.element(), source.pattern()),
+        &terminal,
+        ("two", -10, true, 1),
+        remote,
+    )
+    .expect("a failing search is not an error");
+    assert_eq!(found, []);
+    app.quit();
+}
+
+fn a_failing_search_finds_nothing_remote() {
+    a_failing_search_finds_nothing(true);
+}
+
+fn a_failing_search_finds_nothing_classic() {
+    a_failing_search_finds_nothing(false);
+}
+
 /// The node Core knows mockapp's terminal by.
 fn terminal_node() -> NodeId {
     NodeId::in_outpost(OutpostId(1), 1)
@@ -498,6 +598,22 @@ fn main() {
         (
             "the_status_bar_is_read_below_the_caret_classic",
             the_status_bar_is_read_below_the_caret_classic,
+        ),
+        (
+            "command_marks_move_the_review_cursor_remote",
+            command_marks_move_the_review_cursor_remote,
+        ),
+        (
+            "command_marks_move_the_review_cursor_classic",
+            command_marks_move_the_review_cursor_classic,
+        ),
+        (
+            "a_failing_search_finds_nothing_remote",
+            a_failing_search_finds_nothing_remote,
+        ),
+        (
+            "a_failing_search_finds_nothing_classic",
+            a_failing_search_finds_nothing_classic,
         ),
     ]);
 }

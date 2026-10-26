@@ -119,6 +119,49 @@ pub(crate) fn run(
     }
 }
 
+/// Moves the review cursor to the previous or next command mark of the
+/// navigator's terminal (`docs/design/terminal-model.md`, "Features and
+/// settings"): Core's terminal model answers it as the line move it is,
+/// landing at the review cursor's column and speaking the line, so the
+/// review position and what is said follow a line move's; nothing is said
+/// past the last mark that way, or when the navigator is not a terminal
+/// Core models.
+pub(crate) fn command_mark(
+    state: &mut SrState,
+    trace_id: TraceId,
+    command: ReviewCommand,
+) -> Vec<Effect> {
+    let Some(navigator) = state.navigator.as_ref() else {
+        return Vec::new();
+    };
+    let node = navigator.object.id;
+    let (from, place) = match &navigator.text {
+        ReviewText::At(position) => (
+            TextPoint::At(point_of(position)),
+            LandingPlace::Column(position.column),
+        ),
+        _ => (TextPoint::Caret, LandingPlace::Start),
+    };
+    let query_id = state.allocate_query_id();
+    let forward = command == ReviewCommand::NextCommandMark;
+    let Some(effects) =
+        crate::terminal_model::command_mark(state, node, trace_id, (query_id, forward, from))
+    else {
+        return Vec::new();
+    };
+    state.pending_text = Some(PendingText {
+        query_id,
+        node,
+        then: TextFollowUp::Land(Landing {
+            place,
+            speak: TextUnit::Line,
+            edge: None,
+            command,
+        }),
+    });
+    effects
+}
+
 /// A review position on `line` at byte `offset`, which may be on its line
 /// break ([`text::position_in`]), its column worked out.
 fn position_at(line: &SharedChunk, offset: usize, grid: bool) -> ReviewPosition {

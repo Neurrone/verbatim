@@ -1422,6 +1422,9 @@ fn reduce_command(
         ReviewCommand::ReportStatusBar => {
             terminal_model::report_status_bar(state, trace_id, repeat)
         }
+        ReviewCommand::PreviousCommandMark | ReviewCommand::NextCommandMark => {
+            review_text::command_mark(state, trace_id, command)
+        }
         _ => navigator_command(state, trace_id, command, repeat),
     };
     stopped.append(&mut effects);

@@ -70,6 +70,10 @@ impl std::hash::Hasher for Spread {
 /// How long a gone row lingers ("Lingering"), in milliseconds.
 pub const LINGERING_MS: u64 = 2000;
 
+/// How many command marks a terminal keeps, the oldest dropped first
+/// ("Features and settings").
+pub const MARKS: usize = 1_000;
+
 /// What one read of a terminal returned, as the read program gives it
 /// (`verbatim_uia_rops::Snapshot`), with its text as UTF-8 and the time
 /// of the read. The start for the next read is the outpost's to keep.
@@ -626,11 +630,9 @@ struct Screen {
     shows_text: bool,
     lingering: Vec<Lingering>,
     review: Option<Anchor>,
+    /// The command marks, oldest first, at most [`MARKS`] ("Features and
+    /// settings").
     marks: Vec<Anchor>,
-    /// Command marks whose line no read since a new screen has shown, each
-    /// with how many rows the read that lost it held: found again by their
-    /// line's hash when a later read shows it ("The review cursor").
-    lost_marks: Vec<(Anchor, usize)>,
     /// The places the caller keeps, each by its number
     /// ([`TerminalMemory::add_place`]).
     places: Vec<(u64, Anchor)>,
@@ -670,19 +672,25 @@ impl Screen {
         self.rows.len().saturating_sub(self.height)
     }
 
-    /// Places each lost command mark whose line a row of the read starts,
-    /// nearest its old place counted from the read's end ("The review
-    /// cursor").
-    fn find_lost_marks(&mut self) {
-        let rows = &self.rows;
-        let (found, lost): (Vec<_>, Vec<_>) = self
-            .lost_marks
-            .drain(..)
-            .map(|(mark, total)| (refind(mark, total, mark.column, rows), (mark, total)))
-            .partition(|(found, _)| found.is_some());
-        self.marks
-            .extend(found.into_iter().filter_map(|(mark, _)| mark));
-        self.lost_marks = lost.into_iter().map(|(_, mark)| mark).collect();
+    /// The command marks of `marks`, from a read of `total` rows, in this
+    /// read: each found again by its line's text nearest its old place,
+    /// counted from the read's end ("Starting again"), or else kept at that
+    /// place, to be found by its text when a command looks for it
+    /// ("Features and settings"); a mark that would lie above the
+    /// document's start, when this read starts there, is dropped.
+    fn keep_marks(&mut self, marks: &[Anchor], total: usize) {
+        let shift = isize_of(self.total()) - isize_of(total);
+        let at_start = self.at_document_start;
+        self.marks = marks
+            .iter()
+            .map(|mark| {
+                refind(*mark, total, 0, &self.rows).unwrap_or(Anchor {
+                    row: mark.row + shift,
+                    ..*mark
+                })
+            })
+            .filter(|mark| !at_start || mark.row >= 0)
+            .collect();
     }
 
     /// Keeps only a screen above the next read's start and the rows below
@@ -746,11 +754,18 @@ fn next_of(rows: usize, above: usize, asked: usize) -> usize {
 /// its rows with text, the hash and the least distance from the document's
 /// end a row with it had at that read, 1 for the last row. Kept for
 /// recognition only, to tell that screen coming back from a flood; never
-/// spoken.
+/// spoken. Its command marks are set aside with it, each by its place
+/// counted from that read's end, and come back at those places when the
+/// screen does ("Features and settings"): the screen that replaced it,
+/// such as a full-screen program's, starts at the document's start, where
+/// a mark kept at its place would lie above that start and be dropped.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Aside {
     rows: Map<u64, usize>,
+    marks: Vec<Anchor>,
+    /// How many rows the read the marks are counted in held.
+    total: usize,
 }
 
 impl Aside {
@@ -767,7 +782,11 @@ impl Aside {
                     .or_insert(distance);
             }
         }
-        Self { rows }
+        Self {
+            rows,
+            marks: memory.marks.clone(),
+            total: memory.total(),
+        }
     }
 
     /// Whether a row with text of the aside screen is in `rows`, a read to
@@ -945,19 +964,43 @@ impl TerminalMemory {
     }
 
     /// Sets a command mark on the line holding row `row` of the last read,
-    /// at the line's first row, or the first row kept of it. Does nothing
-    /// before the first read or on a row the memory does not keep.
-    pub fn add_mark(&mut self, row: usize) {
-        if let Some(screen) = &mut self.screen
-            && let Some(index) = screen.index(row)
-        {
-            let first = line_start(&screen.rows, index);
-            let line_hash = screen.rows[first].line_hash;
-            screen.marks.push(Anchor {
-                row: isize_of(screen.skipped + first),
-                column: 0,
-                line_hash,
-            });
+    /// at the line's first row, or the first row kept of it, unless one is
+    /// there already, and returns the mark there. The oldest mark goes past
+    /// [`MARKS`]. Does nothing before the first read or on a row the memory
+    /// does not keep.
+    pub fn add_mark(&mut self, row: usize) -> Option<Anchor> {
+        let screen = self.screen.as_mut()?;
+        let index = screen.index(row)?;
+        let first = line_start(&screen.rows, index);
+        let mark = Anchor {
+            row: isize_of(screen.skipped + first),
+            column: 0,
+            line_hash: screen.rows[first].line_hash,
+        };
+        if !screen.marks.contains(&mark) {
+            if screen.marks.len() >= MARKS {
+                screen.marks.remove(0);
+            }
+            screen.marks.push(mark);
+        }
+        Some(mark)
+    }
+
+    /// Puts command mark `mark` at `to`, where its line was found when a
+    /// command looked for it, or drops it with `None` ("Features and
+    /// settings"). Does nothing when there is no such mark.
+    pub fn replace_mark(&mut self, mark: Anchor, to: Option<Anchor>) {
+        let Some(screen) = &mut self.screen else {
+            return;
+        };
+        let Some(at) = screen.marks.iter().position(|kept| *kept == mark) else {
+            return;
+        };
+        match to {
+            Some(to) => screen.marks[at] = to,
+            None => {
+                screen.marks.remove(at);
+            }
         }
     }
 
@@ -1184,9 +1227,10 @@ impl TerminalMemory {
 
     /// A read that keeps nothing of the last read and pairs nothing, a new
     /// screen ("Screens"): its visible rows are new and its rows above them
-    /// silent. The review position goes to the caret, the command marks
-    /// wait for their lines, and the last read's screen and history block
-    /// are set aside in place of any earlier aside screen ("The aside
+    /// silent. The review position goes to the caret, and the last read's
+    /// screen and history block are set aside with its command marks in
+    /// place of any earlier aside screen, whose marks come back at their
+    /// places when this read is that screen coming back ("The aside
     /// screen").
     fn screens(
         &mut self,
@@ -1196,15 +1240,14 @@ impl TerminalMemory {
         shape: &Outcome,
     ) -> Outcome {
         let (width, height, caret) = (shape.width, shape.height, shape.caret);
+        let back = self.aside.take().filter(|aside| aside.found(&rows));
         self.aside = Some(Aside::of(current));
         let old = vec![OldRow::Gone { lingering: false }; current.total()];
         let mut next = Screen::fresh(rows, read, (width, height), current.height);
         next.review = caret.map(|row| anchor_at(&next.rows, row, read.caret_column));
-        let total = current.total();
-        next.lost_marks.clone_from(&current.lost_marks);
-        next.lost_marks
-            .extend(current.marks.iter().map(|&mark| (mark, total)));
-        next.find_lost_marks();
+        if let Some(back) = back {
+            next.keep_marks(&back.marks, back.total);
+        }
         let screen = next.screen_start();
         let kinds = (0..next.rows.len())
             .map(|row| {
@@ -1230,7 +1273,9 @@ impl TerminalMemory {
     /// The memory started again from `read` ("Starting again"): every row's
     /// history begins afresh and nothing is aligned; each anchor is found
     /// by its line's text nearest its old place, or else the review
-    /// position goes to the caret and a mark or a place is dropped.
+    /// position goes to the caret, a place is dropped, and a command mark
+    /// keeps its place, counted from the read's end, to be found by its
+    /// text when a command looks for it.
     fn start_again(
         &mut self,
         current: &Screen,
@@ -1247,12 +1292,12 @@ impl TerminalMemory {
                 .caret
                 .map(|row| anchor_at(&next.rows, row, read.caret_column))
         });
-        next.marks = current.marks.iter().filter_map(found).collect();
         next.places = current
             .places
             .iter()
             .filter_map(|(number, anchor)| Some((*number, found(anchor)?)))
             .collect();
+        next.keep_marks(&current.marks, total);
         let outcome = Outcome {
             rows: vec![NewRow::New; next.rows.len()],
             old: vec![OldRow::Gone { lingering: false }; total],
@@ -2113,7 +2158,6 @@ fn remember(
         lingering,
         review: None,
         marks: Vec::new(),
-        lost_marks: memory.lost_marks.clone(),
         places: Vec::new(),
         continued: false,
     };
@@ -2122,10 +2166,13 @@ fn remember(
     next.review = memory
         .review
         .and_then(|anchor| map_anchor(anchor, memory, aligned, &fates, &next, read));
+    // Above the last read a mark keeps its place, as the review position
+    // does ("The review anchor"), above a refused start too.
+    let place = aligned.place - isize_of(memory.skipped);
     next.marks = memory
         .marks
         .iter()
-        .filter_map(|&mark| map_mark(mark, &fates, shift, &next.rows))
+        .filter_map(|&mark| map_mark(mark, &fates, place, (&next.rows, read.at_document_start)))
         .collect();
     next.places = memory
         .places
@@ -2231,32 +2278,41 @@ fn map_anchor(
     }
 }
 
-/// A command mark after a read ("Moving by command"): it moves with its
-/// line, and is dropped when its line is gone.
-fn map_mark(mark: Anchor, fates: &[OldRow], shift: isize, rows: &[Row]) -> Option<Anchor> {
+/// A command mark after a read ("Features and settings"): within the read
+/// it moves with its row, onto its line's first row when the row still
+/// holds its line, and is dropped when its row is gone or rewritten; above
+/// the read it keeps its place, `place` rows from where it was, unless the
+/// read starts at the document's start and the place lies above it. A mark
+/// kept by its place, after a new screen or the memory starting again, may
+/// lie on a row of another line, and is found by its line's text when a
+/// command looks for it.
+fn map_mark(
+    mark: Anchor,
+    fates: &[OldRow],
+    place: isize,
+    (rows, at_document_start): (&[Row], bool),
+) -> Option<Anchor> {
+    let kept = |row: isize| (!at_document_start || row >= 0).then_some(Anchor { row, ..mark });
     let to = match usize::try_from(mark.row) {
-        Err(_) => {
-            return Some(Anchor {
-                row: mark.row + shift,
-                ..mark
-            });
-        }
+        Err(_) => return kept(mark.row + place),
         Ok(from) => match fates.get(from)? {
             OldRow::Kept(to) => *to,
-            OldRow::Above => {
-                return Some(Anchor {
-                    row: mark.row + shift,
-                    ..mark
-                });
-            }
+            OldRow::Above => return kept(mark.row + place),
             OldRow::Rewritten(_) | OldRow::Gone { .. } | OldRow::Left => return None,
         },
     };
     let first = line_start(rows, to);
-    (rows[first].line_hash == mark.line_hash).then(|| Anchor {
-        row: isize_of(first),
-        column: 0,
-        line_hash: mark.line_hash,
+    Some(if rows[first].line_hash == mark.line_hash {
+        Anchor {
+            row: isize_of(first),
+            column: 0,
+            line_hash: mark.line_hash,
+        }
+    } else {
+        Anchor {
+            row: isize_of(to),
+            ..mark
+        }
     })
 }
 

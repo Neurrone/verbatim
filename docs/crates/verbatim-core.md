@@ -1077,6 +1077,22 @@ they make.
   last line with text, read, spelled or copied by the press's repeat
   count. Outside a modeled terminal it says `Message::NoStatusLineFound`,
   and with no text `Message::NoStatusBarInformation`.
+- Command marks. Enter given to the rules on a caret's line that holds
+  input (`TerminalReader::caret_line_input`) marks that line in the
+  memory and notes its hash until the quiet period after the key ends;
+  each read until then clears it when a mark with that hash survived,
+  or marks the new row nearest the caret starting a line with it, as
+  where Pi prints the input it cleared. Each mark's line, its first
+  row's text and how many rows it held, is kept (`MarkLine`) for the
+  search. `review_text::command_mark` runs Verbatim+Alt+Up and Down
+  Arrow as a line move whose request the model answers
+  (`Review::Mark`): after the fresh read, `review::mark` tries the marks
+  beyond the review position, nearest first, finding each by its line's
+  hash near its place in the memory, and above the memory with
+  `TextOp::TerminalFind`, the outpost's search, whose matches it checks
+  by their line's hash; a mark not found is dropped, and the answer is
+  the row as `TextReply::Read`, landed as a line move lands, or nothing
+  past the last mark.
 - Settings: "report new output" and "review follows caret" are given to
   every model's rules whenever they change, whichever way they changed.
 

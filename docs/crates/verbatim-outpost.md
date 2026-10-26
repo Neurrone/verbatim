@@ -2798,8 +2798,13 @@ it.
   snapshot of their own from as many rows above where the next read
   starts, or the whole document, padding kept, answered
   `TextReply::TerminalHistory` with how many rows the read holds above
-  that start (`terminal::history`). A request naming an anchor of the
-  outpost's own, such as a caret report's, is answered as any text's.
+  that start (`terminal::history`). A command mark's line above them is
+  looked for when Core asks (`TextOp::TerminalFind`), by
+  `terminal::find` with `verbatim_uia_rops::terminal_find`, answered
+  `TextReply::TerminalFound` with each match's rows above that start and
+  its text; Core decides which match, if any, is the mark's. A request
+  naming an anchor of the outpost's own, such as a caret report's, is
+  answered as any text's.
 - A read waiting in the outbound queue is never merged with a newer one:
   each read starts where the one before it said to start, so a read
   dropped for a newer one would leave the rows between them unread by

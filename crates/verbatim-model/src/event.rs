@@ -958,6 +958,12 @@ pub enum ReviewCommand {
     /// on the second press in a streak, copied to the clipboard on the
     /// third.
     ReportStatusBar,
+    /// Move the review cursor to the previous command mark in a terminal
+    /// and speak its line (`docs/design/terminal-model.md`, "Features and
+    /// settings").
+    PreviousCommandMark,
+    /// Move the review cursor to the next command mark in a terminal.
+    NextCommandMark,
 }
 
 /// An event Verbatim indicates at once, outside the speech queue, named

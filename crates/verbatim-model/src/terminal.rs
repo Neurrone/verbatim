@@ -161,6 +161,18 @@ pub struct TerminalColourRun {
     pub background: u32,
 }
 
+/// A row a terminal's search found ([`crate::TextReply::TerminalFound`]):
+/// where it is, in rows above where the next read starts (negative below
+/// it), and the text read from it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalMatch {
+    /// Rows above the start.
+    pub above: i32,
+    /// The text of the rows read from it, padding and line breaks as the
+    /// terminal gave them.
+    pub text: String,
+}
+
 /// Which read Core asks a terminal's outpost for at once
 /// ([`crate::TextOp::TerminalReadNow`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

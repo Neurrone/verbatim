@@ -852,10 +852,92 @@ fn the_alternate_screen_from_a_shell_as_long_as_it_is_a_new_screen_not_an_overfl
 }
 
 #[test]
+fn a_command_mark_above_the_read_keeps_its_place() {
+    // Before the history is full a place is exact: the mark set on the
+    // document's first row stays on that row however far output carries it
+    // above the read ("Features and settings").
+    let mut watch = Watch::console(10, 3, 100);
+    watch.write("$ one");
+    assert_eq!(
+        watch.memory.add_mark(0),
+        Some(Anchor {
+            row: 0,
+            column: 0,
+            line_hash: hash("$ one")
+        })
+    );
+    for line in 1..=20 {
+        watch.write(&format!("\r\nl{line}"));
+    }
+    // The document's 21 rows end where the read does.
+    let first = 21 - isize::try_from(watch.memory.rows().len()).expect("a few rows");
+    assert_eq!(
+        watch.memory.marks(),
+        [Anchor {
+            row: -first,
+            column: 0,
+            line_hash: hash("$ one")
+        }]
+    );
+}
+
+#[test]
+fn a_command_mark_above_the_documents_start_is_dropped() {
+    // A history of two rows: a read of the screen and a screen above it
+    // starts at the document's start, which shows that the marked row left
+    // the buffer.
+    let mut watch = Watch::console(10, 3, 2);
+    watch.write("$ one");
+    watch.memory.add_mark(0);
+    watch.write("\r\nl1");
+    assert_eq!(watch.memory.marks().len(), 1);
+    for line in 2..=8 {
+        watch.write(&format!("\r\nl{line}"));
+    }
+    assert_eq!(watch.memory.marks(), []);
+}
+
+#[test]
+fn command_marks_are_capped_the_oldest_dropped_first() {
+    let mut watch = Watch::console(10, 3, 100);
+    watch.write("a\r\nb");
+    // A mark is set once on its line.
+    watch.memory.add_mark(0);
+    watch.memory.add_mark(0);
+    assert_eq!(watch.memory.marks().len(), 1);
+    // As many marks as are kept, each moved to a place of its own above.
+    let above = |number: usize| Anchor {
+        row: -isize::try_from(number).expect("a count"),
+        column: 0,
+        line_hash: hash("a"),
+    };
+    watch
+        .memory
+        .replace_mark(watch.memory.marks()[0], Some(above(1)));
+    for number in 2..=super::MARKS {
+        let mark = watch.memory.add_mark(0).expect("the row is kept");
+        watch.memory.replace_mark(mark, Some(above(number)));
+    }
+    assert_eq!(watch.memory.marks().len(), super::MARKS);
+    watch.memory.add_mark(1);
+    let marks = watch.memory.marks();
+    assert_eq!(marks.len(), super::MARKS);
+    assert_eq!(marks[0], above(2));
+    assert_eq!(
+        marks[super::MARKS - 1],
+        Anchor {
+            row: 1,
+            column: 0,
+            line_hash: hash("b")
+        }
+    );
+}
+
+#[test]
 fn a_command_mark_survives_a_full_screen_program() {
-    // A mark is kept by its line's hash: lost while a full-screen program
-    // shows no row of its line, it is found again when the shell's screen
-    // comes back ("The review cursor").
+    // A mark is set aside with the shell's screen while a full-screen
+    // program shows its own, and comes back at its place, counted from the
+    // read's end, when the shell's screen does ("The aside screen").
     let mut watch = Watch::console(10, 3, 20);
     watch.write("$ ls\r\nfile\r\n$ vim");
     watch.memory.add_mark(0);
