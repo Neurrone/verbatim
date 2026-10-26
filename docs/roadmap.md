@@ -52,40 +52,42 @@ recorded as provisional.
 ### The terminal redesign
 
 Built from [the terminal model](design/terminal-model.md) (accepted by
-Dickson on 2026-10-23), in the parts its section 12 lists, each one step
-in the sense of `REVIEW.md`, with nothing pushed until the last. The
-design review, settling the working tree, and the documents step are
-done; the simulated terminal with its conformance expectations and
-recordings, the oracle, and the core's memory, alignment and reading
-rules in `verbatim-text` are committed. What remains, in section 12's
-order:
+Dickson on 2026-10-25), each part one step in the sense of `REVIEW.md`,
+with nothing pushed until the last. The model in `verbatim-text`, its move
+into Core's reducer, "Report status bar" and moving by command are built.
+What remains, in order:
 
-- The read program's colours, read in the reads in each key's window, and
-  the remote operations audit.
-- The outpost and Core: reading moved onto the core; the review position
-  as an anchor; following the caret only within a key's window; the key's
-  window and the typed-character limit; the quiet-period timer; the
-  subscription in place before the first read; the caret event reading in
-  Windows Terminal; and each read stamped with its own start time, so that
-  a caret read after a key is never taken for the caret before it (the
-  likely cause of `conhost_typing` step 5 failing about one run in four).
-- "Report status bar" with NVDA+End; then moving by command with
-  Verbatim+Alt+Up Arrow and Verbatim+Alt+Down Arrow, with their scenarios
-  in both terminals, in a shell and in Pi's regular mode.
-- The end-to-end scenarios of section 9, with NVDA captures where NVDA's
-  speech is the expectation, among them output written just after a
-  terminal takes the focus with an interactive shell, and the console
-  host's real password prompt; the existing terminal scenarios brought
-  back to passing; then streaming and redrawing at a real program's rate,
-  with a test program of Verbatim's own.
+- Moving by command's scenarios in Pi's regular mode, which wait until Pi
+  is installed.
+- Recordings for the conformance corpus, after checking that the NVDA pin
+  equals the installed build for any capture: Pi's regular mode resized,
+  set aside until the corpus can record a resize (Dickson, 2026-10-25);
+  fzf, waiting until Dickson installs it. htop is dropped (Dickson,
+  2026-10-25).
+- End-to-end scenarios: the existing terminal scenarios brought back to
+  passing; then cargo's build bar below its output; the landing rule's
+  keys; Control+W, Control+U and Control+K; tab completion; suggestions; a
+  completion list; menu completion; history search; output while typing;
+  pasting; slow echo; a spinner with a message; several progress lines;
+  resizing; a list shown by colour; a checkbox list; a refreshing
+  full-screen script; fzf-like filtering; the review cursor kept through a
+  footer redraw and moved with its text through a scroll; output just
+  after the focus with an interactive shell; the console host's real
+  password prompt; and Pi in both modes. Then, as decided on 2026-10-24,
+  Verbatim's own streaming program (`verbatim-stream-test`) at up to 60
+  frames a second in each way programs stream, with a footer, a header and
+  a middle status row, expected to speak the streamed text once, in order,
+  with no word split, whatever the reads' timing.
 - The measurements after, against the baseline of processor time,
   wake-ups and change-to-speech time taken on 2026-10-23 on the build
   before the reading changes (its runs are kept under
   `target/perf/terminal-baseline-*`; the memory baseline is in
   [performance](performance.md), "Memory use"), in
-  [performance](performance.md).
-- The model rewritten to describe the design as built, its decisions
-  moved to [the terminals parity entry](parity/terminals.md).
+  [performance](performance.md), for typing, a 20,000-line flood, a Pi
+  stream at its recorded pace, a clock ticking once a second, and a
+  full-screen program refreshing rows.
+- [The terminals parity entry](parity/terminals.md), the crates'
+  documents and these entries brought in line with the model.
 - The whole terminal suite, `cargo xtask ci`, and the push.
 
 Related items:
@@ -93,7 +95,7 @@ Related items:
 - Provisional, awaiting Dickson (2026-10-11): the console host's source
   raises no text change for a write that leaves the cursor where it was,
   as a full history scrolling whole lines may
-  ([the model](design/terminal-model.md), section 2.5); if a measurement
+  ([the model](design/terminal-model.md), "The terminals"); if a measurement
   on the installed build confirms it, follow NVDA, which has the same gap.
   A flood of identical lines cannot be counted whenever the history is
   full, a limitation in the model's section 6.
@@ -114,7 +116,7 @@ Related items:
   change). First settle whether Windows Terminal or UIA loses the event,
   with about 60 runs and a second, independent UIA client listening. The
   model reads on Windows Terminal's caret events as well as its text
-  changes ([the model](design/terminal-model.md), section 5.1), which
+  changes ([the model](design/terminal-model.md), "When to read"), which
   comes back with the outpost and Core step (Dickson, 2026-10-17: part of
   this redesign).
 - The terminal scenario the lock-free listener's first step lets fail

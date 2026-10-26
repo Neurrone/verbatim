@@ -2962,7 +2962,7 @@ and speech paths pay nothing for it (Dickson, 2026-10-26).
 
 Every read of a focused terminal that begins in a key's window, the
 300 milliseconds after it, reads the screen's colours too, each row's runs of one foreground and background
-(`docs/design/terminal-model.md`, section 5.7;
+(`docs/design/terminal-model.md`, "Lists and colours";
 `docs/crates/verbatim-uia-rops.md`, "The colours"). Measured on
 2026-10-24 on this machine (x64, debug build), 120 by 30 screens, in the
 console host and the pinned Windows Terminal 1.24.12741, each figure the
