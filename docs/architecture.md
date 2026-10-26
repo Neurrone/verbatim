@@ -322,8 +322,8 @@ screen reader in both rendered and source form.
   rule defined once, judged against Core's focus, only pre-read judgments
   outside Core, focuses ordered by when they happened), and 2026-10-25 (a
   rule ported from NVDA defined once in the Windows-specific crate, as
-  ported code never moves into a platform-neutral one; Claude, 2026-10-25,
-  pending Dickson's acceptance).
+  ported code never moves into a platform-neutral one; Dickson,
+  2026-10-26).
 - **D15 — The latency budget is split in two and measured per stage.**
   From observation of the OS event to the utterance being queued: 10 ms
   or under on every backend. From queued to the first audio sample: 10 ms
