@@ -54,7 +54,7 @@ space says "lo" (`notepad_typed_words`, from NVDA's captures
 `target/e2e-evidence/m42-text-captures-2026-10-23/`). Different,
 deliberately: the zero-width non-joiner and joiner also continue a word,
 which NVDA's rule does not, since Persian and Indic words are typed
-with them. Different (Fable, 2026-10-23, pending Dickson's acceptance):
+with them. Different (Dickson, 2026-10-26):
 NVDA also forgets the word for a movement key that moves nothing and for
 Delete and Control+Delete, but not for a Backspace or Control+Backspace
 that moves nothing, whose script returns before forgetting it when the

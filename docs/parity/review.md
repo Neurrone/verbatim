@@ -258,8 +258,7 @@ announcement comes from the same comparison of the selection before and
 after, and the same wording, as a selecting key's, and the first press
 says "Can't select text, press twice to copy" when the text cannot be
 selected, flat text included. The marker in another object saying "No
-start marker set" is Fable's decision of 2026-10-21, pending Dickson's
-acceptance. The range with the review cursor moved back before the
+start marker set" is Dickson's decision of 2026-10-26. The range with the review cursor moved back before the
 marker is covered by
 `select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker`
 (`crates/verbatim-core/tests/text.rs`), with flat text by

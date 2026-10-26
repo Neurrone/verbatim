@@ -226,8 +226,7 @@ Differences:
   2026-10-08, `docs/design/phase6-design.md`, "What a key did to the
   text"). For Backspace and Delete, alone or with Control, the caret's
   line differing from the line of the last caret reported before the
-  key is evidence too (Fable, 2026-10-22, pending Dickson's
-  acceptance), since deleting one of a
+  key is evidence too (Dickson, 2026-10-26), since deleting one of a
   run of the same character, such
   as a password field's mask, changes neither the caret's neighbors
   nor, in a WPF `PasswordBox`, whose positions follow edits, where the
@@ -246,7 +245,7 @@ Differences:
   order pressed, one step beyond NVDA, where a typed character overtakes
   a held key; the lock keys alone pass at once, since their state is
   announced from Windows' and Num Lock's decides what a numpad key is
-  (Fable, 2026-10-22, pending Dickson's acceptance). A held key behind
+  (Dickson, 2026-10-26). A held key behind
   another has its caret read once the key ahead's evidence has been
   answered, or 100 ms after the key ahead was sent on, whichever comes
   first, so that the read sees the application after the key ahead
@@ -320,8 +319,7 @@ Differences:
   script saying nothing while Right's waits (`selection_keys` scenarios,
   captured 2026-10-22 in
   `target/e2e-evidence/m42-key-holding-merge-2026-10-22/captures/`).
-  Speaking every intermediate change is a difference (Fable, 2026-10-22,
-  pending Dickson's acceptance).
+  Speaking every intermediate change is a difference (Dickson, 2026-10-26).
 - A selection change that follows a change of the focus's text, and the
   keys that change the text over a selection: **matched** in the classic
   edit control and **different** through UIA by Dickson's decision,
