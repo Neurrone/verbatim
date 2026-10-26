@@ -2155,6 +2155,20 @@ fn compare(before: &Caret, shown: &str, column: usize, typed: &str) -> (usize, C
     {
         at = column + 1;
     }
+    // A caret read past typing other than spaces that the line does not
+    // show yet: the caret and its line are read after the screen's text,
+    // by another call, and the terminal wrote between. Nothing changed
+    // yet, and the typing still goes where it went ("Typing echo").
+    if old.trim_end() == new.trim_end()
+        && column > before.typing
+        && new.chars().skip(before.typing).all(char::is_whitespace)
+        && typed
+            .chars()
+            .take(column - before.typing)
+            .any(|c| !c.is_whitespace())
+    {
+        return (before.typing, Compared::Unchanged);
+    }
     // Typing that moved the caret over text already shown is matched as
     // typing, below.
     let typing_over = at > before.typing && !typed.is_empty();

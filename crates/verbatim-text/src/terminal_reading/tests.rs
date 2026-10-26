@@ -25,6 +25,10 @@ struct Term {
     /// The keys' windows joined, from the first key's time to the last
     /// window's end: a read within it takes the screen's colours.
     colours_window: Option<(u64, u64)>,
+    /// How many characters past the caret the next read finds it, as a
+    /// read whose caret was read after the terminal wrote what its text
+    /// does not show yet.
+    caret_ahead: usize,
 }
 
 impl Term {
@@ -46,6 +50,7 @@ impl Term {
             query: Query::default(),
             followed: false,
             colours_window: None,
+            caret_ahead: 0,
         };
         let first = term.read(0);
         assert_eq!(first, quiet(None), "the first read speaks nothing");
@@ -120,7 +125,7 @@ impl Term {
                 first_row: snapshot.first_row,
                 caret_rows_to_end: snapshot.caret_rows_to_end,
                 caret_line: snapshot.caret_line,
-                caret_column: snapshot.caret_column,
+                caret_column: snapshot.caret_column + std::mem::take(&mut self.caret_ahead),
                 at_ms,
                 above: usize::try_from(snapshot.above).expect("a few rows"),
             };
@@ -1296,6 +1301,22 @@ fn typing_onto_a_second_row_and_escape_on_it() {
             text: "echo aaaaaaaaaaaaaxyz".to_owned()
         }])
     );
+}
+
+#[test]
+fn a_caret_read_past_typing_its_line_does_not_show_yet_waits_for_the_line() {
+    // "Typing echo": the caret and its line are read after the screen's
+    // text, and the terminal wrote the character between: the read finds
+    // the caret past it with the line as it was. The character is echoed
+    // at the read that shows it (conhost_line_key_flood).
+    let mut term = Term::new(20, 3, 10);
+    term.write("ready> ", 100);
+    term.typed(".", 1000);
+    assert_eq!(term.write(".", 1002), says(vec![echo(0, ".")]));
+    term.typed("\\", 1094);
+    term.caret_ahead = 1;
+    assert_eq!(term.read(1094), quiet(None));
+    assert_eq!(term.write("\\", 1096), says(vec![echo(0, "\\")]));
 }
 
 #[test]
