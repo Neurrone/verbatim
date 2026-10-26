@@ -43,9 +43,12 @@ const CATEGORIES: [(&str, &str, &str); 6] = [
         "level 1 selected: speech 1 of 19",
         "level 0 States expanded 2 of 6",
     ),
+    // Five, with the cell coordinates indication NVDA's "Cell coordinates"
+    // option matches (`docs/parity/focus-announcement.md`, "Table cell
+    // coordinates").
     (
         "Properties collapsed 3 of 6 level 0",
-        "level 1 description: speech 1 of 4",
+        "level 1 description: speech 1 of 5",
         "level 0 Properties expanded 3 of 6",
     ),
     (
