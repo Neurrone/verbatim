@@ -163,6 +163,22 @@ impl Terminal {
         true
     }
 
+    /// Numbers `wire` as the terminal's next read, and notes it as the
+    /// read whose start is kept when it is: a read whose screen shows text,
+    /// or any read while the last kept showed none ("A read with no text").
+    /// Returns whether its start is kept.
+    fn number(&mut self, wire: &mut TerminalSnapshot) -> bool {
+        self.reads += 1;
+        wire.read = self.reads;
+        let shows = verbatim_text::terminal_rows::shows_text(&wire.screen.text);
+        let kept = shows || !self.showed_text;
+        if kept {
+            self.start_read = self.reads;
+            self.showed_text = shows;
+        }
+        kept
+    }
+
     /// The terminal gained the focus: its next read is sent whatever the
     /// last one sent, since Core's reading rules take the first read after
     /// the focus as the one that speaks nothing ("The focus"), and a later
@@ -505,16 +521,11 @@ pub fn read<'a>(
     );
     let mut wire = snapshot_of(&snapshot, started_ms, waited);
     wire.ended_ms = (crate::protocol::now_us() / 1_000).max(started_ms);
-    terminal.reads += 1;
-    wire.read = terminal.reads;
-    let shows = verbatim_text::terminal_rows::shows_text(&wire.screen.text);
-    if shows || !terminal.showed_text {
+    if terminal.number(&mut wire) {
         terminal.start = snapshot
             .next_start
             .take()
             .and_then(|range| AgileReference::new(&range).ok());
-        terminal.start_read = terminal.reads;
-        terminal.showed_text = shows;
     }
     terminal.read_started_ms = started_ms;
     terminal.read_started_us = clock_us;

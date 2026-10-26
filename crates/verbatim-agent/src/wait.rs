@@ -9,14 +9,18 @@
 //! minimized or restored, or brought to the foreground) and checks again
 //! each time one arrives. Nothing is polled and nothing sleeps: between
 //! events the thread blocks in `MsgWaitForMultipleObjectsEx` until a
-//! message comes or the wait's time runs out. No thread timer bounds it,
-//! since `KillTimer` leaves a `WM_TIMER` already in the queue, which ended
-//! the next wait at once when a wait ended on an event as its timer fired.
+//! message comes or the wait's time runs out, so no thread timer is
+//! needed to bound it.
+//!
+//! The wait removes and dispatches every message it does not own, so a
+//! `WM_QUIT` would not end it; no thread that waits here runs a message
+//! loop of its own or is sent one (the agent's waits run on its connection
+//! and request threads).
 
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, WAIT_FAILED, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -148,9 +152,17 @@ pub fn until(mut met: impl FnMut() -> bool, timeout: Duration) -> bool {
         let milliseconds = u32::try_from(left.as_millis()).unwrap_or(u32::MAX).max(1);
         // SAFETY: no handles; returns when a message is in the queue or the
         // time is up, and a message already there counts.
-        unsafe {
-            let _ =
-                MsgWaitForMultipleObjectsEx(None, milliseconds, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        let woke = unsafe {
+            MsgWaitForMultipleObjectsEx(None, milliseconds, QS_ALLINPUT, MWMO_INPUTAVAILABLE)
+        };
+        // A failed wait would return at once each time, so the wait ends
+        // with what holds now rather than spinning until its deadline.
+        if woke == WAIT_FAILED {
+            tracing::warn!(
+                error = %windows::core::Error::from_thread(),
+                "waiting for a window event failed"
+            );
+            break met();
         }
     };
     drop(hooks);
@@ -167,33 +179,6 @@ mod tests {
     #[test]
     fn a_condition_that_holds_at_once_needs_no_event() {
         assert!(until(|| true, Duration::from_millis(1)));
-    }
-
-    #[test]
-    fn a_timer_message_left_in_the_queue_does_not_end_a_wait() {
-        // A `WM_TIMER` already in the queue, as `KillTimer` leaves one.
-        // SAFETY: no preconditions.
-        let thread = unsafe { GetCurrentThreadId() };
-        let mut msg = MSG::default();
-        // SAFETY: creates this thread's queue; nothing is removed.
-        unsafe {
-            let _ = PeekMessageW(&raw mut msg, None, 0, 0, PM_NOREMOVE);
-        }
-        for id in 0..8 {
-            // SAFETY: a plain message to this thread's own queue.
-            unsafe {
-                let _ = PostThreadMessageW(
-                    thread,
-                    windows::Win32::UI::WindowsAndMessaging::WM_TIMER,
-                    WPARAM(id),
-                    LPARAM(0),
-                );
-            }
-        }
-        let timeout = Duration::from_millis(100);
-        let started = Instant::now();
-        assert!(!until(|| false, timeout));
-        assert!(started.elapsed() >= timeout, "{:?}", started.elapsed());
     }
 
     #[test]

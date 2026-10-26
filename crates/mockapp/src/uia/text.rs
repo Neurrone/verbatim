@@ -36,7 +36,8 @@
 //! fixture can
 //! make the `IsItalic` read fail (`italic_fails`), as a provider that fails
 //! an attribute read, its `FindText` fail (`find_text_fails`), as Windows
-//! Terminal's has, its expansion to a line below the last line with text
+//! Terminal's has, or fail only when it searches backward
+//! (`find_backward_fails`), its expansion to a line below the last line with text
 //! give that line (`lines_clamp`), as the console host's does, and its
 //! backward moves answer with a positive count
 //! (`backward_moves_positive`), as some providers do.
@@ -680,7 +681,8 @@ impl ITextRangeProvider_Impl for TextRange_Impl {
         ignorecase: windows_core::BOOL,
     ) -> WinResult<ITextRangeProvider> {
         hits::hit(Method::RangeFindText);
-        if formats_of(&self.tree, self.index).find_text_fails {
+        let formats = formats_of(&self.tree, self.index);
+        if formats.find_text_fails || (formats.find_backward_fails && backward.as_bool()) {
             return Err(Error::from(E_FAIL));
         }
         let all = text_of(&self.tree, self.index);

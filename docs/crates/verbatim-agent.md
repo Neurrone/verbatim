@@ -266,9 +266,8 @@ out-of-context WinEvent hooks for the events that can change it (a
 top-level window created, destroyed, shown, hidden, renamed, cloaked or
 uncloaked, minimized or restored, or brought to the foreground) and check
 again on each, blocking in `MsgWaitForMultipleObjectsEx` between them
-until a message comes or the wait's time is up. No thread timer bounds
-the wait, since `KillTimer` leaves a `WM_TIMER` already queued, which
-ended the next wait at once. Process exits are recorded from each launched child's
+until a message comes or the wait's time is up, so no thread timer is
+needed to bound the wait. Process exits are recorded from each launched child's
 job object completion port (private `jobs` module), file waits use
 `FindFirstChangeNotification`, and event waits use the event's handle.
 Nothing polls or sleeps.

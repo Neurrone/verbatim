@@ -322,6 +322,9 @@ its crate-internal modules are the reviewable surface:
   `E_FAIL`, as a provider that fails an attribute read, and one with
   `find_text_fails` set fails `FindText` the same way, as Windows
   Terminal's has (`tests/fixtures/terminal_find_fails.json`), one with
+  `find_backward_fails` set fails only a backward `FindText`, so a
+  failure that closes one direction of a search can be told from one that
+  ends it (`tests/fixtures/terminal_find_backward_fails.json`), one with
   `lines_clamp` set gives the last line with text for an expansion to any
   line below it, as the console host's provider does
   (`tests/fixtures/lines_clamp.json`), and one with

@@ -50,7 +50,7 @@ impl Watch {
             })
             .expect("a simulated read");
         self.start = Some(snapshot.next_start);
-        let wire = TerminalSnapshot {
+        let mut wire = TerminalSnapshot {
             text: TerminalText::unpadded(&snapshot.text),
             screen: TerminalText::unpadded(&snapshot.screen),
             from_start: snapshot.from_start,
@@ -69,6 +69,7 @@ impl Watch {
             colours: None,
             caret: None,
         };
+        self.terminal.number(&mut wire);
         if !self.terminal.sends(&wire) {
             return None;
         }
@@ -107,6 +108,23 @@ fn a_read_identical_to_the_last_sent_is_not_sent_unless_it_waited() {
     assert!(watch.write("", 300, false).is_none());
     assert!(watch.write("", 400, true).is_some());
     assert!(watch.write("\r60%", 500, false).is_some());
+}
+
+/// A read identical to the last one sent, and not sent, credits its start
+/// to that read, which is the read Core knows, so the rows of a search are
+/// counted from a read Core has.
+#[test]
+fn a_read_not_sent_credits_its_start_to_the_last_read_sent() {
+    let mut watch = Watch::new();
+    watch.write("50%", 100, false);
+    assert!(watch.write("", 200, false).is_some());
+    assert_eq!(watch.terminal.start_read, 2);
+    assert!(watch.write("", 300, false).is_none());
+    assert_eq!(watch.terminal.start_read, 2);
+    assert!(watch.write("", 400, false).is_none());
+    assert_eq!(watch.terminal.start_read, 2);
+    assert!(watch.write("\r60%", 500, false).is_some());
+    assert_eq!(watch.terminal.start_read, 5);
 }
 
 /// A row changes at a read, a read identical to it follows that waited for

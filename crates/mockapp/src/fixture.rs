@@ -105,6 +105,8 @@ struct RawNode {
     #[serde(default)]
     find_text_fails: bool,
     #[serde(default)]
+    find_backward_fails: bool,
+    #[serde(default)]
     lines_clamp: bool,
     #[serde(default)]
     cultures: Vec<(usize, usize, i32)>,
@@ -229,6 +231,9 @@ pub(crate) struct FixtureNode {
     /// Whether `FindText` on the text fails, as Windows Terminal's has
     /// thrown.
     pub(crate) find_text_fails: bool,
+    /// Whether `FindText` fails when it searches backward alone, so a
+    /// search's failure in one direction can be told from one in both.
+    pub(crate) find_backward_fails: bool,
     /// Whether expanding to a line below the last line with text gives
     /// that line instead, as the console host's provider does.
     pub(crate) lines_clamp: bool,
@@ -398,6 +403,7 @@ fn convert(
         italic: raw.italic,
         italic_fails: raw.italic_fails,
         find_text_fails: raw.find_text_fails,
+        find_backward_fails: raw.find_backward_fails,
         lines_clamp: raw.lines_clamp,
         cultures: raw.cultures,
         styles: raw.styles,

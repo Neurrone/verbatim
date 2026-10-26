@@ -112,6 +112,8 @@ struct Session<'a> {
     /// by a live read sent to Core before the search runs, as when a
     /// program keeps printing while a search is on its way.
     before_find: Option<(&'a mut common::MockApp, HWND, Vec<String>)>,
+    /// How many searches Core asked for.
+    finds: u32,
 }
 
 impl Session<'_> {
@@ -215,6 +217,7 @@ impl Session<'_> {
                     TextReply::Done
                 }
                 TextOp::TerminalFind { needle, from, rows } => {
+                    self.finds += 1;
                     if let Some((app, hwnd, shown)) = self.before_find.take() {
                         let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
                         show(app, hwnd, &shown);
@@ -334,6 +337,7 @@ fn new_output_is_said_line_by_line(remote: bool) {
         state: SrState::new(),
         spoken: Vec::new(),
         before_find: None,
+        finds: 0,
     };
     session.input(&focus());
     session.spoken.clear();
@@ -395,6 +399,7 @@ fn session(uia: &Uia, hwnd: HWND, remote: bool) -> Session<'_> {
         state: SrState::new(),
         spoken: Vec::new(),
         before_find: None,
+        finds: 0,
     };
     session.input(&focus());
     session.live();
@@ -492,7 +497,7 @@ fn command_marks_are_found_while_output_scrolls(remote: bool) {
         session.before_find = Some((&mut app, hwnd, rows_after_ls(15)));
         session.input(&command(ReviewCommand::PreviousCommandMark, 0));
         let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
-        assert!(session.before_find.is_none(), "the mark was searched for");
+        assert_eq!(session.finds, 1);
         // The new output waits in the flood policy's queue behind the
         // earlier output, which this session never plays.
         assert_eq!(session.spoken, [text("ready>ls")]);
@@ -606,17 +611,51 @@ fn a_failing_search_finds_nothing_classic() {
     a_failing_search_finds_nothing(false);
 }
 
+/// A provider whose `FindText` fails when it searches backward
+/// (`terminal_find_backward_fails.json`): the failure closes the search's
+/// upward direction alone, and the search goes on downward from its row.
+fn a_failing_search_goes_on_in_the_other_direction(remote: bool) {
+    let rows = ["y 1", "y 2", "y 3", "y 4", "y 5", "ready>"];
+    let found = search_in("terminal_find_backward_fails.json", &rows, ("y", 2), remote);
+    assert_eq!(
+        found,
+        [
+            found_row(2, "y 3"),
+            found_row(1, "y 4"),
+            found_row(0, "y 5"),
+        ]
+    );
+}
+
+fn a_failing_search_goes_on_in_the_other_direction_remote() {
+    a_failing_search_goes_on_in_the_other_direction(true);
+}
+
+fn a_failing_search_goes_on_in_the_other_direction_classic() {
+    a_failing_search_goes_on_in_the_other_direction(false);
+}
+
 /// The outpost's search for `needle` over every row of `rows`, outward
 /// from the row `from` rows above where the next read starts, on a screen
 /// of three rows.
 fn search(
+    rows: &[&str],
+    needle_from: (&str, i32),
+    remote: bool,
+) -> Vec<verbatim_model::TerminalMatch> {
+    search_in("terminal.json", rows, needle_from, remote)
+}
+
+/// As [`search`], on the terminal of `fixture`.
+fn search_in(
+    fixture: &str,
     rows: &[&str],
     (needle, from): (&str, i32),
     remote: bool,
 ) -> Vec<verbatim_model::TerminalMatch> {
     common::init_com();
     let title = common::unique_title("mockapp-terminal-find");
-    let mut app = common::spawn("terminal.json", "uia", &title);
+    let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
     let uia = Uia::new().expect("a UIA client");
     common::apply(&mut app, hwnd, "screen term 3");
@@ -732,6 +771,7 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
         state: SrState::new(),
         spoken: Vec::new(),
         before_find: None,
+        finds: 0,
     };
     session.input(&focus());
     session.live();
@@ -838,6 +878,14 @@ fn main() {
         (
             "a_failing_search_finds_nothing_classic",
             a_failing_search_finds_nothing_classic,
+        ),
+        (
+            "a_failing_search_goes_on_in_the_other_direction_remote",
+            a_failing_search_goes_on_in_the_other_direction_remote,
+        ),
+        (
+            "a_failing_search_goes_on_in_the_other_direction_classic",
+            a_failing_search_goes_on_in_the_other_direction_classic,
         ),
         (
             "the_search_takes_rows_starting_with_the_needle_remote",
