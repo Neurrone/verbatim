@@ -623,8 +623,7 @@ pub(crate) const SECOND_WINDOW_REPEATS: usize = 2;
 /// terminal is an optional utterance up to `repeats` times before the one
 /// heard in full (`docs/testing.md`, "Optional utterances";
 /// [`LAUNCH_REPEATS`]): each repeat cuts off the one before it, so every
-/// one said but the last may be cut off. A repeat may be followed by its
-/// line, "blank", an optional utterance accepted only after a repeat.
+/// one said but the last may be cut off.
 pub(crate) fn expect_windows_terminal_prompt_read(
     scenario: &mut Scenario,
     state: &ScenarioState,
@@ -632,27 +631,16 @@ pub(crate) fn expect_windows_terminal_prompt_read(
 ) {
     let title = title(state);
     let terminal = format!("{title} terminal");
-    let before = scenario.speech().optional_outcomes().len();
     prompt_read(
         scenario,
         state,
         &[
             heard(&format!("{title} window")),
             optional_up_to(&terminal, repeats),
-            optional("blank"),
             heard(&terminal),
             heard("blank"),
         ],
         &[],
-    );
-    let outcomes = &scenario.speech().optional_outcomes()[before..];
-    // In compare mode no optional utterance is matched or recorded.
-    if outcomes.is_empty() {
-        return;
-    }
-    assert!(
-        outcomes[1].endings.is_empty() || !outcomes[0].endings.is_empty(),
-        "\"blank\" was said before the terminal heard in full with no repeat of {terminal:?} before it"
     );
 }
 
