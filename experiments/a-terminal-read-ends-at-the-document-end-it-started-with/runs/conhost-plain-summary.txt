@@ -1,0 +1,42 @@
+# terminal=conhost mode=plain window=0x80403a8 shell_pid=20768
+before: 200 reads
+  cut (the snapshot's last row with text is not the footer): 0
+  document's end moved during the read: 0
+  cut with the end moved: 0
+  cut with the end not moved: 0
+  end moved, not cut: 0
+  retried to the moved end: 0, still cut 0, end moved again 0
+  screen's last row is the footer: 200
+  console window moved during the read: 0
+  caret rows (0 is the screen's top): 28; screen height 30
+  caret on the screen's last row: 0
+  read ms: P50 0.99, P95 1.24, max 1.62
+  not cut: console update event during the read in 0 of 200; ms since the last before it P50 n/a, P95 n/a
+flood: 200 reads
+  cut (the snapshot's last row with text is not the footer): 0
+  document's end moved during the read: 0
+  cut with the end moved: 0
+  cut with the end not moved: 0
+  end moved, not cut: 0
+  retried to the moved end: 0, still cut 0, end moved again 0
+  screen's last row is the footer: 200
+  console window moved during the read: 0
+  caret rows (0 is the screen's top): 0, 1, 2, 3, 4, 5, 6, 7 ...; screen height 30
+  caret on the screen's last row: 0
+  read ms: P50 1.74, P95 2.82, max 3.56
+  not cut: console update event during the read in 193 of 200; ms since the last before it P50 0.13, P95 0.50
+  flood lines written while reading: 771 to 3484 over 397 ms
+after: 200 reads
+  cut (the snapshot's last row with text is not the footer): 0
+  document's end moved during the read: 0
+  cut with the end moved: 0
+  cut with the end not moved: 0
+  end moved, not cut: 0
+  retried to the moved end: 0, still cut 0, end moved again 0
+  screen's last row is the footer: 200
+  console window moved during the read: 0
+  caret rows (0 is the screen's top): 19; screen height 30
+  caret on the screen's last row: 0
+  read ms: P50 0.94, P95 1.12, max 1.48
+  not cut: console update event during the read in 0 of 200; ms since the last before it P50 217.24, P95 308.06
+  footer text: 'status: done'

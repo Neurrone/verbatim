@@ -1,0 +1,602 @@
+# terminal=wt mode=region window=0xa6f03ae shell_pid=8880
+phase	i	t_ms	read_ms	since_event_ms	events_during	flood_n	screen_rows	snapshot_rows	caret_rows_to_end	end_moved	cut	retry_cut	retry_moved	screen_footer	window_moved	cursor_row	window_height	doc_last	caret_line	screen_last
+before	0	0.061	3.142	-1.000	0	0	30	2	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	1	3.312	1.627	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	2	5.022	1.784	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	3	6.890	1.945	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	4	8.912	1.989	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	5	11.001	2.147	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	6	13.248	2.128	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	7	15.481	2.168	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	8	17.732	2.059	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	9	19.892	1.688	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	10	21.669	1.806	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	11	23.561	1.918	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	12	25.559	1.841	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	13	27.471	1.875	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	14	29.416	1.855	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	15	31.341	1.838	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	16	33.250	1.988	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	17	35.337	2.104	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	18	37.562	2.092	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	19	39.745	2.164	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	20	42.010	1.936	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	21	44.020	1.941	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	22	46.039	1.839	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	23	47.949	2.407	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	24	50.435	1.739	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	25	52.272	1.829	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	26	54.189	1.727	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	27	56.004	1.725	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	28	57.817	1.867	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	29	59.773	1.748	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	30	61.610	1.696	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	31	63.396	1.689	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	32	65.165	1.925	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	33	67.198	1.770	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	34	69.055	1.706	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	35	70.853	1.936	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	36	72.868	1.797	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	37	74.742	1.863	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	38	76.677	1.862	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	39	78.612	1.824	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	40	80.522	2.096	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	41	82.702	1.518	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	42	84.289	1.643	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	43	86.008	1.563	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	44	87.641	1.582	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	45	89.294	1.774	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	46	91.180	1.722	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	47	92.981	1.645	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	48	94.700	1.732	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	49	96.578	1.724	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	50	98.382	1.820	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	51	100.297	1.904	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	52	102.292	1.856	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	53	104.237	1.872	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	54	106.199	1.872	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	55	108.160	1.797	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	56	110.048	1.836	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	57	111.972	1.856	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	58	113.934	1.747	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	59	115.757	1.637	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	60	117.468	1.612	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	61	119.171	1.869	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	62	121.138	1.602	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	63	122.816	1.534	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	64	124.424	1.616	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	65	126.116	1.563	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	66	127.752	1.920	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	67	129.762	1.793	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	68	131.645	1.789	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	69	133.529	1.798	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	70	135.411	2.099	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	71	137.602	1.902	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	72	139.561	1.916	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	73	141.543	1.927	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	74	143.550	1.736	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	75	145.385	1.928	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	76	147.393	1.986	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	77	149.458	2.215	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	78	151.746	2.264	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	79	154.073	2.088	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	80	156.223	2.152	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	81	158.452	2.086	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	82	160.615	2.062	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	83	162.752	2.081	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	84	164.931	1.951	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	85	166.945	2.016	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	86	169.041	2.037	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	87	171.142	1.942	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	88	173.162	1.899	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	89	175.150	1.693	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	90	176.928	1.891	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	91	178.886	1.889	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	92	180.836	1.889	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	93	182.804	1.929	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	94	184.801	2.084	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	95	186.961	2.070	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	96	189.098	2.019	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	97	191.417	1.946	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	98	193.427	1.908	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	99	195.396	1.931	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	100	197.391	2.133	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	101	199.606	1.868	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	102	201.543	1.912	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	103	203.530	1.965	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	104	205.558	1.843	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	105	207.735	1.971	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	106	209.770	1.921	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	107	211.760	1.967	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	108	213.789	1.899	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	109	215.772	1.934	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	110	217.769	2.140	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	111	219.973	1.912	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	112	221.967	2.103	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	113	224.134	1.913	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	114	226.117	1.959	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	115	228.145	1.944	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	116	230.168	1.922	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	117	232.198	1.943	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	118	234.202	2.419	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	119	236.685	1.930	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	120	238.972	1.942	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	121	241.011	1.896	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	122	242.976	1.971	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	123	245.025	1.936	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	124	247.033	1.948	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	125	249.059	2.003	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	126	251.135	2.049	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	127	253.249	1.814	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	128	255.393	2.069	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	129	257.561	1.967	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	130	259.598	1.978	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	131	261.648	1.916	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	132	263.679	1.935	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	133	265.685	2.010	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	134	267.771	1.976	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	135	269.827	1.623	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	136	271.589	2.053	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	137	273.710	2.140	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	138	275.920	1.991	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	139	277.997	1.919	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	140	279.979	1.986	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	141	282.044	1.979	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	142	284.089	2.128	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	143	286.633	2.004	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	144	288.731	1.878	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	145	290.691	1.892	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	146	292.651	2.028	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	147	294.747	1.952	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	148	296.761	1.925	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	149	298.749	1.928	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	150	300.781	1.997	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	151	302.865	1.832	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	152	304.786	1.875	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	153	306.768	1.864	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	154	308.720	1.931	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	155	310.741	1.845	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	156	312.672	1.895	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	157	314.657	2.024	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	158	316.777	2.906	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	159	319.800	2.048	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	160	321.909	2.055	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	161	324.050	2.024	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	162	326.144	2.032	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	163	328.252	2.030	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	164	330.368	1.729	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	165	332.180	1.757	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	166	334.100	1.713	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	167	335.889	1.787	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	168	337.746	1.855	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	169	339.680	1.730	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	170	341.495	1.778	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	171	343.341	1.770	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	172	345.190	1.734	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	173	347.002	1.814	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	174	348.895	1.720	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	175	350.693	1.543	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	176	352.314	1.843	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	177	354.235	1.690	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	178	356.005	1.693	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	179	357.775	1.812	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	180	359.688	2.123	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	181	361.887	2.209	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	182	364.188	2.210	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	183	366.497	2.102	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	184	368.709	2.011	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	185	370.822	2.119	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	186	373.048	2.117	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	187	375.255	2.078	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	188	377.435	2.143	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	189	379.659	2.486	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	190	382.216	2.089	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	191	384.407	2.138	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	192	386.656	1.991	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	193	388.726	1.681	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	194	390.485	1.740	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	195	392.303	1.724	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	196	394.107	1.706	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	197	395.886	1.780	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	198	397.751	1.632	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+before	199	399.462	1.776	-1.000	0	0	30	30	2	0	0	-1	0	1	0	28	30	status: busy		status: busy
+flood	0	502.055	3.320	-1.000	0	2080	30	60	20	2520	1	1	1800	1	0	28	30	flood line 2080	flood line 2122	status: busy
+flood	1	505.454	3.148	-1.000	0	2142	30	60	19	2400	1	1	1320	0	0	28	30	flood line 2141	flood line 2180	flood line 2142
+flood	2	508.743	2.575	-1.000	0	2201	30	60	11	2400	1	1	1440	0	0	28	30	flood line 2201	flood line 2240	flood line 2201
+flood	3	511.402	2.548	-1.000	0	2259	30	60	14	2160	1	1	840	0	0	28	30	flood line 2256	flood line 2288	flood line 2259
+flood	4	514.059	2.596	-1.000	0	2307	30	60	19	2160	1	1	1680	0	0	28	30	flood line 2303	flood line 2340	flood line 2307
+flood	5	516.738	4.226	-1.000	0	2360	30	60	4	2040	1	1	1440	1	0	28	30	flood line 2361	flood line 2398	status: busy
+flood	6	521.139	3.034	-1.000	0	2403	30	60	11	2400	1	1	1080	0	0	28	30	flood line 2401	flood line 2437	flood line 2403
+flood	7	524.338	2.994	-1.000	0	2454	30	60	15	2280	1	1	1440	0	0	28	30	flood line 2450	flood line 2487	flood line 2454
+flood	8	527.485	2.948	-1.000	0	2508	30	60	17	2760	1	1	1560	0	0	28	30	flood line 2505	flood line 2545	flood line 2508
+flood	9	530.559	2.729	-1.000	0	2568	30	60	20	2280	1	1	1680	0	0	28	30	flood line 2564	flood line 2600	flood line 2568
+flood	10	533.386	2.551	-1.000	0	2621	30	60	13	2400	1	1	1200	0	0	28	30	flood line 2621	flood line 2659	flood line 2621
+flood	11	536.053	2.610	-1.000	0	2680	30	60	13	2280	1	1	720	1	0	28	30	flood line 2680	flood line 2716	status: busy
+flood	12	538.782	3.211	-1.000	0	2740	30	60	9	3000	1	1	1200	0	0	28	30	flood line 2736	flood line 2779	flood line 2740
+flood	13	542.100	2.639	-1.000	0	2797	30	60	11	2880	1	1	600	0	0	28	30	flood line 2793	flood line 2831	flood line 2797
+flood	14	544.834	2.476	-1.000	0	2848	30	60	14	1920	1	1	1560	0	0	28	30	flood line 2845	flood line 2880	flood line 2848
+flood	15	547.401	2.707	-1.000	0	2900	30	60	12	2280	1	1	720	1	0	28	30	flood line 2898	flood line 2931	status: busy
+flood	16	550.216	2.513	-1.000	0	2951	30	60	17	1920	1	1	1560	0	0	28	30	flood line 2948	flood line 2980	flood line 2951
+flood	17	552.815	2.749	-1.000	0	3000	30	60	10	2400	1	0	600	1	0	28	30	flood line 3001	flood line 3035	status: busy
+flood	18	555.665	2.791	-1.000	0	3053	30	60	18	2040	1	1	1560	0	0	28	30	flood line 3050	flood line 3080	flood line 3053
+flood	19	558.594	2.522	-1.000	0	3100	30	60	10	2280	1	1	600	1	0	28	30	flood line 3101	flood line 3133	status: busy
+flood	20	561.226	2.718	-1.000	0	3151	30	60	19	1920	1	1	1800	0	0	28	30	flood line 3148	flood line 3180	flood line 3151
+flood	21	564.037	2.695	-1.000	0	3201	30	60	21	2400	1	1	1560	0	0	28	30	flood line 3201	flood line 3240	flood line 3201
+flood	22	566.824	2.524	-1.000	0	3261	30	60	11	2400	1	1	840	0	0	28	30	flood line 3261	flood line 3295	flood line 3261
+flood	23	569.433	3.410	-1.000	0	3313	30	60	14	2040	1	1	1560	0	0	28	30	flood line 3311	flood line 3348	flood line 3313
+flood	24	572.946	2.900	-1.000	0	3365	30	60	12	2280	1	1	1440	0	0	28	30	flood line 3362	flood line 3400	flood line 3365
+flood	25	575.954	2.848	-1.000	0	3419	30	60	14	2040	1	1	960	0	0	28	30	flood line 3416	flood line 3448	flood line 3419
+flood	26	578.909	2.677	-1.000	0	3467	30	60	11	2040	1	1	1440	0	0	28	30	flood line 3464	flood line 3500	flood line 3467
+flood	27	581.744	2.845	-1.000	0	3520	30	60	12	1920	1	1	720	1	0	28	30	flood line 3519	flood line 3550	status: busy
+flood	28	584.710	3.156	-1.000	0	3570	30	60	16	2040	1	1	1680	0	0	28	30	flood line 3566	flood line 3600	flood line 3570
+flood	29	587.976	3.057	-1.000	0	3620	30	60	12	2400	1	1	840	1	0	28	30	flood line 3621	flood line 3657	status: busy
+flood	30	591.150	2.839	-1.000	0	3678	30	60	15	1920	1	1	1200	0	0	28	30	flood line 3675	flood line 3707	flood line 3678
+flood	31	594.093	2.636	-1.000	0	3728	30	60	18	2040	1	1	2040	0	0	28	30	flood line 3725	flood line 3760	flood line 3728
+flood	32	596.871	2.714	-1.000	0	3781	30	60	19	2400	1	1	1320	0	0	28	30	flood line 3781	flood line 3820	flood line 3781
+flood	33	599.707	2.635	-1.000	0	3841	30	60	10	2400	1	1	960	0	0	28	30	flood line 3841	flood line 3878	flood line 3841
+flood	34	602.528	3.584	-1.000	0	3901	30	60	14	3240	1	1	1320	0	0	28	30	flood line 3894	flood line 3940	flood line 3901
+flood	35	606.218	3.124	-1.000	0	3960	30	60	11	2160	1	1	480	1	0	28	30	flood line 3959	flood line 3991	status: busy
+flood	36	609.481	2.890	-1.000	0	4009	30	60	18	1920	1	1	1680	0	0	28	30	flood line 4007	flood line 4040	flood line 4009
+flood	37	612.528	2.727	-1.000	0	4061	30	60	12	2400	1	1	960	0	0	28	30	flood line 4061	flood line 4099	flood line 4061
+flood	38	615.375	2.766	-1.000	0	4120	30	60	8	2520	1	1	840	0	0	28	30	flood line 4117	flood line 4154	flood line 4120
+flood	39	618.294	3.137	-1.000	0	4171	30	60	13	2040	1	1	1560	0	0	28	30	flood line 4167	flood line 4200	flood line 4171
+flood	40	621.606	3.633	-1.000	0	4220	30	60	17	2280	1	1	480	1	0	28	30	flood line 4218	flood line 4248	status: busy
+flood	41	625.397	3.154	-1.000	0	4275	30	60	16	2160	1	1	1440	0	0	28	30	flood line 4271	flood line 4306	flood line 4275
+flood	42	628.683	2.842	-1.000	0	4323	30	60	9	2400	1	1	840	0	0	28	30	flood line 4321	flood line 4355	flood line 4323
+flood	43	631.708	3.196	-1.000	0	4374	30	60	17	2160	1	1	1440	0	0	28	30	flood line 4371	flood line 4405	flood line 4374
+flood	44	635.067	3.063	-1.000	0	4423	30	60	11	2400	1	1	1080	0	0	28	30	flood line 4421	flood line 4457	flood line 4423
+flood	45	638.311	2.940	-1.000	0	4479	30	60	17	1800	1	1	1200	0	0	28	30	flood line 4476	flood line 4505	flood line 4479
+flood	46	641.397	2.925	-1.000	0	4525	30	60	13	2280	1	1	1440	0	0	28	30	flood line 4522	flood line 4560	flood line 4525
+flood	47	644.486	2.945	-1.000	0	4580	30	60	11	1800	1	1	1200	1	0	28	30	flood line 4578	flood line 4611	status: busy
+flood	48	647.577	2.967	-1.000	0	4629	30	60	22	1800	1	1	1560	0	0	28	30	flood line 4627	flood line 4660	flood line 4629
+flood	49	650.657	2.558	-1.000	0	4685	30	60	11	2160	1	1	1440	0	0	28	30	flood line 4683	flood line 4720	flood line 4685
+flood	50	653.324	2.630	-1.000	0	4739	30	60	15	2040	1	1	960	0	0	28	30	flood line 4736	flood line 4767	flood line 4739
+flood	51	656.080	2.755	-1.000	0	4786	30	60	17	2280	1	1	1560	0	0	28	30	flood line 4784	flood line 4820	flood line 4786
+flood	52	658.954	2.867	-1.000	0	4840	30	60	10	2400	1	0	480	1	0	28	30	flood line 4841	flood line 4872	status: busy
+flood	53	661.923	2.688	-1.000	0	4889	30	60	16	2040	1	1	1560	0	0	28	30	flood line 4886	flood line 4920	flood line 4889
+flood	54	664.710	2.890	-1.000	0	4940	30	60	14	1920	1	1	600	1	0	28	30	flood line 4940	flood line 4968	status: busy
+flood	55	667.706	2.824	-1.000	0	4985	30	60	11	2280	1	1	1320	0	0	28	30	flood line 4982	flood line 5020	flood line 4985
+flood	56	670.670	2.849	-1.000	0	5039	30	60	16	2040	1	1	960	0	0	28	30	flood line 5036	flood line 5066	flood line 5039
+flood	57	673.630	2.746	-1.000	0	5085	30	60	14	2400	1	1	1560	0	0	28	30	flood line 5081	flood line 5120	flood line 5085
+flood	58	676.531	2.944	-1.000	0	5140	30	60	12	2400	1	1	480	1	0	28	30	flood line 5139	flood line 5171	status: busy
+flood	59	679.642	3.432	-1.000	0	5192	30	60	15	2040	1	1	1680	0	0	28	30	flood line 5190	flood line 5227	flood line 5192
+flood	60	683.184	3.296	-1.000	0	5252	30	60	18	3120	1	1	1560	0	0	28	30	flood line 5242	flood line 5284	flood line 5252
+flood	61	686.643	2.911	-1.000	0	5305	30	60	19	2520	1	1	2040	0	0	28	30	flood line 5301	flood line 5341	flood line 5305
+flood	62	689.638	2.555	-1.000	0	5361	30	60	12	2400	1	1	720	0	0	28	30	flood line 5361	flood line 5398	flood line 5361
+flood	63	692.295	2.664	-1.000	0	5419	30	60	14	1920	1	1	1200	0	0	28	30	flood line 5415	flood line 5448	flood line 5419
+flood	64	695.060	2.799	-1.000	0	5469	30	60	20	2280	1	1	1680	0	0	28	30	flood line 5466	flood line 5502	flood line 5469
+flood	65	697.927	2.584	-1.000	0	5521	30	60	11	2400	1	1	960	0	0	28	30	flood line 5521	flood line 5556	flood line 5521
+flood	66	700.599	2.659	-1.000	0	5574	30	60	19	2040	1	1	1560	0	0	28	30	flood line 5571	flood line 5603	flood line 5574
+flood	67	703.364	2.573	-1.000	0	5627	30	60	14	2160	1	1	1560	0	0	28	30	flood line 5624	flood line 5660	flood line 5627
+flood	68	706.018	2.631	-1.000	0	5680	30	60	11	2160	1	1	720	1	0	28	30	flood line 5679	flood line 5714	status: busy
+flood	69	708.758	2.556	-1.000	0	5733	30	60	18	2040	1	1	1560	0	0	28	30	flood line 5730	flood line 5760	flood line 5733
+flood	70	711.400	3.126	-1.000	0	5781	30	60	19	2400	1	1	2400	0	0	28	30	flood line 5781	flood line 5821	flood line 5781
+flood	71	714.617	2.470	-1.000	0	5841	30	60	11	2400	1	1	960	0	0	28	30	flood line 5841	flood line 5877	flood line 5841
+flood	72	717.191	2.510	-1.000	0	5896	30	60	19	2040	1	1	1320	0	0	28	30	flood line 5893	flood line 5923	flood line 5896
+flood	73	719.799	2.549	-1.000	0	5943	30	60	13	2400	1	1	1440	0	0	28	30	flood line 5941	flood line 5980	flood line 5943
+flood	74	722.455	2.444	-1.000	0	6000	30	60	12	2040	1	1	720	1	0	28	30	flood line 5998	flood line 6030	status: busy
+flood	75	724.983	2.625	-1.000	0	6049	30	60	18	2160	1	1	1800	0	0	28	30	flood line 6046	flood line 6080	flood line 6049
+flood	76	727.731	2.554	-1.000	0	6100	30	60	13	1680	1	1	720	1	0	28	30	flood line 6101	flood line 6129	status: busy
+flood	77	730.370	2.545	-1.000	0	6149	30	60	16	2160	1	1	1560	0	0	28	30	flood line 6145	flood line 6180	flood line 6149
+flood	78	733.029	2.434	-1.000	0	6200	30	60	12	2160	1	1	480	1	0	28	30	flood line 6201	flood line 6230	status: busy
+flood	79	735.561	2.581	-1.000	0	6250	30	60	21	2160	1	1	1800	0	0	28	30	flood line 6247	flood line 6280	flood line 6250
+flood	80	738.231	2.388	-1.000	0	6301	30	60	13	2400	1	1	960	0	0	28	30	flood line 6301	flood line 6340	flood line 6301
+flood	81	740.719	3.322	-1.000	0	6360	30	60	22	2280	1	1	600	1	0	28	30	flood line 6358	flood line 6400	status: busy
+flood	82	744.146	3.130	-1.000	0	6422	30	60	18	3240	1	1	1560	0	0	28	30	flood line 6421	flood line 6464	flood line 6422
+flood	83	747.375	2.682	-1.000	0	6485	30	60	17	2280	1	1	1560	0	0	28	30	flood line 6482	flood line 6520	flood line 6485
+flood	84	750.148	2.554	-1.000	0	6540	30	60	11	2160	1	1	600	1	0	28	30	flood line 6541	flood line 6572	status: busy
+flood	85	752.805	2.624	-1.000	0	6590	30	60	18	2160	1	1	1560	0	0	28	30	flood line 6587	flood line 6620	flood line 6590
+flood	86	755.550	2.469	-1.000	0	6640	30	60	10	2400	1	0	480	1	0	28	30	flood line 6641	flood line 6673	status: busy
+flood	87	758.115	2.747	-1.000	0	6692	30	60	18	2160	1	1	1680	0	0	28	30	flood line 6688	flood line 6720	flood line 6692
+flood	88	760.970	2.743	-1.000	0	6740	30	60	14	2280	1	1	1080	1	0	28	30	flood line 6741	flood line 6780	status: busy
+flood	89	763.804	2.664	-1.000	0	6800	30	60	10	2400	1	1	600	1	0	28	30	flood line 6800	flood line 6832	status: busy
+flood	90	766.588	2.614	-1.000	0	6851	30	60	19	2160	1	1	1680	0	0	28	30	flood line 6848	flood line 6880	flood line 6851
+flood	91	769.286	2.677	-1.000	0	6901	30	60	15	2400	1	0	720	0	0	28	30	flood line 6901	flood line 6938	flood line 6901
+flood	92	772.072	2.889	-1.000	0	6960	30	60	19	2400	1	1	1080	1	0	28	30	flood line 6961	flood line 7000	status: busy
+flood	93	775.096	3.230	-1.000	0	7021	30	60	11	2400	1	1	720	0	0	28	30	flood line 7021	flood line 7060	flood line 7021
+flood	94	778.443	2.822	-1.000	0	7080	30	60	16	2640	1	1	720	0	0	28	30	flood line 7076	flood line 7115	flood line 7080
+flood	95	781.415	3.017	-1.000	0	7140	30	60	13	2280	1	1	720	0	0	28	30	flood line 7137	flood line 7169	flood line 7140
+flood	96	784.605	2.638	-1.000	0	7191	30	60	18	2400	1	1	1560	0	0	28	30	flood line 7188	flood line 7224	flood line 7191
+flood	97	787.365	2.677	-1.000	0	7247	30	60	15	2160	1	1	1680	0	0	28	30	flood line 7244	flood line 7280	flood line 7247
+flood	98	790.133	3.046	-1.000	0	7300	30	60	10	2280	1	1	600	1	0	28	30	flood line 7300	flood line 7334	status: busy
+flood	99	793.278	2.868	-1.000	0	7352	30	60	16	2520	1	1	1320	0	0	28	30	flood line 7349	flood line 7386	flood line 7352
+flood	100	796.251	3.110	-1.000	0	7407	30	60	14	3360	1	1	1200	0	0	28	30	flood line 7403	flood line 7449	flood line 7407
+flood	101	799.463	3.104	-1.000	0	7471	30	60	17	2760	1	1	1200	0	0	28	30	flood line 7468	flood line 7513	flood line 7471
+flood	102	802.680	2.548	-1.000	0	7540	30	60	12	2280	1	1	720	0	0	28	30	flood line 7537	flood line 7570	flood line 7540
+flood	103	805.323	2.546	-1.000	0	7587	30	60	13	2160	1	1	1560	0	0	28	30	flood line 7584	flood line 7620	flood line 7587
+flood	104	807.972	3.046	-1.000	0	7640	30	60	14	2760	1	1	1440	0	0	28	30	flood line 7638	flood line 7680	flood line 7640
+flood	105	811.136	2.936	-1.000	0	7700	30	60	12	1920	1	1	720	1	0	28	30	flood line 7699	flood line 7730	status: busy
+flood	106	814.156	2.697	-1.000	0	7750	30	60	19	2160	1	1	1680	0	0	28	30	flood line 7746	flood line 7780	flood line 7750
+flood	107	816.944	2.515	-1.000	0	7800	30	60	10	2280	1	1	600	1	0	28	30	flood line 7801	flood line 7835	status: busy
+flood	108	819.546	2.655	-1.000	0	7853	30	60	21	1920	1	1	1680	0	0	28	30	flood line 7850	flood line 7881	flood line 7853
+flood	109	822.288	2.816	-1.000	0	7907	30	60	18	2400	1	1	1920	0	0	28	30	flood line 7904	flood line 7941	flood line 7907
+flood	110	825.216	2.790	-1.000	0	7961	30	60	18	2400	1	1	1680	0	0	28	30	flood line 7961	flood line 8000	flood line 7961
+flood	111	828.144	3.109	-1.000	0	8021	30	60	14	2400	1	1	1080	0	0	28	30	flood line 8021	flood line 8060	flood line 8021
+flood	112	831.423	3.116	-1.000	0	8080	30	60	12	1920	1	1	720	1	0	28	30	flood line 8080	flood line 8110	status: busy
+flood	113	834.697	3.025	-1.000	0	8131	30	60	18	2160	1	1	1560	0	0	28	30	flood line 8128	flood line 8160	flood line 8131
+flood	114	837.876	3.412	-1.000	0	8180	30	60	19	2400	1	0	0	1	0	28	30	flood line 8181	flood line 8200	status: busy
+flood	115	841.443	3.030	-1.000	0	8221	30	60	14	2400	1	1	1440	0	0	28	30	flood line 8221	flood line 8260	flood line 8221
+flood	116	844.635	3.094	-1.000	0	8280	30	60	13	2400	1	1	960	1	0	28	30	flood line 8280	flood line 8319	status: busy
+flood	117	847.886	2.938	-1.000	0	8340	30	60	11	2160	1	1	720	1	0	28	30	flood line 8338	flood line 8371	status: busy
+flood	118	850.960	2.954	-1.000	0	8391	30	60	15	2760	1	1	1320	0	0	28	30	flood line 8387	flood line 8427	flood line 8391
+flood	119	854.056	3.791	-1.000	0	8450	30	60	16	2400	1	1	1560	0	0	28	30	flood line 8446	flood line 8486	flood line 8450
+flood	120	857.971	2.790	-1.000	0	8506	30	60	19	2400	1	1	2040	0	0	28	30	flood line 8504	flood line 8543	flood line 8506
+flood	121	860.933	3.674	-1.000	0	8575	30	60	13	3600	1	1	840	0	0	28	30	flood line 8564	flood line 8609	flood line 8575
+flood	122	864.718	2.720	-1.000	0	8628	30	60	15	2280	1	1	1680	0	0	28	30	flood line 8625	flood line 8660	flood line 8628
+flood	123	867.570	2.855	-1.000	0	8680	30	60	11	2160	1	1	600	1	0	28	30	flood line 8680	flood line 8712	status: busy
+flood	124	870.571	3.282	-1.000	0	8730	30	60	16	1920	1	1	1920	0	0	28	30	flood line 8727	flood line 8760	flood line 8730
+flood	125	873.983	3.244	-1.000	0	8780	30	60	12	2160	1	1	600	1	0	28	30	flood line 8781	flood line 8812	status: busy
+flood	126	877.374	3.179	-1.000	0	8832	30	60	18	2160	1	1	1560	0	0	28	30	flood line 8829	flood line 8860	flood line 8832
+flood	127	880.727	3.315	-1.000	0	8881	30	60	17	2400	1	1	1800	0	0	28	30	flood line 8881	flood line 8920	flood line 8881
+flood	128	884.148	2.799	-1.000	0	8941	30	60	14	2400	1	1	1440	0	0	28	30	flood line 8941	flood line 8980	flood line 8941
+flood	129	887.125	2.861	-1.000	0	9000	30	60	2	120	1	0	0	1	0	28	30	flood line 9011	flood line 9042	status: busy
+flood	130	890.081	2.154	-1.000	0	9057	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9087	status: busy
+flood	131	892.342	2.165	-1.000	0	9100	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9131	status: busy
+flood	132	894.651	2.086	-1.000	0	9140	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9174	status: busy
+flood	133	896.855	2.170	-1.000	0	9182	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9220	status: busy
+flood	134	899.141	1.987	-1.000	0	9229	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9260	status: busy
+flood	135	901.205	2.016	-1.000	0	9276	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9303	status: busy
+flood	136	903.503	2.167	-1.000	0	9320	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9349	status: busy
+flood	137	905.761	2.173	-1.000	0	9360	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9390	status: busy
+flood	138	908.044	2.248	-1.000	0	9400	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9432	status: busy
+flood	139	910.406	2.190	-1.000	0	9443	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9480	status: busy
+flood	140	912.686	1.993	-1.000	0	9488	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9520	status: busy
+flood	141	914.758	2.056	-1.000	0	9532	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9561	status: busy
+flood	142	916.883	2.046	-1.000	0	9576	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9606	status: busy
+flood	143	919.004	3.062	-1.000	0	9620	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9656	status: busy
+flood	144	922.133	2.402	-1.000	0	9663	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9700	status: busy
+flood	145	924.635	2.394	-1.000	0	9708	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9740	status: busy
+flood	146	927.145	2.135	-1.000	0	9754	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9785	status: busy
+flood	147	929.360	2.055	-1.000	0	9800	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9830	status: busy
+flood	148	931.515	2.063	-1.000	0	9840	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9876	status: busy
+flood	149	933.641	2.342	-1.000	0	9883	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9920	status: busy
+flood	150	936.065	2.090	-1.000	0	9932	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 9960	status: busy
+flood	151	938.229	2.075	-1.000	0	9976	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10006	status: busy
+flood	152	940.397	2.318	-1.000	0	10020	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10056	status: busy
+flood	153	942.802	2.022	-1.000	0	10064	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10099	status: busy
+flood	154	944.898	2.096	-1.000	0	10108	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10140	status: busy
+flood	155	947.074	1.997	-1.000	0	10152	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10182	status: busy
+flood	156	949.145	1.995	-1.000	0	10196	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10225	status: busy
+flood	157	951.229	1.943	-1.000	0	10238	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10266	status: busy
+flood	158	953.254	2.092	-1.000	0	10280	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10315	status: busy
+flood	159	955.426	2.058	-1.000	0	10322	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10360	status: busy
+flood	160	957.580	2.006	-1.000	0	10369	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10400	status: busy
+flood	161	959.673	2.022	-1.000	0	10414	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10440	status: busy
+flood	162	961.782	2.398	-1.000	0	10454	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10483	status: busy
+flood	163	964.296	2.298	-1.000	0	10500	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10530	status: busy
+flood	164	966.679	2.274	-1.000	0	10540	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10572	status: busy
+flood	165	969.041	1.917	-1.000	0	10581	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10613	status: busy
+flood	166	971.055	1.994	-1.000	0	10620	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10653	status: busy
+flood	167	973.125	2.212	-1.000	0	10661	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10700	status: busy
+flood	168	975.426	2.040	-1.000	0	10707	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10740	status: busy
+flood	169	977.559	2.372	-1.000	0	10752	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10780	status: busy
+flood	170	980.038	2.038	-1.000	0	10791	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10820	status: busy
+flood	171	982.142	2.217	-1.000	0	10833	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10865	status: busy
+flood	172	984.443	2.013	-1.000	0	10879	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10915	status: busy
+flood	173	986.526	2.159	-1.000	0	10921	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10957	status: busy
+flood	174	988.768	2.309	-1.000	0	10965	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 10994	status: busy
+flood	175	991.170	2.410	-1.000	0	11002	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11035	status: busy
+flood	176	993.664	2.266	-1.000	0	11041	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11079	status: busy
+flood	177	996.083	2.419	-1.000	0	11086	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11120	status: busy
+flood	178	998.633	2.353	-1.000	0	11133	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11163	status: busy
+flood	179	1001.095	2.118	-1.000	0	11180	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11211	status: busy
+flood	180	1003.296	2.252	-1.000	0	11220	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11253	status: busy
+flood	181	1005.667	2.248	-1.000	0	11261	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11296	status: busy
+flood	182	1008.020	3.406	-1.000	0	11302	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11332	status: busy
+flood	183	1011.576	2.297	-1.000	0	11340	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11375	status: busy
+flood	184	1013.988	2.134	-1.000	0	11380	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11411	status: busy
+flood	185	1016.196	2.220	-1.000	0	11420	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11460	status: busy
+flood	186	1018.545	2.003	-1.000	0	11467	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11500	status: busy
+flood	187	1020.654	1.956	-1.000	0	11516	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11549	status: busy
+flood	188	1022.705	1.956	-1.000	0	11560	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11600	status: busy
+flood	189	1024.738	1.923	-1.000	0	11611	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11644	status: busy
+flood	190	1026.778	1.918	-1.000	0	11660	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11696	status: busy
+flood	191	1028.784	1.999	-1.000	0	11705	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11740	status: busy
+flood	192	1030.859	1.938	-1.000	0	11754	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11786	status: busy
+flood	193	1032.877	1.855	-1.000	0	11800	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11835	status: busy
+flood	194	1034.811	1.913	-1.000	0	11845	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11880	status: busy
+flood	195	1036.794	1.916	-1.000	0	11891	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11922	status: busy
+flood	196	1038.809	2.120	-1.000	0	11939	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 11973	status: busy
+flood	197	1041.007	2.025	-1.000	0	11981	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 12017	status: busy
+flood	198	1043.122	2.038	-1.000	0	12024	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 12060	status: busy
+flood	199	1045.236	2.139	-1.000	0	12069	30	60	2	0	0	-1	0	1	0	28	30	status: busy	flood line 12100	status: busy
+after	0	1158.358	1.642	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	1	1160.207	1.395	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	2	1161.774	1.381	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	3	1163.325	1.377	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	4	1164.871	1.359	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	5	1166.400	1.381	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	6	1167.969	1.367	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	7	1169.512	1.417	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	8	1171.099	1.337	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	9	1172.643	1.394	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	10	1175.016	1.388	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	11	1176.599	1.319	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	12	1178.084	1.325	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	13	1179.588	1.318	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	14	1181.076	1.338	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	15	1182.620	1.344	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	16	1184.148	1.318	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	17	1185.545	2.167	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	18	1187.782	1.986	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	19	1189.841	2.184	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	20	1192.122	2.026	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	21	1194.224	1.937	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	22	1196.235	1.976	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	23	1198.302	1.875	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	24	1200.248	1.961	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	25	1202.284	1.929	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	26	1204.285	1.697	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	27	1206.236	1.966	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	28	1208.272	1.931	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	29	1210.304	2.206	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	30	1212.633	1.993	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	31	1214.698	2.015	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	32	1216.784	2.056	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	33	1218.911	2.104	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	34	1221.300	1.976	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	35	1223.354	1.949	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	36	1225.399	2.057	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	37	1227.574	1.978	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	38	1229.644	1.882	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	39	1231.629	1.902	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	40	1233.599	1.887	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	41	1235.560	1.738	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	42	1237.627	1.939	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	43	1239.642	1.899	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	44	1241.635	2.061	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	45	1243.783	1.939	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	46	1245.794	1.912	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	47	1247.783	1.895	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	48	1249.751	1.877	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	49	1251.698	1.943	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	50	1253.733	1.847	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	51	1255.681	1.873	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	52	1257.624	1.859	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	53	1259.580	2.043	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	54	1261.711	1.991	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	55	1263.774	1.959	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	56	1265.811	1.941	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	57	1267.830	1.811	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	58	1269.874	1.925	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	59	1271.873	1.972	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	60	1273.917	1.912	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	61	1275.928	1.950	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	62	1277.968	2.152	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	63	1280.202	1.959	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	64	1282.282	2.103	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	65	1284.756	2.001	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	66	1286.866	1.970	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	67	1288.923	1.929	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	68	1290.939	1.901	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	69	1292.940	1.689	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	70	1294.700	2.013	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	71	1296.797	2.099	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	72	1299.034	1.706	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	73	1301.025	1.986	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	74	1303.113	1.920	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	75	1305.117	1.876	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	76	1307.077	1.835	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	77	1309.000	2.048	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	78	1311.134	1.958	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	79	1313.197	1.916	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	80	1315.220	2.124	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	81	1317.436	1.974	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	82	1319.504	1.915	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	83	1321.531	2.000	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	84	1323.626	1.816	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	85	1325.551	1.779	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	86	1327.438	1.980	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	87	1329.534	1.839	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	88	1331.480	2.219	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	89	1333.804	1.892	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	90	1335.783	1.867	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	91	1337.759	1.954	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	92	1339.818	1.897	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	93	1341.811	2.060	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	94	1343.966	1.961	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	95	1346.035	2.040	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	96	1348.173	1.881	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	97	1350.165	1.865	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	98	1352.138	1.883	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	99	1354.131	1.858	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	100	1356.095	1.884	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	101	1358.085	1.879	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	102	1360.069	1.938	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	103	1362.113	2.188	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	104	1364.399	1.931	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	105	1366.424	1.957	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	106	1368.495	1.890	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	107	1370.477	1.808	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	108	1372.393	1.897	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	109	1374.398	1.865	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	110	1376.371	1.850	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	111	1378.326	2.187	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	112	1380.632	1.852	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	113	1382.613	1.797	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	114	1384.547	1.829	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	115	1386.477	1.856	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	116	1388.445	1.835	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	117	1390.388	2.063	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	118	1392.574	1.878	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	119	1394.574	2.192	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	120	1396.863	2.070	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	121	1399.042	2.016	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	122	1401.157	1.967	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	123	1403.218	1.863	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	124	1405.177	1.956	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	125	1407.223	1.926	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	126	1409.235	2.168	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	127	1411.495	1.853	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	128	1413.450	1.838	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	129	1415.379	1.846	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	130	1417.327	1.825	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	131	1419.242	1.838	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	132	1421.162	1.863	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	133	1423.117	1.864	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	134	1425.062	2.037	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	135	1427.152	2.048	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	136	1429.305	1.886	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	137	1431.273	1.856	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	138	1433.215	1.868	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	139	1435.170	1.899	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	140	1437.155	1.899	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	141	1439.149	1.900	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	142	1441.187	2.397	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	143	1443.639	2.045	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	144	1445.779	1.811	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	145	1447.686	1.861	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	146	1449.641	1.834	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	147	1451.570	1.831	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	148	1453.510	1.911	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	149	1455.524	1.853	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	150	1457.504	2.062	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	151	1459.658	1.985	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	152	1461.755	1.871	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	153	1463.733	2.226	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	154	1466.098	1.859	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	155	1468.040	1.883	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	156	1470.019	1.975	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	157	1472.063	2.122	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	158	1474.587	2.031	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	159	1476.704	1.936	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	160	1478.748	1.873	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	161	1480.704	2.026	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	162	1482.841	1.900	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	163	1484.812	1.982	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	164	1486.881	2.029	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	165	1488.989	2.552	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	166	1491.781	2.053	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	167	1493.939	2.338	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	168	1496.361	2.135	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	169	1498.572	2.075	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	170	1500.719	2.144	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	171	1502.986	2.055	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	172	1505.139	2.469	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	173	1507.781	2.788	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	174	1510.679	2.166	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	175	1512.978	2.286	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	176	1515.417	2.261	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	177	1517.788	1.871	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	178	1519.983	2.164	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	179	1522.572	2.085	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	180	1524.729	1.928	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	181	1526.747	1.739	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	182	1528.577	1.702	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	183	1530.362	1.781	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	184	1532.226	1.766	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	185	1534.076	1.856	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	186	1536.011	2.061	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	187	1538.178	2.468	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	188	1540.726	2.505	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	189	1543.314	2.469	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	190	1545.858	2.035	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	191	1547.972	2.073	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	192	1550.131	2.324	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	193	1552.549	2.031	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	194	1554.660	2.320	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	195	1557.066	2.098	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	196	1559.237	2.056	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	197	1561.389	2.152	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	198	1563.653	1.897	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
+after	199	1565.677	1.964	-1.000	0	12120	30	60	2	0	0	-1	0	1	0	28	30	status: done	flood line 12120	status: done
