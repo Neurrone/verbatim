@@ -521,7 +521,8 @@ Each read, line by line, top to bottom:
   the caret's line is compared the same way, each side padded to its
   caret's column. Within a key's window, away
   from the caret, and with no change of its own in the 2 seconds before
-  the key, it is the key's: one that gained text other than at its end is
+  the first of the keys sharing the window, the keys own it: one that
+  gained text other than at its end is
   the answer, spoken whole; one that only lost text is silent; any other is
   held until the keys pause (`HeldForKeys`). Otherwise a row that only
   lost text is silent (`LostText`), a spinner's symbol replaced alone is
@@ -548,8 +549,12 @@ the alignment, which every read keeps with its line as the typing shows it
 (a suggestion after the caret blanked) and the column the next character
 typed goes to (one past the caret held on the margin's last cell, its wrap
 pending); the caret where the window's first key found it is kept too, so a
-cursor the program moves while it draws and parks back says nothing. At a
-read in the window, the caret's line is the keys'
+cursor the program moves while it draws and parks back says nothing. Each
+read is tagged twice: who owns its changes, the keys within their window
+and the program otherwise (`owner`), and how the caret moved, found once:
+not at all, along its line, onto another line already there, or onto a
+new line (`Move`). The caret step is the one place the keys' kinds are
+read. At a read in the window, the caret's line is the keys'
 answer and is not output: typing shown at the caret is echoed, and typing
 not shown within 300 milliseconds of reaching the program is dropped
 unspoken; a caret moved with no text change says a caret key's unit, or

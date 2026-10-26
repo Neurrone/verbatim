@@ -33,8 +33,9 @@ pub const TYPED_LIMIT_MS: u64 = 300;
 /// than as a key's answer, is volatile ("Volatile rows"), judged at each read.
 pub const VOLATILE_MS: u64 = 2000;
 
-/// A row that changed with no key within this many milliseconds before a
-/// key is not that key's answer, whatever it gained ("A key's answer").
+/// A row that changed with no key within this many milliseconds before
+/// the first of the keys is the program's, not theirs ("Keys and their
+/// window").
 pub const UNPROMPTED_MS: u64 = 2000;
 
 /// The shortest quiet period ("Every time limit").
@@ -456,7 +457,8 @@ impl Screen {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 struct Keys {
-    /// When the latest reached the program.
+    /// When the first and the latest reached the program.
+    first_ms: u64,
     last_ms: u64,
     /// The keys, oldest first.
     kinds: Vec<KeyKind>,
@@ -469,6 +471,79 @@ struct Keys {
     followed: bool,
     /// Typing not yet shown, with when each reached the program.
     typed: Vec<(String, u64)>,
+}
+
+/// Who owns a change a read found ("Keys and their window").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Owner {
+    /// The program's, judged by the rules of output.
+    Program,
+    /// The keys': the caret's line by the caret step, any other line by
+    /// "Rows the keys own".
+    Keys,
+}
+
+/// How the caret moved from the last read's caret, mapped through the
+/// alignment, to the read's: found once for each read ("The caret's
+/// line").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Move {
+    /// No caret, or the last read's caret not found: nothing to compare.
+    Unknown,
+    /// On the same row, at the same column.
+    Still,
+    /// Along the same line.
+    Along,
+    /// Onto another line that was already there.
+    Onto,
+    /// Onto a new line.
+    New,
+}
+
+impl Move {
+    /// The move from `before` to `caret`, the caret's line new when every
+    /// row of it with text is new.
+    fn of(caret: Option<&Caret>, before: Option<&Caret>, outcome: &Outcome, rows: &[Row]) -> Self {
+        let Some(caret) = caret else {
+            return Self::Unknown;
+        };
+        if let Some(before) = before
+            && before.line == caret.line
+        {
+            return if before.row == caret.row && before.typing == caret.column {
+                Self::Still
+            } else {
+                Self::Along
+            };
+        }
+        let line_rows = caret.line
+            ..rows.len().min(
+                outcome
+                    .lines
+                    .iter()
+                    .find(|line| line.rows.start == caret.line)
+                    .map_or(caret.line + 1, |line| line.rows.end),
+            );
+        let fresh = outcome.rows[line_rows.clone()]
+            .iter()
+            .zip(&rows[line_rows])
+            .all(|(kind, row)| row.is_blank() || *kind == NewRow::New);
+        if fresh { Self::New } else { Self::Onto }
+    }
+}
+
+/// What the caret step answered.
+#[derive(Default)]
+struct CaretAnswer {
+    /// The caret's line, when the step spoke of it or found it the keys';
+    /// its change is then not output.
+    line: Option<usize>,
+    /// From a read without colours, the text after the caret that was not
+    /// typed, which waits for a read with them ("Colours").
+    held: Option<String>,
+    /// Whether the caret is back where the keys started, on its line
+    /// unchanged: the keys moved nothing.
+    back: bool,
 }
 
 /// A line found gone, kept while it lingers.
@@ -580,6 +655,7 @@ impl TerminalReader {
             .is_some_and(|keys| key.at_ms <= keys.last_ms + KEY_WINDOW_MS);
         if !open {
             self.keys = Some(Keys {
+                first_ms: key.at_ms,
                 last_ms: key.at_ms,
                 kinds: Vec::new(),
                 origin: self.screen.caret.clone(),
@@ -623,6 +699,26 @@ impl TerminalReader {
                 line.volatile = false;
                 line.said.clone_from(&line.text);
             }
+        }
+    }
+
+    /// Who owns a change a read taken at `now` found in a line with
+    /// `state` ("Keys and their window"): the keys, when the read lies
+    /// within 300 milliseconds after the latest of them and the line did
+    /// not change with no key in the 2 seconds before the first of them;
+    /// the program otherwise. With no line, whose the read's time makes it.
+    fn owner(&self, now: u64, state: Option<&LineState>) -> Owner {
+        let Some(keys) = &self.keys else {
+            return Owner::Program;
+        };
+        let window = now >= keys.last_ms && now <= keys.last_ms + KEY_WINDOW_MS;
+        let unprompted = state
+            .and_then(|state| state.unprompted_ms)
+            .is_some_and(|at| at >= keys.first_ms.saturating_sub(UNPROMPTED_MS));
+        if window && !unprompted {
+            Owner::Keys
+        } else {
+            Owner::Program
         }
     }
 
@@ -884,12 +980,9 @@ impl TerminalReader {
         let silent = self.fresh || !self.focused || outcome.first || resized;
         let report = self.settings.report_new_output && !silent;
         let mut step = Step::default();
-        // The caret's line, against the line before the keys whose window
-        // holds this read.
-        let window = self
-            .keys
-            .as_ref()
-            .is_some_and(|keys| now >= keys.last_ms && now <= keys.last_ms + KEY_WINDOW_MS);
+        // Whether the read lies in the keys' window: its changes are theirs
+        // unless a line's own history says otherwise.
+        let window = self.owner(now, None) == Owner::Keys;
         // The last read's caret, mapped through the alignment: when the
         // caret's row went but its line's first row stayed, as when a
         // wrapped line is erased, the caret was on that line, at its column.
@@ -910,25 +1003,7 @@ impl TerminalReader {
                 .retain(|(_, at)| now <= at.saturating_add(TYPED_LIMIT_MS));
             keys.origin = keys.origin.as_ref().and_then(mapped);
         }
-        // The caret back where the keys found it, on its line unchanged,
-        // from another line the last read left it on: the keys moved
-        // nothing, and the program's cursor moves while it drew are not
-        // spoken ("Keys and their window"). A line the last read showed with other text
-        // under the caret changed, and is answered against that read.
-        let at_origin = match (
-            &caret,
-            self.keys.as_ref().and_then(|keys| keys.origin.as_ref()),
-        ) {
-            (Some(caret), Some(origin)) => {
-                caret.row == origin.row
-                    && caret.column == origin.typing
-                    && caret.text == origin.shown
-                    && before.as_ref().is_none_or(|before| {
-                        before.line != caret.line || before.shown == caret.text
-                    })
-            }
-            _ => false,
-        };
+        let movement = Move::of(caret.as_ref(), before.as_ref(), &outcome, rows);
         // Every read in the keys' window has the colours, but one the
         // outpost took before Core's request for them came ("Colours"):
         // that read leaves the emphasis, the suggestion and text after the
@@ -941,39 +1016,27 @@ impl TerminalReader {
         let mut key_speech: Vec<Speech> = Vec::new();
         // Where the review position goes, set once the read is handled.
         let mut reviews: Vec<(usize, usize)> = Vec::new();
-        if window
-            && !silent
-            && at_origin
-            && let Some(caret) = &caret
-        {
-            // A review position that followed the program's cursor while it
-            // drew comes back with the caret.
-            if self.keys.as_ref().is_some_and(|keys| keys.followed) {
-                step.followed = true;
-                reviews.push((caret.row, read.caret_column));
-            }
-        } else if window && !silent {
-            let moved = match (&caret, &before) {
-                (Some(caret), Some(before)) => {
-                    before.row != caret.row || before.typing != caret.column
-                }
-                (Some(_), None) => true,
-                _ => false,
-            };
-            (answered, colours_held) = self.answer_caret(
-                (caret.as_mut(), before.as_ref()),
-                &outcome,
+        if window && !silent {
+            let answer = self.caret_step(
+                (caret.as_mut(), before.as_ref(), movement),
                 (rows, new_colours.as_deref()),
                 &mut key_speech,
             );
-            if let Some(caret) = &caret
-                && self.settings.review_follows_caret
-                && moved
-            {
-                step.followed = true;
-                reviews.push((caret.row, read.caret_column));
-                if let Some(keys) = &mut self.keys {
-                    keys.followed = true;
+            (answered, colours_held) = (answer.line, answer.held);
+            if let Some(caret) = &caret {
+                if answer.back {
+                    // A review position that followed the program's cursor
+                    // while it drew comes back with the caret.
+                    if self.keys.as_ref().is_some_and(|keys| keys.followed) {
+                        step.followed = true;
+                        reviews.push((caret.row, read.caret_column));
+                    }
+                } else if self.settings.review_follows_caret && movement != Move::Still {
+                    step.followed = true;
+                    reviews.push((caret.row, read.caret_column));
+                    if let Some(keys) = &mut self.keys {
+                        keys.followed = true;
+                    }
                 }
             }
         }
@@ -989,10 +1052,6 @@ impl TerminalReader {
         // New lines, each with its text, or none when it is blank.
         let mut fresh_lines: Vec<(usize, Option<Text>)> = Vec::new();
         let mut emphasis_candidates: Vec<usize> = Vec::new();
-        let unprompted_before = self
-            .keys
-            .as_ref()
-            .map(|keys| keys.last_ms.saturating_sub(UNPROMPTED_MS));
         let old_caret = previous.caret.clone();
         // The old lines whose history a line of the read carries.
         let mut carried: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -1297,13 +1356,8 @@ impl TerminalReader {
             let difference = Difference::new(&old_text, text);
             state.redrawn = true;
             let caret_line = caret.as_ref().is_some_and(|caret| caret.line == start);
-            let prompted = window
-                && !caret_line
-                && state
-                    .unprompted_ms
-                    .zip(unprompted_before)
-                    .is_none_or(|(at, since)| at < since);
-            if prompted {
+            // "Rows the keys own".
+            if !caret_line && self.owner(now, Some(&state)) == Owner::Keys {
                 if difference.gained {
                     key_speech.push(Speech::Answer {
                         row: start,
@@ -1496,42 +1550,49 @@ impl TerminalReader {
         clippy::too_many_lines,
         reason = "the cases of the caret's line rule in order, each short"
     )]
-    /// The caret's line as a key's answer ("Keys and their window"): typing echoed, the
-    /// key's unit or the landing rule, text gained or lost, or the line
-    /// changed some other way. Returns the line answered, whose change is
-    /// then not output, and, from a read without colours, the text after
-    /// the caret that was not typed, which waits for a read with them
-    /// ("Colours").
-    fn answer_caret(
+    /// The caret step ("The caret's line"), the one place the keys' kinds
+    /// are read: the caret's line when the keys own the read, compared with
+    /// the last read's caret `before` by the read's `movement`. The caret
+    /// back where the keys started, on its line unchanged, says nothing;
+    /// after Enter nothing either, its answer being only new output; on a
+    /// new line, the line is output; on another line already there, that
+    /// line is spoken, or the unit of a character or word key; along its
+    /// line, typing echoed, the key's unit or the landing rule, text gained
+    /// or lost, or the line changed some other way. Sets the caret's view
+    /// of its line as the typing shows it.
+    fn caret_step(
         &mut self,
-        (caret, before): (Option<&mut Caret>, Option<&Caret>),
-        outcome: &Outcome,
+        (caret, before, movement): (Option<&mut Caret>, Option<&Caret>, Move),
         (rows, colours): (&[Row], RowColours<'_>),
         speech: &mut Vec<Speech>,
-    ) -> (Option<usize>, Option<String>) {
+    ) -> CaretAnswer {
         let (Some(caret), Some(keys)) = (caret, self.keys.as_ref()) else {
-            return (None, None);
+            return CaretAnswer::default();
         };
+        // The caret back where the keys found it, on its line unchanged,
+        // from another line the last read left it on: the keys moved
+        // nothing, and the program's cursor moves while it drew are not
+        // spoken. A line the last read showed with other text under the
+        // caret changed, and is answered against that read.
+        if let Some(origin) = &keys.origin
+            && caret.row == origin.row
+            && caret.column == origin.typing
+            && caret.text == origin.shown
+            && before.is_none_or(|before| before.line != caret.line || before.shown == caret.text)
+        {
+            return CaretAnswer {
+                back: true,
+                ..CaretAnswer::default()
+            };
+        }
         // In a terminal Enter's answer is only new output, never the caret's
         // line, as NVDA turns off its new-line announcement in terminals
         // (`docs/parity/terminals.md`, "Typing"): what Enter changed is read
         // as output, and a line the caret moved onto, such as the screen's
         // first row a clear homes it to before it erases, says nothing.
         if keys.kinds.last() == Some(&KeyKind::Enter) {
-            return (None, None);
+            return CaretAnswer::default();
         }
-        let line_rows = caret.line
-            ..rows.len().min(
-                outcome
-                    .lines
-                    .iter()
-                    .find(|line| line.rows.start == caret.line)
-                    .map_or(caret.line + 1, |line| line.rows.end),
-            );
-        let fresh = outcome.rows[line_rows.clone()]
-            .iter()
-            .zip(&rows[line_rows.clone()])
-            .all(|(kind, row)| row.is_blank() || *kind == NewRow::New);
         let unit = keys.kinds.iter().rev().find_map(|kind| match kind {
             KeyKind::Caret(unit) => Some(*unit),
             _ => None,
@@ -1561,9 +1622,6 @@ impl TerminalReader {
             .collect();
         // Typing not yet shown.
         let typed: String = keys.typed.iter().map(|(text, _)| text.as_str()).collect();
-        let same = before
-            .as_ref()
-            .is_some_and(|before| before.line == caret.line);
         // A suggestion after the caret in other colours than the typing; in
         // a read without colours, the last suggestion where it still shows,
         // less what was typed along it ("Colours").
@@ -1580,11 +1638,11 @@ impl TerminalReader {
         // held on the last cell of a row the typing filled, its wrap
         // pending, which the next character follows.
         let mut column = caret.column;
-        if !same {
-            if fresh {
-                // A new line at the caret is output (Enter, a new prompt).
-                return (None, None);
-            }
+        if movement == Move::New {
+            // A new line at the caret is output (Enter, a new prompt).
+            return CaretAnswer::default();
+        }
+        if !matches!(movement, Move::Still | Move::Along) {
             // The caret ended on another line that was already there: that
             // line is spoken whatever changed on it ("The caret's line").
             if before.is_some() || unit.is_some() {
@@ -1708,7 +1766,11 @@ impl TerminalReader {
         } else if colours.is_some() {
             self.suggestion = None;
         }
-        (answer, held)
+        CaretAnswer {
+            line: answer,
+            held,
+            back: false,
+        }
     }
 
     /// The last suggestion as it still shows after the caret in a read

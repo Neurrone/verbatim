@@ -723,6 +723,48 @@ fn a_row_that_changed_on_its_own_just_before_the_key_is_not_its_answer() {
 }
 
 #[test]
+fn two_quick_keys_in_one_window_each_say_the_row_that_gained_the_marker() {
+    // "Keys and their window": each read is compared with the last read, so
+    // a second key in the first's window says its own selection.
+    let mut term = Term::new(20, 5, 10);
+    term.write("> apple\r\n  banana\r\n  cherry\r\n$ ", 100);
+    term.key(KeyKind::Other, 1000);
+    assert_eq!(
+        term.write("\x1b[1;1H  apple\x1b[2;1H> banana\x1b[4;3H", 1050),
+        step(
+            vec![answer(1, "> banana")],
+            vec![withheld(0, Reason::LostText)],
+            None
+        )
+    );
+    term.key(KeyKind::Other, 1100);
+    assert_eq!(
+        term.write("\x1b[2;1H  banana\x1b[3;1H> cherry\x1b[4;3H", 1150),
+        step(
+            vec![answer(2, "> cherry")],
+            vec![withheld(1, Reason::LostText)],
+            None
+        )
+    );
+}
+
+#[test]
+fn a_row_that_changed_on_its_own_before_the_first_of_the_keys_is_the_programs() {
+    // "Keys and their window": the 2 seconds are counted before the first
+    // of keys sharing a window. The meter changed 2.1 seconds before the
+    // second key, but 1.9 before the first: its change is the program's.
+    let mut term = Term::new(20, 5, 10);
+    term.write("cpu 10%\r\n$ ", 100);
+    term.write("\x1b[1;1Hcpu 20%\x1b[2;3H", 4000);
+    term.key(KeyKind::Other, 5900);
+    term.key(KeyKind::Other, 6100);
+    assert_eq!(
+        term.write("\x1b[1;1Hcpu 30%\x1b[2;3H", 6150),
+        says(vec![changed(0, "30%")])
+    );
+}
+
+#[test]
 fn other_rows_a_key_changed_are_spoken_once_the_keys_pause() {
     let mut term = Term::new(20, 5, 10);
     term.write("line one\r\nline two\r\n\r\n1,1 Top\x1b[1;1H", 100);
