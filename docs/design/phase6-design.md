@@ -2241,11 +2241,11 @@ Confirmed by Dickson (2026-10-09):
 - The outpost keeps the screens of the last eight reads of a terminal
   for finding the screen before a key; a key whose request arrives after
   more reads than that is judged by the caret alone.
-- The footer flood redraws its footer unchanged during the flood and
-  changed once after it, so its speech is the same however the reads
-  fall: a footer changed during a flood is heard, or not, as the reads
-  happen to find it. NVDA was captured with this script and, first, with
-  a footer changing every twenty lines.
+- No scenario floods above a footer that a read must find while output
+  arrives: a read taken while output moves the document's end can leave
+  the footer out, so its speech would depend on how the reads fall
+  (`docs/design/terminal-model.md`, "Limits"). The status bar scenarios
+  write a few lines at once above their footer instead.
 - Selection lists, changed (confirmed, being built): every line that
   gains a marker another line lost is spoken, top to bottom, not only the
   first. The marker rule is

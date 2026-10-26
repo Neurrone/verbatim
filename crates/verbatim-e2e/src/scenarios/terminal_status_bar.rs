@@ -3,23 +3,53 @@
 //! Terminal and `conhost_status_bar` in the console host. The shared setup
 //! is described in the `terminal` module.
 //!
-//! The footer flood's script, `footer.ps1` (`terminal_footer`), keeps its
-//! last row for a footer below the caret's row. Verbatim+End reads it as
-//! "status: busy" while the script waits, and as "status: done" after the
-//! flood; once the script has cleared the screen and the prompt is back,
-//! with nothing below the caret and no row a program rewrote, it reads the
-//! prompt's line, the last with text. NVDA has no terminal status bar, so
-//! each press is Verbatim's own (`docs/parity/terminals.md`, "Reading a
-//! terminal on demand").
+//! The written script `footer.ps1` clears the screen, keeps its last row
+//! for a footer, "status: busy", with a scroll region over the rows above,
+//! and waits for a key: only the footer is heard, the cleared screen's
+//! blank rows above it being no output. A key read without showing it
+//! writes "output line 1" to "output line 3" into the region in one write,
+//! fewer than a screen, and the script waits again; once the three lines
+//! are heard, Verbatim+End reads the footer below the caret's row as
+//! "status: busy". A second key redraws the footer as "status: done", said
+//! only as it changed, "done", and Verbatim+End then reads "status: done".
+//! A third key removes the region, clears the screen and prints "footer
+//! gone"; with nothing below the caret and no row a program rewrote,
+//! Verbatim+End reads the prompt's line, the last with text. No flood
+//! runs above the footer, because a read taken while output moves the
+//! document's end can leave the footer out (`docs/design/terminal-model.md`,
+//! "Limits"). NVDA has no terminal status bar, so each press is Verbatim's
+//! own (`docs/parity/terminals.md`, "Reading a terminal on demand").
 
 use std::io;
 
 use super::terminal::{self, PROMPT};
-use super::terminal_footer::{self, SCRIPT};
 use crate::registry::ScenarioState;
 use crate::scenario::Scenario;
 
 pub(crate) use super::no_teardown as teardown;
+
+/// The footer below a scroll region, with three lines written above it.
+const SCRIPT: &str = "Add-Type -TypeDefinition @\"\r\n\
+using System;\r\n\
+using System.Runtime.InteropServices;\r\n\
+public static class Vt {\r\n\
+\x20   [DllImport(\"kernel32.dll\")] static extern IntPtr GetStdHandle(int n);\r\n\
+\x20   [DllImport(\"kernel32.dll\")] static extern bool GetConsoleMode(IntPtr h, out int m);\r\n\
+\x20   [DllImport(\"kernel32.dll\")] static extern bool SetConsoleMode(IntPtr h, int m);\r\n\
+\x20   public static void Enable() { var h = GetStdHandle(-11); int m; GetConsoleMode(h, out m); SetConsoleMode(h, m | 4); }\r\n\
+}\r\n\
+\"@\r\n\
+[Vt]::Enable()\r\n\
+$e = [char]27\r\n\
+$rows = [Console]::WindowHeight\r\n\
+[Console]::Write(\"$e[2J$e[1;$($rows - 1)r$e[$rows;1Hstatus: busy$e[$($rows - 1);1H\")\r\n\
+$null = [Console]::ReadKey($true)\r\n\
+[Console]::Write(\"`noutput line 1`noutput line 2`noutput line 3\")\r\n\
+$null = [Console]::ReadKey($true)\r\n\
+[Console]::Write(\"$e[s$e[$rows;1Hstatus: done$e[u\")\r\n\
+$null = [Console]::ReadKey($true)\r\n\
+[Console]::Write(\"$e[r$e[2J$e[H\")\r\n\
+'footer gone'\r\n";
 
 pub(crate) fn setup_windows_terminal(scenario: &mut Scenario) -> io::Result<ScenarioState> {
     terminal::open_windows_terminal(scenario, "status-bar", &[("footer.ps1", SCRIPT)])
@@ -42,8 +72,13 @@ fn status_bar(scenario: &mut Scenario, heard: &str) {
 fn steps(scenario: &mut Scenario) {
     terminal::type_with_echo(scenario, r".\footer.ps1", terminal::Echo::Shown);
     scenario.speech().expect(&["status: busy"]);
+    scenario.send_keys(&["n"]).expect("presses n");
+    scenario
+        .speech()
+        .expect(&["output line 1", "output line 2", "output line 3"]);
     status_bar(scenario, "status: busy");
-    terminal_footer::flood(scenario);
+    scenario.send_keys(&["n"]).expect("presses n");
+    scenario.speech().expect(&["done"]);
     status_bar(scenario, "status: done");
     scenario.send_keys(&["n"]).expect("presses n");
     scenario.speech().expect(&["footer gone", PROMPT]);

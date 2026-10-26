@@ -864,11 +864,16 @@ review a line above the caret, let a script print two lines, and hear the
 review cursor follow the caret to the prompt. The review-padding
 scenarios (`scenarios/terminal_review_padding.rs`) move the review cursor
 along a short printed row and hear it stop at the row's last character,
-"Right b", padding never being reviewed. The footer-flood scenarios
-(`scenarios/terminal_footer.rs`) write a hundred lines into a scroll
-region above a footer that is redrawn during the flood and changed after
-it: the flood policy's thirty lines, "skipped 41 lines", the last
-twenty-nine, and the footer's change, "done".
+"Right b", padding never being reviewed. The footer overflow scenario
+(`scenarios/terminal_footer.rs`) writes a flood longer than the console
+host's history into a scroll region above a footer, and hears the flood
+policy's thirty lines, "skipped more than 8971 lines", the screen's last
+lines and the changed footer. The status bar scenarios
+(`scenarios/terminal_status_bar.rs`) write three lines at once above a
+footer and read it with Verbatim+End before and after it changes, and
+read the prompt's line once the footer is gone. No scenario floods above
+a footer that a read must find while output arrives, because such a read
+can leave the footer out (`docs/design/terminal-model.md`, "Limits").
 
 The window scenarios (`scenarios/terminal_windows.rs`) open a second
 window of each terminal, switch between the two as clicking a taskbar

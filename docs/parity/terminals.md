@@ -119,12 +119,6 @@ scenarios follow it as the model's order of work brings them back.
   outpost only notes changes until Core asks, when a group's last line
   is handed to speech, where NVDA's monitor thread diffs on every
   change.
-- A footer below a scroll region that a flood scrolls above, redrawn
-  unchanged during the flood and changed after it: both say the footer,
-  "status: busy", when it is drawn; Verbatim applies the flood policy
-  (lines 1 to 30, "skipped 41 lines", lines 72 to 100) and says the
-  footer only as it changed, "done" (different: the flood policy;
-  `*_footer_flood`).
 
 #### Typing
 
