@@ -703,104 +703,182 @@ impl SpeechCollector {
             return;
         }
         Self::require_optional_followed(expected);
-        // The sequence as matched so far, each optional utterance as many
-        // times as it was said, for the mismatch report and the endings.
-        let mut resolved: Vec<Expected> = Vec::new();
+        // Each reading of the sequence, each optional utterance said a
+        // given number of times, is matched against the speech as it
+        // arrives. The first reading in order of preference whose texts
+        // and endings all match is taken; a reading still short of speech
+        // waits for the next utterance, and one that cannot match is ruled
+        // out. An optional utterance is therefore taken only where the
+        // rest of the sequence can still match.
+        let readings = Self::readings(expected);
+        let spoken: Vec<Vec<Expected>> = readings
+            .iter()
+            .map(|counts| {
+                expected
+                    .iter()
+                    .zip(counts)
+                    .flat_map(|(want, &count)| std::iter::repeat_n(want.clone(), count))
+                    .collect()
+            })
+            .collect();
         let mut actual: Vec<Utterance> = Vec::new();
-        let mut optionals: Vec<(usize, Range<usize>)> = Vec::new();
-        for (index, want) in expected.iter().enumerate() {
-            let Said::UpTo(times) = want.said else {
-                let deadline = Instant::now() + timeout;
-                resolved.push(want.clone());
-                let Some(got) = self.next_utterance(deadline) else {
-                    self.fail(&format!(
-                        "{}\nutterance {} ({:?}) was not queued within {timeout:?}",
-                        describe_mismatch(&resolved, &actual, expected),
-                        actual.len(),
-                        want.text
-                    ));
-                };
-                actual.push(got.clone());
-                if got.text != want.text {
-                    self.fail_at(
-                        &describe_mismatch(&resolved, &actual, expected),
-                        got.utterance,
-                    );
+        let mut ruled_out: Vec<Option<RuledOut>> = vec![None; spoken.len()];
+        let chosen = loop {
+            let mut chosen = None;
+            let mut waiting = false;
+            for (index, said) in spoken.iter().enumerate() {
+                if ruled_out[index].is_some() {
+                    continue;
                 }
-                continue;
-            };
-            // The same text expected once right after belongs to the end of
-            // the run of it, the optional utterance to its start: a repeat
-            // cuts off the one before it.
-            let same_after = expected[index + 1..]
-                .iter()
-                .take_while(|next| next.said == Said::Once && next.text == want.text)
-                .count();
-            let run = self.take_optional(&want.text, times, same_after, timeout);
-            let said = run.len();
-            optionals.push((index, actual.len()..actual.len() + said));
-            resolved.extend(run.iter().map(|_| want.clone()));
-            actual.extend(run);
+                if let Some(at) = said
+                    .iter()
+                    .zip(&actual)
+                    .position(|(want, got)| want.text != got.text)
+                {
+                    ruled_out[index] = Some(RuledOut::Differs(at));
+                    continue;
+                }
+                // Readings come fewest utterances first, so none after
+                // one still short of speech is complete.
+                if said.len() > actual.len() {
+                    waiting = true;
+                    continue;
+                }
+                if let Some(ending) = self.wrong_ending(said, &actual, timeout) {
+                    ruled_out[index] = Some(ending);
+                    continue;
+                }
+                chosen = Some(index);
+                break;
+            }
+            if let Some(index) = chosen {
+                break index;
+            }
+            if waiting {
+                if let Some(got) = self.next_utterance(Instant::now() + timeout) {
+                    actual.push(got);
+                    continue;
+                }
+                for slot in &mut ruled_out {
+                    slot.get_or_insert(RuledOut::Missing(actual.len()));
+                }
+            }
+            let ruled_out: Vec<RuledOut> = ruled_out
+                .into_iter()
+                .map(|slot| slot.expect("every reading is ruled out"))
+                .collect();
+            self.fail_reading(expected, &spoken, &ruled_out, &actual, timeout);
+        };
+        let mut start = 0;
+        for (want, &count) in expected.iter().zip(&readings[chosen]) {
+            if want.said != Said::Once {
+                self.record_optional(&want.text, &actual[start..start + count], timeout);
+            }
+            start += count;
         }
-        for (want, got) in resolved.iter().zip(&actual) {
-            if matches!(want.said, Said::UpTo(_)) {
+    }
+
+    /// Every reading of `expected`, as how many times each of its items is
+    /// said, in order of preference: the fewest utterances first, so that
+    /// the sequence is matched as soon as the speech so far completes it,
+    /// and among as many, the earlier optional utterances said more times.
+    fn readings(expected: &[Expected]) -> Vec<Vec<usize>> {
+        let mut readings = vec![Vec::new()];
+        for want in expected {
+            let (least, most) = match want.said {
+                Said::Once => (1, 1),
+                Said::UpTo(times) => (0, times),
+            };
+            readings = readings
+                .into_iter()
+                .flat_map(|reading: Vec<usize>| {
+                    (least..=most).rev().map(move |count| {
+                        let mut reading = reading.clone();
+                        reading.push(count);
+                        reading
+                    })
+                })
+                .collect();
+        }
+        // A stable sort keeps the order among as many utterances.
+        readings.sort_by_key(|reading| reading.iter().sum::<usize>());
+        readings
+    }
+
+    /// Waits for each utterance of `said`, a reading whose texts match
+    /// `actual`, that is said once to end, and returns how the first whose
+    /// ending is not the one expected rules the reading out.
+    fn wrong_ending(
+        &mut self,
+        said: &[Expected],
+        actual: &[Utterance],
+        timeout: Duration,
+    ) -> Option<RuledOut> {
+        for (at, (want, got)) in said.iter().zip(actual).enumerate() {
+            if want.said != Said::Once {
                 continue;
             }
-            let deadline = Instant::now() + timeout;
-            let ending = self.ending_by(got.utterance, deadline);
+            let ending = self.ending_by(got.utterance, Instant::now() + timeout);
             let ok = matches!(
                 (want.ending, &ending),
                 (Ending::Completed, Some(UtteranceEnding::Completed))
                     | (Ending::Cancelled, Some(UtteranceEnding::Cancelled))
             );
             if !ok {
-                self.fail_at(
-                    &format!(
-                        "the utterance {:?} was expected to end {:?}, but {}",
-                        want.text,
-                        want.ending,
-                        ending.map_or_else(
-                            || format!("had not ended after {timeout:?}"),
-                            |ending| format!("ended {ending:?}")
-                        )
-                    ),
-                    got.utterance,
-                );
+                return Some(RuledOut::Ending { at, ending });
             }
         }
-        for (index, said) in optionals {
-            self.record_optional(&expected[index].text, &actual[said], timeout);
-        }
+        None
     }
 
-    /// Takes the utterances an optional utterance of `text` said up to
-    /// `times` times matches: the run of `text` that comes next, up to
-    /// `times` plus `same_after` long, less the last `same_after`, which
-    /// are left for the utterances of the same text expected once right
-    /// after it. The first utterance of other text is left unmatched.
-    fn take_optional(
-        &mut self,
-        text: &str,
-        times: usize,
-        same_after: usize,
+    /// Fails the assertion of `expected` once every reading is ruled out,
+    /// naming why the reading that matched the most speech was, the most
+    /// preferred of those that matched as much.
+    fn fail_reading(
+        &self,
+        expected: &[Expected],
+        spoken: &[Vec<Expected>],
+        ruled_out: &[RuledOut],
+        actual: &[Utterance],
         timeout: Duration,
-    ) -> Vec<Utterance> {
-        let mut run = Vec::new();
-        while run.len() < times + same_after {
-            let Some(got) = self.next_utterance(Instant::now() + timeout) else {
-                break;
-            };
-            if got.text != text {
-                self.pending.push_front(got);
-                break;
+    ) -> ! {
+        let reached = |index: usize| match &ruled_out[index] {
+            RuledOut::Differs(at) | RuledOut::Missing(at) => *at,
+            RuledOut::Ending { .. } => spoken[index].len(),
+        };
+        let mut best = 0;
+        for index in 1..spoken.len() {
+            if reached(index) > reached(best) {
+                best = index;
             }
-            run.push(got);
         }
-        let said = run.len().saturating_sub(same_after);
-        for got in run.drain(said..).rev() {
-            self.pending.push_front(got);
+        let said = &spoken[best];
+        match &ruled_out[best] {
+            RuledOut::Differs(at) => self.fail_at(
+                &describe_mismatch(&said[..=*at], &actual[..=*at], expected),
+                actual[*at].utterance,
+            ),
+            RuledOut::Ending { at, ending } => self.fail_at(
+                &format!(
+                    "the utterance {:?} was expected to end {:?}, but {}",
+                    said[*at].text,
+                    said[*at].ending,
+                    ending.as_ref().map_or_else(
+                        || format!("had not ended after {timeout:?}"),
+                        |ending| format!("ended {ending:?}")
+                    )
+                ),
+                actual[*at].utterance,
+            ),
+            RuledOut::Missing(at) => {
+                let at = *at;
+                self.fail(&format!(
+                    "{}\nutterance {at} ({:?}) was not queued within {timeout:?}",
+                    describe_mismatch(&said[..=at], actual, expected),
+                    said[at].text
+                ))
+            }
         }
-        run
     }
 
     /// Waits for each of `said`, an optional utterance of `text` as many
@@ -1700,6 +1778,22 @@ fn record(timeline: &Timeline, texts: &mut HashMap<UtteranceId, String>, frame: 
     }
 }
 
+/// Why one reading of an expected sequence, each optional utterance said
+/// a given number of times, does not match the speech.
+#[derive(Clone, Debug)]
+enum RuledOut {
+    /// Its utterance at this index differs from the one said there.
+    Differs(usize),
+    /// Its utterance at `at` ended otherwise than expected, or, `None`,
+    /// had not ended by the deadline.
+    Ending {
+        at: usize,
+        ending: Option<UtteranceEnding>,
+    },
+    /// Its utterance at this index was not queued by the deadline.
+    Missing(usize),
+}
+
 /// The expected sequence as `declared`, and the actual one, `{:?}`
 /// escaped, with the index of the first utterance that differs between
 /// `resolved`, the expected sequence as matched so far, each optional
@@ -2214,6 +2308,116 @@ mod tests {
         assert_eq!(
             message,
             "the utterance \"title terminal\" was expected to end Completed, but ended Cancelled"
+        );
+    }
+
+    /// A Windows Terminal window's launch: its terminal repeated, and the
+    /// repeat's line, are optional before the terminal heard in full.
+    fn launch() -> [Expected; 5] {
+        [
+            heard("title window"),
+            optional_up_to("title terminal", 1),
+            optional("blank"),
+            heard("title terminal"),
+            heard("blank"),
+        ]
+    }
+
+    /// The outcomes of the launch's two optional utterances.
+    fn launch_outcomes(speech: &SpeechCollector) -> Vec<String> {
+        speech
+            .optional_outcomes()
+            .iter()
+            .map(ToString::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn a_launch_said_once_leaves_both_optional_utterances_absent() {
+        let mut speech = collector(vec![
+            queued(1, "title window"),
+            queued(2, "title terminal"),
+            queued(3, "blank"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Completed),
+            ended(3, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence(&launch());
+        speech.expect_nothing_more(None);
+        assert_eq!(
+            launch_outcomes(&speech),
+            ["\"title terminal\": absent", "\"blank\": absent"]
+        );
+    }
+
+    #[test]
+    fn a_launch_repeat_without_its_line_is_matched_as_the_optional_terminal() {
+        let mut speech = collector(vec![
+            queued(1, "title window"),
+            queued(2, "title terminal"),
+            queued(3, "title terminal"),
+            queued(4, "blank"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Cancelled),
+            ended(3, UtteranceEnding::Completed),
+            ended(4, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence(&launch());
+        speech.expect_nothing_more(None);
+        assert_eq!(
+            launch_outcomes(&speech),
+            ["\"title terminal\": cut off", "\"blank\": absent"]
+        );
+    }
+
+    #[test]
+    fn a_launch_repeat_with_its_line_cut_off_waits_for_the_terminal_heard_in_full() {
+        let mut speech = collector(vec![
+            queued(1, "title window"),
+            queued(2, "title terminal"),
+            queued(3, "blank"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Completed),
+            queued(4, "title terminal"),
+            ended(3, UtteranceEnding::Cancelled),
+            queued(5, "blank"),
+            ended(4, UtteranceEnding::Completed),
+            ended(5, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence(&launch());
+        speech.expect_nothing_more(None);
+        assert_eq!(
+            launch_outcomes(&speech),
+            ["\"title terminal\": in full", "\"blank\": cut off"]
+        );
+    }
+
+    #[test]
+    fn a_launch_line_with_no_repeat_before_it_is_refused() {
+        let mut speech = collector(vec![
+            queued(1, "title window"),
+            queued(2, "blank"),
+            queued(3, "title terminal"),
+            queued(4, "blank"),
+            ended(1, UtteranceEnding::Completed),
+            ended(2, UtteranceEnding::Cancelled),
+            ended(3, UtteranceEnding::Completed),
+            ended(4, UtteranceEnding::Completed),
+        ]);
+        speech.expect_sequence(&launch());
+        speech.expect_nothing_more(None);
+        let payload = catch_unwind(AssertUnwindSafe(|| {
+            crate::scenarios::terminal::require_launch_blank_after_repeat(
+                speech.optional_outcomes(),
+                "title terminal",
+            );
+        }))
+        .expect_err("the launch is refused");
+        assert_eq!(
+            payload.downcast_ref::<String>().map(String::as_str),
+            Some(
+                "\"blank\" was said before the terminal heard in full with no repeat of \"title terminal\" before it"
+            )
         );
     }
 

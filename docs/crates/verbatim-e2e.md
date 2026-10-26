@@ -150,11 +150,19 @@ an utterance is named in its text.
   `times` times in a row. Nothing else is accepted in its place. An
   optional utterance must be followed in the same sequence by an
   utterance of other text said once, whose arrival shows that it was not
-  said; otherwise the assertion fails as a harness error. Where the same
-  text is expected once right after it, the run of that text is split
-  with the expected ones last, since a repeat cuts off the one before
-  it: `optional(t), heard(t), heard(u)` accepts `t u` and `t t u`, the
-  first `t` of two heard in full or cut off. What became of each
+  said; otherwise the assertion fails as a harness error. An optional
+  utterance is taken only where the rest of the sequence can still
+  match: the matcher weighs every reading of the sequence, each optional
+  utterance said a given number of times, against the speech as it
+  arrives, and takes the first whose texts and endings all match, the
+  fewest utterances first and, among as many, the earlier optional
+  utterances said more times. A reading still short of speech waits for
+  the next utterance, within the step's timeout. So
+  `optional(t), heard(t), heard(u)` accepts `t u` and `t t u`, the first
+  `t` of two heard in full or cut off, and
+  `optional(t), optional(u), heard(t), heard(u)` accepts `t u` with both
+  optional utterances absent, and `t u t u` when the first `t u` is not
+  heard in full, as a repeat cuts it off. What became of each
   optional utterance, an `OptionalOutcome` (its text, the input its step
   answers, and each time's ending, none when absent), is noted on the
   timeline and kept in `optional_outcomes()`, which the registry reports.
