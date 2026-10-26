@@ -137,9 +137,11 @@ scenarios follow it as the model's order of work brings them back.
 - In place of NVDA's rule dropping a change of one or two characters,
   the typing Core holds is echoed when the terminal shows it at the end
   of the line and not spoken again as output, and a line changed some
-  other way (a password prompt's asterisks) drops the held typing
-  unspoken, so a tab completion's added text is read and a password is
-  never spoken (different). A line of one or two characters is output
+  other way (a password prompt's asterisks) speaks what it shows and
+  keeps pending only the typing it does not show yet, dropped unspoken
+  300 milliseconds after it was typed, so a tab completion's added text
+  is read and a password is never spoken (different; Dickson,
+  2026-10-26). A line of one or two characters is output
   like any other (`*_short_output`).
 - A line rewritten in place echoes the typing only when what it gained
   is exactly the typing (a character typed in the middle of a command),
@@ -193,11 +195,13 @@ scenarios follow it as the model's order of work brings them back.
   the erase, `cls` typed on a prompt on the screen's first row reads as
   Control+W erasing a word and says nothing (a limit of
   `docs/design/terminal-model.md`).
-- Up Arrow and a character typed at once (`*_up_typing`): NVDA says the
+- Up Arrow and a character typed at once: NVDA says the
   character, "x", as it is typed and then the recalled line with it,
   "echo onex"; Verbatim reads the line's change once, both in it, and
   says "echo onex" without the character's own echo (Dickson,
-  2026-10-09; `docs/design/phase6-design.md`).
+  2026-10-09; `docs/design/phase6-design.md`). When a read shows the
+  recalled line before the "x", as at human speed, the line is spoken
+  and the "x" echoed (Dickson, 2026-10-26; `*_up_typing`).
 - The console host's keys are translated with the console host's own
   keyboard layout, its thread learned from the console window's
   `WinEvents`, as NVDA does.

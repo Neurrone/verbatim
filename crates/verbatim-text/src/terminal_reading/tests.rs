@@ -613,6 +613,25 @@ fn up_arrow_and_a_character_at_once_speak_the_recalled_line_with_it_once() {
 }
 
 #[test]
+fn a_character_typed_after_up_arrow_and_shown_after_the_recalled_line_is_echoed() {
+    // "Typing echo": the recalled line, a change other than the typing,
+    // does not show the "x" yet, so the "x" stays pending and is echoed at
+    // the read that shows it.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ ", 100);
+    term.key(KeyKind::Caret(Unit::Line), 200);
+    term.typed("x", 210);
+    assert_eq!(
+        term.write("echo one", 220),
+        says(vec![Speech::Gained {
+            row: 0,
+            text: "echo one".to_owned()
+        }])
+    );
+    assert_eq!(term.write("x", 250), says(vec![echo(0, "x")]));
+}
+
+#[test]
 fn up_arrow_alone_speaks_the_recalled_line_whole() {
     // A command typed and entered just before, inside the Up Arrow's
     // window, is not a character typed after it.
@@ -1591,6 +1610,48 @@ fn text_after_the_caret_held_for_colours_is_gained_when_the_window_ends_without_
             text: "ho hi".to_owned()
         }])
     );
+}
+
+#[test]
+fn text_held_for_colours_and_gone_at_the_next_read_with_them_is_dropped() {
+    // "Colours": the read with colours settles the hold, though the caret's
+    // line says nothing; the suggestion it held is no longer shown.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ e", 100);
+    term.typed("c", 1000);
+    term.terminal.write(b"c\x1b[90mho hi\x1b[0m\x1b[5D");
+    assert_eq!(
+        term.read_colourless(1050),
+        step(vec![echo(0, "c")], Vec::new(), Some(1300))
+    );
+    assert_eq!(
+        term.write_coloured("\x1b[K", 1060),
+        step(Vec::new(), vec![withheld(0, Reason::LostText)], None)
+    );
+    assert_eq!(term.reader.timer(1300), quiet(None));
+}
+
+#[test]
+fn text_held_for_colours_and_still_shown_in_the_typings_colours_is_gained() {
+    // "Colours": Enter leaves the caret's line unanswered, and the read
+    // with colours finds the held text in the typing's colours.
+    let mut term = Term::new(20, 3, 10);
+    term.write("$ e", 100);
+    term.typed("c", 1000);
+    term.terminal.write(b"cho hi\x1b[5D");
+    assert_eq!(
+        term.read_colourless(1050),
+        step(vec![echo(0, "c")], Vec::new(), Some(1300))
+    );
+    term.key(KeyKind::Enter, 1100);
+    assert_eq!(
+        term.write_coloured("\r\n", 1150),
+        says(vec![Speech::Gained {
+            row: 0,
+            text: "ho hi".to_owned()
+        }])
+    );
+    assert_eq!(term.reader.timer(1400), quiet(None));
 }
 
 #[test]

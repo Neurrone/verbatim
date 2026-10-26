@@ -1197,6 +1197,42 @@ impl TerminalReader {
                 }
                 continue;
             }
+            // A read with colours in the keys' window settles text held for
+            // them, whatever the caret step made of the read ("Colours"):
+            // gone, it is dropped; still shown in the typing's colours, it
+            // is text gained; in other colours, a suggestion the caret step
+            // did not answer, it says nothing.
+            let mut base = base;
+            if window_colours
+                && let Some(state) = &mut base
+                && matches!(state.hold, Some(Hold::Colours(_)))
+                && let Some(Hold::Colours(after)) = state.hold.take()
+                && let Some(new_colours) = &new_colours
+                && let Some(at) = line.text.rfind(after.as_str())
+            {
+                let mut column = line.text[..at].chars().count();
+                let mut row = start;
+                while row + 1 < line.rows.end && column >= rows[row].text.chars().count() {
+                    column -= rows[row].text.chars().count();
+                    row += 1;
+                }
+                let held_at = Caret {
+                    row,
+                    line: row,
+                    text: String::new(),
+                    column,
+                    shown: String::new(),
+                    typing: column,
+                };
+                if suggestion(&held_at, rows, new_colours)
+                    .is_none_or(|other| !other.starts_with(after.as_str()))
+                {
+                    key_speech.push(Speech::Gained {
+                        row: start,
+                        text: after,
+                    });
+                }
+            }
             let Some(mut state) = base.map(|mut base| {
                 base.cut = cut;
                 base
@@ -1706,8 +1742,21 @@ impl TerminalReader {
                     answer = Some(caret.line);
                 }
                 Compared::Other(difference) => {
+                    // Typing the change overtook, the oldest typed
+                    // characters that the text it inserted ends with, is
+                    // spoken with it and dropped; typing the line does not
+                    // show yet stays pending ("Typing echo").
                     if let Some(keys) = &mut self.keys {
-                        keys.typed.clear();
+                        let inserted = difference.inserted().trim_end();
+                        let mut typing = String::new();
+                        let mut overtaken = 0;
+                        for (at, (text, _)) in keys.typed.iter().enumerate() {
+                            typing.push_str(text);
+                            if inserted.ends_with(typing.as_str()) {
+                                overtaken = at + 1;
+                            }
+                        }
+                        keys.typed.drain(..overtaken);
                     }
                     let (prefix, removed, inserted) = (
                         difference.start_chars(),

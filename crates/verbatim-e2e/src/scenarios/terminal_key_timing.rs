@@ -30,13 +30,13 @@
 //!   its end, so the caret's line is spoken as the key's: "ready>
 //!   .\long.ps1". NVDA, captured live on 2026-10-09, says the recalled line
 //!   too.
-//! - `*_up_typing`: `echo one` run, then Up Arrow and "x" pressed in one
-//!   batch, the second before the first's line is read. The line's change
-//!   is read once, with both in it, and spoken as the change: "echo onex";
-//!   then Enter runs it, answered "onex" and the prompt. NVDA, captured
-//!   live, says "x" as it is typed and then the line, "echo onex"; the
-//!   character's own echo is the difference
-//!   (`docs/parity/terminals.md`, "New terminal output").
+//! - `*_up_typing`: `echo one` run, then Up Arrow, which says the recalled
+//!   line, "ready> echo one", and once that is heard "x" typed, at human
+//!   speed: the "x" is typing, echoed, not output, and not cut off by its
+//!   own key; then Enter runs `echo onex`, answered "onex" and the prompt
+//!   (Dickson, 2026-10-26: one fixed outcome at human speed, where Up Arrow
+//!   and "x" pressed at once gave "echo onex" or the line and then the "x"
+//!   by where a read fell between them).
 
 use std::io;
 
@@ -273,15 +273,16 @@ pub(crate) fn setup_up_typing_console_host(scenario: &mut Scenario) -> io::Resul
     terminal::open_console_host(scenario, "up-typing", &[])
 }
 
-/// A command run, recalled with Up Arrow and typed after at once, and run.
+/// A command run, recalled with Up Arrow, typed after once the recalled
+/// line is heard, and run.
 fn up_typing_steps(scenario: &mut Scenario) {
     terminal::type_with_echo(scenario, "echo one", terminal::Echo::Shown);
     scenario.speech().expect(&["one", PROMPT]);
-    scenario
-        .send_keys(&["uparrow", "x"])
-        .expect("presses Up and types x at once");
-    scenario.deviates_from_nvda("docs/parity/terminals.md", "New terminal output");
-    scenario.speech().expect(&["echo onex"]);
+    scenario.send_keys(&["uparrow"]).expect("presses Up");
+    scenario.speech().expect(&["ready> echo one"]);
+    scenario.type_text("x").expect("types x");
+    // Dickson, 2026-10-26: the "x" is echoed as typing.
+    scenario.speech().expect(&["x"]);
     scenario.send_keys(&["enter"]).expect("presses Enter");
     scenario.speech().expect(&["onex", PROMPT]);
 }

@@ -2776,6 +2776,15 @@ and read again at once; 39 of 911 in `measure_keys_windows_terminal`. That
 is about one remote operation and one message more for every other key in
 the console host.
 
+Colours are read in every read that begins in a key's window, not only
+the first after it, so a key costs as many colour reads as its window
+holds reads: 1.0 to 1.33 a key in the console host and 0.90 to 2.09 in
+Windows Terminal, in `measure_keys_conhost` and
+`measure_keys_windows_terminal`. Output in the first 300 milliseconds
+after Enter has every read coloured, each costing what the screen's
+colours cost under "A terminal's colours": up to about 8 milliseconds a
+read on Pi's screen, 72 in the worst case.
+
 The time from a key to its typing echo queued for speech, from the
 latency ledger (minimum, P50, P95, P99, maximum, in milliseconds):
 `measure_keys_conhost` 1.3, 3.4, 4.8, 7.0, 13.2 before, and 0.3, 3.5, 4.8,
@@ -2880,8 +2889,8 @@ read's size is unchanged by the search and was not measured again.
 
 ### A terminal's colours
 
-The first read of a focused terminal after each key reads the screen's
-colours too, each row's runs of one foreground and background
+Every read of a focused terminal that begins in a key's window, the
+300 milliseconds after it, reads the screen's colours too, each row's runs of one foreground and background
 (`docs/design/terminal-model.md`, section 5.7;
 `docs/crates/verbatim-uia-rops.md`, "The colours"). Measured on
 2026-10-24 on this machine (x64, debug build), 120 by 30 screens, in the
@@ -2940,8 +2949,10 @@ a stream of the corpus leaves it:
   reading every cell separately costs.
 
 So the colours cost a key 1 to 3 milliseconds on an ordinary screen and up
-to 8 on a colourful one, on the first read after it only, read after the
-key has reached the program; section 10 of the design estimated 2 to 4
+to 8 on a colourful one, on each read in its window, 1.0 to 1.33 such
+reads a key in the console host and 0.90 to 2.09 in Windows Terminal
+("Live, against the build before"), read after the key has reached the
+program; section 10 of the design estimated 2 to 4
 for a colourful screen. Each check and cell is a provider call inside the
 program, about 2 to 6 microseconds each, the console host's the slower;
 no wake-up is added, the reads being in the read the key already causes,

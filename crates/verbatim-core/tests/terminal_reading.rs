@@ -21,7 +21,8 @@ use std::io::BufReader;
 use terminal_support::{Outpost, Said, Session, said};
 use verbatim_core::{RecordedInput, SrState, dump, read_of, replay, snapshot_of};
 use verbatim_model::{
-    CaretKey, CaretMotion, Effect, Input, ReviewCommand, TerminalScope, TextOp, TraceId,
+    CaretKey, CaretMotion, Effect, Input, ReaderSettings, ReviewCommand, TerminalScope, TextOp,
+    TraceId, TypingEcho,
 };
 use verbatim_term_sim::conformance::{history, streams};
 use verbatim_term_sim::{Flavor, Query};
@@ -252,6 +253,33 @@ fn a_reads_speech_goes_out_for_the_newest_key_whose_window_holds_it() {
     session.release_held();
     session.write("echo onex", 250);
     assert_eq!(session.heard(), [said(Some(x), "echo onex")]);
+}
+
+#[test]
+fn a_character_shown_after_the_recalled_line_follows_the_typing_echo_settings() {
+    // Up Arrow, then "x" typed before the recalled line is read: the line
+    // is spoken, and the "x", shown by a later read, is typing, echoed by
+    // the typing echo settings, here off.
+    let mut session = showing(20, 3, 10, "$ ");
+    session.input(&Input::Settings(ReaderSettings {
+        speak_typed_characters: TypingEcho::Off,
+        ..ReaderSettings::default()
+    }));
+    session.input(&Input::HeldKey {
+        trace_id: TraceId::mint(),
+        key: CaretKey {
+            motion: CaretMotion::PreviousLine,
+            select: false,
+        },
+        pressed_at_ms: 200,
+    });
+    let (x, input) = typed("x", 210);
+    session.input(&input);
+    session.release_held();
+    session.write("echo one", 220);
+    assert_eq!(session.heard(), [said(Some(x), "echo one")]);
+    session.write("x", 250);
+    assert_eq!(session.heard(), []);
 }
 
 #[test]
