@@ -14,9 +14,13 @@
 //! waiting behind earlier speech is
 //! reported but not counted, since it is not latency but the queue doing its
 //! job. The same stages and counts travel to `verbatim-inspect latency` in
-//! each record.
+//! each record. Each line ends with the time from the last key the hook
+//! saw before the speech was queued, whatever trace the speech came on, so
+//! that two builds that divide an announcement into different traces
+//! compare like for like.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use verbatim_control::protocol::{LatencyRecord, LatencyStage, LatencyStageKind};
@@ -56,6 +60,10 @@ struct Stages {
     speech_requested: bool,
     /// When the keyboard hook saw the caret key behind the trace.
     key_pressed: Option<u64>,
+    /// The last key the hook saw when the trace's first utterance was
+    /// queued, on any trace: when, and whether it typed text
+    /// ([`LatencyLedger::key_seen`]).
+    last_key: Option<(u64, bool)>,
     /// When the reducer first handled the trace's input before any outpost
     /// answered for it: a caret key, or a command, which may ask an outpost.
     requested: Option<u64>,
@@ -409,9 +417,21 @@ impl Stages {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
+        let last_key = self
+            .last_key
+            .filter(|(at, _)| *at <= queued)
+            .map(|(at, typed)| {
+                let kind = if typed { "typed text" } else { "typed nothing" };
+                format!(
+                    " From the last key to speech {:.1}, a key that {kind}.",
+                    ms(at, queued)
+                )
+            })
+            .unwrap_or_default();
         Some(format!(
             "{:.1} ms for {:?}: {event_side:.1} ms to speech and {speech_side:.1} ms to sound, \
-             not counting {waited:.1} ms waiting behind earlier speech. Event: {}. Speech: {}.",
+             not counting {waited:.1} ms waiting behind earlier speech. Event: {}. Speech: {}.\
+             {last_key}",
             event_side + speech_side,
             self.text,
             list(true),
@@ -451,6 +471,11 @@ pub struct LatencyLedger {
     /// The ledger's clock, in microseconds since the Unix epoch: the
     /// outpost's [`now_us`], which a test replaces with its own.
     clock: fn() -> u64,
+    /// The last key the hook saw ([`key_seen`](Self::key_seen)): its time
+    /// in microseconds shifted left one bit, the low bit set when it typed
+    /// text, so the hook thread stores both at once without a lock; zero
+    /// before the first key.
+    last_key: AtomicU64,
 }
 
 impl LatencyLedger {
@@ -474,6 +499,7 @@ impl LatencyLedger {
             max_bytes,
             server,
             clock: now_us,
+            last_key: AtomicU64::new(0),
         }
     }
 
@@ -493,6 +519,15 @@ impl LatencyLedger {
             entry.event_observed_at_ms = Some(at_us / 1_000);
             entry.stages.key_pressed = Some(at_us);
         });
+    }
+
+    /// Records that the keyboard hook saw a key at `at_us`, in microseconds
+    /// since the Unix epoch, and whether it typed text: the last key before
+    /// each announcement is queued is timed to it in the latency line,
+    /// whatever trace the announcement came on. Called on the hook thread.
+    pub fn key_seen(&self, at_us: u64, typed: bool) {
+        self.last_key
+            .store(at_us << 1 | u64::from(typed), Ordering::Relaxed);
     }
 
     /// Records when an OS event behind `trace_id` was first observed.
@@ -668,6 +703,8 @@ impl SpeechEvents for LatencyLedger {
     ) {
         let now = (self.clock)();
         let at_ms = now / 1_000;
+        let last_key = self.last_key.load(Ordering::Relaxed);
+        let last_key = (last_key != 0).then_some((last_key >> 1, last_key & 1 == 1));
         let event_observed_at_ms = self.update(trace_id, |entry| {
             // The first utterance of a trace is queued first and heard
             // first, so its queue time pairs with the trace's audio start.
@@ -676,6 +713,7 @@ impl SpeechEvents for LatencyLedger {
                 entry.stages.utterance = Some(utterance);
                 text.clone_into(&mut entry.stages.text);
                 entry.stages.queued = Some(now);
+                entry.stages.last_key = last_key;
             }
             entry.event_observed_at_ms
         });
@@ -934,6 +972,7 @@ mod tests {
         let stages = Stages {
             speech_requested: true,
             key_pressed: None,
+            last_key: None,
             requested: None,
             event: Some(EventTiming {
                 raised_ms_ago: Some(1),
@@ -966,6 +1005,31 @@ mod tests {
                  outpost read 7.0, to Core 0.3, reducer 0.1, to speech 0.1. \
                  Speech: synthesis 1.0, leading silence 0.2, mixer and device 1.8."
             )
+        );
+    }
+
+    /// The line ends with the time from the last key the hook saw before
+    /// the speech was queued, though the speech came on another trace,
+    /// and a key seen after the queuing is not that key.
+    #[test]
+    fn the_line_times_the_speech_from_the_last_key_before_it_was_queued() {
+        let ledger = ledger_at(10_000);
+        ledger.key_seen(4_000, false);
+        ledger.key_seen(6_500, true);
+        let trace = TraceId::mint();
+        ledger.utterance_queued(UtteranceId(1), trace, "x", std::time::Instant::now());
+        ledger.key_seen(11_000, false);
+        FAKE_US.set(12_000);
+        ledger.audio_started(UtteranceId(1), trace, std::time::Instant::now());
+        let line = ledger.timelines.lock().expect("ledger lock").entries[0]
+            .stages
+            .line()
+            .expect("the speech was heard");
+        assert_eq!(
+            line,
+            "2.0 ms for \"x\": 0.0 ms to speech and 2.0 ms to sound, \
+             not counting 0.0 ms waiting behind earlier speech. Event: . Speech: . \
+             From the last key to speech 3.5, a key that typed text."
         );
     }
 
@@ -1250,6 +1314,7 @@ mod tests {
         let stages = Stages {
             speech_requested: true,
             key_pressed: Some(1_000),
+            last_key: None,
             requested: Some(1_400),
             event: Some(EventTiming {
                 relayed_at_us: 1_600,

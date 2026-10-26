@@ -177,6 +177,16 @@ which is reported separately. The stages, in milliseconds:
   device's own clock passed it, read from the audio device's clock; only
   with a real device, so not in the suite's silent audio mode.
 
+Once a key has been pressed, the line ends with one more sentence: "From
+the last key to speech 3.4, a key that typed text." (or "typed nothing"),
+the time from the hook seeing the last key it saw before the speech was
+queued to the speech queued. It is measured whatever trace the speech came
+on, so it compares two builds that start an announcement's line at
+different points, such as one that speaks a key's answer from the read
+the program's own event caused and one that speaks it for the key. It
+times the key that came last, which in a burst of keys may be a later key
+than the one the speech answers.
+
 A stage is left out when the announcement did not pass it; speech from a
 read Core asked for (the focus after a menu closes, at startup) has no
 outpost stages. A caret key's line starts when the keyboard hook saw the

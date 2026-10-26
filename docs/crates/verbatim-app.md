@@ -402,7 +402,10 @@ knowing for review:
   ledger keeps the reducer's handling of the key (`requested`, any
   reduction before an outpost answered) apart from its handling of the
   answer, so the line names the hook to Core, the request's way to the
-  outpost, and caret wait stages as well. verbatim.exe's relay stamps
+  outpost, and caret wait stages as well. Every key the hook reports
+  (`key_seen`, called on the hook thread, one atomic store) is kept as the
+  last key, and each line ends with the time from it to the speech
+  queued, whatever trace the speech came on. verbatim.exe's relay stamps
   (`EventTiming::core_received_at_us` and those after it, and
   `core_read_at_us` on the way back; `docs/archive/relay.md`, section 4.5),
   and the senders' own stamps (the listener's handling's end and write, the

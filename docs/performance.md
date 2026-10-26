@@ -2773,8 +2773,42 @@ the line runs from the key, so it includes that wait. In Windows Terminal
 the text change after a key came about 19 milliseconds after it, one
 frame, and the echo's read 1 to 2 milliseconds after that, in the after
 build's outpost log; the before build's ledger has no stage for that
-wait. The console host's tail (P99 55, maximum 226) has not been
-explained.
+wait. The console host's tail (P99 55, maximum 226) is caret keys, not
+the typing echo: Left and Right Arrow whose answer waited for the caret
+key's watch.
+
+So the two builds were measured again like for like, on 2026-10-26, each
+release build with the latency line's time from the last key the hook
+saw to the speech queued (`docs/tooling/inspect.md`), which does not
+depend on where the line starts, one run of each scenario, the
+compositor below 130 percent of a processor before each. Announcements
+of one character, a space or "blank", minimum, P50, P95, P99, maximum in
+milliseconds, before then after:
+
+- `measure_keys_conhost`, the typing echo (753 and 752): 1.7, 4.0, 6.0,
+  9.3, 14.6, then 1.3, 4.1, 6.4, 10.0, 17.8. Caret keys and Backspace (119
+  and 118): 1.5, 3.3, 10.2, 78.9, 145.3, then 2.6, 3.5, 6.1, 84.7, 122.8.
+- `measure_keys_windows_terminal`, the typing echo (659 and 623): 0.2,
+  21.6, 58.1, 113.6, 132.0, then 0.8, 21.4, 54.3, 58.2, 59.3. Caret keys
+  and Backspace (109 and 74): 0.1, 7.5, 43.2, 77.3, 96.6, then 3.7, 5.5,
+  44.9, 262.2, 288.0.
+
+The typing echo did not slow in either terminal: Windows Terminal's
+median of about 21 milliseconds, one frame, is in both builds, and the
+before build's ledger left it out. The console host's caret key tail is in
+both builds too: 43 to 45 percent of its caret keys (61 and 63 of 141 in
+the first runs) are read by the watch before the console host has handled
+them, and then wait for the console host's caret event, which comes 1 to
+220 milliseconds after the key, or for the next key's read before it,
+150 milliseconds later; the before build spoke the answer from the read
+that event caused and timed its line from the event. In Windows Terminal
+the tail is Backspace at 33 milliseconds a key: each held key waits for
+the watch of the key ahead to be answered (`docs/design/key-holding.md`,
+"Keys behind a held key"), which Windows Terminal answers only when it
+draws, 20 to 80 milliseconds later, so the keys queue, held up to 196
+milliseconds before and 245 after, and the last key's answer was spoken
+about 210 milliseconds after it before and 288 after; one run each, so the
+difference between the builds is not established.
 
 ### A terminal's upward search
 

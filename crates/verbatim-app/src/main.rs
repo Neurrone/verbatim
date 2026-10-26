@@ -388,6 +388,7 @@ fn run(
     let caret_keys: HashMap<GestureId, CaretKey> =
         verbatim_input::caret_bindings().into_iter().collect();
     let clearing_keys: HashSet<GestureId> = verbatim_input::clearing_keys().into_iter().collect();
+    let key_ledger = Arc::clone(&ledger);
     let hook = InputHook::start(
         decision_config(&store),
         Arc::clone(&bound_gestures),
@@ -402,6 +403,17 @@ fn run(
             KeySpeechEffect::TogglePause => speech_control.toggle_pause(),
         }),
         Box::new(move |report| {
+            // Every key the hook saw, for the latency line's time from the
+            // last key to speech.
+            match &report {
+                KeyReport::Typed { pressed_at_us, .. } => key_ledger.key_seen(*pressed_at_us, true),
+                KeyReport::Observed { pressed_at_us, .. }
+                | KeyReport::Held { pressed_at_us, .. }
+                | KeyReport::Passed { pressed_at_us, .. } => {
+                    key_ledger.key_seen(*pressed_at_us, false);
+                }
+                KeyReport::Deferred { .. } => {}
+            }
             let command = match report {
                 KeyReport::Observed {
                     gesture,
