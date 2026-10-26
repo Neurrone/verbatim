@@ -881,13 +881,13 @@ fn the_whole_document_and_a_history_block_are_read_when_asked() {
     app.quit();
 }
 
-/// Rows of the history above where the next read starts are read by place
-/// when Core asks (`TerminalHistory`), padding kept, with how many rows
-/// above that start the read holds.
+/// Rows of the history above the start of the read Core names are read by
+/// place when Core asks (`TerminalHistory`), padding kept, with how many
+/// rows above that start the read holds and the read whose start it is.
 fn history_above_the_next_reads_start_is_read_by_place() {
     let (mut app, mut outpost, term) = start("mockapp-terminal-history");
     write(&mut app, &outpost, &["three", "four", "five"]);
-    let _ = reported(&outpost, term);
+    let read = reported(&outpost, term).read;
     outpost.settled();
     let history = ask(
         &mut outpost,
@@ -895,6 +895,7 @@ fn history_above_the_next_reads_start_is_read_by_place() {
         TextOp::TerminalHistory {
             above: 2,
             whole: false,
+            read,
         },
     );
     assert_eq!(
@@ -909,6 +910,7 @@ fn history_above_the_next_reads_start_is_read_by_place() {
             ]
             .concat(),
             above: 2,
+            read,
         }
     );
     outpost.settled();

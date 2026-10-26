@@ -532,11 +532,14 @@ older one, whose answer Core then drops. The operations (`TextOp`):
   command Core answers from its memory; `Whole`, the whole document after
   a lost read; `HistoryBlock { height }`, a first read again, counted up
   from the document's end by `height` rows with as many above.
-- `TerminalHistory { above, whole }`: the text from `above` rows above the
-  start the next read takes to the document's end, or the whole document,
-  for a review answer above Core's memory (answer `TerminalHistory {
-  text, above }`, the text with its padding and the rows it holds above
-  that start).
+- `TerminalHistory { above, whole, read }`: the text from `above` rows
+  above the start of read `read`, the read Core's memory last took, to
+  the document's end, or the whole document, for a review answer above
+  Core's memory; the outpost counts from that read's start while it
+  keeps it among the last few, and from the start the next read takes
+  otherwise (answer `TerminalHistory { text, above, read }`, the text
+  with its padding, the rows it holds above the start it was counted
+  from, and the number of the read whose start that is).
 - `TerminalFind { needle, from, rows }`: a command mark's line sought
   by its first row's text outward from the row `from` rows above the
   next read's start, alternately the next match at or below it and the

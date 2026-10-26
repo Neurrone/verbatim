@@ -9,7 +9,8 @@
 //! window Core asked colours for, the screen's colours
 //! ([`verbatim_uia_rops::terminal_snapshot`]). It is sent to Core as it is,
 //! without its lines' padding ([`TerminalSnapshot`]). Between reads the
-//! outpost keeps only where the next read starts, the screen's height and
+//! outpost keeps only where the next read starts and the few starts kept
+//! before it ([`EARLIER_STARTS`]), the screen's height and
 //! width as Core last told them, the keys' windows that take colours, and
 //! the on-demand reading's state ([`reading`]).
 
@@ -34,12 +35,23 @@ use verbatim_uia_rops::{
 use crate::text::TextError;
 use reading::Reading;
 
+/// How many starts the outpost keeps before the one the next read takes,
+/// from which a history read Core asked of an earlier read is counted
+/// ([`verbatim_model::TextOp::TerminalHistory`]): a live read or two taken
+/// between Core's taking a read and its history request reaching the
+/// outpost, as when a program keeps printing, leaves that read's start
+/// among them.
+pub const EARLIER_STARTS: usize = 3;
+
 /// What the outpost keeps of a focused terminal between its reads, while
 /// the terminal exists, across focus changes.
 #[derive(Default)]
 pub struct Terminal {
     /// Where the next read starts ([`Snapshot::next_start`]).
     start: Option<AgileReference<IUIAutomationTextRange>>,
+    /// The starts kept before it, oldest first, at most
+    /// [`EARLIER_STARTS`], each with its read as Core knows it.
+    earlier: VecDeque<(u64, AgileReference<IUIAutomationTextRange>)>,
     /// The reads taken, which number each ([`TerminalSnapshot::read`]).
     reads: u64,
     /// The read whose start is kept, as Core knows it: the number of the
@@ -521,11 +533,18 @@ pub fn read<'a>(
     );
     let mut wire = snapshot_of(&snapshot, started_ms, waited);
     wire.ended_ms = (crate::protocol::now_us() / 1_000).max(started_ms);
+    let kept_read = terminal.start_read;
     if terminal.number(&mut wire) {
-        terminal.start = snapshot
+        let next = snapshot
             .next_start
             .take()
             .and_then(|range| AgileReference::new(&range).ok());
+        if let Some(kept) = std::mem::replace(&mut terminal.start, next) {
+            if terminal.earlier.len() == EARLIER_STARTS {
+                terminal.earlier.pop_front();
+            }
+            terminal.earlier.push_back((kept_read, kept));
+        }
     }
     terminal.read_started_ms = started_ms;
     terminal.read_started_us = clock_us;
@@ -539,12 +558,28 @@ pub fn read<'a>(
     })
 }
 
+/// What [`history`] read: the text, padding kept, how many rows it holds
+/// above the start it was counted from, the read whose start that is
+/// ([`verbatim_model::TerminalSnapshot::read`]), and which path answered.
+pub struct History {
+    /// The text.
+    pub text: String,
+    /// Rows above the start.
+    pub above: u32,
+    /// The read whose start the rows are counted from; 0 before any.
+    pub read: u64,
+    /// Which implementation answered.
+    pub path: Path,
+}
+
 /// Reads the history of `terminal` by place, for a review command above
 /// the rows Core's memory keeps ([`verbatim_model::TextOp::TerminalHistory`]):
-/// from `above` rows above where its next read starts to the document's
-/// end, or the whole document when `whole`, in one remote operation. The
-/// text is returned with its padding, with how many rows it holds above
-/// that start.
+/// from `above` rows above the start of read `read` to the document's end,
+/// or the whole document when `whole`, in one remote operation. The start
+/// is that read's while the outpost keeps it ([`EARLIER_STARTS`]), so rows
+/// that output scrolled after Core asked are still the ones read, and
+/// where the next read starts otherwise; the answer names the read it was
+/// counted from.
 ///
 /// # Errors
 ///
@@ -553,9 +588,22 @@ pub fn history(
     uia: &Uia,
     (element, pattern): (&IUIAutomationElement, &IUIAutomationTextPattern),
     terminal: &Terminal,
-    (above, whole, remote): (u32, bool, bool),
-) -> Result<(String, u32), TextError> {
-    let start = terminal.start_range();
+    (above, whole, read, remote): (u32, bool, u64, bool),
+) -> Result<History, TextError> {
+    let earlier = if read == terminal.start_read {
+        None
+    } else {
+        terminal
+            .earlier
+            .iter()
+            .rev()
+            .find(|(kept, _)| *kept == read)
+            .and_then(|(_, range)| range.resolve().ok())
+    };
+    let (start, read) = match earlier {
+        Some(range) => (Some(range), read),
+        None => (terminal.start_range(), terminal.start_read),
+    };
     let query = SnapshotQuery {
         element,
         pattern,
@@ -566,14 +614,19 @@ pub fn history(
         caret: None,
         colours: None,
     };
-    let (snapshot, _) = terminal_snapshot(uia, &query, remote).map_err(|error| {
+    let (snapshot, path) = terminal_snapshot(uia, &query, remote).map_err(|error| {
         if is_gone(&error) {
             TextError::Gone
         } else {
             TextError::Failed(error.to_string())
         }
     })?;
-    Ok((String::from_utf16_lossy(&snapshot.text), snapshot.above))
+    Ok(History {
+        text: String::from_utf16_lossy(&snapshot.text),
+        above: snapshot.above,
+        read,
+        path,
+    })
 }
 
 /// What [`find`] found: the matches, the read whose start their rows are

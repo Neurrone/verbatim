@@ -999,7 +999,8 @@ they make.
   them once; the keys taken in and not yet given to the rules; the newest
   key given; a read owed (the whole document, or a first read's history
   block); the fresh read before a review answer, the review requests
-  waiting, and the history rows that came for the answer in progress; the
+  waiting, the history read asked for and the read it was counted from,
+  and the history rows that came last for the answer in progress; the
   review places; the caret, the screen's shape and whether the last read
   began at the document's start; the shape told to the outpost; the
   quiet-period timer's due time. A
@@ -1063,8 +1064,19 @@ they make.
   (`terminal_model/review.rs`, the outpost's review answers moved), its
   answer then handled as if the outpost had sent it, and any request that
   answer causes answered in turn. When an answer needs rows above the
-  memory, Core asks for them (`TextOp::TerminalHistory { above, whole }`)
-  and works the answer out again once they come. Its rows carry text
+  memory, Core asks for them (`TextOp::TerminalHistory { above, whole,
+  read }`), counted from the start of the read its memory last took,
+  and works the answer out again once they come, placed among the
+  memory's rows as they are then (`review::placed_history`): the answer
+  names the read its rows are counted from, and when the memory has
+  taken later reads since, Core follows that read's start by place
+  across them (`review::Counted`), each read adding how far its own
+  start lies below the start it was counted from, so output that
+  scrolled while the read was out moves nothing and the answer is used
+  rather than asked for again. Rows counted from a read the memory did
+  not take, or whose start it could not follow past a whole read, a
+  refused start or a read it did not take, cannot be placed, and the
+  request is answered `Unanswered`, saying nothing. Its rows carry text
   anchors with the top bit set (`TERMINAL_ANCHORS`), a range no outpost
   mints from, each the place the memory keeps for it; at most 64 places
   beyond those Core holds are kept. A request naming another anchor goes
@@ -1095,7 +1107,8 @@ they make.
   a line move lands, or nothing past the last mark. The model keeps the
   number of the read its memory last took, and places a search's
   matches among the memory's rows when the answer comes
-  (`review::placed`), counted from the start of the read the answer
+  (`review::placed`, which shares `review::start_of` with the history's
+  placement), counted from the start of the read the answer
   names: when that is the memory's last read, as it is whenever the
   memory took every read the outpost took before searching, output that
   scrolled the rows while the search was out moves nothing; otherwise

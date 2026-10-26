@@ -2910,6 +2910,21 @@ speech path. The design had estimated two screens of rows at about 0.24
 milliseconds against 0.12 for one, assuming a read of one screen; the
 read's size is unchanged by the search and was not measured again.
 
+The history read is counted from the start of the read Core's memory
+last took when it asked, and its answer names the read it was counted
+from: Core places its rows among the memory's rows when it comes,
+following that start by place across the reads the memory took
+meanwhile, so a live read that scrolls the rows while the history read
+is out costs no second history read, and the command makes one. For
+that the outpost keeps the starts of the last three reads it kept
+before the next read's (`terminal::EARLIER_STARTS`), three agile
+references it already made and now holds a little longer, with no call
+added; each read the memory takes while a history read is out adds two
+integer additions in the reducer. Rows that cannot be placed end the
+command, saying nothing. Nothing is added to the event or speech path
+but holding those references. This follows from the code and was not
+measured.
+
 ### A terminal's command marks
 
 Setting a mark costs nothing on a read: Enter on a line that holds

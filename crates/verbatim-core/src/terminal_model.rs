@@ -43,7 +43,10 @@
 //!   answer from its memory ([`review::answers`]) is not sent: Core asks for
 //!   a fresh read, aligns it, and answers the request from the memory,
 //!   asking for the rows above the memory when the answer needs them
-//!   ([`TextOp::TerminalHistory`]) and answering again once they come. The
+//!   ([`TextOp::TerminalHistory`]), counted from the start of the read the
+//!   memory last took, and answering again once they come, placed among
+//!   the memory's rows as they are then; rows that cannot be placed end
+//!   the command, saying nothing ([`review::placed_history`]). The
 //!   rows it answers with carry text anchors from a range reserved for Core
 //!   ([`TERMINAL_ANCHORS`]), which no outpost mints.
 //!
@@ -149,14 +152,27 @@ struct Waiting {
 }
 
 /// Rows of the history above the memory, read for the review answer in
-/// progress: what was asked (rows above the next read's start, or the
-/// whole document) and what came.
+/// progress and placed among the memory's rows when they came
+/// ([`review::placed_history`]): the row of the memory's last read where
+/// the first of them is, the rows, and whether they start at the
+/// document's start.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct HistoryRead {
+    first: isize,
+    rows: Vec<verbatim_text::terminal_rows::Row>,
+    reached: bool,
+}
+
+/// The history read asked for by the review answer in progress: the
+/// request, what it asked for (rows above the start of the read the memory
+/// last took, or the whole document), and that read, its start followed
+/// across the reads the memory takes while the request is out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct HistoryAsked {
+    query: QueryId,
     above: u32,
     whole: bool,
-    text: String,
-    rows_above: u32,
+    counted: review::Counted,
 }
 
 /// Core's model of one terminal.
@@ -179,9 +195,11 @@ pub(crate) struct TerminalModel {
     /// first.
     reviews: VecDeque<Waiting>,
     /// The history read asked for by the review answer in progress.
-    history_asked: Option<(QueryId, u32, bool)>,
-    /// The history reads that came for the review answer in progress.
-    pub(crate) history: Vec<HistoryRead>,
+    history_asked: Option<HistoryAsked>,
+    /// The history read that came last for the review answer in progress,
+    /// which holds every row the ones before it held, to the document's
+    /// end.
+    pub(crate) history: Option<HistoryRead>,
     /// The search asked for by the command mark move in progress, and the
     /// hash of the line it seeks.
     find_asked: Option<(QueryId, u64)>,
@@ -252,7 +270,7 @@ impl TerminalModel {
             fresh: None,
             reviews: VecDeque::new(),
             history_asked: None,
-            history: Vec::new(),
+            history: None,
             find_asked: None,
             found: None,
             mark_searches: 0,
@@ -384,7 +402,7 @@ impl TerminalModel {
             || self.fresh == Some(query_id)
             || self
                 .history_asked
-                .is_some_and(|(asked, ..)| asked == query_id)
+                .is_some_and(|asked| asked.query == query_id)
             || self
                 .find_asked
                 .as_ref()
@@ -748,6 +766,10 @@ fn take_snapshot(state: &mut SrState, node: NodeId, snapshot: &TerminalSnapshot)
         if !outcome.blank {
             model.settle_mark(&outcome.rows, at_ms);
             model.read = snapshot.read;
+            let start = review::start_row(model);
+            if let Some(asked) = &mut model.history_asked {
+                asked.counted.took(snapshot, start);
+            }
         }
         let width = u32::try_from(outcome.width).unwrap_or(u32::MAX);
         if model.told != Some((height, width)) && !outcome.blank {
@@ -803,10 +825,11 @@ pub(crate) fn snapshot_event(
     node: NodeId,
     snapshot: &TerminalSnapshot,
 ) -> Vec<Effect> {
-    if !state.focus_matches(node) || crate::terminal::terminal_focus(state) != Some(node) {
-        return Vec::new();
-    }
-    if model_of(state, node).is_some_and(|model| model.owed.is_some()) {
+    if !state.focus_matches(node)
+        || crate::terminal::terminal_focus(state) != Some(node)
+        || model_of(state, node).is_some_and(|model| model.owed.is_some())
+    {
+        not_taken(state, node);
         return Vec::new();
     }
     let taken = take_snapshot(state, node, snapshot);
@@ -834,6 +857,7 @@ pub(crate) fn answered_read(
     // While a read the rules asked for is owed, a read begun before it
     // says nothing: the owed read holds everything it showed.
     if model_of(state, node).is_some_and(|model| model.owed.is_some()) {
+        not_taken(state, node);
         return Some((Said::default(), None, Vec::new()));
     }
     match reply {
@@ -921,6 +945,7 @@ pub(crate) fn reply(
         // A read owed by the rules first: this one, begun before it, is
         // dropped as a live one is, and the review answers wait for it.
         if model.owed.is_some() {
+            not_taken(state, node);
             return effects;
         }
         if let TextReply::TerminalSnapshot(snapshot) = reply {
@@ -942,17 +967,19 @@ pub(crate) fn reply(
         if model_of(state, node).is_some_and(|model| model.owed.is_some()) {
             return effects;
         }
-    } else if let Some((_, above, whole)) = model.history_asked.take() {
-        let (text, rows_above) = match reply {
-            TextReply::TerminalHistory { text, above } => (text, above),
-            _ => (String::new(), 0),
+    } else if let Some(asked) = model.history_asked.take() {
+        let (text, rows_above, read) = match reply {
+            TextReply::TerminalHistory { text, above, read } => (text, above, read),
+            // A read that never ran, as when the terminal lost the focus:
+            // no rows above the start it was asked from.
+            _ => (String::new(), 0, asked.counted.read),
         };
-        model.history.push(HistoryRead {
-            above,
-            whole,
-            text,
-            rows_above,
-        });
+        match review::placed_history(model, &asked, &text, (rows_above, read)) {
+            Some(history) => model.history = Some(history),
+            // Counted from a read the memory did not take, or whose start
+            // it could not follow: the command ends, saying nothing.
+            None => effects.extend(abandon(state, node, trace_id)),
+        }
     } else if let Some((_, hash)) = model.find_asked.take() {
         match reply {
             TextReply::TerminalFound { matches, read } => {
@@ -961,33 +988,48 @@ pub(crate) fn reply(
             // A search that never ran, as when the terminal lost the focus:
             // only a search that ran drops a mark, so the move is abandoned,
             // saying nothing, and the marks are kept.
-            _ => effects.extend(abandon_mark(state, node, trace_id)),
+            _ => effects.extend(abandon(state, node, trace_id)),
         }
     }
     effects.extend(answer_reviews(state, node, trace_id));
     effects
 }
 
-/// Abandons terminal `node`'s command mark move in progress, the first
-/// review command waiting, whose search never ran: its line move says
-/// nothing, as when no mark is left that way.
-fn abandon_mark(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
+/// Abandons terminal `node`'s first review command waiting, saying
+/// nothing: a command mark's move whose search never ran, its line move
+/// answered as when no mark is left that way, or a request whose history
+/// rows could not be placed, answered unanswered.
+fn abandon(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<Effect> {
     let Some(model) = model_mut(state, node) else {
         return Vec::new();
     };
     model.found = None;
     model.mark_searches = 0;
-    let Some(Waiting {
-        trace,
-        review: Review::Mark { query_id, .. },
-    }) = model.reviews.front().cloned()
-    else {
-        return Vec::new();
+    model.history = None;
+    let (trace, query_id, reply) = match model.reviews.front().cloned() {
+        Some(Waiting {
+            trace,
+            review: Review::Mark { query_id, .. },
+        }) => (trace, query_id, TextReply::NoText),
+        Some(Waiting {
+            trace,
+            review: Review::Text { query_id, .. },
+        }) => (trace, query_id, TextReply::Unanswered),
+        _ => return Vec::new(),
     };
     model.reviews.pop_front();
     let trace = trace.unwrap_or(trace_id);
-    let caused = crate::reduce::text_completed(state, trace, query_id, TextReply::NoText);
+    let caused = crate::reduce::text_completed(state, trace, query_id, reply);
     queue_only(state, caused, trace)
+}
+
+/// A read of terminal `node` the memory did not take: the next it takes
+/// was counted from a start it never saw, so a history read out cannot
+/// follow its start past it ([`review::Counted`]).
+fn not_taken(state: &mut SrState, node: NodeId) {
+    if let Some(asked) = model_mut(state, node).and_then(|model| model.history_asked.as_mut()) {
+        asked.counted.skipped();
+    }
 }
 
 /// The trace of an input, for a request it causes that Core answers later.
@@ -1169,7 +1211,7 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
             break;
         };
         let Some(waiting) = model.reviews.front().cloned() else {
-            model.history.clear();
+            model.history = None;
             model.found = None;
             break;
         };
@@ -1224,10 +1266,16 @@ fn answer_reviews(state: &mut SrState, node: NodeId, trace_id: TraceId) -> Vec<E
                 effects.extend(queue_only(state, caused, trace));
             }
             Err(review::Need { above, whole }) => {
-                let (query_id, effect) =
-                    request(state, node, TextOp::TerminalHistory { above, whole });
+                let read = model_of(state, node).map_or(0, |model| model.read);
+                let (query, effect) =
+                    request(state, node, TextOp::TerminalHistory { above, whole, read });
                 if let Some(model) = model_mut(state, node) {
-                    model.history_asked = Some((query_id, above, whole));
+                    model.history_asked = Some(HistoryAsked {
+                        query,
+                        above,
+                        whole,
+                        counted: review::Counted::new(read),
+                    });
                 }
                 effects.push(effect);
                 break;

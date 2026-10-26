@@ -95,11 +95,80 @@ fn the_review_position_moves_with_its_row_as_output_scrolls_it() {
     // Down from it, through the history, read again for each command.
     session.input(&command(ReviewCommand::ReviewNextLine));
     assert_eq!(session.heard(), plain(&["three"]));
-    let history = TextOp::TerminalHistory {
+    let history = |read| TextOp::TerminalHistory {
         above: 9,
         whole: false,
+        read,
     };
-    assert_eq!(session.requests(), [FRESH, history.clone(), FRESH, history]);
+    assert_eq!(session.requests(), [FRESH, history(5), FRESH, history(6)]);
+}
+
+#[test]
+fn output_arriving_while_a_history_read_is_out_moves_nothing() {
+    // The review position on "two", in the history above the memory's rows;
+    // before the outpost reads the history, the program prints two more
+    // lines, read and taken first. The history is read from the start Core
+    // asked from, and placed among the memory's rows as they are: the
+    // command reads "two" with one history read, and the next line below it.
+    let mut session = showing(20, 4, 100, "one\r\ntwo\r\nthree\r\n");
+    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.input(&command(ReviewCommand::ReviewPreviousLine));
+    session.write("four\r\nfive\r\nsix\r\nseven\r\neight\r\nnine\r\n", 200);
+    let _ = session.heard();
+    let _ = session.requests();
+    session.output_before_histories = [("ten\r\neleven\r\n".to_owned(), 300)].into();
+    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["ten", "eleven", "two"]));
+    assert_eq!(
+        session.requests(),
+        [
+            FRESH,
+            TextOp::TerminalHistory {
+                above: 9,
+                whole: false,
+                read: 5,
+            }
+        ]
+    );
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(session.heard(), plain(&["three"]));
+}
+
+#[test]
+fn a_history_read_counted_from_a_start_the_memory_lost_ends_the_command() {
+    // The review position on "line 4", in the history above the memory's
+    // rows; before the outpost reads the history, a flood carries the last
+    // read's rows out of the buffer, so the memory takes the whole document
+    // instead, which did not start at the start before it. The history,
+    // counted from the start Core asked from, cannot be placed: the command
+    // says nothing, and the next one reads where the lost read left the
+    // review position.
+    let mut session = showing(20, 3, 9, &numbered(1..=12));
+    session.input(&command(ReviewCommand::ReviewTop));
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    session.input(&command(ReviewCommand::ReviewNextLine));
+    assert_eq!(session.heard(), plain(&["line 2", "line 3", "line 4"]));
+    let _ = session.requests();
+    session.output_before_histories = [(numbered(13..=40), 100)].into();
+    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    let mut flood = vec!["Phrase(SkippedUncountedLines)".to_owned()];
+    flood.extend((30..=40).map(|line| format!("line {line}")));
+    let heard: Vec<String> = session.heard().into_iter().map(|said| said.words).collect();
+    assert_eq!(heard, flood);
+    assert_eq!(
+        session.requests(),
+        [
+            FRESH,
+            TextOp::TerminalHistory {
+                above: 10,
+                whole: false,
+                read: 6,
+            },
+            TextOp::TerminalReadNow(TerminalScope::Whole)
+        ]
+    );
+    session.input(&command(ReviewCommand::ReviewCurrentLine));
+    assert_eq!(session.heard(), plain(&["line 32"]));
 }
 
 #[test]
@@ -156,7 +225,8 @@ fn moving_above_the_memorys_rows_reads_the_history_up_to_its_start() {
             FRESH,
             TextOp::TerminalHistory {
                 above: 0,
-                whole: true
+                whole: true,
+                read: 3,
             }
         ]
     );

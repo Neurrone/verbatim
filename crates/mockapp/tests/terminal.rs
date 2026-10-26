@@ -114,6 +114,11 @@ struct Session<'a> {
     before_find: Option<(&'a mut common::MockApp, HWND, Vec<String>)>,
     /// How many searches Core asked for.
     finds: u32,
+    /// Rows the terminal shows before the next history read Core asks
+    /// for, as [`Session::before_find`] before a search.
+    before_history: Option<(&'a mut common::MockApp, HWND, Vec<String>)>,
+    /// How many history reads Core asked for.
+    histories: u32,
 }
 
 impl Session<'_> {
@@ -186,15 +191,28 @@ impl Session<'_> {
                 TextOp::AwaitCaret(_) => TextReply::WatchEnded,
                 // The session reads only when a test or Core asks.
                 TextOp::TerminalHold => TextReply::Done,
-                TextOp::TerminalHistory { above, whole } => {
-                    let (text, above) = verbatim_outpost::terminal::history(
+                TextOp::TerminalHistory { above, whole, read } => {
+                    self.histories += 1;
+                    if let Some((app, hwnd, shown)) = self.before_history.take() {
+                        let shown: Vec<&str> = shown.iter().map(String::as_str).collect();
+                        show(app, hwnd, &shown);
+                        self.live();
+                    }
+                    let history = verbatim_outpost::terminal::history(
                         self.uia,
                         (self.source.element(), self.source.pattern()),
                         &self.terminal,
-                        (*above, *whole, self.remote),
+                        (*above, *whole, *read, self.remote),
                     )
                     .expect("the history is read");
-                    TextReply::TerminalHistory { text, above }
+                    // The path asked for answered, never the fallback.
+                    let path = history.path.name();
+                    assert_eq!(path, if self.remote { "remote" } else { "classic" });
+                    TextReply::TerminalHistory {
+                        text: history.text,
+                        above: history.above,
+                        read: history.read,
+                    }
                 }
                 TextOp::TerminalShape { height, width } => {
                     self.terminal.shape(*height, *width);
@@ -338,6 +356,8 @@ fn new_output_is_said_line_by_line(remote: bool) {
         spoken: Vec::new(),
         before_find: None,
         finds: 0,
+        before_history: None,
+        histories: 0,
     };
     session.input(&focus());
     session.spoken.clear();
@@ -400,6 +420,8 @@ fn session(uia: &Uia, hwnd: HWND, remote: bool) -> Session<'_> {
         spoken: Vec::new(),
         before_find: None,
         finds: 0,
+        before_history: None,
+        histories: 0,
     };
     session.input(&focus());
     session.live();
@@ -514,6 +536,37 @@ fn command_marks_are_found_while_output_scrolls_remote() {
 
 fn command_marks_are_found_while_output_scrolls_classic() {
     command_marks_are_found_while_output_scrolls(false);
+}
+
+/// The review cursor on the command's line above the rows Core keeps, as
+/// [`command_marks_move_the_review_cursor`] puts it there; the program
+/// prints five more lines before the outpost reads the history the next
+/// line needs, read and sent to Core first: the history's rows are
+/// counted from the start Core asked from, and the review cursor still
+/// moves to the command's output, with one history read on the remote
+/// path.
+fn the_history_is_placed_while_output_scrolls_remote() {
+    common::init_com();
+    let title = common::unique_title("mockapp-terminal-history-scrolling");
+    let mut app = common::spawn("terminal.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let uia = Uia::new().expect("a UIA client");
+    {
+        let mut session = session_with_a_command(&uia, &mut app, hwnd, true);
+        session.input(&command(ReviewCommand::PreviousCommandMark, 0));
+        let text = |text: &str| vec![SegmentContent::Text(text.to_owned())];
+        assert_eq!(session.spoken, [text("ready>ls")]);
+        session.spoken.clear();
+        session.histories = 0;
+        session.before_history = Some((&mut app, hwnd, rows_after_ls(15)));
+        session.input(&command(ReviewCommand::ReviewNextLine, 0));
+        assert!(session.before_history.is_none(), "the history was read");
+        assert_eq!(session.histories, 1);
+        // The new output waits in the flood policy's queue, which this
+        // session never plays.
+        assert_eq!(session.spoken, [text("a.txt")]);
+    }
+    app.quit();
 }
 
 /// A session on a terminal of four rows where `ls` was typed at the prompt
@@ -772,6 +825,8 @@ fn backspace_says_what_it_deleted_without_caret_events(remote: bool) {
         spoken: Vec::new(),
         before_find: None,
         finds: 0,
+        before_history: None,
+        histories: 0,
     };
     session.input(&focus());
     session.live();
@@ -862,6 +917,10 @@ fn main() {
         (
             "command_marks_are_found_while_output_scrolls_classic",
             command_marks_are_found_while_output_scrolls_classic,
+        ),
+        (
+            "the_history_is_placed_while_output_scrolls_remote",
+            the_history_is_placed_while_output_scrolls_remote,
         ),
         (
             "the_search_works_outward_from_its_row_remote",
