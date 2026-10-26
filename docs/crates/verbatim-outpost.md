@@ -2385,9 +2385,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `ShellCandidates`: each candidate's item, whether it is off the screen
   and its rectangle, with whether the walk read every button, which the
   time budget, the node cap, a failed step or a failed window lookup
-  makes false. A candidate gone before its read is left out, and the
-  budget passing before a read leaves the rest out and the answer
-  incomplete. Which candidate is the item, if any, Core decides
+  makes false. A candidate gone before its read is left out; one whose
+  read fails otherwise is left out and makes the answer incomplete, so
+  one failed read does not fail the query; and the budget passing before
+  a read leaves the rest out and the answer incomplete. Which candidate is the item, if any, Core decides
   (`verbatim-gui`'s `refind`). Either reads no window its application does
   not serve, looks `Shell_TrayWnd` and `TrayNotifyWnd` up without the
   proxy rule (`any_window_element`) and the overflow flyout's window
@@ -2693,9 +2694,9 @@ it.
   placed it showed text, the screen's height and width as Core last told
   them (`TextOp::TerminalShape`, `Terminal::shape`), whether the next read
   takes the colours, its on-demand reading state (`terminal::reading`),
-  when the last read began and whether it took the colours, the caret last
-  sent to Core, and a hash of the last read sent. It is kept while the
-  node is, across focus changes.
+  when the last read began and ended and whether it took the colours, the
+  caret last sent to Core, and a hash of the last read sent. It is kept
+  while the node is, across focus changes.
 - Every read is one snapshot (`terminal::read`, through
   `verbatim_uia_rops::terminal_snapshot`, with the classic fallback behind
   the same entry point): the text from a screen above where the last read

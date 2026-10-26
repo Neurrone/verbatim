@@ -83,9 +83,10 @@ pub enum GuiEvent {
     /// was clicked; the app says so.
     ShellItemGone(String),
     /// The tray icon or taskbar button with this name, chosen in the list
-    /// dialog, was there when the click was made but off the screen or with
-    /// no rectangle or an empty one, so nothing was clicked; the app says
-    /// so.
+    /// dialog, was there when the click was made but with no rectangle or
+    /// an empty one, which the list cannot leave out since it reads no
+    /// rectangles, or off the screen since the list was made, so nothing
+    /// was clicked; the app says so.
     ShellItemUnclickable(String),
 }
 

@@ -811,6 +811,61 @@ fn a_caret_line_that_only_lost_text_while_the_caret_moved_forward_over_it_is_not
 }
 
 #[test]
+fn a_caret_line_that_only_lost_text_while_the_caret_did_not_move_forward_is_that_line() {
+    // The prompt is written where the homed caret was, and the caret is
+    // homed again: the row only lost text, but the caret did not move
+    // forward over it, so it is the caret's line rewritten ("The
+    // alignment"; Dickson, 2026-10-25).
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 30, 5, 20);
+    watch.write("ready> .\\secret.ps1\r\nsecret\r\nready> cls");
+    watch.write("\x1b[H");
+    let cleared = watch.write("\x1b[2J\x1b[3Jready> \x1b[H");
+    assert_eq!(
+        cleared.rows,
+        [NewRow::Rewritten {
+            from: 0,
+            moved: false,
+            alone: false
+        }]
+    );
+}
+
+#[test]
+fn a_caret_line_that_changed_text_while_the_caret_moved_forward_over_it_is_that_line() {
+    // The caret moves forward over "ready> ", unchanged, but the row's
+    // text after it changed rather than only being lost, so it is the
+    // caret's line rewritten ("The alignment"; Dickson, 2026-10-25).
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 30, 5, 20);
+    watch.write("ready> .\\secret.ps1\r\nsecret\r\nready> cls");
+    watch.write("\x1b[H");
+    let cleared = watch.write("\x1b[2J\x1b[3Jready> zzz\x1b[1;8H");
+    assert_eq!(
+        cleared.rows,
+        [NewRow::Rewritten {
+            from: 0,
+            moved: false,
+            alone: false
+        }]
+    );
+}
+
+#[test]
+fn a_wrapped_caret_line_is_compared_whole_with_the_caret_counted_along_it() {
+    // The caret's line wraps onto a second row in both reads. Compared
+    // whole, the new line only lost text, though its first row alone
+    // gained some, and the caret, on its second row, moved forward along
+    // the line from the sixth cell over cells both show unchanged, though
+    // its column in its row is behind where it was, so it is not the
+    // caret's line: a new screen ("The alignment"; Dickson, 2026-10-25).
+    let mut watch = Watch::new(Flavor::WindowsTerminal, 10, 5, 20);
+    watch.write("ready> .\\secret.ps1\r\nsecret\r\nready> cls");
+    watch.write("\x1b[1;6H");
+    let cleared = watch.write("\x1b[2J\x1b[3J\x1b[H eady> .\\secr");
+    assert_eq!(cleared.switch, Switch::New);
+    assert_eq!(cleared.rows, [NEW, NEW]);
+}
+
+#[test]
 fn a_space_dismissing_a_suggestion_leaves_the_caret_line_that_line() {
     // A space typed after "$ git sta" dismisses the grey suggestion after
     // it: the line only lost text and the caret moved forward, but over a

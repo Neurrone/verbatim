@@ -3617,18 +3617,34 @@ whole read 72 to 160 KB, so its byte bound of 8 MiB holds fewer than its
 50 microseconds for an ordinary read of one line more and 1.1 to 2.5
 milliseconds for a whole-document read ("A terminal's rotation").
 
-Two parts of the alignment run only when a read needs them, so a stream
-pays for neither. The vote on the shift the last read's screen rows took,
-a map from each hash of the last read's screen rows with text to where
-they are and a count for each shift the two reads allow, passing once
-over the read's rows, is taken only in
-a read found by text where a row of the history block has its text lower
-than its place, as when a program prints its history again longer or
-the same output is printed twice; a stream through a full history moves
-every row up and takes none (`terminal_rows`'s test
-`a_stream_through_a_full_history_takes_no_vote_on_the_screens_shift`).
+Two parts of the alignment run only when a read needs them. The vote on
+the shift the last read's screen rows took, a map from each hash of the
+last read's screen rows with text to where they are and a count for each
+shift the two reads allow, passing once over the read's rows, is taken
+at most once a read, in a read found by text where some row of the
+history block has its text at a row of the read lower than its place.
+That is so when a program prints its history again longer or the same
+output is printed twice, but also whenever any row with text repeats
+lower down, such as rustc's `  |` rows, lines holding only `}`, or a
+repeated prompt: then a stream takes the vote on every read. A stream of
+distinct lines through a full history moves every row up and takes none
+(`terminal_rows`'s test
+`a_stream_through_a_full_history_takes_no_vote_on_the_screens_shift`),
+while a 10 by 3 console with three rows of history, streaming lines that
+alternate with `  |`, takes it on each of its six reads, and a 120 by 30
+console with 300 rows of history on each of ten. Its cost is within the
+noise of an ordinary read: in a release build on 2026-10-26, one or ten
+new lines streamed through a full 120 by 30 history of lines alternating
+with `  |` took a median of 58 to 69 microseconds a read, against 51 to
+69 for the same history with every row distinct, in both kinds of
+terminal, 31 runs each, measured with the cases of
+`crates/verbatim-text/tests/terminal_cost.rs` given these histories.
 The caret line's check, whether a line written where the caret's line
 started only lost text while the caret moved forward over it, joins the
-two lines' texts and compares them without spaces, four strings of a
-line's length, only when the caret's line starts where it did, nothing
-else kept or paired its first row, and the caret moved forward.
+two lines' texts, compares them without spaces and takes the cells the
+caret moved over from each, six strings of a line's length, only when
+the caret's line starts where it did, nothing else kept or paired its
+first row, and the caret moved forward. Every read also counts the
+caret's column along its line (`remember`'s `line_column`), one pass over
+the characters of the line's rows above the caret's row, none for a line
+of one row.

@@ -84,9 +84,10 @@ pub(super) fn shell_items(
 /// The buttons of `kind` that may be `chosen`, an item the user picked
 /// from an earlier list, now: the surface walked again, and every button
 /// whose runtime id or name is `chosen`'s ([`is_candidate`]) read for its
-/// place, one read each. A candidate gone before its read is left out; the
-/// budget passing before a read leaves that candidate and the rest out and
-/// the answer incomplete.
+/// place, one read each. A candidate gone before its read is left out; one
+/// whose read fails otherwise is left out and makes the answer incomplete;
+/// the budget passing before a read leaves that candidate and the rest out
+/// and the answer incomplete.
 pub(super) fn shell_item_position(
     context: &Context,
     client: &mut Client,
@@ -128,9 +129,15 @@ pub(super) fn shell_item_position(
             }
             Err(error) if element_is_gone(&error) => {}
             Err(error) => {
-                return Err(ReadError::Failed(format!(
-                    "could not read the shell item's position: {error}"
-                )));
+                // One button's failed read leaves the others to decide on;
+                // the answer says it is incomplete, so a name alone is
+                // not trusted to pick the button.
+                tracing::warn!(
+                    %error,
+                    name = found.item.name,
+                    "could not read a shell item's position; it is left out"
+                );
+                complete = false;
             }
         }
     }

@@ -144,6 +144,35 @@ Related items:
   screen read that counts rows (`document_rows`,
   `crates/verbatim-uia-rops/src/terminal.rs` around 866), a possible
   cost to measure.
+- `conhost_full_screen` races its program: a read taken before
+  `altscreen.ps1` parks the cursor speaks "row N changed". It fails on
+  the base build too.
+- A lost read was seen to ask twice for the whole document, where one
+  whole-document read should answer it.
+- "hellook1" is heard in the recorded hand streams.
+- Windows Terminal's launch focus sometimes speaks "... terminal" without
+  "... window", and the desktop's announcement is sometimes cancelled
+  (seen in the `*_up_typing`, `*_typing` and `*_commands` scenarios).
+- `conhost_footer_flood` hears "status: done" where it expects "done",
+  on the base build too.
+- `conhost_typing` missed a typed "o" in 2 of 6 runs on the base build.
+- Pi's regular mode has no steps yet in the "Report status bar" and
+  moving-by-command scenarios; they wait for Pi to be installed on the
+  test machine.
+- The reader's fix for a caret ahead of the typing covers only a line
+  showing none of the pending typing: with "a" and "b" typed, a line
+  showing "a" with the caret one cell ahead gives Gained "a" and then
+  Changed "ab".
+- Enter that erases a grey suggestion speaks the input line again.
+- Up Arrow and then "e" typed before the recalled line is read gives Echo
+  "e" and then Gained "cho one".
+- Backspace erasing "o", Control+Backspace erasing "tw", and tab
+  completion have no exact reader tests.
+- A trimmed caret line taller than the kept screen could miscount the
+  caret's column along its line.
+- The reader ignores the colours of a colours re-read that comes late.
+- The outpost takes a read's `ended_ms` after converting its text from
+  UTF-16, so the conversion's time counts as part of the read.
 
 ### The audio step
 
@@ -499,6 +528,12 @@ deferred.
   so the outpost's running maximum of another application's focus
   (`crates/verbatim-outpost/src/outpost/held.rs`) can depend on arrival
   order.
+- `notepad_editing`'s teardown fails when Notepad restores its earlier
+  tabs, a setting of the test machine rather than of the scenario.
+- `cargo xtask trace scenario` and `cargo xtask measure` look for the
+  build under `<worktree>\target` and ignore a separate target
+  directory (`CARGO_TARGET_DIR`), so a worktree building elsewhere
+  measures a stale or missing build.
 
 ## M4.2 — Parity small items
 

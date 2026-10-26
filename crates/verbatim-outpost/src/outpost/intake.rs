@@ -881,7 +881,12 @@ impl Intake {
             match wake {
                 Some(wake) => {
                     self.alarm.set(wake);
-                    self.alarm.wait();
+                    // A push that ends the wait early leaves the due time
+                    // set; cancelling it spares the kernel a timer interrupt
+                    // no one waits for.
+                    if !self.alarm.wait() {
+                        self.alarm.cancel();
+                    }
                 }
                 None => self.alarm.wait_for_event(),
             }

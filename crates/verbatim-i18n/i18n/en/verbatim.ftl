@@ -111,8 +111,9 @@ tray-list-left-double-click = Left &Double Click
 tray-list-right-click = &Right Click
 # Spoken when the chosen item is not there any more as the click is made.
 tray-list-gone = { $name } is no longer there
-# Spoken when the chosen item is there as the click is made but off the
-# screen or with no rectangle, so there is no point to click.
+# Spoken when the chosen item is there as the click is made but has no
+# rectangle or an empty one, or has gone off the screen since the list was
+# made, so there is no point to click.
 tray-list-unclickable = { $name } cannot be clicked
 
 ## Synthesizer display names.

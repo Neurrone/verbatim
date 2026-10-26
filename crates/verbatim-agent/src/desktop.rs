@@ -31,7 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GWL_EXSTYLE, GWL_STYLE, GetClassNameW, GetForegroundWindow,
     GetWindowLongPtrW, GetWindowTextW, GetWindowThreadProcessId, IsHungAppWindow, IsIconic,
     IsWindowVisible, PostMessageW, SMTO_ABORTIFHUNG, SW_RESTORE, SW_SHOWMINNOACTIVE,
-    SendMessageTimeoutW, SetForegroundWindow, ShowWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND,
+    SendMessageTimeoutW, SetForegroundWindow, ShowWindowAsync, WM_CLOSE, WM_COMMAND,
     WS_EX_NOACTIVATE, WS_MINIMIZEBOX,
 };
 use windows::core::{BOOL, PWSTR, w};
@@ -225,7 +225,10 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// afterwards.
 ///
 /// A minimized window is restored and then set as the foreground with
-/// `SetForegroundWindow`; Windows gives a window it restores from
+/// `SetForegroundWindow`; both the minimize and the restore are posted to
+/// the window's thread (`ShowWindowAsync`), so a hung window cannot block
+/// the agent, and each is waited for on its evidence, the window's
+/// minimized state, up to [`MINIMIZE_LIMIT`]; Windows gives a window it restores from
 /// minimized the foreground whatever input came last. A restored window
 /// that is not already in front is minimized first, without activating
 /// another window (`SW_SHOWMINNOACTIVE`), and restored once it is.
@@ -236,20 +239,17 @@ pub fn minimize_all(timeout: Duration) -> (bool, bool, ForegroundInfo) {
 /// (`docs/tooling/troubleshooting.md`, "Windows' foreground lock keeps launched
 /// applications behind"). msinfo32 is such a window: it ignores the
 /// minimized show state it is launched with and opens restored and
-/// inactive (found 2026-10-09). Such a window is logged, at info, and the
-/// minimize is waited for on window events, up to [`MINIMIZE_LIMIT`].
+/// inactive (found 2026-10-09). Such a window is logged, at info.
 ///
-/// The answer is read straight after `SetForegroundWindow`: a window
-/// restored from minimized and set as the foreground is the foreground
-/// window when the call returns (measured live over 37 such calls on
-/// 2026-10-09, `docs/design/phase6-design.md`, "Foreground events against the
-/// foreground window"). The wait for it on window events, added when a
-/// restored inactive window was set as the foreground without being
-/// minimized first, is gone.
+/// The answer is the window being the foreground, waited for on window
+/// events up to [`MINIMIZE_LIMIT`]: with the restore posted rather than
+/// handled before `SetForegroundWindow`, the switch completes on the
+/// window's thread after the call returns (`conhost_leave_flood` on
+/// 2026-10-26: accepted, and not yet in front as the call returned).
 ///
 /// Each call logs, at info, how long each step took from the call's
-/// start: the minimize requested (`ShowWindow` returns once the window's
-/// thread has handled it), the minimize observed, the restore, and
+/// start: the minimize requested, the minimize observed, the restore
+/// observed, and
 /// `SetForegroundWindow`'s answer, and whether the window was then in
 /// front, so a slow switch can be explained from the agent's log.
 #[must_use]
@@ -267,9 +267,9 @@ pub fn set_foreground(window: u64) -> bool {
             title = info.title,
             "a window to bring forward was restored and not in front; minimized before it is restored"
         );
-        // SAFETY: tolerates any handle; the return value is the window's
-        // earlier visibility, not a failure.
-        let _ = unsafe { ShowWindow(window, SW_SHOWMINNOACTIVE) };
+        // SAFETY: tolerates any handle; the minimize is posted to the
+        // window's thread, and its answer is not waited for.
+        let _ = unsafe { ShowWindowAsync(window, SW_SHOWMINNOACTIVE) };
         steps.minimize_requested = Some(started.elapsed());
         let minimized = wait::until(|| is_minimized(window), MINIMIZE_LIMIT);
         steps.minimized = minimized.then(|| started.elapsed());
@@ -279,16 +279,25 @@ pub fn set_foreground(window: u64) -> bool {
         }
     }
     if is_minimized(window) {
-        // SAFETY: as above.
-        let _ = unsafe { ShowWindow(window, SW_RESTORE) };
-        steps.restored = Some(started.elapsed());
+        // SAFETY: tolerates any handle; the restore is posted to the
+        // window's thread, and its answer is not waited for.
+        let _ = unsafe { ShowWindowAsync(window, SW_RESTORE) };
+        let restored = wait::until(|| !is_minimized(window), MINIMIZE_LIMIT);
+        steps.restored = restored.then(|| started.elapsed());
+        if !restored {
+            steps.log(window, started, false, false);
+            return false;
+        }
     }
     // SAFETY: tolerates any handle; a stale one fails. Its answer is only
     // logged: whether the window is in front is read below.
     let accepted = unsafe { SetForegroundWindow(window) }.as_bool();
     steps.set_foreground = Some(started.elapsed());
     // SAFETY: GetForegroundWindow has no preconditions.
-    let in_front = unsafe { GetForegroundWindow() == window };
+    let in_front = wait::until(
+        || unsafe { GetForegroundWindow() } == window,
+        MINIMIZE_LIMIT,
+    );
     steps.log(window, started, accepted, in_front);
     in_front
 }
@@ -323,7 +332,8 @@ impl SwitchSteps {
 }
 
 /// How long [`set_foreground`] waits for a window it minimized to be
-/// minimized: well within the client's read timeout.
+/// minimized, for one it restored to be restored, and for the window to
+/// be in front: well within the client's read timeout.
 const MINIMIZE_LIMIT: Duration = Duration::from_secs(5);
 
 /// Whether `window` has a minimize box, so Show Desktop minimizes it.

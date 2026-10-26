@@ -49,11 +49,11 @@ pub struct ShellCandidate {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShellCandidates {
     /// Every button found whose runtime id or name is the chosen item's,
-    /// except one gone before its position was read.
+    /// except one gone before its position was read or whose read failed.
     pub candidates: Vec<ShellCandidate>,
     /// Whether every button of the surface was read and every candidate's
     /// position with it: false when the walk's time budget or node cap cut
-    /// it short, or a step or a window's lookup failed, so a button with
-    /// the chosen name may be missing.
+    /// it short, or a step, a window's lookup or a candidate's read failed,
+    /// so a button with the chosen name may be missing.
     pub complete: bool,
 }

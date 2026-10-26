@@ -51,8 +51,10 @@ pub(crate) enum Missed {
     /// It is not there, its name no longer tells it apart, or the request
     /// failed.
     Gone,
-    /// It is there but has no point to click: it is off the screen, or has
-    /// no rectangle or an empty one.
+    /// It is there but has no point to click: it has no rectangle or an
+    /// empty one, which the list cannot leave out since it reads no
+    /// rectangles, or it has gone off the screen since the list, which
+    /// leaves off-screen buttons out, was made.
     Unclickable,
 }
 

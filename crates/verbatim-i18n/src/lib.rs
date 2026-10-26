@@ -387,8 +387,9 @@ pub mod messages {
     }
 
     /// Spoken when the tray icon or taskbar button `name`, chosen in the
-    /// list dialog, is there but off the screen or with no rectangle or an
-    /// empty one, so it has no point to click.
+    /// list dialog, is there but has no rectangle or an empty one, or has
+    /// gone off the screen since the list was made, so it has no point to
+    /// click (Dickson, 2026-10-25).
     #[must_use]
     pub fn tray_list_unclickable(name: &str) -> String {
         fl!(loader(), "tray-list-unclickable", name = name)

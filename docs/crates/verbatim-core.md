@@ -843,7 +843,7 @@ for `SrState::hook_foreground`. `tests/shell.rs` checks each rule.
 ## Terminals
 
 What a terminal says (`terminal.rs`; `docs/design/terminal-model.md`,
-"Core's flood policy"). The focused terminal's outpost reads it and sends
+"Features and settings", its "Core's flood policy"). The focused terminal's outpost reads it and sends
 each read; Core's terminal model (below) gives the read to the reading
 rules, and what they say (`Said`, `TerminalItem`s and the rules' own new
 lines) is spoken here; speech of anything but the focus is ignored. The
@@ -873,7 +873,7 @@ pipe.
   the next review command then reads at the
   caret. A caret report alone, or a caret key's press, never moves it
   there, since a program moves its cursor as it draws
-  (`docs/design/terminal-model.md`, "The review anchor and following").
+  (`docs/design/terminal-model.md`, "The review cursor").
 - Output is spoken queued, in order, one line per utterance, each starting
   and ending with an index mark. Every line counts, blank ones included
   (Dickson, 2026-10-07, and the coherence review of 2026-10-09): a blank
@@ -931,7 +931,7 @@ pipe.
   the reading rules hand it every new line, and after a lost read a count
   of none of the lost read's kind (`Skipped::About(0)`,
   `Skipped::MoreThan(0)` or `Skipped::Uncounted`) ahead of its lines
-  ("Core's flood policy").
+  (`docs/design/terminal-model.md`, "Features and settings").
 - On-demand reading. Once a group's worth of lines waits or is queued for
   speech, Core tells the outpost to hold (`TextOp::TerminalHold`): it only
   notes that the terminal changed. When the group's last line is handed

@@ -15,7 +15,7 @@
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle};
 use std::time::Instant;
 
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
 use windows::Win32::System::Threading::{
     CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CancelWaitableTimer, CreateEventW,
     CreateWaitableTimerExW, INFINITE, SetEvent, SetWaitableTimer, TIMER_ALL_ACCESS,
@@ -100,12 +100,14 @@ impl Alarm {
         let _ = unsafe { SetEvent(self.handle(&self.event)) };
     }
 
-    /// Waits until the timer goes off or the event is set.
-    pub(super) fn wait(&self) {
+    /// Waits until the timer goes off or the event is set, and answers
+    /// whether the timer ended the wait.
+    pub(super) fn wait(&self) -> bool {
         let handles = [self.handle(&self.timer), self.handle(&self.event)];
         // SAFETY: both handles are open for the wait's duration, owned by
         // this alarm, which the caller borrows.
-        let _ = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
+        let ended = unsafe { WaitForMultipleObjects(&handles, false, INFINITE) };
+        ended == WAIT_OBJECT_0
     }
 
     /// Waits until the event is set, whatever the timer does.

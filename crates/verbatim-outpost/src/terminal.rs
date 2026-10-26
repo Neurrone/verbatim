@@ -166,8 +166,8 @@ impl Terminal {
     }
 }
 
-/// A hash of every field of `snapshot` but when it began and the caret
-/// read with it.
+/// A hash of every field of `snapshot` but when it began and ended and the
+/// caret read with it.
 fn fingerprint(snapshot: &TerminalSnapshot) -> u64 {
     let TerminalSnapshot {
         text,

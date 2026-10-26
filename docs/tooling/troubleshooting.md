@@ -335,6 +335,15 @@ failed their setup so, while 12 of 12 alternating runs of
 `conhost_same_flood` and `windows_terminal_commands` started on an idle
 manager passed. The manager stays as busy with the recording off
 (`VERBATIM_E2E_RECORD=0`), so the recording is not the cause.
+`conhost_full_history_flood` and `windows_terminal_full_history_flood`
+fail their setup the same way when run straight after a flood, as
+`conhost_leave_flood` does. The harness does not wait for the manager
+(Dickson, 2026-10-26); instead, before a scenario's setup, check that
+the performance counter `\Process(dwm)\% Processor Time` reads under
+130 percent, for example with
+`(Get-Counter '\Process(dwm)\% Processor Time').CounterSamples.CookedValue`,
+and wait until it does. `Get-Process` cannot read the manager's processor
+time, since its process is protected.
 
 **`cargo xtask trace scenario` and `cargo xtask measure` refuse to start
 while `VERBATIM_E2E_VERBATIM_EXE` is set.** Name the other build with

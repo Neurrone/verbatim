@@ -300,9 +300,9 @@ added or removed, so a rectangle recorded when the list was made could
 lie under a different icon by then, and the list carries none. An item
 `refind` cannot find, or a request that fails, clicks nothing and raises
 `GuiEvent::ShellItemGone`, which the app speaks ("Volume is no longer
-there"); an item found off the screen, or with no rectangle or an empty
-one, which the list cannot leave out since it reads no rectangles, clicks
-nothing and raises `GuiEvent::ShellItemUnclickable` ("Volume cannot be
-clicked"). Each dialog closes through one path in C++, which
+there"); an item found with no rectangle or an empty one, which the list
+cannot leave out since it reads no rectangles, or found off the screen
+when it was on it as the list was made, clicks nothing and raises
+`GuiEvent::ShellItemUnclickable` ("Volume cannot be clicked"). Each dialog closes through one path in C++, which
 destroys it and tells `GuiCore`, and the deferred postPopup frame hide
 only happens once nothing still needs the frame as its visible owner.
