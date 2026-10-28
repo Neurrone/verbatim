@@ -103,7 +103,7 @@ impl fmt::Display for TraceId {
 /// The frame transits real focus during the prePopup show/raise/foreground
 /// dance around the Verbatim menu and the settings dialog; without this
 /// marker it can be announced as a nameless "Verbatim" window with role
-/// unknown, a race described in `docs/roadmap.md`'s M3 section.
+/// unknown, a race described in `docs/roadmap-done.md`'s M3 section.
 /// `verbatim-gui` sets this property (`SetPropW`) on the frame at creation
 /// and clears it (`RemovePropW`) at shutdown; every outpost checks it
 /// (`GetPropW`), and that the window belongs to Core's process, before
