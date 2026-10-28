@@ -1,801 +1,570 @@
 # mockapp
 
-The scripted UIA and MSAA provider test host (architecture section 13,
-layer 2): a real, separate-process Win32 application that answers
-`WM_GETOBJECT` as a genuine out-of-process accessibility *provider* over a
-JSON-scripted tree, so `verbatim-uia` and `verbatim-ia2`'s real client
-stacks — and the outpost's arbitration — are exercised cross-process with
-zero real applications, on plain CI Windows runners. `mockapp`'s own binary
-depends only on `verbatim-model` (for `Role`, `State`, and `StateSet`); the
-client crates it is built to be tested against (`verbatim-uia`,
-`verbatim-ia2`, `verbatim-outpost`) are dev-dependencies, used only by its
-own integration tests.
+The scripted UIA and MSAA provider test host (`docs/architecture.md`
+section 13, layer 2): a real, separate-process Win32 application that
+answers `WM_GETOBJECT` as a genuine out-of-process accessibility provider
+over a JSON-scripted tree, so `verbatim-uia` and `verbatim-ia2`'s real
+client stacks, and the outpost's arbitration, are exercised cross-process
+with no real applications, on plain CI Windows runners. `mockapp`'s own
+binary depends only on `verbatim-model` (for `Role`, `State`, and
+`StateSet`); the client crates it is built to be tested against
+(`verbatim-uia`, `verbatim-ia2`, `verbatim-outpost`) are dev-dependencies,
+used only by its own integration tests. Running it by hand, and its stdin
+commands, are in [the mockapp tooling guide](../tooling/mockapp.md).
 
-CLI: `mockapp --fixture <path.json> --backend <uia|msaa|win32> [--title
-<window title>] [--show]` (default title `mockapp`). With `win32` the
-window answers nothing itself, as a plain Win32 window: its client area
-is Windows' own standard object, named by the title, and only its real
-child controls answer for themselves; stdin commands that act on the
-scripted tree are rejected. It creates one real
-top-level Win32 window titled per `--title`, hidden unless `--show` is
-given, prints `ready` (flushed) once the window exists and the provider is
-answering, then processes stdin commands until `quit`. The cross-process
-tests leave the window hidden; the end-to-end suite's `spelling_errors`
-scenario shows it and drives it with real keys (`docs/crates/verbatim-e2e.md`).
-The focus starts on the first node in the `focused` state, if the fixture
-has one, as an application opens with its focus on a control. With
-`--hide-window-handle`, the UIA root reports a window handle of 0, so a
-client holds the window's own element, runtime id `[42, window]`, without
-its handle.
+## The command line
 
-Fixture format: one JSON object per node — `id` (unique string), `role` (a
-`Role` name in snake case, e.g. `check_box`), optional `name` and `value`
-strings, `states` (an array of `State` names in snake case, e.g.
-`read_only`), optional detail properties (`description` and
-`keyboard_shortcut` strings, one-based `position_in_set`, `set_size`, and
-`level` integers — the M3 `NodeDetails` vocabulary; each backend serves
-the subset its API can express), an optional `default_action` (MSAA's
-`accDefaultAction`, which `accDoDefaultAction` then succeeds for), an
-optional `controller_for` (the `id`
-of a node this one controls, served on the UIA backend as the
-`ControllerFor` relation, as a search box names its suggestion list), an
-optional `text` (milestone M4: the node's text, with bare line feeds; on
-the UIA backend the node serves the text pattern over it, and on the MSAA
-backend, since MSAA has no text interface, mockapp creates a real
-multi-line Win32 `EDIT` control holding the first such text, its line
-feeds made carriage return and line feed pairs, read through the edit
-control's own messages), an optional `content` (true unless set false:
-on the UIA backend a node set false answers `IsContentElement` false, so
-a client that presents only control and content elements, as NVDA does,
-takes it for layout), an optional `msaa_client` on the root (on the UIA
-backend, the window also answers MSAA's client object with the scripted
-root, as a window with a native UIA provider can serve MSAA too, so a
-Win32 control inside it has an MSAA parent with the root's states, the
-focused state included), an optional `native` (the node is a real child
-window rather than a scripted node, on any backend: `tree_view` makes a
-comctl32 tree view, below, with its own optional `window_class` and
-`state_images`, and `uia_window` a child window that is a native UIA
-provider of its own, below), and `children` (nested nodes). The root
-node conceptually corresponds to the window itself.
+`mockapp --fixture <path.json> --backend <uia|msaa|win32> [--title <window
+title>] [--show] [--hide-window-handle] [--count-registrations]` (default
+title `mockapp`). It creates one real top-level Win32 window titled per
+`--title`, hidden unless `--show` is given, prints `ready` (flushed) once
+the window exists and the provider is answering, then processes stdin
+commands until `quit`. The cross-process tests leave the window hidden;
+the end-to-end suite's `spelling_errors` scenario shows it and drives it
+with real keys ([verbatim-e2e](verbatim-e2e.md)). The focus starts on the
+first node in the `focused` state, if the fixture has one, as an
+application opens with its focus on a control.
 
-A `native` tree view (`tree_view.rs`, `tests/fixtures/tree_view.json`) is
-a child window of the host window whose items are the node's `tree_item`
-children, nested as they are, read through comctl32's own MSAA
-implementation and its `TVM_*` messages, as Verbatim reads real
-applications' tree views. The root's `window_class` names the host
-window's class instead (`tests/fixtures/console_window.json` is a console
-host's window, `ConsoleWindowClass`, whose text area reports the automation id "Text Area" through the node's `automation_id`, as the console's text area does; `tests/fixtures/console_terminal.json`
-is the same window with a terminal's text, and
-`tests/fixtures/console_terminal_button.json` adds a native push button
-and serves the root's MSAA client, so a focus can move from the text
-area, read through UIA, to a Win32 control read through MSAA, as a Find
-dialog takes it; the tests start mockapp with no console, so no console
-host can be read for that window and mockapp, whose threads created it,
-serves it, whatever console the test runner has). A tree view's `window_class` registers it under another
-name first, a superclass whose `WM_GETOBJECT` answers the client object
-with comctl32's tree view proxy (`CreateStdAccessibleProxyW`), as Windows
-Forms names and wraps its tree view. With `state_images`, every item gets
-a state image, as a tree view that draws its own check boxes has:
-unchecked, or checked or partly checked by the item's `checked` or
-`mixed` state. (A tree view with comctl32's own check boxes,
-`TVS_CHECKBOXES`, reports its items to MSAA as check boxes instead.) An
-item's `expanded` state expands it, and `selected` selects it. mockapp's
-manifest (`mockapp.exe.manifest`, embedded by `build.rs` as resource 2,
-not the process's own) declares Common Controls version 6, whose tree
-view maps MSAA child ids to items; the tree view and the list view are
-made in an activation context built from it, and the edit control is the
-classic one unless the node with the text sets `edit_version_6`, which
-makes it Common Controls version 6's, as a Windows Forms text box is
-(`tests/fixtures/text_version_6.json`). The two answer `EM_LINEINDEX` for
-the line after the last differently: the classic control's -1 is
-sign-extended into the message's result, and version 6's is zero-extended,
-4294967295, so a client must read the answer's low 32 bits. `text.rs`
-pins both answers and reads both controls alike. A test
-reaches the items through the control's messages, which take plain
-integers (`tests/common/tree_view.rs`), and gives the scripted root the
-focused state, so a focus handed to an outpost passes NVDA's
-focused-state check without the control taking the keyboard focus.
+- With `win32` the window answers nothing itself, as a plain Win32
+  window: its client area is Windows' own standard object, named by the
+  title, and only its real child controls answer for themselves; stdin
+  commands that act on the scripted tree are rejected.
+- With `--hide-window-handle`, the UIA root reports a window handle of 0,
+  so a client holds the window's own element, runtime id `[42, window]`,
+  without its handle.
+- With `--count-registrations`, the UIA root answers through a provider
+  that also implements `IRawElementProviderAdviseEvents` (see `hits`
+  below). It is off otherwise, since implementing that interface changes
+  the calls UIA makes as clients register, which the call-count tests pin.
+
+The stdin commands are listed in the tooling guide; each is acknowledged
+on stdout once it has taken effect, `applied` or `rejected: <reason>`, so
+a test never reads the state from before its command.
+
+## The fixture format
+
+One JSON object per node; the root node is the window itself.
 `fixture::role_from_fixture_str` and `state_from_fixture_str` hold the
-complete name tables.
+complete name tables. The fields:
 
-Stdin commands, one per line: `focus <id>` (raises the backend's
-focus-changed notification — `UiaRaiseAutomationEvent` for UIA,
-`NotifyWinEvent(EVENT_OBJECT_FOCUS, ...)` for MSAA), `set-focus <id>`
-(moves the focused state as `focus` does but raises nothing, so no client
-on the machine, a running screen reader included, calls into mockapp in
-response; for the tests that count an operation's calls exactly, which
-hand the focus to the outpost themselves), `set-name <id> <text>`
-and `set-value <id> <text>` (update the tree and raise the matching
-property-change or name/value-change notification), `set-description <id>
-<text>` (replaces the description and raises
-`EVENT_OBJECT_DESCRIPTIONCHANGE`, or in the UIA backend a help text
-change, the description being served as both the full description and
-the help text), `set-states <id> <state>...` (replaces the whole state
-set, named as in fixtures, and raises `EVENT_OBJECT_STATECHANGE`, or in
-the UIA backend the change of the `ExpandCollapseState` property, the one
-state-bearing property change it raises, as a combo box opening or
-closing raises), `set-controller-for <id> [<controlled>]`
-(UIA only: the node's `ControllerFor` relation names node `controlled`,
-or nothing, and its property change is raised), `focus-child
-<container> <child>` (addresses the container's children as numbered
-simple children from then on, as a Win32 tree view's items are, so its
-`accFocus` names the focused child by child id and its `accChild` has no
-object for them; moves the focus to the child and raises focus on the
-container and then on the child by its child id in one turn of the window
-thread; MSAA-only), `client-name <text>`
-(names the window's client area, the root node, `text`, leaving the
-window's text alone, and raises `EVENT_OBJECT_NAMECHANGE` on the client
-area, as Windows 11 Notepad renames its window as it is first activated;
-unsupported on the UIA backend), `client-identity` (the root node's
-object answers as the object Windows provides for a client area does
-from then on: `IAccIdentity` with the address of the window's client
-area, so a client finds it again at that address however it reached it,
-and `accParent` with the window's own window object; MSAA-only), `disable-client` (the root node gains the unavailable state
-and `EVENT_OBJECT_STATECHANGE` is raised on the client area, as when a
-modal dialog disables its owner; MSAA-only), `select <id>` (marks
-the node selected, moving the state off any previous selection, and raises
-`SelectionItem_ElementSelected` for UIA or `EVENT_OBJECT_SELECTION` for
-MSAA), `notify <text>` (raises a UIA `AutomationNotification` from the
-root provider with `text` as the display string, kind `Other`, processing
-`All`, and a fixed `mockapp-notify` activity id; reported as unsupported
-on the MSAA backend, which has no notification event),
-`active-text-position <id> <start> <end>` (raises UIA's active text
-position changed event from a text node, with the range of its text from
-`start` to `end`, UTF-16 offsets; unsupported on the MSAA backend), `caret <id> <start>
-[<end> [end]]` (selects the text node's text from `start` to `end`, UTF-16
-offsets, the caret alone at `start` when `end` is left out, raising no
-event, as an application's caret moves before a client asks where it is;
-`TextPattern2`'s caret is the selection's start, or its end with the word
-`end`, as Windows 11 Notepad's is after Shift with Right Arrow, which the
-MSAA backend refuses;
-on the MSAA backend the offsets are the edit control's, with its carriage
-returns, sent as `EM_SETSEL`), `caret-event <id>` (raises the backend's
-caret event for a text node, as an application reports its caret once it
-has moved it: UIA's text selection changed event from the node, or, on
-the MSAA backend, `EVENT_OBJECT_TEXTSELECTIONCHANGED` from the edit
-control's client object, which a Common Controls version 6 edit control
-raises whenever its caret moves), `system-caret` and
-`system-caret show` (raise `EVENT_OBJECT_LOCATIONCHANGE`, or
-`EVENT_OBJECT_SHOW`, on the system caret, `OBJID_CARET`, from the window
-that owns the caret, the window on the UIA backend and the edit control
-on the MSAA backend, as Windows raises them when an application moves
-its caret, or shows it again after a move, as a classic edit control
-does), `set-text <id> <text>` (replaces a UIA
-text node's text, with `\n` for a line feed, `\r` for a carriage return,
-and `\\` for a backslash, raising no event, as a terminal's buffer changes
-before a client reads it; the terminal tests write rows padded to the
-width, each ended by a carriage return and line feed, as the terminals
-give them, the last line break leaving an empty last line, so moving by
-lines from the caret to the end counts the caret's row as the terminals
-do; a UIA range keeps its offsets, so a range read after the text
-is replaced holds the new text at those offsets, not text that followed
-an edit; on the MSAA backend it replaces the edit control's text with
-`WM_SETTEXT`, on which the control raises its own value change),
-`text-changed <id>` (raises UIA's text changed event from a
-text node, or on the MSAA backend `EVENT_OBJECT_VALUECHANGE` from the edit
-control's client object), `screen <id> <rows>` (only the last `rows` lines of a
-UIA text node's text are on screen, its visible range, as a terminal shows
-the end of its buffer, 0 the whole text again; raises no event; UIA only),
-`write-on-read <id> <text>` (the next time any range of a UIA text node's
-text is read, `text` is first written over the text at the caret and the
-caret moved past it, raising no event, as a terminal writes a typed
-character between two calls of a client's read; in the MSAA backend, the
-next time another thread reads the edit control's text or selection,
-`text` is first typed over the selection and the control's value change
-raised, as an application handles a typed character during a client's
-read of the caret event before it),
-`take-runtime-id <id> <from>` (node `from` dies:
-its parent no longer lists it, and every call on its elements fails with
-`UIA_E_ELEMENTNOTAVAILABLE`, as on an element that is gone; node `id`
-takes its runtime id, as File Explorer gives a new item the runtime id of
-one it destroyed; raises no event; UIA only), `replace-items <id>` (every
-child of node `id`, with everything under it, dies as `take-runtime-id`'s
-node does, and a copy of each with a runtime id of its own takes its
-place under the same fixture id, keeping its states, so the copy of the
-selected item is selected, as the Settings app replaces its search
-suggestions' items; raises no event; UIA only), `stall <ms>`
-(blocks the window thread for that long, so every cross-process call into
-the window waits, as with an application that is starting up or busy;
-the window thread prints `stall started` on stdout as it begins and
-`stall ended <us>`, the time in microseconds since the Unix epoch on the
-run's clock (`verbatim_process::clock`, whose offset the tests hand
-mockapp), as it ends, so a test waits for the stall itself rather than for a guessed
-time; `stall <ms> <at> <command>` also applies the command `at`
-milliseconds into the stall, from the window thread and still taking no
-message, as a busy application raises an event from the middle of its
-work, its acknowledgement between the stall's two lines),
-`on-activate <command>` (the command is applied once the window is next
-activated, after the activation's own window messages have been handled,
-as an application starts work the moment it is activated; several run in
-the order given; acknowledged `applied` when armed and again when the
-command runs), `slow <ms>` (every provider call on either backend from then on is
-answered that many milliseconds late, as by an application busy building
-a window, until `slow 0`; acknowledged `applied`), `refuse-text on` and
-`refuse-text off` (while on, every request for a node's text pattern fails
-with `E_FAIL`, as a provider that is not ready yet while its application
-starts, which UIA reports to the client as no pattern at all; UIA-only;
-acknowledged `applied`), `answer-property <property id> fail`,
-`... empty` and `... usual` (from then on every provider's
-`GetPropertyValue` for that UIA property, by its numeric id, fails with
-`E_FAIL`, answers `VT_EMPTY`, or answers as usual again; one property at a
-time; UIA-only; acknowledged `applied`; UIA fills an event's cache after
-the event's command is acknowledged, so a test keeps an answer set until
-the event has arrived), `answer-parent <id> fail`, `... none` and
-`... usual`, optionally followed by a count (node `id`'s provider answers
-its next count of `Navigate(Parent)` calls as usual, and every one after
-them failing with `E_FAIL`, with no parent, or as usual, while every other
-call on it answers as usual, as an element File Explorer has taken out of
-its tree can; the count lets a client's walk to the nearest window, which
-steps to the node's parent once, pass first; UIA hands the client no
-parent for the failure as for none; UIA-only, rejected on the MSAA
-backend; acknowledged `applied`), `hold` (the next
-provider call, whichever client makes it, prints `held <method>` on
-stdout as it begins and waits until `release`, so a test knows a client's
-call is in progress and decides when it ends; acknowledged `applied`),
-`release` (lets the held call go on; applied and acknowledged `applied` by the stdin thread
-itself, since the window thread is the one held), and `quit`.
+- `id` (a unique string), `role` (a `Role` name in snake case, such as
+  `check_box`), optional `name` and `value` strings, `states` (an array of
+  `State` names in snake case, such as `read_only`), and `children`.
+- Detail properties: `description` and `keyboard_shortcut` strings, and
+  one-based `position_in_set`, `set_size`, and `level` integers, the
+  `NodeDetails` vocabulary of [verbatim-model](verbatim-model.md); each
+  backend serves the subset its API can express.
+- `default_action`: MSAA's `accDefaultAction`, which `accDoDefaultAction`
+  then succeeds for.
+- `controller_for`: the `id` of a node this one controls, served on the
+  UIA backend as the `ControllerFor` relation, as a search box names its
+  suggestion list.
+- `automation_id`: the node's UIA automation id.
+- `text`: the node's text, with bare line feeds. On the UIA backend the
+  node serves the text pattern over it (`uia::text`, below). On the MSAA
+  backend, which has no text interface, mockapp creates a real multi-line
+  Win32 `EDIT` control holding the first such text, its line feeds made
+  carriage return and line feed pairs, read through the edit control's
+  own messages (`edit`, below). Optional text fields, each a list of
+  UTF-16 stretches, shape what the text pattern answers: `spelling_errors`,
+  `bold`, `italic`, `cultures` (each with a Windows locale id), and
+  `styles` (below).
+- `content`: true unless set false; on the UIA backend a node set false
+  answers `IsContentElement` false, so a client that presents only control
+  and content elements, as NVDA does, takes it for layout.
+- `msaa_client`, on the root: on the UIA backend the window also answers
+  MSAA's client object with the scripted root, as a window with a native
+  UIA provider can serve MSAA too, so a Win32 control inside it has an
+  MSAA parent with the root's states, the focused state included.
+- `window_class`, on the root: the host window's class. For example
+  `tests/fixtures/console_window.json` is a console host's window,
+  `ConsoleWindowClass`, whose text area reports the automation id "Text
+  Area" as the console's does; `console_terminal.json` is the same window
+  with a terminal's text; and `console_terminal_button.json` adds a native
+  push button and serves the root's MSAA client, so a focus can move from
+  the text area, read through UIA, to a Win32 control read through MSAA,
+  as a Find dialog takes it. The tests start mockapp with no console, so
+  no console host can be read for that window, and mockapp serves it.
+- `native`: the node is a real child window rather than a scripted node,
+  on any backend: `tree_view`, `list_view`, `group_box`, `button`, or
+  `uia_window` (each described under the modules below).
+- `edit_version_6`, on the node with the text: the edit control is Common
+  Controls version 6's, as a Windows Forms text box is
+  (`tests/fixtures/text_version_6.json`), rather than the classic one.
 
-Every other command is acknowledged on stdout by the window thread once it
-has taken effect, events included: `applied`, or `rejected: <reason>` for a
-command that could not be applied, such as one naming a node the fixture
-lacks, one the backend does not support, or a line that is no command. A
-test waits for that line before it goes on, so it never measures or reads
-the state from before its command, and a typo in a node id fails at once.
+## Modules
 
-Public API is otherwise internal (`mockapp` is a binary, not a library);
-its crate-internal modules are the reviewable surface:
+`mockapp` is a binary, not a library; its crate-internal modules are the
+reviewable surface.
 
-- `fixture` — JSON parsing and role/state name validation.
-- `tree` — the owned, mutable scripted tree: a flat arena (`Tree`, shared as
-  `SharedTree` behind `Arc<Mutex<_>>`) so provider COM objects and stdin
-  command handling can both reach it without borrowing from the window's
-  state; index 0 is always the root.
-- `window` — Win32 class registration, window creation, and the message
+- `fixture`: JSON parsing and role and state name validation.
+- `tree`: the owned, mutable scripted tree, a flat arena (`Tree`, shared
+  as `SharedTree` behind `Arc<Mutex<_>>`) so provider COM objects and
+  stdin command handling can both reach it without borrowing from the
+  window's state; index 0 is always the root.
+- `window`: Win32 class registration, window creation, and the message
   loop; dispatches `WM_GETOBJECT` to whichever backend is active and drains
   stdin commands posted from the reader thread.
-- `uia` — the UIA provider. Every node gets its own COM object on demand:
-  the root is a `RootProvider` (also the fragment root), every other node a
-  `ChildProvider`; only the root implements `IRawElementProviderFragmentRoot`,
-  so non-root elements never misreport themselves as fragment roots. Role
-  and property mapping is the inverse of `verbatim_uia::map`.
-- `msaa` — the MSAA provider. Every node is its own full `IAccessible`
-  object (never a numbered "simple child"), addressed two ways: the
-  window's default client object (`OBJID_CLIENT`) is always the root, and
-  every node additionally answers `WM_GETOBJECT` under a custom positive
-  object id (`index + 1`) so `NotifyWinEvent` can address any node directly.
-  Deliberately never answers the UIA root object id, so the arbitration
-  probe finds nothing and the window arbitrates to MSAA. Role and state
-  mapping is the inverse of `verbatim_ia2::map`.
-- `uia::text` — the UIA text pattern for a node with `text`
-  (`ITextProvider2` and `ITextRangeProvider`, both answered for either
-  pattern id). A range is two UTF-16 offsets into the node's text, read
-  afresh on every call, so the `caret` command shows through at once. The
-  units are simple and fixed: a character is one code unit; a word is a run
-  of letters and digits with the spaces after it, or one other character;
-  a line ends after its line feed, and a text ending in one has an empty
-  last line, as an editor shows; a paragraph is a line; a stretch of the
-  format unit ends wherever one of the node's `spelling_errors` or `bold`
-  stretches (optional fixture fields, each a list of UTF-16 start and end
-  offsets) starts or ends; the page and the document are the whole text. Moving lands on a unit's
-  start and never past the last unit, so a client sees the text's ends; a
-  move back from inside a unit to its start counts as one, as UIA
-  specifies. The caret (`GetCaretRange`) is the selection's start, as the
-  edit controls report it, and on the UIA backend the keys pressed in the
-  window move the focused node's caret by these units (`caret_key`): Right
-  Arrow by a character, Control+Right Arrow to the next word's start, and
-  Down and Up Arrow to the same column of the next or previous line, or its
-  end when that line is shorter, raising UIA's text selection changed
-  event from the node when the caret moved, as an editor reports its
-  caret, and nothing for a key that left it where it was; the language (`Culture`) is `en-US`
-  outside the node's `cultures` stretches (each a start and an end offset and
-  a Windows locale id) and theirs within one, mixed over a range holding
-  more than one; the
-  annotation types are the spelling error type (60001) for a range
-  within the spelling errors, mixed for a range holding both misspelled
-  and other text, and unsupported for a range with no spelling error, as
-  Windows 11 Notepad reports them; the font is Consolas, black outside
-  the node's `styles.foregrounds` stretches (each with a `COLORREF`), 11
-  point outside the node's `styles.font_sizes` stretches, underlined only
-  within its `styles.underlines` stretches (each with a UIA underline
-  style), italic within the node's `italic` stretches (which the
-  format unit does not end at, so one of its stretches holding italic and
-  upright text reads as mixed, as in Windows Terminal), weighing 700
-  within a bold stretch, 400 outside, and mixed across both.
-  Strikethrough, the background color, bullets, and links are supported
-  only by a node whose `styles` lists their stretches (`strikethroughs`,
-  `backgrounds`, `bullets`, `links`; `tests/fixtures/formatting.json`),
-  with a default outside them (none, white, none, and no link), a link's
-  value being its own range; a node without them answers "not supported"
-  for each, as Windows Terminal answers the attributes it lacks
-  (`text.json`). The format unit ends wherever one of the `styles`
-  stretches starts or ends. A node whose `styles.colors_skip_last` is set
-  answers both colors over a range of two or more characters from all its
-  characters but the last, as both terminals' providers do: the first
-  character's when the rest but the last agree, mixed otherwise
-  (`tests/fixtures/terminal-colours.json`, and
-  `tests/fixtures/terminal-plain-colours.json` with no colored stretch);
-  one whose `styles.distinct_colors` is set gives every character colors
-  of its own, its foreground its offset and its background white less it,
-  so every character's differ from its neighbors', a terminal colour
-  read's worst case (`tests/fixtures/terminal-checkered.json`). Every other attribute is unsupported,
-  and a node with `italic_fails` set fails its `IsItalic` read with
-  `E_FAIL`, as a provider that fails an attribute read, and one with
-  `find_text_fails` set fails `FindText` the same way, as Windows
-  Terminal's has (`tests/fixtures/terminal_find_fails.json`), one with
-  `find_backward_fails` set fails only a backward `FindText`, so a
-  failure that closes one direction of a search can be told from one that
-  ends it (`tests/fixtures/terminal_find_backward_fails.json`), one with
-  `lines_clamp` set gives the last line with text for an expansion to any
-  line below it, as the console host's provider does
-  (`tests/fixtures/lines_clamp.json`), and one with
-  `backward_moves_positive` set answers a backward `Move` or
-  `MoveEndpointByUnit` with a positive count, as some providers do
-  (`tests/fixtures/backward_moves.json`). A range
-  handed back by a client
-  (`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
-  offsets are read from its implementation. `FindText` matches the text
-  within the range exactly (or ignoring ASCII case), the last match when
-  searching backward, and returns no range when there is none;
-  `FindAttribute` is not implemented.
-- `edit` — the MSAA backend's real edit control: created inside the host
+- `stdin`: command parsing and the reader thread.
+- `uia`: the UIA provider. Every node gets its own COM object on demand:
+  the root is a `RootProvider` (also the fragment root), every other node
+  a `ChildProvider`; only the root implements
+  `IRawElementProviderFragmentRoot`, so non-root elements never misreport
+  themselves as fragment roots. Role and property mapping is the inverse
+  of `verbatim_uia::map`.
+- `uia::text`: the UIA text pattern (below).
+- `msaa`: the MSAA provider. Every node is its own full `IAccessible`
+  object (never a numbered simple child, unless `focus-child` makes it
+  one), addressed two ways: the window's default client object
+  (`OBJID_CLIENT`) is always the root, and every node also answers
+  `WM_GETOBJECT` under a custom positive object id (`index + 1`) so
+  `NotifyWinEvent` can address any node directly. It never answers the
+  UIA root object id, so the arbitration probe finds nothing and the
+  window arbitrates to MSAA. Role and state mapping is the inverse of
+  `verbatim_ia2::map`. The list's `accSelection` returns the selected
+  child as its own object, or an empty variant when none is selected.
+- `common_controls`: Common Controls version 6 for mockapp's real
+  controls. mockapp's manifest (`mockapp.exe.manifest`, embedded by
+  `build.rs` as resource 2, not the process's own) declares version 6,
+  whose tree view maps MSAA child ids to items; the tree view and the
+  list view are made in an activation context built from it, so the
+  process otherwise keeps the classic controls.
+- `edit`: the MSAA backend's real edit control, created inside the host
   window, found by class, and selected with `EM_SETSEL` on the window
-  thread.
-- `tree_view` — the MSAA backend's real tree view, described above.
-- `list_view` — the MSAA backend's real list view: a `native`
-  `list_view` node is a comctl32 list view in the report view, made in a
-  Common Controls 6 activation context (`common_controls`), with the
-  node's `columns`, each a header and a width (0 hides it), and its
-  `list_item` children as items, each named by its first column, its value
-  split at `|` the texts of the others (`tests/fixtures/list_view.json`).
-- `buttons` — the MSAA backend's real buttons: a `native` `group_box`
-  node is a standard group box (`Button` with `BS_GROUPBOX`) with its
-  children as push buttons inside its rectangle, and a `native` `button`
-  node a push button beside it; each window is placed below the last in
-  z-order, as a dialog places its controls
-  (`tests/fixtures/group_box.json`).
-- `uia_window` — a `native` `uia_window` node becomes a child window of
-  the host that answers UIA's root object id with the same scripted UIA
+  thread. The classic control and version 6's answer `EM_LINEINDEX` for
+  the line after the last differently: the classic control's -1 is
+  sign-extended into the message's result, and version 6's is
+  zero-extended, 4294967295, so a client must read the answer's low 32
+  bits; `text.rs` pins both answers and reads both controls alike.
+- `tree_view`: a `native` `tree_view` node is a comctl32 tree view, a
+  child window of the host whose items are the node's `tree_item`
+  children, nested as they are, read through comctl32's own MSAA
+  implementation and its `TVM_*` messages, as Verbatim reads real
+  applications' tree views (`tests/fixtures/tree_view.json`). Its own
+  `window_class` registers it under another name first, a superclass whose
+  `WM_GETOBJECT` answers the client object with comctl32's tree view proxy
+  (`CreateStdAccessibleProxyW`), as Windows Forms names and wraps its tree
+  view. With `state_images`, every item gets a state image, as a tree view
+  that draws its own check boxes has: unchecked, or checked or partly
+  checked by the item's `checked` or `mixed` state. (A tree view with
+  comctl32's own check boxes, `TVS_CHECKBOXES`, reports its items to MSAA
+  as check boxes instead.) An item's `expanded` state expands it, and
+  `selected` selects it. A test reaches the items through the control's
+  messages, which take plain integers (`tests/common/tree_view.rs`), and
+  gives the scripted root the focused state, so a focus handed to an
+  outpost passes NVDA's focused-state check without the control taking the
+  keyboard focus.
+- `list_view`: a `native` `list_view` node is a comctl32 list view in the
+  report view, made in a version 6 activation context, with the node's
+  `columns`, each a header and a width (0 hides it), and its `list_item`
+  children as items, each named by its first column, its value split at
+  `|` the texts of the others (`tests/fixtures/list_view.json`).
+- `buttons`: a `native` `group_box` node is a standard group box (`Button`
+  with `BS_GROUPBOX`) with its children as push buttons inside its
+  rectangle, and a `native` `button` node a push button beside it; each
+  window is placed below the last in z-order, as a dialog places its
+  controls (`tests/fixtures/group_box.json`).
+- `uia_window`: a `native` `uia_window` node becomes a child window of the
+  host that answers UIA's root object id with the same scripted UIA
   provider as the host's, over a tree of its own: the node, as its root,
   and its children. Windows' own window objects answer MSAA for it. At
   most one per fixture.
+- `hits`: the provider-side hit counters (below).
 
-The window boundary is tested both ways, with the fewest new pieces: a
-`native` `button` in a host on the UIA backend is a Win32 control inside
-a window whose UIA provider is native (`tests/fixtures/boundary_uia_host.json`,
-and `boundary_uia_layout_host.json`, whose root is not content; both set
-`msaa_client`, whose focused root passes the outpost's check that an MSAA
-focus or one of its ancestors has the focused state, since no window
-takes the real focus where the tests run), and a
-`uia_window` in a host on the `win32` backend is a UIA window inside a
-plain Win32 window (`boundary_win32_host.json`; the test finds the focus
-from the UIA window, since UIA lists no hidden child window among the
-hidden host's children, though the UIA window's parent is still the
-host). `native_controls.rs`
-reports a focus in each through a real outpost and asserts its ancestors
-and what Core speaks: the UIA window's element before the button when it
-is a control and content, and not at all when it is not; and the Win32
-window's client area, by its title, before the UIA window's root and its
-focused button.
-- `stdin` — command parsing and the reader thread.
-- `hits` — the provider-side hit counters: one atomic per provider method
-  (every `IRawElementProviderSimple`, `IRawElementProviderFragment`,
-  `IRawElementProviderFragmentRoot`, and pattern-provider method, the text
-  pattern's and text range's methods a client reads with, every
-  `IAccessible` and `IDispatch` method), and one for `WM_GETOBJECT`. A
-  test reads them with two synchronous
-  window messages to the host window, answered by the same thread that
-  runs every provider call, so a read made after a client's call returns
-  counts every hit that call caused: `WM_APP + 2` returns the counter
-  whose index in `Method::ALL` is `wParam`, and `WM_APP + 3` zeroes them
-  all. The `WM_GETOBJECT`s are also counted by kind (`GetObjectKind`):
+### The UIA text pattern
+
+`uia::text` serves `ITextProvider2` and `ITextRangeProvider`, both
+answered for either pattern id, for a node with `text`. A range is two
+UTF-16 offsets into the node's text, read afresh on every call, so the
+`caret` command shows through at once. A range handed back by a client
+(`CompareEndpoints`, `MoveEndpointByRange`) is one mockapp made, so its
+offsets are read from its implementation.
+
+- Units: a character is one code unit; a word is a run of letters and
+  digits with the spaces after it, or one other character; a line ends
+  after its line feed, and a text ending in one has an empty last line, as
+  an editor shows; a paragraph is a line; a stretch of the format unit
+  ends wherever a `spelling_errors`, `bold`, or `styles` stretch starts or
+  ends (not an `italic` one, so a stretch holding italic and upright text
+  reads as mixed, as in Windows Terminal); the page and the document are
+  the whole text. Moving lands on a unit's start and never past the last
+  unit; a move back from inside a unit to its start counts as one, as UIA
+  specifies.
+- The caret (`GetCaretRange`) is the selection's start, as the edit
+  controls report it. On the UIA backend the keys pressed in the window
+  move the focused node's caret by these units (`caret_key`): Right Arrow
+  by a character, Control+Right Arrow to the next word's start, and Down
+  and Up Arrow to the same column of the next or previous line, or its end
+  when that line is shorter, raising UIA's text selection changed event
+  when the caret moved, and nothing for a key that left it in place.
+- Attributes: the language (`Culture`) is `en-US` outside the `cultures`
+  stretches and theirs within one, mixed over a range holding more than
+  one. The annotation types are the spelling error type (60001) within
+  the spelling errors, mixed for a range holding both misspelled and
+  other text, and unsupported for a range with no spelling error, as
+  Windows 11 Notepad reports them. The font is Consolas, black outside the
+  `styles.foregrounds` stretches (each with a `COLORREF`), 11 point
+  outside the `styles.font_sizes` stretches, underlined only within the
+  `styles.underlines` stretches (each with a UIA underline style), italic
+  within the `italic` stretches, and weighing 700 within a bold stretch,
+  400 outside, and mixed across both. Strikethrough, the background
+  color, bullets, and links are supported only by a node whose `styles`
+  lists their stretches (`strikethroughs`, `backgrounds`, `bullets`,
+  `links`; `tests/fixtures/formatting.json`), with a default outside them
+  (none, white, none, and no link), a link's value being its own range; a
+  node without them answers "not supported" for each, as Windows Terminal
+  answers the attributes it lacks (`text.json`). Every other attribute is
+  unsupported.
+- Terminal colours: with `styles.colors_skip_last`, both colors over a
+  range of two or more characters come from all its characters but the
+  last, as both terminals' providers do: the first character's when the
+  rest but the last agree, mixed otherwise
+  (`tests/fixtures/terminal-colours.json`, and
+  `terminal-plain-colours.json` with no colored stretch). With
+  `styles.distinct_colors`, every character's foreground is its offset
+  and its background white less it, so every character's colors differ
+  from its neighbors', a terminal colour read's worst case
+  (`terminal-checkered.json`).
+- Provider faults, each a fixture flag: `italic_fails` fails the
+  `IsItalic` read with `E_FAIL`; `find_text_fails` fails `FindText` the
+  same way, as Windows Terminal's has (`terminal_find_fails.json`);
+  `find_backward_fails` fails only a backward `FindText`, so a failure
+  that closes one direction of a search can be told from one that ends it
+  (`terminal_find_backward_fails.json`); `lines_clamp` gives the last line
+  with text for an expansion to any line below it, as the console host's
+  provider does (`lines_clamp.json`); and `backward_moves_positive`
+  answers a backward `Move` or `MoveEndpointByUnit` with a positive count,
+  as some providers do (`backward_moves.json`).
+- `FindText` matches the text within the range exactly (or ignoring ASCII
+  case), the last match when searching backward, and returns no range
+  when there is none; `FindAttribute` is not implemented.
+
+### Hit counters
+
+`hits` keeps one atomic counter per provider method: every
+`IRawElementProviderSimple`, `IRawElementProviderFragment`,
+`IRawElementProviderFragmentRoot`, and pattern-provider method, the text
+pattern's and text range's methods a client reads with, and every
+`IAccessible` and `IDispatch` method, plus one for `WM_GETOBJECT`. A test
+reads them with synchronous window messages to the host window, answered
+by the same thread that runs every provider call, so a read made after a
+client's call returns counts every hit that call caused:
+
+- `WM_APP + 2` returns the counter whose index in `Method::ALL` is
+  `wParam`, and `WM_APP + 3` zeroes every counter.
+- `WM_APP + 7` returns the count of `WM_GETOBJECT`s of the kind
+  (`GetObjectKind`) whose index is `wParam` (`common::read_get_objects`):
   `UiaRootObjectId` with a nonzero `wParam`, the message a UIA connection
   begins with, `UiaRootObjectId` with a zero one, `OBJID_CLIENT`,
-  `OBJID_WINDOW`, `OBJID_QUERYCLASSNAMEIDX`, and any other object id;
-  `WM_APP + 7` returns the count of the kind whose index is `wParam`
-  (`common::read_get_objects`), and `WM_APP + 3` zeroes them too. The
-  host window also counts each `WM_GETTITLEBARINFOEX` it takes, as the
-  method `WM_GETTITLEBARINFOEX` (`hit_title_bar_info`), before its
-  default procedure answers it: UIA's proxy for the window's frame sends
-  one for each read of the title bar's location or off-screen state, and
-  of its buttons', and Windows answers it for one window at a time across
-  the desktop, so a test shows a read passes the title bar by. It is only
-  counted, never delayed by `slow` or held by `hold`. The
-  tests compile `src/hits.rs` into their shared module, so the
-  method list and message numbers cannot drift apart. Every counted call
-  is also where `slow` delays a call and `hold` holds one. Started with
-  `--count-registrations`, mockapp answers for its UIA root, the fragment
-  root, with a provider that also implements
-  `IRawElementProviderAdviseEvents` (`CountingRootProvider`, which answers
-  every other call through the ordinary root provider), which UIA calls as
-  clients register and remove handlers for events in the fragment, and the
-  module counts each event's live registrations (the flag is off
-  otherwise, since implementing the interface changes the calls UIA makes
-  as clients register, which the call-count tests pin): `WM_APP + 4` returns them for the event
-  whose id is `wParam` (`common::advised` in the tests), how
+  `OBJID_WINDOW`, `OBJID_QUERYCLASSNAMEIDX`, and any other object id.
+- The host window also counts each `WM_GETTITLEBARINFOEX` it takes, as the
+  method `WM_GETTITLEBARINFOEX` (`hit_title_bar_info`), before its default
+  procedure answers it: UIA's proxy for the window's frame sends one for
+  each read of the title bar's location or off-screen state, and of its
+  buttons', and Windows answers it for one window at a time across the
+  desktop, so a test shows a read passes the title bar by. It is only
+  counted, never delayed by `slow` or held by `hold`.
+- With `--count-registrations`, the root provider is a
+  `CountingRootProvider` (answering every other call through the ordinary
+  root provider), which UIA calls as clients register and remove handlers
+  for events in the fragment; `WM_APP + 4` returns the live registrations
+  for the event whose id is `wParam` (`common::advised` in the tests), how
   `tests/shutdown.rs` sees that an outpost removed its handlers.
 
-Implementation notes:
+Every counted call is also where `slow` delays a call and `hold` holds
+one. The tests compile `src/hits.rs` into their shared module, so the
+method list and message numbers cannot drift apart.
+
+## Implementation notes
 
 - **Threading.** The window thread joins a single-threaded apartment
   (`COINIT_APARTMENTTHREADED`); every provider COM object is built with
   `Agile = false`, so cross-process calls into them are marshaled back onto
-  this thread's message queue — which is why the message loop must keep
+  this thread's message queue, which is why the message loop must keep
   pumping for the process's whole lifetime. Stdin is read on a separate
   thread (reading blocks, which the message loop cannot afford) and handed
   to the window thread over a channel, woken by a payload-free posted
-  message rather than by smuggling a pointer through `LPARAM`.
+  message rather than a pointer in `LPARAM`.
 - **`idObject` recovery.** `WM_GETOBJECT`'s `lParam` carries `idObject`
-  zero-extended into the full pointer width on at least some code paths
-  (observed from `oleacc`'s `AccessibleObjectFromWindow`, whose probes
-  arrive as a huge positive `lParam` rather than sign-extended), so
-  recovering the standard negative object ids (`OBJID_CLIENT` and friends)
-  requires truncating back to 32 bits and reinterpreting (`lparam.0 as
-  i32`), not a checked conversion — `i32::try_from` silently rejects
-  exactly the values this needs to recognize, which was the root cause of
-  an early "the window answers, but with the wrong data" failure mode.
-- **Null interface results.** UIA's `IRawElementProviderFragment`/
-  `IRawElementProviderFragmentRoot`/`IRawElementProviderSimple` methods
-  that can legitimately return "no such element" (`Navigate` at a tree
-  boundary, `GetPatternProvider` for an unsupported pattern,
-  `HostRawElementProvider` for a non-root node) cannot represent a null
-  interface pointer safely in `windows-core`'s `NonNull`-backed interface
-  types. `Err(windows_core::Error::empty())` is the documented escape
-  hatch: the generated COM glue turns it into `S_OK` with an untouched
-  (effectively null) out-parameter, exactly the UIA contract for "nothing
+  zero-extended into the full pointer width on some code paths (`oleacc`'s
+  `AccessibleObjectFromWindow` probes arrive as a huge positive `lParam`),
+  so recovering the standard negative object ids (`OBJID_CLIENT` and
+  others) truncates back to 32 bits and reinterprets (`lparam.0 as i32`);
+  `i32::try_from` would reject exactly the values this must recognize.
+- **Null interface results.** UIA methods that can return "no such
+  element" (`Navigate` at a tree boundary, `GetPatternProvider` for an
+  unsupported pattern, `HostRawElementProvider` for a non-root node)
+  cannot represent a null interface pointer in `windows-core`'s
+  `NonNull`-backed interface types. `Err(windows_core::Error::empty())`
+  is the documented escape: the generated COM glue turns it into `S_OK`
+  with an untouched, null out-parameter, the UIA contract for "nothing
   here."
-- **Toggle, expand-collapse, value, and selection need real pattern
-  objects.** `GetPropertyValue` overrides for pattern-availability and
-  pattern-value properties are documented as an optional shortcut, but
-  empirically `IUIAutomationCacheRequest`'s cache-building still calls
-  `GetPatternProvider` for `TogglePattern`, `ExpandCollapsePattern`,
+- **Real pattern objects.** `IUIAutomationCacheRequest`'s cache-building
+  calls `GetPatternProvider` for `TogglePattern`, `ExpandCollapsePattern`,
   `ValuePattern`, and `SelectionItemPattern` before trusting a cached
-  value — which is exactly the path `verbatim-uia`'s shapes' requests
-  always use. mockapp therefore implements small `IToggleProvider`,
-  `IExpandCollapseProvider`, `IValueProvider`, and
-  `ISelectionItemProvider` objects (returned from `GetPatternProvider`,
-  gated on role for toggle, on the fixture's `expanded`/`collapsed` states
-  or presence of a `value` for the middle two, and on its
-  `selectable`/`selected` states for selection) alongside the
-  `GetPropertyValue` overrides, rather than relying on the shortcut alone.
-  A list, a tab control or a combo box also serves an `ISelectionProvider` whose
-  selection is its children in the `selected` state, so a fixture's
+  value, which is the path `verbatim-uia`'s shapes always use, so a
+  `GetPropertyValue` override alone does not do. mockapp implements small
+  `IToggleProvider`, `IExpandCollapseProvider`, `IValueProvider`, and
+  `ISelectionItemProvider` objects, gated on role for toggle, on the
+  fixture's `expanded` or `collapsed` states or a `value` for the middle
+  two, and on its `selectable` or `selected` states for selection. A
+  list, a tab control or a combo box also serves an `ISelectionProvider`
+  whose selection is its children in the `selected` state, so a fixture's
   initial selection and the `select` command both show through the
-  Selection pattern and its `Selection` property, as a real list reports
-  its selected item. A list's provider also serves `ISelectionProvider2`
-  (`FirstSelectedItem`, `LastSelectedItem`, `CurrentSelectedItem`, the
-  last selected, and `ItemCount`), and a tab control's does not, so the
-  tests see both a provider with `SelectionPattern2` and one without.
-- **Raw-view host furniture.** A real `hwnd`'s UIA raw tree (`TreeScope_Children`
-  with a true condition) can include host-provided native elements — for
-  example window-chrome furniture merged in via `HostRawElementProvider` —
-  alongside the fixture's own children. This is expected UIA behavior for
-  any real top-level window, not a mockapp gap; the UIA tree-construction
-  test tolerates unrecognized nodes only among the window's direct children
-  for exactly this reason, while still requiring every fixture node to be
-  found somewhere.
+  Selection pattern and its `Selection` property. A list's provider also
+  serves `ISelectionProvider2` (`FirstSelectedItem`, `LastSelectedItem`,
+  `CurrentSelectedItem`, the last selected, and `ItemCount`), and a tab
+  control's does not, so the tests see a provider with
+  `SelectionPattern2` and one without.
+- **Raw-view host furniture.** A real window's UIA raw tree can include
+  host-provided native elements, such as window-chrome furniture merged in
+  through `HostRawElementProvider`, alongside the fixture's own children.
+  The UIA tree-construction test tolerates unrecognized nodes only among
+  the window's direct children for that reason, while still requiring
+  every fixture node to be found.
+
+## The test harness
 
 The cross-process integration tests in `tests/` spawn the compiled binary
-via `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
-`tests/fixtures/`, and a shared `tests/common/mod.rs` harness
-(`MockApp`, killed on drop; `find_window` by exact, per-test-unique title;
+through `env!("CARGO_BIN_EXE_mockapp")`, using fixtures under
+`tests/fixtures/` and a shared `tests/common/mod.rs` harness: `MockApp`,
+killed on drop; `find_window` by exact, per-test-unique title; and
 `named_element`, an element found by one search of the window's
 descendants by name, which reads nothing of the window's title bar, where
 a walk of the window's whole tree would wait on its
-`WM_GETTITLEBARINFOEX`, seconds on a busy machine). Before it starts its first
-`mockapp`, a test process puts itself in a kill-on-close job of its own
-(`contain_children`), so every `mockapp` it starts ends with it however it
-ends: a panic in a callback the system calls aborts the process without
-running `MockApp`'s drop, and a `mockapp` left running would keep the
-standard error it inherited open, on which `cargo test` then waits
-forever. `child_cleanup.rs` pins this: it runs itself as a subprocess
-that starts a `mockapp` and panics where the panic cannot unwind, and
-asserts that the subprocess's standard error closes promptly.
-`tests/uia_bugs/` is one test binary (`main.rs` declares a module per
-file) holding the tests that reproduce a fault or limitation of UI
-Automation or show that Verbatim's workaround for one still holds, each
-file named after the entry's heading in `docs/uia-bugs.md`, and
-`support.rs` with the mechanics they share. A test that needs a second
-UIA client process starts the binary again with an environment variable
-that `main` recognizes: an element's owner, or a process racing UIA's
-first-time setup. Every test file runs through
-`tests/common/harness.rs` instead of libtest (`harness = false`): it runs
-and reports the tests as libtest does, then ends the process without
-running DLL detach code, because
-`UIAutomationCore.dll`'s own detach code sometimes hangs or crashes in a
-process that has connected to providers; the file's comment gives the
-evidence. It runs every test isolated (`harness::run_isolated`): the
-runner starts the binary again for each test, with `--isolated-test` and
-its name, on a desktop no other test is using, and reports its result.
-Each of the runner's worker threads makes one desktop and one job object,
-and runs its tests on that desktop one after another, every process a
-test starts being in the job. Before the next test starts there, the
-runner waits until the job's count of running processes, which includes
-those of the job nested in it, is none, so nothing of the earlier test
-is left on the desktop. The job's completion port only wakes that wait,
-because Windows does not guarantee to deliver its message that the count
-reached none, and the port cannot tell that message from a nested job's;
-if processes are still running a minute after the test ended, the run
-fails naming the test. Desktops
-are not made per test because making one costs the Desktop Window
-Manager about a tenth of a second of work, done in turn for the whole
-session, and while it is behind, anything that waits on it is late, such
-as a window's title-bar information, which the MSAA proxy reads. A window
-and its events are seen only from its own desktop, and a process started
-on one, mockapp included, starts its children there, so no test puts a
-window on the desktop the run was started from, which may be in use by an
-end-to-end run, and on its own desktop the test is the only client. That
-matters most to the tests that pin the calls mockapp's providers answer
-(`call_counts.rs`, `terminal.rs`) and to those that raise mockapp's events
-and must hear no other client's: a provider cannot tell which client
-called it (UIA's calls reach it from UI Automation's own threads in
-mockapp, with nothing of the client's identity), and other clients call
-mockapp at times of their own, a screen reader or another test agent
-answering its window's creation, and this binary's other tests, whose
-desktop-wide registrations read every new window. No mockapp test needs
-the foreground or the keyboard focus, which no window on such a desktop
-can have: a test that needs a window to be the foreground, or an element
-to have the focus, tells the outpost under test which (below). Since
-2026-10-08 this covers every file; before, only `call_counts.rs`,
-`terminal.rs`, `caret_watch.rs`, and `shutdown.rs` ran isolated, and
-`cargo xtask ci` put the others' mockapp windows on the interactive
-desktop, where they disturbed end-to-end runs.
+`WM_GETTITLEBARINFOEX`, seconds on a busy machine.
 
-The experiments behind the harness's exit are in `docs/uia-bugs.md`,
-"A process that used UIA can hang or crash as it exits".
-The outpost those tests run
-(`tests/common/outpost.rs`) and its focus reader read the time from the
-test, which stands still unless the test moves it on (`pass_time`), so a
-window's verdict of no UIA provider runs out, and its probe's
-`WM_GETOBJECT` is made, and a classic walk's time budget is spent, only
-where the test says. `uia_tree.rs` and `msaa_tree.rs` walk
-a rich scripted tree through each real client stack and assert normalized
-roles, names, values, states, and detail properties match the fixture —
-every node's details must read back exactly what was scripted, and
-all-`None` for every node the fixture left plain, so both presence and
-absence are pinned (rectangles excluded: mockapp scripts no geometry, but
-UIA merges the real window's rectangle into the hwnd-hosted root).
-`uia_tree.rs` also navigates remotely from a node whose kept element came
-from a text event, read as the `Kept` shape, and asserts the neighbour and
-that no cached read failed.
-`msaa_tree.rs` also reads a list's selected child through
-`verbatim_ia2::acquire::selected_child`, from the list object kept when the
-tree was walked, after a scripted `select`: the MSAA provider's
-`accSelection` returns the selected child as its own object, or an empty
-variant when none is selected.
-`arbitration.rs` asserts that the raw probe (`verbatim_uia::raw_probe`),
-the outposts' and the listener's, answers `0x10000` for a `uia`-backend
-window and the default window procedure's 0 for a `msaa`-backend one,
-that `verbatim_outpost::arbitration::Arbitrator` resolves each to the matching backend,
-and that a window too busy to answer is asked once, with one window
-message and no connection, its "no" taken, and once in an outpost's
-entry for a foreground change, which reads it through MSAA. `events.rs` asserts that
-`set-name`/`set-value` commands are observed by a property
-`verbatim_uia::Registration` and `verbatim_ia2::WinEventHook`,
-that `select` is observed by a selection `verbatim_uia::Registration` (with
-the delivered element's mapped snapshot carrying its name and `Selected`
-state) and by the WinEvent hook as `WinEventKind::Selection`, and that
-`notify` is observed by a notification `verbatim_uia::Registration` with its
-full payload, that one registration of all three, one event handler
-group, hears each, that a registration on a focus hears its changes
-and neither its group's nor a sibling's, and that an active text position
-change arrives with its element and a range whose text is the one
-raised — property, value, selection, and notification changes are
-used rather than focus, so the tests never depend on real keyboard focus
-or `SetForegroundWindow` succeeding, and pass headless on GitHub
-`windows-latest` runners. `controller_for.rs` selects items with `select`
-and asserts that `verbatim_uia::Uia::controlled_descendant` finds a
-result inside the list the search box's `ControllerFor` names, and
-nothing for an item elsewhere, for the list itself, or from a box that
-controls nothing; over `typed_search.json`, a search box holding text,
-it asserts that the box's focus comes with the line at its caret in the
-one message, ahead of a selection in its list delivered after the focus.
-`terminal_snapshot.rs` reads `terminal.json`'s terminal with
-`verbatim-uia-rops`'s terminal read program both ways, the two required
-to agree on every field: a first read, one from where the last said to
-start with nothing new and with output since, one whose start the text
-cleared below, one asked for fewer rows than the screen holds, the whole
-text, and reads taking rows above their start, as many as asked and as far
-as the document's start, each pinned exactly. Over `terminal-colours.json`
-(four rows of twenty cells: one plain, one with two red cells first, one
-whose last cell alone has a green background, which the provider leaves
-out of a range's answer, and one with a blue cell at the second chunk's
-start) it pins the colours as exact runs both ways, read at the width the
-last read found, at none known, and at a stale one.
+- Before it starts its first `mockapp`, a test process puts itself in a
+  kill-on-close job of its own (`contain_children`), so every `mockapp` it
+  starts ends with it however it ends: a panic in a callback the system
+  calls aborts the process without running `MockApp`'s drop, and a
+  `mockapp` left running would keep the standard error it inherited open,
+  on which `cargo test` then waits forever. `child_cleanup.rs` pins this:
+  it runs itself as a subprocess that starts a `mockapp` and panics where
+  the panic cannot unwind, and asserts that the subprocess's standard
+  error closes promptly.
+- Every test file runs through `tests/common/harness.rs` instead of
+  libtest (`harness = false`): it runs and reports the tests as libtest
+  does, then ends the process without running DLL detach code, because
+  `UIAutomationCore.dll`'s own detach code sometimes hangs or crashes in a
+  process that has connected to providers (`docs/uia-bugs.md`, "A process
+  that used UIA can hang or crash as it exits").
+- The outpost the tests run (`tests/common/outpost.rs`) and its focus
+  reader read the time from the test, which stands still unless the test
+  moves it on (`pass_time`), so a window's verdict of no UIA provider runs
+  out, its probe's `WM_GETOBJECT` is made, and a classic walk's time
+  budget is spent only where the test says. The test hands the outpost
+  focus facts as the listener would, and the outpost reads the focused
+  element from the test rather than the system.
+- `tests/uia_bugs/` is one test binary (`main.rs` declares a module per
+  file) holding the tests that reproduce a fault or limitation of UI
+  Automation or show that Verbatim's workaround for one still holds, each
+  file named after the entry's heading in `docs/uia-bugs.md`, with
+  `support.rs` holding the mechanics they share. A test that needs a
+  second UIA client process starts the binary again with an environment
+  variable that `main` recognizes: an element's owner, or a process racing
+  UIA's first-time setup.
 
-`terminal.rs` reads `terminal.json`'s terminal through the outpost's
-`terminal` module and gives each read to Core's reducer, as the worker
-and Core do: new output is said line by line with one UIA call a read
-remotely, and classically, and Backspace says what it deleted with no
-caret event. `terminal_reading.rs` drives a real outpost's worker over
-the same terminal and asserts the reads and answers it sends Core: a
-focus-now terminal reporting its output, a terminal followed through a
-foreground report, each on-demand reading request (hold, read, cancel)
-and its answer, a caret event read with the text change after it, a
-held terminal's caret event read with the text, the console host's caret
-coming from its console and a console caret move with no text change
-read, the system caret not taken for the console's, a read that covers
-a caret event answering a caret key's watch with no caret, an identical read
-not sent again, the hooks' change events waiting for a window read
-through MSAA, a caret key's watch read while the terminal writes waiting
-for its change, a fresh read taken while held, the whole document and a
-history block read when asked, history above the next read's start read
-by place, a colours request after a read without them read at once, and
-the read before a held key a read with its caret.
+### Which tests use the desktop
 
-`remote_ops.rs` runs `verbatim-uia-rops`'s remote and
-classic focus ancestry over `ancestry.json` (a five-level chain, a list
-and a tab control with selected children) and asserts they return the
-same ancestors with the same cached properties, that an element that
-lost the focus returns early, that an element the program read without
-`IsDataValidForForm` reads as a valid entry with no failed cached read,
-from the record of what the program left out, and how both behave
-against a stalled mockapp and one that has exited; the crate's guide
-records the findings.
-It also pins that a walk that hits UIA's transaction timeout, made slow
-with `slow` or stalled with `stall`, is a failure both ways and never
-answered by the classic walk after the program's timeout, and that a
-real outpost then reports the focus with its containers unknown; and
-that reading a list's or tab control's selected item
-(`Uia::selected`) fails with UIA's timeout when mockapp is slow
-or stalled, and as gone once mockapp has exited, never answering that
-nothing is selected.
-`text.rs` drives `verbatim-outpost`'s text module over `text.json`'s text
-on both stacks, as the outpost's worker does once it has a node's text
-(the worker finds a UIA focus by reading the keyboard focus, which a test
-must not take): lines, words, and characters read; movement stopping at
-the empty last line; a position inside a chunk resolved through its text;
-UIA's missing sentence unit and the edit control's paragraph in its place;
-a page unsupported; UIA's language on a chunk; and a caret key answered
-with the word it reached and with a selection reported as selected. It
-also runs Core's say-all over UIA text, which has no sentence unit, its
-text requests answered by the text module against mockapp
-(`uia_say_all_speaks_by_sentence_without_a_sentence_unit`): a line holding
-one sentence's end and the next one's start is spoken as two utterances,
-the sentence running on to the next line as one with that line's mark
-where its words start, and mockapp's caret is moved to each line's start
-as its mark is reached. Its caret keys' watches are checked once, and
-every test moves mockapp's caret first, so that check answers.
-`call_counts.rs` pins a caret move and a caret report on both stacks this
-way too (`docs/performance.md`), and a caret key's watch on both stacks,
-in the UIA text both ways: its first check, which finds no evidence and
-leaves the watch open after one read, and the check a later caret event
-prompts, which answers it.
-`caret_watch.rs` drives a real `verbatim_outpost::Outpost` in the test
-process (the outpost harness `call_counts.rs` uses) against mockapp's
-`caret_watch.json`, a UIA document and a button: a focus on the button
-delivered while a caret key's watch on the document is open is reported
-first, and the watch then ends, answered `WatchEnded`
-(`a_focus_change_during_a_caret_watch_is_handled_at_once`; before
-2026-10-08 the key's 100 ms wait was answered first and the focus waited
-behind it); a caret moved and reported with `caret-event` after the
-watch opened answers it with the character there
-(`a_caret_move_raised_later_answers_the_watch`); and a key that moves
-nothing says nothing, a caret event that shows no change leaves its watch
-open, and the next key's watch ends it, answered `WatchEnded`
-(`a_key_that_moves_nothing_is_answered_with_nothing`); and the document
-a focus-now query answered with, no focus event having reported it, is
-the outpost's focus, so a caret event no key caused is reported
-(`a_focus_now_text_fields_caret_event_is_reported`). mockapp
-acknowledges `caret-event` once the call that raised the event has
-returned, but the outpost's handlers receive it later, on UI Automation's
-threads, and once more as the `WinEvent` UIA raises alongside it for MSAA
-clients, by a second route in no fixed order; so before each step moves
-on, the test waits until the outpost has heard both
-(`OutpostUnderTest::heard`, from `Outpost::observe_heard`) and then
-settles. Without that wait the moves-nothing test once failed under CI
-load: the first step's caret event, still on its way, answered the second
-key's watch, and the second step's event, arriving after that answer, was
-reported as a caret move no assertion expected.
-`slow_application.rs` runs a real
-`verbatim_outpost::Outpost` in the test process against an `msaa`-backend
-mockapp: it captures the address of mockapp's own scripted focus event,
-stalls mockapp's window thread with `stall`, delivers the focus as a
-listener fact once mockapp has acknowledged that the stall began, and
-asserts the outpost still reports it, having started the read before
-the stall ended, so the read waited longer than the outpost's old 1.5
-second deadline. The
-scripted focus event is raised with `NotifyWinEvent`, so this test too
-needs no real keyboard focus.
-`time_limits.rs` holds mockapp's next provider call (`hold`) and shows
-each of UIA's time limits ending the wait while the call is still held,
-each test in a process of its own since the timeouts belong to the
-process: a property read on an element fetched before the hold fails
-with `UIA_E_TIMEOUT` after one `TRANSACTION_TIMEOUT` (five seconds, not
-UIA's default of twenty); a `FindFirst` search run on a `BoundedClient` is
-given up at its own one-second deadline, before any transaction timeout,
-its thread abandoned and waited for once the call is released; and a
-subscription moved onto the subtree of a held window, its element looked
-up before the hold, has its registration there (`FragmentRoot`, the call
-held) end at the two-second connection timeout, and its next move, onto
-a second mockapp's window and asked for while the first was held, is
-made after it: settling both takes one connection timeout, and the
-second mockapp counts one registration.
-`focus_reports.rs` runs a real outpost in the test process over
-`tests/fixtures/reuse.json` (two lists named alike, as a File Explorer
-folder and its subfolder), through `tests/common/outpost.rs`, the
-outpost harness it shares with `call_counts.rs`: the test hands the
-outpost focus facts as the listener would, and the outpost reads the
-focused element from the test rather than the system. With remote
-operations and without, a focus on an item whose runtime id
-`take-runtime-id` gave it from a dead item is reported under a new node,
-a repeated focus on it keeps that node, and each costs exactly the calls
-pinned there. A focus whose event was captured before its item was
-selected (`select` after the capture, the outpost's read of the focused
-element answering the item fetched afterwards) is reported with the item
-selected, its name and role from the event. A foreground event for
-mockapp's window, which is read through UIA, is dropped, and the focus
-inside the window that follows is reported alone, with no foreground
-report before it; `msaa_events.rs` has the same for an MSAA window's
-foreground event handled before the window is in front. Over
-`tests/fixtures/described_group.json`, with a theme that reports
-descriptions as off, the outpost's own read of a focus's ancestors
-reports an unnamed grouping that has a description as focus context,
-without the description.
+None: every `mockapp` test runs on a desktop no other test is using
+(`harness::run_isolated`), so `cargo test -p mockapp` and `cargo xtask ci`
+put no window on the interactive desktop and can run while an end-to-end
+run has it; the end-to-end suite (`#[ignore]`d, run only with
+`--ignored`) is the one set of tests that takes the interactive desktop,
+by design.
 
-`call_counts.rs` is the operation ledger's ratchet (`docs/performance.md`):
-over `tests/fixtures/counts.json`, and `tests/fixtures/dialog.json` (a
-message box: a dialog holding a question, with a description, and two
-buttons) for a dialog's own text, it measures each ledger operation on each
-backend and asserts exactly how many cross-process calls the client side
-made, by kind, and how many calls mockapp's providers answered, by method.
-A focus on a text field, its caret read with it, is measured whole
-through a real outpost for a UIA document and terminal, remotely and
-classically, and a classic edit control (`text_field_focuses_cost_exactly`).
-The MSAA operations (a focus change cold and in the steady state, a focus
-into a list, an arrow to the next list item, and a next-sibling and parent
-navigation step) run through a real outpost, as `slow_application.rs`
-does, reading the calls from the event's or reply's timing. The UIA ones
-run on the test's own thread, making the same `verbatim-uia` calls in the
-same order as the outpost's worker once it has the element: the outpost
-finds a UIA focus's element by reading the system's keyboard focus, which
-a test must not take. Event registrations, which run on the process's one
-registering thread, are pinned by the provider calls they cost mockapp: the focus
-listener's desktop-wide group and an outpost's focus-following property
-subscription. The focus listener's real reader, on the test's thread,
-reads focuses in mockapp's window and is asserted to make no connection
-to a window by its handle, from the connection count
-(`the_listener_makes_no_connection`); and with one mockapp's window
-placed below another's, as its child or owned by it, the listener's
-chain stops below the process boundary, and the parent's provider calls
-are pinned while the listener reads and during a focus-now query
-(`uia_focus_chains_stop_below_the_process_boundary`), and from the
-window's own element held without its handle, the classic walk makes no
-step into the parent
-(`uia_walk_from_a_window_element_held_without_its_handle_stops_below_the_boundary`); above a parent
-that has a UIA provider, the outpost continues the chain through MSAA
-with no UIA call into it, and UIA's client side connects to the parent
-as the outpost's read returns the child window's element, which both
-tests pin by the parent's `WM_GETOBJECT`s by kind
-(`uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider`). A container's selected child is pinned over
-`tests/fixtures/ancestry.json`, through a list's `SelectionPattern2` and
-through a tab control's `Selection` pattern, classically and in the
-focus's remote program; and so are a text focus's registration, its caret
-and text changes and active text position changes as one group, and the
-handling of an active text position change, which makes no call. Say-all's
-batches of twenty lines are pinned over `text.json`'s text replaced by
-forty-five lines, and a batch whose lines differ in language over
-`tests/fixtures/languages.json` (lines in English, French, and German, by
-its `cultures`), which `text.rs` also reads both ways; and a line's
-formatting whose one stretch is mixed for italics, over
-`tests/fixtures/italic.json`, read again by words and characters. The
-caret report after a focus is pinned twice for the same text, with the
-default theme and with every indication on, so the counts show the
-attributes `text.json` does not support (links; and strikethrough, the
-background color, and bullets) asked of the line once and then no more.
-`text.rs` reads every attribute both ways over `formatting.json`, finds
-the unsupported ones over `text.json`, and moves backward over
-`backward_moves.json`.
-`instruction_limit.rs` finds UIA's limit on the instructions one remote
-operation may execute and pins it, and pins how many each of Verbatim's
-programs executes, counted with `verbatim_uia_rops::counting`, at its
-worst against mockapp and at a typical size: over
-`tests/fixtures/deep.json` (a list sixty groups deep) for the focus
-ancestry and navigation, `tests/fixtures/mixed.json` (format stretches of
-two characters, each with one italic) and `italic.json` for the caret
-read, `languages.json` and `terminal.json` for say-all and a
-terminal's tail, and `terminal-checkered.json` and
-`terminal-plain-colours.json` for a terminal's colours on a 120 by 30
-screen, every cell its own run and every row one, each program of the
-read pinned. On a
-mismatch the test prints every measured count,
-so a deliberate change updates all the numbers that moved in one pass.
+The runner starts the binary again for each test, with `--isolated-test`
+and its name, and reports its result. Each of the runner's worker threads
+makes one desktop and one job object, and runs its tests on that desktop
+one after another, every process a test starts being in the job. Before
+the next test starts there, the runner waits until the job's count of
+running processes, which includes those of the job nested in it, is none,
+so nothing of the earlier test is left on the desktop and the test is the
+only client there while it runs. The job's completion port only wakes
+that wait, because Windows does not guarantee to deliver its message that
+the count reached none, and the port cannot tell that message from a
+nested job's; if processes are still running a minute after the test
+ended, the run fails naming the test. No test reads anything the desktop
+keeps beyond its processes, such as its foreground window.
+
+Desktops are made per thread, not per test, because making one costs the
+Desktop Window Manager about a tenth of a second of work, done in turn for
+the whole session, and while it is behind, anything that waits on it is
+late, such as a window's title-bar information, which the MSAA proxy
+reads (a full `cargo test -p mockapp` with 12 worker threads makes 169
+desktops rather than 219; [troubleshooting](../tooling/troubleshooting.md)).
+
+A window and its events are seen only from its own desktop, and a process
+started on one, mockapp included, starts its children there, so nothing
+an end-to-end run's Verbatim, NVDA, or another test does reaches mockapp.
+That matters most to the tests that pin the calls mockapp's providers
+answer (`call_counts.rs`, `terminal.rs`) and to those that raise mockapp's
+events and must hear no other client's: a provider cannot tell which
+client called it, since UIA's calls reach it from UI Automation's own
+threads in mockapp. No test needs the foreground or the keyboard focus,
+which no window on such a desktop can have: a test that needs a window to
+be the foreground, or an element to have the focus, tells the outpost
+under test which (`tests/common/outpost.rs`).
+
+## The tests
+
+Each file's module comment says exactly what it asserts; in outline:
+
+- `uia_tree.rs` and `msaa_tree.rs` walk a rich scripted tree through each
+  real client stack and assert normalized roles, names, values, states,
+  and detail properties match the fixture: every node's details must read
+  back exactly what was scripted, and all-`None` for every node the
+  fixture left plain (rectangles excluded: mockapp scripts no geometry,
+  but UIA merges the real window's rectangle into the window-hosted root).
+  `uia_tree.rs` also navigates remotely from a node kept from a text
+  event, read as the `Kept` shape; `msaa_tree.rs` reads a list's selected
+  child through `verbatim_ia2::acquire::selected_child` after a `select`.
+- `arbitration.rs`: the raw probe (`verbatim_uia::raw_probe`) answers
+  `0x10000` for a `uia`-backend window and the default window procedure's
+  0 for an `msaa`-backend one, `verbatim_outpost::arbitration::Arbitrator`
+  resolves each to the matching backend, and a window too busy to answer
+  is asked once, with one window message and no connection, its "no"
+  taken.
+- `events.rs`: `set-name`, `set-value`, `select`, `notify`, and an active
+  text position change are each observed by the matching
+  `verbatim_uia::Registration` and `verbatim_ia2::WinEventHook`, one
+  registration of all three hears each, and a registration on a focus
+  hears its changes and neither its group's nor a sibling's. These use
+  property, selection and notification changes rather than focus, so they
+  never depend on real keyboard focus.
+- `controller_for.rs`: `verbatim_uia::Uia::controlled_descendant` finds a
+  selection inside the list a search box's `ControllerFor` names and
+  nothing elsewhere, and a search box holding text has its focus come with
+  the line at its caret ahead of a selection in its list.
+- `combo_box.rs`: a UIA combo box without the `Value` pattern, and a
+  looping selector, read through the focus listener's reader and a real
+  outpost: each focus is reported with its first selected item's name as
+  its value, and a later selection is a change of its value.
+- `native_controls.rs`: real Win32 controls inside mockapp read through
+  their own MSAA implementations by a real outpost, and the window
+  boundary both ways. A `native` `button` in a host on the UIA backend is
+  a Win32 control inside a window whose UIA provider is native
+  (`boundary_uia_host.json`, and `boundary_uia_layout_host.json`, whose
+  root is not content; both set `msaa_client`), and a `uia_window` in a
+  host on the `win32` backend is a UIA window inside a plain Win32 window
+  (`boundary_win32_host.json`). The test reports a focus in each and
+  asserts its ancestors and what Core speaks: the UIA window's element
+  before the button when it is a control and content, and not at all when
+  it is not; and the Win32 window's client area, by its title, before the
+  UIA window's root and its focused button.
+- `msaa_events.rs`: MSAA change events handled by a real outpost and
+  spoken by the reducer: a description change on the focus is spoken, a
+  change on any other object says nothing (`docs/nvda/events.md`, "The
+  focus gate: what the default handlers actually speak"), and an MSAA window's foreground event handled before the
+  window is in front is dropped.
+- `window_names.rs`: a window renamed by its accessible name after it
+  took the foreground, as Windows 11 Notepad renames its window, is
+  announced by the name it had, and its rename is not spoken.
+- `focus_reports.rs`, over `reuse.json` (two lists named alike, as a File
+  Explorer folder and its subfolder): with remote operations and without,
+  a focus on an item whose runtime id `take-runtime-id` gave it from a
+  dead item is reported under a new node, a repeated focus keeps that
+  node, and each costs exactly the calls pinned there; a focus captured
+  before its item was selected is reported with the item selected; a
+  foreground event for a UIA-read window is dropped and the focus that
+  follows reported alone; and over `described_group.json` an unnamed
+  grouping with a description is reported as focus context without the
+  description when the theme turns descriptions off.
+- `slow_application.rs`: a real outpost reports a focus on an
+  `msaa`-backend mockapp whose window thread is stalled with `stall`, the
+  read having started before the stall ended.
+- `time_limits.rs` holds mockapp's next provider call (`hold`) and shows
+  each of UIA's time limits ending the wait while the call is still held,
+  each test in a process of its own since the timeouts belong to the
+  process: a property read fails with `UIA_E_TIMEOUT` after one
+  `TRANSACTION_TIMEOUT` (five seconds); a `FindFirst` search on a
+  `BoundedClient` is given up at its own one-second deadline, its thread
+  abandoned and waited for once the call is released; and a subscription
+  moved onto a held window's subtree has its registration end at the
+  two-second connection timeout, its next move made after it.
+- `shutdown.rs`: an outpost told to shut down during a read into mockapp,
+  a remote operation in one test and classic reads in the other, lets the
+  read finish and sends its answer, then removes every UIA event handler
+  it registered.
+- `idle_barrier.rs`: the outpost's part of the harness's idle barrier
+  (`docs/design/communication.md`, section 6.7): the answer to an idle
+  query goes behind every message the outpost sent before it, and is held
+  back while a caret key's watch is open.
+- `caret_watch.rs`, over `caret_watch.json` (a UIA document and a
+  button), through the outpost harness: a focus delivered while a caret
+  key's watch is open is reported first and the watch ends, answered
+  `WatchEnded`; a caret moved and reported after the watch opened answers
+  it; a key that moves nothing says nothing, and a caret event that shows
+  no change leaves its watch open; and a focus-now query's document is the
+  outpost's focus, so a caret event no key caused is reported. mockapp
+  acknowledges `caret-event` once the call that raised the event has
+  returned, but the outpost hears it later, on UI Automation's threads,
+  and again as the `WinEvent` UIA raises alongside it, in no fixed order;
+  so before each step moves on, the test waits until the outpost has heard
+  both (`OutpostUnderTest::heard`, from `Outpost::observe_heard`), or the
+  first step's event could answer the second key's watch.
+- `text.rs` drives `verbatim-outpost`'s text module over `text.json` on
+  both stacks: lines, words, and characters; movement stopping at the
+  empty last line; UIA's missing sentence unit and the edit control's
+  paragraph in its place; a page unsupported; UIA's language; every
+  attribute over `formatting.json` and the unsupported ones over
+  `text.json`; backward moves over `backward_moves.json`; and a caret key
+  answered with the word it reached and with a selection. It also runs
+  Core's say-all over UIA text, which has no sentence unit
+  (`uia_say_all_speaks_by_sentence_without_a_sentence_unit`).
+- `terminal_snapshot.rs` reads `terminal.json`'s terminal with
+  `verbatim-uia-rops`'s terminal read program remotely and classically,
+  the two required to agree on every field, and pins the colours of
+  `terminal-colours.json` as exact runs both ways.
+- `terminal.rs` reads the terminal through the outpost's `terminal`
+  module and gives each read to Core's reducer: new output is said line by
+  line with one UIA call a read remotely, and classically, and Backspace
+  says what it deleted with no caret event.
+- `terminal_reading.rs` drives a real outpost's worker over the same
+  terminal and asserts the reads and answers it sends Core: focus-now and
+  foreground reports, each on-demand reading request and its answer, caret
+  events with and without text changes, the console host's caret, the
+  hooks' change events through MSAA, the whole document and history
+  blocks, colours requests, and the read before a held key.
+- `remote_ops.rs` runs `verbatim-uia-rops`'s remote and classic focus
+  ancestry over `ancestry.json` (a five-level chain, a list and a tab
+  control with selected children) and asserts they return the same
+  ancestors with the same cached properties, that an element that lost
+  the focus returns early, and how both behave against a stalled mockapp
+  and one that has exited; that a walk that hits UIA's transaction
+  timeout is a failure both ways and never answered by the classic walk,
+  and a real outpost then reports the focus with its containers unknown;
+  and that `Uia::selected` fails with UIA's timeout when mockapp is slow
+  or stalled, and as gone once it has exited, never answering that
+  nothing is selected ([verbatim-uia-rops](verbatim-uia-rops.md)).
+- `call_counts.rs` is the operation ledger's ratchet
+  (`docs/performance.md`, "The ledger"): over `counts.json`, and
+  `dialog.json` (a message box) for a dialog's own text, it measures each
+  ledger operation on each backend and asserts exactly how many
+  cross-process calls the client side made, by kind, and how many calls
+  mockapp's providers answered, by method. The MSAA operations, and a
+  focus on a text field with its caret, run through a real outpost; the
+  UIA ones run on the test's own thread, making the same `verbatim-uia`
+  calls in the same order as the outpost's worker once it has the element,
+  since the worker finds a UIA focus by reading the system's keyboard
+  focus, which a test must not take. It also pins event registrations by
+  the provider calls they cost; that the focus listener's reader makes no
+  connection to a window by its handle; that a focus chain stops below the
+  process boundary and continues through MSAA above a parent with a UIA
+  provider; a container's selected child; a caret move, a caret report and
+  a caret key's watch on both stacks; say-all's batches over forty-five
+  lines and over `languages.json`; and a line's mixed italic formatting
+  over `italic.json`.
+- `instruction_limit.rs` finds UIA's limit on the instructions one remote
+  operation may execute and pins how many each of Verbatim's programs
+  executes, counted with `verbatim_uia_rops::counting`, at its worst
+  against mockapp and at a typical size: over `deep.json` (a list sixty
+  groups deep) for the focus ancestry and navigation, `mixed.json` and
+  `italic.json` for the caret read, `languages.json` and `terminal.json`
+  for say-all and a terminal's tail, and `terminal-checkered.json` and
+  `terminal-plain-colours.json` for a terminal's colours on a 120 by 30
+  screen.
+
+On a mismatch the counting tests print every measured count, so a
+deliberate change updates all the numbers that moved in one pass.
