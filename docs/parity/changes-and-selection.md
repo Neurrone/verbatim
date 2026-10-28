@@ -187,7 +187,7 @@ Different:
   22"), since NVDA's word tells the user nothing (Dickson, 2026-10-20).
 - For each arrow NVDA also says the search box's line, which Verbatim
   leaves unsaid for a caret key that moves nothing ([text](text.md),
-  "TextInfo-equivalent layer").
+  "A caret key that moves nothing").
 - A selection of an element outside every element the relation names,
   while the first of them has a selection, is reported by Verbatim as
   that selection and not reported as a suggestion by NVDA (pinned in
@@ -252,10 +252,10 @@ the same one-percent interval, where NVDA's speech mode speaks every
 ten percent. A UIA progress bar is reported only while it is the focus,
 since UIA's property events are followed on the focus alone
 (`docs/parity/backends.md`, "UIA event registration"); a foreground UIA
-progress bar that is not the focus is not yet reported (M4.2). Background progress bar reporting, an
-NVDA option off by default, is not yet built (M4.3): background
-progress bars stay silent for now, with no setting (Dickson, 2026-10-10,
-confirmed as planned for later on 2026-10-15).
+progress bar that is not the focus is not yet reported (M4.2).
+Background progress bar reporting, an NVDA option off by default, is not
+yet built (M4.3): background progress bars stay silent, with no setting
+(Dickson, 2026-10-10 and 2026-10-15).
 
 ### A combo box's value from its selected item
 
@@ -264,61 +264,65 @@ class name contains `LoopingSelector` (a time picker's), has as its value
 the name of the first item its `Selection` pattern holds; when an item
 that does not have the focus changes state, or is selected, while its
 parent is such a focus, NVDA raises a value change on the focus, so the
-new item is spoken as the focus's value. Verbatim: the focus is read
-with its first selected item's name as its value, and the listener's
-selection event for a child of such a focus is reported as a value
-change of the focus, which the reducer speaks as it speaks any value
-change on the focus, the bare value (mockapp's `combo_box` tests). The
-one search that finds the item among the focus's children reads with it
-its name and whether it has the keyboard focus, both as they are then,
-as NVDA reads the item's focus and the combo box's value live when it
-handles the event: an item with the keyboard focus is no value change and
-is said by its focus alone, and the value is the item's name as found,
-never the event's cached name, which can be empty for an item an
-application names late. Different: the value is the event's item, where
-NVDA reads the combo box's current selection when it handles the event
+new item is spoken as the focus's value. NVDA reads the combo box's
+current selection when it handles the event
 (`ComboBoxWithoutValuePattern._get_value`, `NVDAObjects/UIA/__init__.py`
-2762 to 2767). The two differ when the selection moves again before the
-event is handled: when two quick arrows on a collapsed combo box select
-A and then B before A's event is handled, NVDA says B for both events
-and Verbatim says A, then B. Verbatim keeps the event's item, so that each item the
-user passed is said, as each arrow's answer. NVDA also takes the items' added-to and removed-from
-selection events, which Verbatim does not subscribe to
-(`docs/parity/backends.md`, "UIA event registration").
+2762 to 2767), and also takes the items' added-to and removed-from
+selection events.
 
-The Settings app's combo boxes take this path: checked live on
-2026-10-20 on Windows build 26200, every combo box on its Display,
-Mouse, Date and time, Language and region, and Colors pages has no
-`Value` pattern, and arrowing the collapsed "Show additional calendars
-in the taskbar" combo box raises an element selected event on the new
-item, which Verbatim speaks as the combo box's value, "Simplified
-Chinese (Lunar)", and back, "Don't show additional calendars". Expanded
-with Alt+Down Arrow on 2026-10-21, its items take the keyboard focus as
-they are arrowed, and each is said once, by its focus ("Simplified
-Chinese (Lunar) not selected 2 of 3"), with no value change
-(`target/e2e-evidence/fixes-round-six-2026-10-21/settings-combo-box-live-check.txt`).
-NVDA, captured with the same keys on 2026-10-21 (NVDA alpha-58022, the
-pin), says each item in the same words, "not selected" included, and
-says "expanded" at Alt+Down Arrow before the first item
+Verbatim: **matched (unverified)**: the expectation is from NVDA's
+source (`NVDAObjects/UIA/__init__.py`, lines 1380 to 1392, 2746 to 2767
+and 2786 to 2800), with no capture of a real such combo box or time
+picker. The focus is read with its first selected item's name as its
+value, and the listener's selection event for a child of such a focus is
+reported as a value change of the focus, which the reducer speaks as it
+speaks any value change on the focus, the bare value (mockapp's
+`combo_box` tests). The one search that finds the item among the focus's
+children reads with it its name and whether it has the keyboard focus,
+both as they are then, as NVDA reads them live when it handles the
+event: an item with the keyboard focus is no value change and is said by
+its focus alone, and the value is the item's name as found, never the
+event's cached name, which can be empty for an item an application names
+late. The added-to and removed-from selection events are not subscribed
+to (`docs/parity/backends.md`, "UIA event registration").
+
+Different: the value is the event's item, so that each item the user
+passed is said, as each arrow's answer. When two quick arrows on a
+collapsed combo box select A and then B before A's event is handled,
+NVDA says B for both events and Verbatim says A, then B.
+
+The Settings app's combo boxes take this path: checked live on Windows
+build 26200, every combo box on its Display, Mouse, Date and time,
+Language and region, and Colors pages has no `Value` pattern, and
+arrowing the collapsed "Show additional calendars in the taskbar" combo
+box raises an element selected event on the new item, which Verbatim
+speaks as the combo box's value, "Simplified Chinese (Lunar)", and back,
+"Don't show additional calendars". So NVDA's second rule, the same value
+change for a `Windows.UI.Core` combo box that has the `Value` pattern
+(lines 2795 to 2798, NVDA issue 6337), is not needed for Settings and is
+not built: no such combo box was found to try it on. Not built either:
+the classic .NET Framework Windows Forms combo box (the roadmap's audit
+item 11, deferred).
+
+### An expanded combo box's items
+
+NVDA, captured on 2026-10-21 (NVDA alpha-58022, the pin), arrowing the
+Settings combo box "Show additional calendars in the taskbar" after
+Alt+Down Arrow, says "expanded" at Alt+Down Arrow before the first item,
+and each item by its focus, "not selected" included
 (`target/e2e-evidence/fixes-round-eight-2026-10-21/nvda-expanded-combo-box-capture.txt`).
-Verbatim says "expanded" there too: Settings raises the combo box's
-expand state change before the item's focus, and when the change
-reaches the outpost behind the item's focus marker, the outpost plans
-it ahead of the item's focus, since the item is inside the combo box
-that was the focus (`docs/design/focus-pipeline.md`, section 12.4;
-mockapp's
-`a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first`
-test, and the `settings_combo_box_expanded` scenario). The expansion is
-**matched**, from that capture.
-So NVDA's second rule, the same value change for a `Windows.UI.Core`
-combo box that has the `Value` pattern (lines 2795 to 2798, NVDA issue
-6337), is not needed for Settings and is not built: no such combo box
-was found to try it on. Not built either: the classic .NET Framework
-Windows Forms combo box (the roadmap's audit item 11, deferred).
-**matched (unverified)**: the
-expectation is from NVDA's source (`NVDAObjects/UIA/__init__.py`, lines
-1380 to 1392, 2746 to 2767 and 2786 to 2800), with no capture of a real
-such combo box or time picker yet.
+Verbatim: **matched (verified)**, from that capture (the
+`settings_combo_box_expanded` scenario). Expanded, the items take the
+keyboard focus as they are arrowed, and each is said once, by its focus
+("Simplified Chinese (Lunar) not selected 2 of 3"), with no value change
+(`target/e2e-evidence/fixes-round-six-2026-10-21/settings-combo-box-live-check.txt`).
+Settings raises the combo box's expand state change before the item's
+focus, and when the change reaches the outpost behind the item's focus
+marker, the outpost plans it ahead of the item's focus, since the item
+is inside the combo box that was the focus
+(`docs/design/focus-pipeline.md`, section 12.4; mockapp's
+`a_change_of_the_old_focus_queued_behind_a_focus_inside_it_is_handled_first`),
+so Verbatim says "expanded" there too.
 
 ### What an accepted MSAA change reads
 
