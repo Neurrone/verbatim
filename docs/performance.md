@@ -4,28 +4,29 @@ How fast Verbatim answers depends mostly on how many times it waits for
 another process. A call into an application's process is a round trip
 through that application's message loop, and a busy application makes
 every one slow, so the number of such calls is the cost that matters and
-the one Verbatim controls. Times vary between runs and machines; call
-counts do not. So CI enforces the counts exactly, and times are judged
-against a floor measured in the same run.
+the one Verbatim controls. Call counts do not vary between runs, so CI
+enforces them exactly; times vary, so they are judged against a floor
+measured in the same run.
 
-The counts are pinned by `crates/mockapp/tests/call_counts.rs`, which
-asserts every operation's calls by kind, the provider calls mockapp
-answered by method, and its failed cached reads (a cached read of a
-property or pattern the cache request did not hold, which costs no call
-but makes UI Automation raise an error inside itself,
-`docs/design/uia-shapes.md`). Every operation pinned makes no failed
-cached read. Remote programs' instruction counts are pinned by
-`crates/mockapp/tests/instruction_limit.rs`. An exact count is a ratchet:
-a change that adds a call fails CI, and a change that removes one lowers
-the number in the test and here in the same commit. A provider cannot
-tell its callers apart, so each ratchet test runs alone in a process on a
-desktop of its own (`docs/crates/mockapp.md`).
+- `crates/mockapp/tests/call_counts.rs` pins every operation's calls by
+  kind, the provider calls mockapp answered by method, and its failed
+  cached reads (a cached read of a property or pattern the cache request
+  did not hold, which costs no call but makes UI Automation raise an
+  error inside itself, `docs/design/uia-shapes.md`). No pinned operation
+  makes a failed cached read.
+- `crates/mockapp/tests/instruction_limit.rs` pins remote programs'
+  instruction counts.
+- An exact count is a ratchet: a change that adds a call fails CI, and a
+  change that removes one lowers the number in the test and here in the
+  same commit. A provider cannot tell its callers apart, so each ratchet
+  test runs alone in a process on a desktop of its own
+  (`docs/crates/mockapp.md`).
 
-Every other figure here is a measurement and gives its build, date and
-conditions. "This machine" is the development machine: x64, a QEMU
-virtual machine with 12 virtual processors of an AMD Ryzen 7 5700G and
-16 GB of memory, running Windows 11 Pro build 26200. Evidence kept from
-runs is under `target/e2e-evidence/` where a section names it.
+Every other figure is a measurement and gives its build and conditions,
+and its date where that matters to reading it. "This machine" is the
+development machine: x64, a QEMU virtual machine with 12 virtual
+processors of an AMD Ryzen 7 5700G and 16 GB of memory, running Windows
+11 Pro build 26200.
 
 ## What counts as a call
 
@@ -91,12 +92,11 @@ The rules for the edge cases, each with its reason:
 outpost's worker is the only thread that calls into the application, so
 its count is exactly its current entry's; it travels in the published
 event's or reply's timing, and `verbatim-inspect latency` prints it with
-the outpost read stage, from the message that first asked for speech. A
-caret key's watch keeps the calls of checks that found nothing and prints
-them with the caret wait stage. A UIA dialog's text runs on the outpost's
-`verbatim_uia::BoundedClient` for a deadline of its own, its calls added
-back to the worker's count (`verbatim_uia::calls::add`) for one hand-over
-of tens of microseconds.
+the outpost read stage. A caret key's watch keeps the calls of checks
+that found nothing and prints them with the caret wait stage. A UIA
+dialog's text runs on the outpost's `verbatim_uia::BoundedClient` for a
+deadline of its own, its calls added back to the worker's count
+(`verbatim_uia::calls::add`) for one hand-over of tens of microseconds.
 
 UIA's connection timeout is 2 seconds and its transaction timeout 5 in
 every Verbatim process (`verbatim_uia::CONNECTION_TIMEOUT` and
@@ -120,19 +120,18 @@ A trace is cancelled when the outpost handles its entry and publishes
 nothing: a focus whose element no longer has the keyboard focus, a focus
 in a window the other backend owns, an MSAA focus where nothing has the
 focused state, an older focus superseded in its batch, or an entry the
-watchdog abandoned at its deadline.
+watchdog abandoned at its deadline. The ledger counts completed traces
+only.
 
-- Its calls are logged at debug level on the worker's "handled" line (the
+- A cancelled trace's calls, and calls made after an entry's last
+  publish, are logged at debug level on the worker's "handled" line (the
   `unpublished` field) with the trace id, never shown in the latency
-  ledger and never added to the next entry's count. Calls made after an
-  entry's last publish are logged the same way.
+  ledger and never added to the next entry's count.
 - An abandoned entry's calls are never sent: its worker is replaced, and
   the `Abandoned` reply carries no counts. A query withdrawn before it
   started made none.
 - In a batch of several focus events, the newest is handled first and
   older ones only if it is dropped; each counts its own calls.
-
-So the ledger counts completed traces only.
 
 ## The floor and the ratio
 
@@ -154,10 +153,10 @@ So the ledger counts completed traces only.
 
 Every fact the listener sees and every request Core makes passes through
 verbatim.exe, so its share is a stage of its own in the latency line
-(`docs/archive/relay.md`; `docs/tooling/inspect.md` lists the stages).
-Budget: verbatim.exe's own stage at most 1 to 2 ms, and its added hop no
-worse than the platform's floor for crossing processes, every exception
-attributed.
+(`docs/design/communication.md`, section 10.1; `docs/tooling/inspect.md`
+lists the stages). Budget: verbatim.exe's own stage at most 1 to 2 ms,
+and its added hop no worse than the platform's floor for crossing
+processes, every exception attributed.
 
 - Its own time is measured on its monotonic clock alone, from taking a
   fact in or queuing a request to its relay thread beginning the write,
@@ -173,10 +172,9 @@ attributed.
   section (`docs/design/communication.md`, section 4.2), so a
   whole-document read of 9,000 lines takes 0.02 to 0.16 ms for 0.8 MB of
   Latin text and 0.29 ms for 1.3 MB of Cyrillic, and 100 rows of 120
-  colour runs 0.05 to 0.08 ms, in a release build (parsing alone, best of
-  30, measured 2026-10-28), which keys and other outposts' frames posted
-  after it wait for. As JSON strings the same reads took 0.6, 1.6 and
-  1.0 ms.
+  colour runs 0.05 to 0.08 ms (release, parsing alone, best of 30,
+  measured 2026-10-28); keys and other outposts' frames posted after it
+  wait for it.
 - A fact held while its outpost starts is reported as "waiting for the
   outpost to start". An application's outpost is usually a spare started
   ahead of need (`docs/design/focus-pipeline.md`, section 19), so the wait
@@ -187,13 +185,13 @@ attributed.
 
 ## The ledger
 
-Each entry gives the fewest calls the operation can be done in, the count
-today as the ratchet measures it, the target, and what bounds the count.
-The fixture is mockapp's `tests/fixtures/counts.json` unless named: a
-window with a named group of two buttons and a list of three items, the
-first selected. Counts are UIA calls, MSAA calls and window messages; a
-kind not mentioned is zero. Provider calls are mockapp's hits, pinned
-beside the counts.
+Each entry gives the fewest calls the operation can be done in (the
+minimum), the count today as the ratchet measures it, the target, and
+what bounds the count. The fixture is mockapp's
+`tests/fixtures/counts.json` unless named: a window with a named group of
+two buttons and a list of three items, the first selected. Counts are UIA
+calls, MSAA calls and window messages; a kind not mentioned is zero.
+Provider calls are mockapp's hits, pinned beside the counts.
 
 How a UIA focus is measured: the listener reads it from the event's own
 element the classic way, with no remote operation or connection
@@ -215,12 +213,12 @@ Rules that hold for every UIA focus:
   window (`NormalizeElementBuildCache`, answered from the event's cache
   for a sender that is a window), costing mockapp 31 provider calls for a
   button or the list and 22 for a list item; the comparison with the
-  focus Core holds (`CompareElements`, NVDA's duplicate rule, which reaches
-  no provider but is a client call); and the sender's keyboard focus read
-  plainly (`CurrentHasKeyboardFocus`, NVDA's last check), 3 provider
-  calls. The keyboard focus is read plainly because inside a remote
-  program Windows Terminal's second focus identity answers that it has the
-  focus where NVDA's plain read answers that it has not (section 16.8).
+  focus Core holds (`CompareElements`, NVDA's duplicate rule, which
+  reaches no provider but is a client call); and the sender's keyboard
+  focus read plainly (`CurrentHasKeyboardFocus`, NVDA's last check), 3
+  provider calls. It is read plainly because inside a remote program
+  Windows Terminal's second focus identity answers that it has the focus
+  where NVDA's plain read answers that it has not (section 16.8).
 - A repeated focus on the element that still has the keyboard focus is
   dropped after those three calls (`uia_repeated_focus_costs_exactly`);
   the window's verdict is kept, so the window is asked nothing.
@@ -242,7 +240,7 @@ Rules that hold for every UIA focus:
 - The classic walk compares each child it passes by runtime id alone and
   fills only the element found, because filling a window's title bar has
   UIA send its thread `WM_GETTITLEBARINFOEX`, which Windows answers for
-  one window at a time across the desktop (2026-10-24).
+  one window at a time across the desktop.
 - The steady state's 10 `WM_GETOBJECT`s come from the outpost's
   `ElementFromHandle` and the listener's and outpost's separate clients
   each connecting; recorded as a follow-up, not changed.
@@ -256,15 +254,15 @@ Rules that hold for every UIA focus:
   whose own ancestors are reused. The listener makes no remote operation,
   because only the application's outpost may send one into it
   (`docs/design/listener-without-connections.md`, section 2).
-- Today: 5 UIA calls, all the listener's, either way the outpost walks.
-  312 provider calls in all with the outpost's remote walk and 306 with
-  its classic walk, of which 9 `GetPatternProvider` calls are the grid
-  item's row and column (3 for each of the three elements read alone, one
-  of them the window element of the outpost's walk), 2 `GetPropertyValue`
-  calls the ancestors' automation ids, and one `GetPropertyValue` the
-  provider description that the outpost's lookup of the route's window
-  caches for the proxy rule (`docs/design/listener-without-connections.md`,
-  section 5).
+- Today: 5 UIA calls, all the listener's, either way the outpost walks;
+  the minimum, met. 312 provider calls in all with the outpost's remote
+  walk and 306 with its classic walk, of which 9 `GetPatternProvider`
+  calls are the grid item's row and column (3 for each of the three
+  elements read alone, one of them the window element of the outpost's
+  walk), 2 `GetPropertyValue` calls the ancestors' automation ids, and
+  one `GetPropertyValue` the provider description that the outpost's
+  lookup of the route's window caches for the proxy rule
+  (`docs/design/listener-without-connections.md`, section 5).
 - Beside the calls, local work only and no wake-up added: the reading
   threads' watchdog judges once whether the user moved on from the read's
   window (`GetGUIThreadInfo`, `GetWindowThreadProcessId`, class and
@@ -272,8 +270,7 @@ Rules that hold for every UIA focus:
   focus is inside the old, the intake moves the old focus's queued state
   changes ahead of the read (`docs/design/focus-pipeline.md`, section
   12.4), delaying the report by their handling, 0.2 to 1.8 ms per property
-  change in Settings' Date and time page (debug, 2026-10-21).
-- Target: the minimum, met.
+  change in Settings' Date and time page (debug).
 - Bound: one step per ancestor until a known one, so the count grows only
   with how far the focus moved up the tree.
 
@@ -302,8 +299,7 @@ Rules that hold for every UIA focus:
 - The harness's idle barrier waits while a gap is open, at most about 12.2
   seconds for one focus marker (the bound and the listener's 11-second
   `READ_DEADLINE`), within its 15-second idle timeout.
-- Target: none per focus; one read per gap, met.
-- Bound: at most one read per gap.
+- Target: none per focus and at most one read per gap, met.
 
 ### A focus behind other objects' events
 
@@ -313,8 +309,7 @@ UIA focus is judged by the listener as it arrives
 (`docs/design/focus-pipeline.md`, sections 5 and 9). How long the wait
 can be: in mockapp with every provider call answered 20 ms late, a focus
 behind ten selections was taken up about 610 ms after the query before it
-was answered (2026-10-07); reordering it ahead took about 0.1 ms but
-departed from NVDA and was removed on 2026-10-11.
+was answered (measured 2026-10-07).
 
 ### A focus change, UIA, cold
 
@@ -366,14 +361,13 @@ other's MSAA window (`uia_focus_chains_stop_below_the_process_boundary`).
 
 The focus lands on the list, and its selected item is read with it.
 
-- Minimum: 7 UIA calls: a steady-state focus's five, and the selected
-  item's two (`SelectionPattern2`'s `FirstSelectedItem`, fetched with the
-  `Selection` pattern, and `BuildUpdatedCache` on it).
-- Today: 7, all the listener's. 352 provider calls with the outpost's
+- Minimum and today: 7 UIA calls, all the listener's: a steady-state
+  focus's five, and the selected item's two (`SelectionPattern2`'s
+  `FirstSelectedItem`, fetched with the `Selection` pattern, and
+  `BuildUpdatedCache` on it); met. 352 provider calls with the outpost's
   remote walk and 347 with its classic walk, 15 of them the grid items'
   row and column, the selected item's among them, and the ancestors'
   automation ids.
-- Target: the minimum, met.
 - Bound: one selected item per focus.
 
 ### A focus change onto a combo box without the Value pattern, UIA
@@ -401,12 +395,10 @@ Pinned by `uia_combo_box_costs_exactly`, both ways.
 
 ### Arrowing through a list, UIA
 
-- Minimum: 5 UIA calls, a steady-state focus on a windowless element.
-- Today: 5; the walk stops at the list. 327 provider calls with the
+- Minimum and today: 5 UIA calls, a steady-state focus on a windowless
+  element; the walk stops at the list; met. 327 provider calls with the
   outpost's remote walk and 324 with its classic walk, 11 of them the
   grid item's row and column and the ancestors' automation ids.
-- Target: the minimum, met.
-- Bound: as for a steady-state focus.
 
 ### An object navigation step, UIA
 
@@ -415,15 +407,14 @@ Next sibling and parent, from a node the outpost holds.
 - Minimum: 1 UIA call: one program takes the step, fills the neighbor's
   cache and finds the node's nearest window, for correcting the
   neighbor's backend (`verbatim_uia_rops::navigation_step`).
-- Today, remotely: 1 each, from the held element without refreshing it:
-  the program fails at once when the element is gone, and the outpost then
-  searches for it. 91 provider calls for the next sibling and 92 for the
-  parent. A step from a top-level window is taken classically, since a
-  program's walk ends there.
+- Today, remotely: 1 each, met, from the held element without refreshing
+  it: the program fails at once when the element is gone, and the outpost
+  then searches for it. 91 provider calls for the next sibling and 92 for
+  the parent. A step from a top-level window is taken classically, since
+  a program's walk ends there.
 - Today, classically: 3 each: the held element's cache refreshed, which
   proves it still answers, its nearest window, and the step; 141 provider
   calls for the next sibling and 142 for the parent.
-- Target: 1, met.
 - Bound: one step per command.
 
 ### A focus change, MSAA, steady state
@@ -455,12 +446,10 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
 ### A focus change, MSAA, cold
 
 - Minimum and today: 28 MSAA calls and 1 window message, the steady
-  state's count, since nothing is recognized either way, plus the probe.
-  `WindowFromAccessibleObject` answers no window for mockapp's ancestors,
-  and the walk keeps the window it is in. mockapp answered 33 provider
-  calls.
-- Target: met.
-- Bound: as for the steady state.
+  state's count, since nothing is recognized either way, plus the probe;
+  met. `WindowFromAccessibleObject` answers no window for mockapp's
+  ancestors, and the walk keeps the window it is in. mockapp answered 33
+  provider calls.
 
 ### A focus change into a list, MSAA
 
@@ -470,15 +459,12 @@ reaching a parent 3 more (`accParent`, the `QueryInterface` for its
   its `IAccessible`, its window and its seven properties (10).
 - Today: 29: the walk asks the window for its parent because the window
   is not recognized. mockapp answered 30 provider calls.
-- Target: 28.
-- Bound: one selected item per focus.
+- Target: 28. Bound: one selected item per focus.
 
 ### Arrowing through a list, MSAA
 
-- Minimum: 18 MSAA calls.
-- Today: 28, as for a steady-state focus and for the same reason; mockapp
-  answered 32 provider calls.
-- Target: 18.
+- Minimum: 18 MSAA calls. Today: 28, as for a steady-state focus and for
+  the same reason; mockapp answered 32 provider calls. Target: 18.
 
 ### A focus on a tree view item, MSAA
 
@@ -499,9 +485,9 @@ since the provider is comctl32's.
 
 ### A focus on a report view item, MSAA
 
-An item of a real list view in report view (`tests/fixtures/list_view.json`,
-`msaa_list_view_costs_exactly`), after another item, named by its four
-columns as NVDA names it.
+An item of a real list view in report view
+(`tests/fixtures/list_view.json`, `msaa_list_view_costs_exactly`), after
+another item, named by its four columns as NVDA names it.
 
 - Today: 28 MSAA calls and 14 window messages: the view, the header and
   its item count, the column order, each column's rectangle (4), each
@@ -524,12 +510,12 @@ focus, so the outpost tells the object from the focus by identity before
 reading anything.
 
 - Today: the acquisition and its role only, the role to know whether it
-  is a progress bar, whose value changes are reported off the focus (mockapp
-  answers `get_accChild`, `accParent` and `get_accRole` once each); a
-  progress bar then has its states, value and location read, what NVDA's
-  progress bar behavior reads. The focus's own change costs 2 MSAA calls,
-  the acquisition and its value. mockapp answers a `WM_GETOBJECT` for each
-  acquisition, 2.
+  is a progress bar, whose value changes are reported off the focus
+  (mockapp answers `get_accChild`, `accParent` and `get_accRole` once
+  each); a progress bar then has its states, value and location read,
+  what NVDA's progress bar behavior reads. The focus's own change costs 2
+  MSAA calls, the acquisition and its value. mockapp answers a
+  `WM_GETOBJECT` for each acquisition, 2.
 - Bound: one property per event.
 
 ### A name, description, or state change on the focus, MSAA
@@ -573,13 +559,13 @@ selection of the focus or an ancestor as a change of its state
 A search box whose ControllerFor relation names a list, and an item of
 the list selected (`crates/mockapp/tests/controller_for.rs`).
 
-- Today: 1 UIA call, one remote operation, whatever the number of
-  controlled elements. An item found in none is answered with the first
-  controlled element's current selection, read in the same operation,
-  where the classic calls take three more. A selection naming the focus
-  itself reads no current selection: one comparison of runtime ids per
-  UIA selection while the focus is a UIA element, and no lock.
-- Target: 1, met.
+- Minimum and today: 1 UIA call, one remote operation, whatever the
+  number of controlled elements; met. An item found in none is answered
+  with the first controlled element's current selection, read in the
+  same operation, where the classic calls take three more. A selection
+  naming the focus itself reads no current selection: one comparison of
+  runtime ids per UIA selection while the focus is a UIA element, and no
+  lock.
 - Bound: the controlled list's elements, walked inside the provider (see
   "The instruction limit").
 
@@ -613,33 +599,31 @@ A focus moves into a message box from outside it, so the dialog's own
 text is gathered as its description (`docs/nvda/object-model.md`, "A
 dialog's own text"; `tests/fixtures/dialog.json`).
 
-- Minimum: a cold focus's 28 MSAA calls and 1 window message, and 14 for
-  the text: the child count and children (2), each of three children's
-  `IAccessible` and role (6) and states (3), and the question's name,
-  value and description (3).
-- Today: 42 MSAA calls and 1 window message; mockapp answered 50 provider
-  calls. A focus moving within a dialog with its own window does not read
-  it again; mockapp's dialog has none, so it is a new node each time.
-- Target: the minimum, met.
+- Minimum and today: 42 MSAA calls and 1 window message, met: a cold
+  focus's 28 MSAA calls and 1 window message, and 14 for the text: the
+  child count and children (2), each of three children's `IAccessible`
+  and role (6) and states (3), and the question's name, value and
+  description (3). mockapp answered 50 provider calls. A focus moving
+  within a dialog with its own window does not read it again; mockapp's
+  dialog has none, so it is a new node each time.
 - Bound: the dialog's children.
 
 ### A dialog's text, UIA
 
 The same message box through UIA, from a dialog element the outpost holds
 as the `Kept` shape, of which nothing is read
-(`docs/design/uia-shapes.md`, step 4).
+(`docs/design/uia-shapes.md`, section 6).
 
-- Minimum: 1 UIA call per container: its children with every property
-  the rules read cached, in one `BuildUpdatedCache` scoped to the children
-  alone, as NVDA's is.
-- Today: 1. mockapp answered 135 provider calls: 26 `ProviderOptions`, 33
-  `GetPatternProvider`, 43 `GetPropertyValue`, 11
-  `HostRawElementProvider`, 9 `Navigate`, 6 `GetRuntimeId` and 7
-  `FragmentRoot`. A top-level message box's first child is the title bar
-  UIA adds, read without whether it is off the screen, because that read
-  has UIA send `WM_GETTITLEBARINFOEX`, about 6 ms alone and seconds under
-  load (`uia_dialog_window_text_reads_nothing_of_its_title_bar`).
-- Target: 1, met.
+- Minimum and today: 1 UIA call per container, met: its children with
+  every property the rules read cached, in one `BuildUpdatedCache` scoped
+  to the children alone, as NVDA's is. mockapp answered 135 provider
+  calls: 26 `ProviderOptions`, 33 `GetPatternProvider`, 43
+  `GetPropertyValue`, 11 `HostRawElementProvider`, 9 `Navigate`, 6
+  `GetRuntimeId` and 7 `FragmentRoot`.
+- A top-level message box's first child is the title bar UIA adds, read
+  without whether it is off the screen, because that read has UIA send
+  `WM_GETTITLEBARINFOEX`, about 6 ms alone and seconds under load
+  (`uia_dialog_window_text_reads_nothing_of_its_title_bar`).
 - Bound: one call per container read.
 
 ### A tree dump, UIA
@@ -652,9 +636,8 @@ The control plane's tree dump (`verbatim-inspect dump-tree`), through
   program reading up to 60 children.
 - Today: classically one call per listed element, 3 for mockapp's list of
   two items; remotely 1 for that list and for any tree of up to 60
-  children read. Locations and off-screen states are read only when the
-  dump asks for locations, so a dump sends no `WM_GETTITLEBARINFOEX`.
-- Target: the minimum, met.
+  children read; met. Locations and off-screen states are read only when
+  the dump asks for locations, so a dump sends no `WM_GETTITLEBARINFOEX`.
 
 ### The shell's tray and taskbar list, UIA
 
@@ -680,11 +663,10 @@ machine's taskbar, from a separate process running the outpost's walk,
 
 - Minimum and today: 10 MSAA calls for a next sibling (`accNavigate`, the
   neighbor's `IAccessible`, its window and its seven properties) and 10
-  for a parent (`accParent` in place of `accNavigate`). mockapp answered
-  9 provider calls for the next sibling and 15 for the parent, 8 of them
-  `accParent` from `WindowFromAccessibleObject`'s walk. With a theme
-  reporting descriptions and shortcuts off, a next sibling is 8.
-- Target: met.
+  for a parent (`accParent` in place of `accNavigate`); met. mockapp
+  answered 9 provider calls for the next sibling and 15 for the parent, 8
+  of them `accParent` from `WindowFromAccessibleObject`'s walk. With a
+  theme reporting descriptions and shortcuts off, a next sibling is 8.
 
 ### A key through the keyboard hook
 
@@ -697,7 +679,6 @@ machine's taskbar, from a separate process running the outpost's walk,
   channel (`docs/crates/verbatim-input-windows.md`), waking the router
   once; the channel allocates a block of 31 slots about once every 31
   sends, and a queued gesture holds about 70 bytes.
-- Target: none.
 
 ### An interrupt
 
@@ -725,17 +706,12 @@ that ends unheard.
   theme page's previews and the start, exit, error and "not responding"
   sounds take one thread hop to the reducer and one step; a menu or the
   task switcher ending is one step.
-- Measured on 2026-10-24, debug build, `cargo xtask trace scenario
-  notepad_say_all --after 9 --seconds 5`, four runs: the reducer woke 10 to
-  36 times using 3.7 to 45.2 ms and the speech queue thread 11 to 26 times
-  using 1.5 to 2.4 ms, within the spread of the build before.
 - A synthesizer host's audio: each chunk is one frame, a small JSON body
   and its samples as the frame's raw section
   (`docs/design/communication.md`, section 4.2). The synth thread decodes
   a chunk of 1,323 samples (60 ms at 22,050 Hz) in 0.2 microseconds and
-  one of 4,410 in 0.28, and the host encodes them in 0.6 and 2.0, in a
-  release build (best of 30, measured 2026-10-28); the binary header the
-  body replaced decoded in 0.06 and 0.13.
+  one of 4,410 in 0.28, and the host encodes them in 0.6 and 2.0 (release,
+  best of 30, measured 2026-10-28).
 
 ### A caret move, UIA
 
@@ -745,20 +721,19 @@ formatting under the default theme, which reports spelling and grammar
 errors and links, against mockapp's `tests/fixtures/text.json`, whose
 "beta" is a spelling error.
 
-- Minimum: 1 UIA call, one program (`verbatim_uia_rops::caret_read`).
-- Today: 1 remotely; the program makes inside the provider the classic
-  reads' provider calls, one copy more, and the import of the element and
-  its text pattern. Classically 15: the selection, whether it is empty,
-  the evidence (a comparison with the caret Core knew), the line (a copy,
+- Minimum and today: 1 UIA call, one program
+  (`verbatim_uia_rops::caret_read`); met. The program makes inside the
+  provider the classic reads' provider calls, one copy more, and the
+  import of the element and its text pattern.
+- Classically 15: the selection, whether it is empty, the evidence (a
+  comparison with the caret Core knew), the line (a copy,
   `ExpandToEnclosingUnit`, `GetText`), the offset (a copy,
   `MoveEndpointByRange`, `GetText`), the character's annotation types and
-  link (a copy, `ExpandToEnclosingUnit`, one `GetAttributeValues`), and the
-  caret read again with its comparison, because the application can move
-  the caret between classic calls (the console host writing a typed
-  character between them, 2026-10-14). A theme with font, its attributes
-  or colour on adds one attribute read each classically and nothing
-  remotely.
-- Target: 1, met.
+  link (a copy, `ExpandToEnclosingUnit`, one `GetAttributeValues`), and
+  the caret read again with its comparison, because the application can
+  move the caret between classic calls (the console host writes a typed
+  character between them). A theme with font, its attributes or colour on
+  adds one attribute read each classically and nothing remotely.
 - Bound: one line per key.
 
 ### A caret key's watch, UIA
@@ -770,10 +745,10 @@ watch open, and the worker goes on with its queue
 prompts reads the caret again and answers. A key that moves nothing makes
 the first check alone, silently.
 
-- Minimum: one round trip per check; nothing for waiting.
-- Today: 1 remotely per check, the whole caret read; classically 15; in
-  the edit control 5 window messages for a check that finds nothing and 6
-  for one that answers.
+- Minimum and today: one round trip per check, nothing for waiting; met.
+  1 remotely per check, the whole caret read; classically 15; in the edit
+  control 5 window messages for a check that finds nothing and 6 for one
+  that answers.
 - With something selected, when a caret report after the key replaced the
   kept selection, up to two `CompareEndpoints` round trips more (none in an
   edit control). A possible reduction: record in the caret history whether
@@ -784,19 +759,16 @@ the first check alone, silently.
   (`verbatim_uia_rops::MAX_COMPARED_TEXT`, one more than the 512 characters
   from which a selection is spoken as a count): inside the program through
   UIA, one call classically, one `WinEvent` sync in an edit control.
-- In the console host, whose caret events come only on its 530 ms blink
-  timer, an open watch re-reads the caret every 5 ms until it moves, the
-  caret event arrives, or 50 ms pass: a documented workaround (Dickson,
-  2026-10-26; `docs/design/key-holding.md`, "The console host's caret
-  poll"; `experiments/the-console-host-raises-its-caret-events-on-its-blink-timer`),
-  at most 10 round trips and 10 worker wake-ups a key. In
-  `measure_keys_conhost` (release, 2026-10-26) the 48 open watches were
-  each answered within 5 ms, caret reads by watches were 1.34 a key, and
-  caret keys reached speech at P95 9.0, P99 9.4 and maximum 9.4 ms.
+- In the console host an open watch re-reads the caret every 5 ms for up
+  to 50 ms, a documented workaround (`docs/design/key-holding.md`, "The
+  console host's caret poll"): at most 10 round trips and 10 worker
+  wake-ups a key. In `measure_keys_conhost` (release, 2026-10-26) every
+  open watch was answered within 5 ms, caret reads by watches were 1.34 a
+  key, and caret keys reached speech at P95 9.0, P99 9.4 and maximum 9.4
+  ms.
 - Nothing waits behind the key: a focus delivered just after a Right Arrow
   the application ignored is taken 0.74 to 0.85 ms after the key
   (`a_focus_change_during_a_caret_watch_is_handled_at_once`).
-- Target: one round trip per check, met.
 
 ### A caret report, UIA
 
@@ -808,23 +780,23 @@ character with nothing selected, then "al" selected from the caret.
 - Minimum: 1 UIA call remotely; classically 8, a caret move's without the
   comparison or the formatting, when nothing is selected before or after;
   with a selection, the comparison and the change's text.
-- Today: 1 remotely in either case: the comparison, the change's text,
-  and the new selection's text up to 513 units, read only when the
-  selection's ends moved, are in the program. Classically 8 with nothing
-  selected and 21 for "al": the selection's caret (`GetCaretRange`), two
-  comparisons of the ends with the old caret's (a selection from nothing
-  is one whole change, as NVDA speaks it, with no comparison placing it),
-  the change's text (a copy, its two ends moved, its text), the selection's
-  text, where the selection starts, since `TextPattern2`'s caret can be its
-  other end (4, and 3 more for a start on an earlier line), and, at its
-  line's start, whether it is the text's start (2). Inside a line it costs
-  19. When the last selection held something, what its ends now hold is
-  read too, up to 513 units, so an edit is said in general terms
-  (`docs/parity/text.md`, "TextInfo-equivalent layer"); a longer text is
-  compared by its first 513 units and its length. A possible reduction
-  classically: a selection on the caret's line starts at the caret's offset
-  less its length, two calls fewer.
-- Target: 1, met.
+- Today: 1 remotely in either case, met: the comparison, the change's
+  text, and the new selection's text up to 513 units, read only when the
+  selection's ends moved, are in the program.
+- Classically 8 with nothing selected and 21 for "al": the selection's
+  caret (`GetCaretRange`), two comparisons of the ends with the old
+  caret's (a selection from nothing is one whole change, as NVDA speaks
+  it, with no comparison placing it), the change's text (a copy, its two
+  ends moved, its text), the selection's text, where the selection
+  starts, since `TextPattern2`'s caret can be its other end (4, and 3 more
+  for a start on an earlier line), and, at its line's start, whether it
+  is the text's start (2). Inside a line it costs 19. When the last
+  selection held something, what its ends now hold is read too, up to 513
+  units, so an edit is said in general terms (`docs/parity/text.md`,
+  "TextInfo-equivalent layer"); a longer text is compared by its first
+  513 units and its length. A possible reduction classically: a selection
+  on the caret's line starts at the caret's offset less its length, two
+  calls fewer.
 - Beside the calls: a registry lookup per report and a copy of the
   selection's two ends (for UIA two references to ranges already held). A
   terminal's caret report does neither.
@@ -837,9 +809,8 @@ the outpost has read the caret (`TextOp::ReadCaret`,
 no selection (`caret_moves_cost_exactly`).
 
 - Minimum and today: 1 UIA call remotely, 8 classically, 5 window
-  messages in a Win32 edit control.
-- Target: met. A possible reduction: skip the watch's first check when the
-  read was a few milliseconds before.
+  messages in a Win32 edit control; met. A possible reduction: skip the
+  watch's first check when the read was a few milliseconds before.
 - Wake-ups: two more of the hook's thread per held key, and the read's
   round trip: roughly 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time
   per held key in the terminals (debug; `docs/design/key-holding.md`,
@@ -847,15 +818,12 @@ no selection (`caret_moves_cost_exactly`).
   (`ShellCommand::DeferredKey`) and is sent again with one `SendInput`.
 - Each foreground change costs the listener the integrity check's local
   calls and one message to Core, which publishes the hook's view with one
-  lock-free store; the hook's thread is not woken. Traced on 2026-10-24
-  (debug, `measure_focus_new_application --after 3 --seconds 20`, three
-  runs): the reducer 114 to 122 wake-ups over 31.5 to 33.7 ms, within the
-  build before's spread, and the hook's thread none.
+  lock-free store; the hook's thread is not woken.
 - A held key waiting for the key ahead's watch costs the reducer one
   wake-up at the 100 ms bound (`Effect::BoundHeldKeyWait`), one of its
   existing deadlines; the last of 15 auto-repeats of a key that moves
   nothing reached the text box 1.05 to 1.06 s after the release
-  (`measure_held_repeat_text_box`, 2026-10-22).
+  (`measure_held_repeat_text_box`).
 
 ### The shell's staging windows
 
@@ -871,15 +839,13 @@ any window.
   message, and the listener judges and reads a UIA focus there. Only a
   focus change's window facts carry the window's class
   (`WindowFacts::class`).
-- Measured on 2026-10-24 by a hand-run script, debug build, six Alt+Tab
-  switches between two console host windows
-  (`target/e2e-evidence/fg-review-fix-2026-10-24/`): the target was in
-  front 450 to 890 ms after Alt's release for a quick switch and 18 to 33
-  ms with Alt held, against 525 to 811 and 22 to 28 with no Verbatim. The
-  staging reads took 1.5 to 14 ms, three times 400 to 542 ms on a slow
-  File Explorer; such a read can delay the switcher's own focus past the
-  target's, so the switcher is announced after it closed.
-- Target: the minimum.
+- Target: the minimum. The staging reads take 1.5 to 14 ms, and up to
+  about 540 on a slow File Explorer (debug, 2026-10-24); such a read can
+  delay the switcher's own focus past the target's, so the switcher is
+  announced after it closed. Switching between two console host windows,
+  the target was in front 450 to 890 ms after Alt's release for a quick
+  switch and 18 to 33 ms with Alt held, against 525 to 811 and 22 to 28
+  with no Verbatim.
 
 ### Ordering focuses across processes
 
@@ -891,15 +857,10 @@ performance counter, milliseconds and, for a focus, microseconds.
 - Minimum and today: one clock read per observation and no wait; a focus
   message and Core's `CoreFocus` notice carry one number more. No thread,
   timer, message or wake-up.
-- Measured on 2026-10-24, three traces of `conhost_two_windows --after 4
-  --seconds 8` (debug, info): all processes woken 2,890 to 3,165 times for
-  539 to 546 ms on a processor, the reducer 20 to 40 times, within the
-  build before's spread.
 - What it does not catch: a switcher focus Windows raises after the
-  console's (11 ms after its foreground event and 15 ms after its focus,
-  `target/e2e-evidence/focus-order-2026-10-24/after-observed/`) happened
-  later, so no ordering drops it; Core's refusal of the switcher's pane
-  covers it ("The task switcher's frame").
+  console's (11 ms after its foreground event and 15 ms after its focus)
+  happened later, so no ordering drops it; Core's refusal of the
+  switcher's pane covers it ("The task switcher's frame").
 
 ### The focus Core holds, told to the judges before a read
 
@@ -918,11 +879,8 @@ never a copy of the focus they last reported.
   window property (`GetPropW`) per UIA focus, to drop a focus in Core's
   hidden frame before its read. While a focus awaits judgement, a repeat
   is read in full and Core's duplicate rule drops it.
-- Measured on 2026-10-25, `rapid_tabbing_in_settings --after 4 --seconds
-  8` (debug, two runs): all processes woken 7,098 and 8,447 times for 775
-  and 809 ms, the reducer 71 and 76 times, within the build before's
-  spread; over the three `measure_focus_` scenarios a key to its speech
-  queued at a median of 0.6 ms and a 99th percentile of 6.1.
+- Over the three `measure_focus_` scenarios a key to its speech queued at
+  a median of 0.6 ms and a 99th percentile of 6.1 (debug, 2026-10-25).
 - Target: the minimum, but for the reporting outpost's notice of a refused
   focus, which keeps a refused focus from standing as the one it judges
   against.
@@ -951,22 +909,20 @@ speaks a grid item's row and column (`docs/parity/focus-announcement.md`,
 
 - Minimum: the parent's automation id from its cache, Alt with one
   `GetAsyncKeyState`, and the row and column as two properties.
-- Today: no cross-process call added. Every ancestor's request holds its
-  automation id (`verbatim_uia::Ancestor`). The requests of an element read
-  alone (the focus, its selected child, a navigation step's neighbour) hold
-  the `GridItem` pattern's availability, row and column
+- Today: no cross-process call added; met. Every ancestor's request holds
+  its automation id (`verbatim_uia::Ancestor`). The requests of an element
+  read alone (the focus, its selected child, a navigation step's
+  neighbour) hold the `GridItem` pattern's availability, row and column
   (`verbatim_uia::Cell`), which costs mockapp 3 `GetPatternProvider` calls
   per such element; no read of many elements asks for them. Every snapshot
   is 40 bytes larger. One `GetAsyncKeyState` per reported focus change.
-- Target: the minimum, met.
 
 ### The system caret's events
 
 The system caret's location change or show (`OBJID_CARET`), handled as a
 caret event on the focus (`docs/parity/text.md`), measured from the
-outposts' logs on 2026-10-20 over three runs each of `notepad_editing` and
-`conhost_editing`
-(`target/e2e-evidence/fixes-item-11-2026-10-20/commit1-caret-counts.txt`).
+outposts' logs over three runs each of `notepad_editing` and
+`conhost_editing` (2026-10-20).
 
 - Minimum: no call for an event about a focus that reports its own moves;
   otherwise the caret report's, 1 UIA call remotely.
@@ -991,13 +947,12 @@ nothing selected. The MSAA edit control's answer is not pinned, because
 the MSAA read takes the system's keyboard focus, which no test on its own
 desktop can give mockapp.
 
-- Minimum: the query's read, 2 UIA calls and 1 window message, plus the
-  text pattern's fetch and one program remotely (2), or the fetch and 35
-  calls classically (36).
-- Today: 4 UIA calls and 1 window message remotely, 40 and 1 classically.
-  A selection adds what it adds to a reported focus. A terminal's
-  follow-up read is outside the answer's count.
-- Target: the minimum, met.
+- Minimum and today: the query's read, 2 UIA calls and 1 window message,
+  plus the text pattern's fetch and one program remotely (2), or the
+  fetch and 35 calls classically (36): 4 UIA calls and 1 window message
+  remotely, 40 and 1 classically; met. A selection adds what it adds to a
+  reported focus. A terminal's follow-up read is outside the answer's
+  count.
 
 ### The caret report after a focus, UIA
 
@@ -1006,25 +961,23 @@ first line has four stretches (bold "alpha", a space, the misspelt "beta",
 the line feed). It is counted in the focus's message ("A focus on a text
 field"); this entry is the read alone.
 
-- Minimum: 1 UIA call remotely. Classically a caret report's 8, a collapsed
+- Minimum and today: 1 UIA call remotely, met; 35 classically, with the
+  default theme or every indication on: a caret report's 8, a collapsed
   copy of the line (2), for each stretch a copy, `MoveEndpointByUnit`, a
   comparison with the line's end, its text and its attributes in one
-  `GetAttributeValues` (5 each), the walk moved on after each but the last
-  (3), and a `MoveEndpointByRange` to cut the last stretch at the line's
-  end: 34 for four stretches, however many attributes; and one call asking
-  the line for its annotation types and the attributes whose support is
-  not yet known ("Text attributes"): 35.
-- Today: 1 remotely, 35 classically, with the default theme or every
-  indication on. The provider's attribute reads with the default theme:
-  the line's annotation types and link, then two per stretch, 10, the first
-  time; once mockapp's text is known not to support links, 5. With every
+  `GetAttributeValues` (5 each), the walk moved on after each but the
+  last (3), a `MoveEndpointByRange` to cut the last stretch at the line's
+  end, and one call asking the line for its annotation types and the
+  attributes whose support is not yet known ("Text attributes").
+- The provider's attribute reads with the default theme: the line's
+  annotation types and link, then two per stretch, 10, the first time;
+  once mockapp's text is known not to support links, 5. With every
   indication on, eleven attributes: 11 asked of the line and 44 of the
   stretches the first time, then 1 and 28 once the four unsupported ones
   are known.
-- Time against mockapp, debug build, 200 reports, three runs (2026-10-07):
-  classically 3.16 to 3.46 ms at the median, remotely 0.40 ms (0.50 with
-  every indication).
-- Target: 1, met.
+- Time against mockapp, debug build, 200 reports, three runs: classically
+  3.16 to 3.46 ms at the median, remotely 0.40 ms (0.50 with every
+  indication).
 - Bound: the line's stretches, at most 64 a span.
 
 ### A focus on a text field
@@ -1045,30 +998,27 @@ text for every focus it queues. A UIA focus's parts:
 - the selected text, only when something is selected, a protected field's
   too: 1 remotely, 4 classically.
 
+Counts:
+
 - Minimum: each part's own: 9 UIA calls, 1 window message and 1
   connection remotely with nothing selected, 10 with a selection.
 - Today: a UIA document (`text.json`) 9 remotely and 10 with a selection,
-  protected or not, each with 1 window message and 1 connection;
-  classically 45, and 57 with a selection. A UIA terminal
-  (`terminal_reading.json`) 9 remotely and 27 classically, each with 1
-  window message and 1 connection. A classic edit control through MSAA 37
-  MSAA calls and 6 window messages. A focus without text is reported
-  before its search.
-- Target: the minimum, met remotely.
+  protected or not, each with 1 window message and 1 connection, so the
+  minimum is met remotely; classically 45, and 57 with a selection. A UIA
+  terminal (`terminal_reading.json`) 9 remotely and 27 classically, each
+  with 1 window message and 1 connection. A classic edit control through
+  MSAA 37 MSAA calls and 6 window messages. A focus without text is
+  reported before its search.
 - Measured on 2026-10-22 with `cargo xtask measure` (debug, info level,
-  five runs, build 6a644058; minimum, P50, P95, P99 and maximum in ms;
-  `target/e2e-evidence/m42-measure-2026-10-22`). mockapp's field as the
-  first focus in a new application (`measure_focus_new_application`): first
-  word event to queued 28.0, 34.2, 44.1, 46.6, 46.6; outpost read 18.9,
-  20.7, 25.8, 28.2, 28.2 with 4 calls; the line follows by 0 to 1. Of the
-  read, the search for the outpost's element, its first connection to a
-  new application, takes 19.0 to 24.3 ms and the caret read 0.8 to 1.0: a
-  defect against the costing. `measure_focus_text_box` (Windows Forms edit
-  controls through MSAA, 8 or 9 calls): first word 14.1, 20.5, 51.7, 55.9,
-  56.8, its tail the wait for the reducer. Wake-ups over
-  `measure_focus_new_application --after 8 --seconds 5`, three runs: the
-  outposts 9,845 to 11,675 over 712 to 860 ms, verbatim.exe 1,325 to 1,591
-  over 369 to 455 ms.
+  five runs; minimum, P50, P95, P99 and maximum in ms). mockapp's field as
+  the first focus in a new application (`measure_focus_new_application`):
+  first word event to queued 28.0, 34.2, 44.1, 46.6, 46.6; outpost read
+  18.9, 20.7, 25.8, 28.2, 28.2 with 4 calls; the line follows by 0 to 1.
+  Of the read, the search for the outpost's element, its first connection
+  to a new application, takes 19.0 to 24.3 ms and the caret read 0.8 to
+  1.0: a defect against the costing. `measure_focus_text_box` (Windows
+  Forms edit controls through MSAA, 8 or 9 calls): first word 14.1, 20.5,
+  51.7, 55.9, 56.8, its tail the wait for the reducer.
 
 ### A caret key that selects, UIA
 
@@ -1076,24 +1026,22 @@ Shift with Right Arrow, from a collapsed caret at the start to "alpha"
 selected, answered with the line, the character and the text newly
 selected.
 
-- Minimum and today: 1 UIA call: the caret read's program compares the
-  selection's ends with the old ones and reads each change's text when
-  they moved. Classically 30: the caret read's calls and the same
+- Minimum and today: 1 UIA call, met: the caret read's program compares
+  the selection's ends with the old ones and reads each change's text
+  when they moved. Classically 30: the caret read's calls and the same
   comparisons and text reads, only when the selection moved. A selection
   from nothing or to nothing is one whole change, as NVDA speaks it.
-- Target: 1, met.
 
 ### A review cursor line, UIA
 
 The review cursor's next line (numpad 9), from a position the outpost
 reported.
 
-- Minimum and today: 1 UIA call (`verbatim_uia_rops::text_units`);
+- Minimum and today: 1 UIA call (`verbatim_uia_rops::text_units`), met;
   classically 8 (a copy of the position, expanded to its line, collapsed,
   moved; a copy expanded to the line reached and its text; its `Culture`).
-  The first review command and report current object on an edit field read
-  the line at the caret in one program, classically 9.
-- Target: 1, met.
+  The first review command and report current object on an edit field
+  read the line at the caret in one program, classically 9.
 
 ### A review cursor word inside a line, UIA
 
@@ -1101,8 +1049,7 @@ The word at a position inside a line Core holds, found by moving a copy of
 the line's start by the text before the position.
 
 - Minimum and today: 1 UIA call, the program trying each character count
-  a provider may use; classically 12.
-- Target: 1, met.
+  a provider may use, met; classically 12.
 
 ### Say-all, UIA
 
@@ -1110,9 +1057,9 @@ Reading mockapp's three lines from the caret and moving the caret as each
 is reached.
 
 - Minimum and today: 1 UIA call for every batch read ahead
-  (`TextOp::ReadAhead`, twenty units), its end found in the same program;
-  classically 24 for the three lines. Each caret move is 1 call remotely
-  and 4 classically.
+  (`TextOp::ReadAhead`, twenty units), its end found in the same program,
+  and 1 per caret move; met. Classically 24 for the three lines, and 4 per
+  caret move.
 - A batch of twenty lines classically, against mockapp's text replaced by
   forty-five short lines (`uia_say_all_batches_cost_exactly`): 109 for the
   first batch and 108 for each later one. Each line after the first costs
@@ -1122,38 +1069,32 @@ is reached.
   its whole range (3 calls), and line by line only when that read answers
   "mixed": 33 for `languages.json`'s four lines in three languages.
 - Time, debug build against mockapp in its own process, 200 runs, three
-  runs (2026-10-07): classically 10.0 to 10.6 ms at the median (11.7 to
-  13.0 at the 95th percentile), remotely 1.0 to 1.6.
-- Target: 1 per batch and 1 per caret move, met.
+  runs: classically 10.0 to 10.6 ms at the median (11.7 to 13.0 at the
+  95th percentile), remotely 1.0 to 1.6.
 
-When the next batch is read (Dickson, 2026-10-07): say-all reads 20 units
-at a time, hands pieces to speech two ahead of playback, and reads the
-next batch once fewer than 10 pieces are left to speak
-(`docs/crates/verbatim-core.md`, "Say-all"). A count needs no estimate of
-speech's pace, and ten pieces last far longer than a batch's read: against
-Windows 11 Notepad (debug, 2026-10-07, a 300-line document, eSpeak NG at
-376 words a minute, a piece a line then), a batch read in 3.3 ms at the
-median remotely and 21.1 classically, and the gaps between pieces were the
-same either way, 1.5 ms at the median and 14 at the 95th percentile,
-against NVDA's 1.2 and 30.2: the buffered pieces hide the read.
+Say-all reads the next batch once fewer than 10 pieces are left to speak
+(Dickson, 2026-10-07; `docs/crates/verbatim-core.md`, "Say-all"), since
+ten pieces last far longer than a batch's read. Against Windows 11
+Notepad (debug, a 300-line document, eSpeak NG at 376 words a minute, a
+piece a line) a batch read in 3.3 ms at the median remotely and 21.1
+classically, and the gaps between pieces were 1.5 ms at the median and 14
+at the 95th percentile either way, against NVDA's 1.2 and 30.2.
 
 ### The caret's location, UIA
 
 Report caret location.
 
-- Minimum and today: 1 UIA call; classically 5 (the caret's two reads, a
-  copy expanded to the character, its bounding rectangles).
-- Target: 1, met.
+- Minimum and today: 1 UIA call, met; classically 5 (the caret's two
+  reads, a copy expanded to the character, its bounding rectangles).
 
 ### The selected text, UIA
 
 The selected text read for a copy, or with a focus's or the navigator's
 announcement (`ReadRange`).
 
-- Minimum and today: 1 UIA call; classically 7, of which the range's read
-  is 4; at a focus, whose caret read already fetched the selection, those
-  4 alone.
-- Target: 1, met.
+- Minimum and today: 1 UIA call, met; classically 7, of which the range's
+  read is 4; at a focus, whose caret read already fetched the selection,
+  those 4 alone.
 
 ### The review copy's selection, UIA
 
@@ -1163,10 +1104,10 @@ selected from the marker through the character at the review cursor. Core
 sends both ends as points past their characters (`TextThrough`), since
 only the outpost can tell which comes first.
 
-- Minimum and today: 1 UIA call: one program reads the selection, selects
-  (`TextRangeSelect`), reads it again, compares and reads each change's text
-  and the selection's text up to 513 units. It executes 163 instructions
-  (`range_selections_execute_exactly`). Classically 29.
+- Minimum and today: 1 UIA call, met: one program reads the selection,
+  selects (`TextRangeSelect`), reads it again, compares and reads each
+  change's text and the selection's text up to 513 units. It executes 163
+  instructions (`range_selections_execute_exactly`). Classically 29.
 - When the program fails after its select, the selection is made: the
   program still returns the selection before, and only the after-read is
   made classically, never the select again; by the code's count for
@@ -1176,7 +1117,6 @@ only the outpost can tell which comes first.
   `WM_GETTEXTLENGTH` and `WM_GETTEXT` (`uia_text_requests_cost_exactly`,
   "UIA review copy select"; `caret_moves_cost_exactly`, "Edit control
   review copy select").
-- Target: met.
 
 ### Wall-clock gain
 
@@ -1232,13 +1172,11 @@ made only here, in the caret report below, and in `Outpost::settle`.
 
 ### A caret report, Win32 edit control
 
-- Minimum: 5 window messages, the comparison of offsets being local, and
-  the text of a selection change when there is one.
-- Today: 5 with nothing selected before or after; 7 for a selection no key
-  made, its text read with `WM_GETTEXTLENGTH` and `WM_GETTEXT`. A
-  comparison in general terms reads the new selection's text with the same
-  two messages instead.
-- Target: the minimum, met.
+- Minimum and today: 5 window messages with nothing selected before or
+  after, the comparison of offsets being local; 7 for a selection no key
+  made, its text read with `WM_GETTEXTLENGTH` and `WM_GETTEXT`; met. A
+  comparison in general terms reads the new selection's text with the
+  same two messages instead.
 - Beside the calls: the two offsets kept and, for a report that compares a
   selection, one sync and one intake scan. Each value change of the focused
   control locks the edit controls' anchors once.
@@ -1286,22 +1224,22 @@ into a full scrollback of 9,001 lines, each time one flood's stopwatch:
   µs each to a listening client, so merely subscribing makes it 2.2 to 2.6
   seconds, a cost every subscriber pays. About 0.15 seconds of that is the
   subscription's base cache request; a one-property request stalled the
-  console host for minutes in the full outpost, so it is not used.
+  console host for minutes, so it is not used.
 - Windows Terminal takes 1.4 to 1.6 seconds with no screen reader and 1.5
   to 1.7 with Verbatim; it raises about 60 text events per flood.
 
 The outpost reads whenever the text changed, coalesced with no fixed delay
 (`docs/design/terminal-model.md`, "Reading rules", rule 1), and logs each
 read's time, calls and size at debug level; reads and bytes per scenario
-are under "Live, against the build before". Core asks for new output as it
-hands a group's last line to speech, so "skipped" started within 1 ms of
-that line ending in both terminals (2026-10-08). The flood scenarios'
-wall-time ratio compares output reported against output off, and the
-outpost reads either way, so it does not measure the reads' cost; a
-starved machine distorts it (twelve busy threads made the flood 75 to 99
-seconds in Windows Terminal with no screen reader). Core's flood policy
-keeps a lost read's kind on each waiting line, so handing a line on walks
-nothing; a lost read counting none walks the queue once.
+are under "A terminal's reads, live". Core asks for new output as it hands
+a group's last line to speech, so "skipped" starts within 1 ms of that
+line ending in both terminals. The flood scenarios' wall-time ratio
+compares output reported against output off, and the outpost reads either
+way, so it does not measure the reads' cost; a starved machine distorts
+it (twelve busy threads made the flood 75 to 99 seconds in Windows
+Terminal with no screen reader). Core's flood policy keeps a lost read's
+kind on each waiting line, so handing a line on walks nothing; a lost
+read counting none walks the queue once.
 
 ### A terminal's rotation
 
@@ -1316,16 +1254,19 @@ Measured on 2026-10-24 on this machine, release build, 120 by 30, a full
 history of 9,001 rows: in the console host the read program's snapshot
 takes 0.45 to 1.06 ms for a rotation of 0 to 1,000 rows, 7,318 UTF-16
 units; a rotation of 61 rows or more adds the whole document's snapshot,
-25 to 29 ms and 1.1 million units.
+25 to 29 ms and 1.1 million units. A terminal's first read takes only the
+screen; when the document goes on above it, it is read again at once with
+a screen of rows above, one such snapshot each time the outpost begins
+reading a terminal.
 
 The memory's and rules' time from a read's text to its speech, by
 `crates/verbatim-text/tests/terminal_cost.rs`, an ignored test (`cargo
 test --release -p verbatim-text --test terminal_cost -- --ignored
 --nocapture`): a 120 by 30 terminal of each kind with a full history,
-every read timed 31 times with a fresh reader. On 2026-10-26 on this
-machine, medians over both terminals and two runs, moving by up to 0.3 ms
-between runs and 0.6 for cases marked bimodal (the heap handing back
-pages or not):
+every read timed 31 times with a fresh reader. Measured on 2026-10-26 on
+this machine, medians over both terminals and two runs, moving by up to
+0.3 ms between runs and 0.6 for cases marked bimodal (the heap handing
+back pages or not):
 
 - A rotation of 58 rows, settled in one read: 37 to 42 µs.
 - A rotation of 61 rows, and of 1,000 rows, each a lost read and the whole
@@ -1349,12 +1290,8 @@ text once (about 0.1 ms a megabyte each), the vectors kept per row, and in
 the subsequence each of the last read's rows compared with each row
 sharing its text. No case allocates a block of a megabyte or more, because
 such a block takes pages of its own at about 120 µs a megabyte to fill and
-free (2026-10-25); a read's rows share strings of about 64 KB or 1,024
-rows (`docs/crates/verbatim-text.md`, "`Text`").
-
-A terminal's first read takes only the screen; when the document goes on
-above it, it is read again at once with a screen of rows above, one 0.45
-to 1.06 ms snapshot each time the outpost begins reading a terminal.
+free; a read's rows share strings of about 64 KB or 1,024 rows
+(`docs/crates/verbatim-text.md`, "`Text`").
 
 ### A full-screen program's exit
 
@@ -1367,8 +1304,8 @@ with a full history of numbered lines.
   it is the whole document: 1,098,120 UTF-16 units in the console host and
   1,101,779 in Windows Terminal, its `GetText` 28.6 to 30.5 ms and 11.3 to
   11.6 ms while the terminal's writer waits, against 0.44 to 0.60 and 0.77
-  to 1.29 for two screens. It is paid once per close over a full history.
-  It stays (Dickson, 2026-10-25), because a start no higher than two
+  to 1.29 for two screens. It is paid once per close over a full history,
+  and stays (Dickson, 2026-10-25), because a start no higher than two
   screens above the end would miscount a fresh or cleared screen's output.
 - The console host's scroll update counts rows the text moved up in its
   window, which equals the rotation only with a full buffer outside a
@@ -1389,9 +1326,9 @@ Each read crosses the pipe as a snapshot and is aligned on the reducer
 --nocapture`): a 120 by 30 terminal of each kind with 9,001 numbered rows,
 each input carrying a read timed 31 times from a clone of the state
 before. The reducer's time is the whole step; the parse, of the input's
-JSON, runs on the reducer's thread before the step and is timed apart; sizes are the
-unpadded snapshot's JSON. On 2026-10-26 on this machine, three runs,
-medians in µs over both terminals:
+JSON, runs on the reducer's thread before the step and is timed apart;
+sizes are the unpadded snapshot's JSON. Measured on 2026-10-26 on this
+machine, three runs, medians in µs over both terminals:
 
 - An ordinary read of one new line: 1,109 to 1,135 bytes, of which the
   screen 264 to 272; reducer 56 to 68; parse 4 to 9.
@@ -1435,55 +1372,29 @@ a whole document of 9,031 rows of 120 cells 1,986 to 2,620 µs with no page
 fault; an ordinary read of two screens 19 to 29 µs; 132,096 bytes of
 buffers kept after a whole document.
 
-#### Live, against the build before
+### A terminal's reads, live
 
-Measured on 2026-10-26 on this machine, release build ffce203b (every read
-sent to Core) against 0dbf9ad2 (the build before), one run of each
-scenario, outposts logging at debug, wake-ups traced at info level.
+Measured on 2026-10-26 on this machine, release build, every read sent to
+Core, one run of each scenario, before a terminal's text moved to the
+frame's raw section.
 
-Messages and bytes from the terminal's outpost, and its reads:
-
-- `conhost_flood`: 1,911 messages and 6.01 MB; 1,826 reads.
-- `windows_terminal_flood`: 252 and 0.69 MB; 132 reads.
-- `conhost_full_history_flood`: 3,906 and 12.33 MB; 3,857 reads.
-- `windows_terminal_full_history_flood`: 154 and 0.81 MB; 90 reads.
-- `conhost_scrollback_overflow`: 89 and 0.44 MB;
-  `windows_terminal_scrollback_overflow`: 105 and 0.45 MB.
-- `conhost_pager_history`: 126 and 0.22 MB;
-  `windows_terminal_pager_history`: 122 and 0.20 MB;
-  `windows_terminal_cleared_flood`: 112 and 0.18 MB.
-- `measure_keys_conhost`: 2,420 and 5.92 MB, 1,716 reads;
-  `measure_keys_windows_terminal`: 2,991 and 6.30 MB, 1,874 reads.
-
-Each message is the read itself, about 1.6 to 3.3 KB for an ordinary
-read, so with about as many messages as before the bytes are 2 to 4.5
-times the build before's.
-
-The reducer's time per input carrying a read: a live read 101 to 116 µs at
-the median and 182 to 406 at the 99th percentile, an answer to Core's
-request 53 to 83; over a scenario 234 ms in `conhost_flood`, 148 in
-`measure_keys_conhost` and 175 in `measure_keys_windows_terminal`. Over
-the 2 ms budget: the whole document after a lost read, 2.0 to 2.3 ms, and
-3 of the 1,822 reads of `conhost_flood`, the largest 4.7 ms; no key
-scenario's step (the largest 1.35).
-
-Wake-ups and processor time, all processes, then the reducer and relay
-threads:
-
-- `conhost_flood`, 58 to 73 seconds in: 41,677 wake-ups and 2,283 ms, 2.6
-  percent more wake-ups than the build before; the reducer 1,512 and 330
-  ms; the relay 1,474; the outpost's worker 3,710.
-- `windows_terminal_flood`, 58 to 73 seconds in: 5,740 and 602 ms, 2.5
-  percent more; the reducer 244 and 46 ms; the relay 190.
-- `measure_keys_conhost`, 10 to 40 seconds in: 16,660 and 1,625 ms; the
-  reducer 1,302 and 188 ms; the relay 1,116.
-- `measure_keys_windows_terminal`, 10 to 40 seconds in: 17,391 and 1,648
-  ms; the reducer 1,619 and 208 ms; the relay 1,216.
-
-A clock rewriting one line once a second for 30 seconds: the console host
-read 117 times, the second identical read of each tick not sent; Windows
-Terminal 58; the reducer woke 94 and 101 times, as before. Pi and a
-streaming Claude Code reply were not measured.
+- Messages: one per read, about 1.6 to 3.3 KB for an ordinary read; a
+  flood in the console host sent 1,911 messages and 6.01 MB, in Windows
+  Terminal 252 and 0.69 MB; a full-history flood 3,906 and 12.33 MB, and
+  154 and 0.81 MB; the key scenarios 2,420 and 5.92 MB, and 2,991 and
+  6.30 MB.
+- The reducer's time per input carrying a read: a live read 101 to 116 µs
+  at the median and 182 to 406 at the 99th percentile, an answer to
+  Core's request 53 to 83. Over the 2 ms budget: the whole document after
+  a lost read, 2.0 to 2.3 ms, and 3 of the 1,822 reads of `conhost_flood`,
+  the largest 4.7 ms; no key scenario's step (the largest 1.35).
+- Wake-ups: sending every read to Core costs 2.6 percent more wake-ups of
+  all processes over the console host's flood and 2.5 percent over Windows
+  Terminal's than keeping reads in the outpost (Dickson, 2026-10-26). A
+  clock rewriting one line once a second for 30 seconds: the console host
+  read 117 times, the second identical read of each tick not sent; Windows
+  Terminal 58; the reducer woke 94 and 101 times. Pi and a streaming
+  Claude Code reply were not measured.
 
 Colours: in `measure_keys_conhost` 439 of 911 keys found a read ended
 after the key without colours and read again at once, about one remote
@@ -1494,19 +1405,15 @@ Terminal. A key costs as many coloured reads as its window holds: 1.0 to
 From the last key the hook saw to the speech queued, announcements of one
 character, a space or "blank", minimum, P50, P95, P99 and maximum in ms:
 
-- `measure_keys_conhost`: the typing echo (752) 1.3, 4.1, 6.4, 10.0, 17.8;
-  caret keys and Backspace (118) 2.6, 3.5, 6.1, 84.7, 122.8.
-- `measure_keys_windows_terminal`: the typing echo (623) 0.8, 21.4, 54.3,
-  58.2, 59.3; caret keys and Backspace (74) 3.7, 5.5, 44.9, 262.2, 288.0.
-
-The typing echo is no slower than before; Windows Terminal's median of
-about 21 ms is one frame. These runs predate the console host's caret
-poll ("A caret key's watch, UIA"): 43 to 45 percent of its caret keys
-waited 1 to 220 ms for its caret event. Windows Terminal's tail is
-Backspace at 33 ms a key: each held key waits for the watch of the key
-ahead (`docs/design/key-holding.md`, "Keys behind a held key"), answered
-only when it draws 20 to 80 ms later, so the keys queue; the tail varies
-from run to run.
+- The typing echo: `measure_keys_conhost` (752) 1.3, 4.1, 6.4, 10.0, 17.8;
+  `measure_keys_windows_terminal` (623) 0.8, 21.4, 54.3, 58.2, 59.3.
+  Windows Terminal's median of about 21 ms is one frame.
+- Windows Terminal's caret keys and Backspace (74): 3.7, 5.5, 44.9, 262.2,
+  288.0. Its tail is Backspace at 33 ms a key: each held key waits for the
+  watch of the key ahead (`docs/design/key-holding.md`, "Keys behind a
+  held key"), answered only when it draws 20 to 80 ms later, so the keys
+  queue; the tail varies from run to run. The console host's caret keys
+  are under "A caret key's watch, UIA".
 
 ### A terminal's upward search
 
@@ -1517,53 +1424,49 @@ in one remote operation of at most 20 matches, each checked by its line's
 hash in Core, because the console host's `FindText` also matches a longer
 row with the same start. A failing call ends that direction, including
 the range Windows Terminal 1.24.12741 returns for nothing found, whose
-reads fail (2026-10-24). A hit within a row is passed over uncounted, so
-the search is bounded at 100 `FindText` calls
-(`verbatim_uia_rops::FIND_CALLS`), because a one-letter needle would
-otherwise walk the whole history.
+reads fail. A hit within a row is passed over uncounted, so the search is
+bounded at 100 `FindText` calls (`verbatim_uia_rops::FIND_CALLS`),
+because a one-letter needle would otherwise walk the whole history.
 
 - Instructions: at the bound with 19 matches taken, its worst case, 3,065
-  against mockapp (2026-10-26), under a third of the limit.
+  against mockapp, under a third of the limit.
 - Time: one `FindText` costs 0.1 to 0.2 ms classically wherever the text
   is, and about 3 inside a program, against either terminal with a full
-  scrollback of 9,001 lines (2026-10-07). The search is not measured in a
-  real terminal; it is estimated at about 60 ms for 20 calls and about 300
-  at the bound of 100. Against mockapp, debug, a search at the bound took
-  1.2 ms remotely and 61 classically (2026-10-26).
+  scrollback of 9,001 lines. The search is not measured in a real
+  terminal; it is estimated at about 60 ms for 20 calls and about 300 at
+  the bound of 100. Against mockapp, debug, a search at the bound took 1.2
+  ms remotely and 61 classically.
 
 The reading itself never searches: its read program keeps a range where
 the next read starts.
 
 ### A terminal review command above the last read
 
-A review command whose place lies above the rows a terminal's memory
-keeps reads the history in one remote operation of its own
-(`review::History`, `verbatim_uia_rops::terminal_snapshot`), from two
-screens above the place to the document's end, and looks for the place's
-line by its hash from a screen above the place to a screen below it,
-nearest first (Dickson, 2026-10-25). The search below the place adds only
-up to a screen of 64-bit hash comparisons, a few microseconds; the second
-screen above covers output that scrolls while the read is out, so up to a
-screen of output costs no second read, about 0.12 ms by the design's
-estimate. Rows that cannot be placed end the command silently, so a
-command makes at most one history read. Nothing is added to the event or
-speech path. This follows from the code and was not measured.
+Figures in this entry and the next follow from the code and were not
+measured. Nothing in either is on the event or speech path.
+
+- A review command whose place lies above the rows a terminal's memory
+  keeps makes at most one history read, one remote operation
+  (`review::History`, `verbatim_uia_rops::terminal_snapshot`) from two
+  screens above the place to the document's end (Dickson, 2026-10-25).
+- Finding the place's line by its hash adds up to a screen of 64-bit hash
+  comparisons below the place, a few microseconds; the second screen above
+  lets up to a screen of output scroll while the read is out without a
+  second read, at about 0.12 ms.
 
 ### A terminal's command marks
 
-Setting a mark costs nothing on a read: Enter on a line holding input adds
-an anchor, and while a command's line waits to be marked each read
-compares its new rows' hashes, a few microseconds, until the quiet period.
-A move between marks costs one fresh read per press and a walk over the
-marks and rows in the reducer; a mark above the rows Core keeps adds one
-search per mark tried ("A terminal's upward search"), an estimated 60 ms
-when its line is the nearest of 20 rows starting with its text and at most
-about 300. A press makes at most three searches (`review::MARK_SEARCHES`),
-so it waits at most about 900 ms. A search's answer names the read its rows
-are counted from, so output that scrolls meanwhile moves nothing and the
-answer is never asked for again. This follows from the code and was not
-measured. Nothing is added to the event or speech path: numbering a read
-is one counter in the outpost (Dickson, 2026-10-26).
+- Setting a mark costs nothing on a read beyond comparing each read's new
+  rows' hashes, a few microseconds, while a command's line waits to be
+  marked; numbering a read is one counter in the outpost (Dickson,
+  2026-10-26).
+- A move between marks costs one fresh read per press and a walk over the
+  marks and rows in the reducer; a mark above the rows Core keeps adds one
+  search per mark tried ("A terminal's upward search"), an estimated 60 ms
+  when its line is the nearest of 20 rows starting with its text and at
+  most about 300. A press makes at most three searches
+  (`review::MARK_SEARCHES`), so it waits at most about 900 ms, and never
+  asks for the same answer twice.
 
 ### A terminal's status bar
 
@@ -1579,15 +1482,12 @@ ms after it, reads the screen's colours too, each row's runs of one
 foreground and background (`docs/design/terminal-model.md`, "Lists and
 colours"; `docs/crates/verbatim-uia-rops.md`, "The colours").
 
-The method follows what the providers answer: a stretch answers its first
-cell's colour when every cell but its last has it and "mixed" otherwise,
-the format unit stops only at rows, and Windows Terminal has no
-`FindAttribute`, so checking a stretch reads it and its last cell. Each
-row is checked whole, a row of several colours in chunks of 16 cells
-(`verbatim_uia_rops::COLOUR_CHUNK`, fastest of 8, 16, 30 and 120 on Pi's
-screen), and a chunk of several cell by cell; a plain row costs one check.
-Reading every cell separately costs about 18,000 instructions and 55 to 70
-ms in the console host for any screen.
+Each row is checked whole, a row of several colours in chunks of 16
+cells (`verbatim_uia_rops::COLOUR_CHUNK`, the fastest of 8, 16, 30 and
+120 on Pi's screen), and a chunk of several cell by cell, so a plain row
+costs one check (`docs/crates/verbatim-uia-rops.md`, "The colours", gives
+why). Reading every cell separately would cost about 18,000 instructions
+and 55 to 70 ms in the console host for any screen.
 
 Measured on 2026-10-24 on this machine, debug build, 120 by 30, in the
 console host and the pinned Windows Terminal 1.24.12741, medians of 20
@@ -1611,10 +1511,10 @@ reads against the same read without colours:
   Windows Terminal.
 
 So colours cost 1 to 3 ms on an ordinary screen and up to 8 on a
-colourful one, on each read in a key's window ("Live, against the build
-before" gives the reads a key), after the key reached the program. Each
-check or cell is a provider call inside the program, about 2 to 6 µs; no
-wake-up is added.
+colourful one, on each read in a key's window ("A terminal's reads, live"
+gives the reads a key), after the key reached the program. Each check or
+cell is a provider call inside the program, about 2 to 6 µs; no wake-up
+is added.
 
 ## Newer UIA features
 
@@ -1626,10 +1526,10 @@ process; the counts are pinned by `call_counts.rs`.
 
 Every UIA client Verbatim creates turns on `IUIAutomation6`'s
 `CoalesceEvents` and `ConnectionRecoveryBehavior`, as NVDA does
-(`docs/crates/verbatim-uia.md`). Both are local settings, so no count or
-mockapp wait changed: a burst of 100 name changes is delivered whole
-either way, a stalled window's reads time out as before, and creating a
-client takes 0.036 ms at the median.
+(`docs/crates/verbatim-uia.md`). Both are local settings, so they add no
+call and change no mockapp wait: a burst of 100 name changes is delivered
+whole, a stalled window's reads time out, and creating a client takes
+0.036 ms at the median.
 
 ### Event handler groups
 
@@ -1680,8 +1580,7 @@ for every event, so each request holds only what is read from it.
   what they need when handled, one call, as NVDA does
   (`a_focus_s_help_text_and_suggestions_are_followed`); the first after
   Enter in Settings' search box waits 138 to 164 ms in that call while
-  Settings lays out the page
-  (`target/e2e-evidence/controllerfor-2026-10-21/`).
+  Settings lays out the page.
 
 ### Text attributes
 
@@ -1689,22 +1588,23 @@ The classic reads fetch a stretch's attributes in one
 `IUIAutomationTextRange3::GetAttributeValues` call; the provider's work is
 one `GetAttributeValue` per attribute either way. The caret's read reads
 the attributes the theme asks for among those the control supports
-(`docs/text-attributes.md`, "What Verbatim fetches now"): while an
-attribute's support is unknown the line is asked for it once, and "not
-supported" stops it being asked again for that control. The line is asked
-for its annotation types first, and its stretches only when it has some,
-so a line with nothing to read is not walked. The counts are pinned in
-`call_counts.rs` ("The caret report after a focus, UIA") and the learning
-in `crates/mockapp/tests/text.rs`.
+(`docs/parity/speech-audio.md`, "Which text attributes are fetched"):
+while an attribute's support is unknown the line is asked for it once,
+and "not supported" stops it being asked again for that control. The
+line is asked for its annotation types first, and its stretches only when
+it has some, so a line with nothing to read is not walked. The counts are
+pinned in `call_counts.rs` ("The caret report after a focus, UIA") and
+the learning in `crates/mockapp/tests/text.rs`.
 
 - A line of 14 stretches without spelling errors, as a terminal's line
   is, with the default theme: 9 calls classically and no walk either way.
   In Windows Terminal, which supports neither annotations nor links, the
   caret's read costs 0.43 ms remotely on a line of one stretch
-  (`docs/text-attributes.md`, "What reading them costs").
-- Medians on 2026-10-07, release, against mockapp, 200 reports after 20 to
-  warm up, three runs: `text.json`'s line 0.35 to 0.55 ms remotely and 3.4
-  to 4.6 classically (every indication on 0.43 to 0.70 and 3.4 to 4.0); the
+  (`experiments/the-terminals-report-no-language-links-or-annotations/readme.md`,
+  "What reading them costs").
+- Medians, release, against mockapp, 200 reports after 20 to warm up,
+  three runs: `text.json`'s line 0.35 to 0.55 ms remotely and 3.4 to 4.6
+  classically (every indication on 0.43 to 0.70 and 3.4 to 4.0); the
   14-stretch line 0.30 to 0.37 and 0.82 to 1.3 (every indication on 0.47
   to 0.61 and 9.2 to 10.6, 94 calls).
 
@@ -1732,8 +1632,8 @@ no extra call.
 Verbatim's text range code follows Microsoft's guidance ("Using
 IUIAutomationTextRange", "Understanding Performance Issues When Using the
 Text and TextRange Control Patterns", and the reference pages of
-`ITextRangeProvider` and `IUIAutomationTextRange`), audited on 2026-10-07;
-each rule is pinned by `call_counts.rs` on both paths.
+`ITextRangeProvider` and `IUIAutomationTextRange`); each rule is pinned
+by `call_counts.rs` on both paths.
 
 - A stretch whose attribute is "mixed" is read again by its words, and a
   mixed word by its characters, as NVDA does, up to 64 stretches a span,
@@ -1759,8 +1659,8 @@ each rule is pinned by `call_counts.rs` on both paths.
 
 UIA stops a remote operation that executes too many instructions, with
 `InstructionLimitExceeded` (2). The limit is not published; measured on
-2026-10-07 on this machine against mockapp, it is exactly 10,000: a loop
-of 2,498 passes runs, and one more instruction stops it
+this machine against mockapp, it is exactly 10,000: a loop of 2,498
+passes runs, and one more instruction stops it
 (`the_instruction_limit_is_measured`). A run that exceeds it is answered
 classically for that call (`Path::Fallback`), at hundreds of calls;
 programs are not made resumable (Dickson, 2026-10-07).
@@ -1789,7 +1689,7 @@ first, the share of the limit in brackets:
   passed, plus 11 to read the current selection of an element not found
   and 4 for each further controlled element. About 280 elements fit under
   the limit; the controlled list is the one bound the application sets
-  (Settings' search suggestions were 25, 2026-10-03).
+  (Settings' search suggestions were 25).
 - The caret read: 4,462 (45 percent) for a line of 64 stretches reached by
   walking a mixed stretch by words and characters, eleven attributes, and
   every selection text up to 513 units; 97 for the report after a focus on
@@ -1815,14 +1715,14 @@ first, the share of the limit in brackets:
 
 ## Memory use
 
-Measured on 2026-10-24 on this machine, release build 975fb269, default
-settings, eSpeak NG, before Core kept any terminal memory: every process
-sampled four times a second with `Get-Process`. Private bytes (the
-commit) is the figure to compare, since outposts share most of their
-working set's pages. Workloads: idle at Verbatim's Settings dialog; the
-console host and Windows Terminal, 120 by 30 with 9,001-row buffers, with
-a small then a full history; a 10,000-line flood in each with output
-reported; both closed. Private bytes and working set, steady, in MB:
+Measured on 2026-10-24 on this machine, release build, default settings,
+eSpeak NG, before Core kept any terminal memory: every process sampled
+four times a second with `Get-Process`. Private bytes (the commit) is the
+figure to compare, since outposts share most of their working set's
+pages. Workloads: idle at Verbatim's Settings dialog; the console host and
+Windows Terminal, 120 by 30 with 9,001-row buffers, with a small then a
+full history; a 10,000-line flood in each with output reported; both
+closed. Private bytes and working set, steady, in MB:
 
 - `verbatim.exe`: 7.5 and 33.4 idle, 8.2 and 32.5 at the end; no terminal
   workload moved it by more than 0.3.
@@ -1877,6 +1777,6 @@ with rustc's `  |` rows or a repeated prompt; a stream of distinct lines
 takes none
 (`a_stream_through_a_full_history_takes_no_vote_on_the_screens_shift`). It
 costs within an ordinary read's noise: 58 to 69 µs a read at the median
-against 51 to 69 with every row distinct (release, 2026-10-26, 31 runs).
-The caret line's check makes six strings of a line's length, only when
-the caret moved forward on a line starting where it did.
+against 51 to 69 with every row distinct (release, 31 runs). The caret
+line's check makes six strings of a line's length, only when the caret
+moved forward on a line starting where it did.

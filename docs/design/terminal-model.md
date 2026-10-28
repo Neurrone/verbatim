@@ -176,11 +176,11 @@ Cases no reader can resolve from the text, and cases decided as not handled:
 
 Each figure is detailed in `docs/performance.md` under the section named:
 
-- Latency: a typing echo is queued for speech at a median of 4.1 milliseconds after the key in the console host and 21.4 in Windows Terminal, one frame ("Live, against the build before").
-- An ordinary read: 0.45 to 1.06 milliseconds of snapshot in the console host ("A terminal's rotation"), 1.6 to 3.3 KB crossing to Core, and 101 to 116 microseconds of the reducer at the median ("Live, against the build before").
+- Latency: a typing echo is queued for speech at a median of 4.1 milliseconds after the key in the console host and 21.4 in Windows Terminal, one frame ("A terminal's reads, live").
+- An ordinary read: 0.45 to 1.06 milliseconds of snapshot in the console host ("A terminal's rotation"), 1.6 to 3.3 KB crossing to Core, and 101 to 116 microseconds of the reducer at the median ("A terminal's reads, live").
 - A whole read, the worst case, after a lost read or a full-screen program's exit over a full history: 1.1 million UTF-16 units, 25 to 31 milliseconds of `GetText` in the console host and 11 to 12 in Windows Terminal while the terminal's writer waits, accepted by Dickson on 2026-10-24 and kept for a program's exit on 2026-10-25, since a lower start would miscount a fresh screen's output ("A full-screen program's exit"), 72 to 160 KB crossing to Core, and 1.1 to 1.9 milliseconds of the reducer at the median, within its 2-millisecond budget, optimized to stay on the reducer (Dickson, 2026-10-26; "A terminal's reads in Core").
 - Memory: 20 to 27 KB per terminal however long it ran, rising by up to 5.6 MB while a whole read is aligned ("The terminal memory's cost, estimated").
-- Wake-ups: 2.5 to 2.6 percent more for all of Verbatim's processes over a flood, every read crossing to Core (Dickson, 2026-10-26), none more for a once-a-second clock, and beyond them only the quiet-period timer ("Live, against the build before").
+- Wake-ups: 2.5 to 2.6 percent more for all of Verbatim's processes over a flood, every read crossing to Core (Dickson, 2026-10-26), none more for a once-a-second clock, and beyond them only the quiet-period timer ("A terminal's reads, live").
 - Colours: 0.90 to 2.09 coloured reads a key, each 1 to 3 milliseconds more on an ordinary screen, 8 on Pi's and 72 in the worst case; read in every read, they would cost an estimated 6 to 12 percent of a core while Pi or Claude Code streams, 2 to 4 milliseconds a read at up to 30 reads a second (the per-key figures are in "A terminal's colours" in `docs/performance.md`).
 
 ## Testing
