@@ -77,9 +77,9 @@ in "Top-level windows in the ancestry", then the focus
 (unverified)**: reducer tests, and `mockapp` tests that an early
 foreground event and a UI Automation window's foreground event are
 dropped; the Start menu, window-switch, `conhost_` and
-`explorer_folder_window` scenarios are to verify it live, and what NVDA
-says when a console window comes in front some 400 ms after its text
-area's focus is still to be captured.
+`explorer_folder_window` scenarios do not yet verify it live, and what
+NVDA says when a console window comes in front some 400 ms after its
+text area's focus is not captured.
 
 ### A File Explorer folder window opening
 
@@ -102,13 +102,13 @@ the first item. **partial**: the usual case matches, and
 `explorer_folder_window` asserts it; NVDA's rare "pane" is deliberately
 not said (Dickson, 2026-10-12), the scenario asserting Verbatim's
 deterministic result; the tab rule is not yet built, belonging to the
-app-module porting track. Verbatim says "pane" in place of "Items View list" in a few
-openings (2 of 29): its focus listener takes a UIA focus event on the
+app-module porting track. Verbatim says "pane" in place of "Items View
+list" in a few openings (2 of 29): its focus listener takes a UIA focus event on the
 items view's own window element, raised just before the first item's,
 and reads it before its content is ready, as an unnamed pane; the item's
 focus then has that element as its previous focus, not an entered
-container. NVDA received no such event in 30 openings. To be
-investigated before `explorer_folder_window` can be counted on.
+container. NVDA received no such event in 30 openings. This is not yet
+investigated, so `explorer_folder_window` cannot yet be counted on.
 
 ### The desktop's announcement
 
@@ -124,7 +124,7 @@ a focus-now answer with a focused control is that control's focus
 alone, the foreground window announced only as an entered ancestor when
 it is presentable, so starting with the desktop says "Desktop list" and
 the icon. **partial**: starting matches; returning to the desktop does
-not yet, since a foreground fact for the desktop window that reaches
+not, since a foreground fact for the desktop window that reaches
 Core before the list item's focus is still spoken as the focus,
 "Program Manager", as Verbatim has not ported NVDA's class rule for
 foreground events; the harness expects NVDA's speech there
