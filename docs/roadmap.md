@@ -340,6 +340,15 @@ M4.1 (stability) is complete and archived in [Completed
 milestones](roadmap-done.md); these are its follow-ups still open or
 deferred.
 
+- Four mockapp tests fail intermittently under `cargo xtask ci`, a defect by
+  `docs/testing.md`, their causes not yet found (2026-10-28):
+  `call_counts::uia_combo_box_costs_exactly` (two failures in three runs
+  alone, measuring two UIA calls),
+  `call_counts::uia_focus_chains_stop_below_the_process_boundary`,
+  `arbitration::a_probe_that_timed_out_is_made_once_in_its_entry` ("no read
+  of the time followed the probe") and
+  `shutdown::a_remote_operation_in_progress_finishes_before_the_outpost_shuts_down`
+  (one failure in five, one handler left registered).
 - The outpost crash inside UI Automation's saved-event delivery (first
   seen 2026-10-11: on one of UI Automation's own worker threads, with no
   frame of Verbatim's, `ProtobufHelper::GetCacheResponse` read a null
