@@ -12,10 +12,9 @@
 //! calls exactly the same [`artifacts_root`] and [`scenario_dir`] functions a
 //! scenario subprocess used to decide where to look, and
 //! [`ScenarioSummary::read`] to parse what that subprocess left behind —
-//! rather than scraping the subprocess's own stdout — so the "one line per
-//! scenario" run summary `docs/roadmap.md`'s M3 Track B item asks for is
-//! built from a small, deliberately-written file instead of fragile text
-//! parsing.
+//! rather than scraping the subprocess's own stdout — so the run summary,
+//! one line per scenario, is built from a small, deliberately-written file
+//! instead of fragile text parsing.
 
 use std::fmt::Write as _;
 use std::fs;

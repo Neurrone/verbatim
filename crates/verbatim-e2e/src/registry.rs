@@ -38,7 +38,7 @@
 //! `teardown` are a layer of structure on top of that guarantee, for
 //! scenario-specific state `Scenario` itself does not track.
 //!
-//! Groups (`docs/roadmap.md`'s M3 track) are a coarse selector for
+//! Groups (`docs/roadmap-done.md`'s M3 section) are a coarse selector for
 //! `cargo xtask vm test --group`, not a strict taxonomy:
 //!
 //! - [`Group::Speech`]: Verbatim's own menu and Speech settings dialog, and
@@ -61,7 +61,7 @@
 //!   its Terminal page, whose applied change Verbatim+5 then finds in
 //!   Core.
 //! - [`Group::Shell`]: the Windows shell — switching foreground between
-//!   applications (the "task switching" item `docs/roadmap.md`'s M3 E2E
+//!   applications (the "task switching" item `docs/roadmap-done.md`'s M3 E2E
 //!   list names,
 //!   [`second_application_and_verbatim_menu`](crate::scenarios::second_application_and_verbatim_menu)),
 //!   an outpost replaced after it dies
@@ -81,7 +81,7 @@
 //!   and [`settings_search_suggestions_reentered`](crate::scenarios::settings_search_suggestions_reentered)
 //!   for the box entered again holding text).
 //! - [`Group::Navigation`]: the M3 object-navigation and review-cursor
-//!   commands (`docs/roadmap.md`'s M3 section) —
+//!   commands (`docs/roadmap-done.md`'s M3 section) —
 //!   [`object_navigation_in_settings`](crate::scenarios::object_navigation_in_settings)
 //!   against Verbatim's own settings dialog,
 //!   [`object_navigation_over_uia`](crate::scenarios::object_navigation_over_uia)

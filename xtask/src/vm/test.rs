@@ -24,8 +24,7 @@
 //! - Each selected scenario runs as its own `cargo test -p verbatim-e2e
 //!   --test e2e <name> -- --exact` subprocess ([`run_scenario_subprocess`]), not one
 //!   shared invocation covering every scenario. This is the design choice
-//!   for controlling scenario boundaries from here (`docs/roadmap.md`'s M3
-//!   Track B item asks for one or the other): reusing the existing
+//!   for controlling scenario boundaries from here: reusing the existing
 //!   `#[test]`-per-scenario libtest binary this way needs no new runner
 //!   mode inside `verbatim-e2e` itself, and it gives each scenario a
 //!   boundary from process start to process exit, with no new IPC. The

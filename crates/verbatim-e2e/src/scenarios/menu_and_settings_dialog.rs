@@ -1,4 +1,4 @@
-//! The M1 exit criteria (`docs/roadmap.md`): Verbatim+V opens the menu,
+//! The M1 exit criteria (`docs/roadmap-done.md`): Verbatim+V opens the menu,
 //! every menu item and every control in the Speech settings dialog
 //! announces its name, role, value, state, and shortcut on focus, and
 //! adjusting the rate slider and the voice combo box speaks each new value.

@@ -174,7 +174,7 @@ pub(crate) fn text_box_body(scenario: &mut Scenario, _state: &mut ScenarioState)
 /// key's effect was misjudged"): each key is judged from the caret it
 /// started from, so Shift+Right's selection is said, cut off by Right's
 /// character, "l", and then the selection Right cleared. NVDA says only "l"
-/// (`m42-key-holding-merge-2026-10-22/captures/`), its Shift+Right script
+/// (a live capture), its Shift+Right script
 /// saying nothing while Right's waits and Right comparing with the
 /// selection before Shift+Right: Verbatim says every intermediate
 /// selection change (`docs/parity/text.md`, "TextInfo-equivalent layer").

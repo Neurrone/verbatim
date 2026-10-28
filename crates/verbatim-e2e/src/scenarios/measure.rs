@@ -699,8 +699,8 @@ fn arrow_keys(scenario: &mut Scenario, truth: &Truth, (title, target): (&str, &s
 /// How many times [`select_then_right`] selects and presses Right.
 const SELECT_THEN_RIGHT: usize = 10;
 
-/// The first case of holding keys (`docs/roadmap.md`, the key-holding
-/// prototype): select then copy's first press selects the first word of
+/// The first case of holding keys (`docs/design/key-holding.md`, "How
+/// often a key's effect was misjudged"): select then copy's first press selects the first word of
 /// the top line, from a start marker at the line's start through the
 /// review cursor on the word's last character, and Right Arrow follows at
 /// once, before the application can have reported the selection's caret,

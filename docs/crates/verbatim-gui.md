@@ -94,6 +94,9 @@ The private modules:
   of `GuiThread`, a token of the same names that is neither `Send` nor
   `Sync`. `run_gui` makes the one token, by an `unsafe` constructor whose
   contract is being on the GUI thread, before it runs the loop there.
+  A panic in a Rust method C++ calls aborts Core, on purpose: cxx aborts
+  rather than unwind across the boundary by design, and a panic in GUI
+  state should end Core visibly rather than leave it running half-broken.
 - `GuiCore` (in `lib.rs`) — the GUI's Rust half. It lives on `run_gui`'s
   stack for the whole loop and is used only on the GUI thread; it keeps
   the `GuiThread` token, which also keeps it on that thread. Menus and
