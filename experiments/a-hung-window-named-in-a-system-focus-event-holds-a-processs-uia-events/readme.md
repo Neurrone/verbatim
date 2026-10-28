@@ -2,7 +2,7 @@
 
 These experiments establish the fault recorded in `docs/uia-bugs.md` under [A hung window named in a system focus event holds a process's UIA events](../../docs/uia-bugs.md#a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events). Three series ran on Dickson's x64 machine (Windows 11, build 26200), in debug builds:
 
-- 2026-10-10: the mockapp experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`../mockapp-experiments-2026-10-10/`](../mockapp-experiments-2026-10-10/readme.md) (commits 8b491dc and b0a1989). `docs/design/focus-pipeline.md`, sections 11 and 12.11, holds their account.
+- 2026-10-10: the mockapp experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`../mockapp-experiments-2026-10-10/`](../mockapp-experiments-2026-10-10/readme.md) (commits 8b491dc and b0a1989). Their account is below; `docs/design/focus-pipeline.md`, section 12.3, states the decision taken from them.
 - 2026-10-18 morning: P4, in `p4/`, one of the option (c) prototype experiments ([`../focus-events-cannot-be-limited-to-one-application/`](../focus-events-cannot-be-limited-to-one-application/readme.md) describes the prototype).
 - 2026-10-18 later: `h1` to `h6`, at the top of this folder, which found the mechanism and what bounds it.
 

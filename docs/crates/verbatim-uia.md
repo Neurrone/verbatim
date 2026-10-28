@@ -389,7 +389,12 @@ Public API:
   share a client: UIA delivers the focus events Windows Terminal's XAML
   raises from a second identity of its terminal to a client with only a
   focus handler, but not to one that also has a group on the desktop's root
-  (`docs/design/focus-pipeline.md`, section 16.8). UIA's focus handler is
+  (`docs/design/focus-pipeline.md`, section 16.8). The order is NVDA's
+  too: the desktop's root element is fetched before the focus handler is
+  registered, the group is registered on that root after it, and parts
+  asking for the same properties share one cache request; registered in
+  another order, the second identity reaches the client now and then.
+  UIA's focus handler is
   desktop-wide, so the focus listener, which watches every application at
   once (decision D13), is the one process that registers it. `close()` ends a registration for
   good and returns once it is done: every move already asked for is made,

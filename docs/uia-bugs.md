@@ -133,15 +133,21 @@ All of that process's UIA event delivery waits, every application's events and n
 - The hold is twice the connection timeout per focus WinEvent, or until the window answers if sooner: 812 ms with the connection timeout at 500 ms; 3,806 to 3,821 ms at the default 2,000 ms; with 10,000 ms, 7,773 ms in an 8-second stall and 19,767 ms in a 20-second stall, each the end of the stall (`h3_*`).
 - Each focus WinEvent naming the hung window pays the full wait again: three held 5,814 ms at 1,000 ms, one held 1,824 ms.
 - Each client object in the process that holds a focus registration runs its own focus tracking on the same thread: two client objects with a desktop handler each made four calls (1,820 ms at 500 ms).
+<<<<<<< HEAD
 - With the connection timeout at 10 seconds, a 15-second stall held 14,800 ms, and a name change at a desktop-wide registration was not delivered within 25 s (focus pipeline section 12.11).
+||||||| parent of 13a94cab (Cut the focus pipeline design to its options, reasons and limits)
+- The first measurements (focus pipeline section 12.11, 2026-10-10) saw 14,800 ms in a 15-second stall, and a name change at a desktop-wide registration not delivered within 25 s, with clients whose connection timeout Verbatim then set to 10 seconds.
+=======
+- The first measurements (E-hung-proxy, 2026-10-10) saw 14,800 ms in a 15-second stall, and a name change at a desktop-wide registration not delivered within 25 s, with clients whose connection timeout Verbatim then set to 10 seconds.
+>>>>>>> 13a94cab (Cut the focus pipeline design to its options, reasons and limits)
 - Verbatim sets the connection timeout to UIA's default 2 seconds (`CONNECTION_TIMEOUT`), so the listener's hold is up to about 4 seconds per focus WinEvent, as measured at 2,000 ms above.
 
 #### Not affected
 
 - A name-change WinEvent for the hung window held nothing (2 to 3 ms); only the focus WinEvent triggers it (`e_hung_cause`).
 - A process with no focus registration of any kind: another application's name change arrived in 1 ms during the same stall (`e_hung_cause`; P4's `N_B`, 1 ms; in `e_cross`, a stand-in outpost's name and text events 0 to 1 ms).
-- A hung application that no focus WinEvent names delays nothing (section 12.11, 0 ms).
-- Explicit reads on other threads of the held process: 1 ms throughout (section 12.11).
+- A hung application that no focus WinEvent names delays nothing (E-hung-proxy, 0 ms).
+- Explicit reads on other threads of the held process: 1 ms throughout (E-hung-proxy).
 - The held process's MSAA WinEvent hooks keep delivering: 0 ms (`e_cross`).
 - A server-side provider held while raising its own event holds only its own events (E-delivery, section 11).
 
@@ -162,7 +168,7 @@ All of that process's UIA event delivery waits, every application's events and n
 
 #### NVDA
 
-NVDA is inferred to meet it: it is one process with a desktop-wide focus registration and its focus mapping left on (section 12.11). No NVDA capture or issue records it.
+NVDA is inferred to meet it: it is one process with a desktop-wide focus registration and its focus mapping left on (`docs/design/focus-pipeline.md`, section 12.3). No NVDA capture or issue records it.
 
 #### Reproduction test
 
@@ -170,7 +176,13 @@ No test reproduces the hold, its absence in a process with no focus registration
 
 #### Evidence
 
+<<<<<<< HEAD
 [`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); `docs/design/focus-pipeline.md`, section 12.11 and its subsections "Containment option 2, tested" and "Cross-process containment and MSAA's view of UIA focus".
+||||||| parent of 13a94cab (Cut the focus pipeline design to its options, reasons and limits)
+[`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); `docs/design/focus-pipeline.md`, section 12.11 and its subsections "Containment option 2, tested" and "Cross-process containment and MSAA's view of UIA focus"; commits 8b491dc and b0a1989.
+=======
+[`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); `docs/design/focus-pipeline.md`, section 12.3, for the decision taken from them; commits 8b491dc and b0a1989.
+>>>>>>> 13a94cab (Cut the focus pipeline design to its options, reasons and limits)
 
 ### The connection timeout applies to the whole process
 
