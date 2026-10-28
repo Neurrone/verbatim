@@ -1,7 +1,7 @@
 //! Compare mode: a scenario's own setup and body run unchanged against NVDA
 //! instead of Verbatim, and a report sets what the scenario expects
 //! Verbatim to say beside what NVDA said, step by step
-//! (`docs/nvda-transcript.md`, "Comparing a scenario").
+//! (`docs/tooling/nvda.md`, "Comparing a scenario").
 //!
 //! It is a research instrument, not a test: it asserts nothing, never runs
 //! in continuous integration, and passes unless the harness itself fails,

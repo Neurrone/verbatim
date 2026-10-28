@@ -18,7 +18,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 /// [`verbatim_input::keys::vk_from_name`] also resolves, so parsing only
 /// needs to check membership before resolving the virtual key. The last
 /// three are screen-reader modifiers, held to press an NVDA key such as
-/// `insert+t` when the agent drives NVDA (`docs/nvda-transcript.md`).
+/// `insert+t` when the agent drives NVDA (`docs/tooling/nvda.md`).
 const MODIFIER_NAMES: &[&str] = &[
     "control",
     "shift",

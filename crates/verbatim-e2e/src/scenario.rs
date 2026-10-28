@@ -2650,7 +2650,7 @@ fn connect_nvda(agent: &mut AgentClient) -> io::Result<(SpeechCollector, Timelin
     let port = crate::nvda::session_port(session)?;
     let (transcript, hello) = crate::nvda::Transcript::connect(port).map_err(|error| {
         io::Error::other(format!(
-            "compare mode reads NVDA's speech from its transcript add-on (docs/nvda-transcript.md), \
+            "compare mode reads NVDA's speech from its transcript add-on (docs/tooling/nvda.md), \
              so NVDA with the add-on must be running in the agent's session, session {session}: {error}"
         ))
     })?;

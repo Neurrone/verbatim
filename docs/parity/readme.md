@@ -48,7 +48,7 @@ is declared at the step that shows it, with
 `Scenario::deviates_from_nvda("docs/parity/<file>.md", "<entry heading>")`
 called after the step's input, beside the comment that cites the entry.
 Compare mode judges that step against the entry
-([the NVDA transcript guide](../nvda-transcript.md), "Comparing a
+([the NVDA transcript guide](../tooling/nvda.md), "Comparing a
 scenario"), and a unit test checks that every entry a declaration names
 is a `###` heading of the file it names, so renaming an entry means
 renaming its declarations.

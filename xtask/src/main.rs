@@ -22,7 +22,7 @@
 //! a demonstration's in `videos/demos`. See `xtask/src/demo.rs`.
 //!
 //! `nvda` builds the NVDA transcript add-on, captures what NVDA speaks, and
-//! compares an end-to-end scenario with NVDA (`docs/nvda-transcript.md`).
+//! compares an end-to-end scenario with NVDA (`docs/tooling/nvda.md`).
 //! See `xtask/src/nvda.rs`.
 //!
 //! `windows-terminal` downloads and unpacks the pinned portable Windows

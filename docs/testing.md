@@ -8,7 +8,7 @@ The measure set, the end-to-end registry's `measure` group (`measure_` scenarios
 
 Beside the measure set, two cost benchmarks are measurement, not tests, under the same terms: `crates/verbatim-text/tests/terminal_cost.rs` (the terminal memory and reading rules) and `crates/verbatim-core/tests/terminal_cost.rs` (the reducer's cost of a terminal's reads). Each is ignored, so no test run includes it, is run in a release build with `--ignored --nocapture`, and asserts nothing about the times (Dickson, 2026-10-26).
 
-Compare mode (`docs/nvda-transcript.md`, "Comparing a scenario"), which runs a scenario against NVDA and reports what it expects beside what NVDA said, is a research instrument, not a test: it asserts nothing and never runs in CI, so this standard is unchanged by it.
+Compare mode (`docs/tooling/nvda.md`, "Comparing a scenario"), which runs a scenario against NVDA and reports what it expects beside what NVDA said, is a research instrument, not a test: it asserts nothing and never runs in CI, so this standard is unchanged by it.
 
 ## One target, one code path
 

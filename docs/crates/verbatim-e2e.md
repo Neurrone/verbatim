@@ -232,7 +232,7 @@ behind it, which the run saves as `latency.csv`.
 Compare mode runs a scenario's own setup and body against NVDA instead of
 Verbatim, asserts nothing, and writes a report setting what the scenario
 expects Verbatim to say beside what NVDA said, step by step
-(`docs/nvda-transcript.md`, "Comparing a scenario", says how to run it).
+(`docs/tooling/nvda.md`, "Comparing a scenario", says how to run it).
 It is a research instrument, not a test, and never runs in CI.
 `compare::ENV`, `VERBATIM_E2E_COMPARE`, set to a scenario's name, selects
 it for that scenario only: `registry::run_named` asks `compare::selects`,

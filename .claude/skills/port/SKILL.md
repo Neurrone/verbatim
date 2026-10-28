@@ -40,7 +40,7 @@ Write every brief from `references/brief.md`, and point it at the "Standing rule
 - `docs/crates/` explains implemented crate responsibilities and public APIs.
 - `docs/testing.md` defines what counts as a valid Verbatim test.
 - `docs/tooling/readme.md` defines how to exercise and inspect the implementation.
-- `docs/nvda-transcript.md` defines how to capture NVDA's speech live.
+- `docs/tooling/nvda.md` defines how to capture NVDA's speech live.
 - Code and tests record what has actually been implemented.
 
 Keep these current as part of the port. Do not create a second source of truth merely because this skill is running, because two records of the same status drift apart.
@@ -90,7 +90,7 @@ Before changing production behavior, settle two separate questions.
 
 Where the assertion runs: choose the cheapest place that can catch the failure, in this order: a unit test, a `mockapp` cross-process test, an end-to-end scenario, an interactive probe. Follow `docs/testing.md` exactly. Do not run desktop-taking tests or NVDA captures unless the session has permission under the repository's tooling rules.
 
-Where the expected value comes from: for anything spoken, a live NVDA capture (`cargo xtask nvda capture`, `docs/nvda-transcript.md`) taken before the expectation is written. Never take it from Verbatim's current output, and do not settle it by reading NVDA's source when a capture is possible: on 2026-10-11 desktop scenarios expected "Program Manager" after a dialog closed, which came from Verbatim's old rule rather than NVDA and was found only when Dickson questioned it.
+Where the expected value comes from: for anything spoken, a live NVDA capture (`cargo xtask nvda capture`, `docs/tooling/nvda.md`) taken before the expectation is written. Never take it from Verbatim's current output, and do not settle it by reading NVDA's source when a capture is possible: on 2026-10-11 desktop scenarios expected "Program Manager" after a dialog closed, which came from Verbatim's old rule rather than NVDA and was found only when Dickson questioned it.
 
 Performance has its own judge. An operation that makes calls into an application gets its entry in the ledger (`docs/performance.md`, "The ledger") and an exact call-count test in `crates/mockapp/tests/call_counts.rs`, in the same commit, because an exact count is a ratchet that fails CI when a later change adds a call. A change on the event or speech path is also measured as `docs/tooling/measuring.md`, "Measuring performance", prescribes, against the figures recorded before the change.
 

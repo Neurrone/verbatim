@@ -891,7 +891,7 @@ nothing, to see what it expects beside what NVDA says, step by step:
 the scenario's name with the usual `cargo test` command. Left set, the
 variable fails every other scenario at once as a harness error, so unset
 it before any other run. [The NVDA transcript
-guide](../nvda-transcript.md), "Comparing a scenario", says how, and
+guide](nvda.md), "Comparing a scenario", says how, and
 which scenarios cannot be compared.
 
 ## The VM harness

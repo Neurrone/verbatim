@@ -1,4 +1,4 @@
-//! The NVDA transcript add-on's client (`docs/nvda-transcript.md`), shared
+//! The NVDA transcript add-on's client (`docs/tooling/nvda.md`), shared
 //! by `cargo xtask nvda capture` and the harness's compare mode
 //! ([`crate::compare`]).
 //!
