@@ -35,8 +35,8 @@
 //!   while inputs waited ([`EventSink::watched`]). Since the relay reads
 //!   the pongs itself, a stalled reducer never makes an outpost look
 //!   wedged (section 6.8).
-//! - The supervisor therefore runs on one thread, the relay, plus a helper
-//!   that parses large frames for the app ([`Frames`]).
+//! - The supervisor therefore runs on one thread, the relay; the app parses
+//!   every frame on its reducer thread ([`Frames`]).
 //! - It keeps two spare outposts started and waiting, with no application
 //!   (`docs/design/focus-pipeline.md`, section 19), from the moment Core's
 //!   own outpost is ready: a start for an application takes the oldest,
@@ -55,8 +55,7 @@
 //! the owner kills or retires it, `Ended` is sent at once, and the relay
 //! drops anything the child wrote afterwards. One application's
 //! incarnations come in the order the supervisor ended and started them:
-//! an outpost's `Ended` before its replacement's `Started`, even while
-//! [`Frames`] holds that `Ended` behind a large frame.
+//! an outpost's `Ended` before its replacement's `Started`.
 
 mod frames;
 mod ignored;
@@ -78,7 +77,7 @@ use verbatim_process::port_queue::Progress;
 
 use crate::protocol::{OutpostToSupervisor, SupervisorToOutpost};
 
-pub use frames::{Frame, Frames, LARGE_FRAME_BYTES, Parsed};
+pub use frames::{Frame, Frames};
 pub use ignored::{IGNORE_PIDS_ENV, IgnoredProcesses, parse_pids};
 pub use retire::ShutdownSummary;
 pub use writer::QueueError;
@@ -151,9 +150,8 @@ impl std::fmt::Display for EndReason {
     }
 }
 
-/// Where the supervisor delivers its [`OutpostMessage`]s. The relay, the
-/// launch helpers and the helper parsing large frames deliver through the
-/// same sink, so a sink that puts each message in one queue gives the app
+/// Where the supervisor delivers its [`OutpostMessage`]s. The relay and the
+/// launch helpers deliver through the same sink, so a sink that puts each message in one queue gives the app
 /// every outpost's messages in the order they reached the supervisor. The
 /// app's sink posts them to the reducer thread's port, among its keys and
 /// commands (`docs/design/communication.md`, section 4.5); a channel of
@@ -198,9 +196,7 @@ pub enum Undelivered {
 
 impl EventSink {
     /// A sink that hands each message to `deliver`, which says whether the
-    /// app took it, has gone, or refused it for now ([`Undelivered`]):
-    /// once the app has gone, the helper parsing large frames stops, and a
-    /// result it refused is delivered again.
+    /// app took it, has gone, or refused it for now ([`Undelivered`]).
     #[must_use]
     pub fn new(
         deliver: impl Fn(OutpostMessage) -> Result<(), Undelivered> + Send + Sync + 'static,
@@ -380,10 +376,6 @@ pub enum OutpostMessage {
     /// parsed: the app passes it through [`Frames`], which turns it into
     /// the [`OutpostMessage::Event`] it carries.
     Frame(Frame),
-    /// A large frame parsed by the helper of [`Frames`], ordered among the
-    /// app's inputs where the parse finished: the app passes it through
-    /// [`Frames`] too.
-    Parsed(Parsed),
     /// The idle barrier's round `round` (`docs/design/communication.md`,
     /// section 6.7; [`Supervisor::query_idle`]): the listener has answered,
     /// or has gone, and every outpost in `outposts` is asked now, each
@@ -413,8 +405,6 @@ pub struct Supervisor {
     owner: relay::Mailbox<owner::OwnerEvent>,
     writers: Writers,
     ignored: Arc<IgnoredProcesses>,
-    /// The sink, for the helper of [`Supervisor::frames`].
-    events: EventSink,
 }
 
 impl Supervisor {
@@ -468,7 +458,7 @@ impl Supervisor {
             exe_path,
             options,
             shutdown_limit,
-            events_tx: events.clone(),
+            events_tx: events,
             writers: Arc::clone(&writers),
             own_tx: owner_tx.clone(),
             events: owner_rx,
@@ -479,17 +469,15 @@ impl Supervisor {
             owner: owner_tx,
             writers,
             ignored,
-            events,
         })
     }
 
     /// What the app passes every message this supervisor delivers through,
     /// on the thread that takes them: it parses each outpost's frame into
-    /// the message it carries, a large one on a helper thread, keeping each
-    /// outpost's order ([`Frames`]).
+    /// the message it carries, keeping each outpost's order ([`Frames`]).
     #[must_use]
     pub fn frames(&self) -> Frames {
-        Frames::new(self.events.clone(), self.owner.clone())
+        Frames::new(self.owner.clone())
     }
 
     /// Whether `pid` names a process Verbatim ignores entirely

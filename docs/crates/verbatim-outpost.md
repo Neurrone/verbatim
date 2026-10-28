@@ -1224,29 +1224,19 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   (exited, killed, retired, or target exited). Its messages are delivered
   as the relay read them, `Frame`s, whole and unparsed; the app passes
   every `OutpostMessage` through the `Frames` that `Supervisor::frames()`
-  makes, on the thread that takes them, and `Frames::arrived(message,
-  out)` appends what to handle now: the message itself, or for a frame
-  the `Event(pid, outpost_id, position, message)` it carries. `Frames`
-  parses each frame, stamps every node id with the outpost's id, records
-  when the relay read it, and numbers the messages that carry node ids
-  in pipe order, as the outposts' reader threads did; a frame larger
-  than `LARGE_FRAME_BYTES` (256 KiB) goes to a helper thread,
-  `verbatim-parse`, started on first use, whose result comes back
-  through the sink as `Parsed`, and that outpost's later frames and its
-  `Ended` wait behind it, so each outpost's order holds while the reducer
-  goes on with its other inputs (`docs/design/communication.md`, section
-  4.8). `Frames::parsing()` says whether a frame is with the helper; the
-  idle barrier waits for it. A frame that is not a message has its
-  outpost ended, as a pipe that fails does, and its later frames are
-  dropped, only its `Ended` handed on. Word that an outpost that failed
-  before its `Ready` is replaced (`Reincarnated`) waits behind that
-  outpost's frame with the helper as its `Ended` does. While an outpost's
-  `Ended` waits
-  behind its frame with the helper, everything about the same application
-  that arrives after it waits behind it too (a replacement's `Started`,
-  frames and `Ended`, and `NotWatched`), so the app, which keys its
-  outpost state by application, always hears an outpost's end before its
-  replacement's start. The relay drops every frame from
+  makes, on the thread that takes them, and `Frames::arrived(message)`
+  returns what to handle now: the message itself, or for a frame the
+  `Event(pid, outpost_id, position, message)` it carries. `Frames`
+  parses every frame, whatever its size, as it arrives, on the reducer's
+  thread, stamps every node id with the outpost's id, records when the
+  relay read it, and numbers the messages that carry node ids in pipe
+  order, as the outposts' reader threads did; so each outpost's messages
+  and its `Ended` reach the app in the order the relay delivered them
+  (`docs/design/communication.md`, section 4.8). A frame of 256 KiB
+  takes about half a millisecond to parse in a release build. A frame
+  that is not a message has its outpost ended, as a pipe that fails
+  does, and its later frames are dropped, only its `Ended` handed on.
+  The relay drops every frame from
   an outpost it has already ended itself (stuck, retired, its target
   gone, or unreadable), though it reads that pipe until it ends. Every message is delivered
   through the `EventSink` given to `new`: a channel of `OutpostMessage`s
@@ -1254,11 +1244,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   function, which the app uses to post the messages to the reducer
   thread's port, in line with its keys and commands. The function says
   why a message was not delivered (`Undelivered`): `Gone`, the app having
-  gone, which stops the helper parsing large frames; or `Refused`, the
-  message given back because the port refused its packet, in which case
-  the helper delivers its result again every 50 ms until it is taken,
-  since that outpost's later messages and the idle barrier wait for it,
-  and the relay keeps a message refused, with every message it sends
+  gone; or `Refused`, the message given back because the port refused
+  its packet, in which case the relay keeps a message refused, with every message it sends
   after it, behind it, and delivers them again, in order, at its next
   send and at every heartbeat, so nothing it sends is lost or overtaken
   (an `Ended` still comes before its replacement's `Started`;
@@ -1327,8 +1314,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     the same object and kind, and for an MSAA event other than a menu
     opening the same thread that raised it (or the oldest waiting fact makes room), and
     anything else, a query above all, fails at once. The supervisor's
-    thread count is the relay, plus the helper parsing large frames once
-    one has come.
+    thread count is the relay, plus the short-lived threads that launch
+    and end children and check whether an application is hung.
   - Facts that arrive while an outpost is starting are held in arrival
     order, a newer fact for the same object and kind, and for an MSAA event
     other than a menu opening the same thread that raised it, replacing

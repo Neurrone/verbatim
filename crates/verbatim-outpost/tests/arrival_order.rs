@@ -36,7 +36,7 @@ use verbatim_outpost::protocol::{
     EventTiming, OutpostToSupervisor, SupervisorToOutpost, read_message, write_message,
 };
 use verbatim_outpost::supervisor::{
-    EventSink, Frames, LARGE_FRAME_BYTES, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
+    EventSink, Frames, OutpostMessage, ReducerStall, ShutdownSummary, Supervisor,
 };
 use verbatim_process::port_queue::{PortQueue, Received, port_queue};
 use verbatim_process::transport::{BlockingReader, BlockingWriter};
@@ -99,20 +99,15 @@ fn value_change(value: &str) -> OutpostToSupervisor {
 /// What the stand-in outpost writes for request number `request`, in
 /// order; `None` for the end of its process, with code 3.
 fn script(request: u64, ready: &OutpostToSupervisor) -> Vec<Option<OutpostToSupervisor>> {
-    let large = LARGE_FRAME_BYTES + 1;
     match request {
         1 => vec![Some(fault("A", 0)), Some(ready.clone())],
         2 => vec![Some(fault("B", 0))],
-        3 => vec![
-            Some(fault("L", large)),
-            Some(fault("S1", 0)),
-            Some(ready.clone()),
-        ],
-        4 => vec![Some(fault("E2", 0)), Some(ready.clone())],
         5 => vec![
             Some(fault("F1", 0)),
             Some(fault("F2", 0)),
-            Some(fault("F3", large)),
+            // Four times the pipe's 64 KiB and the relay's one read, so
+            // the relay reads it over several reads.
+            Some(fault("F3", 256 * 1024)),
             None,
         ],
         6 => {
@@ -346,9 +341,7 @@ impl Reducer {
             match input {
                 Input::Key(number) => handled.push(format!("key {number}")),
                 Input::Outpost(message) => {
-                    let mut decoded = Vec::new();
-                    self.frames.arrived(message, &mut decoded);
-                    for message in decoded {
+                    if let Some(message) = self.frames.arrived(message) {
                         handled.push(self.name(message));
                     }
                 }
@@ -436,7 +429,6 @@ impl Reducer {
             }
         }
         assert!(rest.is_empty(), "nothing more was delivered: {rest:?}");
-        assert!(!self.frames.parsing(), "no frame is still being parsed");
         assert!(
             self.stalls.try_recv().is_err(),
             "no stall was reported but those asserted"
@@ -492,50 +484,11 @@ fn a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_af
     end(app);
 }
 
-/// A large frame from one outpost is parsed off the reducer's thread: a
-/// key and another outpost's frames that arrived after it are handled
-/// first, and that outpost's own later frames come after it, in order.
-fn a_large_frame_delays_no_key_and_no_other_outposts_frame_and_its_outposts_next_frame_follows_it(
-    signal: &Signal,
-) {
-    let (first_app, first_pid) = application();
-    let (second_app, second_pid) = application();
-    let mut reducer = Reducer::start();
-    reducer.with_outposts(&[first_pid, second_pid]);
-
-    // Held from here: all of it is in the reducer's port before it takes
-    // any, the large frame first.
-    reducer.cue("O1", 3);
-    signal.wait("O1's large frame, S1 and Ready");
-    reducer.press(1);
-    reducer.cue("O2", 4);
-    signal.wait("O2's E2 and Ready");
-    assert_eq!(
-        reducer.take(6),
-        [
-            "key 1",
-            "O2: E2",
-            "O2: ready",
-            "O1: L",
-            "O1: S1",
-            "O1: ready"
-        ]
-    );
-
-    reducer.finish(ShutdownSummary {
-        clean: 3,
-        exited: 0,
-        killed: 0,
-        killed_on_failure: 0,
-    });
-    end(first_app);
-    end(second_app);
-}
-
 /// An outpost's pipe closing reaches the app, as its end, after every
-/// frame it wrote before, the last a large one parsed by the helper. It
-/// ended before its `Ready`, so the app hears it replaced, after its frames
-/// as its end is, and after its end its replacement's start.
+/// frame it wrote before, the last a large one, parsed on the reducer's
+/// thread as every frame is. It ended before its `Ready`, so the app hears
+/// it replaced, after its frames as its end is, and after its end its
+/// replacement's start.
 fn a_closed_pipe_reaches_the_app_after_every_frame_before_it() {
     let (app, pid) = application();
     let mut reducer = Reducer::start();
@@ -698,12 +651,6 @@ fn main() {
     a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after(&signal);
     println!(
         "test a_frame_written_before_a_key_is_reduced_before_it_and_one_written_after_it_after ... ok"
-    );
-    a_large_frame_delays_no_key_and_no_other_outposts_frame_and_its_outposts_next_frame_follows_it(
-        &signal,
-    );
-    println!(
-        "test a_large_frame_delays_no_key_and_no_other_outposts_frame_and_its_outposts_next_frame_follows_it ... ok"
     );
     a_closed_pipe_reaches_the_app_after_every_frame_before_it();
     println!("test a_closed_pipe_reaches_the_app_after_every_frame_before_it ... ok");

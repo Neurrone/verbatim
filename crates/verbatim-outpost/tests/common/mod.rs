@@ -77,8 +77,7 @@ impl Delivered {
     }
 
     fn take(&self, message: OutpostMessage) {
-        let mut out = Vec::new();
-        self.frames.borrow_mut().arrived(message, &mut out);
-        self.ready.borrow_mut().extend(out);
+        let handled = self.frames.borrow_mut().arrived(message);
+        self.ready.borrow_mut().extend(handled);
     }
 }

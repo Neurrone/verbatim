@@ -166,6 +166,11 @@ worse than the platform's floor (`cargo xtask relay-floor`,
   the clock every process shares (`verbatim_process::clock`).
 - On the way back its reader stamps when it read and parsed each outpost
   message, separating the pipe from the wait for the reducer.
+- The reducer parses every outpost frame on its own thread, whatever its
+  size, with no wake-up of its own: a few microseconds for the common
+  messages and about half a millisecond for a frame of 256 KiB in a
+  release build, which keys and other outposts' frames posted after it
+  wait for.
 - A fact held while its outpost starts is reported as "waiting for the
   outpost to start". An application's outpost is usually a spare started
   ahead of need (`docs/design/focus-pipeline.md`, section 19), so the wait
@@ -1371,7 +1376,7 @@ Each read crosses the pipe as a snapshot and is aligned on the reducer
 --nocapture`): a 120 by 30 terminal of each kind with 9,001 numbered rows,
 each input carrying a read timed 31 times from a clone of the state
 before. The reducer's time is the whole step; the parse, of the input's
-JSON, runs off the reducer in the supervisor's frame helper; sizes are the
+JSON, runs on the reducer's thread before the step and is timed apart; sizes are the
 unpadded snapshot's JSON. On 2026-10-26 on this machine, three runs,
 medians in µs over both terminals:
 

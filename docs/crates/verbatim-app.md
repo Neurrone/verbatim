@@ -82,8 +82,7 @@ The end-to-end harness's hooks (private `harness` module):
   which holds its facts and its query. When every answer is in, the reducer takes in what is already
   on its port and checks its own conditions: no outpost request
   outstanding, no outpost still starting, no focus wanted from an outpost
-  being started (a crashed outpost's replacement), no large frame
-  still being parsed, no key the hook held back still waiting to be
+  being started (a crashed outpost's replacement), no key the hook held back still waiting to be
   passed on, and no terminal's quiet-period timer armed, since what waits
   for it is spoken when it ends. If they hold, the waiters are answered once
   everything queued so far has reached the speech manager; if not, the
@@ -283,9 +282,8 @@ knowing for review:
   (`ShellCommand::Outpost`), router inputs, the keyboard hook's keys,
   speech marks, and control-plane requests. It passes every supervisor
   message through the supervisor's `Frames`, which turns each outpost's
-  frame into the message it carries, a frame over 256 KiB parsed on a
-  helper thread while the reducer goes on, that outpost's later frames
-  waiting behind it. The supervisor's relay watches the port's counts and
+  frame into the message it carries, on the reducer's thread whatever its
+  size, in the order the frames arrive. The supervisor's relay watches the port's counts and
   logs a warning when the reducer has taken nothing for three ping
   intervals while inputs waited (`EventSink::watched`). Every outpost message arrives tagged with the
   outpost incarnation whose pipe carried it; an outpost joins the live set

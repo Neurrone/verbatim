@@ -1119,8 +1119,6 @@ struct ReducerThread<'a> {
     /// Turns the outposts' frames, which the supervisor's relay posts
     /// unparsed, into the messages they carry, in each outpost's order.
     frames: Frames,
-    /// Room for the messages [`Frames`] hands on for one input.
-    decoded: Vec<OutpostMessage>,
     /// The caret keys the hook held back, until Core passes them on.
     held_keys: held_keys::HeldKeys,
     /// The held key waiting for the watch of the key ahead of it, and when
@@ -1229,7 +1227,7 @@ impl ReducerThread<'_> {
             }
             // `Frames` turns these into the messages they carry, before
             // anything reaches here.
-            OutpostMessage::Frame(_) | OutpostMessage::Parsed(_) => {}
+            OutpostMessage::Frame(_) => {}
             OutpostMessage::NotWatched { target_pid } => {
                 // The application is not running, or is ignored: no outpost
                 // will answer for it, so its focus is no longer awaited,
@@ -1482,12 +1480,9 @@ impl ReducerThread<'_> {
     fn on_command(&mut self, command: ShellCommand) {
         match command {
             ShellCommand::Outpost(message) => {
-                let mut decoded = std::mem::take(&mut self.decoded);
-                self.frames.arrived(message, &mut decoded);
-                for message in decoded.drain(..) {
+                if let Some(message) = self.frames.arrived(message) {
                     self.on_outpost_message(message);
                 }
-                self.decoded = decoded;
             }
             ShellCommand::Input(input) => self.apply(*input),
             ShellCommand::CaretKey {
@@ -1626,7 +1621,6 @@ impl ReducerThread<'_> {
             && self.terminal_timer.is_none()
             && self.live.starting() == 0
             && self.focus_now_wanted.is_empty()
-            && !self.frames.parsing()
     }
 
     /// Merges a change from the settings dialog's Terminal page into the
@@ -2180,7 +2174,6 @@ fn reducer_loop(
         views: (None, BTreeSet::new()),
         handled_input: 0,
         frames: context.supervisor.frames(),
-        decoded: Vec::new(),
         barrier: idle::IdleBarrier::default(),
         reincarnated: HashSet::new(),
         exiting: false,
