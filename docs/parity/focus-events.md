@@ -564,19 +564,14 @@ deliver" records: the outpost reads the focus at once and speaks where
 it now is. In NVDA's second case the listener's classic read of the
 sender fails, and the listener reports the focus as the event's cache
 gives it, its ancestors unknown; so does a read out of its time budget,
-and a classic read whose step from an element below the desktop root to
-its parent fails or finds no parent, as NVDA's failed parent read falls
-back to the window hierarchy rather than ending the chain (only reaching
-the root ends the walk as known: `focus_ancestry_classic` and
-`Ancestry::failed_hop` in `crates/verbatim-uia-rops/src/focus.rs`; the
-log line "UIA focus ancestors read" names the failed step as
-`failed_hop`, `NoParent` or the failing code, and as `None` for a walk
-that reached the root). The outpost's own walks, its remote program's
-and its per-hop walk (`Uia::ancestors`, `AncestorWalk::Unknown`), report
-the ancestors unknown the same way, so a focus carries no partial chain
-as if it were whole (`FocusedControl::ancestors` is `None`, and Core
-receives `ancestors_unknown`), and the next focus, even one inside it,
-is read to its window as a first focus is.
+and a walk whose step from an element below the desktop root to its
+parent fails or finds no parent, as NVDA's failed parent read falls back
+to the window hierarchy rather than ending the chain. The outpost's own
+walks report the ancestors unknown the same way, so a focus carries no
+partial chain as if it were whole, and the next focus, even one inside
+it, is read to its window as a first focus is
+(`docs/crates/verbatim-uia-rops.md`, `failed_hop`;
+`docs/crates/verbatim-outpost.md`, "Reading the focus").
 
 Different, by decision (Dickson, 2026-10-21): NVDA builds a known chain
 from the window hierarchy, where Verbatim reports the ancestors unknown
