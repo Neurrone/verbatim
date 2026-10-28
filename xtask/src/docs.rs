@@ -283,7 +283,8 @@ fn unindexed(documents: &[(String, String)]) -> Vec<String> {
 /// A link or a code span found in a document's prose.
 #[derive(Debug, PartialEq)]
 enum Item {
-    /// A link's destination, as written between its parentheses.
+    /// A link's destination, as written between its parentheses or after a
+    /// reference-style definition's colon.
     Link { line: usize, target: String },
     /// A code span's text, and whether [`PLANNED`] follows it directly.
     Code {
@@ -302,14 +303,26 @@ fn scan(text: &str) -> Vec<Item> {
     let mut items = Vec::new();
     let mut line = 1;
     let mut at = 0;
+    // Whether the line before was a definition: a definition cannot
+    // interrupt a paragraph, so one is read only where a block can start.
+    let mut after_definition = false;
     while at < bytes.len() {
-        if (at == 0 || bytes[at - 1] == b'\n')
-            && let Some(target) = definition_target(&prose[at..])
-        {
-            items.push(Item::Link {
-                line,
-                target: target.to_owned(),
-            });
+        if at == 0 || bytes[at - 1] == b'\n' {
+            let previous = prose[..at.saturating_sub(1)].rsplit('\n').next();
+            let block_starts = at == 0
+                || after_definition
+                || previous.is_some_and(|text| {
+                    let text = text.trim();
+                    text.is_empty() || text.starts_with('#')
+                });
+            after_definition = false;
+            if block_starts && let Some(target) = definition_target(&prose[at..]) {
+                items.push(Item::Link {
+                    line,
+                    target: target.to_owned(),
+                });
+                after_definition = true;
+            }
         }
         match bytes[at] {
             b'\n' => {
@@ -369,7 +382,11 @@ fn definition_target(rest: &str) -> Option<&str> {
     let indent = line.len() - line.trim_start_matches(' ').len();
     let label = line[indent..].strip_prefix('[')?;
     let close = label.find(']')?;
-    if indent > 3 || close == 0 || label[..close].contains('[') || label.starts_with('^') {
+    if indent > 3
+        || label[..close].trim().is_empty()
+        || label[..close].contains('[')
+        || label.starts_with('^')
+    {
         return None;
     }
     let target = label[close + 1..].strip_prefix(':')?.trim();
@@ -569,7 +586,13 @@ mod tests {
              \n\
              [r]: gone.md \"title\"\n\
              \x20 [k]: <../vm.md>\n\
-             [^1]: a footnote, not a link.\n",
+             [^1]: a footnote, not a link.\n\
+             \n\
+             Prose that wraps onto a line starting\n\
+             [x]: with a bracket is not a definition,\n\
+             - nor in a list item\n\
+             \x20 [y]: continued.md\n\
+             [ ]: blank-label.md\n",
         )]);
         assert_eq!(
             run_check(&documents, &["docs/vm.md", "crates/foo/src/lib.rs"]),
