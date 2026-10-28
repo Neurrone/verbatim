@@ -457,8 +457,8 @@ impl RawPipe {
         // The connect is pending. When both events are signalled the wait
         // reports the connect, the lower index; the accept loop then sees
         // the shutdown and drops the client.
-        // SAFETY: both handles are valid events owned by this instance and
-        // by the server, which outlives the accept thread.
+        // SAFETY: both handles are valid events: `read_event` is owned by
+        // this instance, and `shutdown` is borrowed for the whole call.
         let woke =
             unsafe { WaitForMultipleObjects(&[self.read_event, shutdown.0], false, INFINITE) };
         let mut transferred = 0u32;
