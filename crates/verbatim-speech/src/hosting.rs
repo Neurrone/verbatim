@@ -182,17 +182,43 @@ pub fn decode_to_host(body: &[u8]) -> io::Result<ToHost> {
     parse_json(body)
 }
 
-/// Appends the JSON body of a message from a host's frame to `body`. A
-/// [`FromHost::Pcm`]'s frame also has a raw section, its samples, which
-/// [`put_samples`] appends after the body; the body gives their place.
+/// How the transport that carries these messages puts a frame together
+/// (`docs/design/communication.md`, section 4.2): a JSON body alone, or a
+/// body and then a raw section. This module decides which a message's
+/// frame is ([`put_from_host`], [`put_pcm`]), so a PCM frame cannot be
+/// written without its samples.
+pub trait Framing {
+    /// Appends a frame whose body `put_body` appends, with no raw section.
+    ///
+    /// # Errors
+    ///
+    /// Returns `put_body`'s error, or the transport's.
+    fn body(&mut self, put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> io::Result<()>;
+
+    /// Appends a frame whose body `put_body` appends, then its raw section,
+    /// which `put_raw` appends.
+    ///
+    /// # Errors
+    ///
+    /// Returns `put_body`'s or `put_raw`'s error, or the transport's.
+    fn body_and_raw(
+        &mut self,
+        put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+        put_raw: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+    ) -> io::Result<()>;
+}
+
+/// Appends a message from a host's frame through `frame`: a
+/// [`FromHost::Pcm`]'s body and its samples as the raw section, as
+/// [`put_pcm`] does, and every other message its JSON body alone.
 ///
 /// # Errors
 ///
-/// Returns the encoding's error.
-pub fn encode_from_host(message: &FromHost, body: &mut Vec<u8>) -> io::Result<()> {
+/// Returns the encoding's error, or `frame`'s.
+pub fn put_from_host(message: &FromHost, frame: &mut impl Framing) -> io::Result<()> {
     let wire = match message {
         FromHost::Pcm(utterance, format, samples) => {
-            return encode_pcm(*utterance, *format, samples, body);
+            return put_pcm(*utterance, *format, samples, frame);
         }
         FromHost::Ready(description) => Wire::Ready(description.clone()),
         FromHost::FirstAudio(utterance, timing) => Wire::FirstAudio(*utterance, *timing),
@@ -202,22 +228,23 @@ pub fn encode_from_host(message: &FromHost, body: &mut Vec<u8>) -> io::Result<()
         FromHost::Failed(utterance, reason) => Wire::Failed(*utterance, reason.clone()),
         FromHost::SettingApplied(refusal) => Wire::SettingApplied(refusal.clone()),
     };
-    serde_json::to_writer(body, &wire).map_err(io::Error::other)
+    frame.body(|body| serde_json::to_writer(body, &wire).map_err(io::Error::other))
 }
 
-/// Appends the JSON body of [`FromHost::Pcm`] for `utterance`'s `samples`
-/// to `body`, as [`encode_from_host`] does, without copying the samples
-/// into a message first: the utterance, the format, and the samples' place
-/// in the raw section, which [`put_samples`] appends.
+/// Appends the frame of [`FromHost::Pcm`] for `utterance`'s `samples`
+/// through `frame`, as [`put_from_host`] does, without copying the samples
+/// into a message first: a body giving the utterance, the format, and the
+/// samples' place in the raw section, then the samples as the raw section,
+/// little-endian `i16`s, copied once.
 ///
 /// # Errors
 ///
-/// Returns the encoding's error.
-pub fn encode_pcm(
+/// Returns the encoding's error, or `frame`'s.
+pub fn put_pcm(
     utterance: UtteranceId,
     format: PcmFormat,
     samples: &[i16],
-    body: &mut Vec<u8>,
+    frame: &mut impl Framing,
 ) -> io::Result<()> {
     let wire = Wire::Pcm {
         utterance,
@@ -225,16 +252,16 @@ pub fn encode_pcm(
         channels: format.channels,
         samples: (0, samples.len() * 2),
     };
-    serde_json::to_writer(body, &wire).map_err(io::Error::other)
-}
-
-/// Appends the raw section of a PCM frame to `raw`: `samples` as
-/// little-endian `i16`s.
-pub fn put_samples(samples: &[i16], raw: &mut Vec<u8>) {
-    raw.reserve(samples.len() * 2);
-    for sample in samples {
-        raw.extend_from_slice(&sample.to_le_bytes());
-    }
+    frame.body_and_raw(
+        |body| serde_json::to_writer(body, &wire).map_err(io::Error::other),
+        |raw| {
+            raw.reserve(samples.len() * 2);
+            for sample in samples {
+                raw.extend_from_slice(&sample.to_le_bytes());
+            }
+            Ok(())
+        },
+    )
 }
 
 /// Reads a message from a host from its frame's body and raw section,
@@ -362,35 +389,53 @@ mod tests {
             assert_eq!(&decode_to_host(&body).unwrap(), message);
         }
         for message in &from_host {
-            let mut body = Vec::new();
-            encode_from_host(message, &mut body).unwrap();
-            let raw = match message {
-                FromHost::Pcm(_, _, samples) => {
-                    let mut raw = Vec::new();
-                    put_samples(samples, &mut raw);
-                    Some(raw)
-                }
-                _ => None,
-            };
-            assert_eq!(&decode_from_host(&body, raw.as_deref()).unwrap(), message);
+            let mut frame = Parts::default();
+            put_from_host(message, &mut frame).unwrap();
+            assert_eq!(
+                &decode_from_host(&frame.body, frame.raw.as_deref()).unwrap(),
+                message
+            );
+        }
+    }
+
+    /// A frame's parts as [`Framing`] put them.
+    #[derive(Default)]
+    struct Parts {
+        body: Vec<u8>,
+        raw: Option<Vec<u8>>,
+    }
+
+    impl Framing for Parts {
+        fn body(
+            &mut self,
+            put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+        ) -> io::Result<()> {
+            put_body(&mut self.body)
+        }
+
+        fn body_and_raw(
+            &mut self,
+            put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+            put_raw: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+        ) -> io::Result<()> {
+            put_body(&mut self.body)?;
+            put_raw(self.raw.insert(Vec::new()))
         }
     }
 
     #[test]
     fn a_pcm_frames_body_names_its_samples_place_and_they_follow_as_little_endian() {
-        let mut body = Vec::new();
+        let mut frame = Parts::default();
         let format = PcmFormat {
             sample_rate: 22_050,
             channels: 1,
         };
-        encode_pcm(UtteranceId(7), format, &[1, -2], &mut body).unwrap();
+        put_pcm(UtteranceId(7), format, &[1, -2], &mut frame).unwrap();
         assert_eq!(
-            String::from_utf8(body).unwrap(),
+            String::from_utf8(frame.body).unwrap(),
             r#"{"Pcm":{"utterance":7,"sample_rate":22050,"channels":1,"samples":[0,4]}}"#
         );
-        let mut raw = Vec::new();
-        put_samples(&[1, -2], &mut raw);
-        assert_eq!(raw, [1, 0, 0xFE, 0xFF]);
+        assert_eq!(frame.raw, Some(vec![1, 0, 0xFE, 0xFF]));
     }
 
     #[test]

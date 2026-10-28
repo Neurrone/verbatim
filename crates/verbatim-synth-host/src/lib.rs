@@ -38,8 +38,7 @@ use verbatim_process::clock::now_us;
 use verbatim_process::event::{Event, wait_any};
 use verbatim_process::transport::{EventReader, EventWriter, Taken, put_frame, put_frame_with_raw};
 use verbatim_speech::hosting::{
-    FromHost, HostDescription, HostTiming, ToHost, decode_to_host, encode_from_host, encode_pcm,
-    put_samples,
+    Framing, FromHost, HostDescription, HostTiming, ToHost, decode_to_host, put_from_host, put_pcm,
 };
 use verbatim_speech::{
     CancelWake, IndexMark, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError,
@@ -175,31 +174,21 @@ fn describe(driver: &dyn SynthDriver) -> HostDescription {
     }
 }
 
-/// Appends `message`'s frame to `buffer`: a PCM frame with its samples as
-/// the raw section, every other message a body alone.
-fn put_message(buffer: &mut Vec<u8>, message: &FromHost) -> io::Result<()> {
-    match message {
-        FromHost::Pcm(utterance, format, samples) => put_pcm(buffer, *utterance, *format, samples),
-        _ => put_frame(buffer, |body| encode_from_host(message, body)),
-    }
-}
+/// The transport's framing, appending each frame to one buffer.
+struct Frames<'b>(&'b mut Vec<u8>);
 
-/// Appends a PCM frame of `utterance`'s `samples` to `buffer`, the samples
-/// copied once, straight into it.
-fn put_pcm(
-    buffer: &mut Vec<u8>,
-    utterance: UtteranceId,
-    format: PcmFormat,
-    samples: &[i16],
-) -> io::Result<()> {
-    put_frame_with_raw(
-        buffer,
-        |body| encode_pcm(utterance, format, samples, body),
-        |raw| {
-            put_samples(samples, raw);
-            Ok(())
-        },
-    )
+impl Framing for Frames<'_> {
+    fn body(&mut self, put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> io::Result<()> {
+        put_frame(self.0, put_body)
+    }
+
+    fn body_and_raw(
+        &mut self,
+        put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+        put_raw: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        put_frame_with_raw(self.0, put_body, put_raw)
+    }
 }
 
 /// The host's two pipes, used from its one thread.
@@ -248,7 +237,7 @@ impl Host {
         let written = writer
             .start(|buffer| {
                 for message in messages {
-                    put_message(buffer, message)?;
+                    put_from_host(message, &mut Frames(buffer))?;
                 }
                 Ok(())
             })
@@ -278,9 +267,9 @@ impl Host {
         let written = writer
             .start(|buffer| {
                 if let Some(first) = first {
-                    put_message(buffer, first)?;
+                    put_from_host(first, &mut Frames(buffer))?;
                 }
-                put_pcm(buffer, utterance, format, samples)
+                put_pcm(utterance, format, samples, &mut Frames(buffer))
             })
             .and_then(|done| {
                 if done {

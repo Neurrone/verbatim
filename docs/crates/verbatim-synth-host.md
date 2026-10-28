@@ -83,7 +83,7 @@ A cancelled utterance stops at its driver's next push, and also ends with
 
 The sink. `push_pcm` writes one `Pcm` frame per call, its samples copied
 once, straight into the write buffer as the frame's raw section
-(`verbatim_speech::hosting::put_samples`), after `FirstAudio`
+(`verbatim_speech::hosting::put_pcm`), after `FirstAudio`
 in the same write for an utterance's first audio, and `index_reached`
 one `Mark` frame, so marks stay in order with the audio around them.
 Writes go through a `transport::EventWriter`. A write the pipe cannot

@@ -231,10 +231,13 @@ Public API:
   (`verbatim_process::transport`, in a Windows crate, so not here), and
   this module gives its parts: `encode_to_host` and `decode_to_host`
   serve the Core-to-host direction, a JSON body alone;
-  `encode_from_host` appends the JSON body of a message from a host, and
-  `decode_from_host(body, raw)` reads one from its body and raw section;
-  `encode_pcm` encodes a `Pcm` body straight from a slice of samples and
-  `put_samples` appends those samples as the frame's raw section. `synth_ids` holds the ids of the hosted synthesizers, which
+  `put_from_host` writes a message from a host through a `Framing`, the
+  transport's two ways of putting a frame together, a body alone or a
+  body then a raw section, so that a `Pcm` frame cannot be written
+  without its samples; `put_pcm` writes a `Pcm` frame straight from a
+  slice of samples, the samples as its raw section; and
+  `decode_from_host(body, raw)` reads a message from its body and raw
+  section. `synth_ids` holds the ids of the hosted synthesizers, which
   Core registers and the host builds by: `ESPEAK` (`espeak`) and
   `ONECORE` (`onecore`). The host process is
   [verbatim-synth-host](verbatim-synth-host.md),

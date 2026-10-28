@@ -1776,6 +1776,8 @@ mod tests {
             b"Length: 1\r\n\r\nx",
             b"Content-Length: 1\r\nRaw: 1\r\n\r\nxy",
             b"Content-Length: 1\r\nRaw-Length: \r\n\r\nx",
+            b"Content-Length: 1\r\nRaw-Length: 1\r\nRaw-Length: 1\r\n\r\nxy",
+            b"Raw-Length: 1\r\nContent-Length: 1\r\n\r\nxy",
             &[b'9'; MAX_HEADER_BYTES + 1],
         ] {
             let mut reader = BufReader::new(header);

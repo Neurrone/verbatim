@@ -13,9 +13,9 @@
 //! message is converted to the wire types here as it is encoded, borrowing
 //! from it, and back as it is decoded, each text validated and copied into
 //! a `String` of its own. A range outside the raw section, a text that is
-//! not UTF-8, colour records that do not fill their range, or a raw
-//! section longer or shorter than the ranges the body names, is a
-//! protocol error.
+//! not UTF-8, colour records that do not fill their range, or ranges that
+//! do not tile the raw section, each starting where the last ended and the
+//! last ending at its end, is a protocol error.
 
 use std::borrow::Cow;
 use std::io;
@@ -342,7 +342,7 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToSupervisor>
         serde_json::from_slice(body).map_err(|error| invalid(&error.to_string()))?;
     let mut section = Section {
         bytes: raw,
-        named: 0,
+        next: 0,
     };
     let message = match wire {
         Wire::Event {
@@ -408,20 +408,26 @@ pub(super) fn decode(body: &[u8], raw: &[u8]) -> io::Result<OutpostToSupervisor>
 }
 
 /// A frame's raw section as its message is read from it: the bytes, and
-/// how many of them the ranges read so far named.
+/// where the next range must start, the end of the ranges read so far.
 struct Section<'s> {
     bytes: &'s [u8],
-    named: usize,
+    next: usize,
 }
 
 impl<'s> Section<'s> {
-    /// The bytes at `range`.
+    /// The bytes at `range`, which must start where the last range ended,
+    /// so the ranges tile the raw section in the order they are read.
     fn bytes(&mut self, (start, length): Range) -> io::Result<&'s [u8]> {
         let end = start
             .checked_add(length)
             .filter(|&end| end <= self.bytes.len())
             .ok_or_else(|| invalid("a range outside the frame's raw section"))?;
-        self.named = self.named.saturating_add(length);
+        if start != self.next {
+            return Err(invalid(
+                "a range in the frame's raw section that does not start where the last ended",
+            ));
+        }
+        self.next = end;
         Ok(&self.bytes[start..end])
     }
 
@@ -503,10 +509,10 @@ impl<'s> Section<'s> {
         })
     }
 
-    /// Checks that the ranges read named the whole raw section, no more
-    /// and no less.
+    /// Checks that the ranges read, each starting where the last ended,
+    /// reached the raw section's end: they tile it exactly.
     fn finish(self) -> io::Result<()> {
-        if self.named == self.bytes.len() {
+        if self.next == self.bytes.len() {
             Ok(())
         } else {
             Err(invalid(
@@ -535,6 +541,8 @@ fn invalid(message: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use verbatim_process::transport::{Parts, read_frame};
+
+    use verbatim_model::{TextAnchor, TextChunk, TextUnit, WindowHandle};
 
     use super::super::{Message, decode_message, encode_message};
     use super::*;
@@ -598,6 +606,37 @@ mod tests {
         }
     }
 
+    fn window() -> WindowFacts {
+        WindowFacts {
+            top_level: WindowHandle(0x10),
+            root_owner: WindowHandle(0x20),
+            topmost: false,
+            under_active_window: None,
+            in_foreground: true,
+            class: "ConsoleWindowClass".to_owned(),
+            application: "pwsh".to_owned(),
+            alt_held: false,
+        }
+    }
+
+    fn caret() -> CaretReport {
+        CaretReport {
+            line: TextChunk {
+                unit: TextUnit::Line,
+                text: "$ ls -l\r\n".to_owned(),
+                start: TextAnchor(1),
+                offset: 4,
+                languages: Vec::new(),
+                first: false,
+                last: true,
+                truncated: false,
+                formats: Vec::new(),
+            },
+            selection: None,
+            selection_line: None,
+        }
+    }
+
     fn reply(reply: TextReply) -> OutpostToSupervisor {
         OutpostToSupervisor::Reply {
             trace_id: trace(8),
@@ -636,6 +675,23 @@ mod tests {
             event(snapshot(&cyrillic, &cyrillic, None)),
             // Empty texts, and colours taken but with no rows.
             event(snapshot("", "", Some(Vec::new()))),
+            // The event's window and the read's caret, both given.
+            OutpostToSupervisor::Event {
+                trace_id: trace(7),
+                observed_at_ms: 1_752_000_000_000,
+                observed_at_us: 0,
+                backend: Backend::Uia,
+                window: Some(window()),
+                application: Some(Pid(20)),
+                timing: EventTiming::default(),
+                event: NormalizedEvent::TerminalSnapshot {
+                    node_id: NodeId::new(3),
+                    snapshot: Box::new(TerminalSnapshot {
+                        caret: Some(caret()),
+                        ..snapshot(&latin, "", None)
+                    }),
+                },
+            },
             reply(TextReply::TerminalSnapshot(Box::new(snapshot(
                 &cyrillic,
                 "",
@@ -796,6 +852,51 @@ mod tests {
         for range in ["[0,4]", "[2,2]", "[18446744073709551615,2]"] {
             let error = history(range, b"abc").expect_err("refused");
             assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{range}");
+        }
+    }
+
+    /// Ranges that overlap or leave a gap are a protocol error, though
+    /// their lengths add up to the raw section's: the ranges must tile it,
+    /// each starting where the last ended.
+    #[test]
+    fn ranges_that_do_not_tile_the_raw_section_are_a_protocol_error() {
+        let timing = serde_json::to_string(&EventTiming::default()).expect("JSON");
+        let found = |first: &str, second: &str| {
+            let body = format!(
+                r#"{{"Reply":{{"trace_id":8,"request_id":4,"outcome":{{"Done":{{"Text":{{"TerminalFound":{{"matches":[{{"above":0,"text":{first}}},{{"above":1,"text":{second}}}],"read":0}}}}}}}},"timing":{timing}}}}}"#
+            );
+            OutpostToSupervisor::from_parts(Parts {
+                body: body.as_bytes(),
+                raw: Some(b"abcdef"),
+            })
+        };
+        let matches = |first: &str, second: &str| {
+            reply(TextReply::TerminalFound {
+                matches: vec![
+                    TerminalMatch {
+                        above: 0,
+                        text: first.to_owned(),
+                    },
+                    TerminalMatch {
+                        above: 1,
+                        text: second.to_owned(),
+                    },
+                ],
+                read: 0,
+            })
+        };
+        assert_eq!(
+            found("[0,3]", "[3,3]").expect("the well-formed frame reads"),
+            matches("abc", "def")
+        );
+        // Overlapping, a gap then a repeat, and out of order.
+        for (first, second) in [("[0,3]", "[0,3]"), ("[3,3]", "[3,3]"), ("[3,3]", "[0,3]")] {
+            let error = found(first, second).expect_err("refused");
+            assert_eq!(
+                error.kind(),
+                io::ErrorKind::InvalidData,
+                "{first} then {second}"
+            );
         }
     }
 
