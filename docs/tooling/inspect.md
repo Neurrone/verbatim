@@ -6,7 +6,13 @@ How to drive and watch a running Verbatim through the control plane with `verbat
 (`docs/architecture.md` section 10). It is not a child of Core and is not in
 any job object; it attaches through the named pipe (or, for a VM or CI
 agent, a TCP tunnel) like any other control-plane client. Every subcommand
-prints plain text, one fact per line.
+prints plain text, one fact per line, with no tables or spinners, so it
+reads well piped, redirected, or through a screen reader. Timestamps
+render as local wall-clock time with no zone suffix, such as
+`2026-07-14T10:42:32.158`, through the Win32 conversion that is correct
+across daylight-saving transitions. The crate itself is
+`crates/verbatim-inspect`; its connection goes through
+`verbatim-control`'s `Client` ([its guide](../crates/verbatim-control.md)).
 
 Build and start a Verbatim to inspect first:
 
