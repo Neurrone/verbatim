@@ -28,10 +28,7 @@ Public API:
   launches a child. The supervisor launches outposts and the listener
   with it, over `overlapped::pipe`s whose child ends are overlapped too
   (since communication step 6); `verbatim-synth-hosted` launches the
-  synthesizer host with it over `overlapped::pipe`s (since step 9); and
-  the relay floor's benchmark launches its children with it, over
-  `overlapped::pipe`s or, for the conditions that measure synchronous
-  anonymous pipes, over pipes it makes itself with `CreatePipe`.
+  synthesizer host with it over `overlapped::pipe`s (since step 9).
 - `Contained` — the launched child: `job`, the kill-on-close job handle,
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
@@ -60,8 +57,8 @@ Public API:
   prove. It makes both handles non-inheritable, as they arrive
   inheritable, so no process the child creates, or a library inside it
   creates, can hold Core's pipes open after the child exits. The outpost
-  binary, as an outpost and as the listener, the synthesizer host, and the
-  relay floor use it.
+  binary, as an outpost and as the listener, and the synthesizer host use
+  it.
 - `clock` (`docs/design/communication.md`, section 3.3) — the clock every
   process of a run stamps the times it compares across processes with:
   `now_us()`, the performance counter in microseconds plus one offset to
@@ -97,9 +94,8 @@ Public API:
   finish, for a thread that waits on events rather than on a port; on
   one of those, `poll` asks with a zero wait whether the operation has
   finished, `wait` waits for it, and `cancel_read` cancels a read in
-  flight and waits for it to end (only a read is ever cancelled). The
-  relay floor's benchmark (`verbatim-relay-floor`) and `transport` use
-  it.
+  flight and waits for it to end (only a read is ever cancelled).
+  `transport` uses it.
 - `event` (`docs/design/communication.md`, sections 7.3 and 7.4) —
   `Event`, an unnamed manual-reset event (`new`, `set`, `reset`,
   `is_set`), and `wait_any(events, timeout)`, which waits until any of
@@ -150,8 +146,8 @@ Public API:
   measured (`docs/design/communication.md`, section 11, step 3).
   `opt_out_of_power_throttling()` and
   `opt_current_thread_out_of_power_throttling()` opt the process or the
-  calling thread out of execution-speed power throttling; only the relay
-  floor's benchmark calls them, since the same measurement found no gain
+  calling thread out of execution-speed power throttling; nothing outside
+  this crate's tests calls them, since the same measurement found no gain
   that would pay for the energy. Timer resolution is not raised.
 - `transport` — the frames and senders of the pipes between verbatim.exe
   and its outposts, listener and synthesizer hosts (`docs/design/communication.md`, section

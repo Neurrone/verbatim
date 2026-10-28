@@ -44,8 +44,7 @@ before debugging anything downstream.
 - [Running mockapp by hand](mockapp.md): `mockapp` against a fixture, and
   which tests use the interactive desktop.
 - [Measuring](measuring.md): "Measuring performance", with `cargo xtask
-  measure`, `cargo xtask trace`, and what every measurement reports, and
-  "Measuring the platform floor".
+  measure`, `cargo xtask trace`, and what every measurement reports.
 - [The end-to-end suite](e2e.md): test-audio mode, running the suite on
   this machine, `cargo xtask park`, the scenarios, the measure set, and
   hearing and recording a run.

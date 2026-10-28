@@ -139,23 +139,23 @@ NVDA is one process, so there is no relay to compare with, and most of this does
 
 ## 6. Measuring the platform's floor under Balanced
 
-A benchmark, `cargo xtask relay-floor`, launches a small benchmark binary in three roles: a sender A standing in for the listener, a relay B standing in for verbatim.exe, and a receiver C standing in for the outpost. It uses the same pipe types as Verbatim. Each message carries A's QPC stamp. B and C stamp with QPC on read return and before write, and keep their stamps in memory until exit.
+The floor is measured with Verbatim's pipe types between a sender standing in for the listener, a relay standing in for verbatim.exe, and a receiver standing in for the outpost.
 
-- Gaps between messages are random (exponential, mean 20 ms, clipped to 1 to 100 ms), generated in A by waits on a waitable timer. Every receiver is then blocked when a message arrives, as with real events. A back-to-back flood would measure throughput, not wake-up.
-- The variants:
-  - F0: two threads in one process, one condition variable. This is the floor for one wake-up.
-  - F1: A writes straight to C over one pipe. This is the floor for a single hop, with no relay.
-  - F2: A to C through B, where B is one thread that reads synchronously and writes at once. This is the floor for any third process in the path.
-  - F3: A to C through B built as section 4.1 (completion port, overlapped named pipes).
-  - F4: A to C through B built as today's code (reader thread, crossbeam channel, owner, condition variable, writer thread). This is the baseline.
-  - F3 and F4 each run at normal priority and at the 4.4 priorities, with power throttling off.
+- Gaps between messages are random (exponential, mean 20 ms, clipped to 1 to 100 ms), generated in the sender by waits on a waitable timer. Every receiver is then blocked when a message arrives, as with real events. A back-to-back flood would measure throughput, not wake-up.
+- The cases:
+  - One wake-up: two threads in one process, one condition variable.
+  - A single hop: the sender writes straight to the receiver over one pipe, with no relay.
+  - A minimal relay: the relay is one thread that reads synchronously and writes at once. This is the floor for any third process in the path.
+  - The designed relay, built as section 4.1 (completion port, overlapped named pipes).
+  - Today's relay, built as today's code (reader thread, crossbeam channel, owner, condition variable, writer thread). This is the baseline.
+  - The designed relay and today's relay each run at normal priority and at the 4.4 priorities, with power throttling off.
 - The conditions:
   - Balanced, idle.
   - Balanced with N normal-priority spinning threads, where N is the number of logical processors.
   - Balanced with N minus 1 spinning threads, which keeps one processor free.
   - Balanced during a real end-to-end flood scenario.
   - Once, for attribution only, under High performance and with `timeBeginPeriod(1)` in all three processes, and on bare metal if Dickson has one, so that the VM's share and Windows' share can be separated.
-- Size: 20,000 messages per variant and condition, which is about 7 minutes each at a 20 ms mean, and 100,000 messages for the chosen design under Balanced idle and under load.
+- Size: 20,000 messages per case and condition, which is about 7 minutes each at a 20 ms mean, and 100,000 messages for the chosen design under Balanced idle and under load.
 - Reported per hop and end to end: count, median, 99th, 99.9th and 99.99th percentiles, maximum, and the number over 0.5, 1 and 2 ms.
 - Attribution: one run of each condition under WPR's CPU usage (precise) profile, which records context switches and ready-thread events. For every sample over 1 ms, the trace gives the delay from ready to running for each thread involved, and what ran instead: another thread (pre-emption or priority), nothing in the guest (a vCPU stall), or an idle processor waking. This turns the inferred causes in section 3 into established ones.
 
@@ -168,12 +168,12 @@ Definitions, per relayed fact:
 
 verbatim.exe's added latency is H1 plus H2. A route without verbatim.exe would still pay one hop shaped like H3.
 
-1. Benchmark, before any Verbatim change: F0 to F4 as in section 6. This is recorded as the floor. Its decision point is in section 9.
-2. Benchmark, after the design: F3 at the chosen priority, under Balanced, idle and under load, 100,000 messages each.
-   - B's internal time: maximum at most 0.5 ms. It is pure CPU on a running thread.
+1. Floor, before any Verbatim change: every case of section 6. This is recorded as the floor. Its decision point is in section 9.
+2. Floor, after the design: the designed relay at the chosen priority, under Balanced, idle and under load, 100,000 messages each.
+   - The relay's internal time: maximum at most 0.5 ms. It is pure CPU on a running thread.
    - H1 plus H2: 99.9th percentile at most 1 ms. Maximum at most 2 ms, except samples that the ETW trace shows to be guest-wide stalls (no guest thread ran during the delay). Those are counted and reported, never dropped.
-   - F3's tail minus F1's at every percentile up to the 99.99th: at most 1 ms.
-   - F3's share over 2 ms must be no worse than F2's, and well below F4's.
+   - The designed relay's tail minus the single hop's at every percentile up to the 99.99th: at most 1 ms.
+   - The designed relay's share over 2 ms must be no worse than the minimal relay's, and well below today's relay's.
 3. Verbatim, live: the measure scenarios (measure_focus_explorer, measure_keys_conhost, measure_keys_text_box and the rest of the measure set), release and debug, until at least 5,000 delivered facts per build, under Balanced.
    - The ledger's "verbatim.exe" stage: maximum at most 1 ms. 99.9th percentile at most 0.2 ms in release, at most 0.5 ms in debug.
    - H1 plus H2: 99.9th percentile at most 1 ms. Maximum at most 2 ms, with every exception attributed by an ETW capture during one of the runs, as in item 2.
@@ -201,7 +201,7 @@ verbatim.exe's added latency is H1 plus H2. A route without verbatim.exe would s
 
 ## 9. Questions for Dickson
 
-- If the floor benchmark shows that F2, a minimal third process, already exceeds 2 ms at its maximum under Balanced on the VM, is the budget read as "verbatim.exe's own stage at most 1 to 2 ms, and its added hop no worse than the platform's floor, every exception attributed", rather than as an absolute maximum on this machine? Recommendation: yes, while also measuring once on bare metal.
+- If the floor shows that the minimal relay, a third process doing nothing else, already exceeds 2 ms at its maximum under Balanced on the VM, is the budget read as "verbatim.exe's own stage at most 1 to 2 ms, and its added hop no worse than the platform's floor, every exception attributed", rather than as an absolute maximum on this machine? Recommendation: yes, while also measuring once on bare metal.
 - Should EcoQoS and the thread priorities decided on 2026-10-08 be built in this step? Recommendation: yes. They are the only lever on the non-silent tail that the power-plan constraint leaves open.
 
 ## 10. Follow-ups found, not part of this step

@@ -560,7 +560,7 @@ Each step is small, builds and passes `cargo xtask ci`, and is verified before t
 
 Also measured in this step: the JSON parse and re-serialize cost of decision 1, and, before step 4, the evaluation of `mio::windows::NamedPipe` in place of the hand-written overlapped module (Dickson, 2026-10-11), including whether a write that completes at once leaves the pipe free for the next write without the I/O thread waking.
 
-Evaluated 2026-10-11 against mio 1.2.4 (79d1417): mio never sets skip-completion-on-success on pipes, so after any write the pipe stays busy until its poll thread processes the completion, and a second frame from the same producer waits for that wake-up; reads go through a 4 KiB internal buffer and are copied again; a second writer is refused, not queued; and its named-pipe code had a use-after-free fixed on 2026-09-28. Decided with Dickson: keep the hand-written module and grow it into the transport; mio's race tests (`tests/win_named_pipe.rs`) are models for step 4's tests. The floor benchmark gains the measurements the evaluation lists (back-to-back frames, write latency during a flood, several producers on one pipe, 1, 2 and 32 MB frames, allocations per frame, a child draining a 2 MB write before exit).
+Evaluated 2026-10-11 against mio 1.2.4 (79d1417): mio never sets skip-completion-on-success on pipes, so after any write the pipe stays busy until its poll thread processes the completion, and a second frame from the same producer waits for that wake-up; reads go through a 4 KiB internal buffer and are copied again; a second writer is refused, not queued; and its named-pipe code had a use-after-free fixed on 2026-09-28. Decided with Dickson: keep the hand-written module and grow it into the transport; mio's race tests (`tests/win_named_pipe.rs`) are models for step 4's tests. The floor measurement of step 2 gains the measurements the evaluation lists (back-to-back frames, write latency during a flood, several producers on one pipe, 1, 2 and 32 MB frames, allocations per frame, a child draining a 2 MB write before exit).
 
 - Builds from the branch: f94e761 (one write per message), 43adba8 (the relay stages), and the `overlapped` module and the scheduling module as libraries only, split out of db16548 and 7e6e562, with no behaviour change.
 - Extends the ledger with the return-path and speech stages of 10.1 that today's architecture can stamp (synth request, host first chunk, host return, device clock).
@@ -587,7 +587,7 @@ The figures come from the ledger's latency lines, which round to 0.1 ms, through
 
 ### Step 2. The platform floor and the speech-path scenario
 
-- The relay floor benchmark (5cbcb4e) as `relay.md` section 6 specifies, F0 to F4, plus F5: sender and receiver both overlapped with inline writes (this design's child side), and F6: a host-shaped round trip (command, a fixed CPU burst standing in for a first chunk, paced reply).
+- The platform's floor as `relay.md` section 6 specifies, with two cases added: sender and receiver both overlapped with inline writes (this design's child side), and a host-shaped round trip (command, a fixed CPU burst standing in for a first chunk, paced reply).
 - `measure_speech_real` (10.3), on the dev VM and once on bare metal.
 - ETW attribution (WPR, CPU usage, precise) for one run of each condition.
 - Removes: nothing.
@@ -914,7 +914,7 @@ Unchanged:
 - Section 4.1's core: the supervisor's owner thread becomes the relay, on a completion port; it reads the listener's pipe and routes in the same pass; at most one write in flight per child; a stuck child holds only its own queue; the ordering argument resting on one routing thread; the alternatives rejected in 4.2 (a separate relay thread, direct pipes, MMCSS for the relay).
 - Section 4.3: one write per message.
 - Section 4.4: priority and power throttling under Balanced, no timer resolution change, with the list of threads widened by section 6.1 here.
-- Section 6: the floor benchmark, with two variants added.
+- Section 6: the floor measurement, with two cases added.
 - Section 7's pass criteria and section 9's two approved decisions.
 
 Changed:
@@ -931,7 +931,6 @@ Changed:
 - 43adba8 (the relay's ledger stages): kept in step 1 for the baseline; its stage names are kept; its `EventTiming` fields move into the frame header in step 4.
 - db16548 (the relay on a completion port): kept, split. Its `overlapped` module (pipe, `Port`, `PipeIo`) becomes the core of the transport in step 4; its relay thread, `Mailbox` and `Inbox`, and its event-driven retirement and hang checks are kept in step 5; its line splitter and parse path for the listener are replaced by the frame reader and header routing.
 - 7e6e562 (priorities and power throttling): kept, in step 3.
-- 5cbcb4e (`cargo xtask relay-floor`): kept, with F5 and F6 added, in step 2.
 - c9564c6 (the pushing thread writes): kept in step 5, changed so encoding happens outside the per-child lock.
 - cfbd323 (work in progress on more threads' priorities): kept and finished in step 3 (the role constants and the `thread_started` callback); its speech queue role becomes obsolete in step 10, and its outpost outbound writer role in step 6.
 

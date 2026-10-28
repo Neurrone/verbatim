@@ -156,8 +156,8 @@ Every fact the listener sees and every request Core makes passes through
 verbatim.exe, so its share is a stage of its own in the latency line
 (`docs/archive/relay.md`; `docs/tooling/inspect.md` lists the stages).
 Budget: verbatim.exe's own stage at most 1 to 2 ms, and its added hop no
-worse than the platform's floor (`cargo xtask relay-floor`,
-`docs/tooling/measuring.md`), every exception attributed.
+worse than the platform's floor for crossing processes, every exception
+attributed.
 
 - Its own time is measured on its monotonic clock alone, from taking a
   fact in or queuing a request to its relay thread beginning the write,

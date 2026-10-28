@@ -18,8 +18,7 @@
 //!   ([`opt_current_thread_out_of_power_throttling`]), keeps it on fast
 //!   cores at full clocks, which costs energy for every unit of work. The
 //!   same measurement found no latency gain from it, so Verbatim's
-//!   processes do not ask for it; the platform floor's benchmark (`cargo
-//!   xtask relay-floor`) still measures it.
+//!   processes do not ask for it.
 //!
 //! Timer resolution is not raised: nothing on the relay's path waits on a
 //! timer.

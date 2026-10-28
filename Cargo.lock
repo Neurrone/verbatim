@@ -2089,18 +2089,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "verbatim-relay-floor"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "serde",
- "serde_json",
- "verbatim-process",
- "windows",
- "workspace-hack",
-]
-
-[[package]]
 name = "verbatim-speech"
 version = "0.1.0"
 dependencies = [
