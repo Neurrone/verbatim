@@ -51,7 +51,15 @@ Public API:
   the description added is built once per `Request` and kept with it,
   and the count of a window's refusals in a row, kept for the logs, is
   dropped when a lookup of it is answered or, for a window destroyed
-  meanwhile, at the next refusal),
+  meanwhile, at the next refusal; the description counts as served only
+  by those proxies when every provider it names, whatever its role (main,
+  override, nested), is from `UIAutomationCore.dll`, so File Explorer's
+  child windows whose main provider is the MSAA proxy under an override
+  from `DUI70.dll` are answered; a refusal is logged at debug, and from a
+  window's fourth refusal in a row at info with the count
+  (`REFUSALS_BEFORE_INFO`), so a window that never answers shows in the
+  logs; a refusal is never retried, the next event or query that needs
+  the window looking it up again),
   `any_window_element(hwnd, request)` (the same lookup without the proxy
   rule, for a window with no provider, whose element is UIA's proxies by
   nature),
