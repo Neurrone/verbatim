@@ -1,6 +1,6 @@
 # The focus pipeline rework
 
-Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The focus pipeline rework"). The study below them was made the same day, read-only. Sources: `docs/architecture.md` (D9, D13 as amended through 2026-10-20, D14 as amended 2026-10-25), `docs/design/focus-pipeline.md`, `docs/design/listener-without-connections.md`, `docs/design/outpost-redesign.md`, `docs/design/windows-terminal-twin-focus.md`, `docs/parity/focus-events.md`, `docs/parity/windows-and-processes.md`, `docs/parity/focus-context.md`, `docs/parity/backends.md`, `docs/nvda/events.md`, `docs/uia-bugs.md`, `docs/performance.md`, the roadmap's M4.1 follow-ups, `docs/crates/verbatim-outpost.md`, the 276 commits since 2026-10-01 that touched the pipeline's files and the full messages of this week's, Dickson's memory notes, and the code of `verbatim-outpost` (listener, `focus_read`, `arbitration`, the outpost's intake, worker, gap, held, handover, acceptance, window, focus path, narrowing), `verbatim-core` (reduce, focus rules, applications, shell, state) and `verbatim-app`'s routing, read for this study by three read-only inventories whose findings are folded in below with file and line references.
+Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The focus pipeline rework"). The study of the present pipeline follows them, with file and line references into the code as of 2026-10-25; the process and thread model it starts from is `docs/architecture.md`, section 1.
 
 ## What was found
 
@@ -61,7 +61,7 @@ From the first four, the listener must receive and read every UIA focus and each
 
 ## The inventory
 
-About ninety distinct mechanisms sit between an event and Core's decision (the three inventories count 34 in the listener, 39 in the outpost and 31 in Core, the app and the supervisor, of which about thirteen are one protocol counted from each end). Each is named below with what it does, why it exists, and its class: a root element (forced by a constraint above), a parity port (follows NVDA's source), or a reconciliation (exists so that Verbatim's processes agree). Patches on another mechanism are called out as such. Line references are to the files named; commits are hash and date.
+About ninety distinct mechanisms sit between an event and Core's decision (34 in the listener, 39 in the outpost and 31 in Core, the app and the supervisor, of which about thirteen are one protocol counted from each end). Each is named below with what it does, why it exists, and its class: a root element (forced by a constraint above), a parity port (follows NVDA's source), or a reconciliation (exists so that Verbatim's processes agree). Patches on another mechanism are called out as such. Line references are to the files named; commits are hash and date.
 
 ### The listener, as a focus meets it
 
@@ -85,7 +85,7 @@ About ninety distinct mechanisms sit between an event and Core's decision (the t
 - One waiting event per element and kind (0eaf540e). Parity port.
 - Reading threads ended with their outpost, through `HookRemoved` (ad4145e5). Reconciliation; a thread could end with its process instead, which the supervisor already watches.
 - The judgement in NVDA's order (ffacb9b5, 2026-10-12): the hung check; the native check with the raw probe, the console check from the held sender and the Windows Forms class check (the three replacements for calls that connected, b9f69805, 59f0f077, 4d2962c3, 2026-10-19); the repeat check against the focus Core holds; the menu redirect; the acceptance test; the console-window and hidden-frame refusals; the sender's keyboard focus read live with the cached fallback. Parity ports, with the no-connection replacements as reconciliations of the collision constraint.
-- The verdict cache: yes for the window's life, no for 500 ms, a timed-out probe kept as no for the worker thread whose entry made it (`arbitration.rs` 79 to 338; 60de4e41, 2026-10-03; a133815e, 23884a3d, a93e8744, all 2026-10-25). Parity rule; the three commits of today are a patch chain on the outpost's entry model, the last because abandoned workers share one arbitrator.
+- The verdict cache: yes for the window's life, no for 500 ms, a timed-out probe kept as no for the worker thread whose entry made it (`arbitration.rs` 79 to 338; 60de4e41, 2026-10-03; a133815e, 23884a3d, a93e8744, all 2026-10-25). Parity rule; the three commits of 2026-10-25 are a patch chain on the outpost's entry model, the last because abandoned workers share one arbitrator.
 - The held elements and the repeat rule against the focus Core holds (`focus_read.rs` 543 to 735; a46d8b53 and a17676f6, 2026-10-11; c0bbf19b and 9f502def, 2026-10-25). Parity rule; the held-element bookkeeping is a reconciliation with Core.
 - The classic ancestor walk, reusing the chain above the first known ancestor, and the report from the cache with ancestors unknown when the read fails (638064dc, 2026-10-19; e07351fe and 2b13487b, 2026-10-22). Root under the no-connection rule.
 - The drop reasons and their three classes for the outpost's gap (`focus_read.rs` 286 to 310, 420 to 541; f05cdc6b, fba1dfe8, 8c4d5df4, all 2026-10-21, one of them reversing the one before). Reconciliation with the gap; a patch chain of four in one day.
@@ -98,7 +98,7 @@ About ninety distinct mechanisms sit between an event and Core's decision (the t
 - Spares, reincarnation, one failure path with backoff (878a586c, ded1988a, 2026-10-16). A decided latency optimization.
 - The hand-over's supervisor half, relaying `ForwardingEnded` in order behind the facts. Reconciliation.
 - The marker, read, drop and reads-ended messages with hand-over priority in the writer. The two-route ordering mechanism's wire form.
-- `CoreFocus` to the listener (whole, no ancestors), to the judged outpost, and to the outposts the focus moved between, after every judged focus event and every change (c0bbf19b, 63ea08c1, 9f502def, 2026-10-25). Reconciliation with Core; it replaced `FocusQueued` (8fe59b1b, 2026-10-12) and was corrected twice today.
+- `CoreFocus` to the listener (whole, no ancestors), to the judged outpost, and to the outposts the focus moved between, after every judged focus event and every change (c0bbf19b, 63ea08c1, 9f502def, 2026-10-25). Reconciliation with Core; it replaced `FocusQueued` (8fe59b1b, 2026-10-12) and was corrected twice on 2026-10-25.
 - Views and `NodesHeld`, and the supervisor's own copy of attention for retirement. Root under D9.
 - The idle barrier, a round through every child, holding for open gaps and markers. Harness aid.
 - Console client as the application and the console host's outpost serving it, with the focus-now query routed to the host (ece62cdf; c35219af, 95b2b012, 2026-10-19). Windows constraint made two-routed by per-process outposts.
@@ -115,7 +115,7 @@ About ninety distinct mechanisms sit between an event and Core's decision (the t
 - The old focus's state changes planned ahead of a focus inside it (05fe1594, 4d442eb5, 2026-10-22). Patch on the marker: the marker put a state change raised before the focus behind it, and this puts it back.
 - The idle query as a batch boundary (10f01254). Harness aid.
 - The watchdog with `HANDLING_DEADLINE` 10 s and `MOVED_ON_GRACE`, abandonment, publishing under the generation claim, and the supervisor's eight-abandoned-workers rule (38bb0eb0; f49cd3e3). Root.
-- The acceptance test against the foreground as the entry is handled, the readable-window check, the hidden-frame drop, the foreground change's in-front check and NVDA's two tests, the MSAA focus's redirect, repeat, focused-state and enrichment steps (`acceptance.rs`; `worker.rs` 381 to 434, 3683 to 3815). Parity ports; the null-foreground guard (bf467cec, 2026-10-25) is a regression fix from today's shared-rule rework.
+- The acceptance test against the foreground as the entry is handled, the readable-window check, the hidden-frame drop, the foreground change's in-front check and NVDA's two tests, the MSAA focus's redirect, repeat, focused-state and enrichment steps (`acceptance.rs`; `worker.rs` 381 to 434, 3683 to 3815). Parity ports; the null-foreground guard (bf467cec, 2026-10-25) is a regression fix from that day's shared-rule rework.
 - The backend arbitration with the listener's yes verdict copied in (`record_probe`, ffacb9b5). Parity rule plus a reconciliation of two arbitrations.
 - The gap: open on a dropped `WinEvent` focus copy in a UIA window unless a UIA focus within 100 ms before answered it; closed by a read in the same top-level window, a drop that ends the wait, the end of the listener's reads, a later focus of this outpost, or Core's focus moving elsewhere; read at once for a sender with no window; otherwise read at the one-second bound; the idle answer held meanwhile (`gap.rs`; 3d99e52c, f05cdc6b, fba1dfe8, 8c4d5df4, 2026-10-21). Recovery from a hard constraint, shaped entirely by the two routes: the half of the evidence it needs from the listener arrives as drop classes on the wire.
 - The console window read again through its proxy inside a remote-operation walk (8c4d5df4). Workaround for a UIA defect, exercised by the gap's read and the focus-now read.
@@ -123,7 +123,7 @@ About ninety distinct mechanisms sit between an event and Core's decision (the t
 - Held: the focus Core holds, the unjudged reports drained by the judged trace, the states last read (`held.rs`; c0bbf19b). Reconciliation with Core; the unjudged queue is the patch for the notice's latency.
 - Tracking: the focus the outpost follows, its chain, window, role and batch, running beside Held (`worker.rs` 279 to 379). A second copy of the focus, older than Held.
 - MSAA and UIA change and selection targeting against the judged-against focuses (c0bbf19b). Parity port of NVDA's focus gate as a pre-read cost filter.
-- `emit_focus` with the report's window facts (relation to the foreground, class, application name, Alt held), the focus-now query with the proxy rule and `served_by`, the console client names held open (`worker.rs` 2297 to 2385; `read.rs` 908 to 1058; 832df39e, 2026-10-25). Root and parity; the names' process handles are a patch on yesterday's application name (48d8432d), itself added for the switcher rule.
+- `emit_focus` with the report's window facts (relation to the foreground, class, application name, Alt held), the focus-now query with the proxy rule and `served_by`, the console client names held open (`worker.rs` 2297 to 2385; `read.rs` 908 to 1058; 832df39e, 2026-10-25). Root and parity; the names' process handles are a patch on the application name of 2026-10-24 (48d8432d), itself added for the switcher rule.
 - Outbound merging while a write is in flight (510b7f82). Root under a pipe.
 
 ### Core and the app
@@ -147,7 +147,7 @@ About ninety distinct mechanisms sit between an event and Core's decision (the t
 
 ### Counts
 
-About ninety mechanisms. About twenty-five port NVDA's rules and about twenty answer a hard constraint directly; the remaining forty-odd exist so that Verbatim's processes agree, and of those about twenty trace to the two-route structure in particular (the hand-over and its ordering rules, the marker and the old-focus reorder, the gap with its news and evidence classes, the copied verdict, the element found by path, the chain from the listener's read, `CoreFocus` with the held elements and the unjudged queue, the stamps). The patch chains, each on one mechanism and each within six days: the verdict cache's timed-out probe (three commits today); the gap's drop classes (four on 2026-10-21, one reversing another); the hand-over's run ordering (seven on 2026-10-20 and 2026-10-21); the stamps (two on 2026-10-24, with a stated residual); `CoreFocus` (three today, plus the null-foreground regression); the listener's out-of-time judging (six on 2026-10-20); the application name (two in two days). Every chain but the last two is a disagreement between two processes' copies of one fact being tuned rather than removed.
+About ninety mechanisms. About twenty-five port NVDA's rules and about twenty answer a hard constraint directly; the remaining forty-odd exist so that Verbatim's processes agree, and of those about twenty trace to the two-route structure in particular (the hand-over and its ordering rules, the marker and the old-focus reorder, the gap with its news and evidence classes, the copied verdict, the element found by path, the chain from the listener's read, `CoreFocus` with the held elements and the unjudged queue, the stamps). The patch chains, each on one mechanism and each within six days: the verdict cache's timed-out probe (three commits on 2026-10-25); the gap's drop classes (four on 2026-10-21, one reversing another); the hand-over's run ordering (seven on 2026-10-20 and 2026-10-21); the stamps (two on 2026-10-24, with a stated residual); `CoreFocus` (three on 2026-10-25, plus the null-foreground regression); the listener's out-of-time judging (six on 2026-10-20); the application name (two in two days). Every chain but the last two is a disagreement between two processes' copies of one fact being tuned rather than removed.
 
 ## Where state is duplicated, and how the copies disagree
 
@@ -202,7 +202,7 @@ If Dickson keeps today's exact judging, the hole closes only by not dropping a r
 
 ### One time unit
 
-Every observation stamped in microseconds from one clock read, in the listener, the outposts and the app's focus-now answer, with the millisecond field derived from it on the wire and never compared. `observed_no_earlier` then compares one number and is a total order. Removes the mixed case the review left in f2d19387.
+Every observation stamped in microseconds from one clock read, in the listener, the outposts and the app's focus-now answer, with the millisecond field derived from it on the wire and never compared. `observed_no_earlier` then compares one number and is a total order. Removes the mixed case of stamps in two units, which a review left in f2d19387.
 
 ### Smaller merges, none urgent
 
@@ -234,7 +234,7 @@ No call into any application is added on the steady-state focus path. The gap's 
 ## Comparison
 
 - Today's design: meets every requirement; about ninety mechanisms, half of them reconciling three copies of the focus and two routes; seven patch chains in six days, each tuning a disagreement between copies; one correctness hole in the repeat drop; two clocks and four drop classes on the wire for one wait.
-- A one-process host or a listener holding every UIA registration: rejected by Dickson on 2026-10-20 and in option (b1) on measured grounds (the hung-window hold on every application's UIA events; blast radius), not reopened here, and nothing found this time is new evidence.
+- A one-process host or a listener holding every UIA registration: rejected by Dickson on 2026-10-20 on measured grounds (the hung-window hold on every application's UIA events; blast radius), not reopened here, since the study found no new evidence.
 - The outposts holding the focus registration: ruled out by E-cost and the hung-window hold on every outpost.
 - The present shape with the four removals above: the same requirements met, about twenty fewer mechanisms, three of the eleven disagreements gone (the gap's, the verdicts' effect on the gap, and the repeat hole), one wire protocol simpler, and the remaining reconciliations each the only one of its kind: the marker for order, the hold for the hand-over, the stamps for staleness, the node-id namespace for incarnations.
 

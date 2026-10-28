@@ -1,6 +1,6 @@
 # The caret and selection rework
 
-Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The caret and selection rework"). The study below them was made the same day, read-only. Read: the description of the model as built at the end of this document, `docs/architecture.md` (D14 as amended), `docs/design/key-holding.md`, `docs/design/wake-ups.md`, `docs/parity/text.md` and `input.md`, `docs/nvda/editable-text-and-terminals.md`, `docs/performance.md` (the caret entries), `docs/crates/verbatim-core.md` and `verbatim-outpost.md`; the code in `verbatim-core` (`editing.rs`, `reduce.rs`, `state.rs`), `verbatim-outpost` (`text/mod.rs`, `outpost/text_reads.rs`, `outpost/worker.rs`, `outpost/intake.rs`, `outpost/outbound.rs`, `outpost/held.rs`), `verbatim-model/src/text.rs`, `verbatim-uia-rops/src/caret.rs`, `verbatim-input/src/scripts.rs`; the mockapp and Core test names; NVDA's `editableText.py` 417 to 471, `behaviors.py` 331 to 349, `window/edit.py` 1068 to 1084, `UIAHandler/__init__.py` 902 to 917; and the 79 commits of this month on these files, read by their messages. Terminals are out of scope except where the mechanism is shared.
+Status: scope and order of work agreed by Dickson on 2026-10-25, to be built in a session of its own (`docs/roadmap.md`, M4, "The caret and selection rework"). Terminals are out of scope except where the mechanism is shared.
 
 ## What was found
 
@@ -26,7 +26,7 @@ The shape is right: a caret key is held while the focus's outpost reads the care
 6. The measurements and new tests listed under "What must be measured before trusting it" below.
 7. The documents: D14, the key-holding design, the parity entries on text and input, and the crate guides describe the result.
 
-The study follows, then the description of the model as built before the rework. Where the study's options differ from the decisions above, the decisions hold.
+The study follows, then the description of the model as built before the rework, which the study calls the research. Where the study's options differ from the decisions above, the decisions hold.
 
 ## Terms
 
@@ -95,7 +95,7 @@ Core's words:
 - The superseded slot: one query id whose late answer's selection change is still spoken (505e3ad8, after Control+Backspace then Backspace lost "alpha unselected"). Patch; its one-slot limit is the recorded three-key loss.
 - The focus's caret carried in the focus message and taken silently for a duplicate (88541265, 2026-10-22). Root.
 
-Beside these, the typed word's forgetting rules (2f9687ba) and typing echo from the hook touch the caret path only by cancelling and superseding; I leave them out of the count.
+Beside these, the typed word's forgetting rules (2f9687ba) and typing echo from the hook touch the caret path only by cancelling and superseding; they are left out of the count.
 
 Of the twenty-five: twelve are root elements or parity ports; three are bookkeeping; ten are patches, and seven of those ten (the two histories, the newest-by-time rule, the time-zero record, `since` with its line restriction, the report numbers with the baseline-report comparison, the covered signal) exist for the race between a key's path and the application's event, which holding closed on 2026-10-22 for every held key.
 
@@ -129,9 +129,9 @@ Stated as its mechanisms, each with the constraint or failure it answers.
 
 - Holding, deferral, the wait for the key ahead and its bound: unchanged (the first constraint; Shift+Right then Right; the ten-second repeat). The caret table is held as now, plus, if Dickson chooses, a closed list of editing chords (Control+Z, Control+Y, Control+X, Control+V, Escape) so that every key Verbatim speaks for has a before read; other keys outside the table are judged from the last read at the request's arrival.
 - One request per key: read the caret before the key, with the key's unit, and open the watch with that read as the baseline. The reply is the before read; Core passes the key on; the watch answers later with a second reply (one request, two answers; the request can carry both query ids). Reason: the before read is the first check (nothing has happened yet), so the separate watch request and its read are one round trip and one message per key for nothing. The outpost pins a copy of the last read as the key's baseline at that moment, so "before" is defined by construction, not found by time.
-- One last read per node in the outpost, replaced by every read: focus, caret event, before read, answering check, and Verbatim's own select or caret move. Reason: only the outpost can hold provider positions (the fifth constraint); one record with one rule replaces the eight-read history, the kept selection, its three modes and its numbering. For a key that was not held, the last read at the request's arrival is the baseline (decision 3 says whether the eight-read history stays as a fallback until uiAccess).
+- One last read per node in the outpost, replaced by every read: focus, caret event, before read, answering check, and Verbatim's own select or caret move. Reason: only the outpost can hold provider positions (the fifth constraint); one record with one rule replaces the eight-read history, the kept selection, its three modes and its numbering. For a key that was not held, the last read at the request's arrival is the baseline (the decisions remove the eight-read history now, with no fallback until uiAccess).
 - Every read reports facts: whether the caret and the selection differ from the key's baseline (evidence), how the selection changed from the last read (the words), whether the text changed since (general terms), the caret's line and the key's unit as they are now and as they were in the baseline, and whether the caret is on the baseline's line. All compared inside the one remote program, as `CaretQuery` already does with `since` and `previous_selection`; the baseline's selection is a third pair of ends, equal to the last read's in the common case. Reason: the third and fifth constraints. Core then needs no history and no prediction: what Backspace removed is `removal` over the before and after lines the answer carries, Delete's unit is the before unit against the after unit, "something was selected before" is the baseline's selection.
-- The evidence judgment stays in the outpost, made from those facts, because it also tells the outpost when to stop reading on text changes (decision 7). It is named in D14 as the one read-time decision outside Core.
+- The evidence judgment stays in the outpost, made from those facts, because it also tells the outpost when to stop reading on text changes (the decisions above). It is named in D14 as the one read-time decision outside Core.
 - The recheck: unchanged (non-atomic reads).
 - General terms: unchanged (the note, the waiting value change behind the sync, the old range's text).
 - Core speaks from every read it accepts: a report's changes at once, or held in `heard` while a key waits on the node; a before read's changes at once, before the key's words; a key's answer's words then its changes; a late or superseded answer as a report. Reason: compare-once means each change is said by whoever receives it, so no slot is needed and no change is lost.
@@ -141,7 +141,7 @@ Stated as its mechanisms, each with the constraint or failure it answers.
 - The ten-second bound and the idle barrier's wait on an open watch: unchanged bookkeeping.
 - Event coverage (`caret_read_since`) and the system caret's dropping: unchanged bookkeeping.
 
-Counted at the inventory's granularity: of the twenty-five, eight go (Core's history, the time-zero record, `since` with its line restriction, the covered signal, the three baseline modes, the selection kept after Verbatim's own move as a separate rule, the merging clause pending its check, and the superseded slot), one is added (the baseline's life following Core's focus), and the outpost's history stays only until uiAccess: seventeen, eighteen in the interim.
+Counted at the inventory's granularity: of the twenty-five, eight go (Core's history, the time-zero record, `since` with its line restriction, the covered signal, the three baseline modes, the selection kept after Verbatim's own move as a separate rule, the merging clause pending its check, and the superseded slot), one is added (the baseline's life following Core's focus), and the outpost's history goes too (the decisions above): seventeen.
 
 ### How it handles each failure the current mechanisms were added for
 
@@ -168,7 +168,7 @@ Counted at the inventory's granularity: of the twenty-five, eight go (Core's his
 ### Per-key costs
 
 - Calls: a held key through UIA makes two round trips (the before read, the answering check) instead of three; classically two reads of 8 and 15 calls instead of 8, 15 and 15; in a classic edit control 5 and 6 window messages instead of 5, 5 and 6. The before read now also compares the selection when one exists on either side (in the program at no round trip; classically two comparisons and the change texts, as a caret report pays today) and reads the key's unit when it is a word (one unit read in the program for Control+Delete and Control+Backspace; a character is cut from the line). A typed character's report costs what it costs today.
-- Messages and wake-ups: one request fewer per held key (one pipe write in Core, one wake of the outpost's pipe reader, one worker item), and the first check's round trip with its worker wake-ups gone. Against the measured 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time per held key, I estimate 2 to 4 fewer wake-ups; it must be measured, not estimated.
+- Messages and wake-ups: one request fewer per held key (one pipe write in Core, one wake of the outpost's pipe reader, one worker item), and the first check's round trip with its worker wake-ups gone. Against the measured 8 to 13 wake-ups and 0.7 to 1.5 ms of processor time per held key, the estimate is 2 to 4 fewer wake-ups, to be measured, not estimated.
 - Latency: the answering read is the same read at the same moment, so key to first sound should be unchanged; the hold may shorten by the time Core spent emitting the second request.
 - Bytes: the answer carries the before line (as long as the line, usually under a hundred bytes; capped at the chunk's 64 KB). Core's history no longer clones the selection's start line per report.
 - Memory: one last read and one pinned baseline per node, against eight reads and a kept selection in the outpost and eight timed reports in Core.
@@ -176,7 +176,7 @@ Counted at the inventory's granularity: of the twenty-five, eight go (Core's his
 
 ### What it removes
 
-In Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_moved_by_core`'s time-zero record, `PendingCaret::{deleted, before, selected_before, before_unknown}` and `deleted_text`/`compared_text` (their work moves to comparing the answer's before and after), `superseded_caret` and `superseded_reply`, `CaretWatch::{since, compare, pressed_at_ms}` (the press time stays on the input for `later_key`). In the outpost: `CaretSeen`, `REMEMBERED_CARETS` and the search by press time (or kept as the un-held fallback until uiAccess, by decision 3), `KeptSelection::report` and `NodeAnchors::reports`, `LastSelection` and `CaretFor::Focus`'s restart, `Baseline::{selected, known_line}` with `compared_already`, `Signal::covered`, the separate `AwaitCaret` request and the watch's first check, `forget_selection` at a focus, and `MoveCaret`'s clearing of the history. Probably the outbound's not-across-a-reply clause (decision 8).
+In Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_moved_by_core`'s time-zero record, `PendingCaret::{deleted, before, selected_before, before_unknown}` and `deleted_text`/`compared_text` (their work moves to comparing the answer's before and after), `superseded_caret` and `superseded_reply`, `CaretWatch::{since, compare, pressed_at_ms}` (the press time stays on the input for `later_key`). In the outpost: `CaretSeen`, `REMEMBERED_CARETS` and the search by press time, `KeptSelection::report` and `NodeAnchors::reports`, `LastSelection` and `CaretFor::Focus`'s restart, `Baseline::{selected, known_line}` with `compared_already`, `Signal::covered`, the separate `AwaitCaret` request and the watch's first check, `forget_selection` at a focus, and `MoveCaret`'s clearing of the history. The outbound's not-across-a-reply clause, once verified (the decisions above).
 
 ### What stays that someone might expect to go
 
@@ -189,7 +189,7 @@ In Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_
 
 - Today's design: meets the requirements but carries ten patches, seven of them for a race that holding closed; two known losses (the repeated focus, the three-key burst); nine places of state; three round trips and two requests per held key.
 - The research's recommendation alone (baseline lifetime follows Core's focus; superseded answers update the caret): fixes the two losses with two small changes and leaves the two histories, three modes, two requests and the stale-clock disagreement. A correct minimum step, not a simplification.
-- This design: the research's two changes, plus one baseline, one request, one stamp, no histories, no prediction, no slot. Fewer calls and messages per key. It undoes four commits of this month and reshapes a fifth, each for a cause holding removed. The one judgment outside Core is named and bounded.
+- This design: the research's two changes, plus one baseline, one request, one stamp, no histories, no prediction, no slot. Fewer calls and messages per key. It undoes four commits of October 2026 and reshapes a fifth, each for a cause holding removed. The one judgment outside Core is named and bounded.
 - The D14-literal variant (the outpost reports every read's facts and Core judges evidence): rejected for this round. In the common case it costs nothing more, but the outpost must know when a key is answered to stop reading on text changes; without that it reads twice per typed character after any caret key, or needs a message per key. If uiAccess or a later protocol gives a cheap "key answered" signal, revisit.
 
 ### What must be measured before trusting it
@@ -199,9 +199,9 @@ In Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_
 3. The stale caret workloads (`measure_stale_caret_text_box`, `measure_stale_caret_notepad`, `measure_stale_caret_conhost`): 0 of 60 misjudged, as at the merge.
 4. Wake-ups and processor time (`cargo xtask trace scenario` at info level) over `measure_keys_text_box`, `measure_keys_windows_terminal` and a Notepad key workload, before and after: expect fewer worker items and outpost pipe-reader wakes per key; latency ledger P50 and P95 key to first sound unchanged.
 5. Scenarios: every `text_box_*`, `notepad_*`, `wpf_password`, `settings_search_suggestions` and `settings_search_suggestions_reentered`, and `terminal_key_timing`, since the key protocol is shared with terminals.
-6. New tests, one per behaviour: mockapp, a focus reported twice with Control+A between, Core dropping the second, "N characters selected" said once; Core, three keys whose first answer arrives after the third press, the first's change said; Core, a report's change arriving after a key's reply said once (decision 8); mockapp, a mouse selection between the before read and the key, said before the key's words; the outpost, a key whose baseline's selection differs from the last read's, evidence by ends.
+6. New tests, one per behaviour: mockapp, a focus reported twice with Control+A between, Core dropping the second, "N characters selected" said once; Core, three keys whose first answer arrives after the third press, the first's change said; Core, a report's change arriving after a key's reply said once (the merge clause's removal); mockapp, a mouse selection between the before read and the key, said before the key's words; the outpost, a key whose baseline's selection differs from the last read's, evidence by ends.
 
-## Follow-ups outside this decision, noticed on the way
+## Follow-ups outside this decision
 
 - A typed character's caret report costs Core's pipe reader and reducer a wake each; whether a report that changed nothing Core needs could stay in the outpost is a wake-up question, not a caret one.
 - A kept selection with no text, from the by-parts select path, is not checked for its range no longer holding its text (`docs/parity/text.md`, "Not yet built"); the last read would store text from every path that reads it.
@@ -211,9 +211,9 @@ In Core: `caret_history`, `CARET_HISTORY`, `TimedCaret`, `caret_before`, `caret_
 
 ## The model as built, before the rework
 
-Written 2026-10-25 from the code at c0f80a7e. Read-only research; nothing was built or run. Terminals are left out.
+Describes the code at c0f80a7e, of 2026-10-25. Terminals are left out.
 
-### The decision, and my recommendation
+### The decision, and the recommendation
 
 The question: should D14's rule "a judgment uses the focus Core holds, never a copy of what the outpost last reported" also cover the outpost's per-node selection baseline, which would mean Core sending its selection with every caret request?
 
@@ -314,7 +314,7 @@ The recorded differences:
 
 - A key that moves nothing is silent, where NVDA speaks the unit after 100 ms (Dickson, 2026-10-08).
 - A caret event alone is not evidence when the caret was known.
-- Every intermediate change of two merged reports is spoken, where NVDA's event limiter keeps only the last (pending your acceptance).
+- Every intermediate change of two merged reports is spoken, where NVDA's event limiter keeps only the last (pending Dickson's acceptance).
 - Through UIA, a selection typed over or deleted says "selection removed" where NVDA says "x unselected" (Dickson, 2026-10-22).
 - Selections are counted in grapheme clusters, not code points.
 - Keys outside the caret table speak their evidence.
@@ -347,13 +347,13 @@ The sequence:
 4. Core drops the focus as a repeat and says nothing.
 5. The watch's answer compares with the already-replaced kept selection, so it has no change. Control+A says nothing.
 
-NVDA, which drops the duplicate before `initAutoSelectDetection`, would say "N characters selected". The window is small (a few milliseconds of unjudged focus, or the gap read's up to a second), and I have not reproduced it. The point is structural: the baseline's lifetime is keyed on the outpost's own report rather than on the focus Core holds.
+NVDA, which drops the duplicate before `initAutoSelectDetection`, would say "N characters selected". The window is small (a few milliseconds of unjudged focus, or the gap read's up to a second), and it has not been reproduced. The point is structural: the baseline's lifetime is keyed on the outpost's own report rather than on the focus Core holds.
 
 #### Decisions made in the outpost
 
 - When the baseline starts over: the outpost's own focus report. Per D14 this belongs to Core's focus. This is the one real misplacement.
-- Whether a key has its evidence. The baseline prefers the outpost's own reports over Core's `since`. This is a read-time judgment that cannot wait for Core, and with key holding the two agree. I would leave it.
-- How the selection changed, and whether that is in general terms. These are facts found while reading: positions compared inside the provider, plus the text of the changed ranges. Core chooses the words. I would leave them.
+- Whether a key has its evidence. The baseline prefers the outpost's own reports over Core's `since`. This is a read-time judgment that cannot wait for Core, and with key holding the two agree, so it stays.
+- How the selection changed, and whether that is in general terms. These are facts found while reading: positions compared inside the provider, plus the text of the changed ranges. Core chooses the words, so they stay in the outpost.
 
 ### The options for the selection baseline
 
@@ -384,7 +384,7 @@ The result would be two baselines again, Core's for keys and the outpost's for e
 
 What changes: the outpost sends the raw selection, and Core works out the difference.
 
-What it costs: Core cannot order two positions in different chunks without the provider, and it cannot read the text between them. That rules out Shift+Down across lines, Control+A, and every selection longer than the lines Core already has. It also cannot read what an old UIA range holds after an edit. Each case it cannot settle would need another round trip (a `ReadRange`) on the key path: a few milliseconds and one more wake-up each. And general terms could not be judged at all. I reject this option.
+What it costs: Core cannot order two positions in different chunks without the provider, and it cannot read the text between them. That rules out Shift+Down across lines, Control+A, and every selection longer than the lines Core already has. It also cannot read what an old UIA range holds after an edit. Each case it cannot settle would need another round trip (a `ReadRange`) on the key path: a few milliseconds and one more wake-up each. And general terms could not be judged at all. This option is rejected.
 
 #### Core names the report it accounted for (a variant)
 
@@ -409,7 +409,7 @@ What it costs: no new messages and no new wake-ups. A new focus has nothing kept
   - The text selection's baseline, like the provider's ranges, is held where the reads are made, and is replaced at every comparison.
   - Core decides when it starts over (at the focus Core holds) and whether a compared change is spoken.
 - `docs/crates/verbatim-outpost.md` ("Text and caret") and `docs/crates/verbatim-core.md` should list the selection state on each side, and which side is authoritative for what. The outpost owns what the selection was at the last comparison. Core owns what the caret and selection are now, for prediction, review and held anchors.
-- Optional, your call: replace the single `superseded_caret` slot with the few query ids of every superseded key on the node, so no compared change is lost in a burst. NVDA loses these too, so this goes beyond parity.
+- Optional, for Dickson to decide: replace the single `superseded_caret` slot with the few query ids of every superseded key on the node, so no compared change is lost in a burst. NVDA loses these too, so this goes beyond parity.
 
 Follow-ups noticed, not part of this decision:
 
