@@ -1,2870 +1,1318 @@
 # verbatim-outpost
 
 The per-application outpost process, the focus listener, the Core-side
-supervisor, and the private protocol between them (architecture sections 1
-and 4, decisions D9 and D13, implemented in full: one outpost per
-application, many at once, with a dedicated listener that detects focus
-and the outposts announcing it).
+supervisor, and the private protocol between them: one outpost per
+application, many at once, with a dedicated listener that detects focus and
+the outposts announcing it. The reasons for this shape are in
+`docs/architecture.md`, section 1 ("Outposts", "The focus listener (D13)")
+and in `docs/design/focus-pipeline.md`.
 
-An outpost's target application is set once and never retargeted: the pid
-arrives on its command line (`--target-pid`), or, for a spare started
-before it had an application, in the supervisor's `Assign`; its
-`WinEvent` hooks install once, when it has its application, its UIA
-registration once during construction, and there is no rebind path.
-Outposts stay alive when their application loses foreground.
+An outpost's application is set once: by `--target-pid` on its command
+line, or, for a spare, by the supervisor's `Assign`. Its `WinEvent` hook
+installs once, when it has its application, its UIA registration once
+during construction, and there is no rebind path. Outposts stay alive when
+their application loses the foreground.
 
 ## How focus reaches an outpost
 
-Focus detection is a separate process (decision D13). The focus listener —
-the same `verbatim-outpost.exe` run with `--listener` and no target pid —
-holds the one desktop-global UIA focus registration and the global MSAA
-hooks for focus, foreground, and menu-popup opens (process id zero). Its
-callbacks never make a cross-process call: they read only what each event
-carries (a UIA element's cached properties, an MSAA event's raw address)
-plus the hang-safe `GetWindowThreadProcessId`, and forward each captured
-fact to Core. A UIA focus is the
-exception: the listener judges and reads it from the event's own element,
-on a thread for the element's application (below). The supervisor routes
-every fact to the target application's own outpost, which acquires,
-arbitrates, enriches, and announces it exactly as it does for the events
-it still hooks itself.
+The focus listener is `verbatim-outpost.exe --listener`, with no target. It
+holds the one desktop-wide UIA focus registration, the desktop-wide UIA
+event group, and the global MSAA hooks. Its callbacks never make a
+cross-process call: they read what each event carries and the hang-safe
+`GetWindowThreadProcessId`, and forward each fact to Core. A UIA focus is
+the exception: the listener judges and reads it on a thread for the
+element's application (below). The supervisor routes every fact to its
+application's outpost, which handles it as it handles its own hook's
+events.
+
+An event the listener receives before its desktop-wide UIA subscriptions
+are all installed is dropped (`Outgoing::uia_event_process` in
+`crates/verbatim-outpost/src/listener.rs`), as NVDA drops events before its
+global handlers are registered; Verbatim's start asks the foreground
+application's outpost for its focus instead (`ShellCommand::FocusNow`).
 
 ### The hand-over of an application's MSAA events
 
-Following `docs/design/focus-pipeline.md` (section
-12.4, and decision 2 of its section 15), an outpost's own process-scoped
-hook takes in its application's MSAA focus, foreground, menu-popup,
-alert, and tooltip events too, so every MSAA event of the application
-reaches it by one route, in the order Windows raised them. The listener
-forwards those events only for an application whose outpost's hook is not
-yet in, so that an application's first events start its outpost. The
-hand-over, step by step:
+An outpost's own process-scoped hook takes in all its application's MSAA
+events, focus, foreground, menu-popup, alert, and tooltip included, so they
+reach it by one route in the order Windows raised them
+(`docs/design/focus-pipeline.md`, section 12.4). The listener forwards
+those events only until the outpost's hook is in, so that an application's
+first events start its outpost:
 
 - An outpost reads the `WinEvent` clock (`verbatim_ia2::event_clock`)
-  before it installs its hook, and says `Ready` once the hook is in.
-- On `Ready` the supervisor sends the listener
-  `SupervisorToOutpost::HookInstalled`, with the application and the
-  outpost incarnation. The listener reads the clock, forwards none of that
-  application's `WinEvent` facts raised after that tick, still forwards
-  those raised at or before it however late they reach its hook, and
-  queues `OutpostToSupervisor::ForwardingEnded`, naming the tick, behind
-  every fact it has queued. The supervisor relays it to that outpost
-  incarnation, in order behind the facts, as
-  `SupervisorToOutpost::ForwardingEnded`; one for an incarnation that has
-  gone is dropped.
-- Every `WinEvent` fact carries the thread that raised it and when
-  (`WinEventStamp`, from `idEventThread` and `dwmsEventTime`), whichever
-  hook took it in. The outpost matches the two hooks' copies of an event by
-  counting (`outpost::handover`): a copy whose identity, its kind, address,
-  thread, and time, the other source has an unmatched copy of is dropped,
-  and any other is handled and counted. Two identical events raised by one
-  thread in one tick are two copies from each source, matched pair by
-  pair, so both are handled; nothing that came from one source alone is
-  dropped. Each copy is queued under the hand-over's lock, so the intake
-  receives the copies in the order they were judged. A listener copy
-  raised before the outpost's first clock reading has no twin and is not
-  counted; after `ForwardingEnded`, only copies raised between the two
-  readings are counted, a handful at most, and only for
-  `handover::TWIN_BOUND` (15 seconds) after it arrived, by the outpost's
-  monotonic clock, after which nothing is counted again.
-- When an application's ready outpost ends, for any reason, the
-  supervisor sends the listener `SupervisorToOutpost::HookRemoved`, and the
-  listener forwards that application's events again. A listener that
-  replaces another is told on its command line (`--hooks-in`) which
-  applications have outposts with their hooks in; it forwards none of
-  their events and first sends each such outpost a `ForwardingEnded`, which
-  ends a hand-over the listener it replaces left unfinished. Messages for
-  the listener while its launch is at work are held, in order, and written
-  once it has a writer.
+  before it installs its hook, and says `Ready` once it is in.
+- On `Ready` the supervisor sends the listener `HookInstalled` (application
+  and incarnation). The listener reads the clock, forwards none of that
+  application's facts raised after that tick, still forwards those raised
+  at or before it, and queues `ForwardingEnded`, naming the tick, behind
+  every fact queued; the supervisor relays it to that incarnation, or drops
+  it if the incarnation has gone.
+- Every `WinEvent` fact carries its raising thread and time
+  (`WinEventStamp`). The outpost matches the two hooks' copies by counting
+  (`outpost::handover`): a copy whose kind, address, thread, and time the
+  other source has an unmatched copy of is dropped, any other is handled
+  and counted, so nothing from one source alone is dropped. Copies are
+  queued under the hand-over's lock, in the order judged. Only copies
+  raised between the two clock readings are counted after
+  `ForwardingEnded`, and only for `handover::TWIN_BOUND` (15 seconds).
+- When a ready outpost ends, the supervisor sends the listener
+  `HookRemoved`, and the listener forwards that application's events again.
+  A replacement listener gets `--hooks-in`, forwards none of those
+  applications' events, and first sends each such outpost a
+  `ForwardingEnded`. Messages for the listener while it launches are held
+  in order.
 - A console window's events reach the console host's outpost by its own
-  hook, which Windows scopes by the event's thread, the console host's,
-  as the listener routes them (below).
+  hook, which Windows scopes by the event's thread.
 
 ### A UIA focus, judged and read by the listener
 
-A UIA focus (`docs/design/focus-pipeline.md`,
-section 12, option (b), and decisions 1, 3, and 9 of its section 15) is
-judged and read by the listener, since a UIA element cannot be handed to
-another process and the listener is the one process that receives the
-event's own element:
+A UIA element cannot be handed to another process, so the listener, which
+receives the event's own element, judges and reads a UIA focus
+(`docs/design/focus-pipeline.md`, sections 12, 16, and 18;
+`docs/design/listener-without-connections.md`, sections 2 and 3).
 
-- The listener's focus registration and its desktop-wide event handler
-  group are shaped as `verbatim_uia::ListenerEvent` (`Part::shaped`): NVDA's
-  base cache request, with `IsDialog` and
-  `IsTogglePatternAvailable` added (`docs/design/uia-shapes.md`, decision
-  6), so the events' elements arrive with their process, window, runtime
-  id, control type, name, keyboard focus, NVDA's other base properties,
-  and what refines a role, and every callback receives a
-  `Cached<ListenerEvent>`. The role is read through `RoleCore`, refined
-  for dialogs and toggle buttons as every other read refines it, which
-  departs from NVDA's base request at the cost of two properties per
-  desktop-wide event; `ListenerEvent::parts` gives the role, the name,
-  and the focused state, nothing else. The reading thread takes the
-  value, states, and details from its read of the sender, and an outpost reads a selected item it was sent from its
-  focus's subtree (`Worker::fresh_selection`); a menu opening and a
-  notification are reported from the role and name.
-- The listener's focus callback makes no call. It sends the element's
-  application a marker (`DeliveredFact::UiaFocusMarker`, numbered by the
-  listener) and queues the element, as an `Agile<ListenerEvent>`, for that
-  application's reading thread (`focus_read::Readers`): one thread per
-  application, created on its first focus event, and ended once the
-  events waiting for it are read when the supervisor's `HookRemoved` tells
-  the listener the application's outpost has ended
-  (`Readers::outpost_ended`), or at the listener's shutdown, so it keeps
-  its last focus for as long as the application has an outpost
-  (`docs/design/focus-pipeline.md`, section 16.6). A later event of an
-  application still running starts a new thread.
-- The thread judges and reads each event in arrival order
-  (`focus_read::FocusReader::read`, which takes the sender as the
-  `Cached<ListenerEvent>` it resolves, as `FocusReader::check_fact` does
-  for a selection or notification, and reads the window, class name and
-  framework of its judgment and log from that cache). An event from a hung
-  window or the console window's own element is dropped before any call;
-  one on a shell window that only stages a switch is read and reported,
-  and Core drops it (`docs/crates/verbatim-core.md`, the rules for
-  particular applications' windows). Then the classic read
-  (`verbatim_uia_rops::focus_ancestry_classic`, with `refresh`, and with
-  the nearest window the checks found as `nearest_window`), every call on
-  an element the listener holds, with no remote operation and no
-  connection to any window (`docs/design/listener-without-connections.md`,
-  sections 2 and 3, step 8): when the element has the runtime id of the
-  focus the thread read before, whether that earlier element still has
-  the keyboard focus (NVDA's duplicate evidence, sent as
-  `UiaFocusRead::same_as_last`); the element's value, states, and details
-  afresh, its name and role staying the event's; a list's or tab control's
-  selected child, and a combo box's without the `Value` pattern, whose
-  first selected item, like a looping selector's (a time picker's list),
-  is sent as its value and not as a selected child, with
-  `UiaFocusRead::value_from_selection` set, as NVDA reads such a combo box's
-  value (`ComboBoxWithoutValuePattern`); and its raw-view ancestors, one tree walker step each,
-  each with its own window handle through the client side's window proxy,
-  the console window's title included, up to the first one the thread
-  knew, the rest reused from the read before, or to the desktop root, as
-  NVDA's raw-view walk does. The element's keyboard focus and nearest
-  window, read by the checks just before, are not asked again. The walk
-  never steps across the process boundary: an element whose window's
-  parent window, or visible owner for a top-level window, another process
-  serves (`verbatim_uia::parent_across_process_boundary`), as the Settings
-  page's content inside `ApplicationFrameHost`'s frame, is the last
-  ancestor it reads, and a step that reaches another process's window, as
-  an owner shown between the check and the step makes it, is not kept
-  (section 3, step 11). A menu item's legacy MSAA state is one live read
-  after the walk. A read that fails
-  reports the focus from its event, its ancestors unknown, whatever the
-  event's cache says of its keyboard focus, which the checks before the
-  read have already judged, as NVDA lets a focus through whose read
-  fails.
-- The readers judge a repeat against the focus Core holds, as NVDA
-  judges one against its one last queued focus (decision D14, "Where the
-  rules run"; section 16.3 of the focus-pipeline design), by the rule
-  `verbatim_core::focus_rules::repeats_focus` defines. They share the
-  elements of the focuses they accepted (`focus_read::HeldElements`), by
-  how Core has judged them: Core tells the listener of every focus event it
-  judges, taken or refused, and every change of its focus
-  (`SupervisorToOutpost::CoreFocus`), by the trace of the event the focus
-  came from, which for a UIA focus is the listener's own. An event whose
-  sender `CompareElements` equates with the element of the focus Core
-  holds, while that element's `HasKeyboardFocus` reads true, is dropped,
-  its marker resolved as a drop; a comparison or a read that fails lets it
-  through. While a focus the listener accepted waits for Core's
-  judgement, Core's focus can yet become it, so nothing is a repeat and no
-  comparison is made; the extra read that costs, of a repeat that comes
-  before Core's judgement, is dropped by Core's own duplicate rule. A
-  focus Core refused, as it refuses a shell window that only stages a
-  switch, never stands for its focus, and once Core holds a focus no read
-  of the listener's gave it, as an MSAA focus or a foreground change,
-  nothing is compared. A menu opening is compared with the element of the
-  focus Core holds, as NVDA compares it with its focus object. Then the
-  acceptance test against the foreground window, the outpost's port of
-  it, defined once for both (`outpost::acceptance`), on the element's own
-  window or, one
-  call (`verbatim_uia::nearest_window_handle`), its nearest ancestor's: a
-  focus that fails is dropped before it is read and is never kept for
-  Core's judgement, which only a focus that passed and was read is. The
-  outpost does not test a UIA focus itself. Each read is also
-  logged at debug level: the sender's runtime id, class name, framework,
-  and own window handle, and the comparison's result; the framework is a
-  call made only while debug logging is on. Each thread's own focus before
-  still serves the ancestor read's stop and `same_as_last`, the evidence
-  that a runtime id still names the element it named, by which the
-  outpost gives a reused runtime id a new node and keeps the element it
-  found for a node.
-- The read (`DeliveredFact::UiaFocusRead`, a `UiaFocusRead`) or the drop
-  (`DeliveredFact::UiaFocusDropped`) follows the marker through
-  verbatim.exe, never coalesced and never dropped on the way: the
-  listener queues them unkeyed, and the supervisor's writer lets them
-  through a full queue in order. A drop says, in `evidence`
-  (`DropEvidence`, set by `focus_read::drop_evidence` from the drop's
-  reason and the event's kind), what it tells an outpost waiting for a
-  UIA focus: `Focus`, a drop that ends the wait, either a verdict of
-  NVDA's checks on the event (`focus_read::VERDICTS`: its window hung, not
-  related to the foreground window, the console window's own, or a shell
-  window that only stages a switch, or a repeat of the focus that still
-  has the keyboard focus, or the comparison of a menu opening with the
-  focus failed) or the listener giving up on the application
-  (`focus_read::GAVE_UP`: the read did not return in time, waited too
-  long behind its application's abandoned reads, ran out of time before
-  its window was looked up or judged, or its event said it lacked the
-  keyboard focus when the read's time was up); `Inconclusive`, any other
-  drop of a focus, which could not establish where the focus is (its
-  element no longer with the keyboard focus, its window not using UIA,
-  which is another window than the copy's, the read abandoned when the
-  user moved on, no thread to read it, the listener shutting down, its
-  element not kept for the read or not resolved, its reading thread
-  without a UIA client, or a newer event of its element replacing it);
-  `NoWindow`, its sender with no window above it
-  (`focus_read::NO_WINDOW`), as a sender gone before its read has; or
-  `NotFocus`, not a focus at all. Two of these are judgement calls of
-  their own (Dickson, 2026-10-21): the drop whose event said it lacked
-  the keyboard focus when the read's time was up ends the wait, and the
-  one a newer event replaced is inconclusive. A read says, in `focus`,
-  whether it was a focus's rather than a menu opening's. Both go on the pipe as JSON,
-  the field `"evidence"` on each drop and `"focus"` on each read; the
-  listener, the supervisor and the outposts build from one `protocol.rs`,
-  so neither needs a version.
-- A `WinEvent` focus copy whose window uses UIA is dropped by the worker
-  for its UIA focus to report, and the worker waits for that UIA focus
-  (`outpost/gap.rs`, `docs/design/listener-without-connections.md`,
-  decision 11): it opens a gap, unless a UIA focus was observed no earlier
-  than 100 ms before the copy, which a focus's UIA read from the listener
-  closes, as do a focus marker's drop that ends the wait (`Focus`), the
-  end of the listener's reads, a focus (not a foreground change) the
-  outpost reports observed after the copy, and a focus of another
-  application's that Core holds, observed after it. That last one reaches
-  an outpost in Core's notice of its focus (`CoreFocus`), which an
-  outpost receives when Core judges one of its focus events or its focus
-  moves to or from the outpost's application, and the worker reads it
-  only when it wakes for the gap, so it saves a read, never a wake-up. A
-  selection's, a notification's, or a menu opening's marker neither
-  closes a gap nor reads it, and nor does an `Inconclusive` drop, which
-  leaves the gap to its bound; one that is resolved after the bound has
-  passed lets the gap be read then, as any marker's resolution does, the
-  gap then being due. A read answers a copy only in the copy's top-level
-  window (`window::top_level_of`, a local call made for each copy and each
-  read), so a UIA focus in another window of the application, such as the
-  folder window a new File Explorer window was opened from, answers
-  nothing of it; a drop carries no window and is matched by its
-  observation alone, a limit (Dickson, 2026-10-21). A gap a drop or the
-  end of the reads closes is logged at debug, one line per close. The
-  gap is the worker's alone, without a lock, and a replacement worker
-  starts with none. While a marker waits,
-  the gap is not judged, whatever the worker wakes for. The intake hands
-  the worker, with each entry, the news of the focus markers it resolved
-  without a read (`MarkerNews`), under the lock `Intake::next_with_gap`
-  takes anyway, so a copy such a drop already answers opens no gap; and
-  `next_with_gap` gives the worker `Item::Wake` at the gap's bound,
-  `UIA_FOCUS_BOUND`, a second from the copy's observation by the
-  outpost's clock, or at once for news while a gap is open. Due, or at
-  once when a focus marker of it is dropped for `NoWindow`, the worker reads
-  the focus with the focus-now query's read (`read::focused_control_in`)
-  and reports it as a UIA focus, once per gap, logging it at info ("no
-  UIA focus followed a WinEvent focus in a UIA window"). That read makes
-  no call into the application when the focus window is no longer a
-  window, has a ghost window standing in for it, or is hung
-  (`window::event_window_unreadable`, local calls); and it reads again,
-  through the window's proxy, an ancestor that is a window's own element
-  read inside the provider without its handle, as the console host's
-  window is (`docs/uia-bugs.md`, "Inside a remote operation, conhost's
-  window has no handle or title"), one call, so the read reports the
-  window the listener's read would. The idle barrier's answer waits while
-  a gap is open, as it waits for a caret key's watch: until the bound, a
-  second after the copy's observation; while any marker waits for its
-  resolution then, a focus's, a selection's, a notification's or a menu
-  opening's alike, until it is resolved, which can take as long as the
-  listener's read, up to `focus_read::READ_DEADLINE` (11 seconds), a
-  marker queued behind its application's abandoned reads waiting up to
-  that deadline again, and each marker that follows while the gap is open
-  adding its own time; then the read, if the gap comes to one. For one
-  focus marker on an application that answers, that is about 12.2
-  seconds at most (the bound, the deadline, the relay's 146 ms at most
-  measured, and the read's milliseconds), within the harness's 15-second
-  idle timeout; a slower application can exceed it, and the harness's
-  idle timeout then fails the step, which is the right outcome. A settle
-  request (`Outpost::settle`) reads a gap that is due before it is
-  answered.
-- A read, its checks included, has one time budget, `READ_BUDGET`, 2
-  seconds, asked before each of its calls after the first, so at most the
-  call under way runs past it. The raw probe's wait, up to 3 seconds, is
-  not counted (`Budget`): the budget's end moves on by the time the
-  window's verdict took, so for a sender with a window of its own the
-  budget starts once the probe has answered. Once it has passed the read
-  makes no more calls, but still makes every one of NVDA's checks that
-  needs none: the native check takes the window's verdict when it is
-  known without a call, from the class lists or a kept verdict, and drops
-  the event only when the probe, and so perhaps the console check, would
-  be needed; the acceptance test and the refusals are local; and the
-  sender's keyboard focus is taken from the event's cached
-  `HasKeyboardFocus`, a sender whose cache does not hold `true` being
-  dropped. A live keyboard focus read that fails by UIA's transaction
-  timeout is judged the same way, from the cache; any other failure lets
-  the focus through. The
-  repeat check, which needs the last focus's keyboard focus read live, is
-  skipped, so a repeat out of time is reported, a deliberate divergence
-  from NVDA. A focus so judged is reported with what was read, the
-  event's cache giving the rest, its ancestors unknown.
-- Each call of a read is timed by the system's clock, one reading at the
-  start of each call, which ends the call before it
-  (`FocusQuery::before_call` names the classic walk's), and a call that
-  took longer than a second is logged at info with its name and its
-  elapsed milliseconds, so the slowest calls behind `READ_DEADLINE` can be
-  seen.
-- A watchdog abandons a thread whose read runs past `READ_DEADLINE`, 11
-  seconds: the budget, the raw probe's three seconds it does not count,
-  UIA's five-second transaction timeout for the call that can be under
-  way when the budget passes, and a second to spare.
- It bounds how long the application's
-  later events wait behind the read's marker, but not the call under way:
-  the transaction timeout bounds each provider call, not a UIA operation
-  (`docs/uia-bugs.md`, "A timeout bounds each provider call, not an
-  operation"), so an operation of several provider calls, such as the
-  nearest-window lookup, can run past it in an application that still
-  answers each of them, and its read is abandoned. The watchdog also
-  abandons a read, as NVDA's watchdog cancels a slow call
-  (`_shouldRecoverAfterMinTimeout`), once it has taken `MOVED_ON_GRACE`,
-  half a second, and the window in front belongs to the read's
-  application on another UI thread than the window being read, the
-  application being each window's provider process
-  (`verbatim_uia::provider_process`), so a console window is its console
-  host's, never its client's
-  (`outpost::window::front_is_another_thread_of_its_application`, local
-  calls, which an outpost's worker shares): File Explorer's folder
-  windows, the taskbar and the Alt+Tab switcher are one process on
-  several threads, and a focus on one must not wait behind a slow read
-  of another. Console host's Find, Properties and Defaults windows are on
-  the console window's real thread, which `GetWindowThreadProcessId`
-  reports as the client's for the console window, so a slow read of the
-  console window with one of them in front is abandoned after the half
-  second, as NVDA's watchdog abandons it; a console window whose host
-  cannot be read has no provider process and is never judged moved on
-  from or to. Only a focus's or a menu opening's read is judged so, and
-  only once the window being read (`focus_read::WatchedRead`, the read
-  as the watchdog watches it) is known: the event's cached window
-  handle, or for a sender that is not a window the nearest window once
-  the read's lookup has returned (`WatchedRead::learn`); a selection's
-  or a notification's check is never judged so, as NVDA makes those
-  checks on its callback threads, whose calls its watchdog never
-  cancels. The user is judged at the end of the grace only with
-  evidence that the user may have left the window: a foreground event
-  the listener's own hook delivers (`Readers::foreground_changed`,
-  called after the event is forwarded, so its observation time is taken
-  first) since the read's event was queued, or the window in front
-  already on another thread of the application when the read's window
-  became known, judged once then with the same local calls
-  (`WatchedRead::judge_front`: by the watchdog as the read starts for a
-  cached window handle, by the read's `learn` for a nearest window,
-  which wakes the watchdog only when the front is elsewhere). Past the
-  grace it is judged on each foreground event, until the deadline. A
-  read with no such evidence costs the watchdog no wake-up besides its
-  start's. The event is dropped with the reason "the user moved on from
-  a slow window" and the abandonment logged at warn. When the watchdog
-  abandons a read, either way, it marks the read abandoned, so that a
-  read that returns later keeps no focus for Core's judgement, and a
-  focus the read accepted just before waits for no judgement of Core's,
-  which is told the event was dropped (`Reading::abandoned`,
-  `HeldElements::abandoned`); the event is reported dropped, a new
-  thread takes the application's later events, and the abandoned
-  thread, once its call returns, lowers the application's count of
-  abandoned threads, says nothing and ends. With two of an
-  application's threads abandoned and still in their calls
-  (`ABANDONED_LIMIT`), it gets no new thread: its focus events wait, a
-  newer event of an element replacing its waiting one, and the first
-  abandoned thread whose call returns reads them. The bound is one per
-  application (`App::limit_reached`): `READ_DEADLINE` after its second
-  thread was abandoned, the watchdog drops every event waiting with the
-  reason "it waited too long behind its application's abandoned reads",
-  which resolves their markers, and each later event is dropped with it
-  as it is pushed, until an abandoned thread's call returns, which ends
-  the bound; so its outpost runs at most `READ_DEADLINE` behind the hung
-  reads, once. A focus waiting so counts for `Readers::focus_pending`
-  only when the menu opening asked about is its own application's (the
-  callback passes the opening's cached process id, no call).
-- When the listener is replaced, the supervisor tells every outpost,
-  ready or starting, that its reads have ended
-  (`DeliveredFact::UiaFocusReadsEnded`), so none waits on a marker the old
-  listener cannot resolve.
+- Shape. The registration and group are shaped as
+  `verbatim_uia::ListenerEvent` (`Part::shaped`): NVDA's base cache request
+  with `IsDialog` and `IsTogglePatternAvailable` added
+  (`docs/design/uia-shapes.md`, decision 6), so the role is refined as
+  every other read refines it. `ListenerEvent::parts` gives the role, name,
+  and focused state.
+- The callback makes no call. It sends the application a marker
+  (`DeliveredFact::UiaFocusMarker`) and queues the element as an
+  `Agile<ListenerEvent>` for the application's reading thread
+  (`focus_read::Readers`): one per application, created on its first event,
+  ended once its queue is read after `HookRemoved`
+  (`Readers::outpost_ended`) or at shutdown.
+- The thread judges and reads each event in order
+  (`focus_read::FocusReader::read`; `check_fact` for a selection or
+  notification). A hung window or the console window's own element is
+  dropped before any call; a shell window that only stages a switch is read
+  and Core drops it. Repeats are judged against the focus Core holds
+  (`docs/architecture.md`, "Where the rules run (D14)";
+  `verbatim_core::focus_rules::repeats_focus`): Core tells the listener of
+  every judgement and focus change (`CoreFocus`), the readers share the
+  elements of the focuses they accepted (`focus_read::HeldElements`), and an
+  event whose sender `CompareElements` equates with Core's focus while that
+  element's `HasKeyboardFocus` reads true is dropped; a failed comparison
+  lets it through. Nothing is compared while an accepted focus awaits
+  Core's judgement, after Core refused it, or once Core holds a focus no
+  listener read gave it. Then the acceptance test against the foreground
+  window (`outpost::acceptance`, shared with the outposts) on the element's
+  own or nearest window (`verbatim_uia::nearest_window_handle`); the
+  outpost does not test a UIA focus again.
+- The read (`verbatim_uia_rops::focus_ancestry_classic`) makes every call
+  on an element the listener holds, with no remote operation and no
+  connection: whether the element with the same runtime id as the previous
+  focus still has the keyboard focus (`UiaFocusRead::same_as_last`); value,
+  states, and details afresh; a list's or tab control's selected child, or
+  for a combo box without `Value` or a looping selector the first selected
+  item as its value (`UiaFocusRead::value_from_selection`); the raw-view
+  ancestors with their window handles, up to the first the thread knew or
+  the desktop root, never across the process boundary
+  (`verbatim_uia::parent_across_process_boundary`); and a menu item's
+  legacy MSAA state. A read that fails reports the focus from its event,
+  ancestors unknown. Each read is logged at debug with the sender's runtime
+  id, class, framework (read only with debug logging on), and window.
+- The read (`DeliveredFact::UiaFocusRead`, whose `focus` says focus or menu
+  opening) or the drop (`DeliveredFact::UiaFocusDropped`) follows the
+  marker through verbatim.exe, never coalesced or dropped. A drop's
+  `evidence` (`DropEvidence`, from `focus_read::drop_evidence`) is `Focus`
+  (a verdict of NVDA's checks, `focus_read::VERDICTS`, or the listener
+  giving up, `focus_read::GAVE_UP`), `Inconclusive` (any other drop of a
+  focus), `NoWindow` (`focus_read::NO_WINDOW`), or `NotFocus`; which drops
+  end an outpost's wait is decided in
+  `docs/design/listener-without-connections.md`, decision 11.
+- Budget. A read has one budget, `READ_BUDGET` (2 seconds), asked before
+  each call after the first (`Budget`), not counting the raw probe's wait
+  of up to 3 seconds. Past it the read makes no calls but still makes
+  every check that needs none, taking the keyboard focus from the cached
+  `HasKeyboardFocus` (also when a live read fails by UIA's transaction
+  timeout); the repeat check is skipped, a deliberate divergence from NVDA.
+  A call over a second is logged at info (`FocusQuery::before_call`).
+- Watchdog. A read past `READ_DEADLINE`, 11 seconds (the budget, the
+  probe's 3, the 5-second transaction timeout, and a second), is abandoned;
+  the timeout bounds each provider call, not an operation
+  (`docs/uia-bugs.md`). A focus's or menu opening's read is also abandoned
+  after `MOVED_ON_GRACE` (half a second) once the window in front belongs
+  to its application on another UI thread
+  (`outpost::window::front_is_another_thread_of_its_application`, by
+  provider process, `verbatim_uia::provider_process`), as NVDA's watchdog
+  cancels a slow call. The window watched (`focus_read::WatchedRead`) is the
+  cached handle or the nearest window once found (`WatchedRead::learn`), and
+  the front is judged only with evidence: a foreground event from the
+  listener's hook (`Readers::foreground_changed`) or the front already
+  elsewhere when the window became known (`WatchedRead::judge_front`). An
+  abandoned read is marked (`Reading::abandoned`, `HeldElements::abandoned`)
+  so a late return keeps nothing, the event is reported dropped, and a new
+  thread takes later events. With `ABANDONED_LIMIT` (two) threads still in
+  calls the application gets no new thread and its events wait;
+  `READ_DEADLINE` after that (`App::limit_reached`) every waiting and later
+  event is dropped until a thread returns.
+- When the listener is replaced, the supervisor tells every outpost its
+  reads have ended (`DeliveredFact::UiaFocusReadsEnded`).
 
-The outpost's side is under the intake and the worker below: the intake
-holds everything behind a marker until its read takes the marker's place,
-and the worker reports the read and only then finds its own copy of the
-element (`outpost::focus_path`).
+The gap. A `WinEvent` focus copy in a UIA window is dropped for its UIA
+focus to report, and the worker waits for that focus (`outpost/gap.rs`;
+`docs/design/listener-without-connections.md`, decision 11). It opens a gap
+unless a UIA focus was observed within 100 ms before the copy. A UIA focus
+read, a `Focus` drop, the end of the listener's reads, a later focus the
+outpost reports, or another application's later focus in Core's
+`CoreFocus` closes it; selection, notification, and menu markers and
+`Inconclusive` drops do not. A read answers a copy only in the copy's
+top-level window (`window::top_level_of`); a drop is matched by its
+observation alone. The gap is the worker's alone, without a lock, and is
+not judged while a marker waits. The intake passes the markers it resolved
+without a read (`MarkerNews`) under the lock `Intake::next_with_gap` takes,
+and gives `Item::Wake` at `UIA_FOCUS_BOUND`, a second after the copy. Due,
+or at once on a `NoWindow` drop, the worker reads the focus with the
+focus-now read (`read::focused_control_in`) and reports it as a UIA focus,
+logged at info; that read makes no call into a gone, ghosted, or hung
+window (`window::event_window_unreadable`). The idle barrier's answer waits
+while a gap is open, at most about 12.2 seconds for one focus marker on an
+application that answers (the bound, the read deadline, the relay, and the
+read), within the harness's 15-second idle timeout. `Outpost::settle` reads
+a due gap first.
 
 ### Console windows and frames of another process
 
-A console window is one application in one outpost, its console host's,
-as NVDA gives it and its text area the client's app module
-(`docs/design/focus-pipeline.md`, section 5.4). Windows names the console's
-client (such as `powershell.exe`) as a console window's owner, while its
-UIA facts, the text area's and the window element's, come from the
-console host's provider and so go to the console host. The listener sends
-each `WinEvent` for a `ConsoleWindowClass` window to the process of the
-event's own thread, the console host, read with `OpenThread` and
-`GetProcessIdOfThread`, local calls (`listener::routed_process`, as NVDA's
-`consoleWindowsToThreadIDs` learns the real thread); when the thread
-cannot be opened, the event is dropped, logged at debug once per window,
-rather than sent to the client, whose outpost would take the console
-host's window as its application's. The console host's
-outpost marks each event in a console window with the client as its
-`application` (`OutpostToSupervisor::Event`), which Core takes as the
-event's source, and answers a focus-now query for its console window.
-A focus change carries its application's name, the client's in a console
-window, read once per process and kept with that process held open
-(`outpost::ApplicationNames`), so a name is dropped when its process
-exits and never passes to a later process given the same id.
-An outpost's window filters (`window::served_by`, which
-`focus_window_of`, `foreground_window_of`, `main_window_of` and
-`top_level_windows` decide by) take a window as the application's when
-the application serves its UIA (`verbatim_uia::served_by`, local calls),
-so a console window is its console host's and never its client's, even
-when the host cannot be read from the client, and `read::focused_control_in`
-reads no focused element in a window another process serves
-(`read::control_window`; `docs/design/listener-without-connections.md`,
-section 4.3). Where the supervisor starts an outpost for a process on
-account of a fact in a window, it checks that the process serves that
-window (`check_served_by` in `supervisor/owner.rs`): a debug build fails,
-a release build logs an error. The crate
-re-exports `provider_process` and `console_host_of`, so Core routes a
-console client's focus-now query to its console host without depending
-on `verbatim-uia`. A focus whose top-level window belongs to
-another process, as the Settings app's page inside `ApplicationFrameHost`'s
-frame, is read by the listener up to the window below the process
-boundary, and the outpost continues the chain from that window's parent
-or owner through MSAA, from its client area up, whether that window has
-a UIA provider or not (`read::uia_chain_onward`, for the listener's read
-and a focus-now read alike), as NVDA switches API at a window boundary;
-a parent with a provider, such as a WinUI host of WebView2 content, is
-read through MSAA too, named and roled as MSAA gives it, where NVDA
-reads it through UIA (sections 4.3 and 4.4 of that design). UIA's
-client side still sends such a parent the message a connection begins
-with, and connects to one with a provider, whenever the outpost's read
-returns the child window's element: an accepted limit, shared with the
-listener and with NVDA (decision 13 of that design).
-The outpost connects to, probes and walks up into only the windows its
-application serves (`read::serves`, by the window's provider process),
-with one accepted exception: object navigation's raw-view step
-(`Uia::neighbor`, from `read.rs`'s classic navigation) can land in
-another process's window, such as the Settings frame above the page's
-content, and reads that neighbor through UIA before
-`read::corrected_backend` switches it to MSAA; it is user-initiated and
-off the per-event path, and a boundary stop before it is a follow-up
-(section 4.3 of that design). Otherwise:
-its own UIA walk (`read::uia_ancestors`, for the ancestors query and a
-focus-now read's classic read) stops below the boundary and is
-continued the same way, and a step that reaches another process's
-window after all, as an owner shown between the boundary check and the
-step makes it, switches to MSAA at that window without probing it
-(`read::own_window_uses_uia`, which the continuation of the listener's
-chain, `read::uia_chain_from_read`, also asks); the MSAA walk (`read::msaa_ancestors`) answers
-another process's window as read through MSAA without probing it; a
-navigation neighbor that is another process's window is kept as read
-(`read::corrected_backend`); and a focus route through another
-process's window is not followed (`Context::focus_route`).
+A console window is one application in its console host's outpost, as
+NVDA gives it and its text area the client's app module
+(`docs/design/focus-pipeline.md`, section 5.4). The listener sends each
+`WinEvent` for a `ConsoleWindowClass` window to the process of the event's
+thread, the console host (`listener::routed_process`), dropping one whose
+thread cannot be opened. The console host's outpost marks each event in a
+console window with the client as its `application`, which Core takes as
+the event's source, and answers a focus-now query for the window. A focus
+change carries its application's name, read once per process and kept with
+the process held open (`outpost::ApplicationNames`).
+
+An outpost takes a window as its application's when the application serves
+its UIA (`window::served_by`, through `verbatim_uia::served_by`, local
+calls), and `read::focused_control_in` reads no focused element in another
+process's window (`read::control_window`). The supervisor checks that a
+process it starts an outpost for serves the fact's window
+(`check_served_by` in `supervisor/owner.rs`; a debug build fails). The
+crate re-exports `provider_process` and `console_host_of` so Core routes a
+console client's focus-now query to its host.
+
+A focus whose top-level window belongs to another process, as the Settings
+page inside `ApplicationFrameHost`'s frame, is read by the listener up to
+the window below the boundary, and the outpost continues the chain from
+that window's parent or owner through MSAA (`read::uia_chain_onward`), as
+NVDA switches API at a window boundary, even for a parent with a UIA
+provider (`docs/design/listener-without-connections.md`, sections 4.2 to
+4.4, decisions 7 and 13). The outpost connects to, probes, and walks up
+into only its application's windows (`read::serves`): its UIA walk
+(`read::uia_ancestors`) stops below the boundary, a step that reaches
+another process's window anyway switches to MSAA there
+(`read::own_window_uses_uia`), the MSAA walk does not probe such a window,
+and a focus route through one is not followed (`Context::focus_route`). The
+accepted exception is object navigation's raw-view step (`Uia::neighbor`),
+which reads such a neighbor through UIA before `read::corrected_backend`
+switches it to MSAA.
 
 ### Starting an outpost and asking for the focus
 
 A fact for an application with no outpost starts one
 (`DeliveredFact::may_start_outpost`) unless it is a selection or a
-notification other than the shell's window-snap results: Core speaks no
-other notification from an application that cannot hold the focus. Node
-identity never crosses a process: the listener forwards a UIA runtime id,
-and the receiving outpost mints the `NodeId` from it. There is no announce
-poll: at startup, and after an outpost or the listener is replaced, Core
-asks the application for its current focus with a single focus-now query.
+notification other than the shell's window-snap results. Node identity
+never crosses a process: the outpost mints the `NodeId` from the forwarded
+runtime id. Nothing polls: at startup, and after an outpost or the listener
+is replaced, Core asks for the focus with one focus-now query.
 
-The outpost an application gets is usually a spare
-(`docs/design/focus-pipeline.md`, section 19): the supervisor keeps two
-outposts started with no application (`--spare`), each with its pipes,
-tracing, COM apartment, UIA client and focus-following registration
-(scoped to nothing), worker with its UIA client already made, watchdog,
-and `WinEvent` thread with no hook, which say `SpareReady` and answer
-pings. A start for an application takes the oldest, ready or not, and
-sends it `Assign`; the spare sets its application, reads the hand-over's
-clock, installs its process-scoped hook on its running `WinEvent` thread,
-starts waiting for the application's exit, logs "watching its
-application" with the application's image and pid, and says `Ready`. The
-supervisor holds the application's facts meanwhile and releases them on
-`Ready`, as for an outpost started for the application.
+An application usually gets a spare (`docs/design/focus-pipeline.md`,
+section 19): the supervisor keeps two outposts started with `--spare`, with
+everything made but a hook, which say `SpareReady`. A start takes the
+oldest, ready or not, and sends `Assign`; the spare sets its application,
+reads the clock, installs its hook, waits on the application's exit, and
+says `Ready`, the supervisor holding the application's facts meanwhile.
+Spares start once Core's own outpost is ready or has ended; a given spare
+is replaced at once. Spares are pinged but never asked in idle rounds,
+sent end-of-reads markers, or retired.
 
-The supervisor starts the two spares once Core's own outpost, which is
-started for Verbatim's own process at startup, is ready, or has ended
-without becoming ready. It reads a spare's pipe as the spare's, by its
-launch, until `Assign`, and as the application's after. A given spare
-never returns to the list, and its replacement starts at once, as it is
-given. Spares are pinged as outposts are, are never asked in idle rounds,
-sent end-of-reads markers, or retired, and are shut down with the rest.
-
-Every outpost failure takes one path (`Owner::outpost_failed`), whatever
-its cause: the process exits or crashes, its hook fails (it reports the
-fault and exits), its launch fails, it misses its pings for three
-intervals, or it piles up abandoned workers. The supervisor ends it and
-logs the failure with its reason, the last fault it sent included: as an
-error, whose sound a user hears, for a spare's failure and for one before
-its `Ready`, and as a warning for a ready outpost that crashed or was
-stuck, as before. If its application has exited, it ends as the application's
-exit. Otherwise the application keeps its record, with its held facts and
-any idle query held for it, and is given the next spare, or an outpost
-started for it when none waits, whether or not it holds attention; facts
-that arrive meanwhile are held for it. Nothing is ever given up: the
-application's first failure is replaced at once, and each further one
-after a backoff (`policy::Backoff`) of 1, 2, 4, 8 and 16 seconds, then 30
-seconds for every one after; the count starts again when the outpost that
-failed had been up for a minute (`STAYED_UP`), and when the application
-comes to the foreground, which also ends a backoff that runs. One that was
-ready is ended for the app at once (`Ended`, exited, or killed when the
-supervisor ended it), and its hook goes with it (`HookRemoved`), so the
-listener forwards the application's MSAA events again until the next is
-ready. One that failed before its `Ready` lost nothing: when the next is
-given, the app hears `Reincarnated`, naming the failed incarnation and the
-next, then the failed one's `Ended` if it heard it started, then the next
-one's `Started`; in an idle round that asked the failed one, the next
-answers in its place, and the app asks the application for no focus at
-that `Ended`. A spare that fails while it waits (it exits, misses its
-pings, or fails to launch) is replaced, at once for the first failure and
-after the same backoff, counted for the spares, for each further one. An
-outpost that cannot watch the application it is
-given, its hook failing or its having one already, reports why as a
-fault and exits with code 1 without `Ready`.
+Every outpost failure takes one path (`Owner::outpost_failed`): the process
+exits or crashes, its hook fails (a `Fault`, then exit code 1 without
+`Ready`), its launch fails, it misses three pings, or it piles up abandoned
+workers. The failure is logged with its last fault, as an error (heard)
+for a spare or before `Ready`, a warning otherwise. If the application has
+exited, that is its end. Otherwise the application keeps its record, held
+facts, and any idle query, and gets the next spare or a new outpost: the
+first failure at once, further ones after a backoff (`policy::Backoff`) of
+1, 2, 4, 8, 16, then 30 seconds, counted again once an outpost stayed up a
+minute (`STAYED_UP`) or the application comes to the foreground. A ready
+outpost's `Ended` and `HookRemoved` go at once; for one that failed before
+`Ready` the app hears `Reincarnated`, then the failed one's `Ended` if it
+heard it start, then the next one's `Started`, which also answers an idle
+round in its place. Spares' failures are replaced with their own backoff.
 
 ### Who calls into an application
 
 Only an application's own outpost sends it a remote operation or makes a
-new UIA connection to one of its windows
-(`docs/design/listener-without-connections.md`, section 2): the listener
-reads every focus from elements it holds, with no connection, and an
-outpost connects to, probes and walks up into only the windows its
-application serves, but for object navigation's step, an accepted
-exception described above. Two processes' new connections and a remote operation
-into one application cannot then come from Verbatim's own calls, so no
-lock is needed around them. The supervisor's table of applications
-(`App`) holds each application's process open from its first record until
-the process exits, through any retirement and every outpost failure, so
-its process id is never reused while an outpost or a reading thread
-serves it. The registrations make no connection by handle: a scope of
-windows' subtrees is given as their elements (`Scope::Subtrees`).
+new UIA connection to its windows
+(`docs/design/listener-without-connections.md`, section 2), so no lock is
+needed around them. The supervisor's `App` table holds each application's
+process open while it has a record, so its pid is never reused while an
+outpost or reading thread serves it. Registrations scope windows' subtrees
+by their elements (`Scope::Subtrees`), with no connection by handle.
 
 ## Public API
 
 ### The protocol
 
-- `protocol` — the wire vocabulary the supervisor and each outpost speak.
-  `observed_no_earlier` orders two observations stamped in milliseconds
-  and microseconds as Core orders two focuses, to the microsecond when
-  both carry microseconds, else to the millisecond; the listener and the
-  outposts order a focus Core queued against their own last focus by it.
-  `EventTiming` records, in microseconds from `now_us`, when an event was
-  observed, relayed to the outpost by Core, taken from the outpost's queue,
-  and published to Core, and for a WinEvent how long before it was observed
-  Windows raised it, and the cross-process calls the worker made for it
-  (`calls`, a `CallCounts`). A caret key's reply answered by a later
-  check of its watch also says when the evidence that answered it was
-  taken from the queue (`awaited_at_us`) and how many of its calls the
-  checks before it made (`awaited_calls`, a part of `calls`); the
-  listener's `FocusFact`, Core's
-  `DeliverFact` and `Query`, and the outpost's `Event` and `Reply` carry
-  it, and Core's latency ledger reads it. verbatim.exe adds its own stamps
-  (`docs/archive/relay.md`, section 4.5): `core_received_at_us`, when it
-  took in a listener's fact or queued a request; `core_relay_us`, its own
-  time from then to its relay thread beginning the write, measured on its
-  monotonic clock alone; `core_held_us`, the part of that a fact was held
-  for its starting outpost; `core_sent_at_us`, the first plus the second;
-  and `core_read_at_us`, when its reader read an outpost's `Event` or
-  `Reply` (`OutpostToSupervisor::core_read`). A `Query` carries
-  `core_received_at_us`, `core_relay_us`, and `core_sent_at_us` to the
-  outpost, which copies them into its reply. Each message is stamped as
-  its write begins, just before it is encoded, by whichever thread writes
-  it, the one that sent it or the I/O thread finishing what waited behind
-  a write in flight (`OutpostToSupervisor::written`, called from the
-  backlog's `encode`): `listener_written_at_us` on a listener's
-  `FocusFact`, and `written_at_us` on an outpost's `Event` or `Reply`.
-  The listener stamps `listener_handled_at_us` when it has handled a fact:
-  a reading thread as it finishes with a UIA focus, menu opening,
-  selection or notification, and the sending side, as it sends it, for
-  any other fact (a `WinEvent`'s, a marker, a drop decided without a
-  read). These
-  split the hops to verbatim.exe into the sender's own time and the
-  pipe's. `MenuOrSwitchEnded` carries an `EventTiming` with the same
-  listener stamps, and `Pong` a `written_at_us` stamped the same way. The
-  commands to the listener (`Ping`, `HookInstalled`, `HookRemoved`,
-  `CoreFocus`, which an outpost also receives) carry `sent_at_us`, which verbatim.exe's writer stamps
-  as the write begins (`SupervisorToOutpost::stamp_sent`); the listener
-  stamps its read of each and logs the hop at trace level under
-  `verbatim::stage`, and verbatim.exe logs each pong's trip back and a
-  menu end's stages the same way. `hop_us` is the time between two such
-  stamps, `None` where either is missing.
-  `SupervisorToOutpost`: `SetBackendOverride` (forces one backend for every
-  window of the target, or restores normal arbitration), `DeliverFact` (a
-  focus fact the listener captured, routed to this outpost — a UIA focus's
-  marker, its read or its drop, an MSAA focus or menu-popup address, or a
-  foreground window — carrying the listener's own trace id and observation
-  timestamp so the latency timeline starts at the OS event, its
-  `EventTiming`, and for a `WinEvent`'s fact its `WinEventStamp`),
-  `HookInstalled` and `HookRemoved` (to the listener, the hand-over above),
-  `CoreFocus` (the focus Core holds, decision D14, "Where the rules
-  run": to the listener, to the outpost whose focus event Core has just
-  judged, and to the outposts whose focus Core's focus was or now is,
-  whenever Core judges a focus event, taken or refused, or its focus
-  changes; `judged`, the trace of the focus event judged, every one the
-  receiver sent before it judged too; `focus`, a
-  `verbatim_core::focus_rules::HeldFocus`, the trace of the event Core took
-  its focus from, the focus and its ancestors with their ids, backends,
-  roles, names and states, its top-level window, and whether it is alive,
-  to the listener without its ancestors, which it does not judge by, and
-  to an outpost only when the focus is that
-  outpost's, its node ids as the outpost issued them
-  (`HeldFocus::for_outpost`); and `observed`, when that focus was
-  observed, which an outpost whose focus Core no longer holds takes for
-  its gap above),
-  `ForwardingEnded` (to an outpost, the hand-over's end), `Query` (a
-  request id and a `Query`: `FocusNow`, `Navigate` with a model `QueryKind`,
-  `Activate`, `Ancestors`, `DumpTree`, `Text`, a node and a model
-  `TextOp`, milestone M4's text protocol, `ShellItems`, the shell's
-  tray icons or taskbar buttons for Core's list dialog, or
-  `ShellItemPosition`, the buttons that may be one of them now, with
-  their positions, for a click), `Cancel` (withdraws a query that
-  has not started), `Ping`, `IdleQuery` (the harness's idle barrier's
-  round, under "The idle barrier" below), `Shutdown` (shut down
-  cleanly and exit, under "Shutting down" below), and `Assign` (to a
-  spare: the application it watches from now on). `OutpostToSupervisor`:
-  `Ready` (the outpost has its application and its hook is in: the first
-  message of an outpost started for an application, a spare's answer to
-  `Assign`), `SpareReady` (a spare's first message: it waits for
-  `Assign`), `Event`
-  (trace id, observation timestamp on the run's shared clock, in
-  milliseconds and, for a focus, in microseconds from the same clock read,
-  backend, the event window's `WindowFacts`, normalized event), `Reply` (exactly one per accepted query,
-  echoing its request id, with its `EventTiming`, default for a query
-  withdrawn or abandoned, and a `QueryOutcome`: `Done` with a
-  `QueryResult`, `Gone` when the node is no longer reachable, `Failed` with
-  a reason, `NotStarted` when it was withdrawn before it ran, or `Abandoned`
-  when it started and passed its deadline, so side effects such as an
-  activation may already have happened), `Pong` (echoes the ping's sequence
-  number and reports how many abandoned workers have not yet returned, which
-  the supervisor watches), `Fault`, `FocusFact` and `ForwardingEnded` (sent
-  only by the listener), `TargetExited` (the outpost's application has exited,
-  sent once, ahead of ordinary messages, so the supervisor shuts the
-  outpost down), and `IdleAnswer` (the answer to `IdleQuery`, behind
-  every message sent before it; `is_idle_answer` names it, since nothing
-  is merged across it). A `FocusNow` answer carries the application's foreground
-  window and its facts, when it holds the system foreground, and its focused
-  control with ancestors, selected child, window facts, and what its text
-  read found (`FocusedControl::text`, as `FocusChanged`'s `text`), and the time
-  the outpost began reading it, in milliseconds and microseconds from one
-  clock read, which orders it among the focus events. A
-  `ListenerFact` strips to a pid-less `DeliveredFact` once the supervisor
-  has routed it. Node ids arrive from Core stamped with this outpost's id;
-  the outpost looks them up with the stamp cleared (`NodeId::unstamped`).
-  `OutpostToSupervisor::assign_outpost` is the stamp Core applies to every
-  node id in a message. Each message is one frame of
-  `verbatim_process::transport`, a `Content-Length` header and the message
-  as compact JSON, through `write_message` and `read_message`, for any
-  type that implements `Message` (`put_frame` and `from_parts`):
-  `SupervisorToOutpost` and `OutpostToSupervisor`. `write_message` hands
-  its writer the whole frame in one write, so a message is one
-  `WriteFile` on a bare pipe, `encode_message` gives those bytes without
-  writing them, `put_message` appends them to a buffer a sender writes
-  from, and `decode_message` parses a frame's `Parts`. A message that
-  carries a terminal's text, an event with a `TerminalSnapshot` and a
-  reply with a `TerminalSnapshot`, `TerminalHistory` or `TerminalFound`,
-  is framed with a raw section (the private `protocol::raw` module, and
-  `docs/design/communication.md`, section 4.2): every text in it is
-  UTF-8 in the raw section and its place in the JSON a range,
-  `"raw":[start,length]` in a `TerminalText` and `"text":[start,length]`
-  for a history's or a match's text, and a read's colour runs are 16-byte
-  records there, four little-endian `u32`s (column, length, foreground,
-  background), the JSON giving `"colours":{"raw":[start,length],"rows":[...]}`
-  with each row's run count. The module converts to these wire forms
-  while encoding, borrowing from the message, and back while decoding,
-  validating each text with `simdutf8` and copying it into a `String`;
-  the model's types know nothing of it. A range outside the raw section,
-  invalid UTF-8, colour records that do not fill their range, or a raw
-  section longer or shorter than the ranges name is a protocol error, and
-  so is a raw section on any other message. Every other message is its
-  JSON alone, byte for byte as before. A short example, a terminal's
-  history whose text is `abc` has a header with the JSON's length and
-  `Raw-Length: 0000000003`, a JSON body whose outcome is
-  `{"Done":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
-  and then the three bytes `abc`.
-  `message_kind(body)` reads a frame's kind, the name of the message's
-  variant, from the body's first bytes without parsing the rest, as
-  serde's external tagging writes it (`{"Pong":...}`, `"TargetExited"`);
-  the relay reads it on every outpost frame.
+`protocol` is the wire vocabulary the supervisor and each child speak.
+
+- `SupervisorToOutpost`: `SetBackendOverride` (one backend for every
+  window, or normal arbitration); `DeliverFact` (a routed fact: a UIA
+  focus's marker, read, or drop, an MSAA focus or menu-popup address, a
+  foreground window, with the listener's trace id, observation time,
+  `EventTiming`, and for a `WinEvent` its `WinEventStamp`); `HookInstalled`
+  and `HookRemoved` (to the listener) and `ForwardingEnded` (to an
+  outpost); `CoreFocus`; `Query`; `Cancel` (withdraws a query not
+  started); `Ping`; `IdleQuery`; `Shutdown`; `Assign`; `NodesHeld`; and
+  `Fetches`.
+- `CoreFocus` is sent to the listener, to the outpost whose focus event
+  Core just judged, and to the outposts whose focus Core's focus was or now
+  is, whenever Core judges a focus event or its focus changes: `judged`
+  (the trace judged), `focus` (a `verbatim_core::focus_rules::HeldFocus`:
+  trace, focus and ancestors, top-level window, alive; to the listener
+  without ancestors, to an outpost only when the focus is its own, with its
+  own node ids, `HeldFocus::for_outpost`), and `observed`.
+- `Query` is a request id and a `Query`: `FocusNow`, `Navigate` (a model
+  `QueryKind`), `Activate`, `Ancestors`, `DumpTree`, `Text` (a node and a
+  model `TextOp`), `ShellItems`, or `ShellItemPosition`.
+- `OutpostToSupervisor`: `Ready`; `SpareReady`; `Event` (trace id,
+  observation time in milliseconds and, for a focus, microseconds from one
+  clock read, backend, `WindowFacts`, normalized event); `Reply` (exactly
+  one per accepted query, with its `EventTiming` and a `QueryOutcome`:
+  `Done` with a `QueryResult`, `Gone`, `Failed`, `NotStarted`, or
+  `Abandoned`, after which side effects may have happened); `Pong` (the
+  ping's sequence number and the count of abandoned workers not returned);
+  `Fault`; `FocusFact`, `ForwardingEnded`, `MenuOrSwitchEnded`, and
+  `ForegroundWindow`, from the listener only; `TargetExited`, once, ahead of
+  ordinary messages; and `IdleAnswer` (`is_idle_answer`).
+- A `FocusNow` answer carries the foreground window and its facts when the
+  application holds the foreground, its focused control with ancestors,
+  selected child, window facts, and text read (`FocusedControl::text`), and
+  when reading began, which orders it among focus events.
+- A `ListenerFact` strips to a pid-less `DeliveredFact` once routed. Node
+  ids from Core carry the outpost's stamp, cleared for lookup
+  (`NodeId::unstamped`); `OutpostToSupervisor::assign_outpost` applies it.
+  `observed_no_earlier` orders two observations as Core orders focuses, to
+  the microsecond when both have it. `WALK_DEADLINE` (5 seconds) is public
+  so Core's deadline for a shell walk can outlast it.
+
+Timing (`docs/design/communication.md`, section 10.1). `EventTiming`
+records, in microseconds from `now_us`, when an event was observed, relayed,
+taken from the outpost's queue, and published, how long before observation
+Windows raised a `WinEvent`, and the worker's cross-process calls (`calls`,
+a `CallCounts`); a caret key's late answer adds `awaited_at_us` and
+`awaited_calls`. verbatim.exe adds `core_received_at_us`, `core_relay_us`,
+`core_held_us`, `core_sent_at_us`, and `core_read_at_us`
+(`OutpostToSupervisor::core_read`); a `Query` carries the first three to the
+outpost, which copies them into its reply. Each message is stamped as its
+write begins, by whichever thread writes it
+(`OutpostToSupervisor::written`): `listener_written_at_us` on a
+`FocusFact`, `written_at_us` on an `Event`, `Reply`, or `Pong`; the listener
+adds `listener_handled_at_us`. Commands to the listener carry `sent_at_us`
+(`SupervisorToOutpost::stamp_sent`), and the listener logs each hop at trace
+under `verbatim::stage`. `hop_us` is the time between two stamps.
+
+Framing. Each message is one frame of `verbatim_process::transport`, a
+`Content-Length` header and compact JSON, through `write_message` and
+`read_message`, for any type that implements `Message` (`put_frame` and
+`from_parts`): `SupervisorToOutpost` and `OutpostToSupervisor`.
+`write_message` writes the whole frame in one `WriteFile`,
+`encode_message` gives the bytes, `put_message` appends them to a sender's
+buffer, and `decode_message` parses a frame's `Parts`. A message that
+carries a terminal's text (an event with a `TerminalSnapshot`, or a reply
+with a `TerminalSnapshot`, `TerminalHistory`, or `TerminalFound`) has a raw
+section (the private `protocol::raw` module;
+`docs/design/communication.md`, section 4.2): each text is UTF-8 there and
+a range in the JSON, `"raw":[start,length]` in a `TerminalText` and
+`"text":[start,length]` for a history's or match's text, and colour runs
+are 16-byte records of four little-endian `u32`s (column, length,
+foreground, background), the JSON giving
+`"colours":{"raw":[start,length],"rows":[...]}` with each row's run count.
+The module converts while encoding, borrowing from the message, and back
+while decoding, validating text with `simdutf8`; the model's types know
+nothing of it. A range outside the section, invalid UTF-8, records that do
+not fill their range, a section longer or shorter than its ranges, or a
+section on any other message is a protocol error. For example, a history
+whose text is `abc` has a header with `Raw-Length: 0000000003`, a body whose
+outcome is
+`{"Done":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
+and then the bytes `abc`. `message_kind(body)` reads a frame's variant name
+from its first bytes without parsing the rest; the relay reads it on every
+outpost frame.
 
 ### The arbitrator
 
-- `Arbitrator` — NVDA's per-window backend decision (`_isUIAWindowHelper`):
-  `verdict(hwnd, &WindowClasses)` answers from the good class list, the
-  Windows 11 shell rule (the root ancestor's class is a shell top-level
-  window, and the window is not the Start button), the bad class list, a
-  forced override from `SetBackendOverride`, or a kept probe result, and
-  `None` when only the probe can decide; the worker then probes, with
-  the raw probe (`verbatim_uia::raw_probe`) in an outpost and in the
-  focus listener alike (`arbitration::uses_uia`), and calls
-  `record_probe`. No connection to the window follows the probe, in an
-  outpost or the listener: when a new File Explorer window's first UIA
-  focus events arrive in a burst after their senders are gone, the focus
-  the burst ends on is recovered by the outpost's focus read
-  (`outpost::gap`; the listener design's risk 13). `WindowClasses::of(hwnd)`
-  reads the window's raw class, its class normalized as NVDA normalizes it
-  (`normalize_class_name`: NVDA's class map, and the Windows Forms and
-  `ATL:` wrappers removed), and its root ancestor's class. When the probe
-  finds a provider, `post_probe_check` names the check NVDA makes before
-  using it (a console's formatted text, a list view's Windows Forms
-  origin, which an outpost and the focus listener alike read as its raw
-  class's `WindowsForms10.` prefix, a local call; and a
-  console's formatted text, which an outpost reads by the window's handle
-  and the listener from the event's sender, the text area or the console
-  window's element, through the console check `uses_uia` is given); a provider
-  that fails it is recorded with `record_excluded` and
-  is MSAA for the window's lifetime. `probe_found_provider(hwnd,
-  &WindowClasses)` answers whether a kept probe found a UIA provider of
-  the window's own on a window its class lists do not decide; the
-  runtime-id search applies the proxy rule only to such a window, because
-  a window UIA by class may be served only by UIA's proxies, and the
-  focus listener keeps a probe for every UIA focus it reports. A probe that finds a UIA
-  provider is kept for the window's lifetime and dropped by `forget` when
-  the window is destroyed, as decision D15 specifies. A probe that finds
-  none is trusted for only `NEGATIVE_VERDICT_LIFETIME` (500 ms, NVDA's
-  cache period) and then repeated: a busy or starting application answers
-  the probe late or not at all, and the probe then reports no provider for
-  a window that has one. A probe that times out is kept as a "no" only
-  for the rest of the worker's entry that made it
-  (`Arbitrator::record_timed_out`), so that the entry probes the window
-  once, and is forgotten as the next entry begins
-  (`Arbitrator::begin_entry`) and when its own ends, never renewed; the
-  focus listener's reader keeps nothing of it. The "no" is kept for the
-  worker thread that probed: no other thread sees it, so it never gives
-  the event thread a lasting verdict, and an abandoned worker that
-  finishes its entry late neither forgets the "no" of the worker in
-  charge nor adds its own to that worker's entry. The next entry probes
-  again, as NVDA's verdict, timed from before its probe, is out of date
-  when a probe that took the whole wait returns. The renewal is by time because no event says a
-  window has begun to answer the probe. The time is the arbitrator's
-  `Clock`, the system's unless `Arbitrator::set_clock` sets another, and
-  `Arbitrator::now` reads it, for the worker's renewal of the verdicts an
-  entry probed. The same clock measures the time budgets of the outpost's
-  classic walks (`PATH_BUDGET`, `ENRICHMENT_BUDGET`), each checked
-  between calls through `arbitration::time_limit`, and of a focus
-  reader's whole read (`READ_BUDGET`), checked between calls through
-  `focus_read`'s `Budget`, which leaves out the raw probe's wait.
-  `Outpost::set_clock` sets an outpost's, and
-  `FocusReader::set_clock` a focus reader's, for a test that counts calls
-  and decides when a probe is made again and when a walk's time is up,
-  however long its calls take. Both class lists are
-  lifted from NVDA and pinned by unit tests naming their exact NVDA source
-  locations, so a future NVDA sync is a diff of two lists: the bad list is
-  `badUIAWindowClassNames` in `nvda/source/UIAHandler/__init__.py`, and the
-  good list concatenates `goodUIAWindowClassNames` from the same file with the
-  Windows 11 shell tuple from the Explorer app module's `isGoodUIAWindow`
-  (`nvda/source/appModules/explorer.py`).
+`Arbitrator` is NVDA's per-window backend decision (`_isUIAWindowHelper`).
+`verdict(hwnd, &WindowClasses)` answers from the good class list, the
+Windows 11 shell rule, the bad class list, a `SetBackendOverride`, or a kept
+probe, and `None` when only the probe can decide; the worker then probes
+with the raw probe (`verbatim_uia::raw_probe`, through
+`arbitration::uses_uia`, as the listener does) and calls `record_probe`. No
+connection follows a probe (`docs/design/listener-without-connections.md`,
+decision 2).
+
+- `WindowClasses::of(hwnd)` reads the raw class, the class normalized as
+  NVDA does (`normalize_class_name`), and the root ancestor's class.
+- `post_probe_check` names NVDA's check before using a provider: a list
+  view's Windows Forms origin, or a console's formatted text (read by an
+  outpost from the window and by the listener from the sender). A provider
+  that fails is recorded with `record_excluded`, MSAA for the window's
+  lifetime.
+- `probe_found_provider` answers whether a kept probe found the window's own
+  provider where the class lists do not decide; the runtime-id search
+  applies the proxy rule only there.
+- A "yes" is kept for the window's lifetime and dropped by `forget` on
+  destruction (decision D15). A "no" lasts `NEGATIVE_VERDICT_LIFETIME`
+  (500 ms, NVDA's cache period), since a busy application answers late. A
+  timed-out probe is a "no" only for the rest of the worker entry that made
+  it, on that thread (`record_timed_out`, `begin_entry`).
+  `lasting_verdict` answers only a verdict that lasts the window's
+  lifetime.
+- `Clock`, `Arbitrator::set_clock`, and `Arbitrator::now` time the verdicts
+  and the classic walk budgets (`PATH_BUDGET`, `ENRICHMENT_BUDGET`, through
+  `arbitration::time_limit`); `Outpost::set_clock` and
+  `FocusReader::set_clock` set it for tests that count calls.
+- Both class lists are lifted from NVDA and pinned by unit tests naming
+  their sources (`badUIAWindowClassNames` and `goodUIAWindowClassNames` in
+  `nvda/source/UIAHandler/__init__.py`, and `isGoodUIAWindow` in
+  `nvda/source/appModules/explorer.py`), so an NVDA sync is a diff.
 
 ### The outpost
 
-- `Outpost`, `run_pipe`, `run_attach` — the per-application outpost (the
-  `outpost` module; outpost redesign, "Inside an outpost").
-  `run_pipe(pipe_in, pipe_out, target_pid, options)` runs one on Core's
-  pipes, watching `target_pid`, or, for `None`, as a spare that sends
-  `SpareReady` and watches the application `Assign` names. Either way the
-  application is set once, by `Outpost::assign`: the hand-over's clock is
-  read, the process-scoped `WinEvent` hook installed on the outpost's
-  `WinEvent` thread, which started with no hook (`EventThread::hook`), and
-  `Ready` sent. When the hook cannot be installed the outpost reports a
-  `Fault` saying why, sends no `Ready`, shuts down, and exits with code
-  1, since the listener stops forwarding an application's events once its
-  outpost is ready (`docs/design/focus-pipeline.md`, section 19.8, item
-  5); the supervisor handles it as an outpost that ended before `Ready`.
-  `Outpost::new` and its siblings, for tests in their own process, watch
-  their application from construction and panic when the hook cannot be
-  installed. Its parts:
-  - Intake (`outpost::intake`): the MSAA hook callbacks (`APP_SUBSCRIPTIONS`:
-    focus, foreground, menu-popup, alert, and tooltip events, which become
-    the same facts the listener forwards, value, state, name, selection,
-    and destroy, for its application's pid),
-    the focus-following UIA callbacks, and the reader's routed facts
-    (the UIA focus's marker and read, the listener's desktop-wide selections, menus, and
-    notifications, and the MSAA facts it forwards until the hand-over ends,
-    each matched with the hook's copy first, `outpost::handover`) and
-    queries only add an entry to the queue and return. A UIA callback captures the element's cached parts, its cached
-    window handle, and an agile reference; it never calls into the
-    application.
-  - The focus-following UIA subscription, following NVDA's selective
-    registration on Windows 11 (`UIAHandler/__init__.py` 642 to 756,
-    `NVDAObjects/UIA/__init__.py` 1623 to 1630;
-    `docs/design/focus-pipeline.md`, section 17): one registration, on one
-    thread and client, with NVDA's two local groups built once. The base
-    group, given every UIA focus whose element the outpost has, holds the
-    name, value, and state changes and `Text_TextSelectionChanged`; the
-    extended group, given a focus with text read through UIA, also holds
-    `Text_TextChanged` and the active text position changed event, except
-    for the console host's text area, which takes it without
-    `Text_TextChanged`, since its console updates tell the outpost of its
-    output (`docs/design/wake-ups.md`, item 15). Both
-    are on the focused element only, since the reducer acts on no other
-    element's changes (NVDA's scope also names the focus's ancestors, but
-    UIA delivers no ancestor's event to it; `docs/parity/backends.md`, "UIA event
-    registration"). The parts are shaped: a property change's element
-    arrives as a `verbatim_uia::Cached<PropertyEvent>`, everything a name,
-    value, or state set is read from and no detail; a caret, text, or
-    active text position change's as a `Cached<TextEvent>`. The worker's
-    event carries it as `Agile<PropertyEvent>` or `Agile<TextEvent>`
-    (`intake::EventElement`), resolved on the worker as the `Kept` shape
-    both cover, which is what the node registry keeps and all any reader
-    of the event's element reads.
-    The worker moves it each time it reports a focus, without waiting
-    (`follow_focus`): the matching group is added to the new focus, then
-    removed from the previous one alone (`RemoveEventHandlerGroup`);
-    `RemoveAllEventHandlers` is called only at shutdown, as the
-    registering thread ends. A move to the
-    node and group already followed is not asked of the subscription, and
-    one to the same element under another node makes no call, as the
-    subscription compares the elements. A focus whose element the outpost
-    does not have, or one read through MSAA, is followed by nothing. Each
-    move is logged at debug level, by the worker and by the subscription's
-    thread with every call it makes.
-  - The queue applies NVDA's limiter rules to MSAA events only
-    (`docs/design/focus-pipeline.md` section 5). One entry waits per
-    object and kind, and for an MSAA event other than a menu opening, per
-    thread that raised it, as NVDA's limiter keys them (a menu opening
-    waits per address alone, and the console host's events merge per
-    window and kind); a newer one replaces it and moves to the back, which
-    is all that limits UIA events. A batch is everything that accumulated
-    while the worker handled the previous one, planned in the order it
-    arrived, but for a focused terminal's caret event waiting ahead of a
-    text change of the terminal (its console update or UIA text change)
-    with only events between them, which is planned just after the newest
-    such change, since that change's read reads the caret too
-    (`caret_after_update`). Per batch the newest 4 MSAA focus events and
-    the newest 10 other MSAA events per thread that raised them are kept
-    (each MSAA event carries its own thread, from the outpost's hook or
-    the listener's), the focused object's other events beyond the limit
-    though they count, and a foreground change by either limit, since it
-    counts among both; UIA events and menu openings are not counted;
-    events from a window the system reports hung (`IsHungAppWindow`) are
-    dropped before any read. Each consecutive run of MSAA focus events and
-    foreground changes, every foreground change of the batch among them,
-    is tried newest first until one is reported, at the place of the run's
-    newest, as NVDA's `pumpAll` does (only an MSAA event NVDA's pump
-    receives ends a run, and every other entry is handled at its own
-    place, `ends_a_run`; `Planned::handle` dispatches each planned item).
-    Of two foreground changes of the same window from the same thread
-    (`Key::Foreground` names both), the later to arrive replaces the one
-    waiting. A foreground change removes a focus event waiting on its
-    window's client object from the same thread when the focus was not
-    raised after it (in one tick, unless the focus is the hook's copy and
-    the change is known to have been raised before the hook went in), as
-    NVDA's limiter removes a waiting focus when it adds the change. A run
-    whose events all carry their raise time is tried in that order
-    (`in_raised_order`), events of one clock tick ordered by the
-    hand-over's `Arrival` (`outpost::handover`): a listener copy known to
-    have been raised before the outpost's hook went in, and every listener
-    copy of the batch that arrived before it, go ahead of the rest, which
-    keep their arrival order. Every UIA focus event is handled at its own
-    place, and the newest menu opening from each backend is handled last.
-    A UIA
-    focus's marker holds its place: nothing that arrives after it is
-    planned until the listener's read takes its place, or its drop, or the
-    end of the listener's reads, removes it, so an event raised after a
-    focus is never handled before it, as NVDA's UIA events pass in order
-    through its one flusher thread; a read whose marker the outpost never
-    held, as when the outpost started after it, is taken where it
-    arrives. When the read takes its marker's place and the focus last
-    reported is among the read's ancestors, the old focus's own UIA
-    state changes that the outpost's subscriptions queued after the
-    marker, up to the next marker or idle query, are planned ahead of the
-    read, in their order (`old_focus_events_first`): a provider moving the
-    focus into a child of the old focus, as a combo box opening into its
-    list, raises the old focus's state change first, but the change comes
-    by the outpost's own route and the focus by the listener's, so the
-    change can be queued behind the marker. A state change raised after
-    the focus is moved too, and spoken, as NVDA speaks a state change of
-    the focus or of any focus ancestor in either order. The old focus's
-    name and value changes, events of other elements, the listener's
-    facts, and every event when the new focus is not inside the old keep
-    their places (`docs/design/focus-pipeline.md`, section 12.4). The
-    check compares runtime ids the read carries and makes no call.
-  - The worker (`outpost::worker`): one thread takes entries in order and
-    finishes each before the next. Before any call into the application
-    for an entry, it tests the event by NVDA's acceptance test against the
-    foreground window (`outpost::acceptance`;
-    `docs/parity/focus-events.md`, "Event acceptance"): `accepts_event`,
-    defined once for the outposts and the listener, a pure function of
-    the event's name, its window, the window queries (`WindowQueries`,
-    local calls in `SystemWindows`), and the events application support
-    asked for (`RequestedEvents`, empty), and drops an event from a window
-    unrelated to the foreground window. Its last part,
-    `foreground_relation`, is what an outpost reports in an event's window
-    facts (`verbatim_core::focus_rules::ForegroundRelation`), which the
-    reducer judges a focus by after the read. A caret key's evidence is watched for
-    between entries (under "Text" below), not waited on. It is the only
-    thread that calls into the application, so events and replies leave in
-    the order their entries were planned: the order they joined the queue,
-    but for a batch's menu openings, the older focus events of a run of
-    MSAA focus events, and a caret key's answer,
-    which leaves when its evidence comes. Being the
-    only such thread, it is where the calls are counted: the backend crates
-    count each call on the thread that makes it, and the worker takes both
-    counts when it publishes an event or a reply, which carries them in its
-    `EventTiming`. Calls an entry makes without publishing, for an event it
-    drops, are taken when the entry ends, logged, and belong to no trace
-    (`docs/performance.md`, "Cancelled traces").
-  - The watchdog waits on an alarm (`outpost/alarm.rs`), a high-resolution
-    waitable timer the worker sets as it starts an entry and cancels as it
-    publishes, and an event set for a foreground fact and the shutdown;
-    setting and cancelling wake no thread, so the watchdog wakes only when
-    a deadline or grace passes (`docs/design/wake-ups.md`, item 3).
-  - The worker waits for work on an alarm of the intake's own: its event
-    is set when something is pushed while the worker waits, and its timer
-    is set, as the worker begins to wait, to the earlier of the wake the
-    worker asked for (`Intake::wake_at`) and the bound of its wait for a
-    UIA focus, so a wake comes on time at a resolution finer than the
-    system's 15.6 ms timer. Only the worker asks for a wake, so no other
-    thread's write can take one back.
-  - The watchdog abandons a worker whose call passes its deadline (an
-    event, a focus, or a focus-now query 10 s, NVDA's normal watchdog
-    timeout, since an application that is starting up can take seconds to
-    answer a read that then succeeds; a navigation or activation 400 ms; an
-    ancestor walk or tree dump 5 s), or, after half a second, once the user
-    has moved to a window served by the same process, by its provider
-    process, on another UI thread (the decision is `abandon_reason` and
-    `next_check`, the window test `is_another_thread_of_its_application`,
-    each unit-tested), answers the stuck query
-    `Abandoned`, and starts a replacement that continues with the queue. An
-    abandoned worker that returns publishes nothing, since publishing checks
-    under the watchdog's lock that the worker is still in charge, lowers the
-    abandoned count, and exits. Nothing is sent while that lock is held:
-    publishing claims the entry's result under the lock and queues the
-    message after releasing it, and the watchdog releases it before it
-    queues an `Abandoned` answer, so the watchdog never waits on the
-    writer.
-  - Time limits inside an entry (`docs/design/focus-pipeline.md`, section
-    6). Each UIA call ends after `verbatim_uia::CONNECTION_TIMEOUT`, two
-    seconds, when it connects, or `verbatim_uia::TRANSACTION_TIMEOUT`,
-    five seconds, on a held element, both set once for the process.
-    A focus's ancestor walk checks its two-second budget
-    (`ENRICHMENT_BUDGET`, by the outpost's clock) between calls, so it
-    ends within the budget and one call. The one operation made of many provider calls, a UIA
-    dialog's own text (one second, `DIALOG_TEXT_WAIT`), runs on the
-    context's `verbatim_uia::BoundedClient` and is given up at its
-    deadline, its thread abandoned; a dialog's text given up is no text. Tree
-    view messages are sent with `SendMessageTimeoutW`, half a second,
-    aborting at once for a hung window, as list view and edit messages
-    were already. An `IAccessible` call has no bound of its own: the
-    entry's deadline, enforced by abandonment, is its bound.
-  - The I/O thread, the process's main thread in `run_pipe`, on the
-    transport's child side (`verbatim_process::transport::ChildIo`;
-    `docs/design/communication.md`, sections 4.6 and 6.4): it waits only
-    on its completion port, reads Core's commands and hands each to
-    `Outpost::handle_command`, which answers pings itself, the pong
-    written at once unless a write is in flight, withdraws a cancelled
-    query that has not started with a `NotStarted` reply, and queues
-    everything else; and it finishes the writes to Core that pended. It
-    runs at `THREAD_PRIORITY_HIGHEST`.
-  - The outbound queue (`outpost::outbound`), under "Messages to Core"
-    below: every thread that sends a message writes it itself.
-  `run_pipe` is the production mode over inherited overlapped pipe
-  handles, which reads Core's commands until Core asks it to shut down,
-  or the command pipe ends, and then shuts the outpost down cleanly
-  (`Outpost::shutdown`, under "Shutting down" below), waiting for every
-  write in flight; it also tells Core when the target application exits,
-  from a thread that waits on the application's process. An outpost made
-  with `Outpost::new` and its siblings, as tests make one in their own
-  process, takes the overlapped end it writes to, and a thread of its
-  sender's own finishes its writes that pend in place of the I/O thread.
-  `run_attach` watches a pid directly, asks for its focus, and prints each
-  outbound message as the model's JSON, a terminal's text inside it, as a
-  line on stdout, from a thread that reads
-  the outpost's pipe, the standalone dev mode. Both take an
-  `OutpostOptions`, fixed for the outpost's life, whose one field,
-  `remote_operations`, says whether a UIA focus's ancestry may be read
-  with a remote operation (`Outpost::with_options`; `Outpost::new` uses
-  the default, on). `Outpost::with_focused_element_reader` takes a
-  `FocusedElementReader` too, the function the worker reads a UIA focus's
-  element with, given the request it fills the element by and answering a
-  `verbatim_uia::Cached<Node>`, which is otherwise the system's keyboard
-  focus (`Uia::focused`): mockapp's tests hand a real outpost a UIA
-  focus in a window that does not have the keyboard focus, and measure
-  everything it does with it. `Outpost::set_foreground_reader` gives the
-  outpost a `ForegroundReader`, the function it reads the foreground
-  window with when it tests an event for acceptance and when it records
-  the window a focus entered, which is otherwise `GetForegroundWindow`:
-  an event from a window not related to it is dropped, and an MSAA state
-  change on that window's
-  own object, when the window was the foreground as the focus entered it,
-  is not spoken as an ancestor's, as NVDA's foreground object takes its
-  place (`docs/parity/focus-announcement.md`, "A top-level window's state change"), and
-  mockapp's windows, on desktops where none takes the foreground, are made
-  the foreground this way. `Outpost::set_focus_window_reader` gives it a
-  `FocusWindowReader`, the function a focus-now query reads the window
-  with the keyboard focus with, which is otherwise `GetGUIThreadInfo`'s:
-  the focused element is read only when the application serves that
-  window, so mockapp's tests name mockapp's window. `Outpost::settle` waits until the worker has
-  handled everything queued, follow-ups included, the focus-following
-  subscriptions have made every move asked of them, and every message
-  published has been written to the pipe: the evidence those tests wait on
-  before they read what the application answered, and before they assert
-  the outpost said nothing more. It then waits for the event thread to
-  have taken every nudge sent before it, so any change of the hook that
-  handling asked for has been made. `settle` covers only what has reached the
-  outpost: an application's event reaches a client after the call that
-  raised it has returned, on UI Automation's threads or the hook thread.
-  `Outpost::failed_reads` gives the failed cached reads the outpost has
-  made so far, its worker's and its focus-following subscription's
-  callbacks' (`verbatim_uia::calls`), which a test reads once the outpost
-  has settled; the outpost logs them when it shuts down, and the listener
-  logs its own, its reading threads' and its registration's.
-  `Outpost::observe_heard` hands an observer (`HeardObserver`) each event
-  the outpost's own UIA handlers and `WinEvent` hooks take in, as a
-  `Heard` (a property change by id, a text selection change, a text
-  change, an active text position change, or a `WinEvent` by kind), once
-  it is queued for the worker; a test waits to hear the events it had
-  mockapp raise, then settles. The worker and its reads (`worker.rs`, `read.rs`), the
-  intake, the writer, the protocol, and the supervisor's owner, policy, and
-  writer modules forbid `unsafe` code: every UIA and MSAA read goes through
-  the backend crates' safe wrappers, and what remains `unsafe` in the crate
-  is window-manager calls (`outpost/window.rs`, arbitration's class
-  reads), the event thread's message loop, process creation, and the
-  inherited pipe handles.
+`Outpost`, `run_pipe`, and `run_attach` are the per-application outpost.
+
+- `run_pipe(pipe_in, pipe_out, target_pid, options)` runs one on Core's
+  inherited overlapped pipes, watching `target_pid`, or for `None` as a
+  spare. `Outpost::assign` sets the application once: the clock, the hook on
+  the `WinEvent` thread (`EventThread::hook`), and `Ready`. When the hook
+  fails it reports a `Fault`, sends no `Ready`, and exits with code 1
+  (`docs/design/focus-pipeline.md`, section 19.8). It serves until
+  `Shutdown` or the end of the command pipe, then shuts down cleanly, and a
+  thread waiting on the target sends `TargetExited`.
+- `run_attach` watches a pid, asks for its focus, and prints each outbound
+  message as the model's JSON on stdout: the development mode.
+- `OutpostOptions::remote_operations` says whether a UIA focus's ancestry
+  may be read with a remote operation (on; `--classic-uia` turns it off).
+- For tests in their own process: `Outpost::new` and its siblings watch
+  from construction and panic when the hook fails, with a sender thread in
+  place of the I/O thread; `with_options`; `with_focused_element_reader` (a
+  `FocusedElementReader` in place of `Uia::focused`);
+  `set_foreground_reader` (a `ForegroundReader` in place of
+  `GetForegroundWindow`, for acceptance and the window a focus entered); and
+  `set_focus_window_reader` (a `FocusWindowReader` for focus-now).
+- `Outpost::settle` waits until everything queued is handled, follow-ups
+  included, the subscription has made every move asked, every published
+  message is written, and the event thread has taken every nudge. It covers
+  only what has reached the outpost.
+- `Outpost::failed_reads` gives the worker's and subscription callbacks'
+  failed cached reads (`verbatim_uia::calls`), also logged at shutdown.
+- `Outpost::observe_heard` hands a `HeardObserver` each event the outpost's
+  own handlers and hook take in, as a `Heard`, once queued.
+
+Inside an outpost (`docs/design/communication.md`, section 6.4):
+
+- The intake (`outpost::intake`): the hook callbacks (`APP_SUBSCRIPTIONS`),
+  the subscription's callbacks, routed facts (each matched first by
+  `outpost::handover`), and queries only add an entry and return. A UIA
+  callback keeps the cached parts, window handle, and an agile reference.
+- The focus-following subscription (`docs/design/focus-pipeline.md`, section
+  17): one registration with NVDA's two groups. The base group, given every
+  UIA focus whose element the outpost has, holds name, value, and state
+  changes and `Text_TextSelectionChanged`; the extended group, for a focus
+  with text read through UIA, adds `Text_TextChanged` and the active text
+  position changed event. The console host's text area takes the group
+  without its text events (`Group::ExtendedWithoutTextEvents`), and the
+  console's caret events are its caret events
+  (`docs/design/wake-ups.md`, item 15). Both are on the focused element
+  only (`docs/parity/backends.md`, "UIA event registration"). Elements
+  arrive as `Cached<PropertyEvent>` or `Cached<TextEvent>`, carried as
+  `intake::EventElement` and resolved as `Kept`. The worker moves the
+  subscription with each focus it reports (`follow_focus`): add the group to
+  the new focus, then `RemoveEventHandlerGroup` from the old;
+  `RemoveAllEventHandlers` only at shutdown. A move to what is already
+  followed makes no call; a focus read through MSAA is followed by nothing.
+- The queue (`docs/design/focus-pipeline.md`, section 5; the rules are in
+  `docs/architecture.md`, "Outposts"): one entry per object and kind, and for
+  an MSAA event other than a menu opening per raising thread (a menu opening
+  per address; the console host's events per window and kind), a newer
+  replacing it at the back. A batch is what accumulated during the previous
+  one, in arrival order, but a focused terminal's caret event ahead of its
+  text change goes just after the change, whose read reads the caret
+  (`caret_after_update`). Per batch the newest 4 MSAA focus events and 10
+  other MSAA events per thread are kept (the focus's own events beyond the
+  limit, a foreground change by either); events from a hung window are
+  dropped.
+- Runs: each run of MSAA focus and foreground events is tried newest first,
+  each under its own deadline, until one is reported, at the run's newest
+  place, as NVDA's `pumpAll` does (`ends_a_run`, `Planned::handle`); three
+  focus candidates per backend are kept (`Planned::Focus`). A foreground
+  change removes a waiting focus on its client object from the same thread
+  not raised after it. A run whose events all carry raise times is tried in
+  that order (`in_raised_order`), ties by the hand-over's `Arrival`. UIA
+  focus events are handled at their own places, the newest menu opening
+  per backend last.
+- Markers: nothing that arrives after a UIA focus's marker is planned until
+  the read, its drop, or the end of reads resolves it, as NVDA's UIA events
+  pass through one flusher thread. When the read's ancestors include the
+  focus last reported, that old focus's own state changes queued after the
+  marker are planned ahead of the read (`old_focus_events_first`), since a
+  provider moving the focus into a child raises the old focus's change
+  first but it comes by another route. The check compares runtime ids.
+- The worker (`outpost::worker`), one thread, the only one calling into the
+  application, handles entries in order, so events and replies leave in
+  planned order but for menu openings, a run's older focuses, and a caret
+  key's answer. Before any call it applies NVDA's acceptance test
+  (`outpost::acceptance`; `docs/parity/focus-events.md`, "Event
+  acceptance"): `accepts_event`, a pure function of the event, its window,
+  `WindowQueries` (local calls in `SystemWindows`), and `RequestedEvents`;
+  its `foreground_relation` goes in the window facts
+  (`verbatim_core::focus_rules::ForegroundRelation`). It takes the backend
+  crates' per-thread call counts into each published `EventTiming`; an
+  entry that publishes nothing logs its calls (`docs/performance.md`,
+  "Cancelled traces").
+- The worker waits on the intake's alarm (`outpost/alarm.rs`): an event set
+  by a push while it waits, and a high-resolution timer set to the earlier
+  of its requested wake (`Intake::wake_at`) and the gap's bound. Only the
+  worker sets a wake.
+- The watchdog waits on an alarm the worker sets per entry and cancels as it
+  publishes, waking only when a deadline or grace passes
+  (`docs/design/wake-ups.md`, item 3). Deadlines: an event, a focus, or a
+  focus-now 10 s, NVDA's watchdog timeout; a navigation or activation
+  400 ms; an ancestor walk or tree dump 5 s. After half a second it also
+  abandons a worker once the user has moved to another UI thread of the
+  same provider process (`abandon_reason`, `next_check`,
+  `is_another_thread_of_its_application`). It answers the query
+  `Abandoned` and starts a replacement worker. A returning abandoned worker
+  publishes nothing, since publishing checks under the watchdog's lock that
+  it is in charge; nothing is sent while that lock is held.
+- Time limits in an entry (`docs/design/focus-pipeline.md`, section 6): UIA
+  calls end at `verbatim_uia::CONNECTION_TIMEOUT` (2 s) or
+  `TRANSACTION_TIMEOUT` (5 s); `ENRICHMENT_BUDGET` (2 s) bounds a focus's
+  ancestor walk between calls; a UIA dialog's text runs on a
+  `verbatim_uia::BoundedClient` within `DIALOG_TEXT_WAIT` (1 s); tree view,
+  list view, and edit messages use `SendMessageTimeoutW`; an `IAccessible`
+  call is bounded by the entry's deadline.
+- The I/O thread, the main thread (`verbatim_process::transport::ChildIo`,
+  at `THREAD_PRIORITY_HIGHEST`), waits only on its completion port, hands
+  each command to `Outpost::handle_command` (which answers pings itself and
+  withdraws an unstarted cancelled query with `NotStarted`), and finishes
+  pending writes.
+
+The worker, its reads, the intake, the writer, the protocol, and the
+supervisor's owner, policy, and writer modules forbid `unsafe`; what remains
+is window-manager calls, the event thread's message loop, process creation,
+and the inherited pipe handles.
 
 ### Text and dialog text
 
-- `text` (milestone M4) — the outpost's side of the text protocol
-  (`docs/crates/verbatim-model.md`, "The text protocol"), public so
-  mockapp's tests drive it as the worker does. `perform(source, anchors,
-  op)` answers one `TextOp` but a caret key's watch, which `check_caret`
-  checks, over a `TextSource`, a backend's view
-  of one node's text in its own positions and UTF-16: `uia::UiaText`, over
-  a text pattern, where a position (`UiaPos`) is one end of a text range,
-  and `edit::EditText`, over an edit control's messages, where it is an
-  offset (a plain edit control's word is the line segmented by
-  `verbatim-text`'s word rules, each word with the white space after it,
-  a no-break space read as a space, and a carriage return or line feed a
-  word of its own, as NVDA finds it); `UiaText::new` takes the element too, which a remote operation
-  starts from, and `remote` and `fetches` say whether caret reads try a
-  remote operation and which formatting they read; `support` gives what
-  the control is already known to support of the text attributes
-  (`TextSupport`), and `known_support` what it is known to support after
-  the reads, for the caller to keep. `caret_report` reads
-  the caret's line and the selection, for `CaretMoved`, with the line's
-  formatting when asked (the report after a focus), and remembers when
-  its read finished; `caret_report_since` also says whether the caret left
-  a given position and, as its `LastSelection` asks, how the selection
-  changed from the node's last report (`ReportedCaret`), with whether the
-  report's selection is kept for the next to compare with, and with the
-  change in general terms when the node's text changed since
-  (`ReportedCaret::content_changed` and `new_selection`);
-  `caret_report_checking` is `caret_report_since` that also asks a given
-  check, once the caret is read and only for a comparison with a
-  selection in either report, whether an unnoted change of the text
-  waits, and then makes the comparison in general terms;
-  `Anchors::note_content_changed` notes such a change, and
-  `NodeText::forget_selection` and `Anchors::forget_selection` make the
-  next report carry no change. `Anchors` keeps one backend's anchors, by
-  node, numbered from a counter both of an outpost's backends share, and never forgets
-  those in its `HeldAnchors`, the anchors Core holds, which both of an
-  outpost's backends share too (`Anchors::sharing`); `NodeText` is one
-  node's, and its `position_at` mints a position at a backend position
-  without a call, as the worker keeps an active text position change's
-  range (`UiaPos::start_of`). `check_caret` checks a caret key's watch
-  with one read of the caret and answers `Watched::Answered` with the
-  key's reply once there is evidence, or `Watched::Watching`; it never
-  waits. `CaretSignal` is what a check knows besides the text: whether a
-  caret event prompted it, and the clock for when a caret was read (Unix
-  milliseconds), so the unit tests run on a fake clock. Details under
-  "Text" below.
-- `dialog_text` — a dialog's own text, such as a message box's question,
-  gathered from its children by NVDA's rules (`docs/nvda/object-model.md`,
-  "A dialog's own text"), public so mockapp's tests gather it as the
-  worker does. `dialog_text(&dialog)` runs the rules over a
-  `DialogParent`, what the text is gathered under, whose children are
-  each a `DialogObject`, the traits each backend implements: MSAA through
-  `verbatim_ia2::dialog::DialogObject`, both at once, and UIA through
-  `UiaDialog::new(uia, request, element)`, the dialog, of which nothing
-  is read but its children (the worker resolves the dialog's kept
-  `Agile<Kept>` on the bounded client's thread and hands over its `Live`
-  element), and `UiaObject`, each child, whose children
-  come with their properties cached, one call per container, each read as
-  a `verbatim_uia::DialogText`, with its description whatever the theme,
-  as NVDA's dialog text includes it (decision 5 of
-  `docs/design/uia-shapes.md`), and without whether it is off the screen,
-  which the rules never use and which a top-level dialog's title bar
-  answers only by asking the window's thread (`WM_GETTITLEBARINFOEX`).
-  `is_dialog(role)` says which nodes have such text: a dialog, an alert, or a property page. A gathering looks at no more than `MAX_OBJECTS`
-  objects; a dialog with more says nothing rather than part of its text.
+- `text` is the outpost's side of the text protocol
+  (`docs/crates/verbatim-model.md`, "The text protocol"), public so mockapp
+  drives it. `perform(source, anchors, op)` answers a `TextOp` over a
+  `TextSource`, a backend's view of one node's text in UTF-16:
+  `uia::UiaText` over a text pattern (positions are `UiaPos`; `new` takes
+  the element for remote operations; `remote`, `fetches`, `support`, and
+  `known_support` say whether caret reads try a remote operation, which
+  formatting they read, and the `TextSupport` known before and after), or
+  `edit::EditText` over an edit control's messages (offsets; a word is the
+  line segmented by `verbatim-text`'s rules, as NVDA finds it).
+  `caret_report`, `caret_report_since` (with `LastSelection` and
+  `ReportedCaret`), and `caret_report_checking` read the caret for
+  `CaretMoved`. `Anchors` keeps a backend's anchors by node and never
+  forgets those in `HeldAnchors` (`Anchors::sharing`), with
+  `note_content_changed` and `forget_selection`; `NodeText` is one node's
+  (`position_at`, `forget_selection`). `check_caret` checks a caret key's
+  watch with one read and answers `Watched::Answered` or
+  `Watched::Watching`; `CaretSignal` is what the check knows besides the
+  text, with a clock for tests.
+- `dialog_text(&dialog)` gathers a dialog's own text by NVDA's rules
+  (`docs/nvda/object-model.md`, "A dialog's own text") over a
+  `DialogParent` whose children are `DialogObject`s: MSAA through
+  `verbatim_ia2::dialog::DialogObject`, UIA through
+  `UiaDialog::new(uia, request, element)` and `UiaObject`, each child read as
+  a `verbatim_uia::DialogText` with its description whatever the theme
+  (`docs/design/uia-shapes.md`, decision 5). `is_dialog(role)` says which
+  roles have such text; more than `MAX_OBJECTS` objects gives no text.
 
 ### Ignored processes
 
-- `supervisor::IgnoredProcesses` — processes Verbatim ignores entirely,
-  named by the end-to-end harness in `VERBATIM_IGNORE_PIDS`
-  (`IGNORE_PIDS_ENV`; `from_env`, `hold`, `contains`, `parse_pids`): the
-  owner's own Windows Terminal. Each is held open as a `Target` is, so its
-  pid names that process and no other for as long as Verbatim runs.
-  `Supervisor::new` and `with_executable` take them; the owner starts no
-  outpost for one (`ensure_spawned` answers `NotWatched`) and routes none
-  of its facts, and passes their pids to the focus listener as
-  `--ignore-pids`, which holds them open too and drops every fact from
-  them before it is queued. `Supervisor::is_ignored` lets the app pass
-  them over (`crates/verbatim-outpost/tests/ignored_process.rs`, and the
-  listener's `a_fact_from_an_ignored_process_is_never_sent`).
+`supervisor::IgnoredProcesses` (`IGNORE_PIDS_ENV`, `VERBATIM_IGNORE_PIDS`;
+`from_env`, `hold`, `contains`, `parse_pids`) are processes Verbatim
+ignores, named by the end-to-end harness: its own Windows Terminal. Each is
+held open; no outpost starts for one (`ensure_spawned` answers
+`NotWatched`), none of its facts is routed, and the listener, given
+`--ignore-pids`, drops them before queuing. `Supervisor::is_ignored` lets
+the app pass them over.
 
 ### The focus listener
 
-- `run_listener` — the focus-listener runtime (decisions D13 and D14;
-  outpost redesign, "The focus listener"), on the transport's child side
-  (`docs/design/communication.md`, sections 4.6 and 6.3): its main thread
-  is its I/O thread, which waits only on a completion port, reads Core's
-  commands, and finishes the writes to Core that pended, at
-  `THREAD_PRIORITY_HIGHEST`; every thread that produces a fact (UIA's
-  callback threads, the reading threads, the `WinEvent` thread) writes it
-  itself, at once when no write is in flight, with its write stamp taken
-  as the write begins and its frame encoded into the sender's one write
-  buffer, kept from frame to frame. It installs the global
-  MSAA hooks (`LISTENER_SUBSCRIPTIONS`, pid zero: focus, foreground,
-  menu-popup, menu and switcher end, alert, and a tooltip window shown,
-  forwarded as `DeliveredFact::Show`, whose help balloon the worker
-  reports as an alert), and desktop-wide UIA
-  subscriptions for the events NVDA registers globally on Windows 11, all
-  through one `Registration` and so one client, as NVDA's are: the focus
-  handler (`Subscription::Focus`) on the client first, then an element
-  selected, a menu opened, and notifications, registered together as one
-  event handler group on the desktop's root element. A UIA menu opening
-  takes the focus's route: its marker, then its application's reading
-  thread, which judges it as NVDA's automation event handler judges a
-  menu opening (the focus handler's checks but the duplicate test, with a
-  sender UI Automation counts as the current focus judged as that focus,
-  with its window and without the native check) and reads it as a focus
-  on the menu, with its ancestors; one that arrives
-  while a focus event waits for or is in its read is dropped, as NVDA
-  drops a menu opening while a focus is pending. A newer focus event, or
-  menu opening, of an element replaces its waiting one, as NVDA's UIA
-  limiter keeps one. And only then
-  announces `Ready`, so focus and menus are seen from the moment it does
-  (announcing first lost a menu opened right after start, found
-  2026-10-06). The event thread (`EventThread::spawn`) likewise returns
-  only once its hooks are installed. Each event becomes a `FocusFact` (a
-  `ListenerFact`: the owning pid and a `DeliveredFact`) built entirely from
-  cached and hang-safe local reads, but for a UIA focus, whose marker is
-  sent at once and whose read is made on its application's reading thread
-  (`focus_read`, above; `focus_read::FocusReader` is public so a test
-  stands in for the listener with the listener's own reader). A
-  foreground event is forwarded without
-  checking the foreground: a starting application's window raises it before
-  it actually becomes the foreground window, so the check waits for the
-  outpost's worker, as NVDA's waits for its main-thread pump. Outgoing facts are
-  coalesced with NVDA's UIA limiter rule, one waiting fact per element and
-  kind (`DeliveredFact::key`, which takes the event's stamp, so that a
-  `WinEvent`'s fact other than a menu opening (a foreground change, an MSAA
-  focus, an alert, or a tooltip shown) is keyed by the thread that raised
-  it too, as NVDA's `WinEvent` limiter keys it (for the alert and tooltip,
-  Dickson, 2026-10-21); a menu opening is
-  keyed by its address alone, since NVDA's limiter keeps only its most
-  recent menu event, whatever its address or thread, and the outpost's
-  intake handles only a batch's newest, which follows NVDA per
-  application, for popup starts (the difference is recorded in
-  `docs/parity/backends.md`, the limiter's entry); notifications and a
-  focus's marker, read, and drop are never merged), with pongs
-  and `Ready` first, while a write is in flight; this backlog of the
-  sender's (`listener::Waiting`) also judges, under the sender's lock,
-  whether a `WinEvent`'s fact was raised after its outpost's hook went in,
-  so none is ever sent behind "forwarding ended". The end of a menu or of
-  the Alt+Tab switcher is told to Core once its grace, 50 milliseconds, has
-  passed with no later end: a threadpool timer, set again by a later end,
-  whose callback sends it through the same sender, behind every fact
-  waiting, so no thread of the listener's waits for the grace. The end
-  carries when its grace is over, and a callback that runs before then (one
-  of an earlier end's grace that took the lock only once a later end was
-  noted, or a timer firing a little early) sends nothing and sets the
-  timer again for the rest. For the keyboard hook's view of the
-  foreground (architecture section 5), it sends Core
-  `OutpostToSupervisor::ForegroundWindow` for every foreground event,
-  whatever process raised it, ignored ones and Verbatim's own included,
-  and whether or not the event's fact is forwarded: the window, the
-  thread the event names, whether it is a console host window, and the
-  integrity level of the process that owns the window, read with local
-  kernel calls (`integrity::process_integrity`; `integrity::own_integrity`
-  is what verbatim.exe reads of itself). Only the newest such report
-  waits (`FactKey::ForegroundWindow`). Once its hooks are in, the
-  `WinEvent` thread reports the window then in front from local reads
-  (a nudge, `NUDGE_FOREGROUND_START`). The console's events are in the
-  listener's hook set but kept unhooked (`verbatim_ia2::suspend_kinds`),
-  except when it starts with a console window in front, whose thread no
-  foreground event will name: then they stay hooked until one of that
-  window's own names its thread, which is reported, and are unhooked
-  (`foreground::ForegroundWatch`, the pure state, unit-tested). The
-  supervisor passes the report to the app as
-  `OutpostMessage::ForegroundWindow` (a `ForegroundReport`). It answers
-  `Ping` with a `Pong`, takes the hand-over's
-  `HookInstalled` and `HookRemoved` (above), `HookRemoved` also ending the
-  application's reading thread, and ignores everything else.
-  Its per-application state is which applications' outposts have their
-  hooks in, which a replacement is given on its command line
-  (`--hooks-in`, `listener::parse_hooks_in`), and each reading thread's
-  last focus, which a replacement does without at the cost of one fuller
-  ancestor read per application, so a crash respawns into full
-  capability at once. It makes no remote operation, so it is not given
-  `--classic-uia`. Range-value changes and live regions, which NVDA
-  also registers globally, are not subscribed yet: the reducer speaks values
-  only for the focus, and live regions are milestone M7's.
-- `listener::capture` — what the listener's UIA callbacks capture from an
-  event's element: its cached window handle and snapshot parts, nothing
-  read live. Public so that mockapp's tests make a selection's fact from
-  mockapp's own event as the listener does (`tests/combo_box.rs`).
+`run_listener` is the listener runtime (`docs/design/communication.md`,
+section 6.3).
+
+- Its main thread is its I/O thread (completion port,
+  `THREAD_PRIORITY_HIGHEST`); every thread that produces a fact writes it
+  itself, encoded into the sender's one buffer.
+- It installs the global MSAA hooks (`LISTENER_SUBSCRIPTIONS`: focus,
+  foreground, menu-popup, menu and switcher end, alert, and tooltip shown,
+  forwarded as `DeliveredFact::Show`) and, through one `Registration`, the
+  focus handler (`Subscription::Focus`) then element selected, menu opened,
+  and notifications as one group on the desktop root, and says `Ready` only
+  once all are in, so a menu opened right after start is seen. Range-value changes and live regions are not subscribed:
+  values are spoken only for the focus, and live regions are milestone
+  M7's.
+- A UIA menu opening takes the focus's route, judged as NVDA's automation
+  event handler judges one, and is read as a focus on the menu. One that
+  arrives while a focus of its application waits or is read is dropped
+  (`Readers::focus_pending`). A newer focus or menu opening of an element
+  replaces its waiting one.
+- Other events become `FocusFact`s (`ListenerFact`: pid and
+  `DeliveredFact`) from cached and local reads. A foreground event is
+  forwarded without checking the foreground, since a starting window raises
+  it early; the outpost checks. `focus_read::FocusReader` is public for
+  tests.
+- While a write is in flight, waiting facts (`listener::Waiting`) merge per
+  element and kind (`DeliveredFact::key`), a `WinEvent` fact but a menu
+  opening also per raising thread, a menu opening per address alone
+  (`docs/parity/backends.md`, the limiter's entry); notifications and a
+  focus's marker, read, and drop never merge; pongs and `Ready` go first.
+  The backlog judges under the sender's lock whether a fact was raised after
+  its outpost's hook went in, so none follows `ForwardingEnded`.
+- A menu's or the Alt+Tab switcher's end goes to Core (`MenuOrSwitchEnded`)
+  once its 50 ms grace passes with no later end, from a threadpool timer
+  that a later end sets again; a callback that runs early sends nothing.
+- For every foreground event, whatever its process, the listener sends
+  `ForegroundWindow` (window, the event's thread, whether a console host
+  window, integrity level by `integrity::process_integrity`;
+  `integrity::own_integrity` is verbatim.exe's), only the newest waiting
+  (`FactKey::ForegroundWindow`), and once its hooks are in, the window then
+  in front (`NUDGE_FOREGROUND_START`). The console's events stay unhooked
+  (`verbatim_ia2::suspend_kinds`) unless it starts with a console window in
+  front, until one of that window's events names its thread
+  (`foreground::ForegroundWatch`). The app receives it as
+  `OutpostMessage::ForegroundWindow` (a `ForegroundReport`).
+- It handles `Ping`, `HookInstalled`, `HookRemoved` (which also ends the
+  application's reading thread), `CoreFocus`, `IdleQuery`, and `Shutdown`,
+  and ignores the rest. A replacement gets `--hooks-in`
+  (`listener::parse_hooks_in`) and does without each thread's last focus,
+  at the cost of one fuller ancestor read per application. It makes no
+  remote operation, so takes no `--classic-uia`.
+- `listener::capture` is what the UIA callbacks capture, public so mockapp
+  makes a selection's fact as the listener does
+  (`crates/mockapp/tests/combo_box.rs`).
 
 ### The supervisor
 
-- `Supervisor` (the `supervisor` module; outpost redesign, "The
-  supervisor") — `new(events)` starts the lifecycle owner thread, the
-  relay, which starts the focus listener at once (`with_executable` launches every
-  child from a given executable with a given shutdown time limit, for the
-  test that launches a stand-in); `shutdown()` shuts every outpost and the
-  listener down for Verbatim's exit, returning once every one has ended
-  with a `ShutdownSummary`, how many of the children that ended during
-  Verbatim's life, spares included, shut down cleanly, had already exited
-  or exited with an
-  error, were killed because their time limit passed, or were killed
-  because ending them cleanly failed (the wait for their exit failed, or
-  there was no thread to end them, or it panicked); `ensure_spawned(pid)` starts an outpost
-  without asking it to report anything, giving it a spare when one waits
-  (used at Core startup for Core's own pid, so its outpost is warm before
-  the first gesture, and for a focus-now query of an application with
-  none);
-  `send_to_outpost(outpost_id, command)` queues a command for one outpost
-  incarnation without waiting, failing at once with a `QueueError` when that
-  incarnation has ended or its queue is full; `note_views(attention,
-  holding)` passes the views the app derives from the reducer state;
-  `core_focus(judged, focus, outposts)` sends `CoreFocus` to the
-  listener, without its ancestors, and to each of `outposts` as its own
-  focus or none; and
-  `query_idle(round)` runs the idle barrier's round through the children
-  (under "The idle barrier" below), the app hearing which outposts it
-  asked through `OutpostMessage::IdleQueried`. The
-  app hears that the listener is ready, and whether it replaced one that
-  ended, through `OutpostMessage::ListenerReady`; that a spare is ready,
-  with how many are ready and waiting, through `SpareReady` (Verbatim's
-  readiness waits for `SPARES`, two, so every end-to-end scenario's
-  applications take a spare); that an outpost failed before its
-  `Ready` and which incarnation holds its application's facts, through
-  `Reincarnated`; and of each incarnation
-  through
-  `OutpostMessage`: `Started` before
-  any of its messages, then its messages, and `Ended` with a reason
-  (exited, killed, retired, or target exited). Its messages are delivered
-  as the relay read them, `Frame`s, whole and unparsed; the app passes
-  every `OutpostMessage` through the `Frames` that `Supervisor::frames()`
-  makes, on the thread that takes them, and `Frames::arrived(message)`
-  returns what to handle now: the message itself, or for a frame the
-  `Event(pid, outpost_id, position, message)` it carries. `Frames`
-  parses every frame, whatever its size, as it arrives, on the reducer's
-  thread, stamps every node id with the outpost's id, records when the
-  relay read it, and numbers the messages that carry node ids in pipe
-  order, as the outposts' reader threads did; so each outpost's messages
-  and its `Ended` reach the app in the order the relay delivered them
-  (`docs/design/communication.md`, section 4.8). A terminal's
-  whole-document read of 9,000 lines takes 0.02 to 0.3 ms to parse in a
-  release build, its text in the frame's raw section (`docs/performance.md`,
-  "verbatim.exe's relay"). A frame
-  that is not a message has its outpost ended, as a pipe that fails
-  does, and its later frames are dropped, only its `Ended` handed on.
-  The relay drops every frame from
-  an outpost it has already ended itself (stuck, retired, its target
-  gone, or unreadable), though it reads that pipe until it ends. Every message is delivered
-  through the `EventSink` given to `new`: a channel of `OutpostMessage`s
-  converts into one (the tests use that), and `EventSink::new` takes a
-  function, which the app uses to post the messages to the reducer
-  thread's port, in line with its keys and commands. The function says
-  why a message was not delivered (`Undelivered`): `Gone`, the app having
-  gone; or `Refused`, the message given back because the port refused
-  its packet, in which case the relay keeps a message refused, with every message it sends
-  after it, behind it, and delivers them again, in order, at its next
-  send and at every heartbeat, so nothing it sends is lost or overtaken
-  (an `Ended` still comes before its replacement's `Started`;
-  `crates/verbatim-outpost/tests/target_gone.rs`).
-  `EventSink::watched(progress, stalled)` lets the relay watch the thread
-  taking them: at each heartbeat it reads `progress`, the counts of a
-  `verbatim_process::port_queue` (`Progress`), and once that thread has
-  taken nothing for three heartbeats in a row while inputs waited it
-  reports a `ReducerStall` (how long, and how many waited) to `stalled`,
-  once per stall. Nothing is ended for it: the relay reads the outposts'
-  pongs itself, so a stalled reducer never makes an outpost look wedged
-  (section 6.8).
-  - The lifecycle owner (`owner`) is one thread, `verbatim-relay`, that
-    makes every lifecycle decision and owns the per-application records
-    and the listener record. It is also the relay
-    (`docs/design/communication.md`, section 6.2; the `relay` module): it
-    waits only in `GetQueuedCompletionStatusEx` on one completion port,
-    with a timeout that is the next heartbeat (3 seconds) or sweep (30
-    seconds), and is woken by a read of a child's pipe completing, a
-    write to a child that pended completing, or its mailbox. It reads the
-    listener's pipe and every outpost's, each through a
-    `transport::PortReader`, one read in flight per pipe, and handles each
-    frame in the pass that read it: a listener's fact is parsed, routed,
-    and written to its outpost there and then, so a fact crosses
-    verbatim.exe with this one thread's wake-up; an outpost's frame is
-    read for its kind only (`message_kind`): a pong and `TargetExited` are
-    handled there, `Ready` is handled and handed on, and every other frame
-    is handed to the app whole as `OutpostMessage::Frame`, with when it
-    was read: the reader's own buffer when it gave it up
-    (`transport::FrameBody::Owned`, a frame read over several reads), a
-    copy of the body otherwise. The pipe's read is armed again at once, so every pipe
-    drains however busy the reducer is (section 4.4). The pipe's end is
-    handled after every frame before it. Launch helpers, retirements,
-    hang checks and the app report to it through the mailbox
-    (`relay::Mailbox`, a channel whose sends post one wake to the port
-    unless one is already waiting; a wake the port refuses is not counted
-    as waiting, so the next send posts again, and the relay also takes the
-    mailbox at every heartbeat, so nothing sent waits longer than a ping
-    interval); there is no shared map lock. It never
-    blocks: launching blocks, so the owner records the application as
-    starting and hands the launch to a helper thread, which makes the
-    child's writer and reports back; the relay then sends `Started`, in
-    order with its other messages to the app, and reads the child's pipe
-    from then on, a second fact meanwhile being held,
-    never a second launch; a retirement runs on a thread of its own
-    and reports how the child ended; and whether an application with
-    eight abandoned workers is hung, which walks its windows, is checked
-    on a thread of its own, the outpost being judged on its answer. At
-    Verbatim's exit the relay keeps serving its pipes until every
-    retirement has reported and every pipe has finished, since a child's
-    shutdown message must be written.
-  - Each child's commands go through a `transport::Sender` on verbatim.exe's
-    overlapped end of its command pipe (`writer`), on the relay's port:
-    the thread that sends a command, the relay or the reducer, writes it
-    itself when no write is in flight and nothing waits, and otherwise it
-    waits in a bounded queue (capacity 64), written in order by the relay
-    once the write that pended completes; the relay finds the writer by
-    the completion's key (`relay::CommandPipes`, to which a writer is
-    added as it is made). So the relay never waits on a pipe while
-    deciding and the reducer thread never waits on one, and a child that
-    stops reading holds up only its own queue. When the queue is full a
-    ping still gets through, and so does a message of the MSAA hand-over,
-    or any part of a UIA focus's read, which keeps its place behind
-    everything queued before it and is never merged or dropped
-    (`Outgoing::delivered`); a routed fact replaces any waiting fact for
-    the same object and kind, and for an MSAA event other than a menu
-    opening the same thread that raised it (or the oldest waiting fact makes room), and
-    anything else, a query above all, fails at once. The supervisor's
-    thread count is the relay, plus the short-lived threads that launch
-    and end children and check whether an application is hung.
-  - Facts that arrive while an outpost is starting are held in arrival
-    order, a newer fact for the same object and kind, and for an MSAA event
-    other than a menu opening the same thread that raised it, replacing
-    the older one and moving to the back (NVDA's limiter rule), and
-    released in that order
-    on `Ready` (the pure `HeldFacts`); then the listener is told the
-    outpost's hook is in (`HookInstalled`), and when a ready outpost's
-    record goes, that it is not (`HookRemoved`), through
-    `Owner::tell_listener`, which holds them while the listener's launch is
-    at work.
-  - Targets: the owner identifies each application by a process it holds
-    open (`process::Target`), opened when the application's first outpost
-    is started and kept while the application has a record: an outpost, or
-    a failed outpost's replacement waiting for its backoff. Windows never gives a process's id to another process while a
-    handle to it is open, so the pid the owner knows, and passes to the
-    outpost, names that application and no other for as long as it is
-    held. No outpost is started or replaced for an application whose
-    process has exited, or that cannot be opened to be held; the app hears
-    `OutpostMessage::NotWatched`, so nothing waits for one. Until an
-    application is held, the pid in a routed fact, or in the app's request,
-    is trusted to name the process that raised the fact or holds the
-    foreground, which was observed moments before it is opened.
-  - Failure: when an outpost's pipe closes, the owner ends it after the
-    relay has handed on everything it wrote. If its application has
-    exited, it ended with its target (`Ended`, target exited), is not
-    replaced, and the application's process is let go. Otherwise it
-    failed, and takes the one failure path described above, under "Spare
-    outposts": its application is given the next outpost, at once or after
-    the backoff, and is never given up
-    (`crates/verbatim-outpost/tests/spares.rs`). The sweep ends the record
-    of an application that has exited while its replacement waited.
-  - Stuck: every child is pinged every three seconds; nine seconds without
-    a pong ends it (`Ended`, killed). An outpost whose worker waits on a
-    slow application still answers pings from its I/O thread, so it is not
-    stuck. Eight abandoned workers end an outpost too, except while its
-    application's windows are reported hung (`IsHungAppWindow`), when a
-    replacement would hang the same way (the pure `wedge_decision`): each
-    abandoned worker is a thread blocked in the application, freed only
-    when the process exits. Either is followed by the failure path, an
-    application that has exited included. The pongs are read by the relay
-    itself, never through the reducer, so a reducer that has stalled ends
-    no outpost; it is reported as its own stall
-    (`EventSink::watched`).
-  - Retirement: an outpost whose application has not held attention for two
-    minutes, which is not Core's own, and in which the reducer holds no
-    nodes, is ended (`Ended`, retired) by the sweep every 30 seconds (the
-    pure `retirement_decision`).
-  - Target exit: an outpost whose application has exited says so
-    (`TargetExited`), and the owner ends it (`Ended`, target exited); it is
-    not replaced. The heartbeat also checks every held application, and
-    ends the outpost of one that has exited the same way, for an outpost
-    that could not wait on its application's process.
-  - Every ending shuts the child down cleanly (`retire`, on a thread of
-    its own, under "Shutting down" below): unless it has already exited,
-    the child is sent `Shutdown`, its command pipe is closed once that is
-    written, and it is killed through its job only if it has not exited
-    within `SHUTDOWN_LIMIT`. When the owner ends an outpost for any reason
-    but the end of its pipe, `Ended` is sent at once and anything the
-    child wrote afterwards follows it, which the app drops.
-  - The focus listener is supervised the same way from its own record: its
-    facts go to the owner, which routes them; it is pinged and replaced when
-    it stops answering or its pipe closes, and a replacement's `Ready` asks
-    the attention application to report again, since facts were lost in the
-    gap.
-  - Process creation (`process`): each child is launched through
-    [verbatim-process](verbatim-process.md), spawned suspended into a
-    kill-on-close job with a 200 MB memory cap and resumed, inheriting only
-    its own two pipe ends and its log handle through a
-    `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`, so two launches running at once can
-    never keep each other's pipes open. The module itself keeps only the
-    role's command line and log name and the two local process and window
-    queries the owner uses.
+`Supervisor`:
+
+- `new(events)` starts the relay, which starts the listener at once;
+  `with_executable` uses a given executable and shutdown limit, for tests.
+  Both take the `OutpostOptions` every outpost gets.
+- `shutdown()` shuts every child down and returns a `ShutdownSummary`: how
+  many children ended cleanly, had exited, exited with an error, were killed
+  at their time limit, or were killed because ending them failed.
+- `ensure_spawned(pid)` starts an outpost, from a spare when one waits.
+- `send_to_outpost(outpost_id, command)` queues a command without waiting,
+  failing at once with a `QueueError` when the incarnation ended or its
+  queue is full.
+- `note_views(attention, holding)`, `core_focus(judged, focus, outposts)`,
+  `leave_nodes_held`, `query_idle(round)`, `is_ignored`, and `frames`.
+- `SPARES` is two; Verbatim's readiness waits for them.
+
+The app hears through `OutpostMessage`: `ListenerReady`, `SpareReady`,
+`Reincarnated`, `IdleQueried`, `NotWatched`, `ForegroundWindow`, and per
+incarnation `Started`, its messages as unparsed `Frame`s, and `Ended` with a
+reason (exited, killed, retired, target exited). `Frames::arrived` (from
+`Supervisor::frames()`, on the reducer's thread) turns a frame into
+`Event(pid, outpost_id, position, message)`, the payload boxed: it parses
+each frame, stamps node ids with the outpost's id, records when the relay
+read it, and numbers the messages that carry node ids
+(`docs/design/communication.md`, section 4.8). A frame that is not a message
+ends its outpost: `Frames` drops that outpost's later frames at once,
+handing on only its end, and the relay drops every frame from an outpost
+it has already ended. Messages go through the `EventSink` given to `new` (a
+channel converts into one; `EventSink::new` takes the app's posting
+function). `Undelivered` says why one was not: `Gone`, or `Refused`, when
+the relay keeps it and everything after it and delivers them again in order
+(`crates/verbatim-outpost/tests/target_gone.rs`).
+`EventSink::watched(progress, stalled)` reports a `ReducerStall` once the
+reducer thread has taken nothing for three heartbeats while inputs waited;
+nothing is ended for it (`docs/design/communication.md`, section 6.8).
+
+How it works:
+
+- The owner and relay (`owner`, `relay`) is one thread, `verbatim-relay`,
+  that makes every lifecycle decision and owns the records
+  (`docs/design/communication.md`, section 6.2). It waits only on one
+  completion port, timing out at the next heartbeat (3 s) or sweep (30 s).
+  It reads every child's pipe (`transport::PortReader`) and handles each
+  frame in the pass that read it: a listener's fact is routed and written to
+  its outpost there and then; an outpost's frame is read only for its kind
+  (`message_kind`), a pong and `TargetExited` handled, `Ready` handled and
+  passed on, anything else handed on whole (`transport::FrameBody::Owned`
+  or a copy). Helpers report through `relay::Mailbox`. It never blocks:
+  launches, retirements, and hang checks run on threads of their own.
+- Each child's commands go through a `transport::Sender` (`writer`): the
+  sending thread writes when nothing is in flight or waiting, and otherwise
+  the command waits in a queue of 64, written by the relay as writes
+  complete (`relay::CommandPipes`). When the queue is full a ping, the
+  hand-over's messages, and a UIA focus's parts still get through, never
+  merged (`Outgoing::delivered`); a routed fact replaces a waiting one for
+  the same object and kind (and thread, for an MSAA event but a menu
+  opening) or the oldest fact makes room; anything else fails at once.
+- Facts for a starting outpost are held, merged by the same rule, and
+  released on `Ready` (`HeldFacts`); then the listener gets `HookInstalled`,
+  and later `HookRemoved`, through `Owner::tell_listener`.
+- Each application is identified by a process held open (`process::Target`)
+  while it has a record. Nothing is started for an application that exited
+  or cannot be opened; the app hears `NotWatched`.
+- An outpost whose pipe closes is ended once everything it wrote is handed
+  on: with its target if the application exited, otherwise by the failure
+  path (`crates/verbatim-outpost/tests/spares.rs`). Every child is pinged
+  every three seconds, and nine seconds without a pong ends it; eight
+  abandoned workers end an outpost unless its application's windows are
+  reported hung (`wedge_decision`). An outpost whose application has not
+  held attention for two minutes, is not Core's own, and holds no nodes of
+  the reducer's is retired by the sweep (`retirement_decision`). An
+  outpost says `TargetExited` when its application exits, and the heartbeat
+  also checks every held application.
+- Every ending is a clean shutdown (`retire`, under "Shutting down"); an
+  outpost ended for any reason but its pipe's end has `Ended` sent at once,
+  and the app drops what it wrote after.
+- The listener is supervised the same way; a replacement's `Ready` makes
+  Core ask the attention application for its focus.
+- `process` holds the roles' command lines and log names and two local
+  queries; launching is [verbatim-process](verbatim-process.md)'s.
 
 ## Implementation notes
 
 ### Spawning
 
-- Spawning (`Supervisor`, through `verbatim-process`): the outpost is
-  created suspended with two pipes with no name
-  (`verbatim_process::overlapped::pipe`, 64 KiB each way), verbatim.exe's
-  ends overlapped and the child's synchronous, whose child ends are the
-  only inheritable handles, placed
-  in a job object carrying kill-on-job-close and a 200 MB memory cap, and
-  only then resumed — inside the job before executing a single
-  instruction. Core holds the only job handle, so kernel teardown of Core,
-  however it dies, kills every outpost. A per-application outpost's command
-  line carries `--target-pid`, fixing the watched application for its whole
-  life, and a spare's `--spare <launch>`, the supervisor's number for the
-  launch, its application coming later in `Assign`; both carry
-  `--classic-uia` when `uia.remote_operations` is off in
-  `settings.toml` (`Supervisor::new` takes the `OutpostOptions` every
-  outpost is launched with, which `verbatim-app` reads from the setting at
-  startup); the listener's carries `--listener` and no pid.
-  Each child is spawned with `STARTF_USESTDHANDLES` and an inheritable,
-  append-mode file handle as its standard error (and output), so the outpost's
-  and listener's own `tracing` output — which otherwise had no subscriber and
-  went nowhere — lands in a per-role log file in this Verbatim launch's own
-  log directory (`logs\<Verbatim's pid>\outpost-<target image>-<target
-  pid>.log`, `outpost-spare-<launch>.log` for a spare, whose application
-  is not known when its log opens, and `listener.log`, next to the outpost
-  executable; the
-  synthesizer host's `synth-<id>.log` lands there too). The app calls
-  `verbatim_process::prepare_launch_logs` at startup, before it starts
-  any child, which empties
-  that directory if an earlier process with the same pid left it and
-  keeps only the newest ten launch directories. The outpost binary
-  installs a stderr `tracing` subscriber at startup for exactly this; the E2E
-  harness fetches these logs alongside the timeline and stderr, so a silent
-  outpost is readable after the fact instead of theorized. Best-effort: a
-  failed log open leaves the child unredirected, never unspawned.
+Each child is created suspended with two unnamed pipes
+(`verbatim_process::overlapped::pipe`, 64 KiB each way, verbatim.exe's ends
+overlapped), inheriting only its pipe ends and log handle
+(`PROC_THREAD_ATTRIBUTE_HANDLE_LIST`), placed in a kill-on-close job with a
+200 MB memory cap, and resumed (`docs/architecture.md`, section 1). Command
+lines carry `--target-pid`, `--spare <launch>`, or `--listener`, and
+`--classic-uia` when `uia.remote_operations` is off in `settings.toml`. Each
+child's standard error and output go to an append-mode file in this launch's
+log directory: `logs\<Verbatim's pid>\outpost-<target image>-<target
+pid>.log`, `outpost-spare-<launch>.log`, or `listener.log`, beside the
+outpost executable. `verbatim_process::prepare_launch_logs`, called before
+any child starts, empties a directory an earlier process with the same pid
+left and keeps the newest ten. A failed log open leaves the child
+unredirected, never unspawned.
 
 ### Foreground changes and focus-now
 
-- Foreground changes (the worker): a batch that holds a foreground fact
-  is handed out at once. A foreground fact whose window is not the
-  system's foreground window when the worker handles it is dropped, as
-  NVDA's `processForegroundWinEvent` drops it: measured live on
-  2026-10-09, Windows raises the foreground event once the change is
-  made, and the events that come before are stale or raised early by the
-  application itself, such as File Explorer's as it creates its window,
-  which the system's own event follows (`docs/parity/focus-events.md`, "Stale focus
-  events"). The intake held such a batch for up to 250 ms, checking every
-  10 ms, until then. The batch limits keep a foreground fact as one of
-  its thread's other events as well as one of the focus events, as NVDA's
-  limiter does, so the focus events an application raises after it do
-  not crowd the system's event out (measured 2026-10-10: in 8 runs of 8
-  File Explorer's focus events crowded it out without this). A foreground fact in front is
-  dropped too, before anything is read and without counting as reported,
-  when the last focus or foreground change the outpost reported
-  (`Tracking`'s queued focus) is in its window or a child window of it
-  (`window::is_descendant_window`), or came from the fact's own event
-  address, taken as the client object (`OBJID_CLIENT`, `CHILDID_SELF`),
-  as the hook takes a foreground event's window object, and no focus Core
-  queued from another application has replaced it: NVDA's two tests in
-  `processForegroundWinEvent` (`worker::foreground_repeats_focus`).
-  Otherwise a foreground fact is reported at once, whether or not its window has been shown yet,
-  stamped with the time its window was confirmed as the foreground, after
-  its name is read, rather than the time Windows raised the event,
-  named or not, as a focus on the window, since the foreground change is what
-  moves the reducer's attention; the reducer does not speak a nameless
-  foreground window, and nothing announces it later. The window's own
-  accessible object is read: UIA via `window_element`, MSAA via the
-  window's client object (`OBJID_CLIENT`), as NVDA reads a foreground
-  window, so a focus event on the client area that follows is the same
-  node and is not announced again; a popup menu window (`#32768`) reads
-  the same way, as role menu (`read::window_snapshot`). A
-  window whose accessible object cannot be read yet (a freshly created
-  msinfo32 window, found live) is reported from local window data, and a
-  window whose accessible name is still empty takes its window text
-  (`InternalGetWindowText`, which never sends the window a message). A
-  report whose window is no longer the system's foreground window when it is
-  ready to send is dropped, as NVDA's `processForegroundWinEvent` drops it.
-  A foreground event whose window is not yet in front when it is handled
-  is dropped and never kept, and so is one for a window read through UI
-  Automation, even in front, as NVDA drops every MSAA event for such a
-  window. Either window is announced as the focus enters it, from the
-  focus's ancestry, where the reducer speaks the top-level window like any
-  other entered ancestor (`docs/design/focus-pipeline.md`, section 16.4);
-  a console window's foreground event comes before the window is in
-  front, and its title comes from the console window element, the text
-  area's parent, which the listener's read keeps among the ancestors.
-  Whether a window is the foreground window is read by the reader the
-  outpost was given (`Outpost::set_foreground_reader`, the system's
-  `GetForegroundWindow` unless a test gives another), for the foreground
-  fact as for the acceptance test.
-- A window's client area read through MSAA is marked
-  `NodeDetails::top_level_client` when it is a client object of a window
-  with the `WS_SYSMENU` style (`verbatim_ia2`'s snapshot read, one local
-  style read for a client object only): it reads as a pane, and the
-  reducer presents it, by its title, as the window it stands for, as
-  NVDA's `isPresentableFocusAncestor` presents it.
-- Focus-now (the worker): the answer to Core's focus-now query is the
-  target's foreground window, when it holds the system foreground
-  (`GetForegroundWindow`, never `GetGUIThreadInfo`'s `hwndFocus`, which can
-  name a child window such as Windows 11 Notepad's text area), and its
-  focused control (`hwndFocus`, through that window's backend) with its
-  ancestors, or with them unknown (`FocusedControl::ancestors` is then
-  `None`, and Core receives the focus with `ancestors_unknown`),
-  selected child, and, for a control that may have text, its caret read
-  by the reported focus's own read (`read_focus_text`), so a text field
-  focused at startup or after a menu closes or Alt+Tab speaks its line
-  and Core has its caret; a console's text area reads as a nameless
-  terminal there too, as on the event path (`read::console_text_area`).
-  There are no retries: a nameless window is
-  not announced later, a control that takes focus later raises its own focus
-  event, and the query covers focus that settled before the listener
-  existed.
-- Hidden-frame suppression (decision D9): Core's hidden 1x1 main frame is
-  marked with the `verbatim_model::HIDDEN_FRAME_WINDOW_PROP` window
-  property by `verbatim-gui` (see that crate's section) and must never be
-  announced — it transits real focus during the prePopup show/raise/force-
-  foreground dance and would otherwise read as a nameless "Verbatim"
-  window with role unknown, the first of the two M2 focus-timing races.
-  Every `FocusChanged` emission path checks the property (`GetPropW`, which
-  tolerates any handle and never blocks) before emitting: the MSAA event
-  path (scoped to `id_child == verbatim_ia2::CHILDID_SELF`, re-exported
-  from that crate's `com` module for exactly this check, so a child
-  element's event on some unrelated window is never accidentally
-  suppressed by hwnd coincidence), the UIA focus path, and the focus-now
-  query (`focused_control_in` treats the hidden frame as "nothing focused").
-  The foreground and focus-now window choices skip hidden-frame windows. The
-  checks also walk to the window's top-level ancestor (`GetAncestor` `GA_ROOT`,
-  another hang-safe local read): the marker property sits on the frame window
-  only, so a control that lives in its own child `hwnd` inside the frame — a
-  wxWidgets panel has one — is not caught by reading the marker on that child
-  alone, and was announcing as a bare "pane" until the ancestor check was added.
-  A marked window counts only when it belongs to Core's process, the
-  outpost's parent (read once from a process snapshot), since any process
-  can set the property on its own windows. The frame is named once, on
-  purpose: when a popup menu opens while the frame holds the foreground
-  (Verbatim+V), the menu's focus is reported in the frame's window, with
-  the frame's own snapshot, read as a foreground window is read, as its
-  only ancestor, so the reducer says "Verbatim" and then "Context menu",
-  as NVDA names the foreground window a menu opens from
-  (`docs/parity/focus-announcement.md`, "Focus announcement content and property order").
-- `verbatim-gui`'s `force_foreground` (see that crate's section) injects a
-  bare `VK_CONTROL` tap before attempting `SetForegroundWindow`: a gesture
-  that arrived via the control plane (no physical input, as every E2E test
-  and any future remote session sends) fails Windows' foreground-lock
-  heuristic and falls back to the slow `AttachThreadInput` path, observed
-  at roughly two seconds; the tap satisfies the heuristic directly, cutting
-  that to roughly 150 to 450 ms. `VK_MENU` was tried and rejected — a lone
-  Alt press activates menu bars and bounces foreground straight back.
+- A batch with a foreground fact is handed out at once. A foreground fact
+  whose window is not in front when handled is dropped, as NVDA's
+  `processForegroundWinEvent` drops it, since Windows raises its own event
+  once the change is made (`docs/parity/focus-events.md`, "Stale focus
+  events"). It counts among its thread's other events and among focus events
+  in the batch limits, so later focus events do not crowd it out.
+- A foreground fact in front is also dropped, uncounted, when the last
+  focus or foreground change reported (`Tracking`'s queued focus) is in its
+  window or a child (`window::is_descendant_window`), or came from its own
+  address as the client object, and no focus Core queued from another
+  application has replaced it: NVDA's two tests
+  (`worker::foreground_repeats_focus`).
+- Otherwise it is reported at once as a focus on the window, stamped when
+  confirmed in front. The window's own object is read (`window_element`, or
+  `OBJID_CLIENT`), so a focus on its client area is the same node; a popup
+  menu window (`#32768`) reads as a menu (`read::window_snapshot`). An
+  unreadable window is reported from local data, and an empty name takes
+  the window text (`InternalGetWindowText`). A report whose window has left
+  the front by sending time is dropped.
+- A foreground event for a UIA window is dropped, as NVDA drops every MSAA
+  event for one; the window is announced from the focus's ancestry
+  (`docs/design/focus-pipeline.md`, section 16.4). A console window's title
+  comes from its window element among the listener's ancestors.
+- An MSAA client object of a `WS_SYSMENU` window is marked
+  `NodeDetails::top_level_client`, read as a pane and presented by its
+  title, as NVDA's `isPresentableFocusAncestor` presents it.
+- Focus-now answers the foreground window, when the application holds the
+  foreground (`GetForegroundWindow`, never `hwndFocus`), and the focused
+  control (`hwndFocus`, through its window's backend) with its ancestors or
+  them unknown (`ancestors_unknown` in Core), selected child, and caret
+  (`read_focus_text`; a console's text area reads as a nameless terminal,
+  `read::console_text_area`). There are no retries.
+- Hidden-frame suppression (decision D9): Core's hidden 1x1 frame, marked
+  with `verbatim_model::HIDDEN_FRAME_WINDOW_PROP`, is never announced. Every
+  `FocusChanged` path checks the property (`GetPropW`) on the window and its
+  root (`GetAncestor` `GA_ROOT`): the MSAA path (only for `CHILDID_SELF`),
+  the UIA path, and focus-now (`focused_control_in` treats it as nothing
+  focused). A marked window counts only in Core's process, the outpost's
+  parent. A popup menu opened while the frame is in front (Verbatim+V) is
+  reported with the frame's snapshot as its only ancestor, so the reducer
+  says "Verbatim" and then "Context menu" (`docs/parity/focus-announcement.md`,
+  "Focus announcement content and property order").
 
 ### Event flow
 
-- Event flow (the worker): the event thread hosts the WinEvent hooks,
-  installed once for the fixed target pid before the message loop starts
-  (never rebound — a second live `WINEVENT_OUTOFCONTEXT` hook set on a
-  thread that already has one has been observed to permanently kill
-  WinEvent delivery on that thread for the rest of the process, which
-  decision D9's one-pid-per-outpost-for-life design sidesteps). Every event
-  is arbitrated per window so exactly one backend reports it: an MSAA event
-  for a UIA window is dropped, and a UIA event for an MSAA window. The
-  event thread drops an MSAA event whose window is already known to be
-  read through UIA before it is queued, asking its own record of the
-  application's windows (`arbitration::EventWindows`, kept by window
-  handle in a `verbatim_ia2::WindowCache`): a window's classes are read
-  once, and the arbitrator is asked only until its backend is decided for
-  the window's lifetime (`Arbitrator::lasting_verdict`), so a flood from
-  one window costs one lookup per event. A window's entry goes when its
-  destroy event arrives, or when its handle is found owned by another
-  thread; every backend is decided anew after Core changes the backend
-  override. The event thread also narrows the hook (`outpost/narrowing.rs`,
-  `docs/design/wake-ups.md`, "Narrowing the outpost's hook"): while the
-  application's focus window and foreground window are both known to be
-  read through UIA, it unhooks the value, state, name, description,
-  selection and text selection events
-  (`narrowing::NARROWED`, with `verbatim_ia2::suspend_kinds`), which it
-  would drop for those windows anyway, nearly all of them UI Automation's
-  own copies of its events, and it hooks them again as soon as the focus,
-  a menu opening, or the foreground is in a window read through MSAA or
-  not yet decided. Focus, foreground, menu opening, alert, tooltip, window
-  shown, the system caret's location changes, window destroyed, and the
-  console's updates and caret stay hooked for the outpost's life, since
-  the worker uses them for UIA windows too.
-  The focus and foreground windows are those of the hook's own focus,
-  menu-opening and foreground events, decided again before each is
-  queued; until the hook delivers one, those of the facts the listener
-  routed, which the reader passes on as nudges (`event_thread::Nudger`, a
-  thread message the event thread hands to its owner's nudge handler). The
-  worker nudges it to decide again when it has just kept a UIA verdict for
-  a window, and the reader when Core changes the backend override. What can
-  be lost is an event of a narrowed kind raised in a window read through
-  MSAA after the focus or foreground entered it but before the event
-  thread took that event, and one from a window read through MSAA that is
-  neither the focus window nor the foreground window, which the worker's
-  acceptance takes only from a topmost window such as a menu or a
-  drop-down list. An MSAA
-  event's window is exact; a UIA element that is not a window itself is
-  attributed to its window by `nearest_window_handle` (NVDA's
-  `getNearestWindowHandle`), on the worker, since it is a cross-process call.
-  Because every Win32 and wx control is its own window handle, per-window
-  arbitration is per-control there, while a WinUI top level resolves once
-  for its whole subtree. Trace IDs are minted when the OS event first
-  arrives, and each event carries its observation timestamp for the latency
-  ledger and `WindowFacts` for the window it concerns (`window_facts`:
-  top-level window and root owner from `GetAncestor`, the topmost extended
-  style on the window or its top-level window, and for `Windows.UI.Core`
-  windows whether `GetGUIThreadInfo`'s active window is it or contains it,
-  and whether it is in `GetForegroundWindow`'s window by NVDA's test, and,
-  for a focus change only, the window's class, which Core's rules for an
-  application's windows match, and the application's name, its
-  executable's file name without the extension, lower-cased, read once
-  per process with `QueryFullProcessImageNameW` and remembered, a
-  console window's client's for a focus in a console window, and whether
-  Alt is held, by `GetAsyncKeyState`), all local calls. A UIA focus's
-  snapshot, from the listener's read, a menu opening's, or the outpost's
-  own read of the focus, carries the element's own UIA class
-  (`NodeDetails::class_name`) from the element's cache, and its raw-view
-  parent's automation id (`NodeDetails::parent_automation_id`) from the
-  first ancestor the walk read, which Core's rules for an application's
-  elements match; no other snapshot carries them. A node read alone
-  carries its grid row and column when it is a grid item and the theme
-  reports cell coordinates (`gates::node_gates`); a node read among many
-  never does.
+- The event thread hosts the hook, never rebound: a second
+  `WINEVENT_OUTOFCONTEXT` hook set on a thread that has one has been seen to
+  stop delivery on it for the process's life.
+- Every event is arbitrated per window, so one backend reports it. The event
+  thread drops an MSAA event for a known UIA window before queuing it, from
+  its record of windows (`arbitration::EventWindows` in a
+  `verbatim_ia2::WindowCache`), asking the arbitrator only until
+  `lasting_verdict`; an entry goes on destruction or when the handle is
+  found owned by another thread, and all go after an override change. A UIA
+  element that is not a window gets its window from `nearest_window_handle`
+  on the worker.
+- The event thread narrows the hook (`outpost/narrowing.rs`;
+  `docs/design/wake-ups.md`, "Narrowing the outpost's hook", which states
+  what can be lost): while the focus window and foreground window are both
+  UIA, the value, state, name, description, selection, and text selection
+  events are unhooked (`narrowing::NARROWED`), hooked again once the focus,
+  a menu opening, or the foreground is in an MSAA or undecided window.
+  Those windows come from the hook's own events, or, until it delivers one,
+  from nudges for routed facts (`event_thread::Nudger`); the worker nudges
+  when it keeps a UIA verdict.
+- Trace ids are minted when an event arrives. `WindowFacts` (`window_facts`,
+  local calls) give the top-level window and root owner, topmost style,
+  `Windows.UI.Core` activity, NVDA's foreground test, and for a focus the
+  window's class, the application's name (executable stem, lower-cased; the
+  client's in a console window), and whether Alt is held.
+- A UIA focus's snapshot carries the element's class
+  (`NodeDetails::class_name`) and its parent's automation id
+  (`NodeDetails::parent_automation_id`) for Core's per-application rules.
+  A node read alone carries grid row and column when the theme reports cell
+  coordinates (`gates::node_gates`).
 
 ### Reading the focus
 
 - A UIA focus is reported from the listener's read (`Worker::uia_focus`):
-  the listener judged it by its own element's
-  keyboard focus, read live, as NVDA's `shouldAllowUIAFocusEvent` does,
-  and read its states, value, details, ancestors, and selected child from
-  that element. The outpost tests it against the foreground window
-  (NVDA's acceptance test, with the element's nearest window: its own,
-  else the nearest the listener's read found, else the nearest ancestor's
-  in the read; an element with no window in its chain is tested with 0,
-  which passes, as NVDA's `shouldAcceptEvent` lets through an event with
-  no window; `docs/design/focus-pipeline.md`, section 16.2), decides its
-  window's backend, and gives its runtime id a new node first when the
-  listener read that the element it read before under that id has lost
-  the keyboard focus or is gone. It reports the focus at once, with
-  nodes minted from runtime ids; its ancestors are the listener's chain,
-  filtered as a walk filters them, stopped at a container of the previous
-  focus's chain and spliced, and continued through MSAA from a window MSAA
-  owns (`read::uia_chain_from_read`). It finds its own copy of the
-  element by the chain's runtime ids, off the way to speech for a focus
-  without text, and before the report for one whose role may have text
-  (edit field, document, terminal), whose caret is read with it, from the
-  nearest element of the chain with a window of its own: one
+  tested against the foreground with its nearest window (or 0, which passes,
+  as NVDA's `shouldAcceptEvent`; `docs/design/focus-pipeline.md`, section
+  16.2), its backend decided, its runtime id given a new node when the
+  listener read that the earlier element under it lost focus or is gone. Its
+  ancestors are the listener's chain, filtered, spliced at the previous
+  chain, and continued through MSAA (`read::uia_chain_from_read`). Every UIA
+  focus is handled, oldest first; Core culls expired speech.
+- The outpost then finds its own copy by the chain's runtime ids
+  (`docs/design/focus-pipeline.md`, section 16.5), after the report for a
+  focus without text and before it for one that may have text: one
   `ElementFromHandle` and one remote operation
-  (`verbatim_uia_rops::element_by_path`; the classic walk within a second
-  where a program cannot import the window's element), and keeps it
-  under the focus's node and follows it. While the focus is one whose
-  value is its selected item (`UiaFocusRead::value_from_selection`), a
-  selection the listener passes on of one of the focus's children, found
-  by one `FindFirstBuildCache` over its children whose cache holds the
-  item's name and keyboard focus (`verbatim_uia::SelectedItem`), is
-  reported as `ValueChanged` on the focus with the item's name as found
-  (`Worker::selection_as_value`), unless the item has the keyboard focus,
-  as NVDA's list item raises a value change on such a focused parent when
-  its state changes and it does not have the focus; the focus-now answer
-  reads such a value the same way. NVDA's same rule for a
-  `Windows.UI.Core` combo box with the `Value` pattern, which no Settings
-  combo box has (`docs/parity/changes-and-selection.md`), and for the
-  classic .NET Framework Windows Forms combo box, is not built. A repeated focus whose element
-  the outpost already holds, and which the listener read as still
-  focused, is not looked for again. The chain is kept
-  (`outpost::focus_path`) and serves whenever the outpost needs an element
-  of it it does not hold: the focus's controller relation for a
-  selection, a newly entered dialog's own text, and a query on a node of
-  the chain, before any search. A focus whose element its path does not
-  reach, as Windows Terminal's tab focus elements, raised from elements
-  that are in no tree, do not, is reported from the read all the same,
-  with its own ancestors, and nothing is followed until a later focus
-  brings an element, as NVDA hears nothing local before its group is added
-  to a focus (`docs/design/focus-pipeline.md`, section 17). Removed with
-  the step: the outpost's read of
-  the focused element for a focus event, the moved-on rules (a focus
-  reported as its event said, the gone element, the container holding
-  the new focus, and 8be2223's rule for an item that lost its selection),
-  the name-and-position search, the selection event's read of the focused
-  element, and the outpost's own console window rule, now the listener's.
-  Every UIA focus is handled in turn, oldest first, as NVDA's UIA handler
-  queues each one, and Core culls the speech of those that have expired.
-  A UIA selection fact
-  carries, in `focus_window`, the nearest window the listener's reading
-  thread found for an element with no window of its own, the window its
-  acceptance is tested with;
-  a menu opening uses the application's focus window when it is handled,
-  as before. The UIA focus, selection, menu opening, and the outpost's
-  own UIA property events pass NVDA's acceptance test after the window's
-  UIA test; a notification does not, as NVDA tests none, and neither do a
-  text focus's caret, text, and active text position. An MSAA focus fact is
-  acquired with NVDA's child-0-on-a-list redirect, and the redirect of any
-  control's own focus to a focused child its `accFocus` names
-  (`focus_candidate`), and checked as NVDA checks it before anything else
-  is read: it is dropped as a repeat (`focus_rules::repeats_focus`) when
-  Core holds a focus of this outpost's and that focus, and every focus
-  this outpost reported that Core has not judged yet, is the object it
-  names, a whole object rather than a child by id, so Core's focus will be
-  that object whatever Core judges, counting as reported so no older focus
-  of the batch is tried; and it is accepted only when the object or an
-  ancestor has the focused state, read live. Only then is it read and its ancestors walked.
-  When a control's focus was reported as its child, the child's own focus
-  event, which the control raised in the same `SetFocus` call, is dropped
-  while the child is still the focus (`Intake::take_redirected_focus`), so
-  the child is reported once, as NVDA reports it.
-- The focus events are judged against (`outpost::held`, decision D14,
-  "Where the rules run"): the focus Core holds, as Core last told it
-  (`CoreFocus`), when it is this outpost's, and every focus this outpost
-  reported that Core has not judged yet, since Core may yet take it. A
-  change is read when it can be spoken for any of them, since the reducer
-  decides after the read with the focus it holds then; a focus or
-  foreground change is dropped as a repeat only when it repeats every one
-  of them. Once Core holds another application's focus and has judged
-  this outpost's reports, there is none, and no change is read. With
-  each focus the outpost keeps what it recorded as it reported it: the
-  MSAA event address it came from, whether it was a simple child, and the
-  top-level window that was the foreground window as a focus entered it.
-  The tracking state's own focus (`Tracking::focus`, `focus_role`,
-  `window`, `chain`) is the focus the outpost follows, whose caret, text,
-  and terminal output it reads and whose events its subscription hears,
-  and the chain its ancestor walks reuse; no rule judges by it.
+  (`verbatim_uia_rops::element_by_path`, or the classic walk within a
+  second). It keeps the element under the focus's node and follows it. The
+  chain is kept (`outpost::focus_path`) for the controller relation, a
+  dialog's text, and queries. A focus whose element is in no tree, as
+  Windows Terminal's tab focuses, is reported all the same.
+- While the focus's value is its selected item
+  (`UiaFocusRead::value_from_selection`), a selection of one of its children
+  (found by one `FindFirstBuildCache`, `verbatim_uia::SelectedItem`) is
+  reported as `ValueChanged` on the focus (`Worker::selection_as_value`)
+  unless the item has the keyboard focus. NVDA's rules for a
+  `Windows.UI.Core` combo box with `Value` and the .NET Windows Forms combo
+  box are not built (`docs/parity/changes-and-selection.md`).
+- A UIA selection fact's `focus_window` is the window its acceptance is
+  tested with. Notifications are not tested, as NVDA tests none, nor are a
+  text focus's caret, text, and active text position events.
+- An MSAA focus is acquired with NVDA's child-0-on-a-list redirect and the
+  `accFocus` redirect (`focus_candidate`). It is dropped as a repeat
+  (`focus_rules::repeats_focus`) when Core's focus and every unjudged focus
+  of this outpost is the object it names, counting as reported, and
+  accepted only when it or an ancestor has the focused state, read live.
+  A child's own focus event from the same `SetFocus` as its control's
+  redirected one is dropped (`Intake::take_redirected_focus`).
+- Focuses events are judged against (`outpost::held`;
+  `docs/architecture.md`, "Where the rules run (D14)"): Core's focus when it
+  is this outpost's, and every focus reported that Core has not judged. A
+  change is read when it can be spoken for any; a focus is a repeat only of
+  all. With each the outpost keeps its MSAA address, whether a simple child,
+  and the window in front as it was entered. The followed focus
+  (`Tracking::focus`, `focus_role`, `window`, `chain`) is what the outpost
+  reads text from; no rule judges by it.
 - MSAA name, value, and state changes are spoken by the reducer's rule
-  (`focus_rules::change_target`): a name, description, or value change
-  only for a focus, and a state change for a focus or one of its
-  ancestors, so the event's object is told from those by its identity
+  (`focus_rules::change_target`): name, description, and value for a focus,
+  state for a focus or ancestor. The object is identified
   (`EventObject::which_of`, against `focus_rules::change_candidates`)
-  before any property is read, and any other object is not read. For a
-  focus or an ancestor only the property the event names is read, as NVDA
-  reads it, with the rules that depend on the object's role taken from
-  the role it was reported with. A state change that newly expands a
-  focus, by the states the outpost last read or reported for it, carries
-  a `SysTreeView32` item's child count. A progress bar's value change
-  reads its role, states, value, and location alone
-  (`EventObject::progress`). A selection event on a focus or an ancestor
-  is a change of its state, as NVDA handles it, by the reducer's rule
-  (`focus_rules::selection_target`): its states alone are read and
-  reported as one. Any other selection is spoken only inside a focused
-  selection container of this outpost, so it is read in full only while
-  one of the focuses events are judged against is one
-  (`focus_rules::is_selection_container`), and is otherwise dropped after
-  its acquisition.
+  before any read, and only the named property is read. A newly expanded
+  `SysTreeView32` item carries its child count; a progress bar's value
+  change reads role, states, value, and location (`EventObject::progress`).
+  A selection on a focus or ancestor is a state change
+  (`focus_rules::selection_target`); any other is read only inside a
+  focused selection container (`focus_rules::is_selection_container`).
 - Ancestors (`read::uia_remote_enrichment`, `read::uia_enrichment`,
-  `read::msaa_enrichment`): the walk stops at the first ancestor in the
-  previous focus's chain (the tracking state's `chain`) and splices the
-  rest of that chain in, as NVDA does; the remainder is read within
-  `ENRICHMENT_BUDGET`, two seconds (UIA calls inside it wait no longer
-  than that), after which the ancestors are reported unknown. A walk
-  that fails, the remote program by UIA's transaction timeout or the
-  classic walk by a hop that timed out, also reports them unknown, never
-  as an empty chain (`crates/mockapp/tests/remote_ops.rs`,
-  `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`),
-  and so does a classic focus walk (`focus_ancestry_classic`, the focus
-  listener's read and the program's fallback) whose step from an element
-  below the desktop root fails or finds no parent
-  (`Ancestry::ancestors_unknown`;
-  `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`).
-  The outpost's own walks do the same: the remote program's walk that
-  ends at a null parent anywhere but at a top-level window or a window
-  below the process boundary, and
-  `read::uia_enrichment`'s per-hop walk (`Uia::ancestors`) at such a step
-  (`AncestorWalk::Unknown`), report the ancestors unknown: the focus-now
-  answer's `FocusedControl::ancestors` is `None`, which Core receives as
-  `ancestors_unknown`, as it does from the focus the worker reads after
-  a `WinEvent` focus no UIA focus followed
-  (`a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`,
-  `a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`,
-  `a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown`).
-  The focus listener keeps a last focus whose ancestors are unknown out of
-  where its next read stops, so the next focus, even one inside it, is
-  read to its window as a first focus is
-  (`a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain`).
-  Object navigation's ancestor query reads the whole chain.
-- A dialog's own text (`read::describe_dialogs`). Before a focus is
-  published, every dialog among its ancestors, and the focus itself, that
-  none of the focuses events are judged against (the focus Core holds and
-  those reported that Core has not judged yet) had already entered, by
-  the rule the reducer
-  speaks entered containers by (`focus_rules::already_entered`; decision
-  D14, "Where the rules run"), and that has no description of its own, is
-  given its text as its description, while descriptions are read at all
-  (the theme's description indication), so Core speaks it where NVDA does,
-  after the dialog's name, role, and states and before the focused
-  control. A dialog the focus stays inside is therefore read once: the
-  splice carries its text along. A foreground report of a dialog gathers
-  its text too and keeps it (`Tracking`'s `dialog`), and the focus that
-  follows into it takes that rather than reading the dialog again; a
-  focus-now answer gathers for its window and its focus's chain alike,
-  reading a dialog that is both only once. A UIA dialog is read through the
-  element the registry holds, each call waiting at most a second.
-- A focus-now query's UIA ancestry, by default, is one remote operation
-  (`verbatim_uia_rops::focus_ancestry`, called by
-  `read::uia_remote_enrichment` right after the focused element is read):
-  one `Execute` checks the element's `HasKeyboardFocus` live, reads a list's
-  or tab control's selected child, walks the raw-view parents with the
-  base cache filled inside the provider, and finds the element's nearest
-  window. The parents become the chain through `Uia::ancestors_from`,
-  with the same presentable filter, the same stop at a window read through
-  MSAA and the same continuation through MSAA from there. With remote
-  operations off (`--classic-uia`),
-  or for a window whose element could not be imported into a program (a
-  client-side proxy, marked in the context for the window's lifetime and
-  forgotten when it is destroyed), the per-hop walk (`read::uia_enrichment`)
-  is used. A program that fails otherwise is answered by the classic walk
-  for that call and logged with the failing instruction's source line.
-  The program's walk ends at a null parent, as it reaches the top of a
-  program's tree; one that ends there anywhere but at a top-level window
-  or a window below the process boundary ended below it, and reports the
-  ancestors unknown, as the classic walk does. A
-  UIA focus event without text costs the outpost no UIA call before it is
-  reported: the listener's read is its classic walk
-  (`focus_ancestry_classic`), and the outpost's walk to its own copy of the
-  element after the report is one `ElementFromHandle` and one `Execute`
-  (`docs/performance.md`); for a focus with text the walk and the caret's
-  read come before the report. A
-  focused menu item's legacy MSAA checked state, which a menu item that no
-  pattern makes checkable may have, costs the listener's read one call
-  more, read live for it alone, as are the focus-now answer
-  (`verbatim_uia::map::with_legacy_checked_state`) and a navigation step's
-  neighbor.
-- A UIA object-navigation step (`read::uia_remote_step`) is one remote
-  operation (`verbatim_uia_rops::navigation_step`): from the element the
-  registry keeps, read as `Kept` for its own window handle, without
-  refreshing its cache first, the program finds
-  the element's nearest window and takes the step, filling the neighbor's
-  cache inside the provider. A step from a top-level window is taken the
-  classic way, since a program's walk ends there while a tree walker goes
-  on to the desktop and other applications' windows; so is any step with
-  remote operations off or in a window marked as read classically. An
-  element whose provider reports it gone is searched for by runtime id
-  and stepped from classically, as before.
-- Focus candidates: the intake keeps the three newest focus facts from
-  each backend (`Planned::Focus`), and the worker handles them newest
-  first, each under its own deadline, until one is reported, as NVDA's
-  event pump falls back to an older focus event.
+  `read::msaa_enrichment`) stop at the previous chain and splice it, within
+  `ENRICHMENT_BUDGET`. A walk that fails or finds no parent below the root
+  (or below a top-level window, for the remote program and
+  `Uia::ancestors`) reports the ancestors unknown, never empty
+  (`Ancestry::ancestors_unknown`, `AncestorWalk::Unknown`). The listener
+  does not stop its next read at such a focus. Object navigation's ancestor
+  query reads the whole chain.
+- A focus-now's UIA ancestry is one remote operation
+  (`verbatim_uia_rops::focus_ancestry`): keyboard focus, selected child,
+  parents with the base cache, and nearest window, made into a chain by
+  `Uia::ancestors_from`. With remote operations off, or for a window whose
+  element cannot be imported (a proxy, marked for the window's life), the
+  per-hop walk is used; any other failure falls back for that call and is
+  logged with the failing instruction's line.
+- A menu item's legacy MSAA checked state is one more live call
+  (`verbatim_uia::map::with_legacy_checked_state`).
+- A UIA navigation step (`read::uia_remote_step`) is one remote operation
+  (`verbatim_uia_rops::navigation_step`) from the kept element, but classic
+  from a top-level window (a program's walk ends there), with remote
+  operations off, or in a window marked classic. A gone element is found by
+  runtime id and stepped from classically.
+- A dialog's own text (`read::describe_dialogs`) is given as the
+  description of every newly entered dialog in the chain
+  (`focus_rules::already_entered`), and of a dialog focus, without one,
+  while descriptions are read, so Core speaks it where NVDA does. The
+  splice carries it while the focus stays inside, and a foreground report's
+  (`Tracking`'s `dialog`) serves the focus that follows.
 
 ### Menus
 
-- Menus (the worker), following NVDA's MSAA handler: within a batch, focus
-  and foreground events are handled first and the menu opening last. If a
-  focus in the batch already put focus on a menu or menu item, the menu
-  opening is ignored; if its object is not a popup menu, it is ignored;
-  otherwise it becomes a focus on the popup menu, so the reducer never
-  receives a separate menu event. The end of a menu
-  (`EVENT_SYSTEM_MENUEND` or `EVENT_SYSTEM_MENUPOPUPEND`) or of the Alt+Tab
-  switcher (`EVENT_SYSTEM_SWITCHEND`) is not an outpost's concern: the
-  focus listener forwards every such end to Core 50 milliseconds later as
-  `MenuOrSwitchEnded`, with the time it ended, and unless Core has applied
-  a focus observed since then, Core asks the foreground application's
-  outpost for its focus (`Query::FocusNow`).
+Within a batch, focus and foreground events are handled first and the menu
+opening last, as in NVDA's MSAA handler: ignored if a focus already landed on
+a menu or menu item, or if its object is not a popup menu, and otherwise
+reported as a focus on the popup menu. The end of a menu or of the Alt+Tab
+switcher is the listener's (`MenuOrSwitchEnded`); Core then asks the
+foreground application for its focus unless a newer focus was applied.
 
 ### Window destruction and held objects
 
-- Window destruction: an `EVENT_OBJECT_DESTROY` for a window drops its kept
-  arbitration verdict, its mark as read without remote operations, and its
-  MSAA nodes, so a reused handle is probed afresh and never inherits them.
-- Held objects (outpost redesign, "Held objects"): both registries keep
-  every node the outpost reports, with the live UIA element or MSAA object
-  behind it where it has one.
-  Each message that carries node ids (an event, or a reply with a result:
-  `OutpostToSupervisor::carries_nodes`) takes the next position as it is
-  written, and every node issued or looked up since the last publish is
-  recorded as reported at that position then; until it is written, a node
-  a waiting message may report has no position and is kept. So the
-  positions are those Core counts, in the order Core reads the messages
-  (under "Messages to Core" below). Core's reader counts
-  the same messages and hands the app each message's position. The app
-  sends `SupervisorToOutpost::NodesHeld` with the node numbers the reducer
-  holds in that outpost, the text anchors it holds there (milestone M4),
-  and the position of the last message it has
-  handled, whenever any of the three changes, so an outpost whose held set
-  stays the same still releases what it reported meanwhile. The list is
-  never written on its own (`docs/design/communication.md`, step 11): the
-  app leaves it in the writer's slot (`Supervisor::leave_nodes_held`), and
-  the next command written to that outpost, a request or the relay's ping
-  within three seconds, carries it after its own frame in the same
-  write; while commands queued before it was left still wait, it goes
-  with the last of them, so every request the app issued before it is
-  handled first. The worker then releases every node not held that was
-  reported at or before the acknowledged position; a node reported later,
-  or not yet reported, is kept, since Core may not have seen it. Only the
-  worker in charge releases, and the released nodes leave both registries
-  under the watch lock and the outbound sender's lock, and their objects are
-  dropped after both are released, so a worker that replaces an abandoned
-  one can never report a node that is about to vanish. A query
-  for a released node answers `Gone`. A newer list replaces one still in
-  the writer's slot; the intake queue likewise keeps only the newest and
-  never limits it.
+- Window destruction: `EVENT_OBJECT_DESTROY` for a window drops its verdict,
+  its classic mark, and its MSAA nodes.
+- Held objects: both registries keep every node reported with its live
+  element or object. Each message that carries node ids
+  (`OutpostToSupervisor::carries_nodes`) takes the next position as it is
+  written, and the nodes issued or looked up since the last publish are
+  recorded at it, so positions are those Core counts. The app sends
+  `NodesHeld` (the reducer's nodes and text anchors in that outpost and the
+  last position handled) when any changes, never on its own: it waits in the
+  writer's slot (`Supervisor::leave_nodes_held`) for the next command, a
+  request or a ping within three seconds, behind every command queued
+  before it. The worker in charge then releases every unheld node reported
+  at or before that position, under the watch lock and the sender's lock,
+  dropping the objects after, so a replacement worker never reports a
+  vanishing node. A released node answers `Gone`. Only the newest list is
+  kept.
 
 ### What to read
 
-- What to read (milestone M4, [verbatim-model](verbatim-model.md),
-  "Themes"). `SupervisorToOutpost::Fetches` carries
-  the details the active theme wants read for each node
-  (`SrState::fetches`); the app sends it to each outpost as it starts and
-  again whenever the theme in use changes, and the reader applies it at
-  once. Until it arrives, everything is read. A detail whose indication is
-  off is not read: UIA reads in the worker build their requests, and the
-  remote programs their fills, from the gates of the `Node` and
-  `Ancestor` shapes (`docs/design/uia-shapes.md`), which the outpost maps
-  from `Fetches`, one function per gated shape and use (`gates.rs`, a
-  unit test per gated field), so a request leaves out the description's,
-  shortcut's, position's, and level's properties when those are off.
-  The node's place, its rectangle and whether it is off the screen, is
-  fetched for an element read alone (`node_gates`, and `focus_gates` for
-  the focus and its selected child in the focus's read) and never for one
-  read among many (`many_node_gates`, and `ancestor_gates` for
-  ancestors), `docs/design/uia-shapes.md`, decision 9. An
-  ancestor's own description is fetched whatever the theme, since the
-  layout judgment of whether an unnamed grouping is focus context reads
-  it whatever NVDA's setting (decision 4), though the description it is
-  reported with still follows the theme; the theme does not reach a
-  dialog's text either (decision 5). MSAA
-  reads skip `accDescription` and `accKeyboardShortcut` and the list and
-  tree position reads through the MSAA registry, which holds the same
-  setting. The cache requests of the UIA event subscriptions are fixed when
-  they are registered and still ask for everything; the presentation stage
-  drops what is off either way. Text formatting (milestone M4 item 7) is
-  read only for the indications that are on, and among them only what the
-  control supports: the annotation types for spelling and grammar errors,
-  the font's name, its size, its weight, italic, and underline style (the
-  font attributes; the underline style also for the kind of underline),
-  the strikethrough style, the color, the background color, the bullet
-  style, and the link attribute, each with its own detail. `IsHidden` is
-  never read. What a control supports is learned from its answers and
-  kept with its text patterns, by node, until the node is released
-  (`text_support` in the worker's context): an attribute a line answers
-  "not supported" for while its support is unknown is not asked again,
-  and one answered otherwise is supported and no longer checked. The
-  annotation types are never learned, since a provider (Windows 11
-  Notepad) answers "not supported" for text without annotations; the
-  caret read asks a line for them first instead
-  (`docs/crates/verbatim-uia-rops.md`, "The caret read"). Nothing is
-  chosen by application.
+`Fetches` carries the details the theme wants (`SrState::fetches`;
+[verbatim-model](verbatim-model.md), "Themes"), sent at start and on theme
+changes; until it arrives everything is read. UIA requests and remote
+fills are built from the gates of the `Node` and `Ancestor` shapes
+(`docs/design/uia-shapes.md`), one function per shape and use (`gates.rs`):
+a node's place only for an element read alone (`node_gates`,
+`focus_gates`, not `many_node_gates` or `ancestor_gates`, decision 9), and
+an ancestor's description always (decision 4). MSAA reads skip what is off.
+The subscriptions' cache requests ask for everything. Text formatting is
+read only for indications that are on and attributes the control supports,
+learned from its answers and kept per node (`text_support`); spelling and
+grammar annotation types are never learned, since Notepad answers "not
+supported" without annotations, so the caret read asks a line first
+(`docs/crates/verbatim-uia-rops.md`, "The caret read"). `IsHidden` is never
+read.
 
 ### Text and caret
 
-- Text (milestone M4, `text` and the worker's `text_reads`). A `Query::Text`
-  is answered `QueryResult::Text` with whatever the protocol answers,
-  `NoText` and `Gone` among them, so Core hands every answer to the reducer
-  unchanged; its deadline is two seconds. The node's backend comes from the
-  registry that issued it: a UIA node has text when its element has a text
-  pattern, fetched once per node (`TextPattern2` where the provider has it,
-  for the caret) and kept until the node is released, and a node whose
-  element has none answers `NoText`. That answer is kept only until the
-  node is next reported as the focus, or raises a caret or text event,
-  which only an element with text does (`text_reads::forget_no_text`):
-  UIA reports a provider that fails the request, as one not ready yet
-  while its application starts, exactly as one with no pattern, and
-  Windows 11 Notepad once answered so at launch, after which every caret
-  key in it was silent. A caret key's watch on such a UIA node stays open
-  rather than being answered `NoText`, so the application's caret event
-  answers it; a fetch that fails with an error is not kept at all and
-  answers `Unanswered` (mockapp's `refuse-text`, in
-  `crates/mockapp/tests/caret_watch.rs`). An MSAA node has text when it is the
-  client area of a window whose class, normalized by NVDA's class map, is
-  an edit control's (`Edit`, `RichEdit`, `RichEdit20`, `REComboBox20W`,
-  `RICHEDIT50W`), read through its messages, and any other MSAA node
-  answers `NoText`, as MSAA has no text interface. A UIA terminal (by its
-  class, or a focus in a `ConsoleWindowClass` window, the console host)
-  never reads a paragraph or a page, which Windows Terminal reports as the
-  whole buffer. The rules the module follows:
-  - Positions. An anchor is minted at the start of every chunk sent and at
-    each end of a selection; a `TextPosition` is resolved by moving forward
-    from its anchor over the chunk's text converted to UTF-16, checking
-    the text passed so a provider whose characters are code points or
-    grapheme clusters lands right, except a position the outpost itself
-    reported (a caret, a selection's end, a read's point), which it
-    remembers. Anchors Core holds (`NodesHeld`'s `anchors`, set by the
-    reader as the list arrives, before the worker sees it, in a set with a
-    lock of its own, `text::HeldAnchors`, so the reader never waits for
-    the anchor stores' locks, which the worker holds while it reads
-    text) are kept; any other is
-    forgotten once 64 newer ones were minted for the node, and a request
-    naming it is answered `AnchorLost`. A released node's anchors and text
-    patterns go with it.
-  - Chunks are at most 64 KB of UTF-8, cut between whole characters
-    (grapheme clusters): a unit cut short by the byte limit ends at the
-    last cluster boundary before it, and one the source read only in part
-    loses its last cluster, which may have been cut, a surrogate pair's
-    first half among them; a copied range and a selection's text are cut
-    the same way. Offsets
-    are converted from UTF-16 at character boundaries, a position inside a
-    surrogate pair moving past it. UIA reads carry the range's `Culture`
-    as one language run over the chunk (a mixed range carries none);
-    caret reports carry none, to keep a caret move's calls down.
-  - The caret through UIA (`TextSource::caret_read`, which `UiaText`
-    implements with `verbatim_uia_rops::caret_read`) is read in one go: the
-    caret and the selection, whether they moved from the baseline, the
-    caret's line and the watch's unit with the caret's offset in each, and
-    the formatting of the text to be spoken, in one remote operation where
-    the window's provider runs them (the same choice and fallback as the
-    focus walk and the terminal read, logged and remembered alike), and
-    otherwise in its classic reads. The edit controls have no such read,
-    and are read part by part as before, without formatting. Formatting is
-    read for the report after a focus (the line, which Core speaks) and
-    for a caret key's answer (the character, the word, or the line the key
-    speaks; not a paragraph or a page, as NVDA reads no spelling errors
-    when the caret moves by paragraph), never for the report after a typed
-    character, which nothing speaks. It travels in the chunk as
-    `FormatRun`s (byte ranges of its text), in the model's words: bold
-    from a font weight of 700 or more, underlined from any underline style
-    but none (and the style itself, a `LineStyle`, when the kind of
-    underline is fetched), the strikethrough style as a `LineStyle`, the
-    size as "11.0 pt", the color and the background color by the nearest
-    of NVDA's named hues, saturations, and brightnesses ("dark red",
-    `text/color.rs`, ported from NVDA's `colors.py`), the bullet style as
-    a `BulletStyle`, and a link from any value of the link attribute. A
-    character's formatting covers the character.
-  - A caret key's watch (`AwaitCaret`) looks for the evidence NVDA's caret
-    scripts wait for, without waiting. When the request arrives the worker ends the watch it
-    replaces, then checks the new one with one read of the caret
-    (`text_reads::check_watch`, `text::check_caret`). When the read finds
-    evidence the key is answered at once with the caret's line, the watch's
-    unit at the caret (a character cut from the line, any other unit read),
-    and the selection's changes. Otherwise the watch stays open
-    (`text_reads::OpenWatch`, the context's `caret_watch`, at most one),
-    the request is released from the watchdog, and the worker returns to
-    its queue. Each later caret event, text change, or text selection change
-    of the watched node checks the watch again with one read, unless the
-    event was observed before the caret was last read, which already saw
-    it; the check that finds evidence answers the key, and the caret event's
-    own report is not sent, the answer carrying the same caret. A check
-    whose read covers a caret event of the node that is still waiting in
-    the intake, observed at or after the key's press, counts that event as
-    the event's own check would have (`text_reads::Signal`): a watch with
-    no caret known before the key, for which a caret event is the
-    evidence, is then answered by the read that covers it, as a terminal's
-    read does for a caret event the intake planned after its text change,
-    rather than left open when the covered event checks nothing. While a
-    check reads, the watchdog treats the watch's request as the one running,
-    so an abandonment answers it. A watch ends without evidence, answered
-    `TextReply::WatchEnded`, for which Core says nothing, when the next
-    caret key's watch replaces it, when a focus on another node is
-    reported, or when it is `CARET_WATCH_BOUND` (10 seconds) old, which
-    only frees it: the intake wakes the idle worker then (`Item::Wake`,
-    `Intake::wake_at`), and nothing is spoken. In the console host, whose
-    caret events come only on its cursor's blink timer, a watch the first
-    check leaves open also re-reads the caret every 5 ms until a check,
-    its own or an event's, finds the evidence, or 50 ms after the key's
-    `pressed_at_ms`, and ends `WatchEnded` when that last re-read finds
-    nothing (`outpost/caret_poll.rs`, a documented workaround: the worker
-    asks the intake to wake it at the next read, one wake-up of the worker
-    per read and no other thread; `docs/design/key-holding.md`, "The
-    console host's caret poll"). So a key that moves nothing
-    is silent (`docs/parity/text.md`, "TextInfo-equivalent layer"), and a key
-    whose application reports nothing when it moves the caret is silent
-    too. Through UIA each check is the whole caret read above, one round
-    trip remotely, so the check that finds the evidence is the answer, with
-    nothing more to read. The evidence is the caret no longer where it was
-    known to be, the characters either side of the caret changed from what
-    was known, the text at the caret changed after a Delete, the caret's
-    line changed, after a key that deletes, from the line of the caret
-    this outpost last reported before the key (the watch's `deletes`: in
-    a run of one character, such as a password field's mask, deleting one
-    leaves the caret's neighbors as they were, and a provider's positions
-    follow the edit; a position Core gives is not compared so, since it
-    may be in any chunk, such as the paragraph say-all last read), the
-    selection changed, or the selection in the report the caret was known
-    from differs from the selection now: something selected in one and
-    not the other, or ends that are not the same positions. The last
-    counts because a caret event's report can compare the selection, and
-    replace the one kept, before the watch arrives: a provider's positions
-    follow edits, so a Backspace over a selection in Windows 11 Notepad
-    can leave the caret's neighbors as they were, and a selection
-    extended by Shift and a click after a key that changed nothing leaves
-    a classic edit control's caret, the selection's start, where it was.
-    The ends are compared only when that report's selection is not the
-    one the read compared with already (each report is numbered, and the
-    kept selection carries its report's number), so through UIA the
-    comparison's calls are made only after such a report. Where it was known to be is the newest caret this
-    outpost reported for the node from a read that finished before the key
-    was pressed (the watch's `pressed_at_ms`, stamped by the keyboard hook
-    on the same Unix millisecond clock as `observed_at_ms`), which can be
-    newer than Core's (an earlier key's late caret event, or a paste's),
-    else Core's. A caret read at or after the key's time is never the
-    baseline: the application's caret event for this very key can reach
-    the outpost, and be reported, before Core's request does, and judging
-    against it would find no evidence. The outpost remembers its last eight
-    reports per node for this, and forgets them when it moves the caret
-    itself (`TextOp::MoveCaret`, as say-all does), since Core takes such a
-    move as its caret. The characters matter because a provider's
-    positions follow edits (a deleted character takes the known position
-    with it) and the application may have handled the key before the
-    request arrived; only the caret's neighbors count, since a line can
-    wrap anew with no key at all, except after a key that deletes, which
-    changes its line. A caret event alone is evidence only when
-    nothing knew the caret: it can be the application's late report of
-    something earlier. Before a check answers, the caret is read again
-    (`CaretRequest::recheck`; at the end of the same program through UIA,
-    `CaretRead::moved_while_read`, and with one more read and comparison
-    for an edit control), and when it moved while it was read the check
-    answers nothing: the caret may be from before a write and the line
-    from after it (a Backspace's character message in an edit control,
-    the console host writing a typed character between two calls of the
-    one program), a state the text never had; the event that follows the
-    move (the control's caret event, the terminal's text change) checks
-    again. The selection's changes are worked out by comparing
-    endpoints, as the contract says; through UIA the caret read works them
-    out and reads their text in the same round trip when the selection
-    moved (`CaretRead::changes`), and the edit controls work them out call
-    by call.
-  - The caret before a held key (`TextOp::ReadCaret`,
-    `docs/design/key-holding.md`) is read as a caret event's
-    report reads it, with no formatting and without comparing or
-    replacing the selection kept for the node (`LastSelection::Ignore`),
-    one round trip through UIA where the provider runs remote operations,
-    and is answered as a `CaretReply` with `moved` false and its read
-    time. It joins the node's remembered reports, so the held key's watch,
-    which Core sends with a press time just after the read, takes it as
-    its baseline. It is not noted as a read of the caret that covers a
-    caret event observed before it.
-  - A selection no key made, such as the mouse's or the application's, is
-    reported with the caret event that follows it, as NVDA's auto-select
-    detection reports any selection change of a UIA or classic edit focus
-    (`docs/parity/text.md`, "TextInfo-equivalent layer"). Each node keeps
-    the selection of the outpost's last caret report for it, its ends and
-    whether it held nothing (`NodeAnchors`), set by every report, a caret
-    key's answer included, but a terminal's after its focus. A caret
-    event's report of a focus that is not a terminal
-    (`text_reads::CaretFor::Event`) asks the caret read to compare with it
-    (`caret_report_since`'s `LastSelection::Compare`), and its changes
-    travel in `CaretMoved`'s `selection_changes`, by the caret watch's
-    rule. Through UIA the comparison and the change's text are part of
-    the caret read's one round trip; when the last selection held nothing
-    (`CaretRequest::previous_collapsed`) and nothing is selected now, the
-    program compares nothing, so a typed character's report costs what it
-    did. The edit controls compare offsets, with no message, and read a
-    change's text with the window's text. The selection compared with is
-    forgotten at a new focus, so the next report carries no change and
-    sets it anew (the report after it, whose selection Core already speaks
-    as the focus's). When the outpost selects or moves the caret for Core
-    (`Select`, `MoveCaret`), whose own reply speaks what it did, it keeps
-    what it made instead (`NodeText::keep_selection`): the selection as
-    read after the select, with its text up to the cap for compared text,
-    in the select's one round trip through UIA (`RangeRead::selection_after`,
-    one `GetText` more), or the caret where it moved, collapsed; so the
-    application's report of it carries no change and the next key compares
-    with it. The kept selection is the only old selection any key compares
-    with, a selecting key's too: its answer compares with it exactly as a
-    caret event's report does and replaces it, so each change is compared
-    once, by whichever reads it first, and Core sends no selection of its
-    own. When the key's caret event is reported before its watch arrives,
-    the report carries the change and the answer has none left; Core says
-    the report's change after the key's own words
-    (`docs/crates/verbatim-core.md`). A terminal's reports carry no changes: NVDA's
-    console class replaces the detection, which is not yet traced, so a
-    terminal's reports keep no selection. A text change never forgets the
-    selection.
+`Query::Text` is answered `QueryResult::Text`, `NoText` and `Gone` among
+the answers, within two seconds (`text`, the worker's `text_reads`).
 
-    A report's selection starts at a position Core can read before: in
-    the caret's line chunk when the selection starts there, or in the
-    line it starts in, sent as `CaretReport::selection_line`, when that
-    is an earlier line, so a Backspace over the selection says what comes
-    before its start, as NVDA's caret, the start, reads it. Through UIA,
-    where `TextPattern2`'s caret can be the selection's other end
-    (Windows 11 Notepad's after Shift with Right Arrow or End), the caret
-    read finds the start in the same program (`CaretRead::selection_start`):
-    its offset in the caret's line, or the earlier line it starts in and
-    its offset there, and, when it starts at its line's start, whether
-    that is the text's start, which marks the line `first`. Read by parts,
-    the start lies in the caret's line where it is the caret, as in a
-    classic edit control.
+- A UIA node has text when its element has a text pattern (`TextPattern2`
+  where offered), fetched once and kept with the node. `NoText` is kept only
+  until the node is next the focus or raises a caret or text event
+  (`text_reads::forget_no_text`), since UIA answers a provider not yet ready
+  as one with no pattern; a caret watch stays open on it, and a failed fetch
+  answers `Unanswered`. An MSAA node has text when it is the client area of
+  an edit control class (`Edit`, `RichEdit`, `RichEdit20`, `REComboBox20W`,
+  `RICHEDIT50W`). A UIA terminal never reads a paragraph or a page.
+- Anchors are minted at each chunk's start and a selection's ends; a
+  `TextPosition` is resolved by moving forward over the chunk's UTF-16
+  text, checking it, except positions the outpost reported, which it
+  remembers. Anchors Core holds (in `text::HeldAnchors`, with its own lock,
+  so the reader never waits on the worker) are kept; others go after 64
+  newer ones, answered `AnchorLost`.
+- Chunks are at most 64 KB of UTF-8, cut between grapheme clusters; UIA
+  chunks carry the range's `Culture`. Reads move first when asked, by whole
+  units, saying how far; a missing unit is `UnsupportedUnit`. `ReadRange`
+  reads up to 1 MB; `Select` and `MoveCaret` select, `Select` answering the
+  selection's change; `Location` gives a character's screen position;
+  `ReadAhead` reads units up to 32 K UTF-16 code units and marks the last
+  chunk.
+- Through UIA every request but the caret watch is one remote operation
+  where the provider runs them (`TextSource::read_units`, `range`,
+  `point_location`, with `verbatim_uia_rops::text_units`, `text_range`,
+  `text_location`), finding a `PointFrom` (caret, selection end, text end,
+  kept position, or text after one, matched in the provider) and reading
+  from it. Edit controls are read message by message.
+- The caret read (`TextSource::caret_read`, `verbatim_uia_rops::caret_read`)
+  reads, in one remote operation where possible, the caret and selection,
+  whether they moved, the caret's line and the watch's unit with offsets,
+  and the formatting to be spoken: for the report after a focus and a caret
+  key's answer (not a paragraph or page), never a typed character's. It
+  travels as `FormatRun`s: bold at weight 700 or more, underline and
+  strikethrough as `LineStyle`, size as "11.0 pt", colors by NVDA's named
+  hues (`text/color.rs`, ported from NVDA's `colors.py`), `BulletStyle`,
+  and links.
 
-    Whether a comparison is made in general terms is one decision, the
-    same for a caret event's report and every key's answer
-    (`text::content_changed`): the text changed since the kept selection
-    was reported when the node's note is set, or, with a selection in the
-    kept one or now, when the kept selection's text as it was reported no
-    longer matches what its ends hold now, or when the control's value
-    change waits once the caret is read. The note is NVDA's
-    `hasContentChangedSinceLastSelection` (`docs/parity/text.md`,
-    "TextInfo-equivalent layer"): it is set when a classic edit control's
-    value change is handled (`text_reads::note_value_change`), and cleared
-    by the next report, a caret key's answer included, that has a
-    selection to compare with, and by a focus. The waiting value change
-    (`text_reads::value_change_raised`, through `caret_report_checking` and
-    `CaretSignal::text_change_waiting`) covers the Windows Forms text box,
-    which raises its caret's move before its value change and may raise
-    the value change while it answers the read, so the check first waits
-    for the `WinEvent` thread to have taken every event raised before it
-    (`Nudger::sync`): a thread message posted to that thread can be
-    handled before a `WinEvent` raised before the post has reached it, so
-    the sync, besides its thread message, raises a sync marker, a
-    `WinEvent` of the outpost's own process that the thread's one hook set
-    also hears (`verbatim_ia2::SyncMarker`), and returns once both have
-    arrived, the marker arriving behind every event raised before it; "x"
-    typed over a selection, the text box's
-    Control+X, and Backspace or Delete over a selection are said so. The
-    remembered text is Verbatim's own, Dickson's decision of 2026-10-22:
-    through UIA the caret read reads the whole selection's text in the
-    same round trip and keeps it with the selection
-    (`CaretRequest::read_selection_text`, `KeptSelection::text`), and the
-    next comparison reads what the old selection's range holds now
-    (`CaretRequest::read_previous_text`), which a provider moves as the
-    text changes; when the two differ, the comparison is in general
-    terms, so "x" typed over a selection in Windows 11 Notepad says
-    "selection removed" where NVDA, which notes no UIA text change but for
-    Word and the terminals, says "x unselected". Both are read in full,
-    with no limit, and compared length first. An edit control's offsets do
-    not follow edits, and its note covers its changes, so it reads
-    neither. Such a comparison (`text::general_changes`)
-    compares the ends only, and sends each change with no text, whether
-    something was selected or unselected, with `content_changed` and the
-    whole new selection's text in `new_selection`, the one text it reads,
-    when anything changed and something is selected. Two caret reports merged while they wait to be
-    written (`outbound::merged`) carry both reports' changes in order, a
-    waiting report that carries changes is never merged across a reply
-    (`Pending::waiting_with`), which would have it reach Core after the
-    reply to a key pressed before Core saw it, nor with a report in
-    general terms, or into one, whose words come from its own selection.
-  - Which applications raise the evidence, as checked live on
-    2026-10-08: the focused Windows Forms text box raises, for every caret
-    move, `EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET` between the
-    caret's hide and show, then `EVENT_OBJECT_TEXTSELECTIONCHANGED` on its
-    client, and for Delete, which moves no caret, a value change and the
-    caret's hide and show; Windows 11 Notepad recreates its caret on every
-    move (destroy, create, location change, show) and raises
-    `EVENT_OBJECT_TEXTSELECTIONCHANGED` and UIA's text selection changed;
-    the console host raises its caret events together, 10 to about 520 ms
-    after the key; and Windows Terminal raises no caret `WinEvent`, only
-    UIA's text selection changed. The hook reports the caret's location
-    change and show as caret events. Measured the same day with mockapp's
-    real edit control, a Common Controls version 6 edit control raises
-    `EVENT_OBJECT_TEXTSELECTIONCHANGED` whenever its caret moves, focused
-    or not, and the classic edit control raises nothing for an unfocused
-    caret move.
-  - Reads move first when asked: from the start of the unit containing the
-    point, by whole units, never past the text's ends, saying how far they
-    went; a document movement goes to the start or the end. A unit the
-    source lacks is `UnsupportedUnit`; UIA has no sentence, and an edit
-    control's sentence read is its paragraph, which is its line, for Core
-    to split. `ReadRange` reads up to 1 MB for a copy, `Select` and
-    `MoveCaret` select through the backend, `Select` reading the selection
-    before and after it and answering how it changed, by the caret
-    watch's rule, and `Location` gives the
-    screen position of the character at a point. `ReadAhead`, say-all's
-    read, reads up to its count of units in one request, each the unit
-    after the one before, stopping once 32 K UTF-16 code units are read,
-    and marks the last chunk as the text's last when no unit follows it.
-  - Through UIA, every request but the caret watch is also one round
-    trip where the window's provider runs remote operations (`Select`'s
-    read before, selection, and read after included, in one program), with
-    the same choice, fallback, logging, and marking as the caret read: a point
-    named as the protocol names it (`PointFrom`: the caret, a selection's
-    end, an end of the text, a kept position, or a position some text after
-    a kept one, which is found inside the provider by matching that text)
-    is found, moved from, and read in one program
-    (`TextSource::read_units`, `range`, and `point_location`, which
-    `UiaText` implements with `verbatim_uia_rops::text_units`,
-    `text_range`, and `text_location`). A point found by matching text is
-    remembered as one the outpost reported, so naming it again costs
-    nothing; the points just past a range's two characters, which the
-    review copy sends with its ends (`TextThrough`), are not, since each
-    press sends them once. The edit controls keep their message-by-message
-    reads.
-- Caret and text events (the worker). A focus that may have text (through
-  UIA an edit field, a document, or a terminal; through MSAA an edit
-  control's client area), and any other focus whose role is edit field,
-  document, or terminal, has its caret read while the worker handles the
-  focus, before it is reported (`Worker::read_focus_text`), and the read
-  comes in the focus's own message (`FocusChanged`'s `text`), so the line
-  at the caret arrives with the name, role and states and nothing from any
-  source comes between them, as NVDA's object announcement reads an
-  object's text within it (`docs/nvda/speech.md`, "What an object with text
-  says"). When something is selected the selected text is read too, which
-  Core speaks in place of the line, a protected (password) field's too,
-  whose text is read masked as the control gives it. A focus with no
-  text to read (an MSAA
-  object that is not an edit control, a UIA element with no text pattern)
-  carries `FocusText::NoText`, and Core speaks its value in place of its
-  line, as NVDA speaks the value of an object without navigable text. One
-  whose text could not be read now (its element was not found, the
-  provider did not answer, or the caret read failed) carries
-  `FocusText::NotRead`, and Core speaks neither the line nor the value,
-  which for a document is all of its text. A caret read that hangs holds
-  the whole focus report until the handling deadline (Dickson,
-  2026-10-21). A focused terminal's caret is read as any other's, so a new
-  terminal window or tab says "blank" for its empty line, in Windows
-  Terminal as in the console host (`docs/parity/terminals.md`, "New terminal output"). The worker then
-  follows its caret:
-  the focus-following UIA subscription, given the focus with its extended
-  group when the focus has text, its caret, text, and active text
-  position events' elements arriving with
-  only `verbatim_uia::TextEvent` cached (nothing is spoken
-  from them), delivers `Text_TextSelectionChanged`,
-  reported as `CaretMoved`, and `Text_TextChanged`, reported as
-  `TextChanged`, and, in the same event handler group, the active text
-  position changed event, reported as `ActiveTextPositionChanged` with the
-  start of its range kept as a position in the focus's text (an anchor
-  minted for it, no call), and dropped when its element is not a node the
-  outpost knows or it carries no range, as NVDA's handler drops it; the
-  intake keeps the newest one per element. For an edit control, the hooks' caret
+A caret key's watch (`AwaitCaret`) looks for the evidence NVDA's caret
+scripts wait for, without waiting:
+
+- The worker ends the watch it replaces, then checks the new one with one
+  read (`text_reads::check_watch`, `text::check_caret`): on evidence it
+  answers at once with the caret's line, the unit, and the selection's
+  changes; otherwise the watch stays open (`text_reads::OpenWatch`, at most
+  one) and the worker returns to its queue. Each later caret event, text
+  change, or text selection change of the node checks it again, unless
+  observed before the caret was last read; the answering event's own report
+  is not sent. A read that covers a waiting caret event observed after the
+  key's press counts it (`text_reads::Signal`). While a check reads, the
+  watchdog treats the request as running.
+- A watch ends with `TextReply::WatchEnded`, which Core does not speak,
+  when the next key's watch replaces it, a focus on another node is
+  reported, or at `CARET_WATCH_BOUND` (10 s, `Item::Wake`). So a key that
+  moves nothing is silent (`docs/parity/text.md`, "TextInfo-equivalent
+  layer").
+- The console host's caret poll (`outpost/caret_poll.rs`, a documented
+  workaround; `docs/design/key-holding.md`, "The console host's caret
+  poll"): the console host raises caret events only on its cursor's blink
+  timer, so in its focused text area a watch the first check leaves open
+  re-reads the caret every 5 ms until a check finds evidence or 50 ms after
+  the key's `pressed_at_ms`, and ends `WatchEnded` when that last re-read
+  finds nothing. A watch without `pressed_at_ms` is bounded 50 ms after it
+  opened. The worker makes each re-read itself, woken by its intake's wait
+  on a high-resolution timer, because a wait at the system's timer
+  resolution, 15.6 ms by default, would miss most reads, and because a wake
+  time only the worker sets cannot be overwritten by another thread's. A
+  console caret event for the watched node does not stop the poll when its
+  check finds no evidence, because a blink tick left over from an earlier
+  cursor set, such as `PSReadLine`'s set that moves nothing, can come after
+  the key and before its move. A re-read is matched to its watch by the
+  request, not the node, so a worker the watchdog abandoned during a
+  re-read leaves its replacement's watch alone.
+- Evidence is the caret away from where it was known to be; the characters
+  either side of it changed (only those, since a line can rewrap without a
+  key); the text at the caret changed after Delete; the caret's line
+  changed after a deleting key (the watch's `deletes`, for a run of one
+  character such as a password mask); the selection changed; or the
+  selection of the report the caret was known from differs from now, since
+  a caret event's report can replace the kept selection before the watch
+  arrives (compared only when that report was not already compared, by its
+  number). A caret event alone is evidence only when nothing knew the caret.
+- The baseline is the newest caret the outpost reported from a read that
+  finished before the key's `pressed_at_ms` (the keyboard hook's stamp on
+  the clock of `observed_at_ms`), else Core's; never a read at or after the
+  key, which may already show its effect. The last eight reports per node
+  are remembered, forgotten when the outpost moves the caret itself.
+- Before answering, the caret is read again (`CaretRequest::recheck`;
+  `CaretRead::moved_while_read` at the end of the same program), and a
+  caret that moved meanwhile answers nothing, since its line may be from
+  after a write; the following event checks again. Selection changes come
+  from comparing endpoints (`CaretRead::changes`).
+- Evidence by application: the Windows Forms text box raises a caret
+  location change, then `EVENT_OBJECT_TEXTSELECTIONCHANGED` (and a value
+  change for Delete); Windows 11 Notepad raises
+  `EVENT_OBJECT_TEXTSELECTIONCHANGED` and UIA's text selection changed;
+  the console host raises caret events on its blink timer; Windows Terminal
+  raises only UIA's text selection changed. A Common Controls 6 edit
+  control raises `EVENT_OBJECT_TEXTSELECTIONCHANGED` on every caret move;
+  the classic edit control raises nothing for an unfocused one.
+- The caret before a held key (`TextOp::ReadCaret`,
+  `docs/design/key-holding.md`) is read as a caret event's report, without
+  formatting or touching the kept selection (`LastSelection::Ignore`),
+  answered as a `CaretReply` with `moved` false, and joins the remembered
+  reports as the held key's baseline.
+
+Selections no key made (`docs/parity/text.md`, "TextInfo-equivalent
+layer"):
+
+- Each node keeps the selection of its last caret report (`NodeAnchors`),
+  but a terminal's, which keeps none. A caret event's report of a focus
+  that is not a terminal (`text_reads::CaretFor::Event`) compares with it
+  (`LastSelection::Compare`) and sends `selection_changes`; through UIA in
+  the same round trip, comparing nothing when both are empty
+  (`CaretRequest::previous_collapsed`). It is forgotten at a new focus, and
+  replaced by what the outpost made when it selects or moves the caret for
+  Core (`NodeText::keep_selection`, `RangeRead::selection_after`). Each
+  change is compared once, by whichever read sees it first.
+- A report's selection starts where Core can read before it: in the caret's
+  line, or an earlier line sent as `CaretReport::selection_line`; through
+  UIA, where the caret can be the selection's other end, the caret read
+  finds the start (`CaretRead::selection_start`).
+- A comparison is in general terms (`text::content_changed`,
+  `text::general_changes`: ends only, `content_changed`, and the new
+  selection's text in `new_selection`) when the node's note is set (NVDA's
+  `hasContentChangedSinceLastSelection`, set by a classic edit control's
+  value change, `text_reads::note_value_change`); when the kept selection's
+  text no longer matches what its ends hold (through UIA,
+  `CaretRequest::read_selection_text`, `KeptSelection::text`,
+  `CaretRequest::read_previous_text`); or when the control's value change
+  waits once the caret is read (`text_reads::value_change_raised`,
+  `CaretSignal::text_change_waiting`), for the Windows Forms text box. That
+  check first syncs with the `WinEvent` thread (`Nudger::sync`), which
+  raises a `verbatim_ia2::SyncMarker` event, since a posted message can
+  overtake a `WinEvent`. So "x" typed over a selection in Notepad says
+  "selection removed" where NVDA says "x unselected".
+- Two waiting caret reports merge with both reports' changes in order
+  (`outbound::merged`); one with changes never merges across a reply
+  (`Pending::waiting_with`) or with a report in general terms.
+
+Caret and text events:
+
+- A focus that may have text, or has an edit field, document, or terminal
+  role, has its caret read before it is reported (`Worker::read_focus_text`)
+  and carried in `FocusChanged`'s `text` (`docs/nvda/speech.md`, "What an
+  object with text says"), with the selected text when something is
+  selected. No text gives `FocusText::NoText` (Core speaks the value);
+  unreadable text gives `FocusText::NotRead` (Core speaks neither). A caret
+  read that hangs holds the report until the deadline.
+- `Text_TextSelectionChanged` is `CaretMoved`, `Text_TextChanged` is
+  `TextChanged`, and the active text position change is
+  `ActiveTextPositionChanged`, its range's start kept as an anchor without a
+  call, dropped for an unknown element or no range. An edit control's caret
   (`EVENT_OBJECT_LOCATIONCHANGE` or `EVENT_OBJECT_SHOW` on `OBJID_CARET`)
-  and text selection events are reported as `CaretMoved`, and its value
-  change as `TextChanged` without reading the control's whole text as its
-  MSAA value. For a UIA focus, the hooks' caret event from any window
-  NVDA's acceptance test takes a location change from
-  (`acceptance::EventName::LocationChange`) is the focus's caret event,
-  handled as its UIA caret event is (`Worker::system_caret_of_uia_focus`),
-  as NVDA handles the system caret's events on its last queued focus,
-  since some UIA documents, such as Visual Studio's, raise no UIA caret
-  event. Once the focus has raised a UIA caret event of its own, and in a
-  focused console host terminal from the start, whose console caret event
-  is its caret event, the worker marks the focus
-  (`Intake::drop_system_caret`) and the intake drops the system caret's
-  events as they arrive, waking nobody, until the next focus is
-  reported: Windows 11 Notepad raises both for every move, the system
-  caret's first, and the console host raises both at the same blink
-  tick, so each would read the caret a second time. NVDA's exceptions
-  are not built: an IAccessible2 focus, not read before milestone M7,
-  Word's UIA document, Word's own rule, and Scintilla's refusal of the
-  caret's shows and hides, Notepad++'s, both for the app-module track
-  (`docs/parity/text.md`).
-  The intake keeps one waiting caret report per node, and a caret event
-  observed before the worker last read that node's caret (a caret key's
-  check reads it after the event) is dropped. A caret event of a focused
-  terminal whose reading is held while its text has changed unread is
-  noted instead of read (`Item::NotedCaret`): the intake hands it out
-  only when nothing else is ready (`Intake::when_idle`), and it then reads
-  the caret unless a read since, such as the one Core asks for, saw it.
-  While such a terminal is the console host's and no caret key's watch is
-  open, the worker marks its window in the intake
-  (`Intake::absorb_console_updates`), which then drops the window's
-  console updates as they are pushed, without waking the worker, which
-  would do nothing for them; the worker clears the mark before it handles
-  a terminal request or cancel, a caret key, or a new focus, so the read
-  that ends the hold covers every update absorbed. A caret event, a text
-  change, and a text selection change of the node a caret key's watch is
-  open on check the watch first. A focus-now answer's control has its
-  caret read with the answer, by the reported focus's own read, since
-  Core takes it as its focus. Before the answer is sent it is recorded as
-  a focus Core has not judged yet (`outpost::held`), as NVDA's fake
-  focus, queued as a focus event, becomes its last queued focus
-  (`eventHandler.py`, `_trackFocusObject`), so a late foreground change of
-  its window is dropped once Core holds it (Dickson, 2026-10-22); an
-  answer for the focus already judged against keeps the MSAA event address
-  and the simple-child mark its report recorded, which the second
-  foreground test and the MSAA repeat rule compare with. Once the answer
-  is sent it becomes the focus the outpost follows, as a reported focus
-  does, by the same function (`adopt_focus`, which `emit_focus` calls
-  too): a caret key's watch on another node ends, the intake is told
-  (`note_focused`), and the tracking takes its node, role, window and
-  chain; a control that is already the focus this outpost follows, under
-  the same node, is not adopted again, and one whose element it has under
-  another node, as File Explorer's reused runtime ids give
-  (`docs/uia-bugs.md`), is.
-  It is then followed as a reported focus is (`follow_text`): the
-  focus-following subscription moves to it, so its caret events no key
-  caused are reported and a caret key's watch on it is answered by them,
-  and a terminal has its first read, so what its text changes say is
-  reported and Core's on-demand reads of it are answered. It
-  gets no property subscription. It is not counted among the focuses
-  reported (`Tracking::reported`). Whether the focus is a
-  terminal is decided by the focus's own role (`Tracking::focus_role`),
-  which a foreground report, naming a window, leaves as it was, so a
-  terminal stays followed through a foreground report that no focus
-  event follows. The watch is
-  checked before a system caret event is taken as the caret event of a
-  UIA focus this outpost follows, at the cost of the watch's lock
-  for each such event, and the registry's while a watch is open; while
-  that UIA focus has the intake dropping the system caret's events
-  (`Intake::drop_system_caret`), the edit control's are dropped with
-  them, so only its text selection changes answer its caret keys until
-  the next focus is reported. A classic edit control that raises none
-  while focused would have its caret keys unanswered until then; whether
-  it raises them is not known, since the measurements above cover only
-  its unfocused caret moves.
+  and text selection events are `CaretMoved`, its value change
+  `TextChanged`.
+- For a UIA focus, the system caret's events are its caret events
+  (`Worker::system_caret_of_uia_focus`), since some UIA documents raise
+  none, until the focus raises a UIA caret event of its own, or from the
+  start in a console host terminal; then the intake drops them
+  (`Intake::drop_system_caret`) until the next focus, edit controls' caret
+  events with them. NVDA's IAccessible2, Word, and Scintilla exceptions are
+  not built (`docs/parity/text.md`).
+- The intake keeps one caret report per node and drops a caret event older
+  than the node's last caret read. A held terminal's caret event is noted
+  (`Item::NotedCaret`, handed out by `Intake::when_idle`), and the console
+  host's updates for it are dropped as pushed
+  (`Intake::absorb_console_updates`) while no watch is open, the mark
+  cleared before a terminal request, a caret key, or a new focus.
+- A focus-now answer's control has its caret read with it, is recorded as
+  an unjudged focus (`outpost::held`), as NVDA's fake focus is, and then
+  becomes the followed focus (`adopt_focus`, as `emit_focus` does): another
+  node's watch ends, the intake is told (`note_focused`), and the tracking
+  takes it, unless it is already followed under the same node (File
+  Explorer's reused runtime ids get a new one, `docs/uia-bugs.md`). It is
+  followed (`follow_text`) but not counted as reported
+  (`Tracking::reported`).
 
 ### Queries
 
-- Queries (the worker): `ShellItems` (`outpost/shell_items.rs`) reads the
-  notification area (`TrayNotifyWnd` under `Shell_TrayWnd`, with the
-  overflow flyout while visible) or the taskbar (`Shell_TrayWnd` without
-  the notification area's subtree) in the control view, each element as
-  the `ShellButton` shape, which holds whether a button is off the screen
-  but not where it is, and answers every named, on-screen button as a
-  `ShellItem`, a name and a runtime id. `ShellItemPosition { kind, item }`
-  walks the same surface the same way and reads `Place` for each listed
-  button whose runtime id or name is the item's, normally one, answering
-  `ShellCandidates`: each candidate's item, whether it is off the screen
-  and its rectangle, with whether the walk read every button, which the
-  time budget, the node cap, a failed step or a failed window lookup
-  makes false. A candidate gone before its read is left out; one whose
-  read fails otherwise is left out and makes the answer incomplete, so
-  one failed read does not fail the query; and the budget passing before
-  a read leaves the rest out and the answer incomplete. Which candidate is the item, if any, Core decides
-  (`verbatim-gui`'s `refind`). Either reads no window its application does
-  not serve, looks `Shell_TrayWnd` and `TrayNotifyWnd` up without the
-  proxy rule (`any_window_element`) and the overflow flyout's window
-  under it (`window_element`), and asks its time budget (`WALK_BUDGET`,
-  2 seconds) before each call after the first, answering the items read
-  by then once it has passed, a candidate's read included; a walk step that fails is read as no more
-  items there, as NVDA reads a failed UIA step, and logged as a warning
-  naming its error; all within the worker's deadline for the query
-  (`protocol::WALK_DEADLINE`, 5 seconds, public so that Core's deadline
-  for the shell items and a position can outlast it).
-  `DumpTree { locations }` walks the target's foreground window (or
-  its first visible top-level window) through its backend — UIA via
-  `verbatim_uia_rops::tree_dump`, each element's children read in one
-  call, by remote programs where the window allows them, every element
-  read as a `Node` read among many, MSAA via
-  `verbatim_ia2::acquire::walk_tree` from `OBJID_CLIENT` — capped at depth 64
-  and 4096 nodes, reporting whether it is incomplete: a cap cut it short,
-  or an element or object gone during the walk left the part of the tree
-  under it unread; any other failed read fails the dump with its error.
-  Each element's location and whether it is off the screen are read only
-  with `locations`, since for some elements, a top-level window's title
-  bar and its buttons among them, UIA asks the application's UI thread
-  for them (`WM_GETTITLEBARINFOEX`); the answer, `DumpedTree`, says
-  whether they were read (`locations`), and without them every node has
-  no rectangle and no `Offscreen` state.
-  `Ancestors`, `Navigate`, and `Activate` dispatch to whichever registry issued the node:
-  UIA hops through the raw-view tree walker with the base cache request, MSAA
-  through `accParent`, `accNavigate`, and `accDoDefaultAction` on the object
-  the registry kept for the node. A node no registry knows, or one that can
-  no longer be reached, answers `Gone`.
+- `ShellItems` (`outpost/shell_items.rs`) reads the notification area
+  (`TrayNotifyWnd`, with the overflow flyout) or the taskbar
+  (`Shell_TrayWnd` without it) in the control view as `ShellButton`s, and
+  answers every named, on-screen button as a `ShellItem` (name and runtime
+  id). `ShellItemPosition { kind, item }` walks the same way and answers
+  `ShellCandidates` with each matching button's `Place` and whether every
+  button was read; Core picks (`verbatim-gui`'s `refind`). Both read only
+  their application's windows, look the shell windows up without the proxy
+  rule (`any_window_element`), stop at `WALK_BUDGET` (2 s) with what they
+  read, and read a failed step as no more items, logged as a warning.
+- `DumpTree { locations }` walks the foreground window (or the first
+  visible top-level window): UIA with `verbatim_uia_rops::tree_dump`, MSAA
+  with `verbatim_ia2::acquire::walk_tree`, capped at depth 64 and 4096
+  nodes, saying whether incomplete. Locations are read only with
+  `locations`, since a title bar's are asked of the UI thread
+  (`WM_GETTITLEBARINFOEX`).
+- `Ancestors`, `Navigate`, and `Activate` go to the issuing registry: UIA's
+  raw-view walker with the base cache, or MSAA's `accParent`,
+  `accNavigate`, and `accDoDefaultAction`. An unknown or unreachable node
+  answers `Gone`.
 
 ### Selection and notification events
 
-- Selection and notification events: both backends' selection events emit
-  `NormalizedEvent::SelectionChanged` (the selected node's full snapshot)
-  and UIA notifications emit `NormalizedEvent::Notification`. A UIA
-  selection inside an element the focused element names in its
-  ControllerFor relation emits `NormalizedEvent::ControlledSelection`
-  instead, carrying the focus's id, as NVDA reports a search suggestion,
-  and so does one inside none of them, with the first controlled
-  element's current selection as its node, logged at debug ("the first
-  one's current selection is reported"), unless the selection names the
-  focus itself (compared by runtime id, with no call), which then goes on
-  to the other selection handling, as NVDA's base selection handler falls
-  through to its state change handler; one found in none with no current
-  selection read is logged at debug ("a selection in none of the elements
-  the focus controls, and no current selection read from the first"):
-  the relation is read live for each selection, as NVDA reads it, and it
-  and the search for the selected element under what it names are one
-  remote operation where the focus's window allows one
-  (`verbatim_uia_rops::controlled_selection`). The reducer
-  announces both ([verbatim-core](verbatim-core.md)).
-- `OutpostMessage::Event`, which `Frames` makes from a frame, carries the
-  target pid, the outpost id, the message's position, and the boxed
-  `OutpostToSupervisor` payload: the replies grew the message enum well
-  past the lifecycle notices, and boxing keeps every post small. `Supervisor::leave_nodes_held` leaves a
-  `NodesHeld` list for one incarnation, which the next command written to
-  it carries.
+Selections emit `NormalizedEvent::SelectionChanged` and UIA notifications
+`NormalizedEvent::Notification`. A UIA selection inside an element the
+focus names in its ControllerFor relation, or inside none of them (with the
+first controlled element's current selection as its node), emits
+`NormalizedEvent::ControlledSelection` with the focus's id, as NVDA reports
+a search suggestion, unless it names the focus itself; the relation and the
+search are one remote operation
+(`verbatim_uia_rops::controlled_selection`). A UIA selection or
+notification goes through its application's reading thread behind a marker
+(`DeliveredFact::UiaMarked`), which finds a non-window sender's nearest
+window; one with none is dropped, but for the shell's window-snap
+notifications. A waiting notification is replaced by a newer one from the
+same element with the same kind, processing, and activity id, as NVDA's
+UIA limiter keys it.
 
 ## Messages to Core
 
-The thread that sends Core a message writes it itself
-(`outpost::outbound`, through the transport's `Sender`;
-`docs/design/communication.md`, section 4.3): the worker its events and
-replies, the I/O thread its pongs, the thread watching the target
-application `TargetExited`. When no write is in flight the message is
-written at once, with one `WriteFile`, and no other thread wakes. When
-one is in flight, the write pending until Core has read enough of the
-pipe, the message waits in one queue, the sender's backlog, and the I/O
-thread writes what waits once the write in flight completes. Nothing that
-sends a message ever waits: a watchdog that waited behind a full queue,
-as it did when queuing waited for room under the watch lock, could not
-abandon a hung worker.
+The thread that sends a message writes it itself (`outpost::outbound`,
+through the transport's `Sender`; `docs/design/communication.md`, section
+4.3): at once with one `WriteFile` when no write is in flight, otherwise
+into the sender's backlog, which the I/O thread writes as writes complete.
+Nothing that sends ever waits, so the watchdog can always abandon a worker.
 
-- Pongs, `Ready`, and `TargetExited` go ahead of everything else that
-  waits, behind only the write in flight, which is never cut, so a busy
-  outpost is never mistaken for a dead one.
-- While messages wait, they are merged by object and kind, as the intake
-  and the supervisor merge what reaches the outpost and as NVDA's limiters
-  do. An event replaces a waiting event of the same kind for the same node
-  (for a property change, the same property; for a focus, the same kind of
-  focus) and goes to the back, unless the waiting one is a caret report
-  carrying selection changes with a reply after it, when both are kept in
-  order. A terminal's read is never merged with a newer one, since each
-  starts where the one before it said to start ("Terminals").
-- Answers to Core's requests are never merged and keep their order, and
-  so do notifications, each of which says something of its own, and
-  faults. A cancelled query's `NotStarted` answer takes its place among
-  them too.
-- Nothing is merged across a flush (`Outpost::settle`'s), and a flush is
-  answered only once every write before it has completed, so everything
-  published before it is in the pipe when it is answered.
-- What waits is bounded by the nodes and kinds there are, by Core's
-  requests (the supervisor's queue to the outpost holds at most 64), and
-  by the intake's limits, without a bound of its own.
-- The messages that carry node ids are numbered as Core counts them as
-  each is written, and the nodes each may have reported are recorded at
-  its number then (`Pending`, the backlog, sees every message, written at
-  once or after waiting).
-- A terminal's read carries its caret report in itself, one message
-  whatever its size, a whole document's included.
-- Every message is stamped as its write begins, by whichever thread
-  writes it (`written_at_us`, under `EventTiming` above).
+- Pongs, `Ready`, and `TargetExited` go ahead of everything waiting.
+- Waiting events merge by node and kind (the same property, or the same kind
+  of focus), the newer at the back, but not past a caret report with
+  selection changes that has a reply after it, and never a terminal's read.
+- Replies, notifications, and faults never merge and keep their order.
+- Nothing merges across a flush (`Outpost::settle`'s) or an idle answer, and
+  a flush is answered once every earlier write has completed.
+- What waits is bounded by the nodes and kinds, Core's requests, and the
+  intake's limits. Messages carrying node ids are numbered as written
+  (`Pending`).
 
-The supervisor's side already never waits: each child's writer queue
-fails or replaces a command when it is full (the `Supervisor` entry above),
-the relay hands every frame on through the app's sink, which never
-waits, and the
-maps of writers are locked only to look one up, never across a push or a
-write. The focus listener writes the same way, each fact by the thread
-that produced it, and its backlog merges its facts by element and kind,
-and for an MSAA event other than a menu opening by the thread that raised
-it too, and never waits
-either.
+The supervisor and the listener never wait to send either.
 
 ## The idle barrier
 
 The harness's `AwaitIdle` (`verbatim-app`'s `idle` module;
-`docs/design/communication.md`, section 6.7 and step 6a of section 11)
-is answered only after a round in which every child said nothing that
-came before the question was still in progress. The round is in band, so
-it covers whatever is in pipes and backlogs without counting it.
+`docs/design/communication.md`, section 6.7) is answered after a round in
+which every child said nothing that came before the question was in
+progress. The round is in band, so it covers pipes and backlogs.
 
-- `Supervisor::query_idle(round)` posts the round to the relay. The relay
-  writes `IdleQuery` to the listener, behind every command sent to it
-  before; while the listener is launching, the query waits with the
-  hand-over's news and is written once it is launched. A listener that is
-  missing, fails to launch, or ends or is replaced during the round
-  counts as having answered.
-- The listener hands the query to its `WinEvent` thread as a thread
-  message (`Nudger::nudge`), behind every event delivered to that thread,
-  and the thread hands it to the reading threads (`Readers::when_idle`),
-  which run the answer under their lock once no event queued before it is
-  waiting or being read, so it goes behind every such read's or drop's
-  outcome. Each queued event takes its place from one count across every
-  application and the answer keeps the count when it came, so events
-  queued after it are not waited for.
-  A menu or switcher end still in its grace goes first, and the answer
-  behind it. The answer goes through the listener's sender behind every
-  fact sent before it, and no fact is coalesced with one before it across
-  it.
-- On reading the listener's answer, the relay asks every outpost in the
-  same pass, so each query is behind every fact routed to that outpost
-  before it, and first tells the app which it asks
-  (`OutpostMessage::IdleQueried`), so that message reaches the app ahead
-  of every answer. While an outpost is still being launched, the app may
-  not have heard it started, so the relay asks once every launch has
-  reported; an outpost not yet ready is asked behind its held facts when
-  it is. In the relay's writer the query gets through a full queue and no
-  fact queued after it replaces one queued before it.
-- An outpost queues the query in its intake (`Item::IdleQuery`), where
-  it divides what waits: no entry that arrives after it replaces one
-  waiting before it, and it ends the batch it is planned in, so that
-  batch's menu opening goes before it. The worker reaches it once
-  everything that arrived before it has been handled; a noted caret goes
-  first, the query going directly behind it, ahead of what arrived after
-  the query (`Intake::push_ahead`), and waiting for nothing more when it is
-  reached again. It is then answered as soon as no
-  caret key's watch is open and no terminal owes Core a read: checked after
-  every entry the worker in charge handles. The requests terminals owe are
-  kept under a lock of their own, never held across a call into the
-  application, so a worker abandoned in a terminal's read cannot keep its
-  replacement waiting there. Entries that arrive after the
-  query are not waited for, nor are the follow-ups they queue or the
-  carets they note, so a flood cannot hold the answer back. The
-  answer goes through the ordinary queue, never merged, and no event is
-  merged across it (`Pending::waiting_with` stops at it).
-- An outpost's answer reaches the app as an `Event` like any other
-  message; an outpost that ends during the round answers by its `Ended`,
-  which follows everything it sent.
+- `Supervisor::query_idle` posts the round to the relay, which writes
+  `IdleQuery` to the listener behind every earlier command; a missing or
+  ending listener counts as having answered.
+- The listener passes it through its `WinEvent` thread (`Nudger::nudge`) to
+  the reading threads (`Readers::when_idle`), which answer once no event
+  queued before it is waiting or being read, behind a menu end still in its
+  grace and every earlier fact.
+- The relay then asks every outpost in the same pass, telling the app which
+  first (`IdleQueried`); outposts being launched are asked once every launch
+  has reported, a starting outpost behind its held facts. The query gets
+  through a full queue.
+- An outpost queues it (`Item::IdleQuery`), dividing what waits and ending
+  its batch; a noted caret goes just ahead (`Intake::push_ahead`). It is
+  answered once nothing before it is handled and no caret watch, gap, or
+  terminal read owed to Core remains, checked after every entry; terminals'
+  owed requests have their own lock, never held across a call. Entries after
+  the query are not waited for. An outpost that ends answers by its `Ended`.
 
 ## Shutting down
 
-Outposts and the listener are UI Automation clients of every application
-Verbatim reads, and killing a client in the middle of a call or a remote
-operation into an application is the leading suspect in a Windows Terminal
-crash inside `UIAutomationCore.dll` on 2026-10-08; it also happened to every application whenever
-Verbatim exited, since ending a child used to mean closing its job. So
-every way a child ends goes through a clean shutdown, and the kill is
-only the fallback:
+Every child ends by a clean shutdown, the kill being only the fallback
+(`docs/architecture.md`, section 1, gives the reason): at Verbatim's exit
+(`Supervisor::shutdown`, run while the exit sound plays, after the keyboard
+hook is removed; no child starts afterwards), when a child is replaced, and
+when an outpost is retired or its application exits.
 
-- Verbatim exiting: `Supervisor::shutdown`, which the app runs while the
-  exit sound plays, after removing its keyboard hook, and waits for before
-  it exits. No child is started from then on, and a child whose launch
-  reports back afterwards is shut down at once.
-- An outpost or the listener replaced or restarted: one that stopped
-  answering pings, piled up abandoned workers, or closed its pipe, and a
-  child launched after it was no longer wanted.
-- An outpost retired, or ended because its application exited.
-
-The supervisor's side (`supervisor::retire`): the child is sent
-`Shutdown`, which passes a full command queue, its command pipe is closed
-once everything before it is written, and the supervisor waits on the
-process for `SHUTDOWN_LIMIT`. A child that exits with code 0 shut down
-cleanly. One that has not exited by then is killed through its job
-(`Contained::kill`, with `verbatim_process::KILLED_EXIT_CODE`), and the
-kill is logged as a warning with why the child was being ended, and counted
-in the summary as `killed`; so is an exit with another code. A wait that
-fails, rather than running out, also ends in a kill, logged as an error
-and counted apart, as `killed_on_failure`. The end-to-end suite
-checks after every scenario that each outpost and the listener exited
-with code 0 before Verbatim did.
+The supervisor's side (`supervisor::retire`): it sends `Shutdown`, which
+passes a full queue, closes the command pipe once it is written, and waits
+for `SHUTDOWN_LIMIT`, 21 seconds. Exit code 0 is clean. A child still
+running then is killed through its job (`Contained::kill`,
+`verbatim_process::KILLED_EXIT_CODE`), logged as a warning with why it was
+ended and counted `killed`, as is any other exit code; a failed wait ends in
+a kill too, logged as an error and counted `killed_on_failure`.
 
 The outpost's side (`Outpost::shutdown`), in order:
 
-1. The intake closes: nothing new is taken, and what was waiting is
-   dropped.
-2. The `WinEvent` hooks are removed, with the thread that pumped them.
-3. The focus-following UIA subscription is closed: the process's
-   registering thread removes each of its groups one by one
-   (`RemoveEventHandlerGroup`), each removal waiting for callbacks in
-   progress; `RemoveAllEventHandlers` comes at step 7, as the
-   registering thread ends.
-4. The worker finishes the entry in hand and every abandoned worker
-   returns from its call, and so does every thread of the client for
-   operations with a deadline of their own. The watchdog ends first, so
-   nothing more is abandoned. No call is cut off: a call into an application that does
-   not answer is ended by UIA's own timeouts.
-5. Every object held is released: every node leaves both registries, with
-   its text patterns, anchors, and a terminal's kept read start.
-6. What waits is written, the answer to the call that was in progress
-   included, every write in flight completes, and the pipe is closed. The
-   outpost never exits with a write in flight, since its exit would cancel
-   the write and cut the frame (`docs/design/communication.md`, section
-   4.6): its I/O thread serves its port until the sender has finished
-   (`ChildIo::finish`).
-7. The thread leaves COM's multithreaded apartment, and the process's
-   hold on it is given back (`verbatim_uia::release_mta_usage`), so COM
-   ends the apartment once every thread has left it; each worker leaves it
-   as it ends, and so does the process's registering thread, which that
-   call ends first (`docs/crates/verbatim-uia.md`, `Registration`).
+1. The intake closes and drops what waits.
+2. The `WinEvent` hook and its thread go.
+3. The subscription's groups are removed (`RemoveEventHandlerGroup`), each
+   waiting for callbacks in progress.
+4. The watchdog ends, then the worker finishes its entry and every
+   abandoned worker and bounded-client thread returns; no call is cut off,
+   since UIA's timeouts end it.
+5. Every node leaves both registries, with its text patterns, anchors, and
+   a terminal's kept start.
+6. What waits is written, every write in flight completes
+   (`ChildIo::finish`), and the pipe closes, since an exit would cancel a
+   write (`docs/design/communication.md`, section 4.6).
+7. The thread leaves COM's apartment and the process's hold is given back
+   (`verbatim_uia::release_mta_usage`), ending the registering thread with
+   its `RemoveAllEventHandlers` (`docs/crates/verbatim-uia.md`,
+   `Registration`).
 
-The outpost logs how long each step took (`the outpost shut down`). The
-listener's shutdown removes its hooks, its desktop-wide focus handler, and
-its other desktop-wide handlers, writes what waits, waits for every write
-in flight as the outpost does, and gives back the apartment; it makes no call into an application, so nothing else can
-be in progress. Both then end the process with `TerminateProcess` and
-exit code 0 rather than returning from `main`, so no DLL's process-detach
-code runs (`docs/architecture.md`, section 1, "Process and thread model").
+The outpost logs each step's time (`the outpost shut down`). The listener
+removes its hooks and handlers, writes what waits, and leaves COM. Both
+then end with `TerminateProcess` and exit code 0 (`docs/architecture.md`,
+section 1). The limit outlasts any UIA call (`TRANSACTION_TIMEOUT`, five
+seconds, `CONNECTION_TIMEOUT`, two, for classic calls and `Execute` alike)
+and a search of several; only an MSAA call into a hung application can
+outlast it. A clean shutdown takes milliseconds: over one end-to-end run, 4
+to 443 ms from the message to the exit, median 15.
 
-The time limit, `SHUTDOWN_LIMIT`, is 21 seconds. Over the end-to-end
-suite on the development machine (2026-10-08, 436 shutdowns), a clean
-shutdown took from 4 to 443 milliseconds from the shutdown message to the
-process's exit, as the supervisor logs it (`shut down cleanly`,
-`elapsed_ms`): a median of 15 and a 99th percentile of 31, the slowest
-the focus listener's once. The only thing that can make it take longer is a call in
-progress, which the outpost lets finish. UIA ends a call to a provider
-that never answers by its transaction timeout, and one to a provider that
-cannot be reached by its connection timeout, `TRANSACTION_TIMEOUT`, five
-seconds, and `CONNECTION_TIMEOUT`, two, set once per process; this bounds a classic call and a remote
-operation's `Execute` alike (mockapp's `remote_ops` and `time_limits`
-tests pin it). A search makes several calls, each waiting up to that
-long, so the limit was left at 21 seconds when the timeouts were
-shortened from UIA's default of 20 (2026-10-11); waiting longer could
-only wait on an MSAA call into a hung application, which nothing times
-out, and that child is killed. The kill only ever happens while an application is not
-answering, and Verbatim's exit then waits up to the limit, after the exit
-sound.
-
-Tests: `crates/mockapp/tests/shutdown.rs` tells a real outpost to shut
-down while its read into mockapp is held at its first provider call, once
-for a remote operation and once for classic reads, and checks that the
-read's answer is sent, the outpost's four UIA event registrations on
-mockapp's window are removed (counted by mockapp's fragment root through
-`IRawElementProviderAdviseEvents`), the pipe is closed, and mockapp still
-answers another client; and that a ping handed to the outpost while its
-worker is held in a call is answered with a pong at once.
-`crates/verbatim-outpost/tests/shutdown_fallback.rs`
-has a real supervisor launch a stand-in listener that never exits, and
-checks that the shutdown's summary reports it killed because its time
-limit passed, not because the wait for its exit failed. It does not time
-the kill: the wait runs on the system timer tick and can return a few
-milliseconds before the limit.
-`crates/verbatim-outpost/tests/target_exit.rs` runs the real outpost
-binary against a stand-in application, which it ends, and checks that the
-outpost says `TargetExited` and, sent `Shutdown`, closes its pipe and
-exits with code 0. The end-to-end suite checks every run's outposts and
-listener as above.
+Tests: `crates/mockapp/tests/shutdown.rs` (a shutdown during a held read,
+remote and classic: the answer sent, the four UIA registrations removed,
+the pipe closed, mockapp still answering; and a pong while the worker is
+held), `crates/verbatim-outpost/tests/shutdown_fallback.rs` (a stand-in
+that never exits is reported killed at its limit), and
+`crates/verbatim-outpost/tests/target_exit.rs` (`TargetExited`, then a
+clean exit). The end-to-end suite checks every child exited with code 0.
 
 ## Terminals
 
-The `terminal` module (public, so mockapp's tests drive it as the worker
-does) reads a focused terminal and sends each read to Core, whose terminal
-model aligns it and applies the reading rules
-(`docs/design/terminal-model.md`, "Where it runs";
-[verbatim-core](verbatim-core.md), "Core's terminal model"): the outpost
-makes the accessibility calls and judges nothing a read says. Terminal
-behavior is generic, keyed by the control, never the window's title: a
-UIA element of class `TermControl` (Windows Terminal) or
-`WPFTermControl` (the terminal embedded in Visual Studio), or a focus in a
-`ConsoleWindowClass` window (the console host), is `Role::Terminal`. The
-console host's text area is read through UIA, as NVDA reads it on current
-Windows (its provider reports text formatting, which arbitration checks).
-Its focus comes from the host's own process, while
-`GetWindowThreadProcessId` names the console's client as the window's
-owner, and inside a remote operation the host's provider gives no native
-window handle for the window; the classic walk to the nearest window finds
-it.
+The `terminal` module (public, so mockapp drives it) reads a focused
+terminal and sends each read to Core, whose terminal model aligns it and
+applies the reading rules (`docs/design/terminal-model.md`, "Where it runs";
+[verbatim-core](verbatim-core.md), "Core's terminal model"); the outpost
+judges nothing a read says. A UIA element of class `TermControl` (Windows
+Terminal) or `WPFTermControl` (Visual Studio), or a focus in a
+`ConsoleWindowClass` window, is `Role::Terminal`, never by title. The
+console host's text area is read through UIA; inside a remote operation its
+provider gives no handle for the window, which the classic walk finds.
 
-- The worker keeps, per terminal node, a `Terminal`: where the next read
-  starts (`Snapshot::next_start`) and whether the screen of the read that
-  placed it showed text, the screen's height and width as Core last told
-  them (`TextOp::TerminalShape`, `Terminal::shape`), whether the next read
-  takes the colours, its on-demand reading state (`terminal::reading`),
-  when the last read began and ended and whether it took the colours, the
-  caret last sent to Core, and a hash of the last read sent. It is kept
-  while the node is, across focus changes.
-- Every read is one snapshot (`terminal::read`, through
-  `verbatim_uia_rops::terminal_snapshot`, with the classic fallback behind
-  the same entry point): the text from a screen above where the last read
-  said to start, a screen being the height Core told, to the document's
-  end, in one `GetText`, with the screen, the caret and its line, and,
-  when colours are due, the screen's colours, all in one remote operation.
-  Core may ask for two other reads (`TextOp::TerminalReadNow`): the whole
-  document, after a lost read, and a first read's history block, the read
-  again with no start, the screen counted up from the document's end by
-  the height Core names and as many rows above it. It becomes Core's
-  `TerminalSnapshot` (`terminal::snapshot_of`): every text as UTF-8
-  without its lines' padding, with each line's padded length (the text
-  and the screen converted from the provider's UTF-16 in one pass,
-  `terminal::unpadded_utf16`, into spare buffers that a read written to
-  Core gives back, `terminal::recycle`, each kept to `SPARE_KEPT_BYTES`,
-  64 KiB), the caret's
-  row and its column in characters from the caret read with it, the
-  colours converted from `verbatim_uia_rops::ColourRun`, and when the read
-  began on the run's shared clock, so output read before a key's cut is
-  never spoken after it. Where the next read starts is kept from the read
-  unless its screen shows no text where the screen of the last read kept
-  did ("A read with no text", `verbatim_text::terminal_rows::shows_text`).
-  The caret read with it becomes a caret report carried in the snapshot
-  (`text_reads::terminal_read`), since a terminal raises no caret event
-  for every character typed.
-- Sending. A live read is sent as `NormalizedEvent::TerminalSnapshot`
-  unless it is identical, field for field, to the last read sent but for
-  when it began and ended and its caret report (`Terminal::sends`), a read that
-  waited for Core's speech queue excepted, since the reading rules count
-  reads in a row of which the second waited ("Volatile rows"). An answer
-  to Core's request is always sent, as `TextReply::TerminalSnapshot`.
-- Colours ("Colours"). Core asks for the colours with every key that
-  reaches the terminal, naming the key's window
-  (`TextOp::TerminalColours { from_ms, until_ms }`). The outpost keeps the
-  latest end of a window it was asked for, and every read that begins at
-  or before it takes the colours (`Terminal::colours`); a read the outpost
-  does not send, as the last one sent again, uses nothing up. When the
-  request comes and the last read ended at or after the key without
-  colours, one read is taken at once with them, even when the request
-  came after the window ended, and sent as a live read; the request is
-  always answered `Done`. Each read carries when it began and when it
-  ended (`ended_ms`), which Core orders keys against.
-- Keys. A terminal's keys and the reading rules' settings are Core's
-  alone; the outpost is told of neither. A held caret key's read before
-  it is passed on
-  (`TextOp::ReadCaret`) is, in a focused terminal, a read answered as a
-  snapshot whose caret answers the request in Core; the key's watch's
-  evidence, a caret event or a text change, then reads the terminal, and
-  the watch's own answer keeps Core's caret current and says nothing in a
-  terminal.
-- When to read. In the console host the console's own `WinEvents`
-  (`EVENT_CONSOLE_UPDATE_REGION`, `_SIMPLE`, `_SCROLL` and
-  `EVENT_CONSOLE_LAYOUT`, merged into one per window while they wait) are
-  its terminal's text changes, and UIA's text changes are not subscribed
-  for it; in Windows Terminal UIA's text changes are, and its caret
-  events read the terminal too, since it sometimes moves its caret with
-  no text change; the read takes the caret, so it is not read again on its
-  own. The console host's caret event (`EVENT_CONSOLE_CARET`), raised on
-  its cursor's blink timer when the cursor has moved, reads the terminal
-  likewise, so a caret move with no text change reaches Core's reading
-  rules in a read; while reading is held with the text changed it is
-  noted, as any caret event is.
-  A change observed before the last read began is covered by it and reads
-  nothing (`Terminal::covers`), compared in microseconds when the entry
-  carries them, so a change in the read's own millisecond but before it
-  is covered too. Reads made on Windows Terminal's events never wait for a
-  frame; the read before a held key, prompted by no event, can cost that
-  key one software-rendered frame. Windows Terminal raises no text change
-  for writes made only of blank lines, so such a scroll is read at the
-  next event, its caret's move among them.
-- Taking the focus. Once a terminal's focus is reported with its caret,
-  the focus-following subscription is moved to it and the worker waits
-  for the move (`Registration::settle`) before the first read, so output
-  written after that read began raises a change that reads it. That first
-  read is sent even when identical to the last read sent
-  (`Terminal::focused`), since Core's rules, told of the focus, take it as
-  the read that speaks nothing.
-- On-demand reading (`terminal::reading`), a pure transition function the
-  worker drives. Live, the default, a text change of the focused terminal
-  is read at once and sent. Core's text requests change it:
-  `TextOp::TerminalHold` (Core's queue is full: changes are only noted,
-  answered `Done`), `TextOp::TerminalRead { hold }` (answered with a read
-  taken as one that waited for Core's queue when the text changed since
-  the last read, otherwise `TextReply::TerminalUnchanged` without reading,
-  then holding or live again), and `TextOp::TerminalCancel` (speech was
-  cut off: live again, and, when the text changed while held, read and
-  answered, Core speaking only its answers to keys; otherwise answered
-  `TerminalUnchanged` without reading). Core's fresh read before a review
-  command (`TerminalReadNow(Fresh)`) is read whatever the state, and clears
-  a held state's mark that the text changed. A read is one snapshot,
-  which the terminal answers from one locked state of its buffer, so no
-  read is disturbed by the terminal writing to it. While reading is held
-  with the text changed, a caret event is noted, not read, and its caret
-  is read once the outpost has nothing else waiting and sent as a caret
-  report; and while such a terminal is the console host's and no caret
-  key's watch is open, the intake drops the window's console updates
-  without waking the worker (`docs/design/wake-ups.md`).
-- The review cursor is Core's. Rows above those Core's memory keeps are
-  read when Core asks (`TextOp::TerminalHistory { above, whole }`), in a
-  snapshot of their own from as many rows above where the next read
-  starts, or the whole document, padding kept, answered
-  `TextReply::TerminalHistory` with how many rows the read holds above
-  that start and the number of the read whose start it is
-  (`terminal::history`, whose `History` also says which path answered).
-  A command mark's line above them is
-  looked for when Core asks (`TextOp::TerminalFind`), by
-  `terminal::find` with `verbatim_uia_rops::terminal_find`, answered
-  `TextReply::TerminalFound` with each match's rows above that start and
-  its text, and the number of the read whose start they are counted
-  from; Core decides which match, if any, is the mark's. The outpost
-  numbers each read (`TerminalSnapshot::read`) and keeps the number of
-  the read whose start it kept; when that read is not sent, being
-  identical to the last one sent, the last one sent's number stands for
-  it, since its start is the same. A request
-  naming an anchor of the outpost's own, such as a caret report's, is
-  answered as any text's.
-- A read waiting in the outbound queue is never merged with a newer one:
-  each read starts where the one before it said to start, so a read
-  dropped for a newer one would leave the rows between them unread by
-  Core. A whole document's read, about 1 MB of JSON with a full history,
-  goes as one message.
-- Each snapshot logs its cost at debug (`terminal snapshot timing`: the
-  path, microseconds, calls, whether it read the whole document, the rows
-  above its start, its text's length, and its flags), as does the
-  worker's handling of each read (`terminal read timing`, with its wait in
-  the queue).
-- Every UIA notification from a terminal control or the console host's
-  text area is ignored by the focus listener
-  (`verbatim_uia::map::ignores_notifications`, from the class name and
-  automation id of the sender's `ListenerEvent` read), whatever its
-  activity id, as NVDA's terminal overlays ignore them, or output would
-  be spoken twice.
-- A UIA selection or notification goes, like a focus event, through its
-  application's reading thread behind a marker
-  (`DeliveredFact::UiaMarked` takes the marker's place in the intake):
-  for a sender that is not a window, the thread walks up to its nearest
-  window, one call, as NVDA does. A selection whose sender has none is
-  dropped, and the window found is the one the outpost tests the
-  selection's window and acceptance with; a notification whose sender
-  has none is dropped, as NVDA's app module default drops it, but for the
-  shell's window snap results.
-- A UIA notification waiting in the listener or the intake is replaced
-  by a newer one from the same element with the same kind, processing,
-  and activity id, whatever its text, as NVDA's UIA limiter keys one.
-- The unit tests: `terminal/reading.rs` holds every state and event of
-  on-demand reading; `terminal/tests.rs` drives the decision to send a
-  read (`Terminal::sends`) over the simulated terminal
-  (`verbatim-term-sim`), giving the reads sent to the reading rules as
-  Core gives them: a read identical to the last sent is not sent unless
-  it waited, a waited one is, so a row changed around it is not made
-  volatile, and the first read after the focus returns is sent though
-  identical; and it checks that a read's text converted in one pass
-  (`terminal::unpadded_utf16`) is exactly what two copies made, unpaired
-  surrogates and line ends included. Its ignored `measure_conversion`
-  times that conversion in a release build (`docs/performance.md`, "A
-  terminal's reads in Core"). mockapp's `terminal` test
-  reads its UIA terminal provider through the module (new output said line
-  by line, one call remotely; typing echoed as the terminal shows it and
-  Backspace saying what it deleted, through Core), and `terminal_reading`
-  drives every transition through a real outpost's worker.
+- Per terminal node the worker keeps a `Terminal`: the next read's start
+  (`Snapshot::next_start`) and whether its screen showed text, the screen's
+  size as Core told it (`TextOp::TerminalShape`, `Terminal::shape`), whether
+  colours are due, the reading state (`terminal::reading`), the last read's
+  times, the caret last sent, and a hash of the last read sent.
+- A read is one snapshot (`terminal::read`, through
+  `verbatim_uia_rops::terminal_snapshot`, classic fallback behind it): text
+  from a screen above the start to the end in one `GetText`, the screen,
+  the caret and its line, and colours when due, in one remote operation.
+  Core may ask for the whole document or a first read's history block
+  (`TextOp::TerminalReadNow`). `terminal::snapshot_of` makes Core's
+  `TerminalSnapshot`: UTF-8 text without line padding, each line's padded
+  length (one pass, `terminal::unpadded_utf16`, into buffers a written read
+  returns, `terminal::recycle`, each kept to `SPARE_KEPT_BYTES`, 64 KiB),
+  the caret's row and column, colours from `verbatim_uia_rops::ColourRun`,
+  and when the read began. The start is kept unless the screen shows no text
+  where the last kept read's did (`verbatim_text::terminal_rows::shows_text`).
+  The caret read is a caret report inside the snapshot
+  (`text_reads::terminal_read`).
+- A live read is sent as `NormalizedEvent::TerminalSnapshot` unless
+  identical to the last sent but for times and caret (`Terminal::sends`), a
+  read that waited for Core's queue excepted; an answer to Core is always
+  sent (`TextReply::TerminalSnapshot`). Reads never merge while waiting,
+  since each starts where the last said, and a whole document goes as one
+  message.
+- Core asks for colours with every key that reaches the terminal
+  (`TextOp::TerminalColours { from_ms, until_ms }`); reads beginning by the
+  latest end asked take them (`Terminal::colours`), and if the last read
+  ended after the key without them, one is read at once. Each read carries
+  its end (`ended_ms`).
+- Keys and reading settings are Core's. A held caret key's before read is,
+  in a terminal, a snapshot whose caret answers it; the watch's evidence
+  then reads the terminal, and its answer says nothing.
+- The console host's console events (`EVENT_CONSOLE_UPDATE_REGION`,
+  `_SIMPLE`, `_SCROLL`, `EVENT_CONSOLE_LAYOUT`, merged per window) are its
+  text changes, and its `EVENT_CONSOLE_CARET` reads the terminal too;
+  Windows Terminal's UIA text changes and caret events read it. A change
+  observed before the last read began is covered (`Terminal::covers`, in
+  microseconds when known). Reads on Windows Terminal's events never wait
+  for a frame; the before read of a held key, prompted by no event, can
+  cost that key one software-rendered frame. Windows Terminal raises no change for writes of
+  blank lines only, so such a scroll is read at the next event.
+- When a terminal's focus is reported, the subscription moves to it and the
+  worker waits for the move (`Registration::settle`) before the first read,
+  which is sent even if identical (`Terminal::focused`).
+- On-demand reading (`terminal::reading`, a pure transition function): live
+  by default; `TextOp::TerminalHold` only notes changes;
+  `TextOp::TerminalRead { hold }` answers with a read taken as one that
+  waited, or `TextReply::TerminalUnchanged`; `TextOp::TerminalCancel` goes
+  live and reads only if the text changed; `TerminalReadNow(Fresh)` reads
+  whatever the state. Each read is answered from one locked state of the
+  buffer.
+- History: `TextOp::TerminalHistory { above, whole }` reads rows above
+  Core's memory, padding kept, answered `TextReply::TerminalHistory` with
+  the rows above the start and the read number whose start it is
+  (`terminal::history`, `History`); `TextOp::TerminalFind`
+  (`terminal::find`, `verbatim_uia_rops::terminal_find`) finds a command
+  mark's line, answered `TextReply::TerminalFound`, and Core picks the
+  match. Reads are numbered (`TerminalSnapshot::read`); an unsent read's
+  number is the last sent one's.
+- Each snapshot and read logs its cost at debug (`terminal snapshot
+  timing`, `terminal read timing`).
+- The listener ignores every UIA notification from a terminal
+  (`verbatim_uia::map::ignores_notifications`), as NVDA's terminal overlays
+  do, or output would be spoken twice.
+- Tests: `terminal/reading.rs` covers every reading state; `terminal/tests.rs`
+  drives `Terminal::sends` over `verbatim-term-sim` and checks the one-pass
+  conversion, with an ignored `measure_conversion` (`docs/performance.md`,
+  "A terminal's reads in Core"); mockapp's `terminal` and
+  `terminal_reading` tests drive a real outpost.

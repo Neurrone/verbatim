@@ -86,7 +86,7 @@ The maximum is 32 MB (`MAX_FRAME_BYTES`). A reader that sees a larger length tre
 
 Each pipe end that writes has one `Sender`. Its rules, each with its reason:
 
-- One write per frame, so a frame never costs the reader a second wake-up. Several frames may go in one write (`send_all`), each whole with its own header, so the reader wakes once for all of them; an outpost sends a screen read's "caret moved" and "terminal output" together this way.
+- One write per frame, so a frame never costs the reader a second wake-up. Several frames may go in one write (`send_all`), each whole with its own header, so the reader wakes once for all of them.
 - At most one write is in flight per pipe; later frames wait in the sender's backlog, in order, under that pipe's overflow policy (section 4.4). This is what keeps frames from interleaving.
 - The producer writes. A thread that sends when no write is in flight issues the overlapped `WriteFile` itself. If it completes at once, which is the normal case when the reader keeps up, no other thread wakes. If it pends, the slot keeps the buffer and the `OVERLAPPED` until the completion arrives, and the producer returns at once; it never waits.
 - The I/O thread finishes. The completion of a write that pended arrives at the process's I/O thread for that pipe (section 6), which writes the next backlog frame, until the backlog is empty.
