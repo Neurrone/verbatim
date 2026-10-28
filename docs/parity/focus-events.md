@@ -14,115 +14,106 @@ has no test for a foreground or menu focus
 ([Event handling](../nvda/events.md),
 [The UIA client](../nvda/uia.md)).
 
-Verbatim: **matched (verified)**, with one rule of its own and two
-differences: when a read's time is up, and while a focus waits for
-Core's judgement.
+Verbatim: **matched (verified)**, with one rule of its own; the two
+differences are the next two entries. The rule is defined once
+(`verbatim_core::focus_rules::repeats_focus`; decision D14, "Where the
+rules run"): a focus repeats when its event names the element of the
+focus Core holds, which still has the focus, and Core has judged every
+focus the judge sent it. Core applies it, and the focus listener and the
+outposts apply it before they read, against the focus Core holds, which
+Core tells them after every focus event it judges and every change of
+its focus (`SupervisorToOutpost::CoreFocus`;
+`docs/design/focus-pipeline.md`, sections 4.2 and 16.3;
+`docs/crates/verbatim-outpost.md`, "A UIA focus, judged and read by the
+listener").
 
-The rule is defined once (`verbatim_core::focus_rules::repeats_focus`;
-decision D14, "Where the rules run"): a focus repeats when its event
-names the element of the focus Core holds, which still has the focus,
-and Core has judged every focus the judge sent it. Core applies it, and
-the focus listener and the outposts apply it before they read, each
-gathering the evidence by its own means, against the focus Core holds,
-which Core tells them after every focus event it judges and every change
-of its focus (`SupervisorToOutpost::CoreFocus`).
-
-- Core drops a focus on the node of the live focus it holds, which is
-  the last focus it queued, before the stale and foreground checks, so it
-  neither moves attention nor counts as the newest focus a later focus
-  from another application is judged stale against; its newer reading is
-  kept (`docs/design/focus-pipeline.md`, section 4.2). Core compares the
-  node id only, not the states, name, or ancestors, which a second report
-  can read mid-change (Notepad's edit control settling, File Explorer's
-  title being filled in), and not the selected item inside a list; a new
+- Core drops a focus on the node of the live focus it holds, before the
+  stale and foreground checks, so it neither moves attention nor counts
+  as the newest focus a later focus from another application is judged
+  stale against; its newer reading is kept. Core compares the node id
+  only, not the states, name, or ancestors, which a second report can
+  read mid-change (Notepad's edit control settling, File Explorer's title
+  being filled in), and not the selected item inside a list; a new
   selected item is announced by its selection event. This rule across
   backends is Verbatim's own, kept in the reducer because only Core sees
   focus across applications
-  ([verbatim-core](../crates/verbatim-core.md), M3 noise suppression).
-  It covers the focuses the listener does not judge: MSAA's, and the
-  answers to a focus-now query. Core's
+  ([verbatim-core](../crates/verbatim-core.md), M3 noise suppression); it
+  covers MSAA's focuses and the answers to a focus-now query. Core's
   `a_duplicate_focus_does_not_make_a_later_focus_stale` and
-  `the_same_focus_after_another_applications_focus_is_announced` pin it.
+  `the_same_focus_after_another_applications_focus_is_announced`.
 - The focus listener makes NVDA's UIA test itself, in NVDA's order,
-  before it reads anything of the event's sender
-  (`docs/design/focus-pipeline.md`, section 16.3), against the focus Core
-  holds: the elements of the focuses its reading threads read are shared
-  by all of them (`focus_read::HeldElements`), by how Core judged them,
-  and an event whose sender `CompareElements` equates with the element of
-  the focus Core holds, while that element's `HasKeyboardFocus` reads
-  true, is dropped; a comparison or read that fails lets the event
-  through. A repeat costs those two calls. An element is kept only once
-  its focus has passed the acceptance test against the foreground window
-  and has been read; it stands for the focus Core holds only once Core
-  has taken that focus, and no longer once Core holds another, so a focus
-  Core refused, as a shell window that only stages a switch, is never
-  compared with. Mockapp's
+  before it reads anything of the event's sender: an event whose sender
+  `CompareElements` equates with the element of the focus Core holds,
+  while that element's `HasKeyboardFocus` reads true, is dropped; a
+  comparison or read that fails lets the event through. A repeat costs
+  those two calls. A focus Core refused, as a shell window that only
+  stages a switch, is never compared with. Mockapp's
   `a_repeated_focus_on_the_still_focused_element_is_dropped_before_any_read`,
   `a_focus_is_no_repeat_once_core_holds_another`, and
-  `a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus` pin
-  it.
-- Different, deliberately (decision D14, "Where the rules run"): NVDA
-  compares with the last focus it queued, which becomes the focus it
-  holds when it handles the event; Verbatim's judges compare with the
-  focus Core holds, which a focus they sent becomes only once Core has
-  judged it. While one waits, nothing is a repeat: the listener reads a
-  repeat of a focus it read moments before (mockapp's
-  `a_focus_waiting_for_core_s_judgement_is_no_repeat`), and an outpost
-  reports an MSAA focus repeated at the address it reported moments
-  before, unless Core holds a focus of its and every focus it judges
-  against is that object. Core's own
-  rule then drops the repeat, its newer reading kept unspoken, so nothing
-  heard changes; the read is the cost.
-- Different, deliberately (Dickson, 2026-10-20): once the listener's
-  read of a focus has used its time budget, 2 seconds, it makes no more
-  calls into the application, and the repeat test is skipped, since it
-  needs the last focus's keyboard focus read live; a repeat in an
-  application that slow is spoken where NVDA drops it. Its other checks
-  are made where no call is needed
-  (`docs/design/listener-without-connections.md`, section 5), and the
-  sender's keyboard focus, which NVDA reads live, is taken from the
-  event's cache: anything but a cached `true` drops the focus. A provider
-  that answers the property empty, or whose answer fails, leaves UIA's
-  default, `false`, in the cache, the same for both, and NVDA's live read
-  of such a provider gets the same `false` and drops the focus too.
-  Mockapp's `a_repeated_focus_out_of_time_is_reported` pins the skipped
-  repeat test, mockapp's
-  `a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`
-  the drop from the cache, mockapp's events test
-  `uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`
-  what UIA stores for an empty or failed answer, and `verbatim-uia`'s
-  `a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true` the
-  reading of it.
-- Matched (Dickson, 2026-10-21): within the budget, a live read of the
-  sender's keyboard focus that fails, by UIA's transaction timeout or
-  otherwise, lets the focus through, as NVDA's
-  `except COMError: return True` does
-  (`nvda/source/NVDAObjects/UIA/__init__.py`, lines 1632 to 1637); the
-  event's cache judges the focus only when the budget is out before the
-  live read is made. Mockapp's
-  `a_focus_whose_keyboard_focus_read_times_out_is_reported` pins it.
+  `a_uia_focus_is_no_repeat_after_another_application_s_msaa_focus`.
 - Each outpost makes NVDA's MSAA test against the focus Core holds, by
   its address, a whole object rather than a child by id: a focus event at
   that address is a repeat when Core holds a focus of this outpost's and
   it, and every focus this outpost reported that Core has not judged yet,
   is that object. A foreground change Core takes, and a focus Core takes
   from another application or from a UIA focus of the same one, replace
-  it (`docs/design/focus-pipeline.md`, section 16.3). Mockapp's
+  it. Mockapp's
   `a_repeated_msaa_focus_is_a_duplicate_only_of_a_full_object` and
-  `a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus`
-  pin it.
+  `a_repeated_msaa_focus_is_reported_after_another_application_s_uia_focus`.
 - A runtime id is unique only among live elements, and File Explorer
   reuses them: going back from a subfolder, an item of the parent folder
   can take the runtime id of the subfolder's item, destroyed with its
   list. Before a UIA focus whose runtime id already names a node is
-  reported, the focus listener's thread for the application reads live
-  whether the element the id stood for still has the keyboard focus, as
-  NVDA checks it, on the element it read for the earlier focus; when it
-  does not, or cannot be read, the outpost gives the runtime id a new
-  node, so Core announces the focus. Mockapp's `focus_reports` tests and
-  Core's
-  `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`
-  pin it.
+  reported, the listener reads live whether the element the id stood for
+  still has the keyboard focus, as NVDA checks it; when it does not, or
+  cannot be read, the outpost gives the runtime id a new node, so Core
+  announces the focus. Mockapp's `focus_reports` tests and Core's
+  `a_new_node_for_a_reused_runtime_id_is_announced_and_its_selection_follows`.
+
+### A repeat while a focus waits for Core's judgement
+
+NVDA compares with the last focus it queued, which becomes the focus it
+holds when it handles the event. Verbatim: **different (D14)**, "Where
+the rules run": Verbatim's judges compare with the focus Core holds,
+which a focus they sent becomes only once Core has judged it. While one
+waits, nothing is a repeat: the listener reads a repeat of a focus it
+read moments before (mockapp's
+`a_focus_waiting_for_core_s_judgement_is_no_repeat`), and an outpost
+reports an MSAA focus repeated at the address it reported moments
+before, unless Core holds a focus of its and every focus it judges
+against is that object. Core's own rule then drops the repeat, its newer
+reading kept unspoken, so nothing heard changes; the read is the cost.
+
+### A repeat when a read's time is up
+
+NVDA reads the sender's keyboard focus live, and a live read that fails
+lets the focus through (`except COMError: return True`,
+`nvda/source/NVDAObjects/UIA/__init__.py`, lines 1632 to 1637).
+
+Verbatim: **different** (Dickson, 2026-10-20): once the listener's read
+of a focus has used its time budget, 2 seconds, it makes no more calls
+into the application, and the repeat test is skipped, since it needs the
+last focus's keyboard focus read live; a repeat in an application that
+slow is spoken where NVDA drops it. Its other checks are made where no
+call is needed (`docs/design/listener-without-connections.md`, section
+5), and the sender's keyboard focus is taken from the event's cache:
+anything but a cached `true` drops the focus. A provider that answers
+the property empty, or whose answer fails, leaves UIA's default,
+`false`, in the cache, and NVDA's live read of such a provider gets the
+same `false` and drops the focus too. Mockapp's
+`a_repeated_focus_out_of_time_is_reported` pins the skipped repeat test,
+`a_focus_out_of_time_whose_event_says_it_lacked_the_keyboard_focus_is_dropped`
+the drop from the cache, the events test
+`uia_a_focus_events_cache_holds_a_failed_keyboard_focus_as_an_empty_one`
+what UIA stores for an empty or failed answer, and `verbatim-uia`'s
+`a_focus_event_lacks_the_keyboard_focus_unless_its_cache_holds_true` the
+reading of it.
+
+Matched (Dickson, 2026-10-21): within the budget, a live read of the
+sender's keyboard focus that fails, by UIA's transaction timeout or
+otherwise, lets the focus through, as NVDA's does; the event's cache
+judges the focus only when the budget is out before the live read is
+made. Mockapp's `a_focus_whose_keyboard_focus_read_times_out_is_reported`.
 
 ### Stale focus events
 
@@ -142,29 +133,30 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
 - Across outposts, events can arrive out of the order they happened in,
   so the reducer drops a focus event from one outpost observed before the
   newest focus it applied from another (decision D14). Every process
-  stamps its observations on the run's shared clock, the performance
-  counter with one offset every process of the run shares
+  stamps its observations on the run's shared clock
   (`verbatim_process::clock`), in milliseconds and, for a focus, in
   microseconds from the same clock read. Two focuses stamped in one
   millisecond are ordered by their microseconds when both carry them, and
   otherwise neither is stale: UI Automation delivers focus events in
-  bursts, several in one millisecond, and in the Alt+Tab check of
-  2026-10-24 the switcher's pane, read first, reached Core after the
-  console switched to and was announced over it.
+  bursts, several in one millisecond, and in an Alt+Tab check the
+  switcher's pane, read first, reached Core after the console switched
+  to and was announced over it.
 - What each focus's time is: a UIA focus, when the focus listener's
   callback received it, since UI Automation gives an event no time of its
-  own; a `WinEvent` focus, when the hook's callback that took it in began,
-  the outpost's own or the listener's; a foreground change, when its
-  window was confirmed (below); a focus read on request, when the read
-  began; and the end of a menu or of the switcher, when the listener's
-  callback observed it.
-- The focus listener and the outposts judge against the focus Core holds,
-  which Core tells them after it has judged each focus event
-  (`SupervisorToOutpost::CoreFocus`), so the order Core gave two focuses
-  is the order they judge by; an outpost keeps the observation time of
-  another application's focus Core holds, ordered as Core orders two
-  focuses (`protocol::observed_no_earlier`), for its wait for a UIA
-  focus.
+  own; a `WinEvent` focus, when the hook's callback that took it in began;
+  a focus read on request (at startup, after an outpost is replaced, or
+  after a menu closes), when the read began, so it is ordered with the
+  events as NVDA's queue orders the focus it reads; and the end of a menu
+  or of the switcher, when the listener's callback observed it.
+- A foreground change is ordered by the time its window was confirmed as
+  the system's foreground window, not when Windows raised the event:
+  Windows raises it before the change completes, and the old foreground
+  window's focus events in between would otherwise be newer and make the
+  change stale. This orders it where NVDA's processing does. The latency
+  timeline still starts when the foreground event was first observed.
+- The focus listener and the outposts judge against the focus Core
+  holds, so the order Core gave two focuses is the order they judge by
+  (`protocol::observed_no_earlier`).
 - A UIA focus fact whose element is not the focused element is dropped
   when the focus is in another application by then, and otherwise
   reported from the fact with its window: its own, or for a windowless
@@ -173,15 +165,6 @@ Verbatim: **matched (unverified)**; the `rapid_tabbing_in_settings` and
   NVDA walks up to (exact when the event is current; for a late event in
   an application with several windows it can be another of them); only
   with neither is it judged by its application.
-- A focus read on request (at startup, after an outpost is replaced, or
-  after a menu closes) carries the time its read began, so it is ordered
-  with the events as NVDA's queue orders the focus it reads.
-- A foreground change is ordered by the time its window was confirmed as
-  the system's foreground window, not when Windows raised the event:
-  Windows raises it before the change completes, and the old foreground
-  window's focus events in between would otherwise be newer and make the
-  change stale. This orders it where NVDA's processing does. The latency
-  timeline still starts when the foreground event was first observed.
 - A focus in the same top-level window as the newest focus is never
   stale, since one window can hold several applications (a Settings
   page's content inside ApplicationFrameHost's frame) whose own focus may
@@ -212,26 +195,26 @@ filtering" and "Foreground windows"; [MSAA and winevent
 handling](../nvda/msaa.md), "Pump-time processing"; [The UIA
 client](../nvda/uia.md)).
 
-Verbatim: **partial**. The tests below match NVDA; the background
-cases listed last are not implemented.
+Verbatim: **partial**. The tests below match NVDA; the background cases
+in "Background events" are partly not implemented, and the foreground
+window NVDA compares against is "Attention" below. The test is defined
+once (`outpost::acceptance`; decision D14, "Where the rules run"), for
+the outposts and the focus listener, with the window's relation to the
+foreground window (`foreground_relation`) reported with an event's
+window facts, which the reducer judges a focus by after the read
+(`verbatim_core::focus_rules::ForegroundRelation::related`).
 
-- Where the test is made: each outpost's worker makes NVDA's test, rule
-  by rule in NVDA's order, as it handles each entry, with local calls
-  only, before any call into the application, for MSAA name,
-  description, state, value and selection changes, the system caret's
-  location changes and shows (both tested as a location change; NVDA
-  tests a caret show by its focus's own rule instead,
-  `docs/parity/text.md`), focus, foreground and popup menu facts, and
-  alerts. Show facts pass by their class, which the focus listener's
-  hook already tested, as NVDA's show rule depends on the class alone.
-  The test is defined once (`outpost::acceptance`; decision D14, "Where
-  the rules run"), for the outposts and the focus listener, and the window
-  facts an outpost reports with an event carry its last part, the window's
-  relation to the foreground window (`foreground_relation`), read by the
-  same definition, which the reducer judges a focus by after the read
-  (`verbatim_core::focus_rules::ForegroundRelation::related`). Outside the test, as in NVDA's callback: an
-  object destroyed, and Verbatim's own events, the text selection of edit
-  controls, and the console host's updates and caret.
+- Each outpost's worker makes NVDA's test, rule by rule in NVDA's order,
+  with local calls only, before any call into the application, for MSAA
+  name, description, state, value and selection changes, the system
+  caret's location changes and shows (both tested as a location change;
+  NVDA tests a caret show by its focus's own rule instead,
+  `docs/parity/text.md`, "The system caret beside other caret events"),
+  focus, foreground and popup menu facts, and alerts. Show facts pass by
+  their class, which the focus listener's hook already tested, as NVDA's
+  show rule depends on the class alone. Outside the test, as in NVDA's
+  callback: an object destroyed, and Verbatim's own events, the text
+  selection of edit controls, and the console host's updates and caret.
 - Different: with no window in the foreground, an event from an invalid
   window is refused, where NVDA's comparison of the two root owners, both
   0, accepts it; nothing is spoken differently, since such a window
@@ -245,19 +228,17 @@ cases listed last are not implemented.
   window's UIA test, then acceptance with the event's window, the
   focus's recorded window for the focus's own events, or the element's
   nearest window; a windowless element whose window is not found has no
-  window to test, and is accepted, where NVDA walks to the nearest window.
-  A windowless UIA focus is never tested as hung by the intake, as NVDA's
-  hung-window test passes a UIA event whose sender's cached window is 0;
-  a focus with a window of its own is. Property
-  changes, selections, and a text control's caret and text changes are
-  tested, as NVDA's automation event handler tests them; a windowless
-  selection is tested with its nearest window, found by the focus
-  listener's reading thread (`FocusReader::check_fact`). Notifications
-  (spoken only from the focus's application, which Core judges) and the
-  active text position are not tested, as in NVDA, but a notification
-  whose sender has no window above it is dropped, as NVDA's app module
-  default drops it, the shell's window-snap results excepted, as File
-  Explorer's app module lets them through.
+  window to test, and is accepted, where NVDA walks to the nearest
+  window. A windowless UIA focus is never tested as hung by the intake,
+  as NVDA's hung-window test passes a UIA event whose sender's cached
+  window is 0; a focus with a window of its own is. Property changes,
+  selections, and a text control's caret and text changes are tested, as
+  NVDA's automation event handler tests them; a windowless selection is
+  tested with its nearest window (`FocusReader::check_fact`).
+  Notifications and the active text position are not tested, as in NVDA,
+  but a notification whose sender has no window above it is dropped, as
+  NVDA's app module default drops it, the shell's window-snap results
+  excepted, as File Explorer's app module lets them through.
 - The UIA focus is tested by the focus listener, in NVDA's order
   (`docs/design/focus-pipeline.md`, sections 16.2 and 16.3): after the
   repeat check and before the focus is read, against the element's own
@@ -278,19 +259,25 @@ cases listed last are not implemented.
   a node is spoken or its states are read from, and a text focus's caret
   and text events only their process, window, and class name, from which
   nothing is spoken; a difference in the provider's work only.
-- Attention (D14, amended by the outpost redesign): the reducer keeps an
-  attention record, the application and top-level window of the most
-  recent foreground change, standing in for the system's foreground
-  window NVDA compares against. A foreground fact is always accepted and
-  moves attention. The outpost handles a batch that holds a foreground
-  fact at once and drops the fact when its window is not the foreground
-  window then, as NVDA's `processForegroundWinEvent` drops it once its
-  deferral has passed; a foreground fact beside MSAA focus facts is
-  tried with them, newest first, as NVDA's `pumpAll` tries a run of focus
-  and foreground events, so a dropped one lets the older focus be tried
-  and a reported one ends the run ([backends](backends.md), "How an
-  outpost turns events into focus reports"). It does not wait for the window to come in front:
-  the system's foreground event reaches an out-of-context hook only once
+
+### Attention
+
+NVDA compares each event with the system's foreground window, and holds
+a foreground event for at most two core cycles until its window is the
+foreground ("Event acceptance", above). Verbatim: **different (D14)**,
+as amended by the outpost redesign: the reducer keeps an attention
+record, the application and top-level window of the most recent
+foreground change, standing in for the system's foreground window.
+
+- A foreground fact is always accepted and moves attention. The outpost
+  handles a batch that holds a foreground fact at once and drops the fact
+  when its window is not the foreground window then, as NVDA's
+  `processForegroundWinEvent` drops it once its deferral has passed; a
+  foreground fact beside MSAA focus facts is tried with them, newest
+  first, as NVDA's `pumpAll` tries a run of focus and foreground events
+  ([backends](backends.md), "How an outpost turns events into focus
+  reports"). It does not wait for the window to come in front: the
+  system's foreground event reaches an out-of-context hook only once
   `GetForegroundWindow` names its window, after a restore,
   `SetForegroundWindow`, Alt+Tab, or a launch (measured for console
   windows, File Explorer, Notepad, msinfo32, Windows Terminal, a Windows
@@ -306,42 +293,44 @@ cases listed last are not implemented.
   window is the foreground window. File Explorer's folder window, opened
   in front, raises its one foreground event before it is in front, which
   is dropped, and is announced from the focus's ancestry, its title by
-  then the folder's (measured 2026-10-09 and 2026-10-17).
-- A focus event is attended only when its window was in the system's
+  then the folder's.
+- A focus event is attended when its window was in the system's
   foreground window when its outpost read it, topmost, or a
   `Windows.UI.Core` window under the input thread's active window, as
-  NVDA tests it against the real foreground window. Every other event is
-  classified against the attention record from window facts its outpost
-  attached: top-level window, root owner, topmost, for `Windows.UI.Core`
-  windows whether the window is under the input thread's active window,
-  and whether the window is in the system's foreground window when the
-  outpost read the event (NVDA's live test: its top-level window is the
-  foreground window, or its root owner is the foreground window or that
-  window's root owner). Such an event is attended. Windows can raise a
-  window's foreground event while its foreground lock keeps another
-  window in front, and raises none when the window is given the
-  foreground later, so a focus in the system's foreground window that is
-  unrelated to the attention window moves attention, as NVDA takes the
-  foreground from the focus's ancestry. Nothing else moves attention, so
-  a topmost popup menu that takes focus without becoming the foreground
-  leaves attention where it was, and focus returning from it is still
-  attended.
-- Background events accepted from anywhere: toast alerts and the shell's
-  window-snap results, which are always queued, as NVDA's Explorer
-  module queues them, and other UIA notifications only from the focus's
-  application, as NVDA drops notifications from any other. Accepted
-  background events never move focus or the navigator and are spoken
-  queued. Core drops a background event observed before the newest
-  foreground change it applied but reaching it afterwards, from another
-  outpost, as NVDA's one queue has its speech cancelled by that change
-  (`docs/design/focus-pipeline.md`, section 7; Core's
+  NVDA tests it against the real foreground window; every other event is
+  classified against the attention record from the window facts its
+  outpost attached. Windows can raise a window's foreground event while
+  its foreground lock keeps another window in front, and raises none
+  when the window is given the foreground later, so a focus in the
+  system's foreground window that is unrelated to the attention window
+  moves attention, as NVDA takes the foreground from the focus's
+  ancestry. Nothing else moves attention, so a topmost popup menu that
+  takes focus without becoming the foreground leaves attention where it
+  was, and focus returning from it is still attended.
+
+### Background events
+
+NVDA accepts allowlisted tooltip and notification-bar windows, toast
+alerts, and, as an option, background progress bars from anywhere, and
+UIA notifications only from the focus's application ("Event
+acceptance", above). Verbatim: **partial**.
+
+- Matched: toast alerts and the shell's window-snap results are always
+  queued, as NVDA's Explorer module queues them, and other UIA
+  notifications only from the focus's application, as NVDA drops
+  notifications from any other. Accepted background events never move
+  focus or the navigator and are spoken queued. Core drops a background
+  event observed before the newest foreground change it applied but
+  reaching it afterwards, from another outpost, as NVDA's one queue has
+  its speech cancelled by that change (`docs/design/focus-pipeline.md`,
+  section 7; Core's
   `a_toast_observed_before_a_foreground_change_is_dropped`).
-- A help balloon, shown in a standard tooltip window
+- Matched: a help balloon, shown in a standard tooltip window
   (`tooltips_class32`), is spoken from any application as NVDA speaks it
   by default (the listener hooks the show event desktop-wide and
   forwards only a tooltip window's), and an ordinary tooltip is not, as
   NVDA's tooltip reporting is off by default (the `msaa_events` mockapp
-  test, scripted; no end-to-end scenario yet).
+  test, scripted; no end-to-end scenario).
 - Not implemented: the setting that turns tooltips on (not yet, M4.3, the
   settings package in the roadmap) and a per-source cap on background
   events (not yet, unscheduled). The opt-ins application support asks
@@ -369,41 +358,33 @@ cancelled, and calls that cannot be cancelled run through
 `cancellableExecute` (lines 406 to 426), whose thread is abandoned; the
 focus being read is then dropped
 ([Main loop and watchdog](../nvda/main-loop-and-watchdog.md), "The
-watchdog: detection" and "What a live capture shows").
+watchdog: detection" and "What a live capture shows"). NVDA's watchdog
+cancels only its main thread's call (`nvda/source/watchdog.py`,
+`_recoverAttempt`, line 237).
 
-Verbatim: **matched for the read after a focus's judgement; different,
-deliberately, for the judgement's calls once the read's window is known;
-not judged for the rest (Dickson, 2026-10-21)**; unit tests of the
-outposts' worker and of the listener's reading threads pin the rule, and
-no end-to-end scenario makes an application slow enough to show it. An
-outpost's worker and the focus listener's reading thread for an
-application each abandon a call that has taken half a second
+Verbatim: **different** (Dickson, 2026-10-20 and 2026-10-21); unit tests
+of the outposts' worker and of the listener's reading threads pin the
+rule, and no end-to-end scenario makes an application slow enough to
+show it. An outpost's worker and the focus listener's reading thread for
+an application each abandon a call that has taken half a second
 (`MOVED_ON_GRACE`) once the window in front belongs to the same
 application on another UI thread than the window being handled or read,
-the application being each window's provider process, so that a console
-window counts as its console host's rather than its client's, until
-their own deadlines (10 seconds for the worker, `READ_DEADLINE`, 11
-seconds, for a reading thread). The event being handled or read is
-dropped, and a new worker or reading thread takes the application's later
-events.
-
-Console host's own Find, Properties and Defaults windows are on the
-console window's real thread, while `GetWindowThreadProcessId` names the
-console's client's thread for the console window, so with one of them in
-front a slow read of the console window counts as another thread's and
+the application being each window's provider process, until their own
+deadlines (10 seconds for the worker, `READ_DEADLINE`, 11 seconds, for a
+reading thread); the event is dropped and a new worker or reading thread
+takes the application's later events
+(`docs/crates/verbatim-outpost.md`, "A UIA focus, judged and read by the
+listener", owns when each judges). Console host's own Find, Properties
+and Defaults windows are on the console window's real thread, while
+`GetWindowThreadProcessId` names the client's thread for the console
+window, so with one of them in front a slow read of the console window
 is abandoned after the half second, as NVDA's watchdog, comparing the
-same two thread ids, abandons it. A console window whose console host
-cannot be read, such as an elevated client's, has no provider process,
-so it is never judged moved on from, nor is moving to it.
+same two thread ids, abandons it. A console window whose host cannot be
+read, such as an elevated client's, is never judged moved on from, nor
+is moving to it. By case:
 
-A reading thread judges only the reads of focuses and menu openings, and
-only once the read's window is known: the sender's own window from the
-event's cache, or, for a sender that is not a window, its nearest window
-once the lookup has returned. NVDA's watchdog cancels only its main
-thread's call (`nvda/source/watchdog.py`, `_recoverAttempt`, line 237):
-
-- Matched: the read of a focus, or of a menu opening, which NVDA maps
-  to a focus (`nvda/source/UIAHandler/__init__.py`, line 261), after its
+- Matched: the read of a focus, or of a menu opening, which NVDA maps to
+  a focus (`nvda/source/UIAHandler/__init__.py`, line 261), after its
   judgement: the calls NVDA's main thread makes once the handler has
   queued the focus.
 - Different, deliberately: the judgement's own calls once the read's
@@ -417,50 +398,14 @@ thread's call (`nvda/source/watchdog.py`, `_recoverAttempt`, line 237):
   notification (line 1114 for a notification's lookup), which NVDA makes
   on its callback thread, so a slow selection or notification is passed
   on late rather than dropped.
-
-The worker judges when the half second ends and again on each foreground
-event. A reading thread judges on each foreground event once the half
-second has ended, and when it ends if a foreground event has come since
-the read's event arrived, or if the window in front was already another
-thread's when the read's window became known, judged then with the same
-local calls; a read whose window is the front's own thread when it
-becomes known, with no foreground event since, costs no check at the end
-of the half second.
-
-An application with two abandoned reading threads still in their calls
-gets no new thread until one returns: its events wait, until
-`READ_DEADLINE` after its second thread was abandoned. Then every event
-waiting is dropped, and each later one is dropped as it arrives, until an
-abandoned thread's call returns and takes the queue, which ends the
-bound. The bound is one per application, not one per event, so the
-application's outpost, whose later events wait behind each focus's
-marker, runs at most `READ_DEADLINE` behind the hung reads, once, and a
-stream of events from the application cannot keep it behind (Dickson,
-2026-10-21). The limit is Verbatim's own, since NVDA has no reading
-threads to abandon.
-
-A focus waiting so is a pending focus, for NVDA's rule that drops a
-UIA menu opening while a focus is pending, for its own application's
-menu openings only. NVDA's rule is global
-(`isPendingEvents("gainFocus")`, `nvda/source/UIAHandler/__init__.py`,
-lines 772 to 777): any queued focus drops any application's menu
-opening. Verbatim's is per application for a waiting focus, so that a
-hung window cannot silence every other application's menus while its
-reads stay stuck; a focus being read, or waiting for a live thread,
-still counts for every application, as in NVDA (Dickson, 2026-10-21).
-
-The rule is narrower than NVDA's by design: NVDA's one main thread serves
-every application, so a move to any other window frees it, while each of
-Verbatim's applications has its own worker and its own reading thread, so
-a move to another application's window is never held up; only the same
-application's windows on other threads, such as File Explorer's folder
-windows, taskbar and Alt+Tab switcher, wait behind a slow one. NVDA's
-other triggers, no focused window and an unacknowledged system menu, are
-not ported, and nor is its allowlist of window classes that always get
-the long wait (`safeWindowClassSet`).
-
-Other differences:
-
+- Narrower by design: NVDA's one main thread serves every application,
+  so a move to any other window frees it, while each of Verbatim's
+  applications has its own worker and reading thread; only the same
+  application's windows on other threads, such as File Explorer's folder
+  windows, taskbar and Alt+Tab switcher, wait behind a slow one. NVDA's
+  other triggers, no focused window and an unacknowledged system menu,
+  are not ported, nor its allowlist of window classes that always get
+  the long wait (`safeWindowClassSet`).
 - NVDA judges against its own focus object's window, the last focus it
   accepted (`nvda/source/watchdog.py`, lines 224 to 232), so when the
   user moves to another thread's window and that window's own focus read
@@ -470,17 +415,37 @@ Other differences:
   (`_waitUntilNormalCoreAliveTimeout`, lines 133 to 148); Verbatim judges
   when the half second ends and on foreground events, so a move of the
   keyboard focus to another thread with no foreground event, such as to
-  a child window owned by another thread, is caught by NVDA and missed by
-  Verbatim.
-- NVDA compares only threads, by `GetWindowThreadProcessId`, which
-  names a console window's client and one of the client's threads
+  a child window owned by another thread, is caught by NVDA and missed
+  by Verbatim.
+- NVDA compares only threads, by `GetWindowThreadProcessId`, which names
+  a console window's client and one of the client's threads
   (`nvda/source/watchdog.py`, lines 230 to 232). Verbatim also requires
-  both windows to be served by one process, read with local calls
-  (`verbatim_uia::provider_process`), as its window filters do: a
-  console window is its console host's, so a move between a console
-  window and a window of its client's own on another thread is not a
-  move within one application, and no read of either is abandoned for
-  it; no thread of the console host's waits on the client's window.
+  both windows to be served by one process
+  (`verbatim_uia::provider_process`): a move between a console window and
+  a window of its client's own on another thread is not a move within
+  one application, and no read of either is abandoned for it.
+
+### Reads held behind an application's abandoned reads
+
+NVDA has no reading threads to abandon. Its rule dropping a UIA menu
+opening while a focus is pending is global
+(`isPendingEvents("gainFocus")`, `nvda/source/UIAHandler/__init__.py`,
+lines 772 to 777): any queued focus drops any application's menu
+opening.
+
+Verbatim: **different** (Dickson, 2026-10-21). An application with two
+abandoned reading threads still in their calls gets no new thread until
+one returns: its events wait, until `READ_DEADLINE` after its second
+thread was abandoned. Then every event waiting is dropped, and each later
+one as it arrives, until an abandoned thread's call returns and takes
+the queue. The bound is one per application, not one per event, so the
+application's outpost runs at most `READ_DEADLINE` behind the hung reads,
+once, and a stream of events from the application cannot keep it
+behind. A focus waiting so is a pending focus only for its own
+application's menu openings, so that a hung window cannot silence every
+other application's menus while its reads stay stuck; a focus being
+read, or waiting for a live thread, still counts for every application,
+as in NVDA.
 
 ### Recovery after an outpost is replaced
 
@@ -524,27 +489,26 @@ drops a UIA focus whose element no longer has the keyboard focus
 path that reads the focus after a `WinEvent`, so by its source it loses
 these focuses; that is not captured.
 
-Verbatim: **different**, as a consequence of that design's decision 11
-(Dickson, 2026-10-21). When no UIA focus
-follows a `WinEvent` focus in a UIA window within a second of the
-`WinEvent`, the application's outpost reads its focus itself, as the
-focus-now query does, and reports it, once. The listener's drops of the
-UIA focus it waits for fall into three classes:
+Verbatim: **different**, by that design's decision 11 (Dickson,
+2026-10-21). When no UIA focus follows a `WinEvent` focus in a UIA window
+within a second of the `WinEvent`, the application's outpost reads its
+focus itself, as the focus-now query does, and reports it, once. The
+listener's drops of the UIA focus it waits for fall into three classes:
 
-- A drop that ends the wait: a verdict of NVDA's checks on the event, for
-  which NVDA drops it too, or the listener giving up on the application
-  when its read's time ran out, a read into an application that has just
-  failed to answer not being made (Dickson, 2026-10-21). The drop whose
-  event said it lacked the keyboard focus when the read's time was up is among these (Dickson, 2026-10-21).
+- A drop that ends the wait: a verdict of NVDA's checks on the event,
+  for which NVDA drops it too, or the listener giving up on the
+  application when its read's time ran out, a read into an application
+  that has just failed to answer not being made, among them a drop whose
+  event said it lacked the keyboard focus when the read's time was up
+  (Dickson, 2026-10-21).
 - A drop that could not establish the focus: its element no longer has
   the keyboard focus (NVDA's drop at lines 1632 to 1637), its window does
   not use UIA, so it is another window than the copy's, its read was
   abandoned or never started, its element could not be kept or resolved,
   or a newer event of its element replaced it (that last one Dickson's,
-  2026-10-21). The
-  wait goes on to its second with nothing read at once, since these drops
-  come in ordinary fast navigation, where the next key's focus event
-  follows (Dickson, 2026-10-21).
+  2026-10-21). The wait goes on to its second with nothing read at once,
+  since these drops come in ordinary fast navigation, where the next
+  key's focus event follows (Dickson, 2026-10-21).
 - A sender with no window above it, as in a new window's first burst of
   focus events after their senders are gone: the event came and cannot
   be read, and the event for where the focus went may never come, so the
@@ -553,13 +517,14 @@ UIA focus it waits for fall into three classes:
 Where NVDA drops a gone sender's focus event and speaks nothing until the
 next one comes, Verbatim speaks where the focus now is. A read answers
 only a copy in its own top-level window, so a UIA focus in another
-window of the application answers nothing of it; a drop carries no window
-and is matched by when it was observed alone, a limit. So where UIA delivers late, Verbatim speaks
-the same words a second after the `WinEvent`, earlier than NVDA would;
-where it never delivers, and for a burst of gone elements, Verbatim
-speaks the focus where NVDA, by its source, is silent. A late UIA focus
-for the element already read is Core's duplicate and says nothing. Tests:
-`focus_reports.rs` in `mockapp`, its `a_winevent_focus_` tests.
+window of the application answers nothing of it; a drop carries no
+window and is matched by when it was observed alone, a limit. So where
+UIA delivers late, Verbatim speaks the same words a second after the
+`WinEvent`, earlier than NVDA would; where it never delivers, and for a
+burst of gone elements, Verbatim speaks the focus where NVDA, by its
+source, is silent. A late UIA focus for the element already read is
+Core's duplicate and says nothing. Tests: `focus_reports.rs` in
+`mockapp`, its `a_winevent_focus_` tests.
 
 ### A focus whose element is gone before its read
 
@@ -591,84 +556,68 @@ otherwise from a live read that fails, which `_get_name` (lines 1883 to
 handles COMErrors (lines 1155 to 1170). The focus is spoken without its
 UIA ancestors, with or without its name, by its source; not captured.
 
-Verbatim: **matched (unverified)**. The focus listener's own read decides
-both cases (`crates/verbatim-outpost/src/focus_read.rs`). NVDA's first case
-is the listener's nearest-window walk finding no window, which drops the
-event as `NO_WINDOW` (line 1366). There Verbatim differs, by decision 11 of
-`docs/design/listener-without-connections.md` (Dickson, 2026-10-21): the outpost reads the
-focus at once and speaks where it now is, where NVDA drops the event and
-says nothing ("A focus UIA does not deliver", above). NVDA's second case
-is the element going after that walk found its window: the listener's
-classic read of the sender then fails, and the listener reports the focus
-as the event's cache gives it, its ancestors unknown (lines 894 to 925);
-its read running out of its time budget leaves the ancestors unknown in
-the same way (the module doc's time limits, lines 57 to 60), and so does
-a classic read whose step from an element below the desktop root to its
-parent fails or finds no parent, as NVDA's failed parent read falls back
-to the window hierarchy rather than ending the chain: only reaching the
-root ends the walk as known (`focus_ancestry_classic` and
+Verbatim: **matched (unverified)**; the listener's own read decides both
+cases (`crates/verbatim-outpost/src/focus_read.rs`). NVDA's first case is
+the listener's nearest-window walk finding no window, which drops the
+event as `NO_WINDOW`; there Verbatim differs, as "A focus UIA does not
+deliver" records: the outpost reads the focus at once and speaks where
+it now is. In NVDA's second case the listener's classic read of the
+sender fails, and the listener reports the focus as the event's cache
+gives it, its ancestors unknown; so does a read out of its time budget,
+and a classic read whose step from an element below the desktop root to
+its parent fails or finds no parent, as NVDA's failed parent read falls
+back to the window hierarchy rather than ending the chain (only reaching
+the root ends the walk as known: `focus_ancestry_classic` and
 `Ancestry::failed_hop` in `crates/verbatim-uia-rops/src/focus.rs`; the
-listener at line 1047). The listener's log line "UIA focus ancestors
-read" names the failed step as `failed_hop`, `NoParent` or the failing
-code, and as `None` for a walk that reached the root. The outpost's own
-walks behave the same: its remote program's walk, which ends at a null
-parent inside the program, reports the ancestors unknown when it ended
-there anywhere but at a top-level window or a window below the process
-boundary, and its per-hop walk (`Uia::ancestors` in
-`crates/verbatim-uia/src/client.rs`) ends at a failed or missing parent
-below the root as `AncestorWalk::Unknown`, so a focus-now answer or a
-focus the outpost reads itself carries no partial chain as if it were
-whole: the answer's `FocusedControl::ancestors` is then `None`, and Core
-receives the focus with `ancestors_unknown`. A focus whose ancestors are
-unknown also leaves nothing for the listener's next read to reuse, so
-the next focus, even one inside it, is read to its window as a first
-focus is. The mechanism differs from NVDA's, by decision (Dickson,
-2026-10-21): NVDA builds a known chain from the window hierarchy, where
-Verbatim reports the ancestors unknown and Core keeps the previous
-focus's chain; for the File Explorer placeholder the spoken result is
-the same. The placeholder's
-element can answer its properties after it has left the tree, so its
-read succeeds and only that step fails, which run 39613639083 shows with
-`read=0` and the ancestors reported as known; reported as known and
-empty, the next focus in the window counted every container as entered
-and spoke the window's title. The outpost
-reports the focus with the ancestors the listener gave, so with
-`ancestors_unknown`, and it is spoken without its list, and always with
-its name, which NVDA loses when a main-loop pass came between. The time
-in which the element must go differs: in NVDA it runs from the callback
-to the main thread's handling of the event; in Verbatim it is the
-consecutive calls on one listener thread between the walk and the classic
-read, plus the read budget. File Explorer's "Working on it..." placeholder
-takes this path when it is removed in that time, and is then spoken
+log line "UIA focus ancestors read" names the failed step as
+`failed_hop`, `NoParent` or the failing code, and as `None` for a walk
+that reached the root). The outpost's own walks, its remote program's
+and its per-hop walk (`Uia::ancestors`, `AncestorWalk::Unknown`), report
+the ancestors unknown the same way, so a focus carries no partial chain
+as if it were whole (`FocusedControl::ancestors` is `None`, and Core
+receives `ancestors_unknown`), and the next focus, even one inside it,
+is read to its window as a first focus is.
+
+Different, by decision (Dickson, 2026-10-21): NVDA builds a known chain
+from the window hierarchy, where Verbatim reports the ancestors unknown
+and Core keeps the previous focus's chain; for the File Explorer
+placeholder the spoken result is the same. The placeholder's element can
+answer its properties after it has left the tree, so only the parent
+step fails (run 39613639083, with `read=0`; reported as known and empty,
+the next focus counted every container as entered and spoke the window's
+title). It is spoken without its list, and always with its name, which
+NVDA loses when a main-loop pass came between. The time in which the
+element must go differs: in NVDA from the callback to the main thread's
+handling; in Verbatim the consecutive calls on one listener thread
+between the walk and the classic read, plus the read budget. File
+Explorer's "Working on it..." placeholder removed in that time is spoken
 before "Items View list" rather than between it and the item; the
 outpost's later search for its own copy of the element, which logs "the
 focus's own element looked for by its path" with found=false beside it,
-runs after the focus has been reported and decides only what is followed.
-The observations are the logs of runs 39558690998 and 39613639083;
-`explorer_folder_window` accepts the placeholder at either place, so a
-local pass of it, with or without this behaviour, does not prove it.
-Tests of Verbatim's side: `remote_ops.rs` in `mockapp`,
+decides only what is followed. The observations are the logs of runs
+39558690998 and 39613639083; `explorer_folder_window` accepts the
+placeholder at either place, so a local pass of it does not prove it.
+No capture of NVDA exists for this case.
+
+Tests: `remote_ops.rs` in `mockapp`,
 `a_focus_whose_read_fails_is_reported_whatever_its_event_says_of_its_focus`,
 `a_focus_whose_walk_times_out_is_reported_with_its_containers_unknown`,
-and `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`,
-which pins the failed step and the missing parent, for the listener's
-report,
+and `a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown`
+(the failed step and the missing parent) for the listener's report;
 `a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown`,
 `a_focus_now_whose_program_ends_below_the_window_at_an_element_reporting_a_handle_has_its_ancestors_unknown`,
 `a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancestors_unknown`,
 and
 `a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown`
-for the outpost's own walks, `call_counts.rs`'s
+for the outpost's own walks; `call_counts.rs`'s
 `uia_focus_chains_stop_below_the_process_boundary`, whose "child,
 remote" case is a remote walk complete at a window below the process
-boundary,
+boundary;
 `a_focus_inside_one_whose_parent_step_failed_is_read_with_its_whole_chain`
-for the listener's next read, the unit test `a_failed_step_is_told_by_its_code` in
-`verbatim-uia-rops` for a step that fails with a code, and `focus_reports.rs`, whose
-`focus_without_a_path` and its caller
-`a_focus_without_a_path_is_followed_from_its_next_focus_event` assert that
-such a read is reported with its ancestors unknown. No capture of NVDA
-exists for this case.
+for the listener's next read; the unit test
+`a_failed_step_is_told_by_its_code` in `verbatim-uia-rops`; and
+`focus_reports.rs`'s `focus_without_a_path` and its caller
+`a_focus_without_a_path_is_followed_from_its_next_focus_event`.
 
 ### Held objects
 
@@ -683,9 +632,10 @@ and name must all match.
 
 Verbatim: **different (D9)**, by the outposts' node lifetime
 ([Architecture](../architecture.md), D9, and
-[verbatim-outpost](../crates/verbatim-outpost.md)); no test pins it as
-a whole. NVDA releases an object when nothing refers to it, Verbatim
-when Core reports it no longer holds the node.
+[verbatim-outpost](../crates/verbatim-outpost.md), "Window destruction
+and held objects"); no test pins it as a whole. NVDA releases an object
+when nothing refers to it, Verbatim when Core reports it no longer holds
+the node.
 
 - Each outpost keeps its nodes, with the live UIA element or MSAA object
   behind each where it has one (a UIA node reported from a listener fact
@@ -705,9 +655,8 @@ when Core reports it no longer holds the node.
   (`DecomposeHwndIdentityString`), and is matched as one acquired there,
   so a window keeps one node whatever its title says, as NVDA, re-reading
   the old object live, finds the two equal. Any other object reached
-  through `accParent`, or as a child object, has no address of its own
-  (other objects in its window share the one Verbatim would make up), so
-  it is matched only as the same COM object.
+  through `accParent`, or as a child object, has no address of its own,
+  so it is matched only as the same COM object.
 - `IAccessible2` unique ids are not read yet, and location and name are
   not compared when matching a sighting.
 - A window's MSAA nodes are dropped when the window is destroyed; UIA
