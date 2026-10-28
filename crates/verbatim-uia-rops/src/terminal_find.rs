@@ -17,7 +17,7 @@
 //! A `FindText` that fails, or whose range's calls fail, as Windows
 //! Terminal's not-found range does (a range rather than null, whose
 //! `GetText`, `CompareEndpoints` and `MoveEndpointByRange` fail with
-//! `E_FAIL` or `E_INVALIDARG`; `docs/roadmap.md`, 2026-10-24), means not
+//! `E_FAIL` or `E_INVALIDARG`; seen in Windows Terminal 1.24.12741 on 2026-10-24), means not
 //! found in that direction, never an error: the search goes on in the
 //! other direction only. A remote program does it in one round trip and a
 //! classic implementation call by call; [`terminal_find`] is the one
