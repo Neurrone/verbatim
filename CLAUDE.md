@@ -20,7 +20,7 @@ All documentation, comments, and commit messages in this repo must read well wit
 - No ASCII-art diagrams, box drawings, or arrow chains.
 - Prefer prose and lists over pipe tables.
 - Documents describe the present. When a mechanism changes, replace its description rather than appending a dated note or keeping the old text beside the new; history lives in git and the commit messages. A decision of record keeps its date and an amended-on line, but one current statement. A rule that exists because something went wrong keeps one sentence of why, not the narrative. A superseded design record is archived or deleted, never kept in place with a banner.
-- Design documents state the current model, its rules each with a brief reason, its limitations, and the important performance figures such as latency and memory; evidence lives in `experiments/` and history in git, so that a document stays short enough to be read whole.
+- Design documents state the current model, its rules each with a brief reason, its limitations, and the important performance figures such as latency and memory; evidence lives in `experiments/` and history in git, so that a document stays short enough to be read whole. Once its work is built, a design document keeps the problem, the alternatives weighed, the reasons for the choice and its limitations, and points to the crate guide for the mechanism, because the mechanism changes with the code and the crate guide is kept current with it.
 - Reports to Dickson define any invented term on first use or avoid it, lead with the decision he needs to make, and keep status updates short, because in past sessions a third of his messages asked what a term meant.
 
 ## Standing rules
