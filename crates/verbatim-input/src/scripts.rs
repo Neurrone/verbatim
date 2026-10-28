@@ -1,5 +1,5 @@
 //! The script vocabulary and binding tables: M3's object navigation and
-//! review (`docs/roadmap-done.md`'s M3 object-navigation bullet,
+//! review (`docs/roadmap-done.md`'s M3 binding lists,
 //! transcribed exactly), and M4's review, say-all, select-then-copy, and
 //! typing commands (`docs/parity/review.md`, with NVDA's desktop and
 //! laptop keys), plus the caret keys the hook
