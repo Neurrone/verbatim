@@ -303,6 +303,14 @@ fn scan(text: &str) -> Vec<Item> {
     let mut line = 1;
     let mut at = 0;
     while at < bytes.len() {
+        if (at == 0 || bytes[at - 1] == b'\n')
+            && let Some(target) = definition_target(&prose[at..])
+        {
+            items.push(Item::Link {
+                line,
+                target: target.to_owned(),
+            });
+        }
         match bytes[at] {
             b'\n' => {
                 line += 1;
@@ -350,6 +358,22 @@ fn scan(text: &str) -> Vec<Item> {
         }
     }
     items
+}
+
+/// The destination of a reference-style link's definition, `[label]:
+/// destination`, when the line starting `rest` is one: at most three spaces
+/// of indent, a label without brackets, and something after the colon.
+/// A footnote (`[^1]: text`) is not a link.
+fn definition_target(rest: &str) -> Option<&str> {
+    let line = rest.split('\n').next().unwrap_or(rest);
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let label = line[indent..].strip_prefix('[')?;
+    let close = label.find(']')?;
+    if indent > 3 || close == 0 || label[..close].contains('[') || label.starts_with('^') {
+        return None;
+    }
+    let target = label[close + 1..].strip_prefix(':')?.trim();
+    (!target.is_empty()).then_some(target)
 }
 
 /// `text` with every line of a fenced code block, fences included, left
@@ -541,7 +565,11 @@ mod tests {
              [web](https://example.com/a.md), [mail](mailto:a@b.c), [here](#top),\n\
              [crate](../../crates/foo/ \"title\") and [lib](/crates/foo/src/lib.rs).\n\
              ```\n[fenced](nowhere.md)\n```\n\
-             and `[code](nowhere.md)`.\n",
+             and `[code](nowhere.md)`, and [by reference][r] and [kept][k].\n\
+             \n\
+             [r]: gone.md \"title\"\n\
+             \x20 [k]: <../vm.md>\n\
+             [^1]: a footnote, not a link.\n",
         )]);
         assert_eq!(
             run_check(&documents, &["docs/vm.md", "crates/foo/src/lib.rs"]),
@@ -549,6 +577,8 @@ mod tests {
                 "docs/tooling/setup.md:1: the link (missing.md) names docs/tooling/missing.md, which does not exist"
                     .to_owned(),
                 "docs/tooling/setup.md:1: the link (../../../x.md) leads outside the repository"
+                    .to_owned(),
+                "docs/tooling/setup.md:9: the link (gone.md \"title\") names docs/tooling/gone.md, which does not exist"
                     .to_owned(),
             ]
         );
