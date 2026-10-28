@@ -73,7 +73,7 @@ screen reader in both rendered and source form.
 - **D12, utterances stay structured.** The reducer emits semantic spans,
   and only the pipeline's last stage flattens them through a theme whose
   default speaks and sounds as NVDA does by default, plus Verbatim's own
-  cues (section 6; `docs/design/phase6-design.md`, "Themes: one model for verbosity, speech, and sounds").
+  cues (section 6; `docs/crates/verbatim-model.md`, "Themes").
   Why: earcons and voice styling become a theme swap. Decided 2026-07-15.
   Amended 2026-10-07.
 - **D13, the focus listener.** One permanent listener process holds the
