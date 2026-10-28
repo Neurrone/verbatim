@@ -150,7 +150,8 @@ recorder unchanged. What the reducer does with each type is in
   role and screen rectangle, for presentation themes; focus speech carries
   a `validity`; `say_all` marks an utterance say-all reads.
 - `FocusValidity` and `FocusNow`: what focus speech is about, for dropping
-  it once the focus has moved on (`docs/nvda/speech.md`, "Cancellation").
+  it once the focus has moved on (`docs/parity/focus-events.md`, "When
+  speech is cut off, and cancellation of expired focus speech").
   A `FocusValidity` names the node the speech announces and whether it was
   the focus when the speech was made (`had_focus`); a `FocusNow` names the
   focus, its ancestors, and the foreground window's node when known.
