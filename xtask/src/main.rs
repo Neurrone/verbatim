@@ -7,6 +7,11 @@
 //! clippy (warnings denied), and unit tests, all for the host's own
 //! architecture.
 //!
+//! `docs` checks the repository's Markdown documents: that every relative
+//! link and every backticked repository path names something that exists,
+//! and that `docs/readme.md` indexes every document under `docs/`. See
+//! `xtask/src/docs.rs`.
+//!
 //! `vm` drives the milestone M2 Hyper-V E2E harness (`docs/architecture.md`
 //! section 14): building and importing the golden VM, deploying builds into
 //! it, and running `crates/verbatim-e2e`'s suite against it. See
@@ -54,6 +59,7 @@ use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
 mod conformance;
 mod demo;
+mod docs;
 mod nvda;
 mod park;
 mod perf;
@@ -101,6 +107,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("ci") => ci(),
+        Some("docs") => docs::run(),
         Some("vm") => vm::run(&args[1..]),
         Some("park") => park::run(),
         Some("trace") => trace::run(&args[1..]),
@@ -117,6 +124,9 @@ fn main() -> ExitCode {
             eprintln!("commands:");
             eprintln!(
                 "  ci    platform-neutral dependency check, rustfmt, clippy, and unit tests, for the host's architecture"
+            );
+            eprintln!(
+                "  docs  check that the documents' links and backticked repository paths exist, and that docs/readme.md indexes every document under docs"
             );
             eprintln!("  vm    Hyper-V E2E harness; run `cargo xtask vm` alone for its verbs");
             eprintln!(

@@ -38,7 +38,7 @@ before debugging anything downstream.
 
 - [Setup and builds](setup.md): the submodules, CMake and wxWidgets,
   cargo-hakari and the workspace-hack crate, what `cargo xtask ci` scans,
-  and the build's disk use.
+  the documentation check (`cargo xtask docs`), and the build's disk use.
 - [Driving a running Verbatim with verbatim-inspect](inspect.md): the
   control plane's subcommands and the latency line.
 - [Running mockapp by hand](mockapp.md): `mockapp` against a fixture, and

@@ -1,6 +1,6 @@
 # Setup and builds
 
-How to get a fresh clone building: the submodules, CMake and wxWidgets, cargo-hakari and the workspace-hack crate, what `cargo xtask ci` scans, and the build's disk use.
+How to get a fresh clone building: the submodules, CMake and wxWidgets, cargo-hakari and the workspace-hack crate, what `cargo xtask ci` scans, the documentation check, and the build's disk use.
 
 ## First-time setup
 
@@ -91,6 +91,36 @@ every finding:
   none holds what it reads.
 
 `cargo xtask warm-speech` activates the Windows speech platform once and prints how long that took and the default voice's name, failing if the activation fails; CI's two unit-test jobs run it before `cargo xtask ci`, because a fresh runner's first activation outlasts the synthesizer host's ten-second hang bound.
+
+### The documentation check
+
+`cargo xtask docs` (`xtask/src/docs.rs`) checks every Markdown file of
+the repository except those under `nvda/`, `third_party/`, `.git/`,
+the worktrees in .claude/worktrees, a top-level directory whose name starts with
+`target`, `experiments/` (which records code as it was when each
+experiment ran), and `docs/archive/`. Fenced code blocks are not read.
+It prints each violation as the file, line, and what is wrong, and
+fails if there is any:
+
+- Every relative Markdown link resolves to an existing file or directory,
+  relative to the linking file. Links to `http:`, `https:`, and `mailto:`
+  addresses and bare anchors are not checked.
+- Every backticked repository path exists relative to the repository
+  root: a code span starting with one of the folders crates, docs, xtask,
+  vm, experiments, tools, sounds, videos, extensions, or .claude and a
+  slash, with no spaces (a span with spaces is a command) and none of
+  the characters star, question mark, angle brackets, braces, or vertical
+  bar (a glob or a placeholder), read without a trailing anchor, line, or
+  line range. A path that deliberately names something not there yet is
+  followed directly by a space and the word planned in parentheses, as in
+  `crates/verbatim-braille` (planned), which exempts that span alone and
+  tells the reader why it is absent.
+- `docs/readme.md` links every Markdown file under `docs/`, directly or
+  through one of the indexes it links: `docs/crates/readme.md`,
+  `docs/parity/readme.md`, `docs/nvda/readme.md`,
+  `docs/explainers/readme.md`, and `docs/tooling/readme.md`.
+
+Names are compared with their letter case, as GitHub compares them.
 
 ### Build disk use
 
