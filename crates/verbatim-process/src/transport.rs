@@ -7,15 +7,19 @@
 //! [`Sender`] through which verbatim.exe writes a child's commands.
 //!
 //! A frame is a text header giving the body's length, as the Language
-//! Server Protocol's, then the body: `Content-Length: ` and the length in
-//! ten decimal digits, a blank line (`\r\n\r\n`), then that many bytes:
-//! JSON, but for a synthesizer host's PCM, which is binary
-//! (`verbatim_speech::hosting`). The length has a fixed width so a frame can be encoded in place,
-//! its body after a header whose digits are filled in once the body's
-//! length is known; a reader takes any number of digits. A frame is written
-//! with one write and read whole: the reader takes the header, then asks
-//! for the whole body at once. The end of a pipe in the middle of a frame
-//! is an error, never a message.
+//! Server Protocol's, then the body, a JSON message, and then, when the
+//! header names one, a raw section of bytes the message gives the places
+//! of: a terminal's text and colours, or a synthesizer host's samples
+//! ([`Parts`]). The header is `Content-Length: ` and the body's length in
+//! ten decimal digits; for a frame with a raw section, a line break and
+//! `Raw-Length: ` with the raw section's length in ten digits; then a blank
+//! line (`\r\n\r\n`). A frame without a raw section has no `Raw-Length`
+//! line. The lengths have a fixed width so a frame can be encoded in
+//! place, its body and raw section after a header whose digits are filled
+//! in once their lengths are known; a reader takes any number of digits.
+//! A frame is written with one write and read whole: the reader takes the
+//! header, then asks for the whole rest of the frame at once. The end of a
+//! pipe in the middle of a frame is an error, never a message.
 //!
 //! A [`Sender`] writes a frame inline, on the thread that sends it, when no
 //! write is in flight and nothing waits ahead of it, so in the common case
@@ -45,8 +49,8 @@ use crate::overlapped::{
     Completion, Completions, EventFile, PipeIo, Port, PortFile, Started, win32_error,
 };
 
-/// The largest frame body: a terminal's output can be megabytes; anything
-/// larger is a fault.
+/// The largest frame, its body and raw section together, its header aside:
+/// a terminal's output can be megabytes; anything larger is a fault.
 pub const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 
 /// The buffer of an event pipe in the direction its data flows, so a focus
@@ -54,19 +58,58 @@ pub const MAX_FRAME_BYTES: usize = 32 * 1024 * 1024;
 /// write at once (`docs/design/communication.md`, section 4.1).
 pub const EVENT_PIPE_BUFFER: u32 = 64 * 1024;
 
-/// What a header starts with, and what ends it.
+/// What a header starts with, what starts its raw section's line, what
+/// parts its lines, and what ends it.
 const HEADER_NAME: &[u8] = b"Content-Length: ";
+const RAW_NAME: &[u8] = b"Raw-Length: ";
+const LINE_END: &[u8] = b"\r\n";
 const HEADER_END: &[u8] = b"\r\n\r\n";
 
-/// The width of the length a writer puts in the header.
+/// The width of each length a writer puts in the header.
 const LENGTH_DIGITS: usize = 10;
 
 /// The longest header a reader accepts.
 const MAX_HEADER_BYTES: usize = 64;
 
-/// Appends a frame to `buffer`: the header, then the body `put_body`
-/// appends. What `buffer` held before is kept, so several frames can be put
-/// in one buffer and written with one write ([`Sender::send_all`]).
+/// A frame's two parts as a reader hands them out: its body, a JSON
+/// message, and its raw section, `None` when its header names none. A
+/// message that gives places in a raw section is decoded from both; every
+/// other message from its body alone, refusing a raw section
+/// ([`without_raw`](Self::without_raw)).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Parts<'a> {
+    /// The body.
+    pub body: &'a [u8],
+    /// The raw section, when the header names one, empty or not.
+    pub raw: Option<&'a [u8]>,
+}
+
+impl<'a> Parts<'a> {
+    /// A body with no raw section.
+    #[must_use]
+    pub fn body(body: &'a [u8]) -> Self {
+        Self { body, raw: None }
+    }
+
+    /// The body of a frame that may not have a raw section.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`io::ErrorKind::InvalidData`] when the frame has one.
+    pub fn without_raw(self) -> io::Result<&'a [u8]> {
+        match self.raw {
+            None => Ok(self.body),
+            Some(_) => Err(invalid(
+                "a frame has a raw section its message does not take",
+            )),
+        }
+    }
+}
+
+/// Appends a frame without a raw section to `buffer`: the header, then the
+/// body `put_body` appends. What `buffer` held before is kept, so several
+/// frames can be put in one buffer and written with one write
+/// ([`Sender::send_all`]).
 ///
 /// # Errors
 ///
@@ -77,7 +120,29 @@ pub fn put_frame(
     put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
 ) -> io::Result<()> {
     let start = buffer.len();
-    let framed = append_frame(buffer, put_body);
+    let framed = append_frame(buffer, put_body, None::<fn(&mut Vec<u8>) -> io::Result<()>>);
+    if framed.is_err() {
+        buffer.truncate(start);
+    }
+    framed
+}
+
+/// Appends a frame with a raw section to `buffer`, as [`put_frame`] does:
+/// the header with its `Raw-Length` line, the body `put_body` appends, then
+/// the raw section `put_raw` appends after it, which may be empty.
+///
+/// # Errors
+///
+/// Returns `put_body`'s or `put_raw`'s error, or
+/// [`io::ErrorKind::InvalidInput`] for a body and raw section larger
+/// together than [`MAX_FRAME_BYTES`]; `buffer` is then left as it was.
+pub fn put_frame_with_raw(
+    buffer: &mut Vec<u8>,
+    put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+    put_raw: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+) -> io::Result<()> {
+    let start = buffer.len();
+    let framed = append_frame(buffer, put_body, Some(put_raw));
     if framed.is_err() {
         buffer.truncate(start);
     }
@@ -87,48 +152,120 @@ pub fn put_frame(
 fn append_frame(
     buffer: &mut Vec<u8>,
     put_body: impl FnOnce(&mut Vec<u8>) -> io::Result<()>,
+    put_raw: Option<impl FnOnce(&mut Vec<u8>) -> io::Result<()>>,
 ) -> io::Result<()> {
     buffer.extend_from_slice(HEADER_NAME);
     let digits = buffer.len();
     buffer.extend_from_slice(&[b'0'; LENGTH_DIGITS]);
+    let raw_digits = put_raw.is_some().then(|| {
+        buffer.extend_from_slice(LINE_END);
+        buffer.extend_from_slice(RAW_NAME);
+        let at = buffer.len();
+        buffer.extend_from_slice(&[b'0'; LENGTH_DIGITS]);
+        at
+    });
     buffer.extend_from_slice(HEADER_END);
     let body = buffer.len();
     put_body(buffer)?;
     let length = buffer.len() - body;
-    if length > MAX_FRAME_BYTES {
+    let raw_length = match put_raw {
+        Some(put_raw) => {
+            let raw = buffer.len();
+            put_raw(buffer)?;
+            buffer.len() - raw
+        }
+        None => 0,
+    };
+    let whole = length + raw_length;
+    if whole > MAX_FRAME_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "a frame of {length} bytes is larger than the {MAX_FRAME_BYTES} a frame may take"
+                "a frame of {whole} bytes is larger than the {MAX_FRAME_BYTES} a frame may take"
             ),
         ));
     }
-    let length = format!("{length:0LENGTH_DIGITS$}");
-    buffer[digits..digits + LENGTH_DIGITS].copy_from_slice(length.as_bytes());
+    let mut fill = |at: usize, length: usize| {
+        let length = format!("{length:0LENGTH_DIGITS$}");
+        buffer[at..at + LENGTH_DIGITS].copy_from_slice(length.as_bytes());
+    };
+    fill(digits, length);
+    if let Some(at) = raw_digits {
+        fill(at, raw_length);
+    }
     Ok(())
 }
 
-/// Reads one frame's body. Returns `Ok(None)` when the stream ends before
-/// a frame begins: the writer closed its end.
+/// A frame read whole and kept: the buffer it is in, its header ahead of
+/// it when a reader gave its own buffer up, and where in it its body and
+/// its raw section start.
+#[derive(Debug, PartialEq, Eq)]
+pub struct OwnedFrame {
+    buffer: Vec<u8>,
+    /// Where the body starts.
+    start: usize,
+    /// Where the raw section starts, after the body, when there is one; it
+    /// runs to the buffer's end.
+    raw: Option<usize>,
+}
+
+impl OwnedFrame {
+    /// The frame whose body is `buffer` from `start` to `raw`, or to its
+    /// end without a raw section, and whose raw section is the rest.
+    fn new(buffer: Vec<u8>, start: usize, raw: Option<usize>) -> Self {
+        Self { buffer, start, raw }
+    }
+
+    /// Its two parts.
+    #[must_use]
+    pub fn parts(&self) -> Parts<'_> {
+        match self.raw {
+            Some(raw) => Parts {
+                body: &self.buffer[self.start..raw],
+                raw: Some(&self.buffer[raw..]),
+            },
+            None => Parts::body(&self.buffer[self.start..]),
+        }
+    }
+}
+
+/// Reads one frame. Returns `Ok(None)` when the stream ends before a frame
+/// begins: the writer closed its end.
 ///
 /// # Errors
 ///
 /// Returns an error for I/O failures; [`io::ErrorKind::UnexpectedEof`] when
 /// the stream ends inside a frame; and [`io::ErrorKind::InvalidData`] for a
-/// header that is not one, or a length over [`MAX_FRAME_BYTES`], read no
+/// header that is not one, or lengths over [`MAX_FRAME_BYTES`], read no
 /// further than the header.
-pub fn read_frame<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
-    let Some(length) = read_header(reader)? else {
+pub fn read_frame<R: BufRead>(reader: &mut R) -> io::Result<Option<OwnedFrame>> {
+    let Some(lengths) = read_header(reader)? else {
         return Ok(None);
     };
-    let mut body = vec![0; length];
-    reader.read_exact(&mut body)?;
-    Ok(Some(body))
+    let mut buffer = vec![0; lengths.whole()];
+    reader.read_exact(&mut buffer)?;
+    let raw = lengths.raw.map(|_| lengths.body);
+    Ok(Some(OwnedFrame::new(buffer, 0, raw)))
 }
 
-/// Reads a header and returns the length it gives, or `None` at the end of
+/// The lengths a header gives: its body's, and its raw section's when it
+/// names one.
+#[derive(Clone, Copy, Debug)]
+struct Lengths {
+    body: usize,
+    raw: Option<usize>,
+}
+
+impl Lengths {
+    /// The body's and the raw section's together.
+    fn whole(self) -> usize {
+        self.body + self.raw.unwrap_or(0)
+    }
+}
+
+/// Reads a header and returns the lengths it gives, or `None` at the end of
 /// the stream before any of it.
-fn read_header<R: BufRead>(reader: &mut R) -> io::Result<Option<usize>> {
+fn read_header<R: BufRead>(reader: &mut R) -> io::Result<Option<Lengths>> {
     let mut header = Vec::with_capacity(MAX_HEADER_BYTES);
     loop {
         let available = reader.fill_buf()?;
@@ -166,23 +303,49 @@ fn read_header<R: BufRead>(reader: &mut R) -> io::Result<Option<usize>> {
     }
 }
 
-/// The length a complete header gives.
-fn parse_header(header: &[u8]) -> io::Result<usize> {
-    let digits = header
+/// The lengths a complete header gives.
+fn parse_header(header: &[u8]) -> io::Result<Lengths> {
+    let not_one = || invalid("a frame's header is not a Content-Length header");
+    let lines = header
         .strip_prefix(HEADER_NAME)
         .and_then(|rest| rest.strip_suffix(HEADER_END))
-        .filter(|digits| !digits.is_empty() && digits.iter().all(u8::is_ascii_digit))
-        .ok_or_else(|| invalid("a frame's header is not a Content-Length header"))?;
-    let length = std::str::from_utf8(digits)
-        .ok()
-        .and_then(|digits| digits.parse::<usize>().ok())
-        .filter(|&length| length <= MAX_FRAME_BYTES)
-        .ok_or_else(|| {
-            invalid(&format!(
-                "a frame is larger than the {MAX_FRAME_BYTES} bytes a frame may take"
-            ))
-        })?;
-    Ok(length)
+        .ok_or_else(not_one)?;
+    let (body, raw) = match lines
+        .windows(LINE_END.len())
+        .position(|candidate| candidate == LINE_END)
+    {
+        None => (lines, None),
+        Some(at) => {
+            let raw = lines[at + LINE_END.len()..]
+                .strip_prefix(RAW_NAME)
+                .ok_or_else(not_one)?;
+            (&lines[..at], Some(raw))
+        }
+    };
+    let length = |digits: &[u8]| {
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return Err(not_one());
+        }
+        std::str::from_utf8(digits)
+            .ok()
+            .and_then(|digits| digits.parse::<usize>().ok())
+            .filter(|&length| length <= MAX_FRAME_BYTES)
+            .ok_or_else(too_large)
+    };
+    let lengths = Lengths {
+        body: length(body)?,
+        raw: raw.map(length).transpose()?,
+    };
+    if lengths.whole() > MAX_FRAME_BYTES {
+        return Err(too_large());
+    }
+    Ok(lengths)
+}
+
+fn too_large() -> io::Error {
+    invalid(&format!(
+        "a frame is larger than the {MAX_FRAME_BYTES} bytes a frame may take"
+    ))
 }
 
 fn invalid(message: &str) -> io::Error {
@@ -380,7 +543,7 @@ const READ_SIZE: usize = EVENT_PIPE_BUFFER as usize;
 const READS_PER_TURN: usize = 16;
 
 /// An overlapped end read through a completion port by the thread serving
-/// the port, one read in flight, each frame's body handed out whole and in
+/// the port, one read in flight, each frame's parts handed out whole and in
 /// order (`docs/design/communication.md`, sections 4.1 and 4.8). A read
 /// asks for the pipe's buffer while the next frame's length is unknown, and
 /// for the whole rest of a frame once it is known, so a large frame is read
@@ -395,7 +558,7 @@ pub struct PortReader {
     pending: Vec<u8>,
 }
 
-/// A frame's body as a [`PortReader`] hands it out
+/// A frame as a [`PortReader`] hands it out
 /// ([`take_bodies`](PortReader::take_bodies)): lent from the reader's
 /// buffer, or, when the reader gathered the frame in a buffer of its own
 /// and nothing after it, that buffer itself, so a caller that keeps the
@@ -403,43 +566,44 @@ pub struct PortReader {
 #[derive(Debug)]
 pub enum FrameBody<'a> {
     /// Lent for the call: a caller that keeps it copies it.
-    Borrowed(&'a [u8]),
+    Borrowed(Parts<'a>),
     /// The reader's buffer, given up: the whole frame, its header and then
-    /// its body, which starts at `start`. Only a frame gathered over more
-    /// than one read is handed out this way, a large one above all.
-    Owned {
-        /// The frame, header included.
-        buffer: Vec<u8>,
-        /// Where its body starts, after the header.
-        start: usize,
-    },
+    /// its body and raw section. Only a frame gathered over more than one
+    /// read is handed out this way, a large one above all.
+    Owned(OwnedFrame),
 }
 
 impl FrameBody<'_> {
-    /// The body's bytes.
+    /// The frame's body and raw section.
     #[must_use]
-    pub fn bytes(&self) -> &[u8] {
+    pub fn parts(&self) -> Parts<'_> {
         match self {
-            FrameBody::Borrowed(bytes) => bytes,
-            FrameBody::Owned { buffer, start } => &buffer[*start..],
+            FrameBody::Borrowed(parts) => *parts,
+            FrameBody::Owned(frame) => frame.parts(),
         }
     }
 
-    /// The body as a buffer the caller keeps, and where in it the body
-    /// starts: the reader's own buffer when it was given up, a copy of a
-    /// lent body otherwise.
+    /// The frame as one the caller keeps: the reader's own buffer when it
+    /// was given up, a copy of a lent frame otherwise.
     #[must_use]
-    pub fn into_owned(self) -> (Vec<u8>, usize) {
+    pub fn into_owned(self) -> OwnedFrame {
         match self {
-            FrameBody::Borrowed(bytes) => (bytes.to_vec(), 0),
-            FrameBody::Owned { buffer, start } => (buffer, start),
+            FrameBody::Borrowed(Parts { body, raw }) => {
+                let mut buffer = Vec::with_capacity(body.len() + raw.map_or(0, <[u8]>::len));
+                buffer.extend_from_slice(body);
+                if let Some(raw) = raw {
+                    buffer.extend_from_slice(raw);
+                }
+                OwnedFrame::new(buffer, 0, raw.map(|_| body.len()))
+            }
+            FrameBody::Owned(frame) => frame,
         }
     }
 
     /// Whether the reader's buffer was given up rather than lent.
     #[must_use]
     pub fn is_owned(&self) -> bool {
-        matches!(self, FrameBody::Owned { .. })
+        matches!(self, FrameBody::Owned(_))
     }
 }
 
@@ -479,7 +643,7 @@ impl PortReader {
     /// Takes a turn on `completion`, carrying this reader's key: its read's
     /// completion, or a wake posted with its key, which starts the reading
     /// (or goes on with it after [`Reading::Yielded`]) unless a read is
-    /// already in flight. Hands `frame` the body of each whole frame read,
+    /// already in flight. Hands `frame` the parts of each whole frame read,
     /// in order, and reads on while reads complete at once, until one
     /// waits, `READS_PER_TURN` have been made, or the reading ends. A
     /// frame `frame` refuses ends the reading with its error.
@@ -487,9 +651,9 @@ impl PortReader {
         &mut self,
         completion: &Completion,
         port: &Port,
-        mut frame: impl FnMut(&[u8]) -> io::Result<()>,
+        mut frame: impl FnMut(Parts<'_>) -> io::Result<()>,
     ) -> Reading {
-        self.take_bodies(completion, port, |body| frame(body.bytes()))
+        self.take_bodies(completion, port, |body| frame(body.parts()))
     }
 
     /// [`take`](Self::take), handing out each body as a [`FrameBody`]: a
@@ -551,7 +715,7 @@ impl PortReader {
     /// its length is known and more than the pipe's buffer.
     fn wanted(&self) -> usize {
         match frame_bounds(&self.pending) {
-            Ok(Some((header, length))) => (header + length)
+            Ok(Some((header, lengths))) => (header + lengths.whole())
                 .saturating_sub(self.pending.len())
                 .max(READ_SIZE),
             _ => READ_SIZE,
@@ -566,21 +730,19 @@ impl PortReader {
         &mut self,
         frame: &mut impl FnMut(FrameBody<'_>) -> io::Result<()>,
     ) -> io::Result<()> {
-        let mut lend = |bytes: &[u8]| frame(FrameBody::Borrowed(bytes));
+        let mut lend = |parts: Parts<'_>| frame(FrameBody::Borrowed(parts));
         let data = self.slot.data();
         if self.pending.is_empty() {
             let used = whole_frames(data, &mut lend)?;
             self.pending.extend_from_slice(&data[used..]);
         } else {
             self.pending.extend_from_slice(data);
-            if let Some((header, length)) = frame_bounds(&self.pending)?
-                && header + length == self.pending.len()
+            if let Some((header, lengths)) = frame_bounds(&self.pending)?
+                && header + lengths.whole() == self.pending.len()
             {
                 let buffer = std::mem::take(&mut self.pending);
-                return frame(FrameBody::Owned {
-                    buffer,
-                    start: header,
-                });
+                let raw = lengths.raw.map(|_| header + lengths.body);
+                return frame(FrameBody::Owned(OwnedFrame::new(buffer, header, raw)));
             }
             let used = whole_frames(&self.pending, &mut lend)?;
             self.pending.drain(..used);
@@ -606,27 +768,32 @@ impl PortReader {
     }
 }
 
-/// Hands `frame` the body of every whole frame at the start of `bytes`, in
+/// Hands `frame` the parts of every whole frame at the start of `bytes`, in
 /// order, and returns how many bytes they took.
 fn whole_frames(
     bytes: &[u8],
-    frame: &mut impl FnMut(&[u8]) -> io::Result<()>,
+    frame: &mut impl FnMut(Parts<'_>) -> io::Result<()>,
 ) -> io::Result<usize> {
     let mut at = 0;
-    while let Some((header, length)) = frame_bounds(&bytes[at..])? {
-        let end = at + header + length;
+    while let Some((header, lengths)) = frame_bounds(&bytes[at..])? {
+        let end = at + header + lengths.whole();
         if end > bytes.len() {
             break;
         }
-        frame(&bytes[at + header..end])?;
+        let body = at + header;
+        let raw_start = body + lengths.body;
+        frame(Parts {
+            body: &bytes[body..raw_start],
+            raw: lengths.raw.map(|_| &bytes[raw_start..end]),
+        })?;
         at = end;
     }
     Ok(at)
 }
 
-/// The lengths of the header and the body of the frame `bytes` starts
-/// with, once its header is whole; `None` before.
-fn frame_bounds(bytes: &[u8]) -> io::Result<Option<(usize, usize)>> {
+/// The length of the header of the frame `bytes` starts with, and the
+/// lengths it gives, once the header is whole; `None` before.
+fn frame_bounds(bytes: &[u8]) -> io::Result<Option<(usize, Lengths)>> {
     let window = &bytes[..bytes.len().min(MAX_HEADER_BYTES)];
     match window
         .windows(HEADER_END.len())
@@ -643,7 +810,7 @@ fn frame_bounds(bytes: &[u8]) -> io::Result<Option<(usize, usize)>> {
 
 /// An overlapped end read by a thread that waits on its event together
 /// with other events ([`crate::event::wait_any`]), one read in flight, each
-/// frame's body handed out whole and in order: how the synth thread reads
+/// frame's parts handed out whole and in order: how the synth thread reads
 /// its host's frames, and a synthesizer host Core's commands
 /// (`docs/design/communication.md`, sections 7.3 and 7.4). As a
 /// [`PortReader`] does, a read asks for `read_size` bytes while the next
@@ -704,12 +871,12 @@ impl EventReader {
         self.file.event()
     }
 
-    /// Hands `frame` the body of every whole frame the reads so far
+    /// Hands `frame` the parts of every whole frame the reads so far
     /// brought, in order, reading first, never waiting, while a read in
     /// flight has finished or a new one finishes at once and nothing whole
     /// has come yet. A frame `frame` refuses ends the reading with its
     /// error.
-    pub fn take(&mut self, mut frame: impl FnMut(&[u8]) -> io::Result<()>) -> Taken {
+    pub fn take(&mut self, mut frame: impl FnMut(Parts<'_>) -> io::Result<()>) -> Taken {
         loop {
             let done = if self.slot.in_flight() {
                 match self.slot.poll(&self.file) {
@@ -750,7 +917,7 @@ impl EventReader {
     /// its length is known and more than `read_size`.
     fn wanted(&self) -> usize {
         match frame_bounds(&self.pending) {
-            Ok(Some((header, length))) => (header + length)
+            Ok(Some((header, lengths))) => (header + lengths.whole())
                 .saturating_sub(self.pending.len())
                 .max(self.read_size),
             _ => self.read_size,
@@ -1362,7 +1529,7 @@ impl ChildIo {
     }
 
     /// Serves the port on the calling thread, the child's I/O thread: hands
-    /// `command` the body of each command frame, in order, as it is read,
+    /// `command` the parts of each command frame, in order, as it is read,
     /// and finishes `sender`'s writes that pend. Returns once `command`
     /// says to stop, when nothing after that command is handed out, or
     /// once verbatim.exe closes the command pipe.
@@ -1374,7 +1541,7 @@ impl ChildIo {
     pub fn serve<B: Backlog>(
         &mut self,
         sender: &Sender<B>,
-        mut command: impl FnMut(&[u8]) -> io::Result<Serving>,
+        mut command: impl FnMut(Parts<'_>) -> io::Result<Serving>,
     ) -> io::Result<Served> {
         let Self {
             port,
@@ -1455,12 +1622,119 @@ mod tests {
         buffer
     }
 
+    fn framed_with_raw(body: &[u8], raw: &[u8]) -> Vec<u8> {
+        let mut buffer = Vec::new();
+        put_frame_with_raw(
+            &mut buffer,
+            |buffer| {
+                buffer.extend_from_slice(body);
+                Ok(())
+            },
+            |buffer| {
+                buffer.extend_from_slice(raw);
+                Ok(())
+            },
+        )
+        .expect("framed");
+        buffer
+    }
+
+    /// The body of the next frame `reader` holds, which has no raw section.
+    fn read<R: BufRead>(reader: &mut R) -> io::Result<Option<Vec<u8>>> {
+        Ok(read_frame(reader)?.map(|frame| {
+            frame
+                .parts()
+                .without_raw()
+                .expect("no raw section")
+                .to_vec()
+        }))
+    }
+
     #[test]
     fn a_frame_is_a_content_length_header_and_its_body() {
         assert_eq!(
             framed(b"{\"a\":1}"),
             b"Content-Length: 0000000007\r\n\r\n{\"a\":1}".to_vec()
         );
+    }
+
+    #[test]
+    fn a_frame_with_a_raw_section_names_its_length_on_a_second_line() {
+        assert_eq!(
+            framed_with_raw(b"{\"a\":1}", b"xyz"),
+            b"Content-Length: 0000000007\r\nRaw-Length: 0000000003\r\n\r\n{\"a\":1}xyz".to_vec()
+        );
+    }
+
+    #[test]
+    fn frames_with_and_without_raw_sections_read_back_as_their_parts() {
+        let mut bytes = framed_with_raw(b"first", b"raw");
+        bytes.extend(framed(b"second"));
+        bytes.extend(framed_with_raw(b"third", b""));
+        bytes.extend(b"Content-Length: 1\r\nRaw-Length: 2\r\n\r\n4ab");
+        let mut reader = BufReader::with_capacity(5, bytes.as_slice());
+        let mut next = || read_frame(&mut reader).expect("read").expect("a frame");
+        assert_eq!(
+            next().parts(),
+            Parts {
+                body: b"first",
+                raw: Some(b"raw")
+            }
+        );
+        assert_eq!(next().parts(), Parts::body(b"second"));
+        assert_eq!(
+            next().parts(),
+            Parts {
+                body: b"third",
+                raw: Some(b"")
+            }
+        );
+        assert_eq!(
+            next().parts(),
+            Parts {
+                body: b"4",
+                raw: Some(b"ab")
+            }
+        );
+        assert_eq!(read_frame(&mut reader).expect("read"), None);
+    }
+
+    #[test]
+    fn a_raw_section_is_refused_where_its_message_takes_none() {
+        let frame = framed_with_raw(b"{}", b"x");
+        let frame = read_frame(&mut frame.as_slice())
+            .expect("read")
+            .expect("a frame");
+        assert_eq!(
+            frame.parts().without_raw().expect_err("refused").kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
+
+    #[test]
+    fn a_body_and_raw_section_over_the_limit_together_are_refused() {
+        let half = MAX_FRAME_BYTES / 2 + 1;
+        let header = format!("Content-Length: {half}\r\nRaw-Length: {half}\r\n\r\n");
+        let mut reader = BufReader::new(header.as_bytes());
+        assert_eq!(
+            read_frame(&mut reader).expect_err("too large").kind(),
+            io::ErrorKind::InvalidData
+        );
+        let mut buffer = b"kept".to_vec();
+        let error = put_frame_with_raw(
+            &mut buffer,
+            |body| {
+                body.resize(body.len() + half, b'a');
+                Ok(())
+            },
+            |raw| {
+                raw.resize(raw.len() + half, 0);
+                Ok(())
+            },
+        )
+        .expect_err("too large");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(buffer, b"kept");
     }
 
     #[test]
@@ -1471,16 +1745,10 @@ mod tests {
         // A buffer smaller than a header, so each header and body arrives
         // in pieces.
         let mut reader = BufReader::with_capacity(5, bytes.as_slice());
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"first".to_vec())
-        );
-        assert_eq!(read_frame(&mut reader).expect("read"), Some(Vec::new()));
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"second".to_vec())
-        );
-        assert_eq!(read_frame(&mut reader).expect("read"), None);
+        assert_eq!(read(&mut reader).expect("read"), Some(b"first".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), Some(Vec::new()));
+        assert_eq!(read(&mut reader).expect("read"), Some(b"second".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), None);
     }
 
     #[test]
@@ -1488,7 +1756,7 @@ mod tests {
         let whole = framed(b"cut short");
         for cut in [5, whole.len() - 3] {
             let mut reader = BufReader::new(&whole[..cut]);
-            let error = read_frame(&mut reader).expect_err("cut");
+            let error = read(&mut reader).expect_err("cut");
             assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof, "cut at {cut}");
         }
     }
@@ -1497,7 +1765,7 @@ mod tests {
     fn a_length_over_the_limit_is_refused_before_any_body_is_read() {
         let header = format!("Content-Length: {}\r\n\r\n", MAX_FRAME_BYTES + 1);
         let mut reader = BufReader::new(header.as_bytes());
-        let error = read_frame(&mut reader).expect_err("too large");
+        let error = read(&mut reader).expect_err("too large");
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
     }
 
@@ -1506,10 +1774,12 @@ mod tests {
         for header in [
             &b"Content-Length: 1x\r\n\r\n"[..],
             b"Length: 1\r\n\r\nx",
+            b"Content-Length: 1\r\nRaw: 1\r\n\r\nxy",
+            b"Content-Length: 1\r\nRaw-Length: \r\n\r\nx",
             &[b'9'; MAX_HEADER_BYTES + 1],
         ] {
             let mut reader = BufReader::new(header);
-            let error = read_frame(&mut reader).expect_err("refused");
+            let error = read(&mut reader).expect_err("refused");
             assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         }
     }
@@ -1523,21 +1793,19 @@ mod tests {
             theirs.write_all(&framed(&[7; 10_000])).expect("written");
         });
         let mut reader = BufReader::new(BlockingReader::new(ours).expect("a reader"));
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"one".to_vec())
-        );
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(vec![7; 10_000])
-        );
+        assert_eq!(read(&mut reader).expect("read"), Some(b"one".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), Some(vec![7; 10_000]));
         writer.join().expect("the writer");
-        assert_eq!(read_frame(&mut reader).expect("read"), None);
+        assert_eq!(read(&mut reader).expect("read"), None);
     }
 
     /// A frame's body as a reader handed it out, and whether it gave its
     /// buffer up for it.
     type Body = (Vec<u8>, bool);
+
+    /// A frame's body and raw section as a reader handed them out, and
+    /// whether it gave its buffer up for them.
+    type OwnedParts = (Vec<u8>, Option<Vec<u8>>, bool);
 
     /// A port reader on a pipe whose other end the test writes itself.
     struct Fixture {
@@ -1578,7 +1846,7 @@ mod tests {
             let completion = self.completions.iter().next().expect("one");
             let mut frames = Vec::new();
             let reading = self.reader.take(&completion, &self.port, |body| {
-                frames.push(body.to_vec());
+                frames.push(body.without_raw().expect("no raw section").to_vec());
                 Ok(())
             });
             match reading {
@@ -1590,6 +1858,20 @@ mod tests {
         /// One completion's turn, as [`turn`](Self::turn), with each
         /// frame's body and whether the reader gave its buffer up for it.
         fn turn_bodies(&mut self) -> (Vec<Body>, Option<io::Result<()>>) {
+            let (frames, ended) = self.turn_parts();
+            let bodies = frames
+                .into_iter()
+                .map(|(body, raw, owned)| {
+                    assert_eq!(raw, None, "no raw section");
+                    (body, owned)
+                })
+                .collect();
+            (bodies, ended)
+        }
+
+        /// One completion's turn, as [`turn_bodies`](Self::turn_bodies),
+        /// with each frame's raw section too.
+        fn turn_parts(&mut self) -> (Vec<OwnedParts>, Option<io::Result<()>>) {
             assert_eq!(
                 self.port
                     .wait(&mut self.completions, Some(Duration::from_secs(10)))
@@ -1601,8 +1883,9 @@ mod tests {
             let mut frames = Vec::new();
             let reading = self.reader.take_bodies(&completion, &self.port, |body| {
                 let owned = body.is_owned();
-                let (buffer, start) = body.into_owned();
-                frames.push((buffer[start..].to_vec(), owned));
+                let frame = body.into_owned();
+                let Parts { body, raw } = frame.parts();
+                frames.push((body.to_vec(), raw.map(<[u8]>::to_vec), owned));
                 Ok(())
             });
             match reading {
@@ -1727,6 +2010,43 @@ mod tests {
         assert_eq!(write(&stream[first + 3..]), [(b"second".to_vec(), true)]);
     }
 
+    /// A frame with a raw section is handed out with its body and raw
+    /// section parted, lent or given up: a small one lent, then a large
+    /// one gathered over several reads as the reader's buffer.
+    #[test]
+    fn a_port_reader_hands_out_a_frames_raw_section_apart_from_its_body() {
+        let large: Vec<u8> = (0..300_000u32).map(|at| (at % 251) as u8).collect();
+        let mut stream = framed_with_raw(b"small", b"raw");
+        let small = stream.len();
+        stream.extend(framed_with_raw(b"large", &large));
+        let mut reading = Fixture::new(4096);
+        let mut writer = reading.writer.take().expect("open");
+        writer.write_all(&stream[..small]).expect("written");
+        let (frames, ended) = reading.turn_parts();
+        assert!(ended.is_none(), "still reading: {ended:?}");
+        assert_eq!(frames, [(b"small".to_vec(), Some(b"raw".to_vec()), false)]);
+        let rest = stream[small..].to_vec();
+        let writing = thread::spawn(move || writer.write_all(&rest).expect("written"));
+        let mut frames = Vec::new();
+        let ended = loop {
+            let (more, ended) = reading.turn_parts();
+            frames.extend(more);
+            if let Some(ended) = ended {
+                break ended;
+            }
+        };
+        writing.join().expect("the writer");
+        assert_eq!(frames.len(), 1);
+        let (body, raw, owned) = &frames[0];
+        assert_eq!(body, b"large");
+        assert!(
+            raw.as_deref() == Some(large.as_slice()),
+            "the raw section whole"
+        );
+        assert!(*owned, "the reader's buffer, given up");
+        assert!(ended.is_ok(), "{ended:?}");
+    }
+
     #[test]
     fn a_port_reader_reports_the_end_inside_a_frame_as_an_error() {
         let whole = framed(b"cut short");
@@ -1800,16 +2120,10 @@ mod tests {
         sender.close();
         assert_eq!(sender.send(b"late".to_vec()), Err(SendError::Closed));
         let mut reader = BufReader::new(File::from(theirs));
-        assert_eq!(read_frame(&mut reader).expect("read"), Some(large));
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"second".to_vec())
-        );
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"third".to_vec())
-        );
-        assert_eq!(read_frame(&mut reader).expect("read"), None);
+        assert_eq!(read(&mut reader).expect("read"), Some(large));
+        assert_eq!(read(&mut reader).expect("read"), Some(b"second".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), Some(b"third".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), None);
     }
 
     #[test]
@@ -1824,15 +2138,10 @@ mod tests {
         );
         let mut reader = BufReader::new(File::from(theirs));
         assert_eq!(
-            read_frame(&mut reader)
-                .expect("read")
-                .map(|body| body.len()),
+            read(&mut reader).expect("read").map(|body| body.len()),
             Some(100_000)
         );
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"waits".to_vec())
-        );
+        assert_eq!(read(&mut reader).expect("read"), Some(b"waits".to_vec()));
     }
 
     #[test]
@@ -1854,14 +2163,8 @@ mod tests {
         other.send(b"first".to_vec()).expect("written");
         other.send(b"second".to_vec()).expect("written");
         let mut reader = BufReader::new(File::from(theirs));
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"first".to_vec())
-        );
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"second".to_vec())
-        );
+        assert_eq!(read(&mut reader).expect("read"), Some(b"first".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), Some(b"second".to_vec()));
     }
 
     #[test]
@@ -1906,16 +2209,10 @@ mod tests {
         sender.send(b"after".to_vec()).expect("queued");
         sender.close();
         let mut reader = BufReader::new(File::from(theirs));
-        assert_eq!(read_frame(&mut reader).expect("read"), Some(large));
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"second".to_vec())
-        );
-        assert_eq!(
-            read_frame(&mut reader).expect("read"),
-            Some(b"after".to_vec())
-        );
-        assert_eq!(read_frame(&mut reader).expect("read"), None);
+        assert_eq!(read(&mut reader).expect("read"), Some(large));
+        assert_eq!(read(&mut reader).expect("read"), Some(b"second".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), Some(b"after".to_vec()));
+        assert_eq!(read(&mut reader).expect("read"), None);
     }
 
     #[test]
@@ -1946,8 +2243,8 @@ mod tests {
             sender.is_finished()
         });
         let mut reader = BufReader::new(BlockingReader::new(core).expect("a reader"));
-        assert_eq!(read_frame(&mut reader).expect("read whole"), Some(last));
-        assert_eq!(read_frame(&mut reader).expect("read"), None);
+        assert_eq!(read(&mut reader).expect("read whole"), Some(last));
+        assert_eq!(read(&mut reader).expect("read"), None);
         assert!(
             io_thread.join().expect("the I/O thread"),
             "the shutdown returned with everything written"
@@ -1960,7 +2257,7 @@ mod tests {
         let mut frames = Vec::new();
         loop {
             match reader.take(|body| {
-                frames.push(body.to_vec());
+                frames.push(body.without_raw().expect("no raw section").to_vec());
                 Ok(())
             }) {
                 Taken::Frames => return (frames, None),

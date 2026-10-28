@@ -169,10 +169,14 @@ attributed.
   reducer.
 - The reducer parses every outpost frame on its own thread, whatever its
   size, with no wake-up of its own: a few microseconds for the common
-  messages; for a terminal's whole-document read of 9,000 lines, about
-  0.5 ms for 0.9 MB of Latin text and 1.6 ms for 1.6 MB of Cyrillic, in a
-  release build (parsing alone, measured 2026-10-28), which keys and
-  other outposts' frames posted after it wait for.
+  messages. A terminal's text and colours travel in the frame's raw
+  section (`docs/design/communication.md`, section 4.2), so a
+  whole-document read of 9,000 lines takes 0.02 to 0.16 ms for 0.8 MB of
+  Latin text and 0.29 ms for 1.3 MB of Cyrillic, and 100 rows of 120
+  colour runs 0.05 to 0.08 ms, in a release build (parsing alone, best of
+  30, measured 2026-10-28), which keys and other outposts' frames posted
+  after it wait for. As JSON strings the same reads took 0.6, 1.6 and
+  1.0 ms.
 - A fact held while its outpost starts is reported as "waiting for the
   outpost to start". An application's outpost is usually a spare started
   ahead of need (`docs/design/focus-pipeline.md`, section 19), so the wait
@@ -725,6 +729,13 @@ that ends unheard.
   notepad_say_all --after 9 --seconds 5`, four runs: the reducer woke 10 to
   36 times using 3.7 to 45.2 ms and the speech queue thread 11 to 26 times
   using 1.5 to 2.4 ms, within the spread of the build before.
+- A synthesizer host's audio: each chunk is one frame, a small JSON body
+  and its samples as the frame's raw section
+  (`docs/design/communication.md`, section 4.2). The synth thread decodes
+  a chunk of 1,323 samples (60 ms at 22,050 Hz) in 0.2 microseconds and
+  one of 4,410 in 0.28, and the host encodes them in 0.6 and 2.0, in a
+  release build (best of 30, measured 2026-10-28); the binary header the
+  body replaced decoded in 0.06 and 0.13.
 
 ### A caret move, UIA
 

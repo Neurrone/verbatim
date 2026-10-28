@@ -10,6 +10,7 @@ license.workspace = true
 crossbeam-channel.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+simdutf8.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 verbatim-core.workspace = true

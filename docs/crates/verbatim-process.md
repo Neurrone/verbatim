@@ -145,14 +145,26 @@ Public API:
   is not raised.
 - `transport` — the frames and senders of the pipes between verbatim.exe
   and its outposts, listener and synthesizer hosts (`docs/design/communication.md`, section
-  4). A frame is `Content-Length: ` and the body's length in ten digits, a
-  blank line, then the body, at most `MAX_FRAME_BYTES` (32 MB); the fixed
-  width lets a frame be encoded in place. `put_frame(buffer, put_body)`
-  appends one to a buffer, so several can go in one write;
-  `read_frame(reader)` reads one whole from a
-  `BufRead`, the header then the body at once, returning `None` at the end
+  4). A frame is `Content-Length: ` and the body's length in ten digits;
+  for a frame with a raw section, a line break and `Raw-Length: ` with
+  the raw section's length in ten digits; a blank line; then the body, a
+  JSON message, and after it the raw section, bytes whose places the
+  message gives (a terminal's text and colours, a synthesizer host's
+  samples). A frame without a raw section has no `Raw-Length` line. The
+  body and raw section together take at most `MAX_FRAME_BYTES` (32 MB);
+  the fixed width lets a frame be encoded in place. A reader hands a
+  frame out as its `Parts`, `body` and `raw` (`None` when the header names
+  no raw section, which differs from an empty one); `without_raw()` gives
+  the body of a frame whose message may not have one and refuses one
+  that does. `put_frame(buffer, put_body)` appends a frame without a raw
+  section to a buffer, so several can go in one write, and
+  `put_frame_with_raw(buffer, put_body, put_raw)` one with, the raw
+  section appended right after the body in the same buffer, so the
+  frame is still one write. `read_frame(reader)` reads one whole from a
+  `BufRead` as an `OwnedFrame`, whose `parts()` give its body and raw
+  section: the header, then the rest at once, returning `None` at the end
   of the stream between frames and an error for one cut short, a header
-  that is not one, or a length over the limit (refused before any body is
+  that is not one, or lengths over the limit (refused before any body is
   read). `EVENT_PIPE_BUFFER` is the event pipes' 64 KiB.
   `BlockingReader::new(pipe)` is a `Read` over an overlapped end for a
   thread that blocks on each read, as the tests' harnesses and stand-in
@@ -167,7 +179,7 @@ Public API:
   tests' stand-in children.
   `EventReader::new(pipe, read_size)` reads an overlapped end associated
   with no port, for a thread that waits on its `event()` with other
-  events: `take(frame)` hands `frame` the body of every whole frame read
+  events: `take(frame)` hands `frame` the parts of every whole frame read
   so far, reading first, never waiting, and returns `Taken::Frames`, with
   no read in flight, so a reader that handles each frame before taking
   more reads no faster than it handles; `Taken::Waiting`, a read in
@@ -182,7 +194,7 @@ Public API:
   processes.
   `PortReader::new(file)` reads an end associated with a `Port`, for the
   thread serving the port: `take(completion, port, frame)`, given its
-  read's completion or a wake posted with its key, hands `frame` the body
+  read's completion or a wake posted with its key, hands `frame` the parts
   of each whole frame in order, and reads on while reads complete at
   once, until one waits (`Reading::Waiting`), sixteen have been made
   (`Reading::Yielded`, its key posted so it goes on after whatever else
@@ -193,13 +205,13 @@ Public API:
   is unknown and for the whole rest of a frame once it is, so a large
   frame is read in one read into a buffer of its size.
   `take_bodies(completion, port, frame)` is the same turn, handing each
-  body out as a `FrameBody`: `Borrowed`, lent for the call, or `Owned`,
-  the reader's own buffer given up (the whole frame, with `start` where
-  its body begins), which it is for a frame gathered over several reads
-  that fills the buffer with nothing of the next frame after it, a large
-  frame above all, so a caller that keeps the body does not copy it.
-  `bytes()` reads either; `into_owned()` gives the buffer and the body's
-  start, copying only a lent body. `Sender` writes an
+  frame out as a `FrameBody`: `Borrowed`, its parts lent for the call, or
+  `Owned`, an `OwnedFrame` in the reader's own buffer given up (the whole
+  frame, its header ahead of its body), which it is for a frame gathered
+  over several reads that fills the buffer with nothing of the next frame
+  after it, a large frame above all, so a caller that keeps the frame
+  does not copy it. `parts()` reads either; `into_owned()` gives the
+  `OwnedFrame`, copying only a lent one. `Sender` writes an
   overlapped end: `send(item)` puts the item in the `Backlog`, a caller's
   policy (`push`, `pop`, `is_empty`, and `encode`, which appends an
   item's frame just before it is written, whichever thread writes it, so
@@ -234,7 +246,7 @@ Public API:
   inherited overlapped ends and gives the I/O side and the `Sender` every
   thread of the child writes its messages through. `serve(sender,
   command)`, on the child's I/O thread, waits only on the port, hands
-  `command` the body of each command frame in order, and finishes the
+  `command` the parts of each command frame in order, and finishes the
   sender's writes that pend, until `command` answers `Serving::Stop`
   (`Served::Stopped`) or verbatim.exe closes the command pipe
   (`Served::CommandsEnded`). `finish(sender)`, once the sender is closed,

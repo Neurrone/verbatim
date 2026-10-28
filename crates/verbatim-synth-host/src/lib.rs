@@ -36,9 +36,10 @@ use verbatim_audio::PcmFormat;
 use verbatim_model::{TraceId, UtteranceId};
 use verbatim_process::clock::now_us;
 use verbatim_process::event::{Event, wait_any};
-use verbatim_process::transport::{EventReader, EventWriter, Taken, put_frame};
+use verbatim_process::transport::{EventReader, EventWriter, Taken, put_frame, put_frame_with_raw};
 use verbatim_speech::hosting::{
     FromHost, HostDescription, HostTiming, ToHost, decode_to_host, encode_from_host, encode_pcm,
+    put_samples,
 };
 use verbatim_speech::{
     CancelWake, IndexMark, SettingId, SettingValue, SpeechSequence, SynthDriver, SynthError,
@@ -174,6 +175,33 @@ fn describe(driver: &dyn SynthDriver) -> HostDescription {
     }
 }
 
+/// Appends `message`'s frame to `buffer`: a PCM frame with its samples as
+/// the raw section, every other message a body alone.
+fn put_message(buffer: &mut Vec<u8>, message: &FromHost) -> io::Result<()> {
+    match message {
+        FromHost::Pcm(utterance, format, samples) => put_pcm(buffer, *utterance, *format, samples),
+        _ => put_frame(buffer, |body| encode_from_host(message, body)),
+    }
+}
+
+/// Appends a PCM frame of `utterance`'s `samples` to `buffer`, the samples
+/// copied once, straight into it.
+fn put_pcm(
+    buffer: &mut Vec<u8>,
+    utterance: UtteranceId,
+    format: PcmFormat,
+    samples: &[i16],
+) -> io::Result<()> {
+    put_frame_with_raw(
+        buffer,
+        |body| encode_pcm(utterance, format, samples, body),
+        |raw| {
+            put_samples(samples, raw);
+            Ok(())
+        },
+    )
+}
+
 /// The host's two pipes, used from its one thread.
 struct Host {
     commands: RefCell<Commands>,
@@ -220,7 +248,7 @@ impl Host {
         let written = writer
             .start(|buffer| {
                 for message in messages {
-                    put_frame(buffer, |body| encode_from_host(message, body))?;
+                    put_message(buffer, message)?;
                 }
                 Ok(())
             })
@@ -250,12 +278,9 @@ impl Host {
         let written = writer
             .start(|buffer| {
                 if let Some(first) = first {
-                    put_frame(buffer, |body| encode_from_host(first, body))?;
+                    put_message(buffer, first)?;
                 }
-                put_frame(buffer, |body| {
-                    encode_pcm(utterance, format, samples, body);
-                    Ok(())
-                })
+                put_pcm(buffer, utterance, format, samples)
             })
             .and_then(|done| {
                 if done {
@@ -360,8 +385,8 @@ impl Commands {
                 wake,
                 ..
             } = self;
-            let taken = reader.take(|body| {
-                match decode_to_host(body)? {
+            let taken = reader.take(|parts| {
+                match decode_to_host(parts.without_raw()?)? {
                     ToHost::Cancel(utterance) if *current == Some(utterance) => {
                         *cancelled = true;
                         if let Some(wake) = wake.take() {

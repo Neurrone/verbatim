@@ -4,9 +4,11 @@
 //! ends the child inherits, their handle values passed on its command line,
 //! so there is nothing to discover or secure. Each message is one frame of
 //! `verbatim_process::transport`: a `Content-Length` header, then the
-//! message as compact JSON, readable by eye and in captures, and isolated
-//! behind [`write_message`], [`encode_message`] and [`read_message`] so
-//! neither end's logic sees the framing.
+//! message as compact JSON, readable by eye and in captures, and, for a
+//! message carrying a terminal's text or colours, a raw section holding
+//! them, the JSON giving their places (the `raw` module); all of it
+//! isolated behind [`Message`], [`write_message`], [`encode_message`] and
+//! [`read_message`] so neither end's logic sees the framing.
 
 #![forbid(unsafe_code)]
 
@@ -15,6 +17,9 @@ use std::time::Duration;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use verbatim_process::transport::Parts;
+
+mod raw;
 
 /// When an event reached each point on its way through the listener and
 /// the outpost, for the latency log Core writes for every announcement:
@@ -1357,6 +1362,90 @@ pub struct DumpedTree {
 /// bound.
 pub const MAX_MESSAGE_BYTES: usize = verbatim_process::transport::MAX_FRAME_BYTES;
 
+/// A message of the Core-outpost protocol as a frame carries it: its JSON
+/// body, and for a message that carries a terminal's text and colours, a
+/// raw section holding them, the body giving their places
+/// (`docs/design/communication.md`, section 4.2). Every other message is a
+/// body alone, and is refused with a raw section.
+pub trait Message: Sized {
+    /// Appends this message's frame to `buffer`.
+    ///
+    /// # Errors
+    ///
+    /// Returns the encoding's error, and [`io::ErrorKind::InvalidInput`]
+    /// for a message larger than [`MAX_MESSAGE_BYTES`].
+    fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()>;
+
+    /// Reads a message from its frame's parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for parts that are not one.
+    fn from_parts(parts: Parts<'_>) -> io::Result<Self>;
+}
+
+/// Appends `message`'s frame, a JSON body alone, to `buffer`.
+fn put_json<T: Serialize>(buffer: &mut Vec<u8>, message: &T) -> io::Result<()> {
+    verbatim_process::transport::put_frame(buffer, |body| {
+        serde_json::to_writer(body, message).map_err(io::Error::other)
+    })
+}
+
+/// Reads a message that is a JSON body alone.
+fn from_json<T: DeserializeOwned>(parts: Parts<'_>) -> io::Result<T> {
+    serde_json::from_slice(parts.without_raw()?).map_err(io::Error::other)
+}
+
+impl Message for SupervisorToOutpost {
+    fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
+        put_json(buffer, self)
+    }
+
+    fn from_parts(parts: Parts<'_>) -> io::Result<Self> {
+        from_json(parts)
+    }
+}
+
+impl Message for OutpostToSupervisor {
+    fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
+        match raw::Terminal::of(self) {
+            Some(terminal) => terminal.put_frame(buffer),
+            None => put_json(buffer, self),
+        }
+    }
+
+    fn from_parts(parts: Parts<'_>) -> io::Result<Self> {
+        match parts.raw {
+            Some(section) => raw::decode(parts.body, section),
+            None => serde_json::from_slice(parts.body).map_err(io::Error::other),
+        }
+    }
+}
+
+/// A string, as the framing's tests send one.
+#[cfg(test)]
+impl Message for String {
+    fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
+        put_json(buffer, self)
+    }
+
+    fn from_parts(parts: Parts<'_>) -> io::Result<Self> {
+        from_json(parts)
+    }
+}
+
+/// A terminal's read alone, as the outpost's encoding costs are measured.
+#[cfg(test)]
+impl Message for verbatim_model::TerminalSnapshot {
+    fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
+        put_json(buffer, self)
+    }
+
+    fn from_parts(parts: Parts<'_>) -> io::Result<Self> {
+        from_json(parts)
+    }
+}
+
 /// Writes one message as one frame and flushes.
 ///
 /// The frame goes to `writer` in one `write_all`, so on a bare pipe, as the
@@ -1369,7 +1458,7 @@ pub const MAX_MESSAGE_BYTES: usize = verbatim_process::transport::MAX_FRAME_BYTE
 /// [`io::ErrorKind::InvalidInput`] for a message larger than
 /// [`MAX_MESSAGE_BYTES`], which is not sent; serialization of these
 /// message types cannot fail.
-pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io::Result<()> {
+pub fn write_message<W: Write, T: Message>(writer: &mut W, message: &T) -> io::Result<()> {
     let frame = encode_message(message)?;
     writer.write_all(&frame)?;
     writer.flush()
@@ -1380,22 +1469,20 @@ pub fn write_message<W: Write, T: Serialize>(writer: &mut W, message: &T) -> io:
 /// # Errors
 ///
 /// As [`write_message`], without the I/O.
-pub fn encode_message<T: Serialize>(message: &T) -> io::Result<Vec<u8>> {
+pub fn encode_message<T: Message>(message: &T) -> io::Result<Vec<u8>> {
     let mut frame = Vec::new();
     put_message(&mut frame, message)?;
     Ok(frame)
 }
 
-/// Puts one message's frame in `buffer`, which is cleared first, so a
-/// sender encodes straight into the buffer it writes from.
+/// Appends one message's frame to `buffer`, so a sender encodes straight
+/// into the buffer it writes from.
 ///
 /// # Errors
 ///
 /// As [`write_message`], without the I/O.
-pub fn put_message<T: Serialize>(buffer: &mut Vec<u8>, message: &T) -> io::Result<()> {
-    verbatim_process::transport::put_frame(buffer, |body| {
-        serde_json::to_writer(body, message).map_err(io::Error::other)
-    })
+pub fn put_message<T: Message>(buffer: &mut Vec<u8>, message: &T) -> io::Result<()> {
+    message.put_frame(buffer)
 }
 
 /// Reads one message's frame. Returns `Ok(None)` on clean end of stream:
@@ -1408,11 +1495,11 @@ pub fn put_message<T: Serialize>(buffer: &mut Vec<u8>, message: &T) -> io::Resul
 /// ([`io::ErrorKind::InvalidData`], read no further than its header), and
 /// for a frame that is not a valid message (a protocol violation, not a
 /// recoverable condition).
-pub fn read_message<R: BufRead, T: DeserializeOwned>(reader: &mut R) -> io::Result<Option<T>> {
-    let Some(body) = verbatim_process::transport::read_frame(reader)? else {
+pub fn read_message<R: BufRead, T: Message>(reader: &mut R) -> io::Result<Option<T>> {
+    let Some(frame) = verbatim_process::transport::read_frame(reader)? else {
         return Ok(None);
     };
-    decode_message(&body).map(Some)
+    decode_message(frame.parts()).map(Some)
 }
 
 /// The kind of message a frame's body holds, read from the body's first
@@ -1432,13 +1519,13 @@ pub fn message_kind(body: &[u8]) -> Option<&str> {
     std::str::from_utf8(&name[..end]).ok()
 }
 
-/// Parses one frame's body as a message.
+/// Parses one frame's parts as a message.
 ///
 /// # Errors
 ///
-/// Returns an error for a body that is not a valid message.
-pub fn decode_message<T: DeserializeOwned>(body: &[u8]) -> io::Result<T> {
-    serde_json::from_slice(body).map_err(io::Error::other)
+/// Returns an error for parts that are not a valid message.
+pub fn decode_message<T: Message>(parts: Parts<'_>) -> io::Result<T> {
+    T::from_parts(parts)
 }
 
 #[cfg(test)]
@@ -1458,7 +1545,7 @@ mod tests {
             let body = verbatim_process::transport::read_frame(&mut frame.as_slice())
                 .expect("a frame")
                 .expect("not the end");
-            message_kind(&body).map(str::to_owned)
+            message_kind(body.parts().body).map(str::to_owned)
         };
         let pong = OutpostToSupervisor::Pong {
             seq: 1,
@@ -1520,7 +1607,7 @@ mod tests {
             }
         }
         let mut writes = Writes::default();
-        write_message(&mut writes, &"one").expect("written");
+        write_message(&mut writes, &"one".to_owned()).expect("written");
         assert_eq!(
             writes.0,
             vec![b"Content-Length: 0000000005\r\n\r\n\"one\"".to_vec()]

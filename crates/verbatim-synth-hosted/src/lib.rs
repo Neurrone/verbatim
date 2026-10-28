@@ -326,8 +326,8 @@ impl Host {
             return false;
         }
         let Self { replies, read, .. } = self;
-        let taken = replies.take(|body| {
-            read.push_back(decode_from_host(body)?);
+        let taken = replies.take(|parts| {
+            read.push_back(decode_from_host(parts.body, parts.raw)?);
             Ok(())
         });
         match taken {

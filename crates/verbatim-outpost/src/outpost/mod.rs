@@ -67,7 +67,7 @@ use verbatim_model::{Backend, Fetches, NodeId, Pid, TraceId};
 use verbatim_process::overlapped::{End, Flow, pipe};
 use verbatim_process::scheduling::{ThreadPriority, prioritize_role};
 use verbatim_process::transport::{
-    BlockingReader, ChildIo, EVENT_PIPE_BUFFER, Sender, Served, Serving, read_frame,
+    BlockingReader, ChildIo, EVENT_PIPE_BUFFER, Sender, Served, Serving,
 };
 use verbatim_uia::{
     Ancestor, Cached, FOCUS_PROPERTIES, Group, Node, NodeIdRegistry as UiaRegistry, Part,
@@ -78,7 +78,7 @@ use crate::arbitration::{Arbitrator, EventWindows, WindowClasses};
 use crate::event_thread::{EventHandlers, EventThread, MakeHandlers, Nudger};
 use crate::protocol::{
     DeliveredFact, EventTiming, FactKey, OutpostToSupervisor, Query, QueryOutcome,
-    SupervisorToOutpost, UiaSnapshotFact, WinEventStamp, decode_message, now_us,
+    SupervisorToOutpost, UiaSnapshotFact, WinEventStamp, decode_message, now_us, read_message,
 };
 use crate::supervisor::Target;
 use crate::text::uia::UiaPos;
@@ -1765,9 +1765,14 @@ pub fn run_attach(target_pid: u32, options: OutpostOptions) -> io::Result<()> {
         .name("verbatim-attach-printer".to_owned())
         .spawn(move || {
             use std::io::Write as _;
-            while let Ok(Some(body)) = read_frame(&mut printed) {
+            // Each message is printed as the model's JSON, a terminal's
+            // text in it rather than in the frame's raw section.
+            while let Ok(Some(message)) = read_message::<_, OutpostToSupervisor>(&mut printed) {
+                let Ok(json) = serde_json::to_vec(&message) else {
+                    continue;
+                };
                 let mut stdout = io::stdout().lock();
-                let _ = stdout.write_all(&body);
+                let _ = stdout.write_all(&json);
                 let _ = stdout.write_all(b"\n");
                 let _ = stdout.flush();
             }

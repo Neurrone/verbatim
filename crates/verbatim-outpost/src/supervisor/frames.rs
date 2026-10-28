@@ -7,8 +7,9 @@
 //!
 //! Every frame, whatever its size, is parsed here on the reducer's thread
 //! as it arrives, so each outpost's messages reach the reducer in the order
-//! the outpost wrote them, and its end after all of them. A frame of
-//! 256 KiB takes about half a millisecond to parse in a release build.
+//! the outpost wrote them, and its end after all of them. A terminal's
+//! whole-document read of 9,000 lines, its text in the frame's raw section,
+//! takes 0.02 to 0.3 ms to parse in a release build (`docs/performance.md`).
 //!
 //! Parsing here does what the outposts' reader threads did: it stamps every
 //! node id with the outpost's incarnation, records when the relay read the
@@ -21,6 +22,7 @@ use std::collections::HashMap;
 use std::io;
 
 use verbatim_model::{OutpostId, Pid};
+use verbatim_process::transport::OwnedFrame;
 
 use super::OutpostMessage;
 use super::owner::OwnerEvent;
@@ -32,45 +34,34 @@ use crate::protocol::{OutpostToSupervisor, decode_message};
 pub struct Frame {
     pid: Pid,
     outpost: OutpostId,
-    /// The buffer the body is in: the reader's own, given up, for a frame
-    /// read over several reads, its header still ahead of the body; a copy
-    /// of the body otherwise.
-    buffer: Vec<u8>,
-    /// Where the body starts in `buffer`.
-    start: usize,
+    /// The frame's body and raw section: in the reader's own buffer, given
+    /// up, for a frame read over several reads, its header still ahead of
+    /// them; in a copy otherwise.
+    bytes: OwnedFrame,
     /// When the relay read it, in microseconds since the Unix epoch.
     read_at_us: u64,
 }
 
 impl Frame {
-    /// The frame `outpost` sent, its body in `buffer` from `start` on.
-    pub(super) fn new(
-        pid: Pid,
-        outpost: OutpostId,
-        (buffer, start): (Vec<u8>, usize),
-        read_at_us: u64,
-    ) -> Self {
+    /// The frame `outpost` sent.
+    pub(super) fn new(pid: Pid, outpost: OutpostId, bytes: OwnedFrame, read_at_us: u64) -> Self {
         Self {
             pid,
             outpost,
-            buffer,
-            start,
+            bytes,
             read_at_us,
         }
-    }
-
-    /// The frame's body.
-    fn body(&self) -> &[u8] {
-        &self.buffer[self.start..]
     }
 }
 
 impl std::fmt::Debug for Frame {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let parts = self.bytes.parts();
         formatter
             .debug_struct("Frame")
             .field("outpost", &self.outpost)
-            .field("bytes", &self.body().len())
+            .field("bytes", &parts.body.len())
+            .field("raw", &parts.raw.map(<[u8]>::len))
             .finish_non_exhaustive()
     }
 }
@@ -163,7 +154,7 @@ impl Frames {
 /// read it and with its outpost on every node id: node ids name the
 /// incarnation whose pipe they arrived on, never whatever the body claims.
 fn parse(frame: &Frame) -> io::Result<Box<OutpostToSupervisor>> {
-    let mut message: Box<OutpostToSupervisor> = Box::new(decode_message(frame.body())?);
+    let mut message: Box<OutpostToSupervisor> = Box::new(decode_message(frame.bytes.parts())?);
     message.core_read(frame.read_at_us);
     message.assign_outpost(frame.outpost);
     Ok(message)

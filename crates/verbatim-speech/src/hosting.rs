@@ -6,10 +6,10 @@
 //! [`SpeechSequence`] and the host streams back PCM, marks, and the outcome.
 //! Each message is one frame of the transport every pipe between Verbatim's
 //! processes uses (`docs/design/communication.md`, section 4.2), which
-//! lives in a Windows crate; this module gives each frame's body. Control
-//! messages are JSON; PCM is raw little-endian samples behind a short
-//! binary header, since a synthesizer streams far more of it than of
-//! anything else.
+//! lives in a Windows crate; this module gives each frame's parts. Every
+//! message is a JSON body; PCM's samples travel in the frame's raw section
+//! as little-endian `i16`s, the body giving their place there, since a
+//! synthesizer streams far more of them than of anything else.
 //!
 //! Cancellation names the utterance it cancels, so a cancel that crosses
 //! the utterance's own ending on the pipe can never cancel the next one;
@@ -133,25 +133,26 @@ pub struct HostTiming {
     pub sent_at_us: u64,
 }
 
-/// The JSON-encoded part of [`FromHost`]: everything but PCM.
+/// [`FromHost`] as its frame's JSON body gives it: PCM's samples are in
+/// the frame's raw section, and the body gives their place there.
 #[derive(Serialize, Deserialize)]
-enum Control {
+enum Wire {
     Ready(HostDescription),
     FirstAudio(UtteranceId, HostTiming),
     Unavailable(String),
+    Pcm {
+        utterance: UtteranceId,
+        sample_rate: u32,
+        channels: u16,
+        /// Where the samples start in the raw section, in bytes, and how
+        /// many bytes they take: always the whole section.
+        samples: (usize, usize),
+    },
     Mark(UtteranceId, IndexMark),
     Done(UtteranceId),
     Failed(UtteranceId, String),
     SettingApplied(Option<String>),
 }
-
-/// The first byte of a PCM body. No JSON text starts with it, so it tells
-/// PCM from every other message.
-const PCM: u8 = 0;
-
-/// The bytes of a PCM body before its samples: the kind, the utterance,
-/// the sample rate and the channel count.
-const PCM_HEADER: usize = 1 + 8 + 4 + 2;
 
 /// The ids of the synthesizers a synthesizer host can run, shared by Core,
 /// which asks for one by id, and the host, which builds it.
@@ -181,82 +182,114 @@ pub fn decode_to_host(body: &[u8]) -> io::Result<ToHost> {
     parse_json(body)
 }
 
-/// Appends the body of a message from a host to `body`: JSON, or for PCM,
-/// a zero byte, the utterance (a little-endian `u64`), the sample rate (a
-/// `u32`) and the channel count (a `u16`), then the samples as
-/// little-endian `i16`s.
+/// Appends the JSON body of a message from a host's frame to `body`. A
+/// [`FromHost::Pcm`]'s frame also has a raw section, its samples, which
+/// [`put_samples`] appends after the body; the body gives their place.
 ///
 /// # Errors
 ///
 /// Returns the encoding's error.
 pub fn encode_from_host(message: &FromHost, body: &mut Vec<u8>) -> io::Result<()> {
-    let control = match message {
+    let wire = match message {
         FromHost::Pcm(utterance, format, samples) => {
-            encode_pcm(*utterance, *format, samples, body);
-            return Ok(());
+            return encode_pcm(*utterance, *format, samples, body);
         }
-        FromHost::Ready(description) => Control::Ready(description.clone()),
-        FromHost::FirstAudio(utterance, timing) => Control::FirstAudio(*utterance, *timing),
-        FromHost::Unavailable(reason) => Control::Unavailable(reason.clone()),
-        FromHost::Mark(utterance, mark) => Control::Mark(*utterance, *mark),
-        FromHost::Done(utterance) => Control::Done(*utterance),
-        FromHost::Failed(utterance, reason) => Control::Failed(*utterance, reason.clone()),
-        FromHost::SettingApplied(refusal) => Control::SettingApplied(refusal.clone()),
+        FromHost::Ready(description) => Wire::Ready(description.clone()),
+        FromHost::FirstAudio(utterance, timing) => Wire::FirstAudio(*utterance, *timing),
+        FromHost::Unavailable(reason) => Wire::Unavailable(reason.clone()),
+        FromHost::Mark(utterance, mark) => Wire::Mark(*utterance, *mark),
+        FromHost::Done(utterance) => Wire::Done(*utterance),
+        FromHost::Failed(utterance, reason) => Wire::Failed(*utterance, reason.clone()),
+        FromHost::SettingApplied(refusal) => Wire::SettingApplied(refusal.clone()),
     };
-    serde_json::to_writer(body, &control).map_err(io::Error::other)
+    serde_json::to_writer(body, &wire).map_err(io::Error::other)
 }
 
-/// Appends the body of [`FromHost::Pcm`] for `utterance`'s `samples` to
-/// `body`, as [`encode_from_host`] does, without copying the samples into
-/// a message first.
-pub fn encode_pcm(utterance: UtteranceId, format: PcmFormat, samples: &[i16], body: &mut Vec<u8>) {
-    body.reserve(PCM_HEADER + samples.len() * 2);
-    body.push(PCM);
-    body.extend_from_slice(&utterance.0.to_le_bytes());
-    body.extend_from_slice(&format.sample_rate.to_le_bytes());
-    body.extend_from_slice(&format.channels.to_le_bytes());
-    for sample in samples {
-        body.extend_from_slice(&sample.to_le_bytes());
-    }
-}
-
-/// Reads a message from a host from its frame's body.
+/// Appends the JSON body of [`FromHost::Pcm`] for `utterance`'s `samples`
+/// to `body`, as [`encode_from_host`] does, without copying the samples
+/// into a message first: the utterance, the format, and the samples' place
+/// in the raw section, which [`put_samples`] appends.
 ///
 /// # Errors
 ///
-/// Returns [`io::ErrorKind::InvalidData`] for a body that is not one.
-pub fn decode_from_host(body: &[u8]) -> io::Result<FromHost> {
-    if body.first() == Some(&PCM) {
-        if body.len() < PCM_HEADER || !(body.len() - PCM_HEADER).is_multiple_of(2) {
-            return Err(invalid("malformed PCM frame"));
-        }
-        let (header, samples) = body.split_at(PCM_HEADER);
-        let (mut utterance, mut sample_rate, mut channels) = ([0u8; 8], [0u8; 4], [0u8; 2]);
-        utterance.copy_from_slice(&header[1..9]);
-        sample_rate.copy_from_slice(&header[9..13]);
-        channels.copy_from_slice(&header[13..15]);
-        let utterance = UtteranceId(u64::from_le_bytes(utterance));
-        let format = PcmFormat {
-            sample_rate: u32::from_le_bytes(sample_rate),
-            channels: u16::from_le_bytes(channels),
-        };
-        let samples = samples
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| i16::from_le_bytes(*pair))
-            .collect();
-        return Ok(FromHost::Pcm(utterance, format, samples));
+/// Returns the encoding's error.
+pub fn encode_pcm(
+    utterance: UtteranceId,
+    format: PcmFormat,
+    samples: &[i16],
+    body: &mut Vec<u8>,
+) -> io::Result<()> {
+    let wire = Wire::Pcm {
+        utterance,
+        sample_rate: format.sample_rate,
+        channels: format.channels,
+        samples: (0, samples.len() * 2),
+    };
+    serde_json::to_writer(body, &wire).map_err(io::Error::other)
+}
+
+/// Appends the raw section of a PCM frame to `raw`: `samples` as
+/// little-endian `i16`s.
+pub fn put_samples(samples: &[i16], raw: &mut Vec<u8>) {
+    raw.reserve(samples.len() * 2);
+    for sample in samples {
+        raw.extend_from_slice(&sample.to_le_bytes());
     }
-    Ok(match parse_json::<Control>(body)? {
-        Control::Ready(description) => FromHost::Ready(description),
-        Control::FirstAudio(utterance, timing) => FromHost::FirstAudio(utterance, timing),
-        Control::Unavailable(reason) => FromHost::Unavailable(reason),
-        Control::Mark(utterance, mark) => FromHost::Mark(utterance, mark),
-        Control::Done(utterance) => FromHost::Done(utterance),
-        Control::Failed(utterance, reason) => FromHost::Failed(utterance, reason),
-        Control::SettingApplied(refusal) => FromHost::SettingApplied(refusal),
-    })
+}
+
+/// Reads a message from a host from its frame's body and raw section,
+/// which only a PCM frame has.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidData`] for a body that is not one, a
+/// PCM frame whose samples are not its whole raw section or are cut short,
+/// and a raw section with any other message.
+pub fn decode_from_host(body: &[u8], raw: Option<&[u8]>) -> io::Result<FromHost> {
+    let message = match parse_json::<Wire>(body)? {
+        Wire::Pcm {
+            utterance,
+            sample_rate,
+            channels,
+            samples,
+        } => {
+            let format = PcmFormat {
+                sample_rate,
+                channels,
+            };
+            return Ok(FromHost::Pcm(utterance, format, pcm_samples(samples, raw)?));
+        }
+        Wire::Ready(description) => FromHost::Ready(description),
+        Wire::FirstAudio(utterance, timing) => FromHost::FirstAudio(utterance, timing),
+        Wire::Unavailable(reason) => FromHost::Unavailable(reason),
+        Wire::Mark(utterance, mark) => FromHost::Mark(utterance, mark),
+        Wire::Done(utterance) => FromHost::Done(utterance),
+        Wire::Failed(utterance, reason) => FromHost::Failed(utterance, reason),
+        Wire::SettingApplied(refusal) => FromHost::SettingApplied(refusal),
+    };
+    if raw.is_some() {
+        return Err(invalid(
+            "a frame has a raw section its message does not take",
+        ));
+    }
+    Ok(message)
+}
+
+/// The samples a PCM frame's body places at `(start, length)` in its raw
+/// section, which they must fill.
+fn pcm_samples((start, length): (usize, usize), raw: Option<&[u8]>) -> io::Result<Vec<i16>> {
+    let raw = raw.ok_or_else(|| invalid("a PCM frame has no raw section"))?;
+    if start != 0 || length != raw.len() {
+        return Err(invalid("a PCM frame's samples are not its raw section"));
+    }
+    let (samples, rest) = raw.as_chunks::<2>();
+    if !rest.is_empty() {
+        return Err(invalid("a PCM frame's samples end inside a sample"));
+    }
+    Ok(samples
+        .iter()
+        .map(|pair| i16::from_le_bytes(*pair))
+        .collect())
 }
 
 fn parse_json<T: DeserializeOwned>(body: &[u8]) -> io::Result<T> {
@@ -331,29 +364,62 @@ mod tests {
         for message in &from_host {
             let mut body = Vec::new();
             encode_from_host(message, &mut body).unwrap();
-            assert_eq!(&decode_from_host(&body).unwrap(), message);
+            let raw = match message {
+                FromHost::Pcm(_, _, samples) => {
+                    let mut raw = Vec::new();
+                    put_samples(samples, &mut raw);
+                    Some(raw)
+                }
+                _ => None,
+            };
+            assert_eq!(&decode_from_host(&body, raw.as_deref()).unwrap(), message);
         }
     }
 
     #[test]
-    fn a_pcm_body_cut_short_is_refused() {
+    fn a_pcm_frames_body_names_its_samples_place_and_they_follow_as_little_endian() {
         let mut body = Vec::new();
-        encode_from_host(
-            &FromHost::Pcm(
-                UtteranceId(1),
-                PcmFormat {
-                    sample_rate: 22_050,
-                    channels: 1,
-                },
-                vec![1, 2],
-            ),
-            &mut body,
-        )
-        .unwrap();
-        body.pop();
+        let format = PcmFormat {
+            sample_rate: 22_050,
+            channels: 1,
+        };
+        encode_pcm(UtteranceId(7), format, &[1, -2], &mut body).unwrap();
         assert_eq!(
-            decode_from_host(&body).unwrap_err().kind(),
-            io::ErrorKind::InvalidData
+            String::from_utf8(body).unwrap(),
+            r#"{"Pcm":{"utterance":7,"sample_rate":22050,"channels":1,"samples":[0,4]}}"#
         );
+        let mut raw = Vec::new();
+        put_samples(&[1, -2], &mut raw);
+        assert_eq!(raw, [1, 0, 0xFE, 0xFF]);
+    }
+
+    #[test]
+    fn a_malformed_pcm_frame_is_refused() {
+        let pcm = |samples: &str| {
+            format!(
+                r#"{{"Pcm":{{"utterance":1,"sample_rate":22050,"channels":1,"samples":{samples}}}}}"#
+            )
+        };
+        let done = br#"{"Done":1}"#;
+        for (body, raw) in [
+            // Samples cut short: the raw section shorter than the body says.
+            (pcm("[0,4]"), Some(&[1u8, 0, 2][..])),
+            // A raw section longer than the samples the body names.
+            (pcm("[0,2]"), Some(&[1, 0, 2, 0][..])),
+            // Samples placed outside the raw section.
+            (pcm("[2,4]"), Some(&[1, 0, 2, 0][..])),
+            // An odd number of bytes, ending inside a sample.
+            (pcm("[0,3]"), Some(&[1, 0, 2][..])),
+            // No raw section at all.
+            (pcm("[0,0]"), None),
+            // A raw section with a message that takes none.
+            (String::from_utf8(done.to_vec()).unwrap(), Some(&[][..])),
+        ] {
+            assert_eq!(
+                decode_from_host(body.as_bytes(), raw).unwrap_err().kind(),
+                io::ErrorKind::InvalidData,
+                "{body} with {raw:?}"
+            );
+        }
     }
 }

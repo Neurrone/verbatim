@@ -7,7 +7,9 @@ Each `HostedSynth` owns one `verbatim-synth-host.exe`
 through [verbatim-process](verbatim-process.md), and talks to it with the
 protocol in `verbatim_speech::hosting`
 ([verbatim-speech](verbatim-speech.md)), each message a frame of
-`verbatim_process::transport`. A synthesizer that crashes,
+`verbatim_process::transport`: a JSON body, and for PCM the samples in
+the frame's raw section, which the synth thread decodes with the body
+(`decode_from_host`). A synthesizer that crashes,
 hangs, or leaks then takes down only its host, and the next utterance
 starts a new one.
 

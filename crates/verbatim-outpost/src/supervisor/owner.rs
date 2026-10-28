@@ -543,7 +543,7 @@ impl Owner {
                     // When verbatim.exe took the message in, before it is
                     // parsed (`docs/design/communication.md`, section 10.1).
                     let received = Received::now();
-                    self.listener_message(outpost, received, decode_message(body.bytes())?);
+                    self.listener_message(outpost, received, decode_message(body.parts())?);
                     Ok(())
                 }
                 Source::Outpost(pid) => self.outpost_frame(outpost, pid, body),
@@ -598,13 +598,13 @@ impl Owner {
             return Ok(());
         }
         let read_at_us = now_us();
-        match message_kind(body.bytes()) {
+        match message_kind(body.parts().body) {
             Some("Pong") => {
                 let OutpostToSupervisor::Pong {
                     parked_count,
                     written_at_us,
                     ..
-                } = decode_message(body.bytes())?
+                } = decode_message(body.parts())?
                 else {
                     return Err(io::Error::other("a pong that is not a pong"));
                 };
@@ -635,7 +635,7 @@ impl Owner {
                     .records
                     .get_mut(&pid)
                     .filter(|record| record.spare.is_some() && !record.ready)
-                    && let OutpostToSupervisor::Fault { detail } = decode_message(body.bytes())?
+                    && let OutpostToSupervisor::Fault { detail } = decode_message(body.parts())?
                 {
                     record.fault = Some(detail);
                 }
@@ -653,10 +653,10 @@ impl Owner {
         let Some(spare) = self.spare_children.get_mut(&outpost) else {
             return Ok(());
         };
-        match message_kind(body.bytes()) {
+        match message_kind(body.parts().body) {
             Some("Pong") => spare.last_pong_at = Instant::now(),
             Some("SpareReady") => {
-                let OutpostToSupervisor::SpareReady { outpost_pid } = decode_message(body.bytes())?
+                let OutpostToSupervisor::SpareReady { outpost_pid } = decode_message(body.parts())?
                 else {
                     return Err(io::Error::other("a spare's ready that is not one"));
                 };
@@ -670,7 +670,7 @@ impl Owner {
                 }
             }
             Some("Fault") => {
-                if let OutpostToSupervisor::Fault { detail } = decode_message(body.bytes())? {
+                if let OutpostToSupervisor::Fault { detail } = decode_message(body.parts())? {
                     tracing::warn!(%outpost, detail, "spare outpost fault");
                     spare.fault = Some(detail);
                 }

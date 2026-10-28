@@ -655,11 +655,34 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   `OutpostToSupervisor::assign_outpost` is the stamp Core applies to every
   node id in a message. Each message is one frame of
   `verbatim_process::transport`, a `Content-Length` header and the message
-  as compact JSON, through `write_message` and `read_message`;
-  `write_message` hands its writer the whole frame in one write, so a
-  message is one `WriteFile` on a bare pipe, `encode_message` gives those
-  bytes without writing them, `put_message` appends them to a buffer a
-  sender writes from, and `decode_message` parses a frame's body.
+  as compact JSON, through `write_message` and `read_message`, for any
+  type that implements `Message` (`put_frame` and `from_parts`):
+  `SupervisorToOutpost` and `OutpostToSupervisor`. `write_message` hands
+  its writer the whole frame in one write, so a message is one
+  `WriteFile` on a bare pipe, `encode_message` gives those bytes without
+  writing them, `put_message` appends them to a buffer a sender writes
+  from, and `decode_message` parses a frame's `Parts`. A message that
+  carries a terminal's text, an event with a `TerminalSnapshot` and a
+  reply with a `TerminalSnapshot`, `TerminalHistory` or `TerminalFound`,
+  is framed with a raw section (the private `protocol::raw` module, and
+  `docs/design/communication.md`, section 4.2): every text in it is
+  UTF-8 in the raw section and its place in the JSON a range,
+  `"raw":[start,length]` in a `TerminalText` and `"text":[start,length]`
+  for a history's or a match's text, and a read's colour runs are 16-byte
+  records there, four little-endian `u32`s (column, length, foreground,
+  background), the JSON giving `"colours":{"raw":[start,length],"rows":[...]}`
+  with each row's run count. The module converts to these wire forms
+  while encoding, borrowing from the message, and back while decoding,
+  validating each text with `simdutf8` and copying it into a `String`;
+  the model's types know nothing of it. A range outside the raw section,
+  invalid UTF-8, colour records that do not fill their range, or a raw
+  section longer or shorter than the ranges name is a protocol error, and
+  so is a raw section on any other message. Every other message is its
+  JSON alone, byte for byte as before. A short example, a terminal's
+  history whose text is `abc` has a header with the JSON's length and
+  `Raw-Length: 0000000003`, a JSON body whose outcome is
+  `{"Done":{"Text":{"TerminalHistory":{"text":[0,3],"above":0,"read":0}}}}`,
+  and then the three bytes `abc`.
   `message_kind(body)` reads a frame's kind, the name of the message's
   variant, from the body's first bytes without parsing the rest, as
   serde's external tagging writes it (`{"Pong":...}`, `"TargetExited"`);
@@ -946,7 +969,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   process, takes the overlapped end it writes to, and a thread of its
   sender's own finishes its writes that pend in place of the I/O thread.
   `run_attach` watches a pid directly, asks for its focus, and prints each
-  outbound message's JSON as a line on stdout, from a thread that reads
+  outbound message as the model's JSON, a terminal's text inside it, as a
+  line on stdout, from a thread that reads
   the outpost's pipe, the standalone dev mode. Both take an
   `OutpostOptions`, fixed for the outpost's life, whose one field,
   `remote_operations`, says whether a UIA focus's ancestry may be read
@@ -1232,8 +1256,10 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   relay read it, and numbers the messages that carry node ids in pipe
   order, as the outposts' reader threads did; so each outpost's messages
   and its `Ended` reach the app in the order the relay delivered them
-  (`docs/design/communication.md`, section 4.8). A frame of 256 KiB
-  takes about half a millisecond to parse in a release build. A frame
+  (`docs/design/communication.md`, section 4.8). A terminal's
+  whole-document read of 9,000 lines takes 0.02 to 0.3 ms to parse in a
+  release build, its text in the frame's raw section (`docs/performance.md`,
+  "verbatim.exe's relay"). A frame
   that is not a message has its outpost ended, as a pipe that fails
   does, and its later frames are dropped, only its `Ended` handed on.
   The relay drops every frame from
