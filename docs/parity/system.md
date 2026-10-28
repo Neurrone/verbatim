@@ -134,8 +134,8 @@ add-on's dialog). NVDA's add-on clicks the center of the rectangle it
 recorded for the chosen icon when it made the list, so an icon that
 moved since, as tray icons do when another is added or removed, leaves
 a different icon, or none, under the click. Verbatim: **different**
-(`docs/design/safety-audit-2026-10-06.md`, "D4. A shell item click goes
-to a rectangle captured when the list was built"): the list records no
+(`docs/crates/verbatim-gui.md`, `refind`; the module documentation of
+`crates/verbatim-gui/src/tray_list.rs`): the list records no
 rectangles; a click has the outpost walk the tray or taskbar again and
 read the rectangle of each button with the chosen item's UIA runtime id or
 name, and Core takes the one with its runtime id, or else the only one
