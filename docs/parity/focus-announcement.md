@@ -7,13 +7,12 @@ What a focus announcement contains and in what order: names, roles, states, valu
 Focus announcement content and property order (name, role, value,
 states in fixed order, description, shortcut, position, level).
 NVDA: `speakObject` ordering ([Speech](../nvda/speech.md)). Verbatim:
-the per-property order is transcribed in `verbatim-core`
-([verbatim-core](../crates/verbatim-core.md)), and E2E scenarios assert
-the wording. **partial**: the cases below that are matched are pinned by
-the tests each names, or by reducer, mapping, and mockapp tests; the
-rest are listed as not yet or different.
-
-Matched:
+**matched (verified)**: the per-property order is transcribed in
+`verbatim-core` ([verbatim-core](../crates/verbatim-core.md)), E2E
+scenarios assert the wording, and each case below is pinned by the tests
+it names, or by reducer, mapping, and mockapp tests. The cases not yet
+built are in "Focus announcement cases not yet built". Different: an
+empty field has no placeholder to speak.
 
 - Roles spoken: NVDA speaks no role on focus for a set of roles, among
   them list item, menu item, tree view item, pane, static text, and
@@ -48,13 +47,6 @@ Matched:
 - "multi line" for a standard or rich edit control with the
   `ES_MULTILINE` style, after "read only", as NVDA's edit control class
   says it; UIA's multi-line state is dropped, as NVDA drops it.
-- Group boxes: NVDA announces the group box a control sits in when the
-  focus enters it ("Synthesizer grouping" before the Change button),
-  finding it by position since a Win32 group box is the control's
-  sibling (`findGroupboxObject`). Verbatim gives a control's window
-  object, as its container, the first visible group box before it in
-  z-order whose rectangle holds it (`native_controls` mockapp test with
-  real buttons; the settings dialog's Speech page end to end).
 - A window's own MSAA object is matched by the address its identity
   string names, so a dialog whose title changes (Control+Tab to another
   settings category) is the same node and is not announced again, and
@@ -74,11 +66,6 @@ Matched:
   names a new foreground window from the top of the focus's ancestry, as
   NVDA does when no foreground event named it (every scenario that opens
   the menu asserts both).
-- Sliders: a standard trackbar's MSAA value is its position as a
-  percentage of its range; each of Verbatim's settings sliders gives its
-  position as its value, so both screen readers read the setting itself
-  (the `terminal_settings_page` scenario). Every other control on the
-  Speech, Theme, and Terminal pages reads the same in both.
 - Values and descriptions: an edit field or document does not speak the
   whole field after every keystroke; an unchanged value is not repeated;
   a check box, radio button, link, menu item, or application never
@@ -113,76 +100,6 @@ Matched:
   when it changes; a half-checked progress bar is a "busy indicator"
   with no half-checked state and no value spoken, as NVDA adjusts it
   (map unit tests and reducer tests).
-- Text on focus: NVDA reads an edit field's selection or the line at
-  the caret through its text interface, in place of its value ("What an
-  object with text says" in [Speech](../nvda/speech.md)). Verbatim, through
-  the text protocol, speaks the name, role, and states at once, and the
-  line, or "selected" with the selected text, from the focus's message;
-  an edit field, document, or terminal with no text interface speaks its
-  value when the outpost says so (`NoText`), after the rest of the
-  announcement rather than between the role and the states. Object navigation, to-focus, and reporting the current
-  object read the text the same way, whether or not the object has the
-  focus: the selected text, else the line at the caret, else the first
-  line of a control that reports no caret, and the value when it has no
-  text interface. The focus's line comes in the focus's own message, read
-  by the outpost while it handled the focus, so nothing is spoken between
-  the focus and its line, as NVDA says the line with the focus. On
-  Shift+Tab into Settings' search box holding "sound", NVDA says one
-  utterance, "Search box, Find a setting edit sound", and Verbatim two,
-  the box and then "sound", which compare mode judges the same on their
-  joined text; both are cut off by the suggestion "Sound settings 1 of
-  22" (`rapid-tab-nvda-1.txt` in
-  `target/e2e-evidence/fixes-round-six-2026-10-21`; the scenario
-  `settings_search_suggestions_reentered`). When the outpost cannot read
-  the caret (`NotRead`), Verbatim speaks neither the line nor the value,
-  where NVDA, whose read of the selection fails, reads the line at the
-  text's first position instead (`nvda/source/speech/speech.py`, lines
-  905 to 923; "What an object with text says" in
-  [Speech](../nvda/speech.md)). Windows Terminal's second focus
-  identity, whose text NVDA cannot read either, says "terminal" alone
-  in both (`part2c-*` in
-  `target/e2e-evidence/m42-desktop-2-2026-10-22`); for any other text
-  whose caret cannot be read, NVDA's first line is a difference. A
-  protected (password) field's text is read as any field's, masked as
-  its text interface gives it, on focus, by caret movement, and for
-  Backspace, Delete, Control+Backspace and Control+Delete, as NVDA
-  reads it ("Protected (password) fields" in
-  [Editable text and terminals](../nvda/editable-text-and-terminals.md)):
-  stars in a classic edit control, whose text Verbatim masks as NVDA's
-  edit control text does, and the provider's circles in a WPF
-  `PasswordBox`; a typed character is still echoed as "star"
-  ([input.md](input.md)). Without symbol processing (M8) the masked text
-  is spoken as its characters, where NVDA says a run of stars by its
-  count and drops a line of circles: Tab into a Windows Forms password
-  box holding six characters says "Password edit protected" and
-  "selected ******" where NVDA says "selected 6 star", and Tab into the
-  `PasswordBox` says the six circles where NVDA says no text
-  ("Symbol/punctuation processing" in [speech-audio.md](speech-audio.md)).
-  The Windows Forms box's Control+Backspace deletes nothing and inserts
-  a DEL character, masked as a star, and is silent, where NVDA says the
-  word it expected to go, as in any classic edit control
-  ([text.md](text.md), "TextInfo-equivalent layer"). These are pinned by
-  `text_box_password` and `wpf_password`, from
-  `winforms-password-focus.txt` and `wpf-uia-password-focus.txt` in
-  `target/e2e-evidence/m42-selection-keys-2026-10-22/` and
-  `winforms-password-deleting-keys.txt`,
-  `wpf-password-deleting-keys.txt` and
-  `wpf-password-deleting-keys-without-home.txt` in
-  `target/e2e-evidence/m42-protected-fixes-2026-10-22/`. Reading a
-  masked field with the review cursor or object navigation is
-  matched (unverified): it takes the same reads as any field's, and
-  Core's unit test `navigating_to_a_protected_edit_field_reads_its_masked_selection`
-  covers object navigation's request, but no capture or scenario has
-  either in a password field yet.
-- Multi-column list view items: NVDA names an item of a report view
-  (such as msinfo32's right pane) from its column texts, "content;
-  Header: content", with no value or description. Verbatim names an item
-  of a `SysListView32` in the report view or tiles by its columns in the
-  order shown, each but the first after its header, leaving out a column
-  of zero width or no text, through the control's messages with their
-  structures in the list view's process, and gives no list view item a
-  value or description (`native_controls` mockapp test, a real list
-  view; the end-to-end scenario is still to be written).
 - MSAA description changes (`EVENT_OBJECT_DESCRIPTIONCHANGE`) on the
   focus, and state changes, a selection included, on the focus's
   ancestors (reducer tests). An ancestor is recognized by the address it
@@ -204,10 +121,111 @@ Matched:
   the `msaa_events` mockapp test pins that a real tree view item's
   logical parent is not such an ancestor).
 
-Not yet:
+### Group boxes
 
-- The group box's description, which NVDA takes from a static text
-  right after it.
+NVDA announces the group box a control sits in when the focus enters it
+("Synthesizer grouping" before the Change button), finding it by
+position since a Win32 group box is the control's sibling
+(`findGroupboxObject`), and takes the group box's description from a
+static text right after it. Verbatim: **partial**: a control's window
+object is given, as its container, the first visible group box before it
+in z-order whose rectangle holds it (`native_controls` mockapp test with
+real buttons; the settings dialog's Speech page end to end); the group
+box's description is not yet read.
+
+### Sliders
+
+A standard trackbar's MSAA value is its position as a percentage of its
+range. Verbatim: **matched (verified)**: each of Verbatim's settings
+sliders gives its position as its value, so both screen readers read the
+setting itself (the `terminal_settings_page` scenario). Every other
+control on the Speech, Theme, and Terminal pages reads the same in both.
+
+### Text on focus
+
+NVDA reads an edit field's selection or the line at the caret through
+its text interface, in place of its value ("What an object with text
+says" in [Speech](../nvda/speech.md)); when its read of the selection
+fails, it reads the line at the text's first position instead
+(`nvda/source/speech/speech.py`, lines 905 to 923). A protected
+(password) field's text is read as any field's, masked as its text
+interface gives it ("Protected (password) fields" in
+[Editable text and terminals](../nvda/editable-text-and-terminals.md)).
+
+Verbatim: **matched (verified)**, through the text protocol. The name,
+role, and states are spoken at once, and the line, or "selected" with
+the selected text, from the focus's message; an edit field, document,
+or terminal with no text interface speaks its value when the outpost
+says so (`NoText`), after the rest of the announcement rather than
+between the role and the states. Object navigation, to-focus, and
+reporting the current object read the text the same way, whether or not
+the object has the focus: the selected text, else the line at the caret,
+else the first line of a control that reports no caret, and the value
+when it has no text interface. The focus's line comes in the focus's own
+message, read by the outpost while it handled the focus, so nothing is
+spoken between the focus and its line, as NVDA says the line with the
+focus.
+
+- On Shift+Tab into Settings' search box holding "sound", NVDA says one
+  utterance, "Search box, Find a setting edit sound", and Verbatim two,
+  the box and then "sound", which compare mode judges the same on their
+  joined text; both are cut off by the suggestion "Sound settings 1 of
+  22" (`rapid-tab-nvda-1.txt` in
+  `target/e2e-evidence/fixes-round-six-2026-10-21`; the scenario
+  `settings_search_suggestions_reentered`).
+- When the outpost cannot read the caret (`NotRead`), Verbatim speaks
+  neither the line nor the value. Windows Terminal's second focus
+  identity, whose text NVDA cannot read either, says "terminal" alone in
+  both (`part2c-*` in `target/e2e-evidence/m42-desktop-2-2026-10-22`);
+  for any other text whose caret cannot be read, NVDA's first line is a
+  difference.
+- A protected field is read, masked, on focus, by caret movement, and
+  for Backspace, Delete, Control+Backspace and Control+Delete, as NVDA
+  reads it: stars in a classic edit control, whose text Verbatim masks as
+  NVDA's edit control text does, and the provider's circles in a WPF
+  `PasswordBox`; a typed character is still echoed as "star"
+  ([input.md](input.md)). Without symbol processing (M8) the masked text
+  is spoken as its characters, where NVDA says a run of stars by its
+  count and drops a line of circles: Tab into a Windows Forms password
+  box holding six characters says "Password edit protected" and
+  "selected ******" where NVDA says "selected 6 star", and Tab into the
+  `PasswordBox` says the six circles where NVDA says no text
+  ("Symbol/punctuation processing" in [speech-audio.md](speech-audio.md)).
+  The Windows Forms box's Control+Backspace deletes nothing and inserts
+  a DEL character, masked as a star, and is silent, where NVDA says the
+  word it expected to go, as in any classic edit control
+  ([text.md](text.md), "What Backspace and Delete say"). Pinned by
+  `text_box_password` and `wpf_password`, from
+  `winforms-password-focus.txt` and `wpf-uia-password-focus.txt` in
+  `target/e2e-evidence/m42-selection-keys-2026-10-22/` and
+  `winforms-password-deleting-keys.txt`,
+  `wpf-password-deleting-keys.txt` and
+  `wpf-password-deleting-keys-without-home.txt` in
+  `target/e2e-evidence/m42-protected-fixes-2026-10-22/`.
+- Reading a masked field with the review cursor or object navigation is
+  matched (unverified): it takes the same reads as any field's, and
+  Core's unit test
+  `navigating_to_a_protected_edit_field_reads_its_masked_selection`
+  covers object navigation's request, but no capture or scenario has
+  either in a password field.
+
+### Multi-column list view items
+
+NVDA names an item of a report view (such as msinfo32's right pane) from
+its column texts, "content; Header: content", with no value or
+description. Verbatim: **matched (verified)**: an item of a
+`SysListView32` in the report view or tiles is named by its columns in
+the order shown, each but the first after its header, leaving out a
+column of zero width or no text, through the control's messages with
+their structures in the list view's process, and no list view item has a
+value or description (`native_controls` mockapp test, a real list view;
+no end-to-end scenario covers it).
+
+### Focus announcement cases not yet built
+
+Verbatim: **not yet (unscheduled)**, but for the display model's case,
+which is M14.
+
 - In Windows 11 Notepad, opening a file in a Notepad already running:
   NVDA announces the window again as its title changes to the file's
   ("editing dot txt - Notepad"), where Verbatim announces only the text
@@ -229,8 +247,6 @@ Not yet:
   to the focus-following registration ("UIA event registration" in
   [backends.md](backends.md)), so a UIA ancestor's state change is not
   spoken.
-
-Different: an empty field has no placeholder to speak.
 
 ### Table cell coordinates
 
