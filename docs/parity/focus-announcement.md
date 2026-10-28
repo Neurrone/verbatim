@@ -190,7 +190,8 @@ focus.
   box holding six characters says "Password edit protected" and
   "selected ******" where NVDA says "selected 6 star", and Tab into the
   `PasswordBox` says the six circles where NVDA says no text
-  ("Symbol/punctuation processing" in [speech-audio.md](speech-audio.md)).
+  ("Symbol/punctuation processing, speech dictionaries, character
+  descriptions" in [speech-audio.md](speech-audio.md)).
   The Windows Forms box's Control+Backspace deletes nothing and inserts
   a DEL character, masked as a star, and is silent, where NVDA says the
   word it expected to go, as in any classic edit control

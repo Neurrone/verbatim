@@ -304,7 +304,7 @@ not built: no such combo box was found to try it on. Not built either:
 the classic .NET Framework Windows Forms combo box (the roadmap's audit
 item 11, deferred).
 
-### An expanded combo box's items
+### A combo box opened into its list
 
 NVDA, captured on 2026-10-21 (NVDA alpha-58022, the pin), arrowing the
 Settings combo box "Show additional calendars in the taskbar" after

@@ -8,8 +8,8 @@ swallow, double-tap passthrough,
 trapped-key release swallowing, unbound-chord fallthrough.
 NVDA: `keyboardHandler` ([Keyboard input](../nvda/input.md)). Verbatim:
 **partial**. The semantics are matched, verified by unit tests and
-transcribed ([verbatim-input](../crates/verbatim-input.md)); a live
-side-by-side session with NVDA is still worth one session. Sticky and
+transcribed ([verbatim-input](../crates/verbatim-input.md)); no live
+side-by-side session with NVDA has been made. Sticky and
 locked modifier states are not yet built. Different, by decision
 (Dickson, 2026-10-03): Caps Lock is a Verbatim key by default (see
 "Spoken vocabulary and key layouts" in [the readme](readme.md)). NVDA

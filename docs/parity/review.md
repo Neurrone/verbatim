@@ -129,7 +129,7 @@ windowless sibling in the same window, is a real neighbor, except that
 a first child must be in the object's own window or one inside it, and
 an object whose `accNavigate` finds no first child is asked for its
 children (`AccessibleChildren`), both as NVDA does. Verbatim: **matched
-(verified)**; an NVDA wording comparison is still worthwhile.
+(verified)**; no NVDA wording comparison has been made.
 
 ### Sibling navigation resolving back to self reported as edge
 
@@ -151,14 +151,13 @@ Forms tree view (`WindowsForms10.SysTreeView32.app.…`) gets the same
 handling, since NVDA matches its class rules against the normalized
 class name, and so does every class rule in `verbatim-ia2`
 (`native_controls` mockapp test, a real comctl32 tree view under a
-Windows Forms class name; the end-to-end scenario is still to be
-written). A tree view that draws its own check boxes
+Windows Forms class name; no end-to-end scenario covers it). A tree view that draws its own check boxes
 (msconfig's, say) says whether an item is checked only through the
 item's state image, which NVDA reads with `TVM_GETITEMSTATE`: any state
 image makes the item checkable, the second checked, and the third half
 checked; Verbatim reads it the same way (`native_controls` mockapp test:
-"checked", "not checked", and a half-checked parent; the end-to-end
-scenario is still to be written). A tree item outside a `SysTreeView32`
+"checked", "not checked", and a half-checked parent; no end-to-end
+scenario covers it). A tree item outside a `SysTreeView32`
 is NVDA's generic outline item, which drops its value only when it is a
 number and takes no level from it, as Verbatim does (`native_controls`
 mockapp test, scripted tree items). Different: a tree view with
@@ -257,8 +256,8 @@ announcement comes from the same comparison of the selection before and
 after, and the same wording, as a selecting key's, and the first press
 says "Can't select text, press twice to copy" when the text cannot be
 selected, flat text included. The marker in another object saying "No
-start marker set" is Dickson's decision of 2026-10-26. The range with the review cursor moved back before the
-marker is covered by
+start marker set" is Dickson's decision (Dickson, 2026-10-26). The range
+with the review cursor moved back before the marker is covered by
 `select_then_copy_back_from_the_marker_runs_from_the_cursor_through_the_marker`
 (`crates/verbatim-core/tests/text.rs`), with flat text by
 `flat_review_copies_back_from_the_marker_through_the_marker_s_character`
@@ -268,8 +267,8 @@ A copy the text cannot answer says "Not supported in this document" and
 clears the marker too, a recorded difference: NVDA keeps the marker and
 says nothing, since the read's failure escapes its script. NVDA's "No
 text to copy", for a first press whose range holds nothing, which it
-says and then clears the marker, is not built: the range holds nothing only where the marker and the review
-cursor are at the same place with no character there, such as the end of
+says and then clears the marker, is not built: the range holds nothing
+only where the marker and the review cursor are at the same place with no character there, such as the end of
 the text, and Core cannot tell that two positions from different reads
 are the same place, so such a press asks the control to select nothing,
 and its second press copies nothing.
