@@ -13,12 +13,9 @@
 //!   half a millisecond, with no measurable change in processor time or
 //!   wake-ups; raising the threads that compute did not pay, and is not
 //!   done.
-//! - Opting out of power throttling, for a process
-//!   ([`opt_out_of_power_throttling`]) or a thread
-//!   ([`opt_current_thread_out_of_power_throttling`]), keeps it on fast
-//!   cores at full clocks, which costs energy for every unit of work. The
-//!   same measurement found no latency gain from it, so Verbatim's
-//!   processes do not ask for it.
+//! - Power throttling is left to Windows: opting out keeps a process on
+//!   fast cores at full clocks, which costs energy for every unit of work,
+//!   and the same measurement found no latency gain from it.
 //!
 //! Timer resolution is not raised: nothing on the relay's path waits on a
 //! timer.
@@ -26,13 +23,8 @@
 use std::io;
 
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, GetCurrentThread, PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-    PROCESS_POWER_THROTTLING_EXECUTION_SPEED, PROCESS_POWER_THROTTLING_STATE,
-    ProcessPowerThrottling, SetProcessInformation, SetThreadInformation, SetThreadPriority,
-    THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED,
-    THREAD_POWER_THROTTLING_STATE, THREAD_PRIORITY, THREAD_PRIORITY_ABOVE_NORMAL,
+    GetCurrentThread, SetThreadPriority, THREAD_PRIORITY, THREAD_PRIORITY_ABOVE_NORMAL,
     THREAD_PRIORITY_HIGHEST, THREAD_PRIORITY_NORMAL, THREAD_PRIORITY_TIME_CRITICAL,
-    ThreadPowerThrottling,
 };
 
 /// A thread's priority within its process's normal priority class.
@@ -60,37 +52,6 @@ impl ThreadPriority {
     }
 }
 
-/// Opts this process out of execution-speed power throttling (`EcoQoS`),
-/// so Windows never runs it on efficiency cores at a low clock for being a
-/// windowless background process. Every Verbatim process calls it first
-/// thing.
-///
-/// # Errors
-///
-/// Returns the error if Windows refuses the request.
-pub fn opt_out_of_power_throttling() -> io::Result<()> {
-    // The control mask names the policy this process decides itself; the
-    // state mask's zero says it is off.
-    let state = PROCESS_POWER_THROTTLING_STATE {
-        Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-        ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
-        StateMask: 0,
-    };
-    // SAFETY: returns a pseudo-handle and has no preconditions.
-    let process = unsafe { GetCurrentProcess() };
-    // SAFETY: the pseudo-handle of this process; `state` is a correctly
-    // sized PROCESS_POWER_THROTTLING_STATE alive across the call.
-    unsafe {
-        SetProcessInformation(
-            process,
-            ProcessPowerThrottling,
-            (&raw const state).cast(),
-            u32::try_from(size_of::<PROCESS_POWER_THROTTLING_STATE>()).unwrap_or(0),
-        )
-    }
-    .map_err(io::Error::other)
-}
-
 /// Runs the calling thread at `priority`, for a thread an event waits on
 /// as it crosses processes. Dynamic priority boosts stay on.
 ///
@@ -102,32 +63,6 @@ pub fn prioritize_current_thread(priority: ThreadPriority) -> io::Result<()> {
     let thread = unsafe { GetCurrentThread() };
     // SAFETY: the pseudo-handle of the calling thread.
     unsafe { SetThreadPriority(thread, priority.value()) }.map_err(io::Error::other)
-}
-
-/// Opts the calling thread out of execution-speed power throttling.
-///
-/// # Errors
-///
-/// Returns the error if Windows refuses the request.
-pub fn opt_current_thread_out_of_power_throttling() -> io::Result<()> {
-    // SAFETY: returns a pseudo-handle and has no preconditions.
-    let thread = unsafe { GetCurrentThread() };
-    let state = THREAD_POWER_THROTTLING_STATE {
-        Version: THREAD_POWER_THROTTLING_CURRENT_VERSION,
-        ControlMask: THREAD_POWER_THROTTLING_EXECUTION_SPEED,
-        StateMask: 0,
-    };
-    // SAFETY: the pseudo-handle of the calling thread; `state` is a
-    // correctly sized THREAD_POWER_THROTTLING_STATE alive across the call.
-    unsafe {
-        SetThreadInformation(
-            thread,
-            ThreadPowerThrottling,
-            (&raw const state).cast(),
-            u32::try_from(size_of::<THREAD_POWER_THROTTLING_STATE>()).unwrap_or(0),
-        )
-    }
-    .map_err(io::Error::other)
 }
 
 /// [`prioritize_current_thread`] for the thread playing `role`, logging a
@@ -157,31 +92,5 @@ mod tests {
         })
         .join()
         .expect("the thread ran");
-    }
-
-    #[test]
-    fn an_opted_out_process_decides_its_execution_speed_and_has_it_off() {
-        opt_out_of_power_throttling().expect("the request is accepted");
-        let mut state = PROCESS_POWER_THROTTLING_STATE {
-            Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
-            ..PROCESS_POWER_THROTTLING_STATE::default()
-        };
-        // SAFETY: returns a pseudo-handle and has no preconditions.
-        let process = unsafe { GetCurrentProcess() };
-        // SAFETY: the pseudo-handle of this process; `state` is a correctly
-        // sized PROCESS_POWER_THROTTLING_STATE the call writes.
-        unsafe {
-            windows::Win32::System::Threading::GetProcessInformation(
-                process,
-                ProcessPowerThrottling,
-                (&raw mut state).cast(),
-                u32::try_from(size_of::<PROCESS_POWER_THROTTLING_STATE>()).expect("small"),
-            )
-        }
-        .expect("the state is readable");
-        assert_eq!(
-            (state.ControlMask, state.StateMask),
-            (PROCESS_POWER_THROTTLING_EXECUTION_SPEED, 0)
-        );
     }
 }

@@ -43,8 +43,7 @@ commit updated only the changed crate's own guide.
   synthesizer.
 - [verbatim-process](verbatim-process.md) — contained child processes:
   kill-on-close jobs, inherited pipes, and per-launch child logs; unnamed
-  overlapped pipes and a completion port; and the scheduling requests
-  (power throttling, thread priority).
+  overlapped pipes and a completion port; and thread priorities.
 - [verbatim-trace-waits](verbatim-trace-waits.md) — how long threads
   waited to run, from a WPR trace (`cargo xtask trace waits`).
 - [verbatim-term-sim](verbatim-term-sim.md) — a simulated terminal for the

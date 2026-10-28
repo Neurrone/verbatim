@@ -127,10 +127,6 @@ Public API:
   dropped with it.
 - `scheduling` (Dickson's decision of 2026-10-08;
   `docs/design/communication.md`, section 6.1) —
-  `opt_out_of_power_throttling()` opts the process out of execution-speed
-  power throttling (`EcoQoS`, `SetProcessInformation` with
-  `ProcessPowerThrottling`), which Windows otherwise applies to a
-  windowless background process; the power plan is untouched.
   `prioritize_current_thread(priority)` runs the calling thread at a
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`);
   `prioritize_role(role, priority)` does the same and logs a refusal as
@@ -144,11 +140,9 @@ Public API:
   level once per role in a constant of its own. Every other thread keeps
   normal priority: raising the threads that compute did not pay when
   measured (`docs/design/communication.md`, section 11, step 3).
-  `opt_out_of_power_throttling()` and
-  `opt_current_thread_out_of_power_throttling()` opt the process or the
-  calling thread out of execution-speed power throttling; nothing outside
-  this crate's tests calls them, since the same measurement found no gain
-  that would pay for the energy. Timer resolution is not raised.
+  Power throttling is left to Windows, since the same measurement found
+  no gain from opting out that would pay for the energy. Timer resolution
+  is not raised.
 - `transport` — the frames and senders of the pipes between verbatim.exe
   and its outposts, listener and synthesizer hosts (`docs/design/communication.md`, section
   4). A frame is `Content-Length: ` and the body's length in ten digits, a
