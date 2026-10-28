@@ -164,13 +164,15 @@ attributed.
   and travels as a duration (`EventTiming::core_relay_us`), so it does not
   depend on clocks agreeing across processes. The spans either side use
   the clock every process shares (`verbatim_process::clock`).
-- On the way back its reader stamps when it read and parsed each outpost
-  message, separating the pipe from the wait for the reducer.
+- On the way back the relay stamps when it read each outpost frame, and
+  the reducer parses it, separating the pipe from the wait for the
+  reducer.
 - The reducer parses every outpost frame on its own thread, whatever its
   size, with no wake-up of its own: a few microseconds for the common
-  messages and about half a millisecond for a frame of 256 KiB in a
-  release build, which keys and other outposts' frames posted after it
-  wait for.
+  messages and about 2 ms per megabyte in a release build, so about half
+  a millisecond for a frame of 256 KiB and 2 to 4 ms for a terminal's
+  whole-document read of 1 to 2 MB, which keys and other outposts' frames
+  posted after it wait for.
 - A fact held while its outpost starts is reported as "waiting for the
   outpost to start". An application's outpost is usually a spare started
   ahead of need (`docs/design/focus-pipeline.md`, section 19), so the wait

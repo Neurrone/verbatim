@@ -150,9 +150,10 @@ impl std::fmt::Display for EndReason {
     }
 }
 
-/// Where the supervisor delivers its [`OutpostMessage`]s. The relay and the
-/// launch helpers deliver through the same sink, so a sink that puts each message in one queue gives the app
-/// every outpost's messages in the order they reached the supervisor. The
+/// Where the supervisor delivers its [`OutpostMessage`]s. Only the relay
+/// delivers through it, so a sink that puts each message in one queue gives
+/// the app every outpost's messages in the order they reached the
+/// supervisor. The
 /// app's sink posts them to the reducer thread's port, among its keys and
 /// commands (`docs/design/communication.md`, section 4.5); a channel of
 /// [`OutpostMessage`]s converts into a sink, for tests.
