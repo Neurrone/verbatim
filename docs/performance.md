@@ -169,10 +169,10 @@ attributed.
   reducer.
 - The reducer parses every outpost frame on its own thread, whatever its
   size, with no wake-up of its own: a few microseconds for the common
-  messages and about 2 ms per megabyte in a release build, so about half
-  a millisecond for a frame of 256 KiB and 2 to 4 ms for a terminal's
-  whole-document read of 1 to 2 MB, which keys and other outposts' frames
-  posted after it wait for.
+  messages; for a terminal's whole-document read of 9,000 lines, about
+  0.5 ms for 0.9 MB of Latin text and 1.6 ms for 1.6 MB of Cyrillic, in a
+  release build (parsing alone, measured 2026-10-28), which keys and
+  other outposts' frames posted after it wait for.
 - A fact held while its outpost starts is reported as "waiting for the
   outpost to start". An application's outpost is usually a spare started
   ahead of need (`docs/design/focus-pipeline.md`, section 19), so the wait
