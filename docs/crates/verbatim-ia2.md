@@ -272,8 +272,8 @@ Public API:
 
   Identity. A COM identity is never shared by two sightings of one object
   in another process: oleacc delivers every object wrapped in a new
-  wrapper of its own, the Dynamic Annotation wrapper. Measured on
-  2026-10-08 against mockapp, whose provider hands out one cached object
+  wrapper of its own, the Dynamic Annotation wrapper. Against mockapp,
+  whose provider hands out one cached object
   per node: three sightings of one list, two through
   `AccessibleObjectFromEvent` and one as its item's `accParent`, all held
   at once, had three different `IUnknown` addresses. COM's own proxies

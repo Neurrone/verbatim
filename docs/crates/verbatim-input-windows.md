@@ -152,9 +152,8 @@ depends on the desktop they run on.
 
 ## Typed text (the `typed` module)
 
-Which source `Input::CharacterTyped` comes from was the open choice M4's
-Core work left: the hook's translation of each key, or the application's
-own text changes. It comes from the hook, decided on 2026-10-06, because
+`Input::CharacterTyped` comes from the hook's translation of each key,
+not from the application's own text changes, because
 that is the source that is correct for dead keys and never wrong for input
 methods, and the one the reducer's password rule for terminals needs
 (characters arrive before the terminal shows them, and are held until it
@@ -182,7 +181,7 @@ does):
   excepted.
 - Dead keys. Windows keeps a pending dead key (the accent of a
   US-International key, waiting for the letter it modifies) in state every
-  translation with that layout shares; measured on 2026-10-06, one process
+  translation with that layout shares: one process
   translating a dead key leaves it for another process's translation of a
   letter, which comes back accented. Translating keys in a hook the
   classic way consumes the application's dead key and breaks its typing,
@@ -199,8 +198,7 @@ does):
   layout's language, or an older input method's layout handle, whose high
   word starts with hexadecimal E) nothing is translated, rather than
   echoing the romanized keys. `ImmIsIME` cannot tell: with text services
-  it answers true for every layout, the US one included (found
-  2026-10-06). The committed text is not echoed; NVDA hears it from inside
+  it answers true for every layout, the US one included. The committed text is not echoed; NVDA hears it from inside
   the application (its `ime` and `tsf` hooks), which Verbatim's injection
   helper (decision D2, milestone M7) can do, and announcing compositions is
   a later milestone (`docs/parity/input.md`, "IME/composition reporting").
@@ -213,7 +211,7 @@ does):
   keyboard profile; when it is a text service
   (`TF_PROFILETYPE_INPUTPROCESSOR`) for the foreground layout's language,
   nothing is translated, so Verbatim stays silent rather than echoing the
-  raw keys (decided 2026-10-08). Windows switches input methods for every
+  raw keys. Windows switches input methods for every
   application together unless the user chose otherwise, which is why the
   hook thread's active profile stands for the foreground application's.
   Echoing the composed text needs the injection helper and is on the

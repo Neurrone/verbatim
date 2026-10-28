@@ -196,9 +196,8 @@ run it dry before the next frames arrive, which is heard as a click. An
 underrun is counted, and logged as a warning, when the device ran dry
 part-way through an utterance and more of that utterance then played: a
 gap the listener hears. The device running dry while an utterance's
-trimmed trailing silence is held back is not one. Measured live on
-2026-10-04 with OneCore and the 40 ms WASAPI buffer, two full audible
-suite runs had no underruns.
+trimmed trailing silence is held back is not one. With OneCore and the
+40 ms WASAPI buffer, a full audible suite run has no underruns.
 
 The tap. The mixer keeps a copy of every frame it writes to the device
 and gives the tap the frames that have played since the last pass, so

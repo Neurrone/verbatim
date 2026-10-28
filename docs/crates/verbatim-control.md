@@ -70,11 +70,11 @@ Public API:
   as the latency log does, and `docs/tooling/inspect.md` says what each covers;
   listener to outpost, Core to outpost, and to Core are the whole spans a
   timeline without verbatim.exe's relay stamps has instead of the split
-  ones; listener to
+  ones (`docs/design/communication.md`, section 10.1); listener to
   verbatim.exe and outpost to verbatim.exe are likewise the whole spans a
-  timeline without the senders' write stamps has, split on 2026-10-13
-  into the listener's handling, queue and pipe and the outpost's outbound
-  queue and pipe), its time in
+  timeline without the senders' write stamps has, in place of the
+  listener's handling, queue and pipe and the outpost's outbound queue and
+  pipe), its time in
   microseconds, and, for the caret wait and the outpost read, the
   cross-process calls made in it. Version 1 only adds fields, which a
   version 0 peer ignores and reads as empty, so the server answers every

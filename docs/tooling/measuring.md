@@ -16,7 +16,7 @@ measure set" in [the end-to-end guide](e2e.md) says). Both write under `target\p
 each run replaces when the label is the same.
 
 Every measurement reported for Verbatim gives the same figures, so that
-runs compare (Dickson, 2026-10-13): latency per stage and end to end as
+runs compare: latency per stage and end to end as
 the minimum, P50, P95, P99, and maximum observed, never other
 percentiles; the latency of each cross-process hop on its own (outpost to
 verbatim.exe, listener to relay, verbatim.exe to an outpost, the
@@ -51,7 +51,7 @@ user waits on; a stage that shrinks while another grows by as much has
 moved the wait, not removed it.
 
 Two runs of the same build differ: a stage's share over 2 ms moved from
-3.0 to 0.9 percent between two debug runs on 2026-10-13, with about 400
+3.0 to 0.9 percent between two debug runs, with about 400
 samples for the key stages. Compare runs of one build against each other
 before believing a difference, and give more weight to a change in the
 maximum or the 99.9th percentile that holds across runs.
@@ -113,7 +113,7 @@ unless `--keep` is given; a kept trace is about 20 MB a second, so delete
 it from `C:\ProgramData\Verbatim\Traces`, with its `.NGENPDB` folder, as
 soon as it has been read again (`cargo xtask trace waits <trace.etl>
 ...`). Delete it with `cmd /c del` or `cmd /c rd /s /q`: PowerShell's
-`Remove-Item` fails there even with `-Force`, because Dickson's account
+`Remove-Item` fails there even with `-Force`, because an ordinary account
 may delete in that folder but not change attributes, which `-Force` needs.
 
 The window must lie inside the scenario, away from its start and its end:
@@ -122,10 +122,10 @@ three times kept putting the focus on the taskbar's Start button whenever
 the desktop was brought forward, and every scenario then failed at its
 start with "Start toggle button not pressed" spoken first. Restarting
 File Explorer clears it. A scenario's length is in its log
-(`finished in`); the windows the 2026-10-13 baseline used, debug build:
+(`finished in`); the windows the baseline used, debug build:
 
 - `measure_keys_text_box` (39 seconds): `--after 15 --seconds 8`.
-- `measure_focus_explorer`: `--after 10 --seconds 8`. The baseline used it when the scenario ran 17 seconds, and it then lay in a different part of the scenario. The scenario now waits for each new window's announcement and takes about 40 seconds, its ten new windows from about 4 to 30 seconds in and the keys after them, so the same window falls inside the new windows and a trace of it is not comparable with the baseline's. Its latency samples are reported by kind in the run's `measure-summary.txt` ([the end-to-end guide](e2e.md), "The measure set"); runs before 3de02d37 carried few or no new-window samples, none waited for, so their P50 and P95 compare with the keys' figures, while their P99 and maximum can hold a new window.
+- `measure_focus_explorer`: `--after 10 --seconds 8`. The baseline used it when the scenario ran 17 seconds, and it then lay in a different part of the scenario. The scenario now waits for each new window's announcement and takes about 40 seconds, its ten new windows from about 4 to 30 seconds in and the keys after them, so the same window falls inside the new windows and a trace of it is not comparable with the baseline's. Its latency samples are reported by kind in the run's `measure-summary.txt` ([the end-to-end guide](e2e.md), "The measure set").
 - `conhost_flood` (115 seconds): `--after 8 --seconds 6`.
 - `measure_speech_real` (43 seconds, `--audible`): `--after 20 --seconds 8`.
 - `measure_focus_text_box` is over in 5 seconds and has no room for one.
@@ -163,12 +163,12 @@ thread's processor time can be writing its log; a user's outposts do not.
 `cargo xtask trace start` and `cargo xtask trace stop` record a Windows
 Performance Recorder trace with WPR's built-in CPU profile (context
 switches, ready threads, and a CPU sample of every processor each
-millisecond, with stacks). WPR needs administrator rights, so Dickson runs
+millisecond, with stacks). WPR needs administrator rights, so run
 `vm\scripts\Register-VerbatimTraceTask.ps1` once from an elevated
-PowerShell; it registers two tasks that run WPR as SYSTEM and that his
+PowerShell; it registers two tasks that run WPR as SYSTEM and that your
 account may start without elevation, as the park task does. `stop` writes
 the trace to `C:\ProgramData\Verbatim\Traces\verbatim-<time>.etl` and
-names it in `last-trace.txt` there; that folder is readable by his account,
+names it in `last-trace.txt` there; that folder is readable by your account,
 and he may delete what is in it. `cargo xtask trace waits <trace.etl>
 [report] [process.exe ...]` reads a trace with `verbatim-trace-waits`, any
 of its reports (`--by-name`, `--wakers`, `--stacks`, `--samples`,

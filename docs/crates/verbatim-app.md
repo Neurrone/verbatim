@@ -13,8 +13,7 @@ input that asked for it), which confirms it (NVDA's "Copied to clipboard:"
 with the text, or "Unable to copy") under that key's fence, so a later key
 press drops it as it drops any earlier key's speech. Every copying gesture
 routes through it — the report-object triple-press is the first caller. It writes on a thread of
-its own (`Clipboard`, since 2026-10-08; it had written on the reducer
-thread), because emptying the clipboard sends the previous owner, a window
+its own (`Clipboard`), not the reducer thread, because emptying the clipboard sends the previous owner, a window
 of whichever application copied last, `WM_DESTROYCLIPBOARD` and waits for
 the answer with no bound, which an owner that has stopped answering would
 have turned into a reducer that handles nothing. That thread runs no
@@ -256,7 +255,7 @@ knowing for review:
   (`terminateRunningNVDA` in `nvda.pyw`): find the old instance's hidden
   window by title, post `WM_QUIT` so its loop exits and its normal
   teardown runs, and wait up to five seconds for its process to exit
-  (Dickson, 2026-10-10; NVDA waits four). If it is still running, end it
+  (NVDA waits four). If it is still running, end it
   with `TerminateProcess` and wait up to two seconds more; its outposts,
   focus listener and synthesizer hosts end with it through their
   kill-on-close jobs, and the screen reader flag it leaves set is set
@@ -332,8 +331,7 @@ knowing for review:
   focus-now query's becomes reducer input: a focus on the focused control,
   with its ancestors and the text its outpost read with it, its window
   announced only as an entered ancestor when it is presentable, as NVDA
-  announces the focus it starts with (since 2026-10-11; the desktop's
-  Program Manager had been spoken), or, with no focused control, a
+  announces the focus it starts with, or, with no focused control, a
   foreground change to the window. The reducer thread sends a focus-now
   query at startup (for the
   foreground application), when the outpost of the attention application,
@@ -421,8 +419,7 @@ knowing for review:
   it). Each message received before then replaces the one before it whole,
   receipt and reduction included, and those after it are left out: a text
   focus's line, whose caret report on the same trace speaks the line,
-  keeps the focus message's stages (until 2026-10-08 it showed the caret
-  report's outpost stages with the focus's receipt and reduction).
+  keeps the focus message's stages.
   `recent` returns each timeline's
   stages and calls in its `LatencyRecord`. It mirrors
   each utterance's milestones to speech subscribers as a `Speech` frame at

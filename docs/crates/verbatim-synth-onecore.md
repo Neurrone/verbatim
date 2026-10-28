@@ -60,11 +60,10 @@ pitch changes, escaping and marks, and reading a WAV stream. The driver
 speaking through the real OneCore synthesizer is tested in
 `crates/verbatim-synth-host/tests/hosting.rs`, which runs it in the
 synthesizer host as Verbatim does: audio and marks in order, a raised
-capital, cancelling, and a host that dies. The crate once had an ignored
-test that spoke "test" through the real default audio device; it was
-removed on 2026-10-07, since it could not run in `cargo xtask ci` (a
+capital, cancelling, and a host that dies. No test speaks through the
+real default audio device, since it could not run in `cargo xtask ci` (a
 runner may have no audio device, and a test must not speak aloud on a
-developer's machine) and so never ran. What it showed is covered
+developer's machine). What such a test would show is covered
 elsewhere: OneCore's synthesis by the host tests, the speech manager and
 mixer by `verbatim-speech`'s and `verbatim-audio`'s tests, OneCore in the
 whole application by the `switch_to_onecore` end-to-end scenario, and
