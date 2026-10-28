@@ -11,412 +11,111 @@ screen reader in both rendered and source form.
 
 ## 0. Decisions of record
 
-- **D1 — Dual accessibility backends from the start.** UIA and MSAA/IA2 are
-  both first-class client stacks behind the normalized tree model, with
-  per-app arbitration picking the richest source (as NVDA does). JAB is
-  committed but lowest-priority among the backends, landing after UIA and
-  MSAA/IA2 are solid (roadmap M13). Rationale: UIA is the only API for WinUI, Terminal,
-  and modern-Office surfaces, but Firefox and Chromium expose their richest
-  tree via IA2, and much of Win32 — including parts of Windows itself — is
-  MSAA/IA2-only. Neither API alone covers the desktop.
-- **D2 — Injection is planned but never required for correctness.** An
-  in-process injection helper (NVDA's nvdaHelper analog) ships with browse
-  mode (roadmap M7), staged inside that milestone: out-of-process IA2 lands
-  first to prove correctness, then the helper adds IA2 call batching and
-  virtual-buffer acceleration for performance. NVDA has already proven that
-  in-process access is what makes large browser documents fast enough, so
-  the helper is scheduled work rather than gated on new measurements; the
-  fixed-corpus comparison against NVDA (M7 exit) verifies the result.
-  Keeping the helper off the correctness path keeps the x64/ARM64EC/x86
-  binary matrix and antivirus friction out of the early milestones.
-- **D3 — The end-to-end suite runs against any Windows session the
-  harness can reach; continuous integration uses GitHub-hosted runners
-  only.** The suite takes an address and talks to the in-guest agent, so
-  the same scenarios run runner-direct on a hosted Windows runner (whose
-  jobs execute in an interactive desktop session, the same way NVDA runs
-  its own system tests there), runner-direct on a developer's own machine
-  or VM, or against a local Hyper-V VM. The maintainer develops in a single
-  Windows VM on a Proxmox host and runs the suite runner-direct there;
-  there is no Proxmox backend for the harness. Hosted runners
-  are the only CI: the end-to-end suite runs there silently on every
-  change, eSpeak NG speaking into the silent real-time device,
-  recordings included (section 14),
-  and NVDA is never installed or run in CI. Everything else, including
-  audible runs against a real audio device, is the interactive loop, not
-  CI. There are no self-hosted runners and no nested virtualization on
-  hosted runners. Guest transport is standard tooling, not bespoke
-  protocol: PowerShell Direct carries file copies and remote commands
-  into the Hyper-V guest (OpenSSH was planned for other hypervisors,
-  which are no longer planned), and the agent keeps only what a remote
-  channel cannot do, which
-  is launching processes in the interactive session, reporting session
-  facts, and tunnelling the control-plane pipe. Hypervisor backends handle
-  lifecycle and snapshots only, and a snapshot restore is always an
-  explicit request, never something a test run does on its own. Amended
-  2026-09-02; the original D3 deferred CI because hosted runners cannot
-  nest virtualization, which stopped mattering once the suite no longer
-  needed a VM to run. Amended again 2026-10-01: the planned Proxmox
-  backend and second test VM were dropped in favour of runner-direct runs
-  on the maintainer's development VM.
-- **D4 — GUI is wxWidgets through a minimal C++ layer compiled from the
-  GUI crate's build script via cxx; Rust keeps `main` and all logic.**
-  Rationale: wxWidgets accessibility is proven in exactly this role, since
-  NVDA's own GUI is wxPython, and a C++ layer gives full access to it
-  (`wxAccessible` subclassing for accessible descriptions, accelerator
-  tables) where the wxDragon binding used before 2026-09-02 did not.
-  Keeping `main` and the build in cargo preserves the single-command
-  build, deploy, and the end-to-end suite unchanged;
-  the static wxWidgets build recipe for both architectures is adapted from
-  the wxdragon-sys build script rather than written fresh. The C++ layer
-  is widget glue only: Rust calls C++ functions to run the event loop and
-  to build, show, raise, and close widgets from typed page models, and C++
-  calls an opaque Rust `GuiCore` when the user acts. Every string crosses
-  already resolved, so C++ never sees a Fluent message id. Amended
-  2026-10-06, when the port was built; the earlier wording had a
-  callbacks object owned by Rust drive the dialogs.
-- **D5 — Audio backend is WASAPI behind an `AudioSink` trait.** Rationale:
-  allows alternate backends without touching the speech pipeline. Since
-  D17 the seam is the `AudioDevice` trait behind the mixer: the mixer
-  writes to it, and WASAPI is its device implementation.
-- **D6 — Extensions are Wasm components.** The WIT-defined API is the durable
-  contract, deny-by-default: a module can call only the host functions its
-  component imports, and its capabilities are derived from those imports,
-  never declared. The runtime is wasmtime with the component model, the
-  only runtime that meets Windows x64 and ARM64, the component model,
-  interruption of running code and memory limits together; Cranelift
-  compiles on both architectures and the Pulley interpreter is switched on
-  for ARM64 only if the `ci-arm64` ratification or a Cranelift fault requires
-  it; `verbatim-ext` is the one crate that names the runtime. Modules run in
-  the outposts and in Core, never in the listener; most of what NVDA's app
-  modules do is written as rules the host applies as data, and hooks run on
-  the thread that holds the event under an epoch deadline. Closed-source
-  synthesizers run in a separate sandboxed native host process (D18).
-  Rationale: replaces NVDA's unbounded Python add-on surface with a surface
-  that is enumerable from the binary. The design is
-  [docs/design/extensions.md](design/extensions.md). Until the extension
-  host runs them, an application's own rules ported from NVDA's app modules
-  live in Core, never in the listener or an outpost. Amended 2026-10-22
-  (Dickson: runtime decided, capabilities derived, rules before hooks) and
-  2026-10-24 (Dickson: application rules in Core until modules run).
-- **D7 — Braille is designed for but implemented last.** Traits and pipeline
-  seams exist from the start. Rationale: no hardware available for
-  development.
-- **D8 — Dev tooling and the future Remote feature share one protocol** (the
-  "control plane"). Rationale: the remote feature then becomes mostly UI plus
-  auth on top of infrastructure that E2E tests exercise daily.
-- **D9 — One outpost process per application.** Outposts are separate
-  processes by default; consolidating several apps into a shared host is a
-  possible later optimization behind the same location-transparent protocol,
-  not the starting point. Rationale: a thread blocked in a cross-process COM
-  call cannot be safely cancelled or killed, only abandoned, so process exit
-  is the only recovery that reclaims everything; per-app processes make that
-  exit surgical, remove promotion heuristics, and confine crashes in
-  in-client proxy DLLs to one app. Details in section 1.
-- **D10 — Localization is Fluent, via `i18n-embed`.** English resources are
-  compiled into the binary as the permanent fallback; other locales load at
-  startup from a `locale` folder next to the executable, decoupling
-  translation updates from binary releases. Message lookups go through the
-  compile-time-checked `fl!` macro, and no user-visible string may be
-  hardcoded anywhere in the workspace. Rationale: Fluent's grammar handling
-  (plurals, gender, selectors) matters for speech-quality messages, and the
-  ecosystem supports the pseudo-locale testing required from M1.
-- **D11 — No display model until last, and screen review does not wait for
-  it.** Screen review is a spatial projection of the normalized tree —
-  visible nodes ordered by bounding rectangle and grouped into visual
-  lines, extent-backed wherever a text interface exposes per-character
-  geometry (UIA TextPattern bounding rectangles, IA2 character extents),
-  rectangle interpolation otherwise — landing with the browse-mode
-  projection machinery (roadmap M7), with OCR as a second text source (M8).
-  A GDI display model in the NVDA tradition (in-process hooks on GDI
-  text-output calls) is deliberately last (M14) and behind a re-triage
-  gate, riding the M7 injection helper as its delivery vehicle; the only
-  work gated on it is the legacy GDI terminal clients (PuTTY, SecureCRT,
-  Tera Term). Rationale: a display model sees only GDI-drawn text, a
-  shrinking share of a Windows 11 screen, while tree-plus-extents is exact
-  wherever a text API exists — including the Chromium, WinUI, and
-  DirectWrite surfaces where a GDI display model sees nothing at all.
-- **D12 — Utterances stay structured until the last pipeline stage.** The
-  reducer never emits flattened strings: an `Utterance` is a sequence of
-  semantic spans — label, role, value, state, description, attribute-tagged
-  text runs — and a presentation stage at the end of the speech pipeline
-  flattens spans to text through a theme. The default theme matches
-  NVDA's defaults: everything is spoken as NVDA speaks it, and sounds play
-  where NVDA plays them by default, plus Verbatim's own cues and the error
-  sound for a spelling error (decided 2026-10-07; `docs/design/phase6-design.md`,
-  "Themes: one model for verbosity, speech, and sounds"). Rationale: earcons and voice styling for roles
-  and formatting (roadmap M11, in the Emacspeak audio-formatting tradition)
-  become a theme swap rather than a pipeline rewrite, and dictionary and
-  symbol processing operate on typed spans rather than undifferentiated
-  text.
-- **D13 — A dedicated focus-listener outpost detects focus; per-app
-  outposts announce it.** One permanent, stateless listener process holds
-  the single desktop-global UIA focus registration and global MSAA
-  WinEvent hooks (focus, foreground, menu popups), under a hard rule: it
-  never makes a cross-process call from a callback, writer, or
-  registering thread, the registration calls themselves excepted — those read only what the event itself carries (a
-  UIA element's cached properties, an MSAA event's raw window and object
-  ids) plus hang-safe local reads, and forward each captured focus fact to
-  Core, which routes it to the target's own outpost for acquisition,
-  arbitration, enrichment, and announcement. Rationale:
-  per-app outposts structurally race first focus — the event fires before
-  the newly foregrounded app's outpost has spawned and hooked — and the
-  synthetic announce-by-polling that papered over the race was root-caused
-  live (milestone M3) as a class of silent failures: menu-open races,
-  cold-start "window window" noise, and announcements silently never
-  produced when the poll's budget exhausted on a loaded machine. A
-  listener that exists from startup and cannot block on any application
-  never misses the event, so the poll demotes from primary mechanism to
-  rare fallback; announcements keep flowing through the per-app outposts,
-  so node identity, backend arbitration, and D9's isolation for every
-  query are unchanged. Details in section 1.
-  Amended 2026-10-01 (the outpost redesign): the announce poll is removed
-  rather than kept as a fallback; after a listener or outpost restart Core
-  asks the attention application for its current focus once instead. The
-  listener also holds the alert hook and desktop-wide UIA subscriptions
-  for selection, menu opening, and notifications, coalesces its facts
-  with NVDA's limiter rule (one waiting fact per element and kind, and for
-  an MSAA event other than a menu opening per thread that raised it), and
-  may start an outpost only for focus, foreground, menu, notification, and
-  alert facts (amended 2026-10-10: of the notifications, only the shell's
-  window-snap results, the one Core speaks from an application without
-  the focus). Outposts lose their window-scoped UIA subscriptions in
-  favour of one property subscription that follows the focus and its
-  ancestors.
-  Amended 2026-10-05: the listener stays the only receiver of focus
-  events; outposts do not subscribe to their own, so no event is handled
-  twice and no ordering between two sources is needed. NVDA judges a UIA
-  focus against the foreground using the element's nearest window, a
-  cross-process walk the listener may not make. Instead, for an element
-  with no window of its own, the listener sends the foreground thread's
-  keyboard focus window when it belongs to the element's process, a
-  local read that names the window hosting the element when the event is
-  current (for a late event in an application with several windows it
-  can name another of them, a known limitation). The outpost, which
-  must read the focused element again because a UIA element cannot cross
-  processes, drops a fact whose focus has meanwhile moved to another
-  application, and reports one it cannot resolve with the window the
-  listener found, so Core judges it against the foreground window (D14).
-  Amended 2026-10-11 (phase 6, stage A step 6, option (b) of
-  `docs/design/focus-pipeline.md`, section 12.3, approved as decision 9 of
-  its section 15): the listener judges and reads each UIA focus from its
-  sender, on a thread for the sender's application, with time limits and
-  watchdogs. A UIA element cannot be handed to another process (experiment
-  E-marshal), so the listener, which receives the event, is the one
-  process that can judge it by its own element, as NVDA does. Its
-  callbacks and writer still make no cross-process call, nor does its
-  registering thread but for the registration calls themselves (amended
-  2026-10-20): a desktop-wide `AddEventHandlerGroup` on the root reaches
-  every application's provider, so it can cost one connection timeout per
-  stalled application, which UIA's timeouts bound; each application's reading thread reads each focus with a few
-  calls on elements it holds, with no remote operation and no connection
-  to a window (`docs/design/listener-without-connections.md`, section 2),
-  each under UIA's call timeout set once for the process, and a watchdog
-  abandons a thread whose read runs past its deadline. A slow or hung
-  application holds only its own reading thread, except that a hung window
-  named in a focus `WinEvent` holds UIA's delivery of every focus event to
-  the listener until it answers (measured, section 12.11; NVDA's exposure
-  too; `docs/uia-bugs.md`, "A hung window named in a system focus event holds
-  a process's UIA events"). MSAA events are forwarded with no call, as
-  before. The outpost no
-  longer reads the focused element for a focus event: it reports the
-  listener's read and finds its own copy of the element afterwards, off
-  the way to speech.
-  Amended 2026-10-17 (the adopted pipeline, section 12.3 of the same
-  document; amended on 2026-10-19 by `docs/design/listener-without-connections.md`):
-  the listener's per-application reading threads, and no other of its
-  threads, make calls into applications: the judgment and read of each
-  UIA focus (`HasKeyboardFocus`, the nearest window, the raw probe, and
-  the classic read), every one a call on an element the listener holds,
-  with no remote operation and no connection by handle. Only an
-  application's own outpost sends it a remote operation or connects to
-  one of its windows, and an outpost connects to, probes and walks up
-  into only its own application's windows, reading another process's
-  window above the focus through MSAA (section 2 of that design), but
-  for object navigation's step, which can read a neighbor in another
-  process's window through UIA before switching to MSAA, an accepted
-  exception (section 4.3 of that design). So the
-  UIA defect where a new connection fails while another process's remote
-  operation is queued in the application (`docs/uia-bugs.md`) cannot be
-  met between Verbatim's own calls, and no lock guards them. Not covered:
-  other software's UIA calls, the end-to-end agent's two UIA requests, UIA's own
-  focus tracking in the listener's process, and the messages UIA's client
-  side sends a parent window of another process, connecting to it when it
-  has a provider, when a listener's or an outpost's read returns its child
-  window's element (decision 13 of that design). A slow or hung
-  application holds only the threads that serve it.
-  Amended 2026-10-20 (Dickson, declining one UIA host process beside
-  Core with a thread per application): the listener stays a process of
-  its own, apart from the outposts, which stay one process per
-  application (D9), because UIA's focus tracking runs on the one
-  event-delivery thread of whichever process holds a focus registration
-  and nothing short of a process boundary isolates it
-  (`docs/uia-bugs.md`, "A hung window named in a system focus event
-  holds a process's UIA events", whose
-  "Workarounds that didn't work" lists what was tried), so one host
-  process would hold every application's UIA events, terminal output
-  included, for up to 4 seconds per focus event naming a hung window.
-  The measured facts behind it are in the same entry's "Not affected":
-  a thread hung in one application does not delay the process's other
-  threads' calls into other applications, which kept answering in 1 ms,
-  nor UIA's event-delivery thread, since a provider held while raising
-  its own event holds only its own events. What the split costs, two
-  Verbatim processes calling into one application and colliding there,
-  is prevented by the rule of `docs/design/listener-without-connections.md`,
-  section 2, not by a lock.
-- **D14 — Attention follows focus; foreground is announced, not used as a
-  gate.** The reducer tracks an attention record: the process and root
-  window that most recently received a focus fact. It replaces an earlier
-  rule that dropped every event whose process did not own the foreground
-  window, which failed for broker-hosted applications (a Settings page
-  lives in the Settings process while its frame belongs to the frame
-  host), for windows of the already-running shell that never take the
-  foreground cleanly (an Explorer folder window), and for background
-  events users expect to hear. Attention moves only on a foreground
-  change, reported as a focus on the window, which the listener has
-  confirmed is still the foreground window; an ordinary focus fact is
-  classified like any other event, so a topmost popup that takes focus
-  does not take attention.
-
-  Acceptance follows NVDA's `shouldAcceptEvent` rules: a focus is attended
-  when its window, read at the event, is in the system's foreground window
-  (its top-level window or root owner is the foreground window, or shares
-  its root owner), is topmost, or is a `Windows.UI.Core` window under the
-  input thread's active window, judged against the real foreground window
-  rather than the attention record, because a focus can arrive before the
-  report of the foreground change that left its window; a focus with no
-  window facts is judged by its application. Of the alerts, only toasts
-  are reported for now. UIA notifications
-  are accepted from the attention application only, except the shell's
-  window-snap results; menu popups, tooltip and notification-bar classes,
-  configured progress bars and toast alerts are accepted from anywhere as
-  background. Background events never move focus or the navigator, are
-  spoken at Queued priority, and sit under a per-source flood cap (not
-  implemented yet; `docs/parity/focus-events.md`, "Event acceptance"). The
-  focus listener also hooks `EVENT_SYSTEM_ALERT` and a desktop-wide UIA
-  notification registration and forwards them as facts that spawn an
-  outpost on demand, cached reads within its never-block rule.
-
-  Where the rules run: each rule (acceptance, a repeated focus, which
-  property changes, selections and dialog texts are spoken) is defined
-  once, in a platform-neutral crate unless it is ported from NVDA, in
-  which case once in the Windows-specific crate the judges before a read
-  share, and every place that applies it calls that one definition. A
-  judgment is made outside Core only when it must come before an element
-  is read, because a UIA element cannot pass to
-  another process: the focus listener judges a UIA focus before reading
-  it, and an outpost judges an event against the foreground before calling
-  into the application. Those judgments use the focus Core holds, which
-  Core sends to the listener and to the focused application's outpost
-  whenever it changes, never a copy of the focus the listener or outpost
-  last reported. Everything decided after the read is decided in the
-  reducer, from facts the outposts report. Focuses reach Core from several
-  processes, and a slow read in one can deliver an earlier focus after a
-  later one; Core orders them by when they happened, on the shared clock,
-  so a focus that happened before the focus Core has applied never
-  replaces it, to the microsecond, since focus events arrive in bursts
-  within one millisecond (found live on 2026-10-24: Alt+Tab's switcher pane
-  read in the same millisecond as the window switched to, but reaching Core
-  after it). Ratified 2026-09-02; amended
-  2026-10-01 (the outpost redesign: the attention model), 2026-10-05
-  (acceptance against the real foreground) and 2026-10-24 (Dickson: each
-  rule defined once, judged against Core's focus, only pre-read judgments
-  outside Core, focuses ordered by when they happened), and 2026-10-25 (a
-  rule ported from NVDA defined once in the Windows-specific crate, as
-  ported code never moves into a platform-neutral one; Dickson,
+- **D1, dual accessibility backends.** UIA and MSAA/IA2 are both
+  first-class client stacks behind the normalized model, with
+  per-application arbitration picking the richest source; JAB joins last
+  (roadmap M13). Why: UIA alone serves WinUI, Terminal and modern Office,
+  while browsers and much of Win32 are richest through MSAA/IA2. Decided
+  2026-07-13.
+- **D2, injection never required for correctness.** An in-process helper,
+  NVDA's nvdaHelper analog, ships with browse mode (M7) after
+  out-of-process IA2 has proven correctness, for IA2 call batching and
+  virtual-buffer speed. Why: NVDA shows in-process access is what makes
+  large documents fast, and the helper's binary matrix and antivirus
+  friction stay out of early milestones. Decided 2026-07-13. Amended
+  2026-07-15.
+- **D3, the end-to-end suite runs wherever the harness reaches; CI is
+  hosted runners only.** The suite talks to the in-guest agent at an
+  address, on a hosted runner, a developer's machine or VM, or a local
+  Hyper-V VM (section 14). CI runs it silently on every change, recorded,
+  with no self-hosted runners, no nested virtualization and never NVDA;
+  a snapshot restore is always an explicit request. Why: a suite needing
+  no VM runs in CI and on the development VM alike. Decided 2026-07-13.
+  Amended 2026-10-01.
+- **D4, the GUI is wxWidgets through a C++ layer.** The C++ layer,
+  compiled by the GUI crate's build script through cxx, is widget glue
+  only; Rust keeps `main` and all logic and resolves every string
+  (section 11). Why: wxWidgets accessibility is proven in NVDA's own GUI,
+  C++ reaches all of it, and the build stays one cargo command. Decided 2026-07-13. Amended
+  2026-10-06.
+- **D5, the audio device seam.** The mixer (D17) writes to the
+  `AudioDevice` trait, and WASAPI implements it. Why: backends can change
+  without touching the speech pipeline. Decided 2026-07-13. Amended
+  2026-10-04.
+- **D6, extensions are Wasm components.** Their WIT-defined API is
+  deny-by-default, with capabilities derived from a component's imports,
+  never declared; wasmtime is the runtime, named only by `verbatim-ext`,
+  and modules run in the outposts and Core, never in the listener
+  (section 7; [design](design/extensions.md)). Why: unlike NVDA's Python
+  add-ons, the surface is enumerable from the binary. Decided 2026-07-13. Amended
+  2026-10-24 (Dickson).
+- **D7, braille last.** Braille is implemented last, with its traits and
+  pipeline seams present from the start. Why: no hardware is available
+  for development. Decided 2026-07-13.
+- **D8, one control plane.** Development tooling and the future Remote
+  feature share one protocol (section 10). Why: Remote then rides on
+  infrastructure the end-to-end tests exercise daily. Decided 2026-07-13.
+- **D9, one outpost process per application.** Each application has its
+  own outpost; a shared host stays a possible later optimization behind
+  the same protocol (section 1). Why: a thread blocked in a cross-process
+  COM call can only be abandoned, so process exit is the only full
+  recovery, and per-application processes make it surgical. Decided 2026-07-13.
+- **D10, localization is Fluent.** Through `i18n-embed`, English is
+  compiled in as the fallback, other locales load from a `locale` folder,
+  every lookup goes through `fl!`, and no user-visible string is
+  hardcoded. Why: Fluent's grammar handling suits spoken messages, and
+  translations ship apart from binaries. Decided 2026-07-13.
+- **D11, no display model until last.** Screen review projects the
+  normalized tree spatially, with character extents where text interfaces
+  give them, in M7, and OCR in M8; a GDI display model comes last (M14),
+  gated, and only legacy GDI terminals wait for it. Why: it sees only
+  GDI-drawn text, a shrinking share of the screen. Decided 2026-07-15.
+- **D12, utterances stay structured.** The reducer emits semantic spans,
+  and only the pipeline's last stage flattens them through a theme whose
+  default speaks and sounds as NVDA does by default, plus Verbatim's own
+  cues (section 6; `docs/design/phase6-design.md`, "Themes: one model for verbosity, speech, and sounds").
+  Why: earcons and voice styling become a theme swap. Decided 2026-07-15.
+  Amended 2026-10-07.
+- **D13, the focus listener.** One permanent listener process holds the
+  desktop-wide UIA focus registration and the MSAA hooks. Its callbacks
+  make no cross-process call; it reads each UIA focus on a thread per
+  application, with no remote operation or connection, and forwards each
+  fact to Core, which routes it to the application's own outpost to
+  report (section 1). Why: an outpost started after the event would miss
+  the first focus, and a hung window holds every UIA event of the process
+  with the focus registration. Decided 2026-07-16. Amended 2026-10-20
+  (Dickson).
+- **D14, attention follows focus.** Attention moves only on a foreground
+  change, and the foreground is announced, never a gate; each event rule
+  is defined once, judged against Core's focus, outside Core only before
+  a read, and Core orders focuses by when they happened (section 2). Why:
+  a foreground gate failed broker-hosted applications and background
+  events users expect. Decided 2026-09-02. Amended 2026-10-25 (Dickson,
   2026-10-26).
-- **D15 — The latency budget is split in two and measured per stage.**
-  From observation of the OS event to the utterance being queued: 10 ms
-  or under on every backend. From queued to the first audio sample: 10 ms
-  or under with eSpeak NG, through an event-driven shared-mode stream at
-  the audio engine's standard period and MMCSS registration of the audio
-  thread;
-  OneCore is exempt from this half because it synthesizes whole utterances
-  before returning. The process model is not where the time goes (three
-  pipe hops cost under a millisecond); the cost is the per-hop ancestor
-  walk, cold arbitration probes, and lane serialization, so the first
-  half is met by batching ancestry through UIA remote operations, caching
-  MSAA ancestry per window, giving arbitration verdicts the window's
-  lifetime, and never delaying a control behind its window's announcement.
-  The latency ledger records a stage timeline (observed, routed, lane
-  start, verdict, acquired, enriched, emitted, reduced, queued, first
-  synth sample, first audio write), and the budgets are asserted per
-  stage once eSpeak is in. Ratified 2026-09-02.
-  Amended 2026-10-01 (the outpost redesign): there are no lanes; each
-  outpost has one worker, so the planned outpost stages become routed,
-  worker start, backend decided, read, ancestors read, and sent. The
-  arbitration verdict is kept for the window's lifetime and dropped when
-  the window is destroyed, and a UIA element is resolved once per event.
-  Amended 2026-10-02: only a verdict that the window has a UIA provider
-  is kept for its lifetime. A probe that finds none is trusted for 500 ms,
-  NVDA's cache period, and then repeated, because a busy or starting
-  application can fail the probe for a window that has a provider (found
-  live with Windows 11 Notepad, whose edit control was then read through
-  MSAA for the rest of its life).
-  The ledger still records only observed, queued, and first audio; the
-  per-stage timeline is not implemented yet.
-  Amended 2026-10-05: the second half no longer relies on `IAudioClient3`.
-  The development machine's device offers no shared-mode period shorter
-  than the engine's standard 10 ms, and queued to first audio measured
-  3 to 8 ms in the usual case without it, most of that the engine period.
-- **D16 — Recordings take their audio from Verbatim's own rendering.** A
-  tee at the audio output writes every utterance's PCM with its
-  wall-clock start time while still playing it, and the recording step
-  muxes that track with the screen grab. No virtual audio device is
-  involved, so recordings work on a hosted CI runner with no sound device,
-  on any hypervisor, and while the run is being heard live over RDP or
-  locally. Consequently everything Verbatim makes audible, earcons and
-  tones included, is rendered as PCM through that audio output and
-  mixed there, never through a separate path. Ratified 2026-09-02.
-  Amended 2026-10-04: the tee copies the mixer's output (D17), so every
-  stream Verbatim mixes is recorded together, to a WAV file beside the
-  screen grab on the agent's machine, silence-filled by the clock so it
-  runs in step with real time; the recording step encodes it as the
-  video's AAC audio track. The screen grab is ffmpeg's desktop capture, launched
-  through the agent for every scenario on every path (runner-direct,
-  hosted CI, and the Hyper-V harness alike), and VB-CABLE is retired.
-- **D17 — Every utterance has one truthful ending, measured at playback.**
-  The theme flattens an `Utterance` into a speech sequence: text pieces
-  mixed with commands (index mark, pitch, rate, volume, language,
-  character mode, pause), plain serializable data that can cross a
-  process, Wasm, or network boundary unchanged, designed so that a sound
-  item can join it when earcons arrive (sounds will start at their place
-  in the sequence and overlap the speech that follows, belonging to the
-  utterance). Each utterance carries its own id and ends exactly once, as
-  completed, cancelled, or failed, including utterances cleared from a
-  lane before they were synthesized. A synthesizer only produces PCM and
-  never plays it; Verbatim's audio output is a mixer with one audio
-  thread, a buffer per source, and conversion of every source to the
-  device's format, and it tracks which samples belong to which utterance.
-  So the end of an utterance, and each index mark, are reported when the
-  device has played that sample, for every synthesizer without its
-  cooperation. A synthesizer that cannot place marks in its audio has its
-  sequence split at the marks by the speech manager, so mark positions
-  are exact for every backend. Leading and trailing silence is trimmed
-  centrally for every synthesizer, except a pause the sequence asks for.
-  Decided 2026-10-04 (phase 4 of the 2026-09-02 handoff).
-- **D18 — Native synthesizers run in a synthesizer host process.**
-  `verbatim-synth-host.exe` runs one synthesizer per process, OneCore and
-  eSpeak NG included, behind the same `SynthDriver` trait; in Core,
-  `HostedSynth` implements that trait by forwarding requests over a
-  private pipe with a small buffer, so backpressure and cancellation
-  cross the boundary unchanged and audio is still rendered by Core's
-  mixer. A host runs while something uses it (the active synthesizer, a
-  settings dialog listing its voices, later an extension holding it), is
-  ended when nothing does, sits in a kill-on-close job like the outposts,
-  and is started again with its saved settings after a crash, the
-  utterance in flight ending as failed. Pipes, not shared memory, until
-  the latency ledger shows the hop matters. A native engine is loaded
-  through an adapter DLL implementing Verbatim's C ABI, the `SynthDriver`
-  trait as C exports, so the host has no engine-specific code; the host for
-  the adapter's architecture loads it, and the 32-bit x86 host is a reduced
-  build carrying only the adapter loader. The host runs in an AppContainer,
-  the less privileged form wherever the engine allows, with the level chosen
-  per engine. Both are M6 work
-  ([design](design/extensions.md), [plan](design/m6-native-synth-work.md)). Verbatim is licensed GPL
-  version 3 or later from the same date, and eSpeak NG (GPL version 3 or
-  later) is statically linked into the host, not into `verbatim.exe`.
-  Decided 2026-10-04. Amended 2026-10-22 (Dickson: adapters, the
-  reduced x86 host, the container level per engine).
+- **D15, the latency budget is split in two and measured per stage.** The
+  OS event to the utterance queued takes 10 ms or less on every backend,
+  and queued to first audio 10 ms or less with eSpeak NG, OneCore exempt
+  (section 6). Why: the process hops cost under a millisecond, so the
+  time goes elsewhere and only a per-stage budget finds it. Decided
+  2026-09-02. Amended 2026-10-05.
+- **D16, recordings take their audio from Verbatim's own rendering.** A tee
+  copies the mixer's output to a WAV muxed with the screen capture, and
+  everything audible goes through the mixer (`docs/tooling/e2e.md`). Why:
+  recordings then need no audio device and work while heard live. Decided
+  2026-09-02. Amended 2026-10-04.
+- **D17, every utterance has one truthful ending, measured at playback.**
+  Each utterance's speech sequence is plain data with an id, ending once,
+  as completed, cancelled or failed; synthesizers only produce PCM, and
+  the mixer reports endings and marks when the device plays them
+  (`docs/crates/verbatim-speech.md`). Why: say-all and cancellation need
+  endings true for every synthesizer. Decided 2026-10-04.
+- **D18, native synthesizers run in a synthesizer host process.** Each
+  `verbatim-synth-host.exe` runs one synthesizer, OneCore and eSpeak NG
+  included, behind the `SynthDriver` trait over a pipe, and loads native
+  engines through C-ABI adapter DLLs in an AppContainer (section 6).
+  Verbatim is GPL version 3 or later, and eSpeak NG is linked into the
+  host only. Why: an engine's crash or hang costs one restartable process,
+  never Core. Decided 2026-10-04. Amended 2026-10-22 (Dickson).
 
 ## 1. Process and thread model
 
@@ -732,6 +431,28 @@ until a thread returns.
 When the listener is replaced, the supervisor tells every outpost to
 wait on none of its markers.
 
+Of the listener's threads only the reading threads call into
+applications, and each call is one on an element the listener holds,
+with no remote operation and no connection by handle. Only an
+application's own outpost sends it a remote operation or connects to one
+of its windows, and an outpost connects to, probes and walks up into only
+its own application's windows, reading another process's window above the
+focus through MSAA; object navigation's step, which can read a neighbor
+in another process's window through UIA, is an accepted exception
+(`docs/design/listener-without-connections.md`, sections 2 and 4.3). So
+the UIA defect where a new connection fails while another process's
+remote operation is queued in the application (`docs/uia-bugs.md`) cannot
+arise between Verbatim's own calls, and no lock guards them. A slow or
+hung application holds only the threads that serve it, with one
+exception, shared with NVDA: a hung window named in a focus `WinEvent`
+holds UIA's delivery of every UIA event to the process holding a focus
+registration until it answers (`docs/uia-bugs.md`, "A hung window named
+in a system focus event holds a process's UIA events"). That is why the
+listener is a process of its own and not threads in one UIA host beside
+the outposts: nothing short of a process boundary isolates the stall, and
+in a shared host it would hold every application's UIA events, terminal
+output included, for up to 4 seconds per such event.
+
 ### Why one process per app
 
 A blocking COM call parks only its calling thread, so thread pools inside a
@@ -802,6 +523,53 @@ the speech pipeline. Consequences:
   one counts as heard, so say-all and terminal output carry on past it, as
   NVDA's speech manager does when a later index arrives (Dickson,
   2026-10-24).
+
+### Attention and acceptance (D14)
+
+The reducer tracks an attention record: the process and root window that
+most recently received a focus fact. Attention moves only on a foreground
+change, reported as a focus on the window, which the listener has
+confirmed is still the foreground window; an ordinary focus fact is
+classified like any other event, so a topmost popup that takes focus does
+not take attention. The foreground is announced, never used as a gate.
+
+Acceptance follows NVDA's rules (`docs/parity/focus-events.md`, "Event
+acceptance"). A focus is attended when its window, read at the event, is
+in the system's foreground window (its top-level window or root owner is
+the foreground window, or shares its root owner), is topmost, or is a
+`Windows.UI.Core` window under the input thread's active window. It is
+judged against the real foreground window rather than the attention
+record, because a focus can arrive before the report of the foreground
+change that left its window; a focus with no window facts is judged by
+its application. Of the alerts, only toasts are reported for now. UIA
+notifications are accepted from the attention application only, except
+the shell's window-snap results; menu popups, tooltip and
+notification-bar classes, configured progress bars and toast alerts are
+accepted from anywhere as background. Background events never move focus
+or the navigator, are spoken at Queued priority, and are to sit under a
+per-source flood cap, not implemented yet.
+
+### Where the rules run (D14)
+
+Each rule (acceptance, a repeated focus, which property changes,
+selections and dialog texts are spoken) is defined once, in a
+platform-neutral crate unless it is ported from NVDA, in which case once
+in the Windows-specific crate the judges before a read share, and every
+place that applies it calls that one definition. A judgment is made
+outside Core only when it must come before an element is read, because a
+UIA element cannot pass to another process: the focus listener judges a
+UIA focus before reading it, and an outpost judges an event against the
+foreground before calling into the application. Those judgments use the
+focus Core holds, which Core sends to the listener and to the focused
+application's outpost whenever it changes, never a copy of the focus the
+listener or outpost last reported. Everything decided after the read is
+decided in the reducer, from facts the outposts report.
+
+Focuses reach Core from several processes, and a slow read in one can
+deliver an earlier focus after a later one. Core orders them by when they
+happened on the shared clock, to the microsecond, since focus events
+arrive in bursts within one millisecond, so a focus that happened before
+the focus Core has applied never replaces it.
 
 ## 3. Normalized accessibility model
 
@@ -980,7 +748,20 @@ language tagging, synth driver, PCM, the mixer (D17), and the
   - **Native synth host** (D18): one process per synthesizer, matching the
     DLL's architecture (x86 under emulation if needed, M6), streaming PCM
     over a pipe. Eloquence adds the AppContainer sandbox in M6. Latency
-    budget applies equally (the pipe hop is tens of microseconds).
+    budget applies equally (the pipe hop is tens of microseconds). A host
+    runs while something uses it (the active synthesizer, a settings
+    dialog listing its voices, later an extension holding it) and is
+    ended when nothing does; after a crash it is started again with its
+    saved settings, and the utterance in flight ends as failed. The pipe
+    has a small buffer, so backpressure and cancellation cross it
+    unchanged, and stays a pipe rather than shared memory until the
+    latency ledger shows the hop matters. A native engine is loaded
+    through an adapter DLL implementing Verbatim's C ABI, the
+    `SynthDriver` trait as C exports, so the host has no engine-specific
+    code; the 32-bit x86 host is a reduced build carrying only the
+    adapter loader, and the AppContainer's level is chosen per engine,
+    the less privileged form wherever the engine allows
+    ([design](design/extensions.md), [plan](design/m6-native-synth-work.md)).
 - **Audio**: a mixer with one audio thread that converts every source to
   the device's format, sums them, and tracks playback position per
   utterance (D17), writing to the `AudioDevice` trait; WASAPI
@@ -989,9 +770,25 @@ language tagging, synth driver, PCM, the mixer (D17), and the
 - **Latency budget** (enforced by tests, not aspiration): per D15, 10 ms
   or under from event observation to the utterance being queued on every
   backend, and 10 ms or under from queued to the first audio sample with
-  eSpeak. eSpeak NG is built in and the default synthesizer from the
-  opening work of M4, so the second half is measurable from the first
-  text work onward. Every stage is traced (section 9).
+  eSpeak NG, through an event-driven shared-mode stream at the audio
+  engine's standard period with the audio thread registered with MMCSS.
+  OneCore is exempt from the second half because it synthesizes whole
+  utterances before returning. The process model is not where the time
+  goes (three pipe hops cost under a millisecond); the first half is met
+  by batching ancestry through UIA remote operations, caching MSAA
+  ancestry per window, resolving a UIA element once per event, keeping a
+  verdict that a window has a UIA provider for the window's lifetime (a
+  verdict that it has none is trusted for 500 ms, NVDA's cache period,
+  then probed again, since a busy or starting application can fail the
+  probe), and never delaying a control behind its window's announcement.
+  The latency ledger records observed, queued, and first audio; the
+  per-stage timeline it is to record is observed, routed, worker start,
+  backend decided, read, ancestors read, sent, reduced, queued, first
+  synthesized sample, and first audio write, and the budgets are asserted
+  per stage once it does. eSpeak NG is built in and the default
+  synthesizer from the opening work of M4, so the second half is
+  measurable from the first text work onward. Every stage is traced
+  (section 9).
 
 ## 7. Extensions (Wasm)
 
@@ -1012,6 +809,9 @@ language tagging, synth driver, PCM, the mixer (D17), and the
 - App modules hook the pipeline at defined points: adjust presentation of a
   node, add synthetic nodes, handle gestures, react to events. Hooks have
   deadlines; a slow extension degrades itself, not Verbatim.
+- Until the extension host runs modules, an application's own rules
+  ported from NVDA's app modules live in Core, never in the listener or an
+  outpost (D6).
 - Iteration-friendly by design: extensions hot-reload without restarting
   Verbatim; first-party app modules live in this repo and dogfood the API.
   NVDA add-on binary compatibility is a non-goal, but the host API is grown
@@ -1125,7 +925,9 @@ Layered so that LLM-driven development gets fast, deterministic feedback:
    spoken, plus latency assertions against the budget.
 4. **E2E against a real Windows session** (section 14): real Windows, real
    apps (Notepad, Explorer, Terminal, Edge, Office), driven via the control
-   plane, on a hosted CI runner, a developer's own machine or VM, or a
+   plane, on a hosted CI runner (whose jobs run in an interactive desktop
+   session, as NVDA's own system tests do there), a developer's own
+   machine or VM, or a
    local Hyper-V VM (D3);
    speech asserted on the control plane's speech stream, spoken by
    eSpeak NG through the silent real-time device in a silent run or the
