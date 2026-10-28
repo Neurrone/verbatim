@@ -1434,18 +1434,6 @@ impl Message for String {
     }
 }
 
-/// A terminal's read alone, as the outpost's encoding costs are measured.
-#[cfg(test)]
-impl Message for verbatim_model::TerminalSnapshot {
-    fn put_frame(&self, buffer: &mut Vec<u8>) -> io::Result<()> {
-        put_json(buffer, self)
-    }
-
-    fn from_parts(parts: Parts<'_>) -> io::Result<Self> {
-        from_json(parts)
-    }
-}
-
 /// Writes one message as one frame and flushes.
 ///
 /// The frame goes to `writer` in one `write_all`, so on a bare pipe, as the

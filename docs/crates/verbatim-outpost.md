@@ -1313,6 +1313,8 @@ provider gives no handle for the window, which the classic walk finds.
   do, or output would be spoken twice.
 - Tests: `terminal/reading.rs` covers every reading state; `terminal/tests.rs`
   drives `Terminal::sends` over `verbatim-term-sim` and checks the one-pass
-  conversion, with an ignored `measure_conversion` (`docs/performance.md`,
+  conversion, with an ignored `measure_conversion` that times the
+  conversion, the read's event written as the outpost writes it, and
+  Core's parse of that frame, in a release build (`docs/performance.md`,
   "A terminal's reads in Core"); mockapp's `terminal` and
   `terminal_reading` tests drive a real outpost.

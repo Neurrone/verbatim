@@ -170,11 +170,12 @@ processes, every exception attributed.
   size, with no wake-up of its own: a few microseconds for the common
   messages. A terminal's text and colours travel in the frame's raw
   section (`docs/design/communication.md`, section 4.2), so a
-  whole-document read of 9,000 lines takes 0.02 to 0.16 ms for 0.8 MB of
-  Latin text and 0.29 ms for 1.3 MB of Cyrillic, and 100 rows of 120
-  colour runs 0.05 to 0.08 ms (release, parsing alone, best of 30,
-  measured 2026-10-28); keys and other outposts' frames posted after it
-  wait for it.
+  whole-document read of 9,031 rows takes 0.08 to 0.12 ms for 0.29 MB of
+  Latin text and 0.09 to 0.18 ms for 0.36 MB of Cyrillic, and an ordinary
+  read with its screen's 30 rows of 120 colour runs 0.03 to 0.04 ms
+  (release, parsing alone, mean of 50, six runs of the ignored
+  `measure_conversion`, measured 2026-10-28); keys and other outposts'
+  frames posted after it wait for it.
 - A fact held while its outpost starts is reported as "waiting for the
   outpost to start". An application's outpost is usually a spare started
   ahead of need (`docs/design/focus-pipeline.md`, section 19), so the wait
@@ -1366,11 +1367,12 @@ terminal's rotation") and the page faults of the heap taking pages back;
 Core's own part is about 0.2 to 0.5 ms.
 
 The outpost's conversion of a read into its snapshot, in one pass into
-kept buffers (`terminal::unpadded_utf16`; the ignored `measure_conversion`
-in `crates/verbatim-outpost/src/terminal/tests.rs`, release, 2026-10-26):
-a whole document of 9,031 rows of 120 cells 1,986 to 2,620 µs with no page
-fault; an ordinary read of two screens 19 to 29 µs; 132,096 bytes of
-buffers kept after a whole document.
+kept buffers, and its writing in the event sent to Core
+(`terminal::unpadded_utf16`; the ignored `measure_conversion` in
+`crates/verbatim-outpost/src/terminal/tests.rs`, release, 2026-10-28): a
+whole document of 9,031 rows of 120 cells 1,557 to 1,795 µs with at most
+one page fault, in Latin or Cyrillic text; an ordinary read of two screens
+16 to 20 µs; 132,096 bytes of buffers kept after a whole document.
 
 ### A terminal's reads, live
 

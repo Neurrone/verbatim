@@ -5,12 +5,20 @@
 //! ([`super::unpadded_utf16`]) exactly as with two copies, with a
 //! measurement of what that saves.
 
-use verbatim_model::{TerminalSnapshot, TerminalText};
+use std::time::Instant;
+
+use verbatim_model::{
+    Backend, NodeId, NormalizedEvent, TerminalColourRun, TerminalSnapshot, TerminalText, TraceId,
+};
+use verbatim_process::transport::read_frame;
 use verbatim_term_sim::{Flavor, Query, Range};
 use verbatim_text::terminal_reading::{Settings, Speech, Step, TerminalReader};
 use verbatim_text::terminal_rows::{Read, ReadText};
 
 use super::Terminal;
+use crate::protocol::{
+    EventTiming, OutpostToSupervisor, decode_message, encode_message, put_message,
+};
 
 /// The simulated terminal read as the outpost reads it, each read the
 /// outpost sends given to the reading rules.
@@ -292,65 +300,131 @@ fn page_faults() -> u32 {
 }
 
 /// A terminal's text as its provider gives it: `rows` rows of 120 cells,
-/// each padded and ended by a line break, as UTF-16.
-fn padded_rows(rows: usize) -> Vec<u16> {
+/// each a numbered line in `words`' language, padded and ended by a line
+/// break, as UTF-16.
+fn padded_rows(rows: usize, (before, after): (&str, &str)) -> Vec<u16> {
     use std::fmt::Write as _;
     let mut text = String::new();
     for row in 0..rows {
-        let line = format!("PS C> line {row} of the history");
+        let line = format!("PS C> {before} {row} {after}");
         let _ = write!(text, "{line:<120}\r\n");
     }
     text.encode_utf16().collect()
 }
 
-/// The time and page faults of converting and writing a terminal's read,
-/// before and after the conversion in one pass with buffers kept: run with
-/// `cargo test --release -p verbatim-outpost --lib
+/// A screen's colours at their most: 30 rows of 120 runs of one cell.
+fn screen_colours() -> Vec<Vec<TerminalColourRun>> {
+    let row: Vec<TerminalColourRun> = (0..120)
+        .map(|column| TerminalColourRun {
+            column,
+            length: 1,
+            foreground: column,
+            background: 0,
+        })
+        .collect();
+    vec![row; 30]
+}
+
+/// A whole-document read of `text` and `screen`, with `colours`, in the
+/// event the outpost sends Core.
+fn event(
+    text: TerminalText,
+    screen: TerminalText,
+    colours: Option<Vec<Vec<TerminalColourRun>>>,
+) -> OutpostToSupervisor {
+    let snapshot = TerminalSnapshot {
+        text,
+        screen,
+        from_start: true,
+        shrank: false,
+        at_document_start: false,
+        alternate: false,
+        first_row: TerminalText::default(),
+        caret_rows_to_end: 1,
+        caret_line: TerminalText::default(),
+        caret_column: 0,
+        above: 30,
+        started_ms: 0,
+        ended_ms: 0,
+        waited: false,
+        read: 0,
+        colours,
+        caret: None,
+    };
+    OutpostToSupervisor::Event {
+        trace_id: TraceId::mint(),
+        observed_at_ms: 0,
+        observed_at_us: 0,
+        backend: Backend::Uia,
+        window: None,
+        application: None,
+        timing: EventTiming::default(),
+        event: NormalizedEvent::TerminalSnapshot {
+            node_id: NodeId::new(1),
+            snapshot: Box::new(snapshot),
+        },
+    }
+}
+
+/// The read in an [`event`], given back once it is written.
+fn read_of(message: OutpostToSupervisor) -> TerminalSnapshot {
+    let OutpostToSupervisor::Event {
+        event: NormalizedEvent::TerminalSnapshot { snapshot, .. },
+        ..
+    } = message
+    else {
+        panic!("a terminal's event");
+    };
+    *snapshot
+}
+
+/// The time and page faults of converting a terminal's read and writing
+/// it in the event the outpost sends Core, before and after the conversion
+/// in one pass with buffers kept, and the time Core takes to parse that
+/// event's frame: run with `cargo test --release -p verbatim-outpost --lib
 /// terminal::tests::measure_conversion -- --ignored --nocapture
-/// --test-threads=1`. A whole document of a full history (9,001 rows and
-/// a screen of 30) and an ordinary read (two screens), each read 50 times
-/// after one to warm up; "before" converts with two copies and writes into
-/// a buffer that keeps whatever it grew to, as the transport's did, "after"
-/// converts in one pass into the spare buffers ([`super::recycle`]) and
-/// writes into a buffer kept to `WRITE_KEPT_BYTES` once each write is done.
+/// --test-threads=1`. A whole document of a full history (9,031 rows and
+/// a screen of 30) in Latin and in Cyrillic text, an ordinary read (two
+/// screens), and an ordinary read with its screen's colours at their most
+/// ([`screen_colours`]), each read 50 times after one to warm up.
+/// "Before" converts with two copies and writes into a buffer that keeps
+/// whatever it grew to, as the transport's did; "after" converts in one
+/// pass into the spare buffers ([`super::recycle`]) and writes into a
+/// buffer kept to `WRITE_KEPT_BYTES` once each write is done, as the
+/// outpost's writer does; "parse" decodes the frame's body and raw section
+/// as Core's reducer does.
 #[test]
 #[ignore = "a measurement: run in a release build, by hand"]
 fn measure_conversion() {
     const RUNS: u32 = 50;
+    const LATIN: (&str, &str) = ("line", "of the history");
+    const CYRILLIC: (&str, &str) = ("строка", "истории");
     use verbatim_process::overlapped::WRITE_KEPT_BYTES;
-    for (what, units) in [
-        ("whole document", padded_rows(9_031)),
-        ("ordinary read", padded_rows(60)),
+    for (what, units, colours) in [
+        ("whole document", padded_rows(9_031, LATIN), None),
+        (
+            "whole document in Cyrillic",
+            padded_rows(9_031, CYRILLIC),
+            None,
+        ),
+        ("ordinary read", padded_rows(60, LATIN), None),
+        (
+            "ordinary read with colours",
+            padded_rows(60, LATIN),
+            Some(screen_colours()),
+        ),
     ] {
         let screen: Vec<u16> = units[units.len() - 30 * 122..].to_vec();
-        let wire = |text: TerminalText, screen: TerminalText| TerminalSnapshot {
-            text,
-            screen,
-            from_start: true,
-            shrank: false,
-            at_document_start: false,
-            alternate: false,
-            first_row: TerminalText::default(),
-            caret_rows_to_end: 1,
-            caret_line: TerminalText::default(),
-            caret_column: 0,
-            above: 30,
-            started_ms: 0,
-            ended_ms: 0,
-            waited: false,
-            read: 0,
-            colours: None,
-            caret: None,
-        };
+        let wire = |text, screen| event(text, screen, colours.clone());
         // Before: two copies, and a write buffer that keeps its size.
         let mut buffer = Vec::new();
         let mut before = || {
-            let snapshot = wire(two_copies(&units), two_copies(&screen));
+            let message = wire(two_copies(&units), two_copies(&screen));
             buffer.clear();
-            crate::protocol::put_message(&mut buffer, &snapshot).expect("written");
+            put_message(&mut buffer, &message).expect("written");
         };
         before();
-        let (faults, started) = (page_faults(), std::time::Instant::now());
+        let (faults, started) = (page_faults(), Instant::now());
         for _ in 0..RUNS {
             before();
         }
@@ -362,20 +436,20 @@ fn measure_conversion() {
         let mut buffer = Vec::new();
         let mut after = || {
             let (text, spare_screen) = super::spare();
-            let snapshot = wire(
+            let message = wire(
                 super::unpadded_utf16(&units, text),
                 super::unpadded_utf16(&screen, spare_screen),
             );
             buffer.clear();
-            crate::protocol::put_message(&mut buffer, &snapshot).expect("written");
+            put_message(&mut buffer, &message).expect("written");
             if buffer.capacity() > WRITE_KEPT_BYTES {
                 buffer.clear();
                 buffer.shrink_to(WRITE_KEPT_BYTES);
             }
-            super::recycle(snapshot);
+            super::recycle(read_of(message));
         };
         after();
-        let (faults, started) = (page_faults(), std::time::Instant::now());
+        let (faults, started) = (page_faults(), Instant::now());
         for _ in 0..RUNS {
             after();
         }
@@ -387,12 +461,30 @@ fn measure_conversion() {
             .iter()
             .map(|(text, screen)| text.text.capacity() + screen.text.capacity())
             .sum();
+        // Parse: the event's frame, its body and raw section, read back.
+        let message = wire(two_copies(&units), two_copies(&screen));
+        let frame = encode_message(&message).expect("encoded");
+        let frame = read_frame(&mut frame.as_slice())
+            .expect("read")
+            .expect("a frame");
+        let parts = frame.parts();
+        let raw = parts.raw.expect("a terminal's event has a raw section");
+        let parse = || decode_message::<OutpostToSupervisor>(parts).expect("parsed");
+        assert_eq!(parse(), message, "the event read back");
+        let started = Instant::now();
+        for _ in 0..RUNS {
+            std::hint::black_box(parse());
+        }
+        let parse_us = started.elapsed().as_micros() / u128::from(RUNS);
         println!(
             "{what}: before {before_us} us and {before_faults} page faults a read, {before_held} \
              bytes held after; after {after_us} us and {after_faults} page faults a read, {} \
-             bytes held after ({} written, {spare} spare)",
+             bytes held after ({} written, {spare} spare); parse {parse_us} us for a body of \
+             {} bytes and a raw section of {}",
             buffer.capacity() + spare,
-            buffer.capacity()
+            buffer.capacity(),
+            parts.body.len(),
+            raw.len()
         );
     }
 }
