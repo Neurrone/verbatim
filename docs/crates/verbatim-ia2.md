@@ -397,12 +397,15 @@ Public API:
   default): a snapshot skips `accDescription`, `accKeyboardShortcut`, the
   list and tree position reads, and a tree item's level when the active
   theme reports them as off. And the nodes the outpost has issued, each with its
-  address (window handle, object id, and child id), the role read when it
+  address, an `MsaaKey` (window handle, object id, and child id, the
+  child id `CHILDID_SELF`, zero, for the object itself; `id_for(key)`
+  mints or finds a node, `key_of(node)` gives its address back, and a
+  `FocusCandidate`'s `key()` is the address its focus is at), the role read when it
   was issued, and the accessible object it was read from, kept as an agile
   reference; it shares the outpost-wide counter with the UIA registry. It
   only stores and looks up, and never makes a COM call under its lock;
   `acquire` makes the comparisons. `retain` releases the nodes the outpost
-  no longer needs (objects are dropped after the lock is released, since
+  no longer needs, returning their objects as `Released` (dropped after the lock is released, since
   releasing one can call into its process), `forget_window` drops a
   destroyed window's nodes so a reused handle never inherits them, and
   `take_touched` reports the nodes issued or looked up since the last
