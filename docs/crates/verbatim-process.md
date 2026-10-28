@@ -1,10 +1,9 @@
 # verbatim-process
 
 Contained child processes (architecture section 1): what Core launches
-outposts, the focus listener, and synthesizer hosts with. The code was
-extracted from `verbatim-outpost`'s supervisor when the synthesizer host
-(decision D18) needed the same containment, so both kinds of child are
-launched the same way. It also reads the calling process's
+outposts, the focus listener, and synthesizer hosts (decision D18) with,
+so every kind of child is launched and contained the same way. It also
+reads the calling process's
 session, which Verbatim and the test agent check at startup. It is a
 Windows-specific crate and depends only on `tracing` and the Windows
 bindings.
@@ -26,9 +25,9 @@ Public API:
   gave them. Returns the `Contained`, or the error of whichever step
   failed (creating the job or spawning). It is the only way this crate
   launches a child. The supervisor launches outposts and the listener
-  with it, over `overlapped::pipe`s whose child ends are overlapped too
-  (since communication step 6); `verbatim-synth-hosted` launches the
-  synthesizer host with it over `overlapped::pipe`s (since step 9).
+  with it, over `overlapped::pipe`s whose child ends are overlapped too;
+  `verbatim-synth-hosted` launches the synthesizer host with it over
+  `overlapped::pipe`s.
 - `Contained` — the launched child: `job`, the kill-on-close job handle,
   whose closing kills the process; `process`, the process handle (closing
   it only releases the reference); and `pid`, for logs. Dropping a
@@ -125,8 +124,7 @@ Public API:
   with `waiting()`), which the supervisor's relay reads to watch the
   reducer. Items still on the port when everything is dropped are
   dropped with it.
-- `scheduling` (Dickson's decision of 2026-10-08;
-  `docs/design/communication.md`, section 6.1) —
+- `scheduling` (`docs/design/communication.md`, section 6.1) —
   `prioritize_current_thread(priority)` runs the calling thread at a
   `ThreadPriority` (`Normal`, `AboveNormal`, `Highest`, `TimeCritical`);
   `prioritize_role(role, priority)` does the same and logs a refusal as
@@ -134,10 +132,8 @@ Public API:
   messages run at `Highest`: the keyboard hook, verbatim.exe's relay
   thread, the listener's and each
   outpost's I/O thread (and, for an outpost made in a test's process, its
-  sender's finishing thread), and the `WinEvent` threads; the synthesizer
-  host's reader threads, raised too, went with communication step 9. Each
-  caller names its
-  level once per role in a constant of its own. Every other thread keeps
+  sender's finishing thread), and the `WinEvent` threads. Each caller
+  names its level once per role in a constant of its own. Every other thread keeps
   normal priority: raising the threads that compute did not pay when
   measured (`docs/design/communication.md`, section 11, step 3).
   Power throttling is left to Windows, since the same measurement found
@@ -269,10 +265,8 @@ values, and spawns the executable with
 attribute, so `CreateProcessW` creates the process already inside the
 job. It is contained from its first instruction, and creation and
 containment are one step: a Core that dies while launching a child
-cannot leave it outside a job, running or suspended. (An earlier version
-spawned the child suspended and then called `AssignProcessToJobObject`;
-a Verbatim killed between the two steps left a suspended orphan.) Core
-holds the only job handle, so however Core ends, the kernel closes the
+cannot leave it outside a job, running or suspended, as spawning it
+suspended and then assigning it to the job could. Core holds the only job handle, so however Core ends, the kernel closes the
 handle and kills every child.
 
 The job. It always carries `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. With a
