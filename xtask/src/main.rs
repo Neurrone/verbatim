@@ -244,6 +244,12 @@ fn ci() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    println!("xtask ci: documents' links and paths");
+    if docs::run() != ExitCode::SUCCESS {
+        eprintln!("xtask ci: step failed: documents' links and paths");
+        return ExitCode::FAILURE;
+    }
+
     // No step names a target: everything builds for the host's own
     // architecture, x64 on an x64 machine and ARM64 on an ARM64 one, into
     // `target/debug`, the same output the end-to-end suite and plain

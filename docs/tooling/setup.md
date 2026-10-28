@@ -101,6 +101,8 @@ every finding:
   are not scanned, and tests are scanned like everything else: a test
   reads an element through a shape, declaring one in the shape module if
   none holds what it reads.
+- Documents' links and paths (`xtask/src/docs.rs`): the documentation
+  check below.
 
 `cargo xtask warm-speech` activates the Windows speech platform once and prints how long that took and the default voice's name, failing if the activation fails; CI's two unit-test jobs run it before `cargo xtask ci`, because a fresh runner's first activation outlasts the synthesizer host's ten-second hang bound.
 
@@ -109,8 +111,8 @@ every finding:
 `cargo xtask docs` (`xtask/src/docs.rs`) checks every Markdown file of
 the repository except those under `nvda/`, `third_party/`, `.git/`,
 the worktrees in .claude/worktrees, a top-level directory whose name starts with
-`target`, `experiments/` (which records code as it was when each
-experiment ran), and `docs/archive/`. Fenced code blocks are not read.
+`target`, and `experiments/` (which records code as it was when each
+experiment ran). Fenced code blocks are not read.
 It prints each violation as the file, line, and what is wrong, and
 fails if there is any:
 

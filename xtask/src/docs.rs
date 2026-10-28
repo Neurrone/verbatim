@@ -5,8 +5,8 @@
 //! Every Markdown file of the repository is checked except those under
 //! `nvda/`, `third_party/`, `.git/`, `.claude/worktrees/` (other sessions'
 //! checkouts), a top-level directory whose name starts with `target`,
-//! `experiments/` (which records code as it was when each experiment ran),
-//! and `docs/archive/`. Fenced code blocks are not read. The rules:
+//! and `experiments/` (which records code as it was when each experiment
+//! ran). Fenced code blocks are not read. The rules:
 //!
 //! 1. Every relative Markdown link, `[text](path)` or `[text](path#anchor)`,
 //!    resolves to an existing file or directory, relative to the linking
@@ -74,7 +74,6 @@ const EXCLUDED: &[&str] = &[
     ".git",
     ".claude/worktrees",
     "experiments",
-    "docs/archive",
 ];
 
 /// Runs the check on the repository this xtask was built from, printing
@@ -620,7 +619,6 @@ mod tests {
         };
         write("docs/readme.md", "[guide](Guide.md)\n");
         write("docs/guide.md", "");
-        write("docs/archive/old.md", "[gone](gone.md)\n");
         write("experiments/run.md", "[gone](gone.md)\n");
         write("target-x/notes.md", "[gone](gone.md)\n");
         let result = check(&root);
