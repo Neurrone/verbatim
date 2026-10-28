@@ -20,7 +20,9 @@
 //! and `ConnectNamedPipe` as an overlapped operation and immediately blocks
 //! on its completion via `GetOverlappedResult`, so from a caller's
 //! perspective every call still behaves synchronously, but the driver
-//! tracks the read and write directions independently. One handle is
+//! tracks the read and write directions independently. The connect alone
+//! waits on a second event too, the server's [`ShutdownEvent`], so that
+//! dropping the server ends the accept thread's wait directly. One handle is
 //! shared between the reader and writer threads (each issues only its own
 //! kind of operation on it, with its own dedicated event) — this is
 //! Microsoft's documented pattern for one file handle used by multiple
@@ -49,7 +51,7 @@ use verbatim_model::{
 };
 use windows::Win32::Foundation::{
     CloseHandle, ERROR_BROKEN_PIPE, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GetLastError, HANDLE,
-    HLOCAL, LocalFree,
+    HLOCAL, LocalFree, WAIT_EVENT, WAIT_OBJECT_0,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -61,12 +63,15 @@ use windows::Win32::Security::{
 use windows::Win32::Storage::FileSystem::{
     FILE_FLAG_FIRST_PIPE_INSTANCE, FILE_FLAG_OVERLAPPED, PIPE_ACCESS_DUPLEX, ReadFile, WriteFile,
 };
-use windows::Win32::System::IO::{GetOverlappedResult, OVERLAPPED};
+use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, PIPE_READMODE_BYTE,
     PIPE_REJECT_REMOTE_CLIENTS, PIPE_TYPE_BYTE, PIPE_UNLIMITED_INSTANCES, PIPE_WAIT,
 };
-use windows::Win32::System::Threading::{CreateEventW, GetCurrentProcess, OpenProcessToken};
+use windows::Win32::System::Threading::{
+    CreateEventW, GetCurrentProcess, INFINITE, OpenProcessToken, SetEvent, WaitForMultipleObjects,
+    WaitForSingleObject,
+};
 use windows::core::{HRESULT, PCWSTR, PWSTR};
 
 use crate::protocol::{
@@ -390,7 +395,8 @@ fn dispatch_request(
 struct RawPipe {
     handle: HANDLE,
     /// Dedicated to `ConnectNamedPipe` (issued once, from the accept
-    /// thread, before handoff) and every subsequent `ReadFile` (issued
+    /// thread, before handoff, and waited on beside the server's
+    /// [`ShutdownEvent`]) and every subsequent `ReadFile` (issued
     /// serially thereafter from the connection's reader thread). One event
     /// per direction is required: overlapped operations on the same handle
     /// in different directions can be genuinely concurrent, and each needs
@@ -416,37 +422,79 @@ unsafe impl Send for RawPipe {}
 // SAFETY: as above.
 unsafe impl Sync for RawPipe {}
 
+/// How [`RawPipe::connect`] ended without an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Connected {
+    /// A client attached to the instance.
+    Client,
+    /// The server's [`ShutdownEvent`] was set first; the connect was
+    /// cancelled, and any client that attached meanwhile is disconnected
+    /// when the instance is dropped.
+    Shutdown,
+}
+
 impl RawPipe {
     /// Connects this instance, blocking the calling thread until a client
-    /// attaches. Uses `read_event` since it runs before handoff to the
-    /// reader thread, which reuses the same event for its `ReadFile` calls.
-    fn connect(&self) -> windows::core::Result<()> {
+    /// attaches or `shutdown` is set. Uses `read_event` since it runs
+    /// before handoff to the reader thread, which reuses the same event for
+    /// its `ReadFile` calls.
+    fn connect(&self, shutdown: &ShutdownEvent) -> windows::core::Result<Connected> {
         let mut overlapped = OVERLAPPED {
             hEvent: self.read_event,
             ..OVERLAPPED::default()
         };
-        // SAFETY: `overlapped` is valid for the duration of this call and
-        // is not read again after `wait_overlapped` returns.
+        // SAFETY: `overlapped` stays valid until the connect has completed:
+        // every path below that leaves it pending waits for it first.
         let result = unsafe { ConnectNamedPipe(self.handle, Some(&raw mut overlapped)) };
         match result {
-            Ok(()) => Ok(()),
-            Err(error) if error.code() == HRESULT::from_win32(ERROR_PIPE_CONNECTED.0) => Ok(()),
-            Err(error) if error.code() == HRESULT::from_win32(ERROR_IO_PENDING.0) => {
-                let mut transferred = 0u32;
-                // SAFETY: `overlapped` is still valid (same stack frame,
-                // not yet returned); blocks until the pending connect
-                // completes.
-                unsafe {
-                    GetOverlappedResult(
-                        self.handle,
-                        &raw const overlapped,
-                        &raw mut transferred,
-                        true,
-                    )
-                }
+            Ok(()) => return Ok(Connected::Client),
+            Err(error) if error.code() == HRESULT::from_win32(ERROR_PIPE_CONNECTED.0) => {
+                return Ok(Connected::Client);
             }
-            Err(error) => Err(error),
+            Err(error) if error.code() == HRESULT::from_win32(ERROR_IO_PENDING.0) => {}
+            Err(error) => return Err(error),
         }
+        // The connect is pending. When both events are signalled the wait
+        // reports the connect, the lower index; the accept loop then sees
+        // the shutdown and drops the client.
+        // SAFETY: both handles are valid events owned by this instance and
+        // by the server, which outlives the accept thread.
+        let woke =
+            unsafe { WaitForMultipleObjects(&[self.read_event, shutdown.0], false, INFINITE) };
+        let mut transferred = 0u32;
+        if woke == WAIT_OBJECT_0 {
+            // SAFETY: `overlapped` is still valid, and the connect has
+            // completed, so this does not wait.
+            return unsafe {
+                GetOverlappedResult(
+                    self.handle,
+                    &raw const overlapped,
+                    &raw mut transferred,
+                    false,
+                )
+            }
+            .map(|()| Connected::Client);
+        }
+        // Shutdown, or a failed wait, whose error is taken before the calls
+        // below replace it: cancel the connect and wait for it to finish
+        // before `overlapped` goes away. The cancel fails harmlessly when a
+        // client attached in the meantime, and the wait then reports that
+        // connect; either way this instance is not handed on.
+        let wait_error =
+            (woke != WAIT_EVENT(WAIT_OBJECT_0.0 + 1)).then(windows::core::Error::from_thread);
+        // SAFETY: `overlapped` is the pending operation's own, still valid.
+        let _ = unsafe { CancelIoEx(self.handle, Some(&raw const overlapped)) };
+        // SAFETY: as above; this blocks until the connect has completed or
+        // been cancelled.
+        let _ = unsafe {
+            GetOverlappedResult(
+                self.handle,
+                &raw const overlapped,
+                &raw mut transferred,
+                true,
+            )
+        };
+        wait_error.map_or(Ok(Connected::Shutdown), Err)
     }
 
     fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
@@ -842,14 +890,14 @@ fn run_writer<W: Write>(mut writer: W, outbound_rx: &Receiver<Frame>, conn_id: C
 fn accept_loop(
     mut first: Option<RawPipe>,
     create: &dyn Fn() -> io::Result<RawPipe>,
-    shutdown: &AtomicBool,
+    shutdown: &ShutdownEvent,
     (registry, history): (&Registry, &SpeechHistory),
     connections: &Connections,
     handlers: &Arc<ServerHandlers>,
     next_conn_id: &AtomicU64,
 ) {
     loop {
-        if shutdown.load(Ordering::Acquire) {
+        if shutdown.is_set() {
             break;
         }
         let created = first.take().map_or_else(create, Ok);
@@ -861,20 +909,20 @@ fn accept_loop(
             }
         };
 
-        if raw.connect().is_err() {
-            // The instance could not be connected (or shutdown tore it
-            // down first via a dummy connect); try again unless shutting
-            // down.
-            drop(raw);
-            if shutdown.load(Ordering::Acquire) {
-                break;
+        match raw.connect(shutdown) {
+            Ok(Connected::Client) => {}
+            // Dropping the instance disconnects any client that attached
+            // while the connect was being cancelled.
+            Ok(Connected::Shutdown) => break,
+            Err(error) => {
+                warn!(%error, "a control-plane pipe instance failed to connect; trying a new one");
+                continue;
             }
-            continue;
         }
 
-        if shutdown.load(Ordering::Acquire) {
-            // This connection is either shutdown's own dummy client or a
-            // real one racing the shutdown; either way, stop accepting.
+        if shutdown.is_set() {
+            // A real client connected as shutdown began; stop accepting,
+            // and dropping the instance disconnects it.
             drop(raw);
             break;
         }
@@ -890,6 +938,48 @@ fn accept_loop(
     }
 }
 
+/// The manual-reset event that stops the accept thread. Once set it stays
+/// set, so a connect issued after it was set ends at once, and one pending
+/// when it is set ends then.
+struct ShutdownEvent(HANDLE);
+
+// SAFETY: `HANDLE` is a plain kernel handle value, and setting, testing,
+// and waiting on an event are thread-safe.
+unsafe impl Send for ShutdownEvent {}
+// SAFETY: as above.
+unsafe impl Sync for ShutdownEvent {}
+
+impl ShutdownEvent {
+    fn new() -> io::Result<Self> {
+        // SAFETY: manual-reset, initially-unsignaled, unnamed event; no
+        // preconditions.
+        unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
+            .map(Self)
+            .map_err(io::Error::other)
+    }
+
+    fn set(&self) {
+        // SAFETY: `self.0` is a valid event handle owned by `self`.
+        if let Err(error) = unsafe { SetEvent(self.0) } {
+            warn!(%error, "failed to set the control-plane shutdown event");
+        }
+    }
+
+    fn is_set(&self) -> bool {
+        // SAFETY: `self.0` is a valid event handle; a zero timeout only
+        // tests it.
+        let state = unsafe { WaitForSingleObject(self.0, 0) };
+        state == WAIT_OBJECT_0
+    }
+}
+
+impl Drop for ShutdownEvent {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is owned by `self` and not used again.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
 /// A running control-plane server: one named-pipe listener plus its live
 /// connections.
 ///
@@ -898,8 +988,7 @@ fn accept_loop(
 /// `--secure` instances" and ordinary process shutdown both go through
 /// this path).
 pub struct ControlServer {
-    pipe_name: String,
-    shutdown: Arc<AtomicBool>,
+    shutdown: Arc<ShutdownEvent>,
     registry: Registry,
     history: SpeechHistory,
     connections: Connections,
@@ -928,13 +1017,12 @@ impl ControlServer {
     /// spawned. Once this returns, the pipe exists and clients can connect.
     pub fn start_on(pipe_name: &str, handlers: ServerHandlers) -> io::Result<Self> {
         let security = build_owner_only_security_descriptor()?;
-        let shutdown = Arc::new(AtomicBool::new(false));
+        let shutdown = Arc::new(ShutdownEvent::new()?);
         let registry: Registry = Arc::new(Mutex::new(HashMap::new()));
         let history: SpeechHistory = Arc::new(Mutex::new(Some(Vec::new())));
         let connections: Connections = Arc::new(Mutex::new(HashMap::new()));
         let handlers = Arc::new(handlers);
         let next_conn_id = Arc::new(AtomicU64::new(0));
-        let pipe_name_owned = pipe_name.to_owned();
         // The first instance is created here rather than on the accept
         // thread, so the pipe exists once this returns: a client that
         // connects straight after starting the server finds it.
@@ -945,7 +1033,7 @@ impl ControlServer {
             let registry = Arc::clone(&registry);
             let history = Arc::clone(&history);
             let connections = Arc::clone(&connections);
-            let pipe_name = pipe_name_owned.clone();
+            let pipe_name = pipe_name.to_owned();
             thread::Builder::new()
                 .name("verbatim-control-accept".to_owned())
                 .spawn(move || {
@@ -963,7 +1051,6 @@ impl ControlServer {
         };
 
         Ok(Self {
-            pipe_name: pipe_name_owned,
             shutdown,
             registry,
             history,
@@ -1162,26 +1249,8 @@ fn any_subscribed(registry: &Registry, subscribed: impl Fn(&ConnectionEntry) -> 
 
 impl Drop for ControlServer {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
-
-        // Kick the accept thread out of its blocking `ConnectNamedPipe`
-        // wait: connecting a throwaway client causes that call to return,
-        // at which point the accept loop observes `shutdown` and exits
-        // without spawning a session for it. The accept loop only ever has
-        // one instance listening at a time, so a connect attempt reaches
-        // it; retried briefly in case it lands in the short gap between
-        // one instance connecting and the next being created.
-        for _ in 0..20 {
-            if std::fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .open(&self.pipe_name)
-                .is_ok()
-            {
-                break;
-            }
-            thread::sleep(std::time::Duration::from_millis(5));
-        }
+        // Ends the accept thread's pending connect, or its next one.
+        self.shutdown.set();
 
         if let Some(thread) = self.accept_thread.take() {
             let _ = thread.join();
@@ -1589,5 +1658,43 @@ mod tests {
             "the server disconnected the pipe: {error}"
         );
         drop(server);
+    }
+
+    // Dropping the server while a client is connected ends the accept
+    // thread's pending connect (the drop returns only once that thread has
+    // been joined) and disconnects the client.
+    #[test]
+    fn dropping_the_server_with_a_client_connected_stops_it_and_disconnects_the_client() {
+        let pipe_name = test_pipe_name("drop-connected");
+        let server = ControlServer::start_on(&pipe_name, test_handlers()).expect("starts");
+        let mut connection = connect(&pipe_name);
+        assert_eq!(
+            ask(
+                &mut connection,
+                1,
+                Request::Hello {
+                    protocol_version: PROTOCOL_VERSION,
+                },
+            ),
+            Frame::Reply {
+                to: 1,
+                payload: ReplyPayload::Hello {
+                    protocol_version: PROTOCOL_VERSION,
+                },
+            }
+        );
+
+        drop(server);
+
+        let error = read_message::<_, Frame>(&mut connection.1)
+            .expect_err("the connection ends when the server is dropped");
+        assert_eq!(
+            error.raw_os_error(),
+            Some(
+                i32::try_from(windows::Win32::Foundation::ERROR_PIPE_NOT_CONNECTED.0)
+                    .expect("small")
+            ),
+            "the server disconnected the pipe: {error}"
+        );
     }
 }
