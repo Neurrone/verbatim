@@ -48,7 +48,7 @@ before debugging anything downstream.
 - [The end-to-end suite](e2e.md): test-audio mode, running the suite on
   this machine, `cargo xtask park`, the scenarios, the measure set, and
   hearing and recording a run.
-- [The VM harness](../vm.md): every `cargo xtask vm` verb and rebuilding
+- [The VM harness](vm.md): every `cargo xtask vm` verb and rebuilding
   the golden image.
 - [Recording what NVDA says](nvda.md): `cargo xtask nvda capture` and the
   rules it follows.

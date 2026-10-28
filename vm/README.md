@@ -1,10 +1,10 @@
 # Windows 11 Hyper-V VM harness
 
-This directory holds the milestone M2 VM harness: a Packer template that
-builds a provisioning-ready Windows 11 Pro Hyper-V image, a harness
-provisioner that turns that image into an unattended E2E lab machine, and
-the assets `cargo xtask vm` drives from there (see
-`docs/architecture.md` section 14 and `docs/roadmap.md` M2).
+This directory holds the VM harness: a Packer template that builds a
+provisioning-ready Windows 11 Pro Hyper-V image, a harness provisioner
+that turns that image into an unattended E2E lab machine, and the assets
+`cargo xtask vm` drives from there (see `docs/architecture.md` section 14).
+`docs/tooling/vm.md` is the full guide to every verb.
 
 ## Host requirements
 
@@ -29,9 +29,9 @@ Create an ignored local var file:
 Copy-Item vm\example.pkrvars.hcl vm\local.pkrvars.hcl
 ```
 
-Edit `local.pkrvars.hcl` with the local ISO path, SHA-256, Hyper-V switch
-name, temporary build path, and a local administrator password matching
-`.env`. Do not commit `local.pkrvars.hcl`.
+Edit the new local.pkrvars.hcl with the local ISO path, SHA-256, Hyper-V
+switch name, temporary build path, and a local administrator password
+matching `.env`. Do not commit it.
 
 Set `temp_path` to an existing directory on a volume with enough free space
 for the temporary VHDX. Packer's Hyper-V builder uses the host temp
@@ -74,7 +74,7 @@ exported `.vmcx` with `Compare-VM`.
 During the build, Packer runs two PowerShell provisioners in order:
 `scripts/Initialize-VerbatimBaseImage.ps1` (WinRM automation prerequisites
 and `C:\VerbatimLab\image.json`), then
-`scripts/Initialize-VerbatimHarness.ps1` (everything the M2 harness needs
+`scripts/Initialize-VerbatimHarness.ps1` (everything the harness needs
 on top: persistent autologon, an unattended-friendly session, a pinned
 1920x1080 display resolution, the `VerbatimAgent` scheduled task, and its firewall rule — see that
 script's own header comment for the full, idempotent step list).
@@ -88,7 +88,7 @@ Useful wrapper parameters:
   an existing output directory for the same image build. Use this when
   rebuilding into `artifacts/packer/windows11`.
 - `-VarFile <path>` uses a different `.pkrvars.hcl` file. Defaults to
-  `vm/local.pkrvars.hcl`.
+  local.pkrvars.hcl in this directory.
 - `-TempPath <path>` overrides the temporary Hyper-V build path instead of
   reading `temp_path` from the var file.
 - `-OutputDirectory <path>` overrides the final Packer output directory
@@ -112,8 +112,9 @@ deploys a debug build so the in-guest agent is actually running, waits for
 the agent to answer on its TCP port, then takes a checkpoint named
 `golden`. From there:
 
-- `cargo xtask vm test` restores `golden`, deploys the current build on
-  top of it, and runs `crates/verbatim-e2e`'s suite against the guest.
+- `cargo xtask vm test` deploys the current build into the guest and
+  runs `crates/verbatim-e2e`'s suite against it; `--restore` restores
+  `golden` first.
 - `cargo xtask vm start` / `stop` / `restart` / `restore [checkpoint]`
   manage the VM's power state directly.
 - `cargo xtask vm deploy` copies a fresh build in without touching

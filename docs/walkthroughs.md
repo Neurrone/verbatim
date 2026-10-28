@@ -571,7 +571,7 @@ guide](tooling/e2e.md)).
 9. **Against a Hyper-V guest.** `cargo xtask vm test` builds, copies
    changed binaries into the guest, restores the golden checkpoint only
    with `--restore`, and runs each scenario as its own `cargo test`
-   subprocess with `VERBATIM_E2E_REMOTE=1` ([vm.md](vm.md)).
+   subprocess with `VERBATIM_E2E_REMOTE=1` ([the VM harness guide](tooling/vm.md)).
 
 The scenarios are listed in [verbatim-e2e](crates/verbatim-e2e.md).
 

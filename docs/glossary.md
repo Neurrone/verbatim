@@ -87,7 +87,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   listener's read of the focus, or its drop, takes the marker's place.
   [verbatim-outpost](crates/verbatim-outpost.md).
 - **Golden image** — the Packer-built Windows VM baseline the Hyper-V
-  harness imports, deploys to, and checkpoints. [The VM harness](vm.md).
+  harness imports, deploys to, and checkpoints. [The VM harness](tooling/vm.md).
 - **Held nodes** — the node references the reducer holds (the focus,
   its ancestors, the last selection, the navigator, and a pending
   navigation's start); Core sends each outpost its own, and the outpost

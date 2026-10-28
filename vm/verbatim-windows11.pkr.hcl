@@ -79,7 +79,7 @@ build {
   # network reachability, unlike both an in-guest download (throttled or
   # stalled over Hyper-V's NAT) and a WinRM file provisioner (which hung
   # base64-streaming the ~100 MB binary). See vm/vendor/ffmpeg/README.md and
-  # docs/vm.md's image-rebuild section.
+  # docs/tooling/vm.md's image-rebuild section.
 
   # The M2 harness provisioner (autologon, unattended-session settings,
   # display resolution, the VerbatimAgent scheduled task, and

@@ -405,7 +405,7 @@ A scenario's name is also its
 --ignored --exact <name> --test-threads=1` runs exactly that one scenario
 runner-direct, the same
 selection mechanism `cargo xtask vm test --scenario <name>` uses against the
-VM (see "cargo xtask vm verbs" in [The VM harness](../vm.md)).
+VM (see "cargo xtask vm verbs" in [The VM harness](vm.md)).
 
 Some scenarios are local-only, marked `local_only` in the registry. Most
 test Windows 11 Notepad, which GitHub's Windows Server runner lacks (it
@@ -897,4 +897,4 @@ which scenarios cannot be compared.
 ## The VM harness
 
 The `cargo xtask vm` verbs and the golden-image rebuild live in
-[the VM harness guide](../vm.md).
+[the VM harness guide](vm.md).
