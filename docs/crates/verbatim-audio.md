@@ -151,7 +151,13 @@ nothing they had queued. Frames are released once played.
 Backpressure. A source may hold unplayed frames up to the device buffer
 plus 40 ms; a `write` beyond that blocks until playback makes room. This
 keeps a fast synthesizer from running ahead of what is heard, which keeps
-cancellation cheap.
+cancellation cheap. The half-room rule keeps the two threads from waking
+each other for slivers: a blocked writer waits for half its source's room
+(or what it has left to write, if less; `room_wanted`), the audio thread
+wakes writers only when that room is free or it has carried out a
+request, and a write wakes the audio
+thread only when the device needs frames (the device is stopped, or less
+than `LOW_WATER_MS` is queued).
 
 Endings. Every registered utterance ends exactly once with
 `PlaybackEvent::Ended`: completed when its last frame has played,
