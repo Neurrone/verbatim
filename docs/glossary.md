@@ -36,7 +36,7 @@ their NVDA meanings and are documented in [docs/nvda](nvda/readme.md).
   (`verbatim-uia`), MSAA/IA2 (`verbatim-ia2`), later JAB.
   [Architecture](architecture.md) section 4.
 - **Built-in** — a module folder shipped with Verbatim under
-  `extensions/builtin/`, loaded by the same host as an installed module
+  `extensions/builtin/` (planned), loaded by the same host as an installed module
   but never bundled, listed, installed or disabled.
   [extensions](design/extensions.md).
 - **Capability** — a group of host functions a module imports, derived

@@ -144,6 +144,7 @@ modules:
 Good first files, in order of increasing intricacy:
 `crates/verbatim-input-windows/src/lib.rs` (thread + unbounded send + arc-swap),
 `crates/verbatim-speech` (two named threads, command channels, a
-cancellation flag), `crates/verbatim-outpost/src/query_pool.rs`
-(bounded deadlines, worker abandonment, watchdog thread),
+cancellation flag), `crates/verbatim-outpost/src/outpost/mod.rs`
+(one worker per application, bounded deadlines, and the watchdog that
+abandons and replaces a hung worker),
 `crates/verbatim-agent/src/tunnel.rs` (overlapped duplex relay).
