@@ -703,7 +703,7 @@ classically) is not appended: it is walked again the same way by words,
 and a mixed word by characters, as NVDA walks a mixed stretch by finer
 units, so a provider whose format unit does not end where an attribute
 changes (Windows Terminal's and the console host's do not, for italics,
-`docs/text-attributes.md`) still has each part read with its own value;
+`experiments/the-terminals-report-no-language-links-or-annotations/readme.md`) still has each part read with its own value;
 the 64 stretches bound the whole walk. Each value is appended as the
 provider gave it, UIA's sentinels included, and the caller reads it by
 its type, so a value of the wrong type, "not supported", or "mixed" for a
