@@ -37,7 +37,7 @@ A related cost that is not a failure: a remote operation waiting for one busy UI
 
 A second form needs new connections from two processes: a new connection waiting in a busy application fails when another process's new connection waits there too and a third process has a call pending (`e44`, `e50`). Two connections from two threads of one process beside a held call did not fail (`e55`, 12 of 12), nor did a connection beside another's that was waiting when its process ended (12 of 12).
 
-A call that times out leaves its request queued in the application, which processes it when it wakes, so a connection made then by another process can still collide (found while building 3782ee8d).
+A call that times out leaves its request queued in the application, which processes it when it wakes, so a connection made then by another process can still collide.
 
 #### Not affected
 
@@ -53,11 +53,11 @@ A call that times out leaves its request queued in the application, which proces
 
 #### Workarounds that worked
 
-- Only one process connects to an application during another process's operation: only an application's own outpost sends it a remote operation or makes a new UIA connection to it, and the focus listener reads every focus from elements it holds (`docs/design/listener-without-connections.md`, section 2). This replaced a lock per application around each remote operation and each connection by handle, shared by the listener and that application's outpost, which the rule left nothing to guard (removed 2026-10-19). It covers only Verbatim's own processes: remote operations by other software, a request still queued after a timeout, the end-to-end agent's two UIA requests, and UIA's own focus tracking in the listener's process are not covered.
+- Only one process connects to an application during another process's operation: only an application's own outpost sends it a remote operation or makes a new UIA connection to it, and the focus listener reads every focus from elements it holds (`docs/design/listener-without-connections.md`, section 2). It covers only Verbatim's own processes: remote operations by other software, a request still queued after a timeout, the end-to-end agent's two UIA requests, and UIA's own focus tracking in the listener's process are not covered.
 
 #### Workarounds that didn't work
 
-- UIA's setup done in each application by the listener before the application was given its outpost (3782ee8d, reverted in 610c51fd). A later remote operation collided just as the setup's had, so in Windows Terminal it did not prevent the 3-second probe failure and made it more frequent (4 of 12 launches against 0 of 10), and it held each new application 72 to 278 ms before its outpost was given.
+- UIA's setup done in each application by the listener before the application was given its outpost. A later remote operation collided just as the setup's had, so in Windows Terminal it did not prevent the 3-second probe failure and made it more frequent (4 of 12 launches against 0 of 10), and it held each new application 72 to 278 ms before its outpost was given.
 - Making the connection first, so it is under way before the operation arrives: it failed in 6 of 6 (`e31`).
 - Asking again: a later probe fails the same way while an operation is queued (`e9`), and every later operation opens the window again (`e1`).
 
@@ -67,11 +67,11 @@ No NVDA issue or capture records this fault. NVDA is one process, and a process'
 
 #### Reproduction test
 
-No test in `crates/mockapp/tests/uia_bugs/` reproduces it: a test would have to wait for evidence that the operation is queued and that the probe has reached the stalled thread, which needs a mockapp stall that names the messages it is posted and sent, and mockapp has none. A test that did so while mockapp had such a stall, `a_probe_during_another_processs_queued_operation_answers_no` (removed in 31d462fc; its code is at 31d462fc^), passed 20 of 20 runs, and its control with no operation queued 20 of 20; it found the probe's "no" about 3 seconds after the probe was made whatever the connection timeout (500, 1,000, 2,000 and 5,000 ms), and the element lookup's window proxy after about 2 seconds at 500 or 1,000 ms and after 5 seconds at 5,000 ms. The lock's tests showed the lock prevented the fault (`a_probe_waits_for_the_first_operation_behind_a_busy_ui_thread` and `a_probe_waits_for_an_operation_behind_a_busy_ui_thread`, `crates/mockapp/tests/app_lock.rs` at 9887a034: with the lock removed, the probe made during the stall answered "no" after about 5 seconds); they held the listener's remote operation behind mockapp's busy thread, and went with that operation, since the listener makes none (`docs/design/listener-without-connections.md`, section 10, step 6).
+No test in `crates/mockapp/tests/uia_bugs/` reproduces it: a test would have to wait for evidence that the operation is queued and that the probe has reached the stalled thread, which needs a mockapp stall that names the messages it is posted and sent, and mockapp has none. A test written against such a stall passed 20 of 20 runs, and its control with no operation queued 20 of 20; it found the probe's "no" about 3 seconds after the probe was made whatever the connection timeout (500, 1,000, 2,000 and 5,000 ms), and the element lookup's window proxy after about 2 seconds at 500 or 1,000 ms and after 5 seconds at 5,000 ms.
 
 #### Evidence
 
-[`experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](../experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` (including `e24b`, `e24c`, `e26b`, `e28c`, `e28d`, `e35b` and `e35c`), with the tool as patches, and the Notepad and Windows Terminal launches that met the fault; `docs/design/focus-pipeline.md`'s section 20 on the lock as it stood before commit 1b5d3822, which removed the lock; commits 3782ee8d and 610c51fd.
+[`experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](../experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` (including `e24b`, `e24c`, `e26b`, `e28c`, `e28d`, `e35b` and `e35c`), with the tool as patches, and the Notepad and Windows Terminal launches that met the fault.
 
 ### UiaHasServerSideProvider says no for a new conhost window while another process has an event handler
 
@@ -85,9 +85,9 @@ The probe answers "no" after 3,022 to 3,058 ms, so the window is read through MS
 
 In the "no" trials of `e39`, conhost received UIA's request 24 to 31 ms after the window was found and answered `0x10000` in about 3.5 ms, as in the "yes" trials: the window answered, and UIA's client waited afterwards. A lookup by handle meets the same fault: `ElementFromHandleBuildCache` alone, at 0 ms under the trigger, returned UIA's MSAA proxy (its process id the console's client, not conhost) after 5,030 to 5,043 ms in 7 of 120 trials (`e39`).
 
-In the end-to-end suite this is inferred to be why `conhost_two_windows` fails about 1 run in 20: each failing run's probe came from a spare outpost newly given the second console's conhost, 1 to 3 ms after the window's foreground event, with no Verbatim call pending in that conhost, and one of the kept runs already had the per-application lock (`kept-runs/` in this fault's experiments folder, cited in `e38`).
+In the end-to-end suite this is inferred to be why `conhost_two_windows` fails about 1 run in 20: each failing run's probe came from a spare outpost newly given the second console's conhost, 1 to 3 ms after the window's foreground event, with no Verbatim call pending in that conhost (`kept-runs/` in this fault's experiments folder, cited in `e38`).
 
-While the outposts made this call as their probe of their own application's windows, they met a 3-second verdict on other applications' new windows too. In the listener design's first step (`docs/design/listener-without-connections.md`, section 10, step 1; evidence in `target/e2e-evidence/listener-no-connections/step1/`, not committed), 10 of the outposts' probes over 170 scenario runs took 2.8 to 3.3 seconds, all in `explorer_folder_window` and all on File Explorer `DirectUIHWND` windows, none on conhost: 9 answered "yes" and 1 "no", on the "Explorer Pane" window, an ancestor of the focus. In 20 runs of `measure_repeat_explorer`, alternated between the build before that step and the step, an outpost's first probe answered "no" after about 3 seconds twice in the build before, both on the "Explorer Pane", and once with the step, after 3,008 ms on the "Items View" window the listener read; that run still announced all 401 of its focuses.
+The same call, made by an outpost as its probe of other applications' new windows, also took about 3 seconds on File Explorer `DirectUIHWND` windows (the "Explorer Pane" and "Items View" windows), answering "no" in some of those runs.
 
 #### Not affected
 
@@ -104,7 +104,7 @@ While the outposts made this call as their probe of their own application's wind
 
 - The lookup by handle as the check, judging the window native when its element's main provider is not one of UIA's proxies: it returned the MSAA proxy after about 5 seconds in 7 of 120 trials under the trigger, and it misclassifies 11 File Explorer child windows that answer the raw probe but whose element has an MSAA or non-control proxy as its main provider (`e39`).
 - Probing later: it lowers the rate but does not remove the fault, which occurred up to 77.3 ms after the window was found (`e38`); in `e39`, installing the debugging hooks first moved the probe to about 18 ms and gave no "no" in 60, which shows only a lower rate.
-- A lock per application around Verbatim's colliding calls, since removed: it could not prevent this, since no Verbatim call is pending when it happens (`e38`; `conhost_two_windows` failed four times in eleven runs under it).
+- A lock per application around Verbatim's colliding calls: it could not prevent this, since no Verbatim call is pending when it happens (`e38`; `conhost_two_windows` failed four times in eleven runs under it).
 
 #### NVDA
 
@@ -133,7 +133,7 @@ All of that process's UIA event delivery waits, every application's events and n
 - The hold is twice the connection timeout per focus WinEvent, or until the window answers if sooner: 812 ms with the connection timeout at 500 ms; 3,806 to 3,821 ms at the default 2,000 ms; with 10,000 ms, 7,773 ms in an 8-second stall and 19,767 ms in a 20-second stall, each the end of the stall (`h3_*`).
 - Each focus WinEvent naming the hung window pays the full wait again: three held 5,814 ms at 1,000 ms, one held 1,824 ms.
 - Each client object in the process that holds a focus registration runs its own focus tracking on the same thread: two client objects with a desktop handler each made four calls (1,820 ms at 500 ms).
-- The first measurements (focus pipeline section 12.11, 2026-10-10) saw 14,800 ms in a 15-second stall, and a name change at a desktop-wide registration not delivered within 25 s, with clients whose connection timeout Verbatim then set to 10 seconds.
+- With the connection timeout at 10 seconds, a 15-second stall held 14,800 ms, and a name change at a desktop-wide registration was not delivered within 25 s (focus pipeline section 12.11).
 - Verbatim sets the connection timeout to UIA's default 2 seconds (`CONNECTION_TIMEOUT`), so the listener's hold is up to about 4 seconds per focus WinEvent, as measured at 2,000 ms above.
 
 #### Not affected
@@ -166,13 +166,11 @@ NVDA is inferred to meet it: it is one process with a desktop-wide focus registr
 
 #### Reproduction test
 
-No test reproduces the hold, its absence in a process with no focus registration, Verbatim's workaround, or the dropped focus of `h6`: each would have to wait for evidence that UIA's two messages have reached the hung window, which needs a mockapp stall that names the messages it is sent, and mockapp has none. Tests that did so while mockapp had such a stall (removed in 31d462fc; their code is at 31d462fc^) each passed 20 of 20 runs. With a desktop-wide focus handler and the connection timeout at 500 ms, another application's name change, raised after UIA's first send to the hung tree view, arrived after the second, 1,007 to 1,026 ms after the focus `WinEvent` (`a_name_change_waits_for_both_sends_to_a_hung_focus`). A real outpost heard and reported the name change of the focus it followed while the tree view hung; with a focus subscription added to the outpost's registration, that test failed 20 of 20 runs (`an_outposts_uia_events_are_not_held_behind_a_hung_focus`). An MSAA mockapp that raised its focus and stalled in the same turn, at 500 ms, had its focus dropped; with the focus raised and no stall, and with the stall released as soon as UIA's second message reached the window, before the second wait ended, its focus was heard first and the test failed 20 of 20 runs each (`a_focus_raised_while_its_window_is_busy_past_the_connection_timeout_is_dropped`). `a_provider_held_raising_its_event_holds_only_its_own_events`, in `crates/mockapp/tests/uia_bugs/a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events.rs`, shows E-delivery's case under "Not affected", holding mockapp's provider in its call rather than stalling its thread; it passed 20 of 20 runs.
-
-The October experiments `e_mapping`, `e_hung_cause` and `e_cross` are kept as files in `experiments/mockapp-experiments-2026-10-10/`, and the 2026-10-18 measurements used the scratch tool `focusproto`.
+No test reproduces the hold, its absence in a process with no focus registration, Verbatim's workaround, or the dropped focus of `h6`: each would have to wait for evidence that UIA's two messages have reached the hung window, which needs a mockapp stall that names the messages it is sent, and mockapp has none. `a_provider_held_raising_its_event_holds_only_its_own_events`, in `crates/mockapp/tests/uia_bugs/a_hung_window_named_in_a_system_focus_event_holds_a_processs_uia_events.rs`, shows E-delivery's case under "Not affected", holding mockapp's provider in its call rather than stalling its thread; it passed 20 of 20 runs.
 
 #### Evidence
 
-[`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); `docs/design/focus-pipeline.md`, section 12.11 and its subsections "Containment option 2, tested" and "Cross-process containment and MSAA's view of UIA focus"; commits 8b491dc and b0a1989.
+[`experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/`](../experiments/a-hung-window-named-in-a-system-focus-event-holds-a-processs-uia-events/readme.md): experiments `h1` to `h6` (`h1_base`, `h2_base`, `h2_cui`, the `h3_*` variants including `h3_tto500`, `h4_*`, `h5_*` and `h6_*`) with the `focusproto` tool, P4 (including `N_B`), and the October experiments E-delivery, E-hung-proxy, `e_mapping`, `e_hung_cause` and `e_cross`, whose code is in [`experiments/mockapp-experiments-2026-10-10/`](../experiments/mockapp-experiments-2026-10-10/readme.md); `docs/design/focus-pipeline.md`, section 12.11 and its subsections "Containment option 2, tested" and "Cross-process containment and MSAA's view of UIA focus".
 
 ### The connection timeout applies to the whole process
 
@@ -184,7 +182,7 @@ Any client object in a process sets `IUIAutomation2::ConnectionTimeout`.
 
 The value applies to every client object in the process, and the most recent setting by any of them wins. An explicit read on a client object that had set 500 ms waited 10,013 ms after another client object in the process set 10,000 ms; the reverse case waited 508 ms (`h5_*`). A client object created later that sets nothing does not reset it. The transaction timeout behaves the same: a client set both to 1,000 ms, and a client created earlier on another thread then read 1,000 and 1,000, where it had read 10,000 and 20,000 before (E1, section 11).
 
-This undid an earlier Verbatim design: every client creation set the connection timeout to 10 seconds, which overwrote any shorter value another thread had set, and was found to explain a 10-second `GetFocusedElement` in File Explorer (E1).
+So one client that sets a long timeout lengthens every other client's waits: a client creation that set 10 seconds explained a 10-second `GetFocusedElement` in File Explorer (E1).
 
 #### Not affected
 
@@ -196,7 +194,7 @@ Not measured across processes; each process has its own value (inferred from the
 
 #### Workarounds that didn't work
 
-- A shorter timeout per client or per call, as Verbatim's former `within` helper set one: any other client's setting replaces it (E1).
+- A shorter timeout per client or per call: any other client's setting replaces it (E1).
 
 #### NVDA
 
@@ -207,7 +205,7 @@ NVDA leaves UIA's defaults (focus pipeline section 6.1), so it does not meet thi
 These are in `crates/mockapp/tests/uia_bugs/the_connection_timeout_applies_to_the_whole_process.rs`; each passed 20 of 20 runs:
 
 - `timeouts_set_through_one_client_are_read_by_another` reproduces E1: both timeouts set through one client are what a client made before, on another thread, reads.
-- No test reproduces `h5`'s waits, a call on one client waiting the connection timeout another client set last: Dickson decided (2026-10-19) not to keep tests for them in this milestone, so they are recorded here with their figures. The test that showed it, `a_lookup_waits_the_connection_timeout_another_client_set_last` (removed in 31d462fc; its code is at 31d462fc^), passed 20 of 20 runs: a lookup on a client that had set both timeouts to twice the test's wait failed with `UIA_E_TIMEOUT` while the window still hung, once a client on another thread had set only the connection timeout, to 500 ms; with that client's setting removed, it failed 20 of 20 runs.
+- No test reproduces `h5`'s waits, a call on one client waiting the connection timeout another client set last: Dickson decided (2026-10-19) not to keep tests for them in this milestone, so they are recorded here with their figures.
 - `the_first_client_in_a_process_has_verbatims_timeouts` and `making_a_client_keeps_the_timeouts_another_set` show that Verbatim's workaround holds. With the setup's setting removed, the first failed 20 of 20 runs, reading UIA's defaults of 2,000 and 20,000 ms; with client creation setting the timeouts as well, the second failed 20 of 20.
 
 #### Evidence
@@ -260,7 +258,7 @@ The listener's `WinEvent` hook sees the focus move, and UI Automation delivers t
 
 #### Not affected
 
-Not established. In steady state a UIA focus follows its `WinEvent` in the same millisecond at the median in File Explorer, but a running process was affected too: the first folder window of `measure_focus_explorer` had its UIA focus about a second after its `WinEvent` focus each time it took the focus back after a new window closed (`target/e2e-evidence/explorer-flakes-2026-10-21/partA/`).
+Not established. In steady state a UIA focus follows its `WinEvent` in the same millisecond at the median in File Explorer, but a running process was affected too: the first folder window of `measure_focus_explorer` had its UIA focus about a second after its `WinEvent` focus each time it took the focus back after a new window closed.
 
 #### Workarounds that worked
 
@@ -280,7 +278,7 @@ None: the fault does not reproduce reliably, and no mockapp simulation is built 
 
 #### Evidence
 
-`target/e2e-evidence/listener-no-connections/` (`g1c/`, `g1d-ab/`, `ab2/`), `target/e2e-evidence/verify-head-2026-10-20/settings_system_page-2026-10-20T07-31-34.755Z-fail/`, and `target/e2e-evidence/fixes-round-six-2026-10-21/walk-logs/`.
+None is kept in the repository; the fault was met in the end-to-end scenarios `measure_repeat_explorer`, `measure_focus_explorer` and `settings_system_page` (`docs/design/listener-without-connections.md`, decision 2, risks 2 and 13).
 
 ### A registration that times out reports success
 
@@ -377,7 +375,7 @@ Read inside the operation, the window element has no native window handle and no
 
 #### Workarounds that worked
 
-- Verbatim's choice: the listener reads every focus by the classic walk, through the client side, so its ancestors come through the window proxy. An outpost's read of its application's focus, the focus-now query's and the read after a `WinEvent` focus no UIA focus followed, reads by the remote operation, and reads again through the window's proxy any ancestor that is a window's own element (runtime id `[42, handle]`) read without its handle, one `ElementFromHandleBuildCache`. Without it, such a read in `conhost_two_windows`'s second window reported the terminal with no ancestors, so the window went unannounced (`target/e2e-evidence/full-suite-2026-10-21/conhost_two_windows-suite-fail/`); a probe against a real console host showed the operation's window element nameless, with handle 0 and the disabled state, and the proxy's read of it named, with its handle, as the classic walk reads it (`target/e2e-evidence/explorer-c3-fixes-2026-10-21/console-window-remote-vs-proxy.txt`).
+- Verbatim's choice: the listener reads every focus by the classic walk, through the client side, so its ancestors come through the window proxy. An outpost's read of its application's focus, the focus-now query's and the read after a `WinEvent` focus no UIA focus followed, reads by the remote operation, and reads again through the window's proxy any ancestor that is a window's own element (runtime id `[42, handle]`) read without its handle, one `ElementFromHandleBuildCache`. Without it, such a read in `conhost_two_windows`'s second window reported the terminal with no ancestors, so the window went unannounced; a probe against a real console host showed the operation's window element nameless, with handle 0 and the disabled state, and the proxy's read of it named, with its handle, as the classic walk reads it.
 
 #### Workarounds that didn't work
 
@@ -480,7 +478,7 @@ On a desktop where no window has the keyboard focus, as in mockapp's tests, desk
 
 ### Elements cannot be passed to another process
 
-`CoMarshalInterface` of an `IUIAutomationElement` with `MSHCTX_LOCAL` succeeded, but `CoUnmarshalInterface` of those bytes in another process failed with `E_FAIL`, in three runs; the free-threaded marshaler's in-process form failed there with `E_UNEXPECTED`. Within the owning process the same bytes gave a working proxy, and an event handler object of Verbatim's own marshaled to the other process worked until a call passed it an element. No route, documented or not, was found for giving another process an event's sender, so the process that receives a UIA event is the only one that can read from its element; this is why the listener judges and reads each focus itself. A sender stays usable in its own process for as long as the provider keeps the element (P3). Evidence: [`experiments/elements-cannot-be-passed-to-another-process/`](../experiments/elements-cannot-be-passed-to-another-process/readme.md), experiments E-marshal (commit f86da7f, on the unmerged experiment branch) and P3; `docs/design/focus-pipeline.md`, section 11, E-marshal. Tests, in `crates/mockapp/tests/uia_bugs/elements_cannot_be_passed_to_another_process.rs`, each passing 20 of 20 runs: `an_element_marshaled_for_another_process_cannot_be_unmarshaled_there`, `an_element_marshaled_for_another_apartment_cannot_be_unmarshaled_in_another_process`, `an_object_passed_to_another_process_works_until_a_call_passes_it_an_element` and `a_kept_sender_is_read_live_until_its_provider_removes_it`, which pins P3's removal and exit but not its reads after 31 and 152 seconds.
+`CoMarshalInterface` of an `IUIAutomationElement` with `MSHCTX_LOCAL` succeeded, but `CoUnmarshalInterface` of those bytes in another process failed with `E_FAIL`, in three runs; the free-threaded marshaler's in-process form failed there with `E_UNEXPECTED`. Within the owning process the same bytes gave a working proxy, and an event handler object of Verbatim's own marshaled to the other process worked until a call passed it an element. No route, documented or not, was found for giving another process an event's sender, so the process that receives a UIA event is the only one that can read from its element; this is why the listener judges and reads each focus itself. A sender stays usable in its own process for as long as the provider keeps the element (P3). Evidence: [`experiments/elements-cannot-be-passed-to-another-process/`](../experiments/elements-cannot-be-passed-to-another-process/readme.md), experiments E-marshal and P3; `docs/design/focus-pipeline.md`, section 11, E-marshal. Tests, in `crates/mockapp/tests/uia_bugs/elements_cannot_be_passed_to_another_process.rs`, each passing 20 of 20 runs: `an_element_marshaled_for_another_process_cannot_be_unmarshaled_there`, `an_element_marshaled_for_another_apartment_cannot_be_unmarshaled_in_another_process`, `an_object_passed_to_another_process_works_until_a_call_passes_it_an_element` and `a_kept_sender_is_read_live_until_its_provider_removes_it`, which pins P3's removal and exit but not its reads after 31 and 152 seconds.
 
 ### Ancestors cannot be cached or listened to
 
@@ -488,7 +486,7 @@ An event registration scoped to an element's ancestors (`TreeScope_Ancestors` or
 
 ### A timeout bounds each provider call, not an operation
 
-Under a 1-second transaction timeout, a `FindFirst` over a window's descendants held 13,208 ms before failing with `UIA_E_TIMEOUT`, waiting a full timeout for each provider call the held thread did not answer (E-TT, section 11; its experiments folder is shared with "A registration that times out reports success", [`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md)). A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`). No test shows it: Dickson decided (2026-10-19) not to keep tests for this limitation in this milestone, so it is recorded here with its figures. The test that showed it, `a_search_waits_a_timeout_for_each_call_its_stalled_provider_does_not_answer` (removed in 31d462fc; its code is at 31d462fc^), passed 20 of 20 runs; with it, `FindFirst` failed with `UIA_E_TIMEOUT` after three timeouts with both timeouts set to 100, 200 or 500 ms, and after four at 1,000 ms.
+Under a 1-second transaction timeout, a `FindFirst` over a window's descendants held 13,208 ms before failing with `UIA_E_TIMEOUT`, waiting a full timeout for each provider call the held thread did not answer (E-TT, section 11; its experiments folder is shared with "A registration that times out reports success", [`experiments/a-registration-that-times-out-reports-success/`](../experiments/a-registration-that-times-out-reports-success/readme.md)). A remote operation is one transaction, so the timeout bounds it as a whole (`a_stalled_provider_holds_execute_until_the_transaction_timeout` in `crates/mockapp/tests/remote_ops.rs`). Operations made of many calls are run with a deadline of their own on a thread that can be abandoned (`crates/verbatim-uia/src/bounded.rs`). No test shows it: Dickson decided (2026-10-19) not to keep tests for this limitation in this milestone, so it is recorded here with its figures: `FindFirst` failed with `UIA_E_TIMEOUT` after three timeouts with both timeouts set to 100, 200 or 500 ms, and after four at 1,000 ms.
 
 ## Applications
 
@@ -562,7 +560,7 @@ No test reproduces it; mockapp has no second identity. The identity judge in its
 
 #### Evidence
 
-[`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; `docs/design/windows-terminal-twin-focus.md`; `docs/design/focus-pipeline.md`, sections 16.8 and 16.9; GitHub Actions runs [38988118089](https://github.com/Neurrone/verbatim/actions/runs/38988118089) and [39032739474](https://github.com/Neurrone/verbatim/actions/runs/39032739474), whose downloadable artifacts expire and are not committed.
+[`experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/`](../experiments/windows-terminal-raises-focus-from-a-second-runtime-identity/readme.md): the identity judge and its three 150-round runs; `docs/design/windows-terminal-twin-focus.md`; `docs/design/focus-pipeline.md`, sections 16.8 and 16.9.
 
 ### A Qt application's cached keyboard focus can be stale
 
