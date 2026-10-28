@@ -37,8 +37,8 @@ pub struct WindowHandle(pub u64);
 
 /// Facts about the window an event concerns, read by its outpost with local
 /// calls when the event is observed. The reducer classifies every event
-/// against its attention record with these (decision D14 as amended by the
-/// outpost redesign; `docs/parity/focus-events.md`, "Event acceptance").
+/// against its attention record with these (decision D14;
+/// `docs/parity/focus-events.md`, "Event acceptance").
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowFacts {
     /// The event's top-level window.

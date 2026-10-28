@@ -1,5 +1,4 @@
-//! The Core-side supervisor (architecture section 1, decisions D9 and D13;
-//! outpost redesign, "The supervisor").
+//! The Core-side supervisor (architecture section 1, decisions D9 and D13).
 //!
 //! The supervisor starts outposts and the focus listener, routes the
 //! listener's facts to the right outpost, and ends children that crash, hang,

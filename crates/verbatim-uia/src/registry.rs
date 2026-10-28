@@ -22,8 +22,8 @@
 //! (scoped) search only when the element has died.
 //!
 //! Nodes stay until the outpost releases them ([`NodeIdRegistry::retain`]),
-//! which it does for every node Core no longer holds (outpost redesign,
-//! "Held objects"). Unlike the MSAA registry, nodes are not dropped when
+//! which it does for every node Core no longer holds
+//! (`docs/crates/verbatim-outpost.md`, held objects). Unlike the MSAA registry, nodes are not dropped when
 //! their window is destroyed: a UIA runtime id has no documented structure
 //! naming its window. So a node Core still holds after its window closed
 //! (the navigator left there) is the node for any new element given the

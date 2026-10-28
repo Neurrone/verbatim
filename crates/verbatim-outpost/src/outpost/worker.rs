@@ -1,4 +1,4 @@
-//! The worker and its watchdog (outpost redesign, "Inside an outpost").
+//! The worker and its watchdog (architecture section 1, "Outposts").
 //!
 //! One worker thread takes entries from the intake queue in order and
 //! finishes each before starting the next. It is the only thread that calls

@@ -7,7 +7,7 @@
 //! collide.
 //!
 //! The registry also keeps the accessible object each node was read from
-//! (outpost redesign, "Held objects"), so navigation, activation, and
+//! (`docs/crates/verbatim-outpost.md`, held objects), so navigation, activation, and
 //! re-reads reach the object that was announced, not whatever now sits at its
 //! address. Deciding whether a new sighting is a node already issued, NVDA's
 //! comparison order, needs COM calls, so [`acquire`](crate::acquire) makes it;

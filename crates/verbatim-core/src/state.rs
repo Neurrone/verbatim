@@ -68,7 +68,7 @@ pub(crate) struct FocusContext {
 }
 
 /// The application and window of the most recent foreground change (decision
-/// D14 as amended by the outpost redesign): the reducer's stand-in for the
+/// D14): the reducer's stand-in for the
 /// system's foreground window, which is what NVDA classifies events against.
 /// Every event other than a foreground change is classified against it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 //! The request table: the single owner of "exactly one outcome per query"
-//! (outpost redesign, "The app shell").
+//! (`docs/crates/verbatim-app.md`, `requests::RequestTable`).
 //!
 //! Every query Core sends an outpost is recorded here, on the reducer thread,
 //! with a request id and the outpost incarnation it went to. The first

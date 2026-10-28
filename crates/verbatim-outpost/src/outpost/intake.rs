@@ -1,4 +1,4 @@
-//! The outpost's intake queue (outpost redesign, "Inside an outpost"): one
+//! The outpost's intake queue (architecture section 1, "Outposts"): one
 //! queue for the application, holding both events and Core's queries,
 //! handled in the order they arrived, with NVDA's limiter rules for MSAA
 //! events (`orderedWinEventLimiter.py`, and `pumpAll` in NVDA's

@@ -1,5 +1,5 @@
-//! The focus-listener runtime (architecture section 1, decisions D13 and D14;
-//! outpost redesign, "The focus listener").
+//! The focus-listener runtime (architecture section 1, "The focus listener
+//! (D13)"; decisions D13 and D14).
 //!
 //! One permanent, stateless listener process holds the subscriptions that are
 //! global by nature and forwards each captured fact to Core, which routes it

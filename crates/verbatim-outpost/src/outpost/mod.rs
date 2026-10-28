@@ -1,4 +1,4 @@
-//! The per-application outpost (outpost redesign, "Inside an outpost";
+//! The per-application outpost (architecture section 1, "Outposts";
 //! decision D9). One outpost watches one application for its whole life:
 //! the application is set once, when the outpost starts, or, for a spare
 //! started before it had one, when the supervisor assigns it
@@ -25,7 +25,7 @@
 //! Workers run in COM's multithreaded apartment; the registries keep agile
 //! references, so a replacement worker can use what an abandoned one minted.
 //!
-//! Held objects (outpost redesign, "Held objects"): the registries keep the
+//! Held objects (`docs/crates/verbatim-outpost.md`): the registries keep the
 //! live UIA element or MSAA object behind every node the outpost reports.
 //! Each message that carries node ids has a position, counted the same way
 //! by Core; when Core reports the nodes it still holds and the position of
@@ -1541,9 +1541,8 @@ fn capture_text(event: &Cached<TextEvent>, kind: UiaKind) -> UiaEvent {
     }
 }
 
-/// Starts the focus-following UIA subscription (outpost redesign,
-/// "Focus-following UIA subscriptions"; `docs/design/focus-pipeline.md`,
-/// section 17): one registration, on one thread and client, listening
+/// Starts the focus-following UIA subscription
+/// (`docs/design/focus-pipeline.md`, section 17): one registration, on one thread and client, listening
 /// nowhere until the worker reports a focus whose element it has. Its two
 /// groups are NVDA's two local groups (`UIAHandler/__init__.py`,
 /// `_createLocalEventHandlerGroup`): the base group, given every UIA focus,

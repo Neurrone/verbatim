@@ -70,7 +70,7 @@ Public API:
   as the latency log does, and `docs/tooling/inspect.md` says what each covers;
   listener to outpost, Core to outpost, and to Core are the whole spans a
   timeline without verbatim.exe's relay stamps has instead of the split
-  ones, added 2026-10-11 by `docs/archive/relay.md`; listener to
+  ones; listener to
   verbatim.exe and outpost to verbatim.exe are likewise the whole spans a
   timeline without the senders' write stamps has, split on 2026-10-13
   into the listener's handling, queue and pipe and the outpost's outbound

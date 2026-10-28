@@ -318,7 +318,7 @@ knowing for review:
   outpost is queued on that outpost's writer, failing at once if the queue
   is full.
 - `requests::RequestTable` — the single owner of "exactly one outcome per
-  query" (outpost redesign, "The app shell"). Every query sent to an
+  query". Every query sent to an
   outpost (a navigation step, an activation, a tree dump, a focus-now
   query) is recorded with a fresh `RequestId` and the outpost incarnation it
   went to, and sent as a `Query` carrying that id; the outpost's one `Reply`
@@ -405,7 +405,7 @@ knowing for review:
   last key, and each line ends with the time from it to the speech
   queued, whatever trace the speech came on. verbatim.exe's relay stamps
   (`EventTiming::core_received_at_us` and those after it, and
-  `core_read_at_us` on the way back; `docs/archive/relay.md`, section 4.5),
+  `core_read_at_us` on the way back),
   and the senders' own stamps (the listener's handling's end and write, the
   outpost's write; `docs/design/communication.md`, section 10.1)
   split the spans across verbatim.exe: the listener's handling, its queue and

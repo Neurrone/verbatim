@@ -3223,7 +3223,7 @@ fn commands_with_no_navigator_yet_say_so() {
     assert_eq!(said(&effects), no_navigator);
 }
 
-// ---- Windows, menus, and name changes (outpost redesign step 1) ----
+// ---- Windows, menus, and name changes ----
 
 #[test]
 fn a_foreground_change_into_the_focused_window_is_ignored() {
@@ -3532,7 +3532,7 @@ fn a_container_entered_before_a_menu_is_cut_off_by_it() {
     );
 }
 
-// ---- Attention (decision D14 as amended by the outpost redesign) ----
+// ---- Attention (decision D14) ----
 
 #[test]
 fn a_focus_from_a_window_outside_attention_is_dropped() {

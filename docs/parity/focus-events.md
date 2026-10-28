@@ -264,8 +264,8 @@ window facts, which the reducer judges a focus by after the read
 
 NVDA compares each event with the system's foreground window, and holds
 a foreground event for at most two core cycles until its window is the
-foreground ("Event acceptance", above). Verbatim: **different (D14)**,
-as amended by the outpost redesign: the reducer keeps an attention
+foreground ("Event acceptance", above). Verbatim: **different (D14)**:
+the reducer keeps an attention
 record, the application and top-level window of the most recent
 foreground change, standing in for the system's foreground window.
 

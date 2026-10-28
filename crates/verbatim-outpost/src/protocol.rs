@@ -533,7 +533,7 @@ impl DeliveredFact {
     }
 
     /// Whether this fact may start an outpost for an application that has
-    /// none (outpost redesign, "The focus listener"): focus, foreground,
+    /// none (architecture section 1, "The focus listener (D13)"): focus, foreground,
     /// menu, and alert facts may, a UIA focus's marker and read among them,
     /// and the shell's window-snap results notification, the one Core
     /// speaks from any application. A selection without an outpost is
@@ -797,8 +797,8 @@ pub enum SupervisorToOutpost {
     /// outpost starts and whenever the theme in use changes; everything is
     /// read until the first arrives.
     Fetches(verbatim_model::Fetches),
-    /// The nodes from this outpost that Core still holds (outpost redesign,
-    /// "Held objects"), as the numbers the outpost issued, and the position
+    /// The nodes from this outpost that Core still holds
+    /// (`docs/crates/verbatim-outpost.md`, held objects), as the numbers the outpost issued, and the position
     /// of the last message from this outpost that Core has handled
     /// ([`OutpostToSupervisor::carries_nodes`] says which messages count).
     /// The outpost releases every other node it reported at or before that

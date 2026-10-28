@@ -136,8 +136,8 @@ is collected in
 [Main loop and watchdog](nvda/main-loop-and-watchdog.md); it is the
 justification for D9's per-application process isolation and D13's
 rule that the focus listener's callbacks never make a cross-process call
-(amended 2026-10-11: its reads of a UIA focus are made on a thread per
-application, each under UIA's call timeout and a watchdog).
+(its reads of a UIA focus are made on a thread per application, each
+under UIA's call timeout and a watchdog).
 
 Verbatim runs as three kinds of process:
 
@@ -215,7 +215,7 @@ event), retired when the app exits, and may be retired early when idle to
 bound memory use; state rebuilds from live queries on demand.
 
 Inside, an outpost follows NVDA's model of one thread doing all the work
-for an application (the outpost redesign, 2026-10-01). What it says to
+for an application. What it says to
 Core waits in one queue, written by a thread of its own; queuing never
 waits, nothing is queued while a lock the watchdog takes is held, and
 waiting messages are merged by object and kind, but never a terminal's
@@ -233,6 +233,37 @@ not started, or abandoned. The outpost keeps the live UIA element or MSAA
 object behind every node Core still holds, and releases the rest when Core
 reports which nodes it holds; a node id names its outpost incarnation, so
 an id from a replaced outpost can never reach its successor.
+
+The outposts are built on four rules, adopted on 2026-10-01 to replace
+mechanisms that had each been added for one live failure and covered
+cases the others broke (snapshot versions, observation-time checks,
+spawn and announce generations, newest-wins slots, a foreground pid
+gate):
+
+- Responsibilities are split three ways: outposts and the listener listen
+  for events and answer queries, the supervisor manages processes and
+  routes messages, and the reducer decides what to speak, which events to
+  accept, and what attention is. A decision about presentation never lives
+  in an outpost, because only Core sees every application.
+- Each correctness rule has exactly one owner, so that changing it cannot
+  break a case another mechanism was quietly covering.
+- Every queue has a stated overload policy, and no thread that others
+  depend on ever waits on one, so a busy application or a full queue
+  cannot stall reading or the heartbeat.
+- Order replaces version checks. Every hop after an outpost's queue is
+  single-threaded and in order, so a version check could only detect a
+  race inside the outpost, and dropping an event because a later-numbered
+  one arrived first also lost independent events. One worker per
+  application gives the order instead.
+
+Parallel queries within one application are given up: MSAA calls, and
+UIA calls to most Win32 and WinUI providers, are answered on the
+application's UI thread one at a time anyway. The known cost is waiting
+behind a long query in the same application, chiefly the diagnostic tree
+dump; the remedy, if it matters, is splitting or cancelling long queries,
+not adding threads. Identical-focus suppression stays in the reducer,
+because an outpost doing it alone would suppress a return to its
+application after a visit elsewhere.
 
 Recovery is a ladder, cheapest rung first:
 
@@ -262,9 +293,7 @@ Recovery is a ladder, cheapest rung first:
    backoff, 1 second, then 2, 4, up to 30, counted again once an outpost
    has stayed up a minute or the application comes to the foreground, and
    so are the failures of spares while they wait
-   (`docs/design/focus-pipeline.md`, section 19.5; amended 2026-10-16,
-   replacing a rule that stopped replacing an application's outposts after
-   three crashes in a minute). The supervisor knows each application by a
+   (`docs/design/focus-pipeline.md`, section 19.5). The supervisor knows each application by a
    process handle it holds for as long as it has a record for it, so the
    application's pid cannot name another process meanwhile, and no
    outpost is ever started or replaced for an application that has
@@ -281,155 +310,120 @@ speech, GUI) is never in the blast radius at all.
 
 Per-app outposts have one structural blind spot: the first focus. When an
 application gains the foreground, its focus event fires before the
-supervisor has spawned that application's outpost and before the outpost's
-hooks are installed, so the event is unobservable by the very process
-responsible for it. The M3-era mitigation — the supervisor tells the new
-outpost to *reconstruct* what it missed by polling "what window? what
-focused control?" with bounded retries — was root-caused live as a family
-of silent failures: the poll raced menu popups, announced half-constructed
-windows, and when every retry burned its deadline against a loaded or
-slow-starting application, exhausted without announcing anything at all.
+supervisor has started that application's outpost and before the
+outpost's hooks are installed, so the event is unobservable by the very
+process responsible for it. Reconstructing the missed focus by polling
+the new application is not done, because such a poll raced menu popups,
+announced half-constructed windows, and fell silent when a slow
+application exhausted its retries.
 
 The focus listener closes the blind spot at its cause. It is one permanent
 outpost process, supervised like any other (job object, heartbeat,
 respawn), that exists from startup and holds exactly the subscriptions
 that are global by nature:
 
-- the desktop-global UIA focus registration — which UIA offers only
-  desktop-wide anyway; before D13, every per-app outpost held its own
-  desktop-global registration and discarded other applications' events, so
-  N outposts meant N redundant callbacks per focus change system-wide, and
-  this consolidates them into one;
-- global MSAA WinEvent hooks (process id zero) for focus, foreground
-  changes, and menu-popup opens — NVDA's own arrangement, and what
-  absorbs the foreground trigger that previously ran inside Core. Every
-  foreground change is also reported to Core as the window in front, with
-  the thread its event names and its process's integrity level, for the
-  keyboard hook's view of the foreground (section 5).
+- the desktop-wide UIA focus handler, which UIA offers only desktop-wide,
+  and the desktop-wide UIA event group NVDA registers globally on
+  Windows 11 (element selected, menu opened, notifications), all on one
+  client in NVDA's order; one listener holding them, rather than every
+  outpost, means one callback per focus change system-wide instead of one
+  per outpost;
+- global MSAA WinEvent hooks (process id zero) for focus, foreground,
+  menu-popup opens, the end of a menu or of the Alt+Tab switcher, alerts,
+  and tooltips shown, NVDA's own arrangement. Every foreground change is
+  also reported to Core as the window in front, with the thread its event
+  names and its process's integrity level, for the keyboard hook's view of
+  the foreground (section 5), and the end of a menu or switcher goes to
+  Core, which asks the foreground application for its focus if its own
+  has not changed shortly after, as NVDA's fake focus does.
 
-The listener's contract is a single hard rule: **it never makes a
-cross-process call.** A UIA focus callback delivers the element with its
-properties already cached, so building a snapshot is local memory reads;
-an MSAA WinEvent delivers raw window and object ids, which are forwarded
-untouched; the only other reads are hang-safe local ones (the window's
-owning process id, its class name, and for a UIA focus on an element with
-no window of its own, the keyboard focus window from `GetGUIThreadInfo`,
-and for the window in front its process's integrity level, read from the
-kernel). No cross-process calls means no
-deadlines, no query pool, no parked threads, and no way for any
-application — hung or not — to stall focus detection for the rest of the
-desktop. The listener holds no per-application state either, so a crash
-respawns into full capability instantly.
+The listener's contract: **its callbacks, its writer, and its registration
+threads never make a cross-process call.** An MSAA WinEvent delivers raw
+window and object ids, which are forwarded untouched; the only other reads
+in those threads are hang-safe local ones (the window's owning process id,
+its class name, and for the window in front its process's integrity level,
+read from the kernel). No application, hung or not, can stall them.
 
 Detection and announcement are deliberately split. The listener forwards
-each captured focus fact (source process, window, backend address or
-cached snapshot) to Core; the supervisor ensures the target's own outpost
-exists — a spawn now merely delays the announcement by the spawn latency,
-where before it lost the event outright — and hands the fact to it. Facts
-for an outpost still starting are held in arrival order, merged with
+each captured fact to Core; the supervisor ensures the target's own
+outpost exists, giving the application a waiting spare outpost where it
+can, so a start merely delays the announcement, and hands the fact to it.
+Facts for an outpost still starting are held in arrival order, merged with
 NVDA's one-per-object rule, and released in that order when it is ready.
-The app outpost's worker then does the acquisition, cross-backend
-arbitration, ancestry and selection enrichment, and reports the focus
-event, degrading rather than falling silent when enrichment times out
-(the event-carried snapshot always suffices to announce name, role,
-value, and state). Node identity therefore never crosses processes — the
-navigator, object navigation, and every fetch keep routing to the per-app
-outpost exactly as before, and D9's isolation still bounds every call
-that can block.
+The outpost's worker then acquires, arbitrates, enriches with ancestry and
+selection, and reports the focus event, degrading rather than falling
+silent when enrichment times out. Node identity never crosses processes:
+the navigator, object navigation, and every fetch route to the per-app
+outpost, and D9's isolation bounds every call that can block.
 
-Because both backends can report the same focus, the listener forwards
-both facts and takes no side: arbitration is not a race between the pair
-but a per-window verdict the app outpost already keeps, which each
-fact consults independently whenever it arrives — so deduplication does
-not depend on the two facts arriving together, or at all. For a window
-with no verdict yet, the fact resolves the real verdict on the spot:
-fact handling runs on the outpost's deadline-guarded worker, where a
-blocking call is permitted, so the arbitration probe answers within the
-ordinary query deadline and exactly one backend announces,
-deterministically, in either arrival order. The earlier asymmetric
-provisional rule — discard the UIA fact and schedule a background probe,
-trusting the MSAA fact to carry the announcement — is deliberately not
-applied to facts: modern XAML surfaces fire no MSAA focus event at all
-(the Start menu's search box was the live reproducer), so the discarded
-UIA fact was the only announcement that control would ever get, and a
-focus event fires once, with nothing to retry. Legitimate evidence in
-hand is never discarded in favor of hypothetical evidence from the other
-backend. Since the outpost redesign there is no provisional rule at all:
-the outpost's own hooks only queue events, the worker decides every
-window's backend before reading, and a probe that hangs is handled by
-the watchdog like any other hung call. Resolving which window a
-non-windowed UIA element belongs to
-can itself take a cross-process normalize call, which is precisely why
-the verdict check runs in the app outpost and never in the listener.
+All of an application's MSAA events reach its outpost by one route, in the
+order Windows raised them: the outpost's process-scoped hook takes in its
+application's focus, foreground, menu-popup, alert, and tooltip events
+besides value, state, name, selection, and window destruction. The
+listener forwards those events only for an application whose outpost's
+hook is not yet in, so that an application's first events start its
+outpost; once told the hook is in, it says "forwarding ended" behind its
+last forwarded fact, and the outpost matches the two hooks' copies of an
+event by counting, so each event is handled once and none is dropped.
 
-Nothing remains of the old poll. After the listener is replaced, Core
-reads the foreground window itself and asks that application's outpost
-for its current focus once; desktop-wide UIA events from the gap are lost.
-A window that has no name when focus enters it is not announced later,
-as in NVDA.
+A UIA focus is judged and read by the listener, because a UIA element
+cannot be handed to another process and the listener is the one process
+that receives the event's own element. Its callback sends the
+application's outpost a marker the moment the event arrives and queues the
+element for that application's reading thread, one per application,
+created on its first focus event and ended when the application's outpost
+ends. The thread judges the focus as NVDA's focus handler does, in its
+order: the hung window, whether the element is native UIA, NVDA's
+duplicate rule against the focus Core holds, the acceptance test against
+the element's nearest window, the object's own refusals, and the element's
+`HasKeyboardFocus` read plainly, a focus that has lost it dropped as NVDA
+drops it. It then reads the element's value, states, and details afresh,
+and its ancestors, one step each, up to the first one known from the
+focus before, the desktop's root, or the process boundary, with calls on
+elements it holds only. A UIA menu opening takes the same route. The
+read, or its drop, follows the marker through verbatim.exe, the only route
+between the listener and the outposts. The outpost holds every entry that
+arrives after a marker until the read takes the marker's place, so a
+change raised after a focus is never handled before it, as in NVDA's
+single flusher thread; reports the focus from the read at once, its
+ancestors filtered and continued through MSAA where a window is MSAA's;
+and only then finds its own copy of the element by the chain's runtime
+ids, from the nearest window in the chain, for the subscriptions, text,
+and review. Each reading thread has a watchdog: a read past its deadline,
+or a focus's or menu opening's read that has taken half a second once the
+user has moved on to another thread of its application, is reported
+dropped, and a new thread takes the application's later events. An
+application whose abandoned threads reach a small cap gets no new thread:
+its focus events wait for the first of them to return, until the deadline
+after the cap was reached, when every waiting event is dropped, and each
+later one as it arrives, until a thread returns. When the listener is
+replaced, the supervisor tells every outpost to wait on none of its
+markers. `docs/design/focus-pipeline.md` gives the options weighed and the
+reasons.
 
-The per-app outposts shed their focus-shaped subscriptions — the
-per-outpost UIA focus registration, the MSAA focus hook, and the
-menu-popup hook. They keep process-scoped MSAA hooks for value, state,
-name, selection, and window destruction (the end of a menu or of the
-Alt+Tab switcher is global too, and goes from the listener to Core,
-amended 2026-10-02), and one UIA property
-subscription that follows the focus and its ancestors (NVDA's selective
-registration on Windows 11; amended 2026-10-07: the focus alone, since
-the reducer acts only on its changes); selection and notifications come
-desktop-wide from the listener. One extra hop (listener to
-Core to app outpost) costs well under a millisecond against the tens of
-milliseconds acquisition already costs, and removes the zero-to-seconds
-discovery latency of polling.
+Which backend speaks for a window is a per-window verdict the app outpost
+keeps, which each fact consults independently whenever it arrives, so
+deduplication does not depend on the UIA and MSAA facts for one focus
+arriving together, or at all. For a window with no verdict yet, the fact
+resolves the real verdict on the spot, on the outpost's deadline-guarded
+worker, so exactly one backend announces, deterministically, in either
+arrival order. A UIA fact is never discarded in favour of an MSAA fact
+that may follow, because modern XAML surfaces fire no MSAA focus event at
+all (the Start menu's search box), and a focus event fires once, with
+nothing to retry.
 
-Amended 2026-10-11 (phase 6, stage A step 5, `docs/design/focus-pipeline.md`
-section 12.4, approved as decision 2 of its section 15): the per-app
-outposts take back the MSAA focus, foreground, menu-popup, alert, and
-tooltip events in their process-scoped hooks, so all of an application's
-MSAA events reach its outpost by one route in the order Windows raised
-them. The listener keeps its global hooks and forwards those events only
-for an application whose outpost's hook is not yet in; once told the hook
-is in, it says "forwarding ended" behind its last forwarded fact, and the
-outpost matches the two hooks' copies of an event by counting, so each
-event is handled once and none is dropped. The UIA focus stays with the
-listener.
+Nothing polls. After the listener is replaced, Core reads the foreground
+window itself and asks that application's outpost for its current focus
+once; desktop-wide UIA events from the gap are lost. A window that has no
+name when focus enters it is not announced later, as in NVDA.
 
-Amended 2026-10-11 (phase 6, stage A step 6, option (b) of
-`docs/design/focus-pipeline.md`, section 12): the listener's hard rule
-above now holds for its callbacks, its writer, and its registration
-threads, and no longer for the whole process. Its UIA focus callback
-sends the application's outpost a marker the moment the event arrives
-and queues the event's element for that application's reading thread,
-one per application, created on its first focus event and ended after a
-minute without one. The thread judges and reads the focus from the
-event's own element, with calls on elements it holds only: NVDA's
-checks, the element's `HasKeyboardFocus` read plainly last, a focus that
-has lost it dropped as NVDA drops it; NVDA's duplicate evidence, whether
-the element the thread read before under the same runtime id still has
-the keyboard focus; the element's value, states, and details afresh; and
-its ancestors, one step each, up to the first one known from the focus
-before, the desktop's root, or the process boundary. The read, or its drop, follows
-the marker through verbatim.exe, the only route between the listener and
-the outposts. The outpost holds every entry that arrives after a marker
-until the read takes the marker's place, so a change raised after a
-focus is never handled before it, as in NVDA's single flusher thread;
-reports the focus from the read at once, its ancestors filtered and
-continued through MSAA where a window is MSAA's, as before; and only then
-finds its own copy of the element by the chain's runtime ids, from the
-nearest window in the chain, for the subscriptions, text, and review.
-The moved-on rules, the name-and-position search, and the focused
-element read are gone from the focus path; a focus-now query after a
-restart still reads the focused element. Each reading thread has a
-watchdog: a read past its deadline, or a focus's or menu opening's read
-that has taken half a second once the user has moved on to another
-thread of its application, is reported dropped, and a new thread takes
-the application's later events. An application whose abandoned threads
-reach a small cap gets no new thread: its focus events wait for the
-first of them to return, until the deadline after the cap was reached,
-when every waiting event is dropped, and each later one as it arrives,
-until a thread returns.
-When the listener is replaced, the supervisor tells every outpost to
-wait on none of its markers.
+The per-app outposts hold no UIA focus registration. Besides their
+process-scoped MSAA hooks, each holds one UIA property subscription that
+follows the focus (NVDA's selective registration on Windows 11, on the
+focus alone, since the reducer acts only on its changes); selection and
+notifications come desktop-wide from the listener. One extra hop
+(listener to Core to app outpost) costs well under a millisecond against
+the tens of milliseconds acquisition already costs.
 
 Of the listener's threads only the reading threads call into
 applications, and each call is one on an element the listener holds,
@@ -796,7 +790,8 @@ language tagging, synth driver, PCM, the mixer (D17), and the
   defined in WIT (`verbatim:ext`). Epoch-based preemption means a runaway
   extension is interrupted, never hangs Core, so the host runs in-process on
   dedicated threads.
-- Capability-gated, deny-by-default: manifests declare needs (tree-query,
+- Capability-gated, deny-by-default: a component's capabilities are
+  derived from the interfaces it imports, never declared (tree-query,
   event subscription, speech/braille output, gesture binding, config,
   namespaced storage, OCR; each is a separate grant surfaced to the user).
 - Extension kinds: **app modules** (activated per application, mirroring
@@ -971,10 +966,9 @@ no virtual audio device is provisioned and a run can be heard live over
 RDP or locally while it is recorded. A runner-direct run plays through
 the machine's own audio device. The one remaining RDP caveat is video, not
 audio: the desktop stops rendering in a disconnected session, so screen
-capture needs the session attached, or a headless run. The pre-2026-09-02
-design captured loopback audio from a VB-CABLE device, which made
-recording and listening mutually exclusive; its dead ends are recorded in
-`docs/roadmap-done.md` for history.
+capture needs the session attached, or a headless run. Loopback capture
+from a virtual audio device is not used, because it made recording and
+listening mutually exclusive.
 
 Interactive-session rule: Verbatim, the agent, and screen capture only
 work in a session with a visible window station. SSH, WinRM, PowerShell

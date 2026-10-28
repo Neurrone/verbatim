@@ -286,7 +286,7 @@ Implementation notes, `reduce`:
   `MultitaskingViewFrame` (`applications::drops_ancestry`, applied where
   the reducer takes a focus's ancestors, its duplicate's newer reading
   included). `tests/reduce.rs` checks all three.
-- Event acceptance (decision D14 as amended by the outpost redesign;
+- Event acceptance (decision D14;
   `docs/parity/focus-events.md`, "Event acceptance"): the state keeps an attention
   record, the application and window facts of the most recent foreground
   change, standing in for the system's foreground window. Every event is

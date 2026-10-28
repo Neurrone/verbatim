@@ -1,4 +1,4 @@
-//! Rapid focus churn (outpost redesign, step 7): many focus changes in
+//! Rapid focus churn: many focus changes in
 //! quick succession inside one application must leave Verbatim's focus and
 //! navigator on the control that really has focus, with the outpost still
 //! answering. Against Verbatim's own settings dialog, which every run has.

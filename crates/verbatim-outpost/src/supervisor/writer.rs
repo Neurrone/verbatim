@@ -1,6 +1,6 @@
 //! Each child's writer: a [`Sender`] on its command pipe, so nothing that
-//! makes a decision ever waits on a pipe (outpost redesign, "The
-//! supervisor"; `docs/design/communication.md`, section 4.3). The thread
+//! makes a decision ever waits on a pipe (`docs/design/communication.md`,
+//! section 4.3). The thread
 //! that queues a command writes it itself when the pipe is free and
 //! nothing waits; while a write is in flight, commands wait in a bounded
 //! queue, written in order by the relay once that write's completion
@@ -161,7 +161,7 @@ impl Outgoing {
 
 /// When verbatim.exe took in something it relays to an outpost: a
 /// listener's fact as its read completed, or a request as it was queued
-/// (`docs/archive/relay.md`, section 4.5). Read on two clocks: the monotonic
+/// (`docs/design/communication.md`, section 10.1). Read on two clocks: the monotonic
 /// one, for verbatim.exe's own duration, and the wall clock the other
 /// processes' stamps share, for the spans across processes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
