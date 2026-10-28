@@ -46,12 +46,14 @@ before debugging anything downstream.
 - [Measuring](measuring.md): "Measuring performance", with `cargo xtask
   measure`, `cargo xtask trace`, and what every measurement reports.
 - [The end-to-end suite](e2e.md): test-audio mode, running the suite on
-  this machine, `cargo xtask park`, the scenarios, the measure set, and
-  hearing and recording a run.
-- [The VM harness](vm.md): every `cargo xtask vm` verb and rebuilding
-  the golden image.
-- [Recording what NVDA says](nvda.md): `cargo xtask nvda capture` and the
-  rules it follows.
+  this machine, `cargo xtask park`, every environment variable, local-only
+  scenarios and demonstrations, what a run leaves behind and reading a
+  failure, the measure set, and hearing and recording a run.
+- [The VM harness](vm.md): every `cargo xtask vm` verb, rebuilding the
+  golden image, and a map of the harness's code.
+- [Recording what NVDA says](nvda.md): the transcript add-on,
+  `cargo xtask nvda capture`, and `cargo xtask nvda compare`, which runs a
+  scenario against NVDA.
 - [The simulated terminal's conformance](../crates/verbatim-term-sim.md),
   "Conformance": `cargo xtask regenerate-terminal-conformance-expectations`,
   run on demand on a desktop to record what the real console host and
