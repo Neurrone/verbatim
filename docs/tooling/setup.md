@@ -67,9 +67,21 @@ cargo hakari manage-deps
 
 `cargo xtask ci` fails until the crate is up to date.
 
-### What cargo xtask ci scans
+### What cargo xtask ci runs
 
-Before it builds anything, `cargo xtask ci` scans the sources with two
+`cargo xtask ci` is the standard check and exactly what GitHub Actions
+runs, in its `ci` and `ci-arm64` jobs. Its steps are the platform-neutral
+dependency check, the workspace-hack check above, rustfmt, pedantic clippy
+with warnings denied, and unit tests, all for the host's own architecture
+into `target/debug`; no step names a target, so an ARM64 machine checks
+ARM64. The dependency check inspects the `cargo tree` of each crate the
+`CLAUDE.md` NVDA provenance section lists as platform-neutral, and fails
+naming every one that pulls in the `windows` or `windows-core` bindings by
+any path, or reaches `windows-sys` through a workspace crate that names it
+directly; `windows-sys` beneath third-party libraries and the
+workspace-hack crate is allowed, since those libraries are cross-platform.
+
+Before it builds anything, `cargo xtask ci` also scans the sources with two
 checks of its own, each failing the run with the file, line, and text of
 every finding:
 
@@ -132,12 +144,11 @@ with line tables only (above). The end-to-end suite is one test binary,
 each one linked the whole harness. Add a scenario to that file, never as
 a file of its own under `tests/`.
 
-Measured on 2026-10-09 on x64, a clean build of everything `cargo xtask
-ci` and the suite build (`cargo build --workspace --all-targets` and
-`cargo test -p verbatim-e2e --no-run`) was 9.6 GB, 5.5 GB of it PDBs,
-with full debug info for workspace crates and a test binary per scenario.
-Line tables for workspace crates brought it to 6.1 GB, and one suite
-binary to 4.1 GB, 1.4 GB of it PDBs and 1.2 GB incremental state.
+On x64, a clean build of everything `cargo xtask ci` and the suite
+build (`cargo build --workspace --all-targets` and
+`cargo test -p verbatim-e2e --no-run`) is about 4.1 GB, 1.4 GB of it PDBs
+and 1.2 GB incremental state; full debug info and a test binary per
+scenario made it 9.6 GB.
 
 Several worktrees building at once (for example, parallel agents) each
 build into their own `target` directory; do not point them at one shared
@@ -150,6 +161,6 @@ is deep (such as one under `.claude\worktrees`) also needs
 `CMAKE_GENERATOR=Ninja`, since MSBuild's tracking files in eSpeak NG's
 CMake build exceed the path length limit there. On a 16 GB machine, build
 with `-j 4`, and never build while end-to-end scenarios run: a build
-alongside a run once ran memory out and the run was killed (2026-10-09).
+alongside a run once ran memory out and the run was killed.
 A second worktree's build needs about 5.5 GB once `cargo xtask ci` has
 run in it.

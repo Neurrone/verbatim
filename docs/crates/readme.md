@@ -9,14 +9,12 @@ scoping; [Walkthroughs](../walkthroughs.md) stitches these crates into
 end-to-end narratives. Where a method's behavior is not obvious from
 its signature, an implementation note explains how it works and why.
 
-Keep the file for a crate current when its public API changes (this
-replaces the former single `docs/overview.md`). The rule has a second
-half that experience says is the one that actually slips: when a change
-lands behavior another crate's guide *describes* — a "not yet" that
-becomes true, a policy another file summarizes — search the docs for
-claims about that behavior and update them too. Both stale-claim
-incidents found in review survived precisely because the landing
-commit updated only the changed crate's own guide.
+Keep the file for a crate current when its public API changes. The rule
+has a second half, the one that slips: when a change lands behavior
+another crate's guide describes, such as a "not yet" that becomes true or
+a policy another file summarizes, search the docs for claims about that
+behavior and update them too, because a commit that updates only the
+changed crate's own guide leaves those claims stale.
 
 ## The crates, in dependency order
 
@@ -73,8 +71,14 @@ commit updated only the changed crate's own guide.
 - [verbatim-agent](verbatim-agent.md) — the in-guest test agent and
   control tunnel.
 - [verbatim-e2e](verbatim-e2e.md) — the end-to-end scenario registry.
-- [xtask VM harness](xtask-vm-harness.md) — `cargo xtask vm` implementation.
 - [verbatim-gui](verbatim-gui.md) — the wxWidgets GUI through a small C++ layer (D4).
 - [verbatim-app](verbatim-app.md) — `verbatim.exe`: wiring it all together.
-- [Placeholders and tooling](placeholders-and-tooling.md) — stub crates and
-  xtask itself.
+
+Two crates are stubs: `verbatim-ext` and `verbatim-ext-api`, the Wasm
+extension host and its WIT contract, which land in M5.
+
+`xtask`, the workspace automation, is described in the tooling guides:
+`cargo xtask ci` in [setup](../tooling/setup.md), `cargo xtask vm` with a
+map of its code in [the VM harness guide](../tooling/vm.md),
+`cargo xtask park` in [the end-to-end guide](../tooling/e2e.md), and
+`cargo xtask nvda` in [the NVDA guide](../tooling/nvda.md).
