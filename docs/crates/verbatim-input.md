@@ -68,8 +68,7 @@ Public API:
   `bindings_for` for both the hook's map and the router's lookup. Rebinding
   at runtime, for example on a layout change, is not implemented; a new
   layout takes effect on the next start.
-- M4's commands (`docs/design/phase6-design.md`, "The autonomous run", M4 item 5, with
-  NVDA's keys). Every layout: Verbatim+Alt+Home and Verbatim+Alt+End (the
+- M4's commands (`docs/parity/review.md`, with NVDA's keys). Every layout: Verbatim+Alt+Home and Verbatim+Alt+End (the
   review cursor to the selection's start and end), numpad Plus (say all
   from the review cursor), Verbatim+F9 (set the start marker),
   Verbatim+Shift+F9 (the review cursor to the start marker), Verbatim+F10

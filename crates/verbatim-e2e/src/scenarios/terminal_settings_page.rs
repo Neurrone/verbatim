@@ -1,5 +1,5 @@
-//! The settings dialog's Terminal page (`docs/design/phase6-design.md`, "M4: text,
-//! editing, and terminals", Questions; `crates/verbatim-gui/src/terminal_panel.rs`):
+//! The settings dialog's Terminal page (`docs/parity/system.md`, "The
+//! terminal settings"; `crates/verbatim-gui/src/terminal_panel.rs`):
 //! a change applied there reaches Core, and the page shows a change Core
 //! made itself.
 //!

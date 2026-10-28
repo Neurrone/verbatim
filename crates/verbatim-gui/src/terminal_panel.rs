@@ -1,5 +1,5 @@
-//! The settings dialog's Terminal page (`docs/design/phase6-design.md`, "M4: text,
-//! editing, and terminals", Questions): its model, pure apart from the
+//! The settings dialog's Terminal page (`docs/crates/verbatim-gui.md`;
+//! `docs/parity/system.md`, "The terminal settings"): its model, pure apart from the
 //! [`TerminalHost`] it reads and changes the settings through.
 //!
 //! The page has four controls, top to bottom: "Report new output", a check

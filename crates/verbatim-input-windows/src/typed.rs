@@ -30,8 +30,8 @@
 //! - An input method composes keys into text the hook cannot know (Chinese,
 //!   Japanese, and Korean input), so with an input method's layout active
 //!   nothing is translated. Its committed text is not echoed; announcing
-//!   compositions is a later milestone (`docs/design/phase6-design.md`,
-//!   "Internationalization in the text model"), and NVDA reads them from
+//!   compositions is a later milestone (`docs/parity/input.md`,
+//!   "IME/composition reporting"), and NVDA reads them from
 //!   inside the application, which Verbatim's injection helper (decision
 //!   D2) will do.
 //! - A keyboard text service outside those languages (Vietnamese Telex and

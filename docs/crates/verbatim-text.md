@@ -1,7 +1,6 @@
 # verbatim-text
 
-Platform-neutral text segmentation for the text model of milestone M4
-(`docs/design/phase6-design.md`, "Internationalization in the text model"),
+Platform-neutral text segmentation for the text model of milestone M4,
 and the reading of terminals: the memory of a terminal's rows and the
 rules that decide what is spoken (`docs/design/terminal-model.md`).
 Original

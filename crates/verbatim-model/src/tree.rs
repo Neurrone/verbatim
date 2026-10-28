@@ -129,7 +129,8 @@ pub enum Role {
     /// terminal embedded in another application (NVDA's terminal role).
     /// Its text is a grid of cells: the review cursor keeps its column in
     /// cells, and typed characters wait for the terminal to show them
-    /// (`docs/design/phase6-design.md`, M4 items 4 and 5).
+    /// (`docs/parity/review.md`, "Review cursor columns";
+    /// `docs/parity/terminals.md`, "Typing").
     Terminal,
     /// A field for an IP address (MSAA `ROLE_SYSTEM_IPADDRESS`).
     IpAddress,

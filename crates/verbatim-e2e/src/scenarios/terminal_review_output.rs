@@ -1,5 +1,6 @@
 //! The review cursor while new output is written in a terminal
-//! (`docs/design/phase6-design.md`, "The review cursor in a terminal"), as
+//! (`docs/parity/terminals.md`, "The review cursor while output is
+//! written"), as
 //! `windows_terminal_review_output` in Windows Terminal and
 //! `conhost_review_output` in the console host. The shared setup is
 //! described in the `terminal` module.

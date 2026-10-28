@@ -1,4 +1,4 @@
-//! Sounds in the speech pipeline (`docs/design/phase6-design.md`, "Earcons"): a sound
+//! Sounds in the speech pipeline (`docs/crates/verbatim-audio.md`): a sound
 //! item placed in the speech stream reaches the mixer at its place, between
 //! the words around it, without the synthesizer ever seeing it; the queued
 //! text names it; and an event with no sound to play is spoken instead.

@@ -1,4 +1,4 @@
-//! Sounds (`docs/design/phase6-design.md`, "Earcons"): short recorded sounds decoded
+//! Sounds (`docs/crates/verbatim-audio.md`): short recorded sounds decoded
 //! once from WAV files, and tones generated in code. A sound is mixed by the
 //! mixer like speech (decision D16), either at its place in an utterance
 //! ([`Source::sound`](crate::Source::sound)) or at once

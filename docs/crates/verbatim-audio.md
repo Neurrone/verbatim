@@ -58,7 +58,7 @@ Public API:
   cancelled; `pause(paused)` holds the source's audio where it is, or lets
   it go on, with its playback events waiting with the audio. `fail` and
   `cancel_all` return only after the audio thread has carried them out.
-  Sounds (`docs/design/phase6-design.md`, "Earcons"): `sound(utterance, sound, gain)`
+  Sounds: `sound(utterance, sound, gain)`
   places a `Sound` at the current end of the utterance's audio, as `mark`
   places a mark, to start when playback reaches it and play on over the
   audio that follows. Until the utterance is finished, the sound is mixed

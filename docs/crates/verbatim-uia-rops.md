@@ -606,8 +606,10 @@ measured against mockapp on 2026-10-26.
 
 `caret_read_remote` and `caret_read_classic` share one signature
 (`CaretReadFn`), and `caret_read(query, remote)` chooses between them as
-`focus_ancestry` does, answering with a `Path` (milestone M4 items 3 and
-7; `docs/design/phase6-design.md`, "Caret responsiveness"). One difference: a run
+`focus_ancestry` does, answering with a `Path` (milestone M4). It is one
+round trip remotely, the formatting the theme asks for included, since
+remote operations are used wherever they are available (Dickson,
+2026-10-06). One difference: a run
 that failed because the provider's process has gone or did not answer in
 time (`UIA_E_ELEMENTNOTAVAILABLE`, `UIA_E_TIMEOUT`) is returned as the
 error without running the classic reads, which would meet the same

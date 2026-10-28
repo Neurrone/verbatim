@@ -1,5 +1,5 @@
-//! The setup the terminal scenarios share (`docs/design/phase6-design.md`, "Terminal
-//! end-to-end scenarios"), so their results depend neither on the user's
+//! The setup the terminal scenarios share (`docs/crates/verbatim-e2e.md`,
+//! "Shared setups"), so their results depend neither on the user's
 //! own terminals and settings nor on timing.
 //!
 //! A scenario in Windows Terminal and its twin in the console host are

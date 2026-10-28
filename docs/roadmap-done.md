@@ -469,6 +469,21 @@ M4 is not complete; its open work is in [the roadmap](roadmap.md). Each
 line below is an M4 item that has landed, with the commit or date that
 landed it.
 
+Code comments and the crate guides cite M4's text work by item number,
+from the plan of 2026-10-06:
+
+1. Text foundations: segmentation and the text model in Core.
+2. Reading text in the outposts: UIA's text pattern and the standard
+   edit controls' messages.
+3. Caret navigation and selection.
+4. Typed-character and word echo, with the password rule for terminals.
+5. The review cursor.
+6. Say-all.
+7. Formatting spans.
+8. Themes and earcons.
+9. Terminals.
+10. The exit criteria.
+
 ### Opening work
 
 - UIA remote operations for the focus ancestor walk (D15): 389e8838 and
@@ -491,15 +506,13 @@ landed it.
 - Step 3, NVDA's event filtering in the outposts: eb72303f, 6a105348 and
   82ccb5fc, 2026-10-10.
 - Step 4, cheaper reads: 9ef92159, 102a5d3f, 8d5f848c, e3cb1cba and
-  40fec683, 2026-10-10 ([phase 6 design](design/phase6-design.md),
-  "Cheaper reads in the outposts").
+  40fec683, 2026-10-10.
 - Steps 5 and 6 were taken as stage A steps 4 and 6, below.
 
 ### Stage A, the focus pipeline
 
 - Step 1, time limits that hold: 523ee6fb, de5c72fb and 7c3fcc1e, done in
-  1063480e, 2026-10-11 ([phase 6 design](design/phase6-design.md), "Time
-  limits that hold").
+  1063480e, 2026-10-11.
 - Step 2, Core's inputs in arrival order, NVDA's duplicate rule, and
   background speech dropped across a foreground change: 15cae8a8, done in
   b05985d3, 2026-10-11.
@@ -707,11 +720,10 @@ was a week of Dickson's daily use without a crash or a stall, and the
 full suite ten times clean. Its follow-ups still open are in [the
 roadmap](roadmap.md), M4, "Follow-ups from M4.1". Resolved or settled:
 
-- MSAA events lost while the listener resumes
-  ([the phase 6 design](design/phase6-design.md), "MSAA events in each
-  outpost's own hook"): an event raised between a ready outpost's end and
-  the listener resuming is lost. The gap is accepted (Dickson,
-  2026-10-21), as the design's recommendation there says.
+- MSAA events lost while the listener resumes: an event raised between a
+  ready outpost's end and the listener resuming is lost. The gap is
+  accepted (Dickson, 2026-10-21), since it is a few milliseconds of relay
+  for an application whose outpost has just ended.
 - `CoCancelCall` for MSAA calls is not built (Dickson, 2026-10-21): the
   experiment's record,
   `experiments/cocancelcall-ends-an-msaa-com-call-but-not-a-window-message/readme.md`,

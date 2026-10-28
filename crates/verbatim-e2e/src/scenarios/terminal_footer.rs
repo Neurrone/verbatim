@@ -1,5 +1,6 @@
 //! A flood above a footer that is longer than the console host's history
-//! (`docs/design/phase6-design.md`, "Floods and the screen diff"), as
+//! (`docs/design/terminal-model.md`; `docs/parity/terminals.md`, "The
+//! backlog"), as
 //! `conhost_footer_overflow`. The shared setup is described in the
 //! `terminal` module.
 //!

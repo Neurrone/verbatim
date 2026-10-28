@@ -184,8 +184,8 @@ that has not exited within the time limit, 21 seconds, longer than UIA's
 own call timeouts, is killed through its job, and the kill is logged with
 the reason (`docs/crates/verbatim-outpost.md`, "Shutting down"). Killing a
 UIA client in the middle of a call is the leading suspect in a crash of a
-Windows Terminal it was reading (`docs/design/phase6-design.md`, "Windows Terminal
-crash of 2026-10-08"). The job's kill-on-close stays the guarantee for a
+Windows Terminal it was reading, inside `UIAutomationCore.dll`, on
+2026-10-08. The job's kill-on-close stays the guarantee for a
 Core that dies.
 
 A child ends itself with `TerminateProcess` once its shutdown is done,

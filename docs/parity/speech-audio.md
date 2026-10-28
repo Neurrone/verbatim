@@ -122,8 +122,7 @@ new one, and on success sets the configured synthesizer
 (`nvda/source/synthDriverHandler.py` lines 504 to 547, the assignment at
 544) before it returns, so the settings dialog's OK and Cancel can never
 be pressed while a switch is under way. Verbatim: **different**
-(`docs/design/phase6-design.md`, "The settings dialog during a
-synthesizer switch"): the switch does not block the GUI thread (a
+(2026-10-08): the switch does not block the GUI thread (a
 synthesizer host can take its time limit to start), so the settings
 dialog can be closed meanwhile, and the switch's outcome decides what is
 saved. OK or Apply during the switch saves the synthesizer still active
@@ -232,8 +231,7 @@ bullet", "black square").
 NVDA: every attribute its settings
 ask for, on every read, whatever the control supports ([Document
 formatting reporting](../nvda/document-formatting.md), "UIA providers").
-Verbatim: **different** (`docs/design/phase6-design.md`, "Terminal
-decisions"): the attributes the theme's indications ask for, among
+Verbatim: **different** (Dickson, 2026-10-07): the attributes the theme's indications ask for, among
 those the focused control supports, learned from the control itself.
 An attribute a line answers "not supported" for, while its support is
 not yet known, is not asked again while the outpost keeps the node;

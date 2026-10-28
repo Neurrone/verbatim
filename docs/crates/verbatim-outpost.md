@@ -1454,8 +1454,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
   10 ms, until then. The batch limits keep a foreground fact as one of
   its thread's other events as well as one of the focus events, as NVDA's
   limiter does, so the focus events an application raises after it do
-  not crowd the system's event out (`docs/design/phase6-design.md`, "A foreground
-  event before its window is in front"). A foreground fact in front is
+  not crowd the system's event out (measured 2026-10-10: in 8 runs of 8
+  File Explorer's focus events crowded it out without this). A foreground fact in front is
   dropped too, before anything is read and without counting as reported,
   when the last focus or foreground change the outpost reported
   (`Tracking`'s queued focus) is in its window or a child window of it
@@ -1892,8 +1892,8 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
 
 ### What to read
 
-- What to read (milestone M4, `docs/design/phase6-design.md`, "Themes: one model for
-  verbosity, speech, and sounds"). `SupervisorToOutpost::Fetches` carries
+- What to read (milestone M4, [verbatim-model](verbatim-model.md),
+  "Themes"). `SupervisorToOutpost::Fetches` carries
   the details the active theme wants read for each node
   (`SrState::fetches`); the app sends it to each outpost as it starts and
   again whenever the theme in use changes, and the reader applies it at
@@ -2213,8 +2213,7 @@ windows' subtrees is given as their elements (`Scope::Subtrees`).
     reply to a key pressed before Core saw it, nor with a report in
     general terms, or into one, whose words come from its own selection.
   - Which applications raise the evidence, as checked live on
-    2026-10-08 (`docs/design/phase6-design.md`, "Live caret event
-    checks"): the focused Windows Forms text box raises, for every caret
+    2026-10-08: the focused Windows Forms text box raises, for every caret
     move, `EVENT_OBJECT_LOCATIONCHANGE` on `OBJID_CARET` between the
     caret's hide and show, then `EVENT_OBJECT_TEXTSELECTIONCHANGED` on its
     client, and for Delete, which moves no caret, a value change and the
@@ -2565,8 +2564,7 @@ it covers whatever is in pipes and backlogs without counting it.
 Outposts and the listener are UI Automation clients of every application
 Verbatim reads, and killing a client in the middle of a call or a remote
 operation into an application is the leading suspect in a Windows Terminal
-crash inside `UIAutomationCore.dll` (`docs/design/phase6-design.md`, "Windows Terminal
-crash of 2026-10-08"); it also happened to every application whenever
+crash inside `UIAutomationCore.dll` on 2026-10-08; it also happened to every application whenever
 Verbatim exited, since ending a child used to mean closing its job. So
 every way a child ends goes through a clean shutdown, and the kill is
 only the fallback:

@@ -1,7 +1,6 @@
 //! The text protocol (milestone M4): how an outpost sends text to Core and
 //! how Core asks an outpost to read text, wait for the caret, select, or
-//! move the caret (`docs/design/phase6-design.md`, "M4: text, editing, and terminals"
-//! and "Internationalization in the text model").
+//! move the caret (`docs/crates/verbatim-model.md`, "The text protocol").
 //!
 //! The rules the types follow:
 //!
@@ -880,7 +879,7 @@ pub enum CaretMotion {
     /// Any other key passed to the application that types no text (bash's
     /// Control+A and Control+E, Alt+B and Alt+F, Control+W): what it did is
     /// judged by its evidence, text removed at the caret or where the caret
-    /// landed (`docs/design/phase6-design.md`, "What a key did to the text").
+    /// landed (`docs/parity/text.md`, "TextInfo-equivalent layer").
     Other,
 }
 

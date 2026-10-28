@@ -169,8 +169,8 @@ impl Watch {
 
     /// Wakes the watchdog to judge again whether the user has moved on from
     /// the worker's window: a foreground fact reached the outpost, which
-    /// Windows raises once the change is made (`docs/design/phase6-design.md`,
-    /// "Foreground events against the foreground window"). The alarm's event
+    /// Windows raises once the change is made (`docs/crates/verbatim-outpost.md`,
+    /// "Foreground changes and focus-now"). The alarm's event
     /// stays set until the watchdog takes it, so the wake is never lost.
     pub(super) fn foreground_changed(&self) {
         self.alarm.wake();
@@ -3400,8 +3400,8 @@ impl Worker<'_> {
     /// `GetForegroundWindow` named its window, and the events that did not
     /// were stale or raised early by the application itself, as File
     /// Explorer raises one as it creates its window and the system's own
-    /// follows once the window is in front (`docs/design/phase6-design.md`,
-    /// "Foreground events against the foreground window").
+    /// follows once the window is in front (`docs/crates/verbatim-outpost.md`,
+    /// "Foreground changes and focus-now").
     ///
     /// A window not yet in front is dropped and never kept, as NVDA drops
     /// it; so is a window read through UI Automation, for which NVDA drops

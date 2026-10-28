@@ -117,8 +117,7 @@ all enhanced terminals" and the choice between diffing and Windows
 Terminal's notifications are in the Advanced panel, behind its warning,
 and NVDA's "Report dynamic content changes", which Verbatim+5 matches,
 is in Object Presentation. Verbatim: **different** by decision
-(`docs/design/phase6-design.md`, "M4: text, editing, and terminals",
-Questions): a Terminal page in the settings dialog, after Theme, with
+(Dickson, 2026-10-06): a Terminal page in the settings dialog, after Theme, with
 "Report new output", the flood policy's two limits ("Lines spoken in
 full" and "Last lines to speak", 1 to 10,000, sliders, more than either
 terminal's history holds, Core's 10 MB bound on waiting output

@@ -1,6 +1,6 @@
 //! Two windows of each terminal, and two tabs of Windows Terminal, switched
-//! between and typed into (`docs/design/phase6-design.md`, "Terminal reading by
-//! diffing the screen"): `conhost_two_windows`, `windows_terminal_two_windows`
+//! between and typed into (`docs/parity/terminals.md`, "Windows and
+//! tabs"): `conhost_two_windows`, `windows_terminal_two_windows`
 //! and `windows_terminal_tabs`. The console host has no tabs. The shared
 //! setup is described in the `terminal` module.
 //!
@@ -106,7 +106,8 @@
 //! Control+Shift+W: the first tab's terminal and its line, the prompt, are
 //! said. NVDA, captured live, said the terminal without its line, which
 //! it says in other captures of the focus returning to a tab; Verbatim
-//! keeps the line (`docs/design/phase6-design.md`, decisions of 2026-10-09).
+//! keeps the line (Dickson, 2026-10-09; `docs/parity/terminals.md`, "Windows
+//! and tabs").
 
 use std::io;
 use std::time::Instant;

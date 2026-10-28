@@ -372,8 +372,7 @@ Terminal process the agent did not launch appears while it runs.
 **The Verbatim under test never reads your Windows Terminal.** A stray
 UIA focus fact from the owner's Windows Terminal used to start an outpost
 for it, which then called into it, and that Windows Terminal crashed once
-inside UI Automation while it was read (`docs/design/phase6-design.md`, "Windows
-Terminal crash of 2026-10-08"). So the agent launches Verbatim with
+inside UI Automation while it was read, on 2026-10-08. So the agent launches Verbatim with
 `ignore_foreign_terminals` (`AgentClient::launch_verbatim`): it lists
 every `WindowsTerminal.exe` process outside the agent's own jobs, and the
 `OpenConsole.exe` processes they host, holds each open for as long as it
@@ -387,8 +386,12 @@ jobs, so it is read as usual. Every scenario fails if Verbatim's log
 folder holds an outpost log named for one of those processes. Nothing
 else sets the variable, so a Verbatim you start yourself ignores
 nothing. What still reaches your Windows Terminal is UI Automation's own
-work for any desktop-wide client: see `docs/design/phase6-design.md`, "Ignoring the
-owner's Windows Terminal".
+work for any desktop-wide client: while the listener's desktop-wide UIA
+registrations exist, UI Automation's code inside Windows Terminal's
+process handles each event it raises and reads the registration's cached
+properties there, as it does for NVDA or Narrator. Only not registering
+desktop-wide would avoid that, and that would lose focus tracking for
+every UIA application.
 CI's `e2e` job runs `cargo xtask windows-terminal` as a step of its own
 before the suite, so GitHub's runner tests the same release, not the
 Windows Terminal its image ships.

@@ -186,21 +186,24 @@ Related items:
 
 ### The audio step
 
-Decided by Dickson and not yet built. The reasoning is in
-[the phase 6 design](design/phase6-design.md), in the dated section named
-with the item.
+Decided by Dickson and not yet built.
 
 - The audio step of the communication design
-  ([communication](design/communication.md), section 11; "Audio start-up
-  latency and scheduling", 2026-10-08): the audio stream stays awake after
-  speech, writing silence, for a configurable period, 30 seconds by default
-  as in NVDA, and cancelling keeps Stop and Reset; the engine period trial;
-  and the earcon re-mix, where speech that starts while an earcon plays is
-  mixed into audio not yet played, re-mixing what was already handed to the
-  device, so an indication's sound and its speech start together and
-  cancelling an utterance cancels both. The latency ledger stops counting
-  the tail of earlier speech as "mixer and device". Each is measured with
-  the device stages of the communication design's section 10.1.
+  ([communication](design/communication.md), section 11; Dickson,
+  2026-10-08): the audio stream stays awake after speech, writing silence,
+  for a configurable period, 30 seconds by default as in NVDA, because
+  Bluetooth, USB, HDMI and virtual-machine endpoints otherwise clip or
+  delay the next speech; cancelling keeps Stop and Reset, as NVDA does,
+  since shared mode has no other way to discard queued audio; the engine
+  period trial; and the earcon re-mix, where speech that starts while an
+  earcon plays is mixed into audio not yet played, re-mixing what was
+  already handed to the device, so an indication's sound and its speech
+  start together and cancelling an utterance cancels both. Speech now
+  waits behind the roughly 40 ms of earcon already queued, which delays
+  every start-up's first announcement. The latency ledger stops counting
+  the tail of earlier speech as "mixer and device", which made
+  back-to-back utterances look slow there. Each is measured with the
+  device stages of the communication design's section 10.1.
 - In the 28 verification runs of 2026-10-20, every passing run logged 1
   to 10 warnings "the device ran dry in the middle of an utterance: an
   audible gap" from `verbatim::audio` (debug build). They are not caused
@@ -337,10 +340,11 @@ M4.1 (stability) is complete and archived in [Completed
 milestones](roadmap-done.md); these are its follow-ups still open or
 deferred.
 
-- The outpost crash inside UI Automation's saved-event delivery
-  ([the phase 6 design](design/phase6-design.md), "Console windows as one
-  application"): section 17 of the focus-pipeline design is built
-  (152f09a), but `conhost_leave_flood`'s console host outpost failed
+- The outpost crash inside UI Automation's saved-event delivery (first
+  seen 2026-10-11: on one of UI Automation's own worker threads, with no
+  frame of Verbatim's, `ProtobufHelper::GetCacheResponse` read a null
+  element reference from an event's cached response): section 17 of the
+  focus-pipeline design is built (152f09a), but `conhost_leave_flood`'s console host outpost failed
   fast again on 2026-10-12; its full dump, kept outside the repository,
   is to be read and section 17's fifty-run check made.
 - Verbatim's own outpost once left a fact in its intake for 6.37 seconds
@@ -586,13 +590,19 @@ NVDA capture.
   the focus controls"): a stale selection after a second replacement of
   the list, a selection in a second controlled element, and a selection
   raised on the controlled list itself.
-- The review cursor on objects that no longer exist (the section of that
-  name, 2026-10-08): review commands read live from the application
-  rather than from Core's cache; a Gone answer for the navigator's node
-  re-seeds it from the focus, or says "No navigator object" when the dead
-  node is the focus; the outpost reports held MSAA nodes it forgets with
-  their window; and an end-to-end test in both terminals that a reviewed
-  line stays on its text as new output is written below it ("Revised").
+- The review cursor on objects that no longer exist (Dickson,
+  2026-10-08): most review commands answer from Core's cached line or the
+  node's snapshot, and a Gone answer is dropped with the navigator left on
+  the dead node, so a closed tab's or dialog's old text can be read where
+  NVDA, reading live on every command, gives silence or "blank". Review
+  commands read live from the application rather than from Core's cache;
+  a Gone answer for the navigator's node re-seeds it from the focus, or
+  says "No navigator object" when the dead node is the focus; the outpost
+  reports held MSAA nodes it forgets with their window; and an end-to-end
+  test in both terminals that a reviewed line stays on its text as new
+  output is written below it without filling the history. The review
+  position is the provider's, with no bookkeeping of Verbatim's own: once
+  the history is full, staying on the same row is acceptable.
   Flat review's current-line command (`crates/verbatim-core/src/reduce.rs`,
   the flat `ReviewCurrentLine` arm) moves the review offset to the line's
   start, where NVDA's current-line command does not move the review
@@ -611,11 +621,10 @@ deviation where Dickson chose one, checked with compare mode.
 
 ## M4.3 — Settings and indications
 
-These are decided designs that daily use needs; the reasoning
-is in [the phase 6 design](design/phase6-design.md), in the dated section
-named with each item.
+These are decided designs that daily use needs.
 
-- The settings package ("NVDA's settings in Verbatim", 2026-10-08): the
+- The settings package (Dickson, 2026-10-08, from an inventory of NVDA's
+  242 user-visible settings against Verbatim's): the
   missing settings for behaviour Verbatim already has (capital pitch
   change, OneCore's pause after punctuation, the audio output device,
   sounds' volume following the voice, the audio device awake time,
@@ -627,17 +636,20 @@ named with each item.
   features (say "cap" before capitals, delayed character descriptions,
   the spelling-error sound while typing). The review cursor follows focus
   and the caret by default, each with NVDA's setting to turn it off.
-  Spoken progress comes every 10 percent, as NVDA's does.
-- Status cues ("Status cues settled", 2026-10-08): every indication in
+  Spoken progress comes every 10 percent, as NVDA's does. Each of NVDA's
+  settings for a feature not yet built lands with that feature's
+  milestone.
+- Status cues (Dickson, 2026-10-08): every indication in
   the theme's Events group (start and exit, error, application not
   responding, browse and focus mode, suggestions opened and closed,
   progress) plays through key presses; indications in every other group
   are content and are cut off. This is built-in behaviour defined by the
   group, not a setting.
-- Sound-only announcements ("The review cursor in a terminal", the
-  paragraph "Further", 2026-10-08): an announcement a theme reports by
-  sound alone is queued, timed, measured and cancelled exactly like a
-  spoken one; the start-up sound becomes one.
+- Sound-only announcements (Dickson, 2026-10-08): sounds without speech
+  are normal, since a theme can set any indication to sound alone, so an
+  announcement a theme reports by sound alone is queued, timed, measured
+  and cancelled exactly like a spoken one; the start-up sound becomes
+  one.
 - Background progress bar reporting with its setting, an NVDA option off
   by default (Dickson, 2026-10-10, confirmed as planned for later on
   2026-10-15; [changes and selection parity](parity/changes-and-selection.md),
@@ -778,7 +790,13 @@ here.
 
 - Document projection / incremental virtual buffer over the normalized tree;
   quick-nav keys, elements list (presented through the M3 list dialog),
-  switching between focus and browse modes.
+  switching between focus and browse modes. Where the buffer lives is
+  decided here: in Core, or in the outpost or the injection helper with
+  Core querying it, as NVDA keeps its buffers inside the browser's
+  process. Either way Core's state stays cheap to clone (agreed
+  2026-10-06): a buffer held in Core keeps its text in a rope and its
+  nodes in a persistent map, both sharing memory when cloned, so the
+  flight recorder's checkpoints stay affordable.
 - IA2 lands here, deferred from M3 because browsers are what motivate it:
   interface acquisition (`IServiceProvider::QueryService` from the
   WinEvent's `IAccessible` to `IAccessible2` and the IA2 text, hypertext,
@@ -859,8 +877,8 @@ near) parity; screen review reads a modern app's screen correctly.
   symbol levels in place, decide how terminal output's symbol-only lines
   (vim's "~" rows, box-drawing rules) are spoken: M4 speaks them as they
   are, and they should then follow the user's symbol level, as NVDA's
-  are silent at its default level (`docs/design/phase6-design.md`, "Terminal risks found by
-  studying NVDA"). The compare check once symbol levels exist: at
+  are silent at its default level (Dickson, 2026-10-08). The compare
+  check once symbol levels exist: at
   `windows_terminal_commands`'s first prompt NVDA says "ready greater"
   at its default symbol level ("some"), where Verbatim leaves the ">"
   out (Dickson, 2026-10-21).
@@ -1104,19 +1122,19 @@ Tiers, gated by the capabilities each module needs:
   (Dickson, 2026-10-08, reaffirmed 2026-10-09): enforced by default in
   local runs, and recorded but not enforced on GitHub's runners (see
   the response-time budgets below).
-- Response-time budgets (the afternoon decisions of 2026-10-08,
-  reaffirmed 2026-10-09): enforced by default in local runs, recorded but
+- Response-time budgets (Dickson, 2026-10-08, reaffirmed 2026-10-09): enforced by default in local runs, recorded but
   not enforced on GitHub's runners; today the suite records them and
   asserts none. A failure when verbatim.exe's relay takes over 2 ms comes
   with them.
-- Memory growth ("Memory growth tracking", 2026-10-08): a scenario of
+- Memory growth (Dickson, 2026-10-08): a scenario of
   about 25 seconds in every suite, ten iterations of a Windows Forms text
   box window opened, edited, reviewed and closed, and the settings dialog
   Tabbed through. After two warm-up iterations, the counts Verbatim
   reports through the control plane return to exactly the same values
   after every iteration, and each process's private memory grows from
-  iteration 3 to 10 by no more than a small bound.
-- A behaviour-based MSAA audit (the afternoon decisions of 2026-10-08):
+  iteration 3 to 10 by no more than a small bound, enforced in local runs
+  and recorded on GitHub's runners.
+- A behaviour-based MSAA audit (Dickson, 2026-10-08):
   live NVDA captures against a matrix of standard controls, compared
   exactly with Verbatim.
 - Medium integrity on GitHub's runner (Dickson, 2026-10-10): the e2e job

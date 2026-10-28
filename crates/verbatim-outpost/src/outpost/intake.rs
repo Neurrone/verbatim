@@ -142,9 +142,9 @@
 //!   the foreground event once the change is made, so a foreground event
 //!   whose window is not in front when its batch is handled is stale or
 //!   raised early by the application itself, and the worker drops it, as
-//!   NVDA's `processForegroundWinEvent` does (measured live;
-//!   `docs/design/phase6-design.md`, "Foreground events against the foreground
-//!   window").
+//!   NVDA's `processForegroundWinEvent` does (measured live on
+//!   2026-10-09; `docs/crates/verbatim-outpost.md`, "Foreground changes and
+//!   focus-now").
 //!
 //! Intake callbacks only push and return: they never call into the
 //! application and never wait on the worker.

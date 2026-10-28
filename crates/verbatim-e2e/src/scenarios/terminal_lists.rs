@@ -6,7 +6,7 @@
 //! Each script prints "Pick a fruit:" and a five-item list with a ">"
 //! marker on its first item, then moves the marker with Down and Up Arrow
 //! until Enter chooses, each move in one write, as list prompts draw
-//! (`docs/design/phase6-design.md`, "Terminal line keys as NVDA has them").
+//! (`docs/parity/terminals.md`, "Line keys and lists a program draws").
 //! `marker.ps1` erases the old marker and draws the new one, leaving the
 //! caret after it, so the caret moves to the item's line: the key says that
 //! line, as in a text field, and the marker drawn on it is the key's own,

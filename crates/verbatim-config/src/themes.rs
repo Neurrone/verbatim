@@ -1,5 +1,4 @@
-//! Theme files (`docs/design/phase6-design.md`, "Themes and configuration profiles"
-//! and "Packaging").
+//! Theme files (`docs/crates/verbatim-config.md`, "Themes").
 //!
 //! A theme is a directory in the user's themes folder, named by the
 //! theme's id: a TOML manifest, `theme.toml`, holding the theme's name,

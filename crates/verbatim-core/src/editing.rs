@@ -1,7 +1,7 @@
 //! Editing (milestone M4): caret keys and the selection, following NVDA's
 //! wait for evidence (`docs/nvda/editable-text-and-terminals.md`), and
 //! typed character and word echo with the password rules
-//! (`docs/design/phase6-design.md`, M4 items 3 and 4).
+//! (`docs/parity/text.md` and `docs/parity/terminals.md`, "Typing").
 //!
 //! A caret key reaches the application unchanged; the hook reports it, and
 //! the reducer asks the focus's outpost to watch for evidence of what the
@@ -523,8 +523,9 @@ fn deleted_text(
 #[derive(Debug, PartialEq, Eq)]
 enum Removal {
     /// This text, which ended at the caret before the key, is gone, and the
-    /// caret is where it began (`docs/design/phase6-design.md`, "What a key did to the
-    /// text", the guard by text positions).
+    /// caret is where it began: the guard by text positions, which keeps a
+    /// selection list's marker moving between lines from being spoken as a
+    /// deletion (`docs/parity/text.md`, "TextInfo-equivalent layer").
     Removed(String),
     /// The line after the key ends with the whole of the line before, and
     /// the caret is where it began: the line was joined to the one above,
@@ -840,8 +841,8 @@ fn removes_selection(pending: &PendingCaret, caret: &CaretReport) -> bool {
     pending.selected_before && caret.selection.is_none()
 }
 
-/// What a key outside the caret table did (`docs/design/phase6-design.md`, "What a
-/// key did to the text"), from the caret's line `before` it (its text and
+/// What a key outside the caret table did (`docs/parity/text.md`,
+/// "TextInfo-equivalent layer"), from the caret's line `before` it (its text and
 /// the caret's byte offset) and `after` it, and whether the caret is on the
 /// line it was on (`same_line`, from the outpost): text removed at the
 /// caret is spoken; a caret on another line speaks that line (`None`
@@ -885,7 +886,7 @@ fn removed_segments(removed: &str, language: Option<&str>) -> Vec<UtteranceSegme
     }
 }
 
-/// The landing rule (`docs/design/phase6-design.md`, "What a key did to the text"): a
+/// The landing rule (`docs/parity/text.md`, "TextInfo-equivalent layer"): a
 /// caret that moved from `from` (a byte offset) on a line whose text is
 /// unchanged, now at `line`'s offset, speaks by where it landed. By exactly
 /// one character, or at the start or end of the line: the character at the

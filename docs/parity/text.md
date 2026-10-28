@@ -223,8 +223,7 @@ Differences:
   known, since an application's late caret event can belong to an
   earlier key; the position, the characters either side of the caret,
   or the selection must change (the wait-for-evidence design, Dickson,
-  2026-10-08, `docs/design/phase6-design.md`, "What a key did to the
-  text"). For Backspace and Delete, alone or with Control, the caret's
+  2026-10-08). For Backspace and Delete, alone or with Control, the caret's
   line differing from the line of the last caret reported before the
   key is evidence too (Dickson, 2026-10-26), since deleting one of a
   run of the same character, such
@@ -239,8 +238,7 @@ Differences:
   caret and its line, and the key is sent on, so what Backspace deleted
   is worked out by comparing the line read before the key with the line
   after it ([holding caret keys](../design/key-holding.md), adopted on
-  2026-10-22; Dickson, 2026-10-08, `docs/design/phase6-design.md`, "What
-  a key did to the text"). Keys pressed while a held key waits, typed
+  2026-10-22; Dickson, 2026-10-08). Keys pressed while a held key waits, typed
   characters included, wait behind it and reach the application in the
   order pressed, one step beyond NVDA, where a typed character overtakes
   a held key; the lock keys alone pass at once, since their state is
@@ -278,8 +276,7 @@ Differences:
   NVDA says ("o" and "tw" after `echo one two`, both terminals).
 - A key outside NVDA's caret keys that types no text (bash's Control+A,
   Control+E, Alt+B, Alt+F, Control+W, Control+K, and Escape clearing a
-  line) is spoken by its evidence (Dickson, 2026-10-08,
-  `docs/design/phase6-design.md`, "What a key did to the text"): text
+  line) is spoken by its evidence (Dickson, 2026-10-08): text
   it removed at the caret, the new line when the caret left its line,
   and otherwise by where the caret landed (the character, the word, or
   the word then the character). NVDA says nothing for such keys: Escape

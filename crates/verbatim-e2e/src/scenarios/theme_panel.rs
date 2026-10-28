@@ -1,6 +1,6 @@
 //! The settings dialog's Theme page (milestone M4 item 8,
-//! `docs/design/phase6-design.md`, "The settings dialog" and "How the run is
-//! verified"): the page is read, the indications tree is walked through an
+//! `docs/crates/verbatim-gui.md`, the Theme page): the page is read, the
+//! indications tree is walked through an
 //! entry of every category, and the button role is changed to a sound,
 //! which Verbatim then plays in place of the word "button".
 //!

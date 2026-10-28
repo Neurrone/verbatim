@@ -203,8 +203,7 @@ does):
   2026-10-06). The committed text is not echoed; NVDA hears it from inside
   the application (its `ime` and `tsf` hooks), which Verbatim's injection
   helper (decision D2, milestone M7) can do, and announcing compositions is
-  a later milestone (`docs/design/phase6-design.md`, "Internationalization in the text
-  model").
+  a later milestone (`docs/parity/input.md`, "IME/composition reporting").
 - Keyboard text services. Outside Chinese, Japanese, and Korean, Windows'
   text-service keyboards (Vietnamese Telex and VNI, the Indic Phonetic
   keyboards) also compose characters from several keys, but under the

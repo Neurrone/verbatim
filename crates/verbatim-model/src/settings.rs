@@ -77,8 +77,8 @@ pub struct ReaderSettings {
     /// so a password prompt that echoes nothing speaks nothing.
     pub speak_terminal_passwords: bool,
     /// Speak new output in terminals ("Report new output", toggled with
-    /// Verbatim+5, default on; `docs/design/phase6-design.md`, "M4: text, editing, and
-    /// terminals"). NVDA's nearest setting is "Report dynamic content
+    /// Verbatim+5, default on; `docs/parity/system.md`, "The terminal
+    /// settings"). NVDA's nearest setting is "Report dynamic content
     /// changes"; this one covers terminals until live regions arrive.
     pub report_terminal_output: bool,
     /// "Lines spoken in full": up to this many lines of terminal output
@@ -100,8 +100,9 @@ pub struct ReaderSettings {
 /// 10 MB bound on output waiting protects memory.
 pub const MAX_TERMINAL_LINES: u16 = 10_000;
 
-/// The default of both terminal limits ("30 and 30", `docs/design/phase6-design.md`,
-/// "The flood policy, reconsidered").
+/// The default of both terminal limits ("30 and 30", `docs/parity/terminals.md`,
+/// "The backlog"): a screenful or more keeps ordinary command output whole
+/// and still bounds a flood.
 pub const DEFAULT_TERMINAL_LINES: u16 = 30;
 
 impl ReaderSettings {

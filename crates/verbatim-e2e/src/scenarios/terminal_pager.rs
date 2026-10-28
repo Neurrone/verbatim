@@ -27,8 +27,8 @@
 //! "closed" and the prompt, 30 lines, with no skip
 //! (`docs/design/terminal-model.md`, "The aside screen", Dickson,
 //! 2026-10-25). The text scrolls through rows that stay put, so the screen
-//! diff finds how far from the text (`docs/design/phase6-design.md`, "Terminal line
-//! keys as NVDA has them"), and each move speaks only the line it brought
+//! diff finds how far from the text (`docs/parity/terminals.md`, "Line keys
+//! and lists a program draws"), and each move speaks only the line it brought
 //! onto the screen. The caret stays after the prompt, so the keys
 //! themselves say nothing.
 //!

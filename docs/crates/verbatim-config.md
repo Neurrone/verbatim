@@ -45,9 +45,8 @@ Public API:
     "Lines spoken in full" may reach past it; Core's 10 MB bound on output
     waiting protects memory.
 
-  These four and `speak_terminal_passwords` are the Terminal settings of
-  `docs/design/phase6-design.md` ("M4: text, editing, and terminals", Questions),
-  set on the settings dialog's Terminal page and, for "Report new
+  These four and `speak_terminal_passwords` are the Terminal settings
+  (`docs/parity/system.md`, "The terminal settings"), set on the settings dialog's Terminal page and, for "Report new
   output", with Verbatim+5.
 - `VerbatimKeys` — which keys act as the Verbatim modifier (`caps_lock`,
   `insert`, `numpad_insert`) plus `share_modifier`, which passes the
@@ -103,8 +102,7 @@ Public API:
 ## Themes
 
 What a user can set, as `settings.toml` and the themes folder hold it
-(`docs/design/phase6-design.md`, "Themes: one model for verbosity, speech, and
-sounds"). A theme decides, for everything Verbatim can report (each an
+([verbatim-model](verbatim-model.md), "Themes", has the types). A theme decides, for everything Verbatim can report (each an
 indication: a role such as "link", a state such as "checked", a
 description, a spelling error, browse mode switching on, and so on),
 whether it is reported, and how: in words, by a sound, by both, or not at

@@ -1,5 +1,5 @@
-//! The theme in use (`docs/design/phase6-design.md`, "Themes: one model for verbosity,
-//! speech, and sounds"): loading the one the configuration names and making
+//! The theme in use (`docs/crates/verbatim-model.md`, "Themes"): loading the
+//! one the configuration names and making
 //! a theme active, which the speech pipeline presents with and the reducer
 //! fetches for.
 //!

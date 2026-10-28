@@ -120,8 +120,6 @@ NVDA says, to decide what Verbatim should say.
     of work and the tests for M5 and M6, which the roadmap entries point to.
   - [outpost-redesign.md](design/outpost-redesign.md) — the outposts,
     listener, and supervisor; adopted and built.
-  - [phase6-design.md](design/phase6-design.md) — phase 6's decision
-    log; kept for the record.
   - [wake-ups.md](design/wake-ups.md) and
     [safety-audit-2026-10-06.md](design/safety-audit-2026-10-06.md) —
     audit logs: every thread's wake-ups, and the unsafe code.

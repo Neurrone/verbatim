@@ -1,5 +1,5 @@
-//! The settings dialog's Theme page (`docs/design/phase6-design.md`, "The settings
-//! dialog"): its model, pure apart from the theme files and the
+//! The settings dialog's Theme page (`docs/crates/verbatim-gui.md`): its
+//! model, pure apart from the theme files and the
 //! [`ThemeHost`] it makes changes live through.
 //!
 //! The page lists the installed themes, the built-in default first, and

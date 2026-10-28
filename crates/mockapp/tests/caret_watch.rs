@@ -370,7 +370,8 @@ fn a_watchs_end_reads_no_focus_while_a_marker_waits() {
 }
 
 /// Windows 11 Notepad, starting up, once answered that its document had
-/// no text pattern (`docs/design/phase6-design.md`, "Live caret event checks"), and
+/// no text pattern (`docs/parity/text.md`, "A text pattern missing at the
+/// focus"), and
 /// every caret key in it was silent from then on. A provider that fails the
 /// request reaches the client the same way, as no pattern, so the focus is
 /// reported as having no text, and Core speaks its value, as NVDA does for
@@ -1072,7 +1073,8 @@ fn focus_edit(name: &str) -> (common::MockApp, OutpostUnderTest, NodeId, CaretRe
 /// "x" typed over the selected "alpha" in a classic edit control, its
 /// caret event raised before its value change, as the Windows Forms text
 /// box raises the caret's location change before the client's value
-/// change (`docs/design/phase6-design.md`, "Live caret event checks"): the
+/// change (`docs/crates/verbatim-outpost.md`, "Text and caret", checked live
+/// on 2026-10-08): the
 /// value change waiting at the caret event, the report says its change in
 /// general terms, the selection removed, as NVDA's edit control does
 /// (`target/e2e-evidence/m42-desktop-2-2026-10-22/part3b-textbox-1-type-over.txt`).

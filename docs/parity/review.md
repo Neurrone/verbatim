@@ -204,8 +204,7 @@ that no longer exist ([the roadmap](../roadmap.md), M4.2).
 ### Review cursor columns
 
 NVDA moves the review cursor to the start of the
-next or previous line. Verbatim: **different** (Dickson, 2026-10-06;
-`docs/design/phase6-design.md`, M4 item 5): moving to another line,
+next or previous line. Verbatim: **different** (Dickson, 2026-10-06): moving to another line,
 page, or by line from a word keeps the column, so columns of a text table
 or the map of a text-based game read line by line. In a terminal the
 column is a cell column: wide characters (Chinese, Japanese, Korean) take

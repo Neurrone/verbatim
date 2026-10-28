@@ -1,5 +1,5 @@
 //! A flood of terminal output (milestone M4 item 9 and the M4 exit
-//! criteria; `docs/design/phase6-design.md`, "Test design decisions"), as
+//! criteria; `docs/parity/terminals.md`, "The backlog"), as
 //! `windows_terminal_flood` in Windows Terminal and `conhost_flood` in the
 //! console host. The shared setup is described in the `terminal` module.
 //!

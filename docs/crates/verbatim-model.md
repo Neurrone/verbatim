@@ -240,9 +240,7 @@ Public API:
 ## The text protocol (milestone M4)
 
 How an outpost sends text to Core, and how Core asks an outpost to read
-text, wait for the caret, select, or move the caret
-(`docs/design/phase6-design.md`, "M4: text, editing, and terminals" and
-"Internationalization in the text model"). The types are in `text.rs`;
+text, wait for the caret, select, or move the caret. The types are in `text.rs`;
 everything is serde-serializable like the rest of the model, so it travels
 the Core-outpost pipe and the flight recorder unchanged. This section is
 the contract the Windows side implements.
@@ -626,8 +624,13 @@ terminal shows it.
 
 ## Themes (milestone M4)
 
-One model for verbosity, speech, and sounds (`docs/design/phase6-design.md`,
-"Themes: one model for verbosity, speech, and sounds"). The types are in
+One model for verbosity, speech, and sounds: a theme says, for every
+kind of thing Verbatim can report, whether it is reported and how, so it
+decides what a user who wants speech alone hears as well as which sounds
+play. The reducer puts every fact into the utterance as a typed span
+(D12) and consults the theme only to skip fetching what is off; the
+presentation stage turns each span into words, a sound, both, or nothing.
+The types are in
 `theme.rs`; files and settings are `verbatim-config`'s, and presenting
 with a theme is `verbatim-speech`'s.
 

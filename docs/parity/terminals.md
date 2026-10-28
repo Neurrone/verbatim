@@ -15,8 +15,7 @@ cancels speech; a change of one or two characters on one line dropped as
 probably typed; typed characters spoken on the terminal's next text
 change of any kind.
 
-Verbatim: **different** (`docs/design/phase6-design.md`, "Terminal
-reading by diffing the screen"; `docs/design/terminal-model.md`;
+Verbatim: **different** (`docs/design/terminal-model.md`;
 `docs/crates/verbatim-core.md`, "Core's terminal model";
 `docs/crates/verbatim-outpost.md`, "Terminals"), case by case below,
 some matched and some deliberately different. The terminal scenarios
@@ -28,6 +27,12 @@ scenarios follow it as the model's order of work brings them back.
 
 #### Reading output
 
+- Only terminals with UIA text are read: Windows Terminal, the terminal
+  embedded in Visual Studio, and the console host, each recognised by
+  its control in Verbatim's core rather than by an app module, as NVDA's
+  overlays are. NVDA's legacy console support, for consoles without UIA
+  text, is not ported or tested (Dickson, 2026-10-08), since every
+  supported Windows has the console host with UIA.
 - Each read is aligned with the rows last read, row by row, so that
   every row is new, kept wherever it moved, or rewritten (Dickson,
   2026-10-23; `docs/design/terminal-model.md`, "The model"), where NVDA
@@ -42,7 +47,7 @@ scenarios follow it as the model's order of work brings them back.
   as text changes as well as UIA's, merged per window, and a change
   observed before the last read began is covered by it, since UIA's text
   changes stopped reaching the outpost in the middle of large writes in
-  2 of 14 runs (different; `docs/design/phase6-design.md`).
+  2 of 14 runs (different; measured 2026-10-08).
 - Windows Terminal's notifications from a terminal, and the console
   host's from its text area, are all ignored, whatever their activity
   id, so nothing is spoken twice, as NVDA's overlays block them.
@@ -98,8 +103,8 @@ scenarios follow it as the model's order of work brings them back.
 
 #### The backlog
 
-- The backlog is capped ("30 and 30", `docs/design/phase6-design.md`,
-  "The flood policy, reconsidered"; different): with more than "Lines
+- The backlog is capped ("30 and 30", Dickson, 2026-10-06 and 2026-10-07;
+  different): with more than "Lines
   spoken in full" (30) lines waiting once a group's last line has been
   heard, the older ones become "skipped N lines" ("skipped lines" when
   the count is lost, "skipped more than N lines" when the lines went by
@@ -191,7 +196,7 @@ scenarios follow it as the model's order of work brings them back.
   character, "x", as it is typed and then the recalled line with it,
   "echo onex"; Verbatim reads the line's change once, both in it, and
   says "echo onex" without the character's own echo (Dickson,
-  2026-10-09; `docs/design/phase6-design.md`). When a read shows the
+  2026-10-09). When a read shows the
   recalled line before the "x", as at human speed, the line is spoken
   and the "x" echoed (Dickson, 2026-10-26; `*_up_typing`).
 - The console host's keys are translated with the console host's own
@@ -299,9 +304,7 @@ expectation when the model is built).
 #### Line keys and lists a program draws
 
 - Up and Down Arrow in a terminal, a selection list a program draws
-  among them, are matched (Dickson, 2026-10-09,
-  `docs/design/phase6-design.md`, "Terminal line keys as NVDA has
-  them"). NVDA reads the caret's line at the first change of the
+  among them, are matched (Dickson, 2026-10-09). NVDA reads the caret's line at the first change of the
   caret's position after the key, or, finding none within its wait, at
   the end of it, without using a terminal's caret events; what the
   program redraws elsewhere is new output to its diff. Verbatim credits

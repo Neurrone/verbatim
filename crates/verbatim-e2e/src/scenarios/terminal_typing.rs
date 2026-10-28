@@ -1,7 +1,7 @@
 //! Typing a terminal does not show plainly, as `windows_terminal_typing`
 //! in Windows Terminal and `conhost_typing` in the console host
-//! (`docs/design/phase6-design.md`, "Terminal risks found by studying NVDA" and "What
-//! a key did to the text"). The shared setup is described in the
+//! (`docs/parity/terminals.md`, "Typing"; `docs/parity/text.md`,
+//! "TextInfo-equivalent layer"). The shared setup is described in the
 //! `terminal` module.
 //!
 //! What it asserts, each step heard in full before the next:

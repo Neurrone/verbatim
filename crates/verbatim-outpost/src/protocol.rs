@@ -1349,8 +1349,8 @@ pub struct DumpedTree {
 }
 
 /// The most bytes one message may take, its frame's header aside, in either
-/// direction between Core and a child (`docs/design/phase6-design.md`, "Terminal risks
-/// found by studying NVDA", the limit on outpost messages): room for 10 MB
+/// direction between Core and a child (`docs/design/communication.md`, section
+/// 4.2; Dickson, 2026-10-07): room for 10 MB
 /// of terminal output and JSON's escaping. A writer never sends more, and a
 /// reader that is told of more treats the other end as failed rather than
 /// reading on, so an enormous message cannot make it allocate without

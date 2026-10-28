@@ -1,5 +1,5 @@
 //! The review cursor over text read through the text protocol (milestone
-//! M4; `docs/design/phase6-design.md`, "The autonomous run", M4 item 5), with NVDA's
+//! M4; `docs/parity/review.md`), with NVDA's
 //! messages and repeated presses (`docs/nvda/review-modes.md`).
 //!
 //! The review cursor holds the line it is on, so moving by character or

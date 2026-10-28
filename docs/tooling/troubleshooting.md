@@ -84,8 +84,7 @@ restored and inactive and is brought forward as msinfo32's is. It is not
 opened minimized: a folder window the shell opens minimized takes the
 foreground while minimized, and once restored its file list has no
 keyboard focus, so arrow keys say nothing in NVDA or Verbatim (measured
-2026-10-09; `docs/design/phase6-design.md`, "File Explorer opened without the
-foreground right"). A Settings page (`Scenario::open_settings_page`) opens
+2026-10-09). A Settings page (`Scenario::open_settings_page`) opens
 minimized and inactive and is brought forward like the harness's own
 windows. Run a scenario that sends keys first, such as
 `lock_key_announcements`. Never tap keys by hand, or have a script send
@@ -137,8 +136,6 @@ minimize requested and observed, the restore, and
 148 switches in 50 runs of `conhost_leave_flood` on 2026-10-11 the whole
 switch took 150 to 282 milliseconds, and once 1.4 seconds; a scenario
 that switches while speech plays must give the switch that long.
-`docs/design/phase6-design.md`, "Test isolation and the foreground lock (2026-10-08)",
-has the evidence.
 
 **Windows 11 Notepad restores tabs from its previous session.** Notepad
 keeps the tabs of a window that was closed, rather than whose tabs were

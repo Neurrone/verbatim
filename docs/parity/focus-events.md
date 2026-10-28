@@ -222,8 +222,7 @@ cases listed last are not implemented.
   location changes and shows (both tested as a location change; NVDA
   tests a caret show by its focus's own rule instead,
   `docs/parity/text.md`), focus, foreground and popup menu facts, and
-  alerts (`docs/design/phase6-design.md`, "Event filtering in the
-  outposts"). Show facts pass by their class, which the focus listener's
+  alerts. Show facts pass by their class, which the focus listener's
   hook already tested, as NVDA's show rule depends on the class alone.
   The test is defined once (`outpost::acceptance`; decision D14, "Where
   the rules run"), for the outposts and the focus listener, and the window
@@ -307,8 +306,7 @@ cases listed last are not implemented.
   window is the foreground window. File Explorer's folder window, opened
   in front, raises its one foreground event before it is in front, which
   is dropped, and is announced from the focus's ancestry, its title by
-  then the folder's (`docs/design/phase6-design.md`, "File Explorer
-  opened without the foreground right").
+  then the folder's (measured 2026-10-09 and 2026-10-17).
 - A focus event is attended only when its window was in the system's
   foreground window when its outpost read it, topmost, or a
   `Windows.UI.Core` window under the input thread's active window, as

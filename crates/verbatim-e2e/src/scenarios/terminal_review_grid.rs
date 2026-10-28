@@ -1,6 +1,6 @@
 //! The review cursor down a column of a text table in a terminal
-//! (milestone M4 item 9; `docs/design/phase6-design.md`, "Terminal end-to-end
-//! scenarios"), as `windows_terminal_review_grid` in Windows Terminal and
+//! (milestone M4; `docs/parity/review.md`, "Review cursor columns"), as
+//! `windows_terminal_review_grid` in Windows Terminal and
 //! `conhost_review_grid` in the console host. The shared setup is
 //! described in the `terminal` module.
 //!

@@ -1,5 +1,5 @@
-//! Themes: one model for verbosity, speech, and sounds (`docs/design/phase6-design.md`,
-//! "Themes: one model for verbosity, speech, and sounds").
+//! Themes: one model for verbosity, speech, and sounds
+//! (`docs/crates/verbatim-model.md`, "Themes").
 //!
 //! The indication catalogue names every kind of thing Verbatim can report,
 //! each with a stable id and a category. A [`Theme`] says, for each
@@ -859,8 +859,7 @@ impl fmt::Display for ThemeProblem {
 
 /// The details the reducer has fetched, decided by the active theme
 /// ([`Theme::fetches`]): a detail whose indication is off is not fetched,
-/// so off also saves the cross-process call (`docs/design/phase6-design.md`, "Themes:
-/// one model for verbosity, speech, and sounds"). The shell gives it to the
+/// so off also saves the cross-process call. The shell gives it to the
 /// reducer as `Input::Fetches`, and passes the reducer's view of it to every
 /// outpost, which leaves out what is not wanted when it reads a node or
 /// text.
@@ -931,8 +930,7 @@ impl Default for Fetches {
 
 /// Settings that go with the theme but are not part of it: ordinary
 /// settings that a configuration profile may change, like the theme's
-/// choice itself (`docs/design/phase6-design.md`, "Themes and configuration
-/// profiles").
+/// choice itself (`docs/crates/verbatim-config.md`, "Themes").
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeOptions {

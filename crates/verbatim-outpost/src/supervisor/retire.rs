@@ -21,8 +21,8 @@ use super::writer::Outgoing;
 /// or a remote operation into an application is in progress, which the
 /// outpost lets finish rather than cut off: killing a UI Automation client
 /// in the middle of a call is the leading suspect in a Windows Terminal
-/// crash inside `UIAutomationCore.dll` (`docs/design/phase6-design.md`, "Windows
-/// Terminal crash of 2026-10-08"). Such a call ends by UIA's own timeouts
+/// crash inside `UIAutomationCore.dll` on 2026-10-08
+/// (`docs/crates/verbatim-outpost.md`, "Shutting down"). Such a call ends by UIA's own timeouts
 /// even when the application never answers: a call waiting on a provider
 /// that does not answer is ended by UIA's transaction timeout, 20 seconds,
 /// UIA's default, which Verbatim leaves as it is (a classic call and a

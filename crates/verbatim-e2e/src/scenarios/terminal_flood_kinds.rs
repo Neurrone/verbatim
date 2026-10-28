@@ -1,5 +1,5 @@
-//! Floods of other kinds, and the flood limits changed (`docs/design/phase6-design.md`,
-//! "Test design decisions", the floods; the coherence review of
+//! Floods of other kinds, and the flood limits changed
+//! (`docs/parity/terminals.md`, "The backlog"; Dickson, 2026-10-07 and
 //! 2026-10-09), each scenario in both terminals as its own code
 //! (`docs/testing.md`). The shared setup is described in the `terminal`
 //! module.
