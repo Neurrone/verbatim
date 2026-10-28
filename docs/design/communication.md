@@ -411,7 +411,7 @@ Approved by Dickson between 2026-10-11 and 2026-10-15.
 
 Current figures are in `docs/performance.md`; these are the ones the design's choices rest on, measured 2026-10-14 on this development machine, the two-processor development VM, after steps 4 to 9 and 11, two runs each of the measure set:
 
-- Parsing on the reducer: a few microseconds a frame for the common messages in release; a relayed focus read with 12 ancestors about 15 microseconds to parse and re-serialize; a terminal's whole-document read with its text in the raw section 0.02 to 0.29 ms (section 4.2).
+- Parsing on the reducer: a few microseconds a frame for the common messages in release; a relayed focus read with 12 ancestors about 15 microseconds to parse and re-serialize; a terminal's whole-document read with its text in the raw section 0.08 to 0.18 ms (section 4.2).
 - verbatim.exe's own stage: 99.9th percentile at most 0.5 ms in debug and 0.7 ms in release, none over 1 ms; verbatim.exe to an outpost, maximum 1.6 to 4.1 ms.
 - Waiting for the reducer: median 0.1 to 0.2 ms, 99th percentile about 1.3 to 2.2 ms; the parse of each outpost frame on the reducer adds 0.1 ms at the median.
 - Hook to Core: over 1 ms for 22 to 30 percent of keys, since on two processors the reducer, readied by the same key as the synthesizer thread and the host, waits for a processor. What the user hears improved: in release, in the console, a key to its sound has a median of 2.5 ms, against 5.4 before steps 6 to 11. Raising the reducer would need its own measurement under decision 14; accepted as it is (Dickson, 2026-10-14).
