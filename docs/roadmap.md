@@ -111,9 +111,7 @@ Related items, each to be settled within the redesign or after it:
   unit that does not contain its point as the end of the text, one
   comparison inside the existing remote program, judged by a fake-source
   unit test, a mockapp provider whose expansion clamps, and a console host
-  scenario step from a fresh NVDA capture. With it, measure the cost of
-  `document_rows` walking all 9,001 rows on each screen read that counts
-  rows (`crates/verbatim-uia-rops/src/terminal.rs`).
+  scenario step from a fresh NVDA capture.
 - `conhost_full_screen` races its program: a read taken before
   `altscreen.ps1` parks the cursor speaks "row N changed", on the base
   build too.
@@ -446,7 +444,7 @@ This entry keeps the scope and the exit criteria. M4.4 is the plan's
 precondition, because the extension surface exposes the messages it moves.
 
 - Modules as folders: a module is a `module.toml` beside a Wasm component;
-  a built-in is a module folder under `extensions/builtin/`, never listed
+  a built-in is a module folder under `extensions/builtin/` (planned), never listed
   and never disabled by the user; an extension is a `.vext` bundle of
   modules, installed by a request to the running Verbatim through a small
   helper executable and the control plane (NVDA's `nvda_slave.exe`
@@ -476,7 +474,7 @@ precondition, because the extension surface exposes the messages it moves.
 - The minimal log ring, the log viewer window and the Verbatim+F1 focus
   report, pulled forward from M9 because module failures and rule
   provenance need somewhere to be read.
-- The guest workspace under `extensions/` with a permissively licensed SDK;
+- The guest workspace under `extensions/` (planned) with a permissively licensed SDK;
   every built-in written in Rust, Calculator and Notepad first.
 - Every Windows inbox application as a built-in: Explorer (starting with the
   cosmetic fixes deferred from M3), Windows Terminal, Notepad, Calculator,
