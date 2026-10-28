@@ -360,6 +360,12 @@ Public API:
   with UIA's default scope and filter) is the `ListenerEvent` shape's
   request with `IsDialog` and `IsTogglePatternAvailable` added, which the
   focus listener's parts carry.
+- Every handler names the UI Automation thread it runs on
+  `verbatim-uia-callback` at its first event, unless the thread has a
+  name already (once per thread; later callbacks cost a thread-local
+  read), so a trace of the processor's scheduling tells the threads
+  running Verbatim's handlers from UI Automation's own, which stay
+  unnamed.
 - `Registration::with_parts(parts, scope)`, `retarget(scope)`, and
   `retarget_to(scope, group)` — one
   subscription type for every event: `Subscription::Properties`
@@ -791,7 +797,12 @@ Public API:
   read of cached children, a raw cache refill (`build_updated_cache`)
   outside this crate, and `Fill::claim` outside `verbatim-uia-rops`
   (`xtask/src/shapes.rs`; `docs/design/uia-shapes.md`, section 3.5,
-  item 7).
+  item 7). The shape module's unit tests read every shape, for every
+  combination of its gates, through the crate-private cached-read seam
+  against a recording source that answers every read, and assert that the
+  properties and patterns read, with the prefetched patterns, equal the
+  request for those gates exactly, so a missing read and an over-fetch
+  both fail (`docs/design/uia-shapes.md`, section 3.6).
 - `NodeIdRegistry` — maps UIA runtime IDs to stable `NodeId`s and keeps the
   live element behind each, as an `Agile<Kept>`: `id_for_element(runtime_id,
   element)` takes a `Cached<Kept>`, which a keeper of any shape that covers
