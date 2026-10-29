@@ -272,7 +272,10 @@ client's call returns counts every hit that call caused:
   `tests/shutdown.rs` sees that an outpost removed its handlers.
 
 Every counted call is also where `slow` delays a call and `hold` holds
-one. The tests compile `src/hits.rs` into their shared module, so the
+one. A parent step's own delay or failure, `slow-parent`,
+`slow-acc-parent` and `fail-acc-parent`, is a per-node setting in the
+tree instead (`Tree::parent_delay`), applied by the step after it is
+counted and bracketed by `window::announce_call`'s two lines. The tests compile `src/hits.rs` into their shared module, so the
 method list and message numbers cannot drift apart.
 
 ## Implementation notes
@@ -419,7 +422,13 @@ Each file's module comment says exactly what it asserts; in outline:
   but UIA merges the real window's rectangle into the window-hosted root).
   `uia_tree.rs` also navigates remotely from a node kept from a text
   event, read as the `Kept` shape; `msaa_tree.rs` reads a list's selected
-  child through `verbatim_ia2::acquire::selected_child` after a `select`.
+  child through `verbatim_ia2::acquire::selected_child` after a `select`,
+  and that `slow-acc-parent` answers a node's `accParent` late, its wait
+  bracketed by its two lines inside the client's call, and
+  `fail-acc-parent` fails it with `E_FAIL` while the node's name still
+  reads. A client's first call on a new MSAA object's proxy that is
+  `accParent` reaches the provider twice, so the tests read the node's
+  name first.
 - `arbitration.rs`: the raw probe (`verbatim_uia::raw_probe`) answers
   `0x10000` for a `uia`-backend window and the default window procedure's
   0 for an `msaa`-backend one, `verbatim_outpost::arbitration::Arbitrator`
@@ -537,7 +546,10 @@ Each file's module comment says exactly what it asserts; in outline:
   and a real outpost then reports the focus with its containers unknown;
   and that `Uia::selected` fails with UIA's timeout when mockapp is slow
   or stalled, and as gone once it has exited, never answering that
-  nothing is selected ([verbatim-uia-rops](verbatim-uia-rops.md)).
+  nothing is selected ([verbatim-uia-rops](verbatim-uia-rops.md)). It
+  also shows that `slow-parent` lets the steps it counts pass at once and
+  answers the next raw-view step to the parent late, its wait bracketed by
+  its two lines inside that step's call.
 - `call_counts.rs` is the operation ledger's ratchet
   (`docs/performance.md`, "The ledger"): over `counts.json`, and
   `dialog.json` (a message box) for a dialog's own text, it measures each

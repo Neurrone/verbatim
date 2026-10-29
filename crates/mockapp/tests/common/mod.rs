@@ -268,6 +268,19 @@ impl MockApp {
             .unwrap_or_else(|| panic!("mockapp acknowledged {line:?}, not the stall's end"))
     }
 
+    /// Waits for mockapp's next line, which must be `prefix`, a space, and
+    /// a time in microseconds since the Unix epoch on the run's clock, as
+    /// the `started` and `ended` lines of a call `slow-parent`,
+    /// `slow-acc-parent` or `fail-acc-parent` changed are, and returns the
+    /// time.
+    pub fn stamped_line(&self, prefix: &str) -> u64 {
+        let line = self.next_line(&format!("{prefix:?}"), WAIT_TIMEOUT);
+        line.strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix(' '))
+            .and_then(|micros| micros.parse().ok())
+            .unwrap_or_else(|| panic!("mockapp said {line:?}, not {prefix:?} with a time"))
+    }
+
     /// Holds mockapp's next provider call, whichever client makes it, until
     /// [`release`](Self::release): returns once mockapp has taken the
     /// command, so every call from here on is the one held.

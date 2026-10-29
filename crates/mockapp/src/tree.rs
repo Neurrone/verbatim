@@ -77,6 +77,14 @@ pub(crate) struct NodeData {
     /// How the node's UIA provider answers `Navigate(Parent)`, once it has
     /// answered as many calls as usual as the count says (`answer-parent`).
     pub(crate) parent_answer: (crate::stdin::ParentAnswer, u32),
+    /// How many milliseconds late the node's provider answers its parent
+    /// step, UIA's `Navigate(Parent)` or MSAA's `accParent`, once it has
+    /// answered as many calls at once as the count says (`slow-parent`,
+    /// `slow-acc-parent`); 0 for at once.
+    pub(crate) parent_delay: (u64, u32),
+    /// Whether the node's MSAA `accParent` fails with `E_FAIL`
+    /// (`fail-acc-parent`).
+    pub(crate) acc_parent_fails: bool,
     /// The handle of a window that no longer exists, which the node's UIA
     /// provider answers `NativeWindowHandle` with (`report-window`), and
     /// `None` for its usual answer.
@@ -165,6 +173,21 @@ impl Tree {
     #[must_use]
     pub(crate) fn index_of(&self, fixture_id: &str) -> Option<usize> {
         self.by_fixture_id.get(fixture_id).copied()
+    }
+
+    /// How many milliseconds late node `index`'s provider is to answer the
+    /// parent step it is making now, counting the step against those
+    /// `slow-parent` lets pass at once first.
+    pub(crate) fn parent_delay(&mut self, index: usize) -> u64 {
+        let (ms, at_once) = &mut self.nodes[index].parent_delay;
+        if *ms == 0 {
+            return 0;
+        }
+        if *at_once > 0 {
+            *at_once -= 1;
+            return 0;
+        }
+        *ms
     }
 
     /// Node `from` dies, leaving the tree, and node `id` takes its runtime
@@ -332,6 +355,8 @@ fn insert(
         dead: false,
         dies_at_first_child: false,
         parent_answer: (crate::stdin::ParentAnswer::Usual, 0),
+        parent_delay: (0, 0),
+        acc_parent_fails: false,
         reports_window: None,
         content: node.content,
     });

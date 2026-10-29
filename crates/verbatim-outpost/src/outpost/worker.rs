@@ -68,7 +68,8 @@ use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
     MOVED_ON_GRACE, alt_is_held, console_client, event_window_unreadable, focus_window_of,
     foreground_window_handle, front_is_another_thread_of_its_application, is_descendant_window,
-    now_ms, top_level_of, window_belongs_to_hidden_frame, window_facts, window_is_hidden_frame,
+    now_ms, top_level_of, window_belongs_to_hidden_frame, window_exists, window_facts,
+    window_is_hidden_frame,
 };
 use crate::arbitration::window_class_name;
 use crate::terminal::reading::{Action, Event, Reading};
@@ -1390,19 +1391,29 @@ impl Worker<'_> {
     /// followed the `WinEvent` focus `open` names: the focus-now query's
     /// read (`read::focused_control_in`), reported as a UIA focus is. A UIA
     /// focus of the same element that comes after it is reported under the
-    /// same node, which Core takes as a duplicate.
+    /// same node, which Core takes as a duplicate. Its log says whether a
+    /// listener UIA focus had reached the outpost before the copy was
+    /// observed, to the millisecond (`uia_focus_before`), and whether the
+    /// copy's window was gone as the read began (`sender_gone`), which
+    /// together tell late delivery from a burst of gone senders.
     fn read_focus_after_gap(&mut self, open: gap::Open, unreadable: bool) {
         let context = self.context;
         let waited_ms = self
             .clock_now
             .saturating_duration_since(open.opened)
             .as_millis();
+        let first_uia_focus_us = context.first_uia_focus_us.load(Ordering::Relaxed);
+        let uia_focus_before =
+            first_uia_focus_us != 0 && first_uia_focus_us / 1_000 < open.observed_at_ms;
+        let sender_gone = !window_exists(open.hwnd);
         let observed_at_us = now_us();
         let Some((hwnd, control)) = read::focused_control_in(context, self.client) else {
             tracing::info!(
                 hwnd = open.hwnd,
                 waited_ms,
                 unreadable,
+                uia_focus_before,
+                sender_gone,
                 "no UIA focus followed a WinEvent focus in a UIA window; the focus read found none"
             );
             return;
@@ -1417,6 +1428,8 @@ impl Worker<'_> {
             hwnd = open.hwnd,
             waited_ms,
             unreadable,
+            uia_focus_before,
+            sender_gone,
             role = ?node.role,
             name = ?node.name,
             "no UIA focus followed a WinEvent focus in a UIA window; the focus is read and reported"

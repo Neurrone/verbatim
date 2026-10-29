@@ -300,6 +300,19 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
             let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
             guard.nodes[index].parent_answer = (answer, after);
         }
+        Command::SlowParent(id, ms, after) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            guard.nodes[index].parent_delay = (ms, after);
+        }
+        Command::SlowAccParent(..) => {
+            return Err("slow-acc-parent is not supported on the uia backend".into());
+        }
+        Command::FailAccParent(_) => {
+            return Err("fail-acc-parent is not supported on the uia backend".into());
+        }
         Command::ReportWindow(id) => {
             let mut guard = tree
                 .lock()
@@ -964,6 +977,15 @@ mod props {
         index: usize,
         direction: NavigateDirection,
     ) -> WinResult<IRawElementProviderFragment> {
+        if direction == NavigateDirection_Parent {
+            let delay = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .parent_delay(index);
+            if delay > 0 {
+                crate::window::announce_call("slow-parent", delay);
+            }
+        }
         let target = {
             let mut guard = tree
                 .lock()

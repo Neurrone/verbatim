@@ -524,6 +524,25 @@ pub(crate) fn acknowledge(line: &str) {
     let _ = stdout.flush();
 }
 
+/// Brackets a provider call that `command` makes late or fails with two
+/// lines on stdout, `<command> started <us>` and `<command> ended <us>`,
+/// each with the time in microseconds since the Unix epoch on the run's
+/// clock, and blocks the calling thread, the window thread, for `ms`
+/// milliseconds between them, so a test waits for the call itself.
+pub(crate) fn announce_call(command: &str, ms: u64) {
+    acknowledge(&format!(
+        "{command} started {}",
+        verbatim_process::clock::now_us()
+    ));
+    if ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+    acknowledge(&format!(
+        "{command} ended {}",
+        verbatim_process::clock::now_us()
+    ));
+}
+
 fn to_wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(std::iter::once(0)).collect()
 }

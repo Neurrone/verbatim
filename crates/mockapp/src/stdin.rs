@@ -11,7 +11,9 @@
 //! `notify <text>`, `stall <ms> [<at> <command>]`, `on-activate <command>`,
 //! `slow <ms>`, `slow-patterns <ms>`, `refuse-text <on|off>`,
 //! `answer-property <property id> <fail|empty|usual>`,
-//! `answer-parent <id> <fail|none|usual> [<after>]`, `report-window <id>`,
+//! `answer-parent <id> <fail|none|usual> [<after>]`,
+//! `slow-parent <id> <ms> [<after>]`, `slow-acc-parent <id> <ms>`,
+//! `fail-acc-parent <id>`, `report-window <id>`,
 //! `take-runtime-id <id> <from>`, `replace-items <id>`, `disconnect <id>`,
 //! `disconnect-at-first-child <id>`,
 //! `focus-child <container> <child>`, `client-name <text>`,
@@ -198,6 +200,26 @@ pub(crate) enum Command {
     /// walk to the nearest window, which steps to the node's parent once,
     /// pass before the answer takes effect. UIA-only.
     AnswerParent(String, ParentAnswer, u32),
+    /// `slow-parent <id> <ms>`, optionally followed by a count, `after`:
+    /// node `id`'s provider answers its next `after` `Navigate(Parent)`
+    /// calls at once, counted as `answer-parent` counts them, and every one
+    /// after them `ms` milliseconds late, blocking the window thread
+    /// meanwhile, as an application stuck in one call does; 0 answers at
+    /// once again. Each late call prints `slow-parent started <us>` and
+    /// `slow-parent ended <us>` on stdout, on the run's clock, around its
+    /// wait. UIA-only.
+    SlowParent(String, u64, u32),
+    /// `slow-acc-parent <id> <ms>`: node `id`'s `accParent` is answered
+    /// `ms` milliseconds late from now on, as `slow-parent` answers UIA's
+    /// parent step, printing `slow-acc-parent started <us>` and
+    /// `slow-acc-parent ended <us>` around each wait; 0 answers at once
+    /// again. MSAA-only.
+    SlowAccParent(String, u64),
+    /// `fail-acc-parent <id>`: node `id`'s `accParent` fails with `E_FAIL`
+    /// from now on, while every other call on it answers as usual, printing
+    /// `fail-acc-parent started <us>` and `fail-acc-parent ended <us>` as
+    /// each failing call begins and ends. MSAA-only.
+    FailAccParent(String),
     /// `report-window <id>`: makes a child window of the host window and
     /// destroys it, and node `id`'s provider answers `NativeWindowHandle`
     /// with its handle, a window it does not host that no longer exists,
@@ -345,6 +367,36 @@ fn answer_parent(rest: &str) -> Option<Command> {
         .then(|| Command::AnswerParent(id.to_owned(), answer, after))
 }
 
+/// `slow-parent`'s and `slow-acc-parent`'s arguments, a node's id, how
+/// many milliseconds late its parent step is answered, and, where
+/// `with_after` allows one, after how many steps answered at once.
+fn slow_parent(rest: &str, with_after: bool) -> Option<(String, u64, u32)> {
+    let mut parts = rest.split_whitespace();
+    let id = parts.next()?;
+    let ms = parts.next()?.parse().ok()?;
+    let after = match parts.next() {
+        Some(after) if with_after => after.parse().ok()?,
+        Some(_) => return None,
+        None => 0,
+    };
+    parts.next().is_none().then(|| (id.to_owned(), ms, after))
+}
+
+/// `slow-parent`, `slow-acc-parent` or `fail-acc-parent`, as `verb` names,
+/// with its arguments.
+fn parent_step(verb: &str, rest: &str) -> Option<Command> {
+    match verb {
+        "slow-parent" => {
+            slow_parent(rest, true).map(|(id, ms, after)| Command::SlowParent(id, ms, after))
+        }
+        "slow-acc-parent" => {
+            slow_parent(rest, false).map(|(id, ms, _)| Command::SlowAccParent(id, ms))
+        }
+        _ => (!rest.is_empty() && !rest.contains(' '))
+            .then(|| Command::FailAccParent(rest.to_owned())),
+    }
+}
+
 /// `take-runtime-id`'s arguments, the node that takes the runtime id and
 /// the node it is taken from.
 fn take_runtime_id(rest: &str) -> Option<Command> {
@@ -401,6 +453,7 @@ pub(crate) fn parse_command(line: &str) -> Option<Command> {
         },
         "answer-property" => answer_property(rest),
         "answer-parent" => answer_parent(rest),
+        "slow-parent" | "slow-acc-parent" | "fail-acc-parent" => parent_step(verb, rest),
         "report-window" if !rest.is_empty() => Some(Command::ReportWindow(rest.to_owned())),
         "take-runtime-id" => take_runtime_id(rest),
         "replace-items" if !rest.is_empty() => Some(Command::ReplaceItems(rest.to_owned())),
@@ -664,6 +717,31 @@ mod tests {
         }
         assert!(parse_command("stall 20000 8000").is_none());
         assert!(parse_command("stall 20000 8000 frobnicate").is_none());
+    }
+
+    #[test]
+    fn parses_the_slow_and_failing_parent_steps() {
+        assert!(matches!(
+            parse_command("slow-parent item 4000 1"),
+            Some(Command::SlowParent(ref id, 4000, 1)) if id == "item"
+        ));
+        assert!(matches!(
+            parse_command("slow-parent item 0"),
+            Some(Command::SlowParent(ref id, 0, 0)) if id == "item"
+        ));
+        assert!(parse_command("slow-parent item").is_none());
+        assert!(parse_command("slow-parent item 4000 1 2").is_none());
+        assert!(matches!(
+            parse_command("slow-acc-parent item 15000"),
+            Some(Command::SlowAccParent(ref id, 15000)) if id == "item"
+        ));
+        assert!(parse_command("slow-acc-parent item 15000 1").is_none());
+        assert!(matches!(
+            parse_command("fail-acc-parent item"),
+            Some(Command::FailAccParent(ref id)) if id == "item"
+        ));
+        assert!(parse_command("fail-acc-parent").is_none());
+        assert!(parse_command("fail-acc-parent item other").is_none());
     }
 
     #[test]

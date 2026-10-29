@@ -297,6 +297,23 @@ pub(crate) fn apply_command(tree: &SharedTree, hwnd: HWND, command: Command) -> 
         Command::AnswerParent(..) => {
             return Err("answer-parent is not supported on the msaa backend".into());
         }
+        Command::SlowParent(..) => {
+            return Err("slow-parent is not supported on the msaa backend".into());
+        }
+        Command::SlowAccParent(id, ms) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            guard.nodes[index].parent_delay = (ms, 0);
+        }
+        Command::FailAccParent(id) => {
+            let mut guard = tree
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let index = guard.index_of(&id).ok_or_else(|| unknown(&id))?;
+            guard.nodes[index].acc_parent_fails = true;
+        }
         Command::ReportWindow(_) => {
             return Err("report-window is not supported on the msaa backend".into());
         }
@@ -594,12 +611,22 @@ mod handler {
         fn accParent(&self) -> WinResult<IDispatch> {
             hits::hit(hits::Method::AccParent);
             alive(&self.tree, self.index)?;
-            let parent = self
-                .tree
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .nodes[self.index]
-                .parent;
+            let (delay, fails, parent) = {
+                let mut guard = self
+                    .tree
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let delay = guard.parent_delay(self.index);
+                let node = &guard.nodes[self.index];
+                (delay, node.acc_parent_fails, node.parent)
+            };
+            if delay > 0 {
+                crate::window::announce_call("slow-acc-parent", delay);
+            }
+            if fails {
+                crate::window::announce_call("fail-acc-parent", 0);
+                return Err(windows::Win32::Foundation::E_FAIL.into());
+            }
             match parent {
                 Some(parent_index) => {
                     let accessible: IAccessible =

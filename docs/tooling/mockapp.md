@@ -37,7 +37,9 @@ Stdin commands, one per line, once `ready` has printed. The window thread
 acknowledges each on stdout once it has taken effect, events included:
 `applied`, or `rejected: <reason>` for a command naming a node the fixture
 lacks, one the backend does not support, or a line that is no command;
-`stall` prints its own two lines instead, and `quit` prints nothing. A test
+`stall` prints its own two lines instead, and `quit` prints nothing; a call
+`slow-parent`, `slow-acc-parent` or `fail-acc-parent` changes prints two
+lines of its own as well, when it is made. A test
 waits for that line before it goes on, so it never reads the state from
 before its command, and a typo in a node id fails at once. On the MSAA
 backend a text node's text is a real edit control's (see the crate guide),
@@ -147,6 +149,27 @@ parses them.
   parent, or as usual again, after first answering `after` such calls as
   usual, so a client's walk to the nearest window, which steps to the
   parent once, can pass first; UIA hands a client no parent either way.
+- `slow-parent <id> <ms> [<after>]` (UIA only) makes that node's provider
+  answer `Navigate(Parent)` that many milliseconds late, after first
+  answering `after` such calls at once, counted as `answer-parent` counts
+  them; 0 answers at once again. The wait blocks the window thread, so
+  every call into the window made meanwhile waits too, as with an
+  application stuck in one call, and past five seconds Windows reports the
+  window hung. Each late call prints `slow-parent started <us>` as its
+  wait begins and `slow-parent ended <us>` as it ends, both on the run's
+  clock, as `stall` does, so a test waits for the call itself.
+- `slow-acc-parent <id> <ms>` (MSAA only) does the same for the node's
+  `accParent`, from the next call on, printing `slow-acc-parent started
+  <us>` and `slow-acc-parent ended <us>`; 0 answers at once again.
+- `fail-acc-parent <id>` (MSAA only) makes the node's `accParent` fail
+  with `E_FAIL` from then on, every other call on it answering as usual,
+  printing `fail-acc-parent started <us>` and `fail-acc-parent ended <us>`
+  as each failing call begins and ends. A client's first call on a new
+  MSAA object's proxy that is `accParent` reaches the provider twice, one
+  call after the other, so it prints its lines twice and, under
+  `slow-acc-parent`, waits twice; a first call of `get_accName` reaches it
+  once, as does every `accParent` after it (observed on Windows 11 26200,
+  2026-10-29).
 - `report-window <id>` (UIA only) makes a child window of the host
   window and destroys it, and that node's provider answers
   `NativeWindowHandle` with its handle, a window it does not host that

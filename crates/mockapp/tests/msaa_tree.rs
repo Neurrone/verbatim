@@ -440,6 +440,110 @@ fn msaa_tree_dump_ends_an_objects_children_where_it_is_gone() {
     app.quit();
 }
 
+/// The OK button of `tree.json`, the first child of the window's first
+/// child, "Group One", its name read and checked first. A client's first
+/// call on a new MSAA object's proxy that is `accParent` reaches the
+/// provider twice, one call after the other, while a first call of
+/// `get_accName` reaches it once and so does every `accParent` after it
+/// (mockapp's hit counts, Windows 11 26200, 2026-10-29), so the name is
+/// read first and the tests count the provider calls of one `accParent`.
+fn ok_button(hwnd: windows::Win32::Foundation::HWND) -> IAccessible {
+    let child = |parent: &IAccessible| {
+        // SAFETY: `parent` is live; 1 is its first child's position.
+        unsafe { parent.get_accChild(&child_variant(1)) }
+            .expect("get_accChild")
+            .cast::<IAccessible>()
+            .expect("the child is an IAccessible")
+    };
+    let ok = child(&child(&root_accessible(hwnd)));
+    assert_eq!(
+        // SAFETY: `ok` is live; `self_variant` is CHILDID_SELF.
+        text(unsafe { ok.get_accName(&self_variant()) }, "the name").as_deref(),
+        Some("OK")
+    );
+    ok
+}
+
+/// The name of `acc`'s parent, read through its `accParent`.
+fn parent_name(acc: &IAccessible) -> Option<String> {
+    // SAFETY: `acc` is live.
+    let parent = unsafe { acc.accParent() }
+        .expect("accParent")
+        .cast::<IAccessible>()
+        .expect("the parent is an IAccessible");
+    // SAFETY: `parent` is live; `self_variant` is CHILDID_SELF.
+    text(
+        unsafe { parent.get_accName(&self_variant()) },
+        "the parent's name",
+    )
+}
+
+/// mockapp's `slow-acc-parent`: with `slow-acc-parent btn_ok 300`, the OK
+/// button's `accParent` is answered 300 ms late, the wait bracketed by
+/// `slow-acc-parent started` and `slow-acc-parent ended` lines on the
+/// run's clock, both inside the call, and it answers its parent, "Group
+/// One". After `slow-acc-parent btn_ok 0` it is answered at once again: it
+/// prints nothing, so the next line is the next command's acknowledgement.
+fn msaa_slow_acc_parent_answers_the_parent_late() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-slow-parent");
+    let mut app = common::spawn("tree.json", "msaa", &title);
+    let ok = ok_button(common::find_window(&title));
+    app.send("slow-acc-parent btn_ok 300");
+    let from = common::now_us();
+    assert_eq!(parent_name(&ok).as_deref(), Some("Group One"), "late");
+    let returned = common::now_us();
+    let started = app.stamped_line("slow-acc-parent started");
+    let ended = app.stamped_line("slow-acc-parent ended");
+    assert!(
+        from <= started && ended <= returned,
+        "the wait, {started} to {ended}, is inside the call, {from} to {returned}"
+    );
+    assert!(
+        ended - started >= 300_000,
+        "the wait, {started} to {ended}, lasts 300 ms"
+    );
+    app.send("slow-acc-parent btn_ok 0");
+    assert_eq!(parent_name(&ok).as_deref(), Some("Group One"), "restored");
+    app.send("slow-acc-parent btn_ok 0");
+    app.quit();
+}
+
+/// mockapp's `fail-acc-parent`: with `fail-acc-parent btn_ok`, the OK
+/// button's `accParent` fails with `E_FAIL`, the call bracketed by
+/// `fail-acc-parent started` and `fail-acc-parent ended` lines on the
+/// run's clock, both inside it, once, so the next line is the next
+/// command's acknowledgement, while its other calls answer as usual: its
+/// name is still "OK".
+fn msaa_fail_acc_parent_fails_the_parent_alone() {
+    common::init_com();
+    let title = common::unique_title("mockapp-msaa-fail-parent");
+    let mut app = common::spawn("tree.json", "msaa", &title);
+    let ok = ok_button(common::find_window(&title));
+    app.send("fail-acc-parent btn_ok");
+    let from = common::now_us();
+    // SAFETY: `ok` is live.
+    let failed = unsafe { ok.accParent() };
+    let returned = common::now_us();
+    assert_eq!(
+        failed.map(|_| ()).map_err(|error| error.code()),
+        Err(windows::Win32::Foundation::E_FAIL)
+    );
+    let started = app.stamped_line("fail-acc-parent started");
+    let ended = app.stamped_line("fail-acc-parent ended");
+    assert!(
+        from <= started && started <= ended && ended <= returned,
+        "the call's lines, {started} and {ended}, are inside it, {from} to {returned}"
+    );
+    assert_eq!(
+        // SAFETY: `ok` is live; `self_variant` is CHILDID_SELF.
+        text(unsafe { ok.get_accName(&self_variant()) }, "the name").as_deref(),
+        Some("OK")
+    );
+    app.send("fail-acc-parent btn_ok");
+    app.quit();
+}
+
 /// Runs each test on a desktop of its own (`common/harness.rs`).
 fn main() {
     harness::run_isolated(&[
@@ -462,6 +566,14 @@ fn main() {
         (
             "msaa_tree_dump_ends_an_objects_children_where_it_is_gone",
             msaa_tree_dump_ends_an_objects_children_where_it_is_gone,
+        ),
+        (
+            "msaa_slow_acc_parent_answers_the_parent_late",
+            msaa_slow_acc_parent_answers_the_parent_late,
+        ),
+        (
+            "msaa_fail_acc_parent_fails_the_parent_alone",
+            msaa_fail_acc_parent_fails_the_parent_alone,
         ),
     ]);
 }

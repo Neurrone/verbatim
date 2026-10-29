@@ -291,6 +291,11 @@ pub(crate) struct Context {
     /// every window anew: the event thread's windows' backends are
     /// decided again after a change ([`EventWindows`]).
     override_changes: AtomicU64,
+    /// When the first of the focus listener's UIA focuses reached this
+    /// outpost, its read or its drop as a focus, on the run's clock in
+    /// microseconds, 0 before any: the read after a gap logs whether one
+    /// came before the copy's observation (`uia_focus_before`).
+    first_uia_focus_us: AtomicU64,
     /// What nudges the event thread, which decides whether the hook is
     /// narrowed ([`narrowing`]); set once the thread runs.
     event_thread: OnceLock<Nudger>,
@@ -725,6 +730,23 @@ impl Context {
             observed_at_ms,
             timing,
         };
+        // The first UIA focus's arrival, stamped with the relay's own
+        // stamp: one load per fact, and one store, once.
+        if self.first_uia_focus_us.load(Ordering::Relaxed) == 0
+            && matches!(
+                fact,
+                DeliveredFact::UiaFocusRead { focus: true, .. }
+                    | DeliveredFact::UiaFocusDropped {
+                        evidence: crate::protocol::DropEvidence::Focus
+                            | crate::protocol::DropEvidence::Inconclusive
+                            | crate::protocol::DropEvidence::NoWindow,
+                        ..
+                    }
+            )
+        {
+            self.first_uia_focus_us
+                .store(timing.relayed_at_us, Ordering::Relaxed);
+        }
         match win_event {
             Some(stamp) if fact.is_win_event() => {
                 if !self.admit_and_push(
@@ -994,6 +1016,7 @@ impl Outpost {
             focus_path: Mutex::new(None),
             failed_reads: AtomicU32::new(0),
             override_changes: AtomicU64::new(0),
+            first_uia_focus_us: AtomicU64::new(0),
             event_thread: OnceLock::new(),
         });
         if let Some(registration) = register_focus_events(&context) {

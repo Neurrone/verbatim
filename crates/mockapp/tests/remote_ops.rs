@@ -858,6 +858,46 @@ fn a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown() {
     }
 }
 
+/// mockapp's `slow-parent`: with `slow-parent deep 300 1`, "Deep button"'s
+/// first raw-view step to its parent is answered at once and its second
+/// 300 ms late, the wait bracketed by `slow-parent started` and
+/// `slow-parent ended` lines on the run's clock, both inside the second
+/// step's call, and both steps reach its parent, "Inner group". After
+/// `slow-parent deep 0` the step is answered at once again: it prints
+/// nothing, so the next line is the next command's acknowledgement.
+fn a_slow_parent_answers_the_parent_step_late_after_the_steps_it_lets_pass() {
+    let mut fixture = Fixture::start("mockapp-rops-slow-parent");
+    let deep = fixture.find("Deep button");
+    let walker = fixture.uia.raw_view_walker().expect("the raw-view walker");
+    let parent_name = || {
+        // SAFETY: the walker and the element are live COM objects.
+        let parent = unsafe { walker.GetParentElement(&deep) }.expect("the step to the parent");
+        // SAFETY: as above.
+        unsafe { parent.CurrentName() }
+            .expect("the parent's name")
+            .to_string()
+    };
+    fixture.app.send("slow-parent deep 300 1");
+    assert_eq!(parent_name(), "Inner group", "the step let pass");
+    let second_from = common::now_us();
+    assert_eq!(parent_name(), "Inner group", "the late step");
+    let returned = common::now_us();
+    let started = fixture.app.stamped_line("slow-parent started");
+    let ended = fixture.app.stamped_line("slow-parent ended");
+    assert!(
+        second_from <= started && ended <= returned,
+        "the wait, {started} to {ended}, is inside the second step, {second_from} to {returned}"
+    );
+    assert!(
+        ended - started >= 300_000,
+        "the wait, {started} to {ended}, lasts 300 ms"
+    );
+    fixture.app.send("slow-parent deep 0");
+    assert_eq!(parent_name(), "Inner group", "the step restored");
+    fixture.app.send("slow-parent deep 0");
+    fixture.app.quit();
+}
+
 /// What the focus-now query answers for "Deep button" when the step from
 /// its container "Inner group" to that container's parent answers
 /// `answer`, after `setup`'s further mockapp commands, with remote
@@ -1502,6 +1542,10 @@ fn main() {
         (
             "a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown",
             a_focus_whose_parent_step_fails_is_reported_with_its_containers_unknown,
+        ),
+        (
+            "a_slow_parent_answers_the_parent_step_late_after_the_steps_it_lets_pass",
+            a_slow_parent_answers_the_parent_step_late_after_the_steps_it_lets_pass,
         ),
         (
             "a_focus_now_whose_program_finds_no_parent_below_the_window_has_its_ancestors_unknown",
