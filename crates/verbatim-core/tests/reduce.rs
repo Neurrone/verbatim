@@ -3845,17 +3845,19 @@ fn window_node(id: u64, backend: Backend, role: Role, name: &str, handle: u64) -
 }
 
 /// The Settings app as its readers report it: the page's outpost reads the
-/// frame, above its process boundary, as a plain window, role window and
-/// named by its title, carrying the frame's handle, which the frame host's
-/// own focus, the frame's client area, carries too. The plain window is the
-/// frame that focus entered, so the page's focus says the content window
-/// and the focus, as NVDA says "Settings" and then "Settings window"
-/// (`docs/parity/focus-context.md`, "Focus-ancestry context").
+/// frame, above its process boundary, as NVDA's MSAA client for it, a pane
+/// marked a top-level window's client and named by its title, carrying
+/// the frame's handle, which the frame host's own focus, the frame's
+/// client area, carries too. The pane is the frame that focus entered, so
+/// the page's focus says the content window and the focus, as NVDA says
+/// "Settings" and then "Settings window" (`docs/parity/focus-context.md`,
+/// "Focus-ancestry context").
 #[test]
 fn a_frame_read_by_two_outposts_is_entered_once() {
     let mut client = window_node(1, Backend::Msaa, Role::Pane, "Settings", 10);
     client.details.top_level_client = true;
-    let frame = window_node(4, Backend::Msaa, Role::Window, "Settings", 10);
+    let mut frame = window_node(4, Backend::Msaa, Role::Pane, "Settings", 10);
+    frame.details.top_level_client = true;
     let content = window_node(2, Backend::Uia, Role::Window, "Settings", 11);
     let search = node(
         3,
@@ -3876,6 +3878,33 @@ fn a_frame_read_by_two_outposts_is_entered_once() {
                 UtteranceSegment::label("Search box"),
                 role(Role::EditableText),
             ],
+        ]
+    );
+}
+
+/// A window above the process boundary with no system menu, a host's
+/// child window between its top-level window and the focus's own window,
+/// is read as NVDA's MSAA client for it, a pane not marked a top-level
+/// window's client, which is structure and never spoken, named or not,
+/// while the top-level window's client above it is spoken by its title
+/// (`docs/parity/focus-context.md`, "Top-level windows in the ancestry").
+#[test]
+fn a_child_window_above_the_process_boundary_is_not_spoken() {
+    let mut frame = window_node(1, Backend::Msaa, Role::Pane, "Host", 10);
+    frame.details.top_level_client = true;
+    let between = window_node(2, Backend::Msaa, Role::Pane, "Island site", 12);
+    let mut ok = node(3, Role::Button, Some("OK"), None, StateSet::new());
+    ok.backend = Backend::Uia;
+    assert_eq!(
+        spoken_by(&[focus_in(
+            Pid(2),
+            foreground_window(10),
+            ok,
+            vec![frame, between]
+        )]),
+        vec![
+            vec![UtteranceSegment::label("Host")],
+            vec![UtteranceSegment::label("OK"), role(Role::Button)],
         ]
     );
 }

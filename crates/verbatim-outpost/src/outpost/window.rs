@@ -15,6 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_PARENT, GA_ROOT, GA_ROOTOWNER, GUITHREADINFO, GWL_STYLE, GetAncestor,
     GetForegroundWindow, GetGUIThreadInfo, GetPropW, GetWindowLongPtrW, GetWindowThreadProcessId,
     InternalGetWindowText, IsChild, IsHungAppWindow, IsWindow, IsWindowVisible, WS_DISABLED,
+    WS_SYSMENU,
 };
 use windows::core::{BOOL, HSTRING, s, w};
 
@@ -244,15 +245,30 @@ pub(super) fn parent_window(handle: isize) -> isize {
     unsafe { GetAncestor(hwnd(handle), GA_PARENT) }.0 as isize
 }
 
-/// Whether window `handle`'s style disables it (`WS_DISABLED`), the one
-/// state Windows' own state gives it as a plain window that the model
-/// carries (`NVDAObjects/window/__init__.py`, `Window._get_states`). A
-/// local call.
-pub(super) fn window_disabled(handle: isize) -> bool {
+/// What window `handle`'s style says of it as a window read from Windows'
+/// own state, from one local read of the style.
+#[derive(Clone, Copy)]
+pub(super) struct WindowStyle {
+    /// The style disables the window (`WS_DISABLED`), the one state Windows'
+    /// own state gives it as a plain window that the model carries
+    /// (`NVDAObjects/window/__init__.py`, `Window._get_states`).
+    pub(super) disabled: bool,
+    /// The window has a system menu (`WS_SYSMENU`), which makes its MSAA
+    /// client a top-level window's, presented by its title
+    /// (`NVDAObjects/IAccessible/__init__.py` 2095 to 2106).
+    pub(super) system_menu: bool,
+}
+
+/// Window `handle`'s [`WindowStyle`]. A local call.
+pub(super) fn window_style(handle: isize) -> WindowStyle {
     // SAFETY: GetWindowLongPtrW tolerates any handle, answering 0 for an
     // invalid one.
-    let style = unsafe { GetWindowLongPtrW(hwnd(handle), GWL_STYLE) };
-    style.cast_unsigned() & usize::try_from(WS_DISABLED.0).unwrap_or(0) != 0
+    let style = unsafe { GetWindowLongPtrW(hwnd(handle), GWL_STYLE) }.cast_unsigned();
+    let has = |bit: u32| style & usize::try_from(bit).unwrap_or(0) != 0;
+    WindowStyle {
+        disabled: has(WS_DISABLED.0),
+        system_menu: has(WS_SYSMENU.0),
+    }
 }
 
 /// Whether `handle` is a window that exists. A local call.

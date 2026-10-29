@@ -51,8 +51,18 @@ as in NVDA; a UI Automation ancestor is reported only when it is a
 control and content; and the outposts mark the MSAA client area of a
 window with a system menu (`NodeDetails::top_level_client`), which the
 reducer presents although it is a pane, so it is spoken by its title.
-There is no separate foreground announcement. **matched (unverified)**:
-reducer tests for the marked pane and for a pane without the mark.
+A window above the process boundary, which the outpost reads with no
+call into its process, is described as NVDA's MSAA client for it: a
+pane, marked the same way when its style has a system menu, so a host's
+top-level window is spoken by its title and a child window between it
+and the focus's own window is structure; a ghost's or a hung
+application's window there stays a plain window, role window, as NVDA's
+object for it is (`docs/design/focus-pipeline-rework.md`, "The
+foreground wait"). There is no separate foreground announcement.
+**matched (unverified)**: reducer tests for the marked pane and for a
+pane without the mark, and mockapp's
+`a_window_above_the_process_boundary_is_a_plain_window_with_no_call`
+for the windows above the boundary.
 
 ### Window announcement on switching applications
 

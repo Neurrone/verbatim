@@ -37,15 +37,25 @@ provider and through MSAA otherwise ([The UIA client](../nvda/uia.md),
 "The per-window UIA decision"). Verbatim: the focus listener stops at
 the process boundary, and the outpost of the focus's application
 completes the chain with the host or owner window and every window above
-it as plain windows, named by their text, with no call into the other
-process (`docs/design/listener-without-connections.md`, decision 7 and
-section 4.4; `docs/design/focus-pipeline-rework.md`, "Calls that reach
-another application"). **different** (decision 7 of that design,
-Dickson, 2026-10-18, amended 2026-10-29): such a window is named by its
-text with the window role, where NVDA reads it through UIA or MSAA. For
-the Settings frame NVDA's object in the chain is a window named by its
-title too, which it never speaks; at entry the frame's own foreground
-focus is spoken. Reading them through the host window's own outpost by UIA
+it, read from Windows' own state with no call into the other process
+(`docs/design/listener-without-connections.md`, decision 7 and section
+4.4; `docs/design/focus-pipeline-rework.md`, "Calls that reach another
+application" and "The foreground wait"): each is described as NVDA's
+MSAA client for it, a pane named by its text, marked a top-level
+window's client when its style has a system menu, so it is spoken by its
+title, and taken as structure otherwise; a ghost's or a hung
+application's window, and the desktop, stay plain windows of role
+window, as NVDA makes its plain window there. For the Settings frame
+NVDA speaks the frame's MSAA client pane, "Settings", either as the focus
+when its defer finds the frame in front or as an entered ancestor of the
+content's focus when the frame's own focus is dropped
+(`experiments/the-settings-frame-comes-in-front-after-its-foreground-event/nvda-capture.txt`).
+**different** (decision 7 of that design, Dickson, 2026-10-18, amended
+2026-10-29 and, by Fable on 2026-10-30 pending Dickson's acceptance):
+a window NVDA reads through UIA, as a WPF or WinUI host its probe finds
+UIA, is said by its title alone where NVDA says "title window", and an
+application whose MSAA client reports another role is still a pane.
+Reading them through the host window's own outpost by UIA
 is reconsidered if an NVDA capture of entering such a host differs from
 Verbatim's announcement (Dickson, 2026-10-20). An owned dialog seen on
 2026-10-19: the Windows Security credential dialog

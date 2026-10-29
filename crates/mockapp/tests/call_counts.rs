@@ -1985,28 +1985,49 @@ fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
     app.quit();
 }
 
-/// A window above the process boundary is a plain window, read with no
-/// call into its process (`docs/design/focus-pipeline-rework.md`, the
-/// decision of 2026-10-29 in "Calls that reach another application", the
+/// A window above the process boundary is read with no call into its
+/// process, as NVDA's MSAA client object for it
+/// (`docs/design/focus-pipeline-rework.md`, "The foreground wait"; the
+/// decision of 2026-10-29 in "Calls that reach another application"; the
 /// setup of `experiments/the-msaa-continuation-waits-on-the-parent-windows-application/`):
-/// a mockapp UIA window made the child of another mockapp's window, whose
-/// thread is then stalled for four seconds, has the listener's read of its
-/// focus, made before the stall, reported while the parent is still
-/// stalled, the parent named by its text, and the parent's process counts
-/// no provider call at all, only the connection messages UIA's client side
-/// sends it as the outpost's reads return the child window's element
-/// (decision 13 of `docs/design/listener-without-connections.md`). With the
-/// parent read through MSAA, as before, the report waits for the stall's
-/// end and the parent counts its client area's calls.
+/// a mockapp UIA window made the child of a child window of another
+/// mockapp's window, whose thread is then stalled for four seconds, has the
+/// listener's read of its focus, made before the stall, reported while the
+/// parent is still stalled, and the parent's process counts no provider
+/// call at all, only the connection messages UIA's client side sends it as
+/// the outpost's reads return the child window's element (decision 13 of
+/// `docs/design/listener-without-connections.md`). Each window above the
+/// boundary is a pane carrying its handle: the top-level window, which has
+/// a system menu, marked a top-level window's client and named by its
+/// text, and the child window between, which has none, not marked. Read by
+/// a second outpost that judges the top-level window hung, that window is
+/// a plain window, role window, as NVDA's object for a hung window is, and
+/// the child window still a pane. With the parent read through MSAA, as
+/// before, the report waits for the stall's end and the parent counts its
+/// client area's calls.
 fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
+    use windows::Win32::UI::WindowsAndMessaging::FindWindowExW;
     let stall = std::time::Duration::from_secs(4);
     let (mut parent_app, parent) = spawn_parent("stalled", false);
     let title = common::unique_title("mockapp-boundary-stalled-child");
     let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
+    parent_app.send("child-window");
+    // SAFETY: a local search of the parent window's children.
+    let between = unsafe {
+        FindWindowExW(
+            Some(parent),
+            None,
+            windows::core::w!("VerbatimMockAppWindow"),
+            windows::core::PCWSTR::null(),
+        )
+    }
+    .expect("mockapp made the child window");
     let under_test = UiaUnderTest::new(hwnd);
     let outpost = OutpostUnderTest::new(&app);
-    place_below(hwnd, parent, false);
+    // The second outpost finds mockapp's window as a top-level window.
+    let judging_hung = OutpostUnderTest::new(&app);
+    place_below(hwnd, between, false);
     app.send("set-focus first");
     let focused = under_test.focused(hwnd);
     let (judged, _) = outpost.listener_read(&focused);
@@ -2023,16 +2044,37 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
         reported.chain(),
         [
             Some(parent_app.title.as_str()),
+            None,
             Some("Mockapp Counts Fixture"),
             Some("Settings"),
             Some("First")
         ],
         "the outpost's chain"
     );
+    let above_boundary = |reported: &common::outpost::Reported| {
+        reported.ancestors[..2]
+            .iter()
+            .map(|node| {
+                (
+                    node.role,
+                    node.details.top_level_client,
+                    node.details.window,
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let window = |hwnd: HWND| {
+        Some(WindowHandle(u64::from_ne_bytes(
+            (hwnd.0 as isize).to_ne_bytes(),
+        )))
+    };
     assert_eq!(
-        reported.ancestors[0].role,
-        Role::Window,
-        "the parent, a plain window"
+        above_boundary(&reported),
+        [
+            (Role::Pane, true, window(parent)),
+            (Role::Pane, false, window(between))
+        ],
+        "the windows above the boundary, as NVDA's MSAA clients for them"
     );
     outpost.settled();
     assert_eq!(
@@ -2040,6 +2082,20 @@ fn a_window_above_the_process_boundary_is_a_plain_window_with_no_call() {
         (vec![], vec![]),
         "the parent's calls and messages"
     );
+    drop(outpost);
+    let outpost = judging_hung;
+    outpost.judge_hung(parent);
+    let (judged, _) = outpost.listener_read(&focused);
+    let reported = outpost.focus(judged.into_fact(0, FocusEvent::Focus, None));
+    assert_eq!(
+        above_boundary(&reported),
+        [
+            (Role::Window, false, window(parent)),
+            (Role::Pane, false, window(between))
+        ],
+        "the hung top-level window, a plain window"
+    );
+    outpost.settled();
     drop(outpost);
     app.quit();
     parent_app.quit();

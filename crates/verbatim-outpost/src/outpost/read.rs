@@ -33,8 +33,8 @@ use super::Context;
 use super::text_reads::CONSOLE_WINDOW_CLASS;
 use super::window::{
     desktop_window, foreground_window_of, main_window_of, parent_window, served_by, top_level_of,
-    window_belongs_to_hidden_frame, window_disabled, window_exists, window_facts,
-    window_is_hidden_frame, window_text,
+    window_belongs_to_hidden_frame, window_exists, window_facts, window_is_hidden_frame,
+    window_style, window_text,
 };
 
 /// Depth cap for a tree dump (the root is depth 0).
@@ -462,8 +462,27 @@ pub(super) fn reads_as_plain(context: &Context, hwnd: isize) -> bool {
 /// which NVDA also gives it, waits for the model to carry that state (the
 /// order of work's step 8).
 pub(super) fn plain_window(context: &Context, hwnd: isize) -> NodeSnapshot {
+    window_from_local_state(context, hwnd, false)
+}
+
+/// Window `hwnd`, above the process boundary and neither a ghost's nor a
+/// hung application's, as NVDA's MSAA client object for it
+/// (`docs/design/focus-pipeline-rework.md`, "The foreground wait"): a
+/// pane, marked `top_level_client` when its style has a system menu, as
+/// `verbatim_ia2`'s reader marks an MSAA client, and in all else a
+/// [`plain_window`], read from Windows' own state with no call into the
+/// other process.
+fn boundary_client(context: &Context, hwnd: isize) -> NodeSnapshot {
+    window_from_local_state(context, hwnd, true)
+}
+
+/// Window `hwnd` read from Windows' own state alone, one style read and its
+/// text: a [`plain_window`], or, as `client`, the pane of
+/// [`boundary_client`].
+fn window_from_local_state(context: &Context, hwnd: isize, client: bool) -> NodeSnapshot {
+    let style = window_style(hwnd);
     let mut states = StateSet::new();
-    if window_disabled(hwnd) {
+    if style.disabled {
         states = states.with(State::Disabled);
     }
     NodeSnapshot {
@@ -471,12 +490,13 @@ pub(super) fn plain_window(context: &Context, hwnd: isize) -> NodeSnapshot {
             .msaa_registry
             .id_for((hwnd, OBJID_WINDOW.0, CHILDID_SELF)),
         backend: Backend::Msaa,
-        role: Role::Window,
+        role: if client { Role::Pane } else { Role::Window },
         name: window_text(hwnd),
         value: None,
         states,
         details: NodeDetails {
             window: Some(super::window::window_handle(hwnd)),
+            top_level_client: client && style.system_menu,
             ..NodeDetails::default()
         },
     }
@@ -513,14 +533,26 @@ pub(super) fn parent_window_for_focused_state(
     ParentWindow::Uia(focused)
 }
 
-/// The plain windows from `hwnd` up to the desktop, which is none of them,
-/// outermost first ([`plain_window`]): local calls only.
+/// The windows from `hwnd` up to the desktop, which is none of them,
+/// outermost first, read with local calls only: from the first window
+/// another process serves upward, every window is above the process
+/// boundary and, unless a ghost's or a hung application's, is NVDA's MSAA
+/// client for it ([`boundary_client`]); every other window is a
+/// [`plain_window`].
 fn plain_windows_from(context: &Context, hwnd: isize) -> Vec<NodeSnapshot> {
     let desktop = desktop_window();
     let mut windows = Vec::new();
     let mut current = hwnd;
+    let mut above_boundary = false;
     while current != 0 && current != desktop && windows.len() < MAX_ANCESTOR_HOPS as usize {
-        windows.push(plain_window(context, current));
+        above_boundary = above_boundary || !serves(context, current);
+        windows.push(
+            if above_boundary && context.window_unreadable(current).is_none() {
+                boundary_client(context, current)
+            } else {
+                plain_window(context, current)
+            },
+        );
         current = parent_window(current);
     }
     windows.reverse();
@@ -530,8 +562,8 @@ fn plain_windows_from(context: &Context, hwnd: isize) -> Vec<NodeSnapshot> {
 /// The chain from window `hwnd` up, outermost first, `hwnd`'s own entry
 /// included: where a walk that ended below `hwnd` goes on
 /// (`docs/design/focus-pipeline-rework.md`, "A window's name, and the one
-/// fallback"). A window another process serves is a plain window, and so
-/// is every window above it, with no call into that process; a ghost's or
+/// fallback"). A window another process serves, and every window above it,
+/// is read with no call into that process ([`plain_windows_from`]); a ghost's or
 /// a hung application's window is a plain window, and the chain goes on
 /// from its parent window. Any other window is read by its own object
 /// chosen as NVDA chooses it (`Window._get_parent`): its UIA element when
@@ -539,7 +571,7 @@ fn plain_windows_from(context: &Context, hwnd: isize) -> Vec<NodeSnapshot> {
 /// walked up by its backend; a window whose object cannot be acquired is a
 /// plain window too, and the chain goes on from its parent window, as
 /// NVDA's object for it is then its `Window`. Past `out_of_time`, the rest
-/// is plain windows. The desktop ends it.
+/// is read by [`plain_windows_from`]. The desktop ends it.
 fn window_onward(
     context: &Context,
     uia: Option<(&Uia, &Request<Ancestor>)>,
