@@ -32,8 +32,10 @@ use super::writer::Outgoing;
 /// provider that cannot be reached. A timeout bounds each provider call,
 /// not an operation, so an operation of several calls, such as a search,
 /// waits a full timeout for each one the application does not answer; the
-/// 20 seconds leave room for four such calls in a row, and the second on
-/// top covers the shutdown's own work. Waiting
+/// 20 seconds were chosen when Verbatim left UIA's 20-second transaction
+/// timeout as it was, to cover one call UIA ends by itself, and the second
+/// on top covers the shutdown's own work; the limit has not been revisited
+/// for the shorter timeouts. Waiting
 /// longer could only wait on an MSAA call into a hung application, which
 /// nothing times out; that one is killed.
 pub(super) const SHUTDOWN_LIMIT: Duration = Duration::from_secs(21);
