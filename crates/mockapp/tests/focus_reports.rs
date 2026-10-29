@@ -1313,6 +1313,41 @@ fn a_focused_element_of_another_process_is_not_read_further() {
     app.quit();
 }
 
+/// An MSAA focus event naming another application's window, here another
+/// mockapp's, in front, as any process can raise one with
+/// `NotifyWinEvent`: the outpost neither probes nor reads that window, so
+/// the other mockapp answers nothing, no `WM_GETOBJECT` and no provider
+/// call, and nothing is reported.
+fn a_focus_event_naming_another_applications_window_is_not_read() {
+    let title = common::unique_title("mockapp-event-here");
+    let app = common::spawn("small.json", "uia", &title);
+    let other_title = common::unique_title("mockapp-event-elsewhere");
+    let other = common::spawn("small.json", "uia", &other_title);
+    let other_hwnd = common::find_window(&other_title);
+    let outpost = OutpostUnderTest::new(&app);
+    outpost.set_foreground(other_hwnd);
+
+    common::reset_hits(other_hwnd);
+    outpost.deliver_win_event(
+        DeliveredFact::MsaaFocus {
+            hwnd: other_hwnd.0 as isize,
+            id_object: -4,
+            id_child: 0,
+        },
+        WinEventStamp { thread: 1, time: 1 },
+    );
+    outpost.settled();
+    assert_eq!(
+        common::read_hits(other_hwnd),
+        [],
+        "the other application's calls"
+    );
+
+    drop(outpost);
+    other.quit();
+    app.quit();
+}
+
 /// A UIA focus the listener read in a window this outpost judges MSAA,
 /// here by Core's backend override, is dropped: the outpost's own verdict
 /// decides which backend's focus counts in each of its windows, and in an
@@ -2618,6 +2653,10 @@ fn main() {
         (
             "a_focused_element_of_another_process_is_not_read_further",
             a_focused_element_of_another_process_is_not_read_further,
+        ),
+        (
+            "a_focus_event_naming_another_applications_window_is_not_read",
+            a_focus_event_naming_another_applications_window_is_not_read,
         ),
         (
             "a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_when_its_uia_focus_comes_late",

@@ -1474,14 +1474,18 @@ impl Worker<'_> {
         observed_at_us: u64,
     ) {
         let context = self.context;
-        if !read::window_uses_uia(context, window) {
-            tracing::debug!(
-                %trace,
-                window,
-                ?verdict,
-                "the listener dropped a UIA focus on its verdict, and the outpost judges the window MSAA too"
-            );
-            return;
+        match read::own_window_verdict(context, window) {
+            None => return,
+            Some(false) => {
+                tracing::debug!(
+                    %trace,
+                    window,
+                    ?verdict,
+                    "the listener dropped a UIA focus on its verdict, and the outpost judges the window MSAA too"
+                );
+                return;
+            }
+            Some(true) => {}
         }
         let top_level = Some(top_level_of(window)).filter(|&top| top != 0);
         if self.gap.uia_answered(observed_at_us, top_level).is_some() {
@@ -2531,8 +2535,9 @@ impl Worker<'_> {
             }
             return;
         }
-        if read::window_uses_uia(self.context, hwnd) {
-            return; // UIA owns this window.
+        // UIA owns this window, or another application does.
+        if read::own_window_verdict(self.context, hwnd) != Some(false) {
+            return;
         }
         if self.edit_event(kind, (hwnd, id_object, id_child), trace, observed_at_us) {
             return;
@@ -2960,9 +2965,9 @@ impl Worker<'_> {
         // (`verbatim_uia::map::ignores_notifications`).
         if !matches!(event.kind, UiaKind::Notification(_)) {
             if let Some(hwnd) = hwnd
-                && !read::window_uses_uia(self.context, hwnd)
+                && read::own_window_verdict(self.context, hwnd) != Some(true)
             {
-                return; // MSAA owns this window.
+                return; // MSAA owns this window, or another application does.
             }
             // A windowless element with no window found has no window to
             // test (0), and is accepted: the listener's nearest window for a
@@ -3527,9 +3532,13 @@ impl Worker<'_> {
         if !Self::readable(hwnd) {
             return;
         }
-        if read::window_uses_uia(self.context, hwnd) {
-            tracing::debug!(hwnd, "foreground dropped: UIA owns the window");
-            return;
+        match read::own_window_verdict(self.context, hwnd) {
+            None => return,
+            Some(true) => {
+                tracing::debug!(hwnd, "foreground dropped: UIA owns the window");
+                return;
+            }
+            Some(false) => {}
         }
         self.report_foreground(hwnd, trace, observed_at_us);
     }
@@ -3575,7 +3584,10 @@ impl Worker<'_> {
         if !self.accepts(EventName::GainFocus, hwnd) || !Self::readable(hwnd) {
             return;
         }
-        if read::window_uses_uia(self.context, hwnd) {
+        let Some(uia_owns) = read::own_window_verdict(self.context, hwnd) else {
+            return;
+        };
+        if uia_owns {
             // UIA owns this window; its UIA fact reports the focus, which
             // the worker waits for (`gap`), counted from the copy's
             // observation: the entry's start by the system's clock and by
@@ -3742,12 +3754,12 @@ impl Worker<'_> {
         // MSAA, its MSAA focus speaks, and the listener's report is dropped.
         let judged_window = read.window.or(Some(read.hwnd).filter(|&hwnd| hwnd != 0));
         if let Some(window) = judged_window
-            && !read::window_uses_uia(context, window)
+            && read::own_window_verdict(context, window) != Some(true)
         {
             tracing::debug!(
                 %trace,
                 window,
-                "UIA focus dropped: the outpost judges its window MSAA, whose focus speaks for it"
+                "UIA focus dropped: the outpost judges its window MSAA, whose focus speaks for it, or another application serves it"
             );
             return;
         }
@@ -3920,7 +3932,8 @@ impl Worker<'_> {
         if !self.accepts(EventName::MenuStart, hwnd) || !Self::readable(hwnd) {
             return;
         }
-        if read::window_uses_uia(self.context, hwnd) {
+        // UIA owns this window, or another application does.
+        if read::own_window_verdict(self.context, hwnd) != Some(false) {
             return;
         }
         let Some(node) = verbatim_ia2::acquire::snapshot_from_event(

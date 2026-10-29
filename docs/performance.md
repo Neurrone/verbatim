@@ -296,6 +296,12 @@ Rules that hold for every UIA focus:
   for a window's own element read without its handle, as the console
   host's is (`docs/uia-bugs.md`). The late UIA focus then costs one
   connection more, its element found by path (`find_focus_element`).
+- Per event the worker judges a window for, an MSAA event, a foreground
+  change, a menu opening, a UIA selection, a listener's read or drop: the
+  check that its application serves the window (`served_by`), local calls
+  and no call into any application; an event naming another
+  application's window is dropped there, before any probe
+  (`a_focus_event_naming_another_applications_window_is_not_read`).
 - Per listener drop on its verdict ("not UIA" or "unknown") in a window
   the outpost judges UIA, a disagreement of the two processes' verdicts:
   the same focus-now read, at once, in the drop's place, which answers the

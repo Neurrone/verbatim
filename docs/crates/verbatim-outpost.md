@@ -224,7 +224,16 @@ enrichment, walk, subscription or report, `None` answered, and a debug
 line naming both processes. Each read is logged at debug with what asked
 for it (`read::FocusRead`: a focus-now query, the gap, or the read after a
 listener's drop on its verdict). The one connection the call makes into
-the other application cannot be prevented. The supervisor checks that a
+the other application cannot be prevented.
+
+Every window the worker judges or acts on for an event, whether its own
+hook delivered the event or the listener named the window (a drop's
+nearest window, a read's window, a selection's), is first checked as its
+application's (`read::own_window_verdict`, through `served_by`): another
+process's window is neither probed, read nor reported, with a debug line
+naming it, since any process can raise a `WinEvent` naming another's
+window, and the probe, or a console window's check by handle, would call
+into that process. The supervisor checks that a
 process it starts an outpost for serves the fact's window
 (`check_served_by` in `supervisor/owner.rs`; a debug build fails). The
 crate re-exports `provider_process` and `console_host_of` so Core routes a

@@ -159,6 +159,25 @@ fn own_window_uses_uia(context: &Context, hwnd: isize) -> bool {
     serves(context, hwnd) && window_uses_uia(context, hwnd)
 }
 
+/// The backend of window `hwnd`, which an event or the listener names, as
+/// [`window_uses_uia`] judges it, `Some(true)` for UIA, only when the
+/// outpost's application serves it ([`serves`]): `None`, with no probe and
+/// a debug line naming the window, for another process's window, which the
+/// worker neither reads nor reports. Any process can raise a `WinEvent`
+/// naming another's window, and the probe, and a console window's check,
+/// would call into that process. Local calls before the verdict.
+pub(super) fn own_window_verdict(context: &Context, hwnd: isize) -> Option<bool> {
+    if !serves(context, hwnd) {
+        tracing::debug!(
+            hwnd,
+            target_pid = context.target_pid(),
+            "an event names a window the outpost's application does not serve; it is neither probed, read nor reported"
+        );
+        return None;
+    }
+    Some(window_uses_uia(context, hwnd))
+}
+
 /// The snapshot of the top-level window `hwnd` for a foreground report. A
 /// window whose accessible object cannot be read (a freshly created msinfo32
 /// window, found live) is still reported, from local window data, and a
