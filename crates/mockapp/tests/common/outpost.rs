@@ -26,12 +26,20 @@
 //! budget a real wait must spend, as a stalled window's raw probe spends
 //! it, makes the time the system's instead
 //! ([`OutpostUnderTest::follow_the_system_clock`]). The outpost stamps its
-//! own events' observations, and times its verdicts' keeps, by the run's
+//! own events' observations, and times its verdicts' keeps, by the test's
+//! observation clock ([`Outpost::set_observation_clock`]), which a test
+//! chooses once, as it makes the outpost ([`ObservationTime`]): the run's
 //! shared clock moved on by every time the test has passed
-//! ([`Outpost::set_observation_clock`]), so a window's verdict of no UIA
-//! provider runs out, and its probe is made again, once the test passes
-//! its keep, a verdict being compared with the observation of the event
-//! it judges; the facts the test hands over are stamped on that clock
+//! ([`OutpostUnderTest::new`]), or that clock frozen when the outpost was
+//! made, moved on by the time passed and by a microsecond each time it is
+//! read ([`OutpostUnderTest::on_frozen_time`]). On the frozen clock a
+//! window's verdict of no UIA provider runs out, and the gap record's
+//! bound is reached, only once the test passes the time, however long its
+//! steps take, so every test whose assertions depend on a verdict's keep,
+//! the gap's bound or a restamp uses it. The others keep the real one,
+//! because the outpost compares the stamps of caret, text and terminal
+//! reads, read from the run's clock itself, with events' observations;
+//! the facts the test hands over are stamped on the chosen clock
 //! ([`OutpostUnderTest::observed_now`]).
 //!
 //! No window takes the foreground on the desktop a test runs on, so the
@@ -55,10 +63,12 @@
 //! The outpost keeps its own gap record, and the test times its bound
 //! ([`Outpost::set_gap_timer`]): once the test has passed the time left to
 //! the bound when the outpost set it, rounded up to a tenth of a second so
-//! that the real time a test's own steps take never reaches it, the test
-//! reaches it ([`Outpost::gap_bound_reacher`]), as the outpost's timer does
-//! when it fires, and at once for a bound already past, so no test waits
-//! for it. A drop the test hands over carries its
+//! that the observation clock's ticks between a copy's stamp and the
+//! timer's setting never reach it, the test reaches it
+//! ([`Outpost::gap_bound_reacher`]), as the outpost's timer does when it
+//! fires, and a bound already past is reached at once from a thread of its
+//! own, as the threadpool's callback reaches it, since the outpost sets the
+//! timer under its intake's lock; no test waits for it. A drop the test hands over carries its
 //! answer to the record ([`OutpostUnderTest::listener_outcome`] places it
 //! as the listener does). An idle round the test starts
 //! ([`OutpostUnderTest::idle_round`]) reaches the outpost's idle answer,
@@ -310,34 +320,85 @@ impl Reported {
     }
 }
 
+/// Which observation clock a test runs its outpost on, chosen once, as it
+/// makes the outpost.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObservationTime {
+    /// The run's shared clock moved on by every time the test has passed.
+    Real,
+    /// The run's shared clock when the outpost was made, moved on only by
+    /// the time the test passes and by a microsecond each time it is read,
+    /// so no real time is in it and no two reads are equal.
+    Frozen,
+}
+
+/// The outpost's observation clock in a test ([`ObservationTime`]).
+struct TestClock {
+    /// Which clock it is.
+    time: ObservationTime,
+    /// The run's shared clock when the outpost was made, in microseconds.
+    start_us: u64,
+    /// How far the clock has moved on from `start_us`, in microseconds: the
+    /// time passed and the reads.
+    moved_us: AtomicU64,
+    /// How much time the test has passed, in microseconds.
+    passed_us: AtomicU64,
+}
+
+impl TestClock {
+    /// Now on the clock: on the frozen clock, a microsecond after the last
+    /// read.
+    fn now(&self) -> u64 {
+        match self.time {
+            ObservationTime::Real => now_us().saturating_add(self.passed()),
+            ObservationTime::Frozen => {
+                self.start_us + self.moved_us.fetch_add(1, Ordering::SeqCst) + 1
+            }
+        }
+    }
+
+    /// How much time the test has passed, in microseconds.
+    fn passed(&self) -> u64 {
+        self.passed_us.load(Ordering::SeqCst)
+    }
+
+    /// Moves the clock on by `by_us`.
+    fn pass(&self, by_us: u64) {
+        self.passed_us.fetch_add(by_us, Ordering::SeqCst);
+        self.moved_us.fetch_add(by_us, Ordering::SeqCst);
+    }
+}
+
 /// The gap record's timer as the test times it: the time the test has to
 /// pass, from how much it had passed, for the bound the outpost last set
 /// to be reached, if it is set ([`OutpostUnderTest::pass_time`]). A bound
-/// already past is reached at once.
+/// already past is reached at once, from a thread of its own.
 struct TestGapTimer {
-    /// How much time the test has passed, in microseconds.
-    passed_us: Arc<AtomicU64>,
+    /// The outpost's observation clock.
+    clock: Arc<TestClock>,
     /// The passed time, in microseconds, at which the bound is reached.
     reached_at_passed_us: Mutex<Option<u64>>,
     /// What reaches the bound.
     reach: std::sync::OnceLock<Arc<dyn Fn() + Send + Sync>>,
 }
 
-/// The step the time left to a bound is rounded up to: more than the real
-/// time between a copy's observation and its handling in any test.
+/// The step the time left to a bound is rounded up to: more than the
+/// frozen clock's ticks, a microsecond a read, between a copy's
+/// observation and its handling in any test.
 const BOUND_STEP_US: u64 = 100_000;
 
 impl GapTimer for TestGapTimer {
     fn set(&self, due_us: u64) {
-        let passed = self.passed_us.load(Ordering::Relaxed);
-        let left = due_us.saturating_sub(now_us().saturating_add(passed));
+        let passed = self.clock.passed();
+        let left = due_us.saturating_sub(self.clock.now());
         if left == 0 {
             *self
                 .reached_at_passed_us
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner) = None;
             if let Some(reach) = self.reach.get() {
-                reach();
+                let reach = Arc::clone(reach);
+                std::thread::spawn(move || reach());
             }
             return;
         }
@@ -357,23 +418,29 @@ impl GapTimer for TestGapTimer {
 }
 
 /// Has `outpost` stamp its own events' observations, and time its
-/// verdicts' keeps, by the run's shared clock moved on by the time the test
-/// passes, and time its gap record's bound by the test's time: the time
-/// passed, in microseconds, which the test moves on, and the timer.
-fn observe_on_the_tests_time(outpost: &Outpost) -> (Arc<AtomicU64>, Arc<TestGapTimer>) {
-    let passed_us = Arc::new(AtomicU64::new(0));
-    let passed = Arc::clone(&passed_us);
-    outpost.set_observation_clock(Arc::new(move || {
-        now_us().saturating_add(passed.load(Ordering::Relaxed))
-    }));
+/// verdicts' keeps, by the test's observation clock, `time`, and time its
+/// gap record's bound by the test's time: the clock, which the test moves
+/// on, and the timer.
+fn observe_on_the_tests_time(
+    outpost: &Outpost,
+    time: ObservationTime,
+) -> (Arc<TestClock>, Arc<TestGapTimer>) {
+    let clock = Arc::new(TestClock {
+        time,
+        start_us: now_us(),
+        moved_us: AtomicU64::new(0),
+        passed_us: AtomicU64::new(0),
+    });
+    let observed = Arc::clone(&clock);
+    outpost.set_observation_clock(Arc::new(move || observed.now()));
     let gap_timer = Arc::new(TestGapTimer {
-        passed_us: Arc::clone(&passed_us),
+        clock: Arc::clone(&clock),
         reached_at_passed_us: Mutex::new(None),
         reach: std::sync::OnceLock::new(),
     });
     let _ = gap_timer.reach.set(outpost.gap_bound_reacher());
     outpost.set_gap_timer(Arc::clone(&gap_timer) as Arc<dyn GapTimer>);
-    (passed_us, gap_timer)
+    (clock, gap_timer)
 }
 
 /// A real outpost in this process, watching mockapp, with its pipe to Core.
@@ -412,9 +479,8 @@ pub struct OutpostUnderTest {
     /// The trace of the UIA focus event the listener's reader last read,
     /// which its read is delivered under, as the listener sends it.
     last_read: Cell<Option<TraceId>>,
-    /// How much time the test has passed, in microseconds, which the
-    /// outpost's observation clock is the shared clock moved on by.
-    passed_us: Arc<AtomicU64>,
+    /// The outpost's observation clock, which the test moves on.
+    observation: Arc<TestClock>,
     /// The gap record's timer.
     gap_timer: Arc<TestGapTimer>,
     /// The window the keyboard focus moves to during the outpost's next
@@ -423,16 +489,29 @@ pub struct OutpostUnderTest {
 }
 
 impl OutpostUnderTest {
-    /// An outpost watching `app` with the default options.
+    /// An outpost watching `app` with the default options, on the real
+    /// observation clock ([`ObservationTime::Real`]).
     pub fn new(app: &super::MockApp) -> Self {
         Self::with_options(app, OutpostOptions::default())
     }
 
-    /// An outpost watching `app` as `options` say, which has announced
-    /// itself ready, and nothing else. It reads `app`'s window as the
-    /// foreground window.
+    /// An outpost watching `app` as `options` say, on the real observation
+    /// clock, which has announced itself ready, and nothing else. It reads
+    /// `app`'s window as the foreground window.
     pub fn with_options(app: &super::MockApp, options: OutpostOptions) -> Self {
         Self::with_pipe_buffer(app, options, MESSAGES_PIPE_BUFFER)
+    }
+
+    /// [`Self::new`] on the frozen observation clock
+    /// ([`ObservationTime::Frozen`]), for a test whose assertions depend on
+    /// a verdict's keep, the gap record's bound or a restamp.
+    pub fn on_frozen_time(app: &super::MockApp) -> Self {
+        Self::on_frozen_time_with_options(app, OutpostOptions::default())
+    }
+
+    /// [`Self::with_options`] on the frozen observation clock.
+    pub fn on_frozen_time_with_options(app: &super::MockApp, options: OutpostOptions) -> Self {
+        Self::ready(app, options, MESSAGES_PIPE_BUFFER, ObservationTime::Frozen)
     }
 
     /// [`Self::with_options`], its pipe to Core holding `buffer` bytes
@@ -440,7 +519,18 @@ impl OutpostUnderTest {
     /// its write in flight, and what the outpost sends after it waiting
     /// in its backlog.
     pub fn with_pipe_buffer(app: &super::MockApp, options: OutpostOptions, buffer: u32) -> Self {
-        let under_test = Self::build(app, options, buffer, false);
+        Self::ready(app, options, buffer, ObservationTime::Real)
+    }
+
+    /// An outpost watching `app`, on the observation clock `time`, which
+    /// has announced itself ready.
+    fn ready(
+        app: &super::MockApp,
+        options: OutpostOptions,
+        buffer: u32,
+        time: ObservationTime,
+    ) -> Self {
+        let under_test = Self::build(app, options, buffer, false, time);
         assert_eq!(
             under_test.next(),
             OutpostToSupervisor::Ready {
@@ -456,7 +546,13 @@ impl OutpostUnderTest {
     /// [`Self::assign`] gives it `app`. It reads `app`'s window as the
     /// foreground window.
     pub fn spare(app: &super::MockApp) -> Self {
-        let under_test = Self::build(app, OutpostOptions::default(), MESSAGES_PIPE_BUFFER, true);
+        let under_test = Self::build(
+            app,
+            OutpostOptions::default(),
+            MESSAGES_PIPE_BUFFER,
+            true,
+            ObservationTime::Real,
+        );
         assert_eq!(
             under_test.next(),
             OutpostToSupervisor::SpareReady {
@@ -482,7 +578,13 @@ impl OutpostUnderTest {
     }
 
     /// An outpost for `app`, watching it from the start, or a spare.
-    fn build(app: &super::MockApp, options: OutpostOptions, buffer: u32, spare: bool) -> Self {
+    fn build(
+        app: &super::MockApp,
+        options: OutpostOptions,
+        buffer: u32,
+        spare: bool,
+        observation_time: ObservationTime,
+    ) -> Self {
         let pid = app.pid();
         let (ours, theirs) =
             pipe(Flow::Inbound, buffer, End::Overlapped).expect("the outpost's pipe to Core");
@@ -543,7 +645,7 @@ impl OutpostUnderTest {
             *time
         });
         outpost.set_clock(Arc::clone(&clock));
-        let (passed_us, gap_timer) = observe_on_the_tests_time(&outpost);
+        let (observation, gap_timer) = observe_on_the_tests_time(&outpost, observation_time);
         let reader = Arc::clone(&foreground);
         let gate = Arc::new(WorkerGate::default());
         let worker_gate = Arc::clone(&gate);
@@ -586,7 +688,7 @@ impl OutpostUnderTest {
             failed_reads_taken: Cell::new(0),
             core: RefCell::new(None),
             last_read: Cell::new(None),
-            passed_us,
+            observation,
             gap_timer,
             moves_to,
         }
@@ -607,11 +709,10 @@ impl OutpostUnderTest {
         self.reader.borrow().forces_uia(forced);
     }
 
-    /// Now on the outpost's observation clock: the run's shared clock
-    /// moved on by every time the test has passed, which a fact the test
-    /// hands over is stamped by.
+    /// Now on the outpost's observation clock ([`TestClock`]), which a fact
+    /// the test hands over is stamped by.
     pub fn observed_now(&self) -> u64 {
-        now_us().saturating_add(self.passed_us.load(Ordering::Relaxed))
+        self.observation.now()
     }
 
     /// The time the outpost and the listener's reader read now.
@@ -678,11 +779,9 @@ impl OutpostUnderTest {
     pub fn pass_time(&self, by: Duration) {
         self.assert_the_time_is_the_tests();
         *self.time.lock().unwrap_or_else(PoisonError::into_inner) += by;
-        self.passed_us.fetch_add(
-            u64::try_from(by.as_micros()).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
-        let passed = self.passed_us.load(Ordering::Relaxed);
+        self.observation
+            .pass(u64::try_from(by.as_micros()).unwrap_or(u64::MAX));
+        let passed = self.observation.passed();
         let mut reached = self
             .gap_timer
             .reached_at_passed_us

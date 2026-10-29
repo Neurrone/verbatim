@@ -147,7 +147,13 @@
 //!   bound's entry ([`Item::GapBound`]), pushed by the outpost's timer,
 //!   waits behind every marker queued before it, so a UIA focus already
 //!   being read decides first (`docs/design/focus-pipeline-rework.md`, "Who
-//!   owns each duplicated fact", the gap's evidence).
+//!   owns each duplicated fact", the gap's evidence). What a change to the
+//!   record asks of its timer is done before the lock is released, so the
+//!   pipe thread and the worker set and cancel it in the order they change
+//!   the record: done after, a cancel for a record the pipe thread answered
+//!   could follow the worker's set for the next, leaving that record open
+//!   with no timer. Setting and cancelling the timer never waits, and its
+//!   callback, which takes the lock, never sets or cancels it.
 //! - A batch that holds a foreground change is handed out at once, never
 //!   held for its window to become the foreground window: Windows raises
 //!   the foreground event once the change is made, so a foreground event
@@ -177,6 +183,7 @@ use crate::protocol::{DeliveredFact, Query, UiaSnapshotFact, WinEventStamp};
 
 use super::alarm::Alarm;
 use super::gap_record::{Accepted, CopyDropped, GapRead, GapRecord, Outcome};
+use super::gap_timer::GapTimer;
 use super::handover::Arrival;
 use super::worker::is_state_property;
 use crate::protocol::GapAnswer;
@@ -321,6 +328,17 @@ pub(super) enum TimerAction {
     Set(u64),
     /// Cancel it.
     Cancel,
+}
+
+impl TimerAction {
+    /// Has `timer` do this, while the intake's lock is held.
+    fn apply(self, timer: &dyn GapTimer) {
+        match self {
+            Self::Keep => {}
+            Self::Set(due_us) => timer.set(due_us),
+            Self::Cancel => timer.cancel(),
+        }
+    }
 }
 
 /// An item with its trace and observation time, in microseconds on the
@@ -677,36 +695,50 @@ impl Intake {
     /// A UIA focus's outcome is applied to the gap record as it resolves
     /// its marker: a focus's read placed by its own window's top-level
     /// window, found here with one local call, and a drop by the answer it
-    /// carries. What the record's timer is to do then is returned.
-    pub(super) fn push(&self, entry: Entry) -> TimerAction {
-        self.push_arrived(entry, None)
+    /// carries. What the record's timer is to do then is done on `timer`
+    /// before the lock is released, and returned.
+    pub(super) fn push(&self, entry: Entry, timer: &dyn GapTimer) -> TimerAction {
+        self.push_arrived(entry, None, Some(timer))
+    }
+
+    /// [`push`](Self::push) for an entry that is never a UIA focus's
+    /// outcome, so asks nothing of the gap record's timer: the worker's own
+    /// settle and noted caret.
+    pub(super) fn push_outside_gap(&self, entry: Entry) {
+        let _ = self.push_arrived(entry, None, None);
     }
 
     /// [`push`](Self::push) for a copy of a `WinEvent` the hand-over
     /// admitted, which arrived as `arrival`.
     pub(super) fn push_copy(&self, entry: Entry, arrival: Arrival) {
-        let _ = self.push_arrived(entry, Some(arrival));
+        let _ = self.push_arrived(entry, Some(arrival), None);
     }
 
     /// The gap record's timer fired: its entry waits behind every marker
-    /// queued before it.
+    /// queued before it. It asks nothing of the timer.
     pub(super) fn push_gap_bound(&self) {
-        let _ = self.push(Entry {
-            item: Item::GapBound,
-            trace: TraceId::mint(),
-            observed_at_us: crate::protocol::now_us(),
-            timing: crate::protocol::EventTiming::default(),
-        });
+        let _ = self.push_arrived(
+            Entry {
+                item: Item::GapBound,
+                trace: TraceId::mint(),
+                observed_at_us: crate::protocol::now_us(),
+                timing: crate::protocol::EventTiming::default(),
+            },
+            None,
+            None,
+        );
     }
 
     /// The worker dropped a copy in `window`, of top-level window
     /// `top_level`, observed at `at_us`, because it judges the window UIA
-    /// ([`GapRecord::copy_dropped`]); with what the record's timer is to do.
+    /// ([`GapRecord::copy_dropped`]); with what the record's timer is to
+    /// do, which is done on `timer` before the lock is released.
     pub(super) fn gap_copy_dropped(
         &self,
         window: isize,
         top_level: isize,
         at_us: u64,
+        timer: &dyn GapTimer,
     ) -> (CopyDropped, TimerAction) {
         let mut state = self.lock();
         let was_open = state.gap.is_open();
@@ -716,30 +748,40 @@ impl Intake {
             _ if was_open && !state.gap.is_open() => TimerAction::Cancel,
             _ => TimerAction::Keep,
         };
+        action.apply(timer);
         (dropped, action)
     }
 
     /// The worker accepted an event of `window`, of top-level window
     /// `top_level`, observed at `at_us`: a foreground change, which
     /// `restamps`, or a copy it handles through MSAA
-    /// ([`GapRecord::accepted`]); what the record's timer is to do.
+    /// ([`GapRecord::accepted`]); a record it answers has `timer`
+    /// cancelled before the lock is released.
     pub(super) fn gap_accepted(
         &self,
         window: isize,
         top_level: isize,
         at_us: u64,
         restamps: bool,
-    ) -> TimerAction {
-        match self.lock().gap.accepted(window, top_level, at_us, restamps) {
-            Accepted::Answered => TimerAction::Cancel,
-            Accepted::Restamped | Accepted::Unchanged => TimerAction::Keep,
+        timer: &dyn GapTimer,
+    ) {
+        let state = &mut *self.lock();
+        match state.gap.accepted(window, top_level, at_us, restamps) {
+            Accepted::Answered => timer.cancel(),
+            Accepted::Restamped | Accepted::Unchanged => {}
         }
     }
 
     /// The bound's entry is handled at `now_us`
-    /// ([`GapRecord::bound_reached`]).
-    pub(super) fn gap_bound_reached(&self, now_us: u64) -> Result<Option<GapRead>, u64> {
-        self.lock().gap.bound_reached(now_us)
+    /// ([`GapRecord::bound_reached`]): the record's read, if its bound has
+    /// passed; a record whose bound has not passed yet has `timer` set
+    /// again for the rest before the lock is released.
+    pub(super) fn gap_bound_reached(&self, now_us: u64, timer: &dyn GapTimer) -> Option<GapRead> {
+        let state = &mut *self.lock();
+        state.gap.bound_reached(now_us).unwrap_or_else(|due_us| {
+            timer.set(due_us);
+            None
+        })
     }
 
     /// `hwnd` was destroyed: its answer as a top-level window goes.
@@ -761,7 +803,15 @@ impl Intake {
     /// window object as its client object, as NVDA's callback does. The two
     /// are compared by when they were raised, since during the hand-over a
     /// focus can arrive before the copy of a change raised earlier.
-    fn push_arrived(&self, entry: Entry, arrival: Option<Arrival>) -> TimerAction {
+    ///
+    /// `timer` is the gap record's timer, which only a UIA focus's outcome
+    /// asks anything of; `None` for an entry that is never one.
+    fn push_arrived(
+        &self,
+        entry: Entry,
+        arrival: Option<Arrival>,
+        timer: Option<&dyn GapTimer>,
+    ) -> TimerAction {
         // A focus's read is placed before the lock is taken.
         let read_answer = read_answer(&entry.item);
         // A marked UIA event takes its marker's place as itself.
@@ -787,10 +837,14 @@ impl Intake {
         if state.drops_on_arrival(&entry.item) {
             return TimerAction::Keep;
         }
-        let (entry, timer, gap_read_resolves) = state.apply_gap_outcome(entry, read_answer);
+        let (entry, action, gap_read_resolves) = state.apply_gap_outcome(entry, read_answer);
+        match timer {
+            Some(timer) => action.apply(timer),
+            None => debug_assert_eq!(action, TimerAction::Keep, "an entry that asks nothing"),
+        }
         if state.resolves_without_read(&entry) {
             self.rouse(state);
-            return timer;
+            return action;
         }
         let marker = match &entry.item {
             Item::Fact(DeliveredFact::UiaFocusMarker { marker }, _) => Some(*marker),
@@ -866,7 +920,7 @@ impl Intake {
         if let Some(pushed) = logged {
             pushed.log();
         }
-        timer
+        action
     }
 
     /// The next entry to handle and the number of its batch, planning a new
@@ -1136,6 +1190,16 @@ impl Intake {
     /// The object the worker last reported as the focus.
     pub(super) fn focused(&self) -> Option<Object> {
         self.lock().focused.clone()
+    }
+
+    /// Whether a thread holds the intake's lock, for a test that times a
+    /// step against it.
+    #[cfg(test)]
+    pub(super) fn is_held(&self) -> bool {
+        matches!(
+            self.state.try_lock(),
+            Err(std::sync::TryLockError::WouldBlock)
+        )
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -1838,6 +1902,7 @@ pub(super) fn try_newest_first<E>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::outpost::gap_timer::NoGapTimer;
 
     /// An MSAA event on child `child` of window `hwnd`, raised by `thread`
     /// and observed at `child` milliseconds.
@@ -2609,12 +2674,15 @@ mod tests {
         // that have not started.
         let intake = Intake::default();
         let push = |item: Item, observed_at_us: u64| {
-            intake.push(Entry {
-                item,
-                trace: TraceId::mint(),
-                observed_at_us,
-                timing: crate::protocol::EventTiming::default(),
-            });
+            intake.push(
+                Entry {
+                    item,
+                    trace: TraceId::mint(),
+                    observed_at_us,
+                    timing: crate::protocol::EventTiming::default(),
+                },
+                &NoGapTimer,
+            );
         };
         let name_change = |child: i32| Item::Msaa {
             kind: WinEventKind::NameChange,
@@ -2651,18 +2719,21 @@ mod tests {
     fn a_newer_event_for_the_same_object_replaces_the_waiting_one() {
         let intake = Intake::default();
         let push = |child: i32, observed_at_us: u64| {
-            intake.push(Entry {
-                item: Item::Msaa {
-                    kind: WinEventKind::ValueChange,
-                    hwnd: 0,
-                    id_object: -4,
-                    id_child: child,
-                    thread: 0,
+            intake.push(
+                Entry {
+                    item: Item::Msaa {
+                        kind: WinEventKind::ValueChange,
+                        hwnd: 0,
+                        id_object: -4,
+                        id_child: child,
+                        thread: 0,
+                    },
+                    trace: TraceId::mint(),
+                    observed_at_us,
+                    timing: crate::protocol::EventTiming::default(),
                 },
-                trace: TraceId::mint(),
-                observed_at_us,
-                timing: crate::protocol::EventTiming::default(),
-            });
+                &NoGapTimer,
+            );
         };
         push(1, 10);
         push(2, 20);
@@ -2683,18 +2754,21 @@ mod tests {
     fn an_msaa_event_replaces_only_the_one_waiting_from_its_own_thread() {
         let intake = Intake::default();
         let push = |thread: u32, observed_at_us: u64| {
-            intake.push(Entry {
-                item: Item::Msaa {
-                    kind: WinEventKind::ValueChange,
-                    hwnd: 9,
-                    id_object: -4,
-                    id_child: 1,
-                    thread,
+            intake.push(
+                Entry {
+                    item: Item::Msaa {
+                        kind: WinEventKind::ValueChange,
+                        hwnd: 9,
+                        id_object: -4,
+                        id_child: 1,
+                        thread,
+                    },
+                    trace: TraceId::mint(),
+                    observed_at_us,
+                    timing: crate::protocol::EventTiming::default(),
                 },
-                trace: TraceId::mint(),
-                observed_at_us,
-                timing: crate::protocol::EventTiming::default(),
-            });
+                &NoGapTimer,
+            );
         };
         push(7, 1);
         push(8, 2);
@@ -2711,22 +2785,25 @@ mod tests {
     fn an_msaa_focus_replaces_only_the_one_waiting_from_its_own_thread() {
         let intake = Intake::default();
         let push = |thread: u32, observed_at_us: u64| {
-            intake.push(Entry {
-                item: Item::Fact(
-                    DeliveredFact::MsaaFocus {
-                        hwnd: 9,
-                        id_object: -4,
-                        id_child: 1,
-                    },
-                    Some(WinEventStamp {
-                        thread,
-                        time: u32::try_from(observed_at_us).unwrap_or(0),
-                    }),
-                ),
-                trace: TraceId::mint(),
-                observed_at_us,
-                timing: crate::protocol::EventTiming::default(),
-            });
+            intake.push(
+                Entry {
+                    item: Item::Fact(
+                        DeliveredFact::MsaaFocus {
+                            hwnd: 9,
+                            id_object: -4,
+                            id_child: 1,
+                        },
+                        Some(WinEventStamp {
+                            thread,
+                            time: u32::try_from(observed_at_us).unwrap_or(0),
+                        }),
+                    ),
+                    trace: TraceId::mint(),
+                    observed_at_us,
+                    timing: crate::protocol::EventTiming::default(),
+                },
+                &NoGapTimer,
+            );
         };
         push(7, 1);
         push(8, 2);
@@ -2738,15 +2815,18 @@ mod tests {
     fn a_newer_list_of_held_nodes_replaces_the_waiting_one_and_is_never_limited() {
         let intake = Intake::default();
         for acknowledged in [1, 2] {
-            intake.push(Entry {
-                item: Item::NodesHeld {
-                    nodes: Vec::new(),
-                    acknowledged,
+            intake.push(
+                Entry {
+                    item: Item::NodesHeld {
+                        nodes: Vec::new(),
+                        acknowledged,
+                    },
+                    trace: TraceId::mint(),
+                    observed_at_us: 0,
+                    timing: crate::protocol::EventTiming::default(),
                 },
-                trace: TraceId::mint(),
-                observed_at_us: 0,
-                timing: crate::protocol::EventTiming::default(),
-            });
+                &NoGapTimer,
+            );
         }
         let Some((Planned::Run(entry), _)) = intake.next() else {
             panic!("the list is planned");
@@ -2763,12 +2843,15 @@ mod tests {
     }
 
     fn push_fact(intake: &Intake, fact: DeliveredFact) {
-        intake.push(Entry {
-            item: Item::Fact(fact, None),
-            trace: TraceId::mint(),
-            observed_at_us: 0,
-            timing: crate::protocol::EventTiming::default(),
-        });
+        intake.push(
+            Entry {
+                item: Item::Fact(fact, None),
+                trace: TraceId::mint(),
+                observed_at_us: 0,
+                timing: crate::protocol::EventTiming::default(),
+            },
+            &NoGapTimer,
+        );
     }
 
     #[test]
@@ -2797,26 +2880,32 @@ mod tests {
     #[test]
     fn a_query_that_has_not_started_can_be_cancelled() {
         let intake = Intake::default();
-        intake.push(Entry {
-            item: Item::Query {
-                request_id: 5,
-                query: Query::DumpTree { locations: false },
+        intake.push(
+            Entry {
+                item: Item::Query {
+                    request_id: 5,
+                    query: Query::DumpTree { locations: false },
+                },
+                trace: TraceId::mint(),
+                observed_at_us: 0,
+                timing: crate::protocol::EventTiming::default(),
             },
-            trace: TraceId::mint(),
-            observed_at_us: 0,
-            timing: crate::protocol::EventTiming::default(),
-        });
+            &NoGapTimer,
+        );
         assert!(intake.cancel(5));
         assert!(!intake.cancel(5), "already withdrawn");
     }
 
     fn push_item(intake: &Intake, item: Item, observed_at_us: u64) {
-        intake.push(Entry {
-            item,
-            trace: TraceId::mint(),
-            observed_at_us,
-            timing: crate::protocol::EventTiming::default(),
-        });
+        intake.push(
+            Entry {
+                item,
+                trace: TraceId::mint(),
+                observed_at_us,
+                timing: crate::protocol::EventTiming::default(),
+            },
+            &NoGapTimer,
+        );
     }
 
     fn name_change(child: i32) -> Item {
@@ -2986,7 +3075,7 @@ mod tests {
                 None,
             )
         };
-        let (opened, timer) = intake.gap_copy_dropped(0x11, 0x10, 1_000);
+        let (opened, timer) = intake.gap_copy_dropped(0x11, 0x10, 1_000, &NoGapTimer);
         assert_eq!(
             (opened, timer),
             (
@@ -2996,27 +3085,33 @@ mod tests {
         );
         push_item(&intake, marker(7), 1_500);
         assert_eq!(
-            intake.push(Entry {
-                item: dropped(7, GapAnswer::Answers(Some(0x10))),
-                trace: TraceId::mint(),
-                observed_at_us: 1_500,
-                timing: crate::protocol::EventTiming::default(),
-            }),
+            intake.push(
+                Entry {
+                    item: dropped(7, GapAnswer::Answers(Some(0x10))),
+                    trace: TraceId::mint(),
+                    observed_at_us: 1_500,
+                    timing: crate::protocol::EventTiming::default(),
+                },
+                &NoGapTimer
+            ),
             TimerAction::Cancel
         );
         assert!(!intake.gap_open());
         assert!(!intake.busy(), "nothing for the worker");
 
-        let _ = intake.gap_copy_dropped(0x11, 0x10, 500_000);
+        let _ = intake.gap_copy_dropped(0x11, 0x10, 500_000, &NoGapTimer);
         push_item(&intake, marker(8), 501_000);
         push_item(&intake, name_change(3), 502_000);
         assert_eq!(
-            intake.push(Entry {
-                item: dropped(8, GapAnswer::ReadsNow),
-                trace: TraceId::mint(),
-                observed_at_us: 501_000,
-                timing: crate::protocol::EventTiming::default(),
-            }),
+            intake.push(
+                Entry {
+                    item: dropped(8, GapAnswer::ReadsNow),
+                    trace: TraceId::mint(),
+                    observed_at_us: 501_000,
+                    timing: crate::protocol::EventTiming::default(),
+                },
+                &NoGapTimer
+            ),
             TimerAction::Cancel
         );
         let (planned, _) = intake.next().expect("the record's read");

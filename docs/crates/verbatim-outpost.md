@@ -221,14 +221,16 @@ because it judged the window UIA, with its window, top-level window
 - The bound (`gap_record::BOUND_US`, one second from the first copy) is
   timed by one one-shot threadpool timer per outpost
   (`gap_timer::ThreadpoolGapTimer`, behind the `GapTimer` trait), set when
-  the record opens and cancelled when it is answered (`TimerAction`); no
-  thread waits on it. Its callback pushes `Item::GapBound` into the
+  the record opens and cancelled when it is answered (`TimerAction`), under
+  the intake's lock, so that the pipe thread and the worker set and cancel
+  it in the order they change the record; no thread waits on it, and its
+  callback never sets or cancels it. Its callback pushes `Item::GapBound` into the
   intake, behind every marker queued before it. Handled with the record
   open and its bound passed by the observation clock
   (`Intake::gap_bound_reached`), the record closes and is read; a timer
   that fired early is set again for the rest. A test sets its own timer
   (`Outpost::set_gap_timer`) and reaches the bound itself
-  (`Outpost::gap_bound_reacher`).
+  (`Outpost::gap_bound_reacher`), never on the thread that sets the timer.
 - The read (`Worker::gap_read`, `read::gap_focus_read`, trigger
   `read::FocusRead::Gap`) is the focus-now read through UIA only, made
   once: refused with local calls when the foreground thread's focus window

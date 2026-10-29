@@ -46,6 +46,7 @@
 //! An MSAA window's verdict of no UIA provider runs out after its lifetime,
 //! and the window's next event probes it again with a `WM_GETOBJECT`. The
 //! outpost reads that time from the test (`OutpostUnderTest::pass_time`),
+//! on the frozen observation clock (`OutpostUnderTest::on_frozen_time`),
 //! so every probe here is made where the test says, whatever the test's own
 //! speed, and every `WM_GETOBJECT` is pinned.
 
@@ -205,7 +206,7 @@ fn msaa_focus_changes_cost_exactly() {
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
     let window = Some(WindowHandle(hwnd.0 as u64));
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
 
     // The fixture's root has the window role, and an MSAA window object
@@ -483,7 +484,7 @@ fn msaa_state_change_costs_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-state-change");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
     let _ = measure_msaa_focus(&mut app, hwnd, &outpost, ("item2", ITEM_TWO));
     outpost.pass_time(NEGATIVE_VERDICT_LIFETIME);
@@ -644,7 +645,7 @@ fn msaa_dialog_text_costs_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-dialog");
     let mut app = common::spawn("dialog.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
 
     common::apply(&mut app, hwnd, "set-focus yes");
@@ -695,7 +696,7 @@ fn msaa_tree_view_costs_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-tree-view");
     let app = common::spawn("tree_view.json", "msaa", &title);
     let tree = common::tree_view::tree_view(common::find_window(&title));
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
 
     let _ = common::tree_view::focus_item(&outpost, tree, "Settings");
@@ -775,7 +776,7 @@ fn msaa_list_view_costs_exactly() {
         )
     }
     .expect("mockapp made the list view");
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
     let focus = |child: i32| {
         outpost.focus(DeliveredFact::MsaaFocus {
@@ -917,7 +918,7 @@ fn msaa_navigation_steps_cost_exactly() {
     let title = common::unique_title("mockapp-counts-msaa-navigation");
     let mut app = common::spawn("counts.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let mut outpost = OutpostUnderTest::new(&app);
+    let mut outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
     let (first, _) = measure_msaa_focus(&mut app, hwnd, &outpost, ("first", FIRST));
     let first = first.node;
@@ -1136,7 +1137,7 @@ fn uia_focus_changes(remote: bool, expected: &FocusCosts<'_>) {
     let hwnd = common::find_window(&title);
     let window = Some(WindowHandle(hwnd.0 as u64));
     let under_test = UiaUnderTest::new(hwnd);
-    let outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::on_frozen_time_with_options(
         &app,
         OutpostOptions {
             remote_operations: remote,
@@ -1443,7 +1444,7 @@ fn uia_repeated_focus_costs_exactly() {
     let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
 
     let _ = measure_uia_focus((&mut app, &under_test, hwnd), &outpost, ("first", "First"));
@@ -1500,7 +1501,7 @@ fn the_listener_makes_no_connection() {
     let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     for (id, name) in [
         ("first", "First"),
         ("second", "Second"),
@@ -1585,7 +1586,7 @@ fn uia_focus_chains_stop_below_the_process_boundary() {
         let under_test = UiaUnderTest::new(hwnd);
         // Made while the child is still a top-level window, which it finds
         // by its title, and reads as the foreground window.
-        let mut outpost = OutpostUnderTest::with_options(
+        let mut outpost = OutpostUnderTest::on_frozen_time_with_options(
             &app,
             OutpostOptions {
                 remote_operations: remote,
@@ -1850,7 +1851,7 @@ fn uia_focus_chains_continue_through_msaa_above_a_parent_with_a_provider() {
         let mut app = common::spawn("counts.json", "uia", &title);
         let hwnd = common::find_window(&title);
         let under_test = UiaUnderTest::new(hwnd);
-        let mut outpost = OutpostUnderTest::with_options(
+        let mut outpost = OutpostUnderTest::on_frozen_time_with_options(
             &app,
             OutpostOptions {
                 remote_operations: remote,
@@ -1981,7 +1982,7 @@ fn an_outposts_probe_that_finds_a_provider_makes_no_connection() {
     let title = common::unique_title("mockapp-counts-probe-alone");
     let app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     let mut ratchet = Ratchet::default();
     for (label, expected_get_objects, expected_hits) in [
         (
@@ -2068,7 +2069,7 @@ fn uia_navigation_steps(remote: bool) -> [(NodeSnapshot, Cost); 2] {
     let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
-    let mut outpost = OutpostUnderTest::with_options(
+    let mut outpost = OutpostUnderTest::on_frozen_time_with_options(
         &app,
         OutpostOptions {
             remote_operations: remote,
@@ -2199,7 +2200,7 @@ fn uia_ancestors_with_descriptions_off_cost_exactly() {
     let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
-    let mut outpost = OutpostUnderTest::new(&app);
+    let mut outpost = OutpostUnderTest::on_frozen_time(&app);
     outpost
         .outpost
         .handle_command(&SupervisorToOutpost::Fetches(Fetches {
@@ -2258,7 +2259,7 @@ fn a_node_with_no_kept_element_and_no_route_is_gone_with_no_call() {
     let mut app = common::spawn("counts.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
-    let mut outpost = OutpostUnderTest::new(&app);
+    let mut outpost = OutpostUnderTest::on_frozen_time(&app);
     app.send("set-focus first");
     let (judged, _) = outpost.listener_read(&under_test.focused(hwnd));
     let Judged::Read(mut read) = judged else {
@@ -4371,7 +4372,7 @@ fn uia_combo_box_costs(remote: bool, expected: [(CallCounts, &[(&str, u32)]); 2]
     let mut app = common::spawn("combo_box.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let under_test = UiaUnderTest::new(hwnd);
-    let outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::on_frozen_time_with_options(
         &app,
         OutpostOptions {
             remote_operations: remote,
@@ -4522,7 +4523,7 @@ fn uia_text_focus(fixture: &str, id: &str, remote: bool, setup: &[&str]) -> Repo
     let title = common::unique_title("mockapp-counts-text-focus");
     let mut app = common::spawn(fixture, "uia", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::on_frozen_time_with_options(
         &app,
         OutpostOptions {
             remote_operations: remote,
@@ -4672,7 +4673,7 @@ fn text_field_focuses_cost_exactly() {
     // its own, so its host has the focused state, which an MSAA focus
     // needs on the object or an ancestor.
     app.send("set-focus root");
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
     // SAFETY: a local search of mockapp's window's children by class.
     let edit = unsafe {
         windows::Win32::UI::WindowsAndMessaging::FindWindowExW(
@@ -4730,7 +4731,7 @@ fn text_field_focus_now_costs(ratchet: &mut Ratchet) {
         let title = common::unique_title("mockapp-counts-text-focus-now");
         let mut app = common::spawn("text.json", "uia", &title);
         let hwnd = common::find_window(&title);
-        let mut outpost = OutpostUnderTest::with_options(
+        let mut outpost = OutpostUnderTest::on_frozen_time_with_options(
             &app,
             OutpostOptions {
                 remote_operations: remote,

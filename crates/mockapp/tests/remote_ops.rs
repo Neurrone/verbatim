@@ -1043,7 +1043,7 @@ fn a_focus_now_whose_classic_walk_finds_no_parent_below_the_root_has_its_ancesto
 /// reports them.
 fn a_focus_read_after_a_winevent_focus_whose_walk_finds_no_parent_has_its_ancestors_unknown() {
     let mut fixture = Fixture::start("mockapp-rops-gap-none");
-    let outpost = OutpostUnderTest::with_options(
+    let outpost = OutpostUnderTest::on_frozen_time_with_options(
         &fixture.app,
         OutpostOptions {
             remote_operations: false,

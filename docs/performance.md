@@ -289,7 +289,7 @@ fact", the gap's evidence).
 - Per MSAA focus copy the worker judges, through either backend: one local
   `GetAncestor` and one take of the intake's lock. A copy dropped for UIA
   that opens the record sets the threadpool timer, one
-  `SetThreadpoolTimer`; a restamp is a compare and two stores under the
+  `SetThreadpoolTimer`, under that lock, where it never waits; a restamp is a compare and two stores under the
   same lock. Per accepted foreground change: one `GetAncestor` and the
   lock. Per UIA focus read the intake takes in: one `GetAncestor` before
   the lock, placing it; per drop, none. An answer that closes the record

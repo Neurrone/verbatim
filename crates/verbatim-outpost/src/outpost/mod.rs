@@ -85,6 +85,7 @@ use crate::supervisor::Target;
 use crate::text::uia::UiaPos;
 use crate::text::{Anchors, HeldAnchors};
 
+use gap_record::{CopyDropped, GapRead};
 pub use gap_timer::GapTimer;
 use intake::{Entry, EventElement, Intake, Item, UiaEvent, UiaKind};
 use outbound::Outbound;
@@ -409,38 +410,68 @@ impl Context {
             .unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Does what a change to the gap record asked of its timer: sets it for
-    /// a record opened, cancels it for one answered.
-    fn gap_timer(&self, action: intake::TimerAction) {
-        let timer = Arc::clone(
+    /// The gap record's timer, which the intake sets and cancels under its
+    /// lock as the record changes. The handle is dropped by the caller
+    /// after the intake's lock is released, so a timer replaced meanwhile
+    /// ([`Outpost::set_gap_timer`]) waits for its callback, which takes
+    /// that lock, with the lock free.
+    fn gap_timer(&self) -> Arc<dyn GapTimer> {
+        Arc::clone(
             &self
                 .gap_timer
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner),
-        );
-        match action {
-            intake::TimerAction::Keep => {}
-            intake::TimerAction::Set(due_us) => timer.set(due_us),
-            intake::TimerAction::Cancel => timer.cancel(),
-        }
+        )
     }
 
-    /// [`gap_timer`](Self::gap_timer) for an entry pushed: and, when a UIA
-    /// focus's outcome answered the gap record as it resolved its marker
-    /// while the idle barrier's query waits on that record, a wake for the
-    /// worker, which answers the query after an entry
-    /// ([`worker::answer_idle`]); a drop resolved without a read leaves the
-    /// worker nothing else to handle. Only the idle barrier's rounds pay
-    /// that wake.
-    fn pushed_with_gap_timer(&self, action: intake::TimerAction) {
-        self.gap_timer(action);
+    /// The worker dropped a copy in `window`, of top-level window
+    /// `top_level`, observed at `at_us`, because it judges the window UIA
+    /// ([`Intake::gap_copy_dropped`]).
+    fn gap_copy_dropped(&self, window: isize, top_level: isize, at_us: u64) -> CopyDropped {
+        let timer = self.gap_timer();
+        let (dropped, _) = self
+            .intake
+            .gap_copy_dropped(window, top_level, at_us, &*timer);
+        dropped
+    }
+
+    /// The worker accepted an event of `window`, of top-level window
+    /// `top_level`, observed at `at_us` ([`Intake::gap_accepted`]).
+    fn gap_accepted(&self, window: isize, top_level: isize, at_us: u64, restamps: bool) {
+        let timer = self.gap_timer();
+        self.intake
+            .gap_accepted(window, top_level, at_us, restamps, &*timer);
+    }
+
+    /// The bound's entry is handled now, on the observation clock
+    /// ([`Intake::gap_bound_reached`]): the record's read, if its bound has
+    /// passed; a record whose bound has not passed has its timer set again
+    /// for the rest.
+    fn gap_bound_reached(&self) -> Option<GapRead> {
+        let timer = self.gap_timer();
+        self.intake.gap_bound_reached(self.observed_now(), &*timer)
+    }
+
+    /// Pushes `entry` into the intake, which does what it asks of the gap
+    /// record's timer: and, when a UIA focus's outcome answered the gap
+    /// record as it resolved its marker while the idle barrier's query
+    /// waits on that record, a wake for the worker, which answers the query
+    /// after an entry ([`worker::answer_idle`]); a drop resolved without a
+    /// read leaves the worker nothing else to handle. Only the idle
+    /// barrier's rounds pay that wake.
+    fn push_entry(&self, entry: Entry) {
+        let timer = self.gap_timer();
+        let action = self.intake.push(entry, &*timer);
         if action == intake::TimerAction::Cancel && self.idle_query().is_some() {
-            let _ = self.intake.push(Entry {
-                item: Item::Wake,
-                trace: TraceId::mint(),
-                observed_at_us: now_us(),
-                timing: EventTiming::default(),
-            });
+            let _ = self.intake.push(
+                Entry {
+                    item: Item::Wake,
+                    trace: TraceId::mint(),
+                    observed_at_us: now_us(),
+                    timing: EventTiming::default(),
+                },
+                &*timer,
+            );
         }
     }
 
@@ -640,13 +671,12 @@ impl Context {
     }
 
     fn push(&self, item: Item, trace: TraceId, observed_at_us: u64, timing: EventTiming) {
-        let timer = self.intake.push(Entry {
+        self.push_entry(Entry {
             item,
             trace,
             observed_at_us,
             timing,
         });
-        self.pushed_with_gap_timer(timer);
     }
 
     /// Queues an event one of the outpost's own handlers took in, observed
@@ -807,8 +837,7 @@ impl Context {
                 }
             }
             _ => {
-                let timer = self.intake.push(entry());
-                self.pushed_with_gap_timer(timer);
+                self.push_entry(entry());
             }
         }
         // The event thread takes the application's focus and foreground

@@ -366,11 +366,31 @@ a walk of the window's whole tree would wait on its
   top-level window (`listener_outcome` places it as the listener does),
   and the test injects the record's timer's firing rather than waiting for
   it, once the time it passes (`pass_time`) reaches the bound the outpost
-  set, rounded up to a tenth of a second, or at once for a bound already
-  past (`gap_timer_set` says whether one is set). The outpost stamps its
-  own events and times its verdicts' keeps by the run's clock moved on by
-  that time (`observed_now`), with which the facts handed over are
-  stamped. An idle round (`idle_round`) reaches the outpost's idle answer,
+  set, rounded up to a tenth of a second, or at once, from a thread of its
+  own, for a bound already past (`gap_timer_set` says whether one is set).
+  The outpost stamps its own events and times its verdicts' keeps by the
+  test's observation clock (`observed_now`), with which the facts handed
+  over are stamped. Each test chooses that clock once, as it makes the
+  outpost, so none switches partway through (Fable, 2026-10-30, pending
+  Dickson's acceptance):
+  - `OutpostUnderTest::on_frozen_time` (or
+    `on_frozen_time_with_options`) gives the frozen clock: the run's clock
+    when the outpost was made, moved on only by the time passed and by a
+    microsecond each read, so no real time is in it and no two reads are
+    equal. Every test whose assertions depend on a verdict's 500 ms keep,
+    the gap record's bound or a restamp must use it, because on the real
+    clock a slow runner's own steps run out a keep or reach the bound
+    early: every `call_counts` test, the gap record's tests in
+    `focus_reports` (the `a_winevent_focus_` tests, the return and
+    foreground restamp tests, the timer tests, and the others that hand
+    over a copy the outpost drops for UIA), and the one in `remote_ops`.
+  - `OutpostUnderTest::new`, `with_options` and the rest give the real
+    clock, the run's clock moved on by the time passed. Every other test
+    uses it, because the outpost compares the stamps of its caret, text
+    and terminal reads, which it reads from the run's clock itself, with
+    events' observations, which the frozen clock would put in the past.
+
+  An idle round (`idle_round`) reaches the outpost's idle answer,
   which waits while its record is open. `focus_moves_during_the_read`
   moves the focus window as the outpost reads the focused element, and
   `listener_forces_uia` tells the listener's reader of a backend override

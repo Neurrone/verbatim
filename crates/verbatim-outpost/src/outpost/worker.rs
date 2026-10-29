@@ -61,7 +61,7 @@ use super::caret_poll::{self, AfterRead, Poll};
 use super::focus_path::{self, FocusPath};
 use super::gap_record::{CopyDropped, GapRead};
 use super::held;
-use super::intake::{Entry, Handling, Item, Object, TimerAction, UiaEvent, UiaKind, window_of};
+use super::intake::{Entry, Handling, Item, Object, UiaEvent, UiaKind, window_of};
 use super::read::{self, Client, ReadError};
 use super::text_reads::{self, CARET_WATCH_BOUND, OpenWatch};
 use super::window::{
@@ -1327,14 +1327,8 @@ impl Worker<'_> {
     /// whose bound has not passed yet, as when the timer fired a little
     /// early, has its timer set again for the rest.
     fn gap_bound(&mut self, trace: TraceId) {
-        match self
-            .context
-            .intake
-            .gap_bound_reached(self.context.observed_now())
-        {
-            Ok(Some(read)) => self.gap_read(read, trace),
-            Ok(None) => {}
-            Err(due_us) => self.context.gap_timer(TimerAction::Set(due_us)),
+        if let Some(read) = self.context.gap_bound_reached() {
+            self.gap_read(read, trace);
         }
     }
 
@@ -1413,7 +1407,7 @@ impl Worker<'_> {
     fn settle(&self, done: std::sync::mpsc::Sender<()>, trace: TraceId) {
         let context = self.context;
         if context.intake.busy() {
-            context.intake.push(Entry {
+            context.intake.push_outside_gap(Entry {
                 item: Item::Settle(done),
                 trace,
                 observed_at_us: now_us(),
@@ -1424,8 +1418,8 @@ impl Worker<'_> {
         // A noted caret waits for nothing else to be ready, and the settle
         // is: it goes first, and the settle after it.
         if let Some(noted) = context.intake.take_idle() {
-            context.intake.push(noted);
-            context.intake.push(Entry {
+            context.intake.push_outside_gap(noted);
+            context.intake.push_outside_gap(Entry {
                 item: Item::Settle(done),
                 trace,
                 observed_at_us: now_us(),
@@ -3356,11 +3350,8 @@ impl Worker<'_> {
         // record's read after a return carries the return's stamp, or
         // answers one open in another of the application's top-level
         // windows, before its window's verdict, whichever it is.
-        let timer =
-            self.context
-                .intake
-                .gap_accepted(hwnd, top_level_of(hwnd), observed_at_us, true);
-        self.context.gap_timer(timer);
+        self.context
+            .gap_accepted(hwnd, top_level_of(hwnd), observed_at_us, true);
         match read::own_window_verdict(self.context, hwnd) {
             None => return,
             Some(true) => {
@@ -3426,11 +3417,8 @@ impl Worker<'_> {
         }
         // Handled through MSAA, it answers a gap record open in another of
         // the application's top-level windows.
-        let timer = self
-            .context
-            .intake
+        self.context
             .gap_accepted(hwnd, top_level, observed_at_us, false);
-        self.context.gap_timer(timer);
         // A control taking the focus raised focus on itself and then on its
         // focused child, and the control's event was already reported as
         // the child (`verbatim_ia2::acquire::focus_candidate`): NVDA reports
@@ -3531,11 +3519,9 @@ impl Worker<'_> {
         trace: TraceId,
         observed_at_us: u64,
     ) {
-        let (dropped, timer) =
-            self.context
-                .intake
-                .gap_copy_dropped(window, top_level, observed_at_us);
-        self.context.gap_timer(timer);
+        let dropped = self
+            .context
+            .gap_copy_dropped(window, top_level, observed_at_us);
         tracing::debug!(
             window,
             ?dropped,
@@ -4394,6 +4380,114 @@ mod tests {
         assert_eq!(
             answer.ok(),
             Some(OutpostToSupervisor::IdleAnswer { round: 4 })
+        );
+        outpost.shutdown();
+    }
+
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Mutex, OnceLock, PoisonError, Weak};
+
+    use super::super::GapTimer;
+
+    /// The gap record's timer as the test times it: the due time it is set
+    /// for, if it is set, and, the first time it is cancelled, the worker's
+    /// step of opening a record for a copy in another top-level window,
+    /// taken as soon as the intake lets it: there and then, while the
+    /// intake's lock is free, or on a thread of its own that waits for the
+    /// lock, which is joined once the cancelling push is done.
+    #[derive(Default)]
+    struct InterleavedTimer {
+        due_us: Mutex<Option<u64>>,
+        context: OnceLock<Weak<Context>>,
+        stepped: AtomicBool,
+        worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    }
+
+    /// The copy the worker drops for UIA while the record is answered: its
+    /// window, its top-level window, and its observation.
+    const SECOND_COPY: (isize, isize, u64) = (0x21, 0x20, 2_000);
+
+    impl GapTimer for InterleavedTimer {
+        fn set(&self, due_us: u64) {
+            *self.due_us.lock().unwrap_or_else(PoisonError::into_inner) = Some(due_us);
+        }
+
+        fn cancel(&self) {
+            if !self.stepped.swap(true, Ordering::Relaxed)
+                && let Some(context) = self.context.get().and_then(Weak::upgrade)
+            {
+                let held = context.intake.is_held();
+                let step = move || {
+                    let (window, top_level, at_us) = SECOND_COPY;
+                    let _ = context.gap_copy_dropped(window, top_level, at_us);
+                };
+                if held {
+                    *self.worker.lock().unwrap_or_else(PoisonError::into_inner) =
+                        Some(std::thread::spawn(step));
+                } else {
+                    step();
+                }
+            }
+            *self.due_us.lock().unwrap_or_else(PoisonError::into_inner) = None;
+        }
+    }
+
+    /// The pipe thread's push of a UIA focus's outcome that answers the
+    /// open gap record, and the worker's drop of a copy in another
+    /// top-level window that opens the next, come at once: whichever order
+    /// they take, the record left open has its timer set for its bound.
+    #[test]
+    fn a_record_opened_while_the_last_is_answered_keeps_its_timer() {
+        use verbatim_process::overlapped::{End, Flow, pipe};
+        use verbatim_process::transport::EVENT_PIPE_BUFFER;
+
+        use crate::protocol::GapAnswer;
+
+        let (_ours, theirs) =
+            pipe(Flow::Inbound, EVENT_PIPE_BUFFER, End::Overlapped).expect("a pipe");
+        let outpost = super::super::Outpost::new(theirs, std::process::id());
+        let timer = Arc::new(InterleavedTimer::default());
+        outpost.set_gap_timer(Arc::clone(&timer) as Arc<dyn GapTimer>);
+        let _ = timer.context.set(Arc::downgrade(&outpost.context));
+        let context = &outpost.context;
+
+        assert_eq!(
+            context.gap_copy_dropped(0x11, 0x10, 1_000),
+            CopyDropped::Opened { due_us: 1_001_000 }
+        );
+        context.push(
+            Item::Fact(DeliveredFact::UiaFocusMarker { marker: 7 }, None),
+            TraceId::mint(),
+            1_500,
+            EventTiming::default(),
+        );
+        context.push(
+            Item::Fact(
+                DeliveredFact::UiaFocusDropped {
+                    marker: 7,
+                    focus: true,
+                    answer: GapAnswer::Answers(Some(0x10)),
+                },
+                None,
+            ),
+            TraceId::mint(),
+            1_500,
+            EventTiming::default(),
+        );
+        if let Some(worker) = timer
+            .worker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        {
+            worker.join().expect("the worker's step");
+        }
+
+        assert!(context.intake.gap_open(), "the second copy's record");
+        assert_eq!(
+            *timer.due_us.lock().unwrap_or_else(PoisonError::into_inner),
+            Some(SECOND_COPY.2 + 1_000_000),
+            "its bound"
         );
         outpost.shutdown();
     }

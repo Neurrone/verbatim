@@ -364,7 +364,7 @@ fn a_focus_carries_its_parents_automation_id() {
     let mut app = common::spawn("switcher.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus window_a");
     outpost.read_focus_as(client.focused().live().element());
@@ -1470,7 +1470,7 @@ fn a_winevent_focus_no_uia_focus_follows_is_read_once_its_bound_has_passed() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1501,7 +1501,7 @@ fn a_winevent_focus_its_uia_focus_follows_is_reported_once() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1530,7 +1530,7 @@ fn a_winevent_focus_whose_uia_focus_has_no_window_is_read_at_once() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1665,7 +1665,7 @@ fn a_winevent_focus_whose_uia_focus_is_no_longer_focused_is_read_at_its_bound() 
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1700,7 +1700,7 @@ fn a_winevent_focus_observed_past_its_bound_is_read_at_once() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1735,7 +1735,7 @@ fn a_winevent_focus_no_uia_focus_follows_is_read_at_its_bound_and_heard_once_whe
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1796,7 +1796,7 @@ fn a_winevent_focus_in_a_console_window_no_uia_focus_follows_is_read_with_its_wi
     let mut app = common::spawn("console_window.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus text");
     outpost.read_focus_as(client.focused().live().element());
@@ -1873,7 +1873,7 @@ fn a_winevent_focus_whose_uia_focus_waits_for_its_read_at_the_bound_is_reported_
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1905,7 +1905,7 @@ fn a_record_whose_focus_went_to_another_application_reads_nothing_at_its_bound()
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -1928,7 +1928,7 @@ fn a_copy_handled_through_msaa_opens_no_record() {
     let title = common::unique_title("mockapp-msaa-copy");
     let mut app = common::spawn("small.json", "msaa", &title);
     let hwnd = common::find_window(&title);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     let reported = outpost.msaa_focus(hwnd, 1);
@@ -1956,7 +1956,7 @@ fn an_event_and_its_uia_focus_handled_after_the_keep_are_judged_by_one_verdict()
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     let read = outpost.listener_fact(&client.focused());
@@ -2004,7 +2004,7 @@ fn a_return_within_the_bound_is_read_with_the_returns_stamp() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -2036,7 +2036,7 @@ fn an_accepted_foreground_change_into_the_records_window_restamps_it() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -2074,7 +2074,7 @@ fn an_answered_record_cancels_its_timer() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     winevent_focus(&outpost, hwnd);
@@ -2100,7 +2100,7 @@ fn a_gap_read_whose_focus_window_changes_during_the_read_is_dropped() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -2166,7 +2166,7 @@ fn a_forwarded_copy_opens_the_starting_outposts_record() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());
@@ -2193,7 +2193,7 @@ fn the_idle_answer_waits_for_the_wait_for_a_uia_focus() {
     let mut app = common::spawn("small.json", "uia", &title);
     let hwnd = common::find_window(&title);
     let client = Client::new(hwnd);
-    let outpost = OutpostUnderTest::new(&app);
+    let outpost = OutpostUnderTest::on_frozen_time(&app);
 
     app.send("set-focus btn1");
     outpost.read_focus_as(client.focused().live().element());

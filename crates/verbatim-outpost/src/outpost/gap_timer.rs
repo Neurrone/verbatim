@@ -7,6 +7,13 @@
 //! intake ([`super::intake::Item::GapBound`]), which waits behind every
 //! marker queued before it, so a UIA focus already being read decides
 //! first.
+//!
+//! The intake sets and cancels the timer under its lock, in the order the
+//! record changes. That cannot deadlock: `SetThreadpoolTimer` never waits
+//! for a callback, the callback takes the lock but never sets or cancels
+//! the timer, and the only wait for a callback, in the timer's drop, comes
+//! after the lock is released, since the handle the intake is lent is
+//! dropped by its caller.
 
 use std::io;
 use std::sync::{Arc, Weak};
@@ -23,6 +30,10 @@ use super::intake::Intake;
 /// ([`ThreadpoolGapTimer`]), unless a test sets its own
 /// (`Outpost::set_gap_timer`), which says itself when the bound is reached
 /// (`Outpost::gap_bound_reacher`).
+///
+/// It is set and cancelled under the intake's lock, so neither may wait,
+/// nor reach the bound on the calling thread: a bound already past is
+/// reached from another thread, as the threadpool's callback reaches it.
 pub trait GapTimer: Send + Sync {
     /// Has the bound reached at `due_us`, on the outpost's observation
     /// clock (`Outpost::set_observation_clock`), in place of any time set
