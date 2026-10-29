@@ -58,8 +58,10 @@ source for them; its first step is the measurements and captures.
 
 ### The caret and selection rework
 
-The scope, order of work and study are in
-[the caret and selection rework](design/caret-selection-rework.md). Agreed with Dickson on 2026-10-25 after a study found the design's shape
+The decisions, the design and the order of work are in
+[the caret and selection rework](design/caret-selection-rework.md), consolidated for building, the one
+source for them; its first step is NVDA's captures of the keys not yet
+captured. Agreed with Dickson on 2026-10-25 and 2026-10-29 after a study found the design's shape
 right (a held key's caret read before it, the outpost watching for
 evidence and comparing positions in the provider, Core choosing every
 word) but a second layer, added before key holding closed the race it
@@ -68,8 +70,7 @@ places, and two known defects come from copies disagreeing (Control+A
 followed by a repeated focus says nothing; a superseded key's answer
 leaves Core's caret stale).
 
-The decisions and their order of work, each in the design's
-"Decisions" and "Order of work", are:
+The decisions, in brief:
 
 - Pin today's defects with tests first.
 - One last read per text node in the outpost as the only baseline, one
@@ -85,14 +86,17 @@ The decisions and their order of work, each in the design's
 - Control+Z, Control+Y, Control+X, Control+V and Escape in a text field
   match NVDA: not held and silent, replacing the decision of 2026-10-08
   that spoke them; the `caret_keys` scenarios' expectations change.
-- A caret key that moves nothing speaks its unit, as NVDA does, so that
-  Up Arrow on a one-line field reads the line, replacing the decision of
-  2026-10-08 that made it silent; and Alt+Up and Alt+Down Arrow move by
-  sentence where the application does not, as NVDA does (Dickson,
-  2026-10-29).
-- One time stamp per caret report; then the outbound merge's clause
-  against merging across a reply is checked and removed, its stated
-  reason predating 505e3ad8.
+- A key that moves nothing speaks as NVDA's script does, so that Up
+  Arrow on a one-line field reads the line, replacing the decision of
+  2026-10-08 that made it silent: at once at the edge of the text when
+  nothing is selected, otherwise 100 ms after the key; a move that
+  arrives later, within the watch's new 1-second bound, cuts speech and
+  is spoken. Alt+Up and Alt+Down Arrow move by sentence where the
+  application does not, as NVDA does. Terminals keep their reading
+  rules for all of this (Dickson, 2026-10-29).
+- One time stamp per caret report; the outbound queue's clause against
+  merging a caret report across a reply is removed, its stated reason
+  predating 505e3ad8.
 - The judgement of a key's evidence stays in the outpost, named in D14 as
   the one read-time decision outside Core, since it bounds reads on text
   changes.
