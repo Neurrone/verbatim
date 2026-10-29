@@ -35,7 +35,7 @@ In Verbatim the operation was the listener's focus read and the connection an ou
 
 A related cost that is not a failure: a remote operation waiting for one busy UI thread delays every other client's call into the process, on any thread, held elements included, by the same time (`e28`, 9 of 9 delayed to the end of a 1,000 ms busy period, against under 1.1 ms in the control `e28c`).
 
-A second form needs new connections from two processes: a new connection waiting in a busy application fails when another process's new connection waits there too and a third process has a call pending. Two connections from two threads of one process beside a held call did not fail (12 of 12), nor did a connection beside another's that was waiting when its process ended (12 of 12).
+A second form needs new connections from two processes: a new connection waiting in a busy application fails in some trials (3 of 42; with the listener's implicit connection as one of them, the listener's read one connection timeout late in 5 of 42) when another process's new connection waits there too and a third process has a call pending. Two connections from two threads of one process beside a held call did not fail (12 of 12), nor did a connection beside another's that was waiting when its process ended (12 of 12).
 
 A call that times out leaves its request queued in the application, which processes it when it wakes, so a connection made then by another process can still collide.
 
@@ -72,6 +72,8 @@ No test in `crates/mockapp/tests/uia_bugs/` reproduces it: a test would have to 
 #### Evidence
 
 [`experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/`](../experiments/a-new-connection-fails-while-another-processs-remote-operation-is-queued/readme.md): the collide tool's experiments `e1` to `e36` (including `e24b`, `e24c`, `e26b`, `e28c`, `e28d`, `e35b` and `e35c`), with the tool as patches, and the Notepad and Windows Terminal launches that met the fault.
+
+[`experiments/two-new-connections-beside-a-pending-call/`](../experiments/two-new-connections-beside-a-pending-call/readme.md): the second form's frequency, two outposts' lookups and the listener's read beside a pending call.
 
 ### UiaHasServerSideProvider says no for a new conhost window while another process has an event handler
 

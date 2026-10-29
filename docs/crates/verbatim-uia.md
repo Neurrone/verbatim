@@ -99,7 +99,9 @@ call waits up to `CONNECTION_TIMEOUT` to connect and
   runtime_id, request)` searches `parent`'s children only. The runtime id
   condition's `VARIANT` is built by `InitVariantFromInt32Array`, so no raw
   array is handled; `windows`'s `VARIANT` clears its array on drop. A
-  search that finds nothing is `Ok(None)`; one that fails is an error.
+  search that finds nothing is `Ok(None)`, and so is one that passed over
+  a child window whose process did not answer within the connection
+  timeout; one that fails otherwise is an error.
 - `controlled(focused, runtime_id, request, current_instead)`: the
   selected element when it is inside an element the focus names in its
   `ControllerFor` relation, else, with `current_instead`, the first

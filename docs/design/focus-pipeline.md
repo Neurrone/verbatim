@@ -128,7 +128,7 @@ A reading thread is created on its application's first UIA focus event, in COM's
 
 ### 12.3 How a slow application is contained, and D13
 
-Each application's reads are on its own thread, so a held application stalls only its own (E-concurrency). The listener's callbacks, writer and registration thread make no calls. One exposure remains, measured and shared with NVDA: a hung window named in a focus `WinEvent` holds UIA's delivery of every UIA event to any process with a focus registration, with no timeout, until it answers (`docs/uia-bugs.md`, "A hung window named in a system focus event holds a process's UIA events"). The stall stays inside that process, and its `WinEvent` hooks keep delivering; under option (b) only the listener holds a focus registration, so outposts' UIA events, explicit reads and every MSAA hook keep working. Clearing UIA's WinEvent-to-focus mapping does not contain it. Decision (Dickson, 2026-10-10): do as NVDA does, with no MSAA fallback; while a hung window holds the listener's UIA focus, UIA focus is not announced until the window answers, because announcing from MSAA would sound different and a visible failure is better. That is also why the listener is a process of its own (`docs/architecture.md`, "The focus listener (D13)").
+Each application's reads are on its own thread, so a held application stalls only its own (E-concurrency). The listener's callbacks and writer make no calls; its registration thread's desktop-wide registration reads the foreground application's focus. One exposure remains, measured and shared with NVDA: a hung window named in a focus `WinEvent` holds UIA's delivery of every UIA event to any process with a focus registration, with no timeout, until it answers (`docs/uia-bugs.md`, "A hung window named in a system focus event holds a process's UIA events"). The stall stays inside that process, and its `WinEvent` hooks keep delivering; under option (b) only the listener holds a focus registration, so outposts' UIA events, explicit reads and every MSAA hook keep working. Clearing UIA's WinEvent-to-focus mapping does not contain it. Decision (Dickson, 2026-10-10): do as NVDA does, with no MSAA fallback; while a hung window holds the listener's UIA focus, UIA focus is not announced until the window answers, because announcing from MSAA would sound different and a visible failure is better. That is also why the listener is a process of its own (`docs/architecture.md`, "The focus listener (D13)").
 
 ### 12.4 One route per application
 
@@ -186,7 +186,7 @@ Each recommended and approved by Dickson on 2026-10-10 or 2026-10-11 unless date
 6. The UIA probe asks once.
 7. One input channel into Core, in arrival order.
 8. The first-character-after-Tab scenario, as a measurement (section 14).
-9. D13 as amended: the listener judges and reads each UIA focus from its sender on a thread per application; its callbacks, writer and registration thread make no cross-process call.
+9. D13 as amended: the listener judges and reads each UIA focus from its sender on a thread per application; its callbacks and writer make no cross-process call.
 
 ## 16. Rules settled by the first live run of option (b)
 

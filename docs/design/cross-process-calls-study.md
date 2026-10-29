@@ -1,6 +1,6 @@
 # Calls that reach another application: a study
 
-Status: study of 2026-10-29, for Dickson's decisions; nothing is built, and the corrections it proposes to other documents are not applied. The experiments behind its figures are listed under "Evidence" at the end.
+Status: study of 2026-10-29; Dickson took its five decisions, each as recommended, on 2026-10-29. Decisions 1, 4 and 5 are in the order of work and edge cases of `docs/design/focus-pipeline-rework.md` ("Decisions"); decisions 2 and 3 are two small changes made outside that rework's order of work. The corrections it lists for other documents are applied. The experiments behind its figures are listed under "Evidence" at the end.
 
 ## In short
 
@@ -8,7 +8,7 @@ The premise under study (`docs/architecture.md`, section 1; `docs/design/listene
 
 The verdict: the premise needs a design change. It holds for every remote operation and every call Verbatim makes by a window handle, with one decided exception (`GetFocusedElementBuildCache`, below), but not for blocking: six measured mechanisms make one application's reading wait on another application, and two of them lose a focus outright. The change asked for is small and shared: no thread that reports a focus waits on a process other than the one it serves, which three fixes below give. With them, and the limits they leave stated, the premise would hold as "holds with named, stated limits".
 
-The decisions for Dickson, each with the recommendation:
+The decisions, taken by Dickson on 2026-10-29, each as recommended:
 
 1. Above the process boundary, read nothing through the other process's accessibility: describe the parent or owner window as a plain window from Windows' own state, with no call. Recommended; it removes the measured silences of a child application under a busy host (instance 1) and the walk-up race's wait (instance 6), at the cost of the frame's MSAA name and role, which a capture must compare with NVDA's.
 2. The listener installs its `WinEvent` hooks and says `Ready` before its UIA registration, which then runs without gating them. Recommended (instance 2).
@@ -195,7 +195,7 @@ Needs a design change. The rule that only an application's own outpost makes Ver
 
 ## Documents whose claims are false
 
-Proposed corrections, not applied.
+The claims as they stood and their corrections, applied on 2026-10-29.
 
 - `docs/architecture.md`, section 1, "The focus listener (D13)": "The listener's contract: **its callbacks, its writer, and its registration threads never make a cross-process call.**" Corrected: "The listener's contract: its callbacks and its writer never make a cross-process call; its registration thread's one desktop-wide registration, made at its start, waits on the foreground application while UIA reads the system's focus, up to about 6 seconds for one that does not answer (`docs/design/cross-process-calls-study.md`, instance 2)."
 - The same section: "Of the listener's threads only the reading threads call into applications, and each call is one on an element the listener holds". Corrected: "Of the listener's threads the reading threads call into applications, each call one on an element the listener holds, and the registration thread's registration reads the foreground application's focus."
@@ -209,7 +209,7 @@ Proposed corrections, not applied.
 - `docs/crates/verbatim-uia.md`, `find_by_runtime_id`: "a search that finds nothing is `Ok(None)`; one that fails is an error." Corrected: "a search that finds nothing is `Ok(None)`, and so is one that passed over a child window whose process did not answer within the connection timeout; one that fails otherwise is an error."
 - `docs/crates/verbatim-outpost.md`, "Who calls into an application": "Only an application's own outpost sends it a remote operation or makes a new UIA connection to its windows". Corrected: "Only an application's own outpost sends it a remote operation or makes a new UIA connection to its windows by a call of Verbatim's, with the exceptions `docs/design/cross-process-calls-study.md` lists: UIA's client side's connections to a parent across the boundary, the focus-read and walk-up races, and the runtime-id search's entry into another process's child window."
 
-Not a document but false, a code comment: `SHUTDOWN_LIMIT`'s doc in `crates/verbatim-outpost/src/supervisor/retire.rs` says Verbatim leaves UIA's transaction timeout at its default of 20 seconds and the connection timeout at 10; Verbatim sets 5 and 2 (`CONNECTION_TIMEOUT`, `TRANSACTION_TIMEOUT`). A follow-up, not part of this study.
+Not a document but false, a code comment: `SHUTDOWN_LIMIT`'s doc in `crates/verbatim-outpost/src/supervisor/retire.rs` says Verbatim leaves UIA's transaction timeout at its default of 20 seconds and the connection timeout at 10; Verbatim sets 5 and 2 (`TRANSACTION_TIMEOUT`, `CONNECTION_TIMEOUT`). Corrected with the documents.
 
 ## What was not proved
 

@@ -337,12 +337,16 @@ that are global by nature:
   Core, which asks the foreground application for its focus if its own
   has not changed shortly after, as NVDA's fake focus does.
 
-The listener's contract: **its callbacks, its writer, and its registration
-threads never make a cross-process call.** An MSAA WinEvent delivers raw
-window and object ids, which are forwarded untouched; the only other reads
-in those threads are hang-safe local ones (the window's owning process id,
-its class name, and for the window in front its process's integrity level,
-read from the kernel). No application, hung or not, can stall them.
+The listener's contract: **its callbacks and its writer never make a
+cross-process call**; its registration thread's one desktop-wide
+registration, made at its start, waits on the foreground application while
+UIA reads the system's focus, up to about 6 seconds for one that does not
+answer (`docs/design/cross-process-calls-study.md`, instance 2). An MSAA
+WinEvent delivers raw window and object ids, which are forwarded
+untouched; the only other reads in the callbacks and the writer are
+hang-safe local ones (the window's owning process id, its class name, and
+for the window in front its process's integrity level, read from the
+kernel). No application, hung or not, can stall them.
 
 Detection and announcement are deliberately split. The listener forwards
 each captured fact to Core; the supervisor ensures the target's own
@@ -425,27 +429,34 @@ notifications come desktop-wide from the listener. One extra hop
 (listener to Core to app outpost) costs well under a millisecond against
 the tens of milliseconds acquisition already costs.
 
-Of the listener's threads only the reading threads call into
-applications, and each call is one on an element the listener holds,
-with no remote operation and no connection by handle. Only an
-application's own outpost sends it a remote operation or connects to one
-of its windows, and an outpost connects to, probes and walks up into only
-its own application's windows, reading another process's window above the
-focus through MSAA; object navigation's step, which can read a neighbor
-in another process's window through UIA, is an accepted exception
-(`docs/design/listener-without-connections.md`, sections 2 and 4.3). So
-the UIA defect where a new connection fails while another process's
-remote operation is queued in the application (`docs/uia-bugs.md`) cannot
-arise between Verbatim's own calls, and no lock guards them. A slow or
-hung application holds only the threads that serve it, with one
-exception, shared with NVDA: a hung window named in a focus `WinEvent`
-holds UIA's delivery of every UIA event to the process holding a focus
-registration until it answers (`docs/uia-bugs.md`, "A hung window named
-in a system focus event holds a process's UIA events"). That is why the
-listener is a process of its own and not threads in one UIA host beside
-the outposts: nothing short of a process boundary isolates the stall, and
-in a shared host it would hold every application's UIA events, terminal
-output included, for up to 4 seconds per such event.
+Of the listener's threads the reading threads call into applications, each
+call one on an element the listener holds, and the registration thread's
+registration reads the foreground application's focus, with no remote
+operation and no connection by handle. Only an application's own outpost
+sends it a remote operation or connects to one of its windows, and an
+outpost connects to, probes and walks up into only its own application's
+windows, except one connection where the focus or the window hierarchy
+changes between its check and its call, and its runtime-id search, which
+enters any child window of another process below its application's
+top-level window (`docs/design/cross-process-calls-study.md`); it reads
+another process's window above the focus through MSAA; object navigation's
+step, which can read a neighbor in another process's window through UIA,
+is an accepted exception (`docs/design/listener-without-connections.md`,
+sections 2 and 4.3). So the UIA defect where a new connection fails while
+another process's remote operation is queued in the application
+(`docs/uia-bugs.md`) cannot arise between Verbatim's own calls, and no
+lock guards them. A slow or hung application holds only the threads that
+serve it, with these exceptions: a hung window named in a focus `WinEvent`
+holds the listener's UIA events (shared with NVDA; `docs/uia-bugs.md`, "A
+hung window named in a system focus event holds a process's UIA events");
+a window above the process boundary holds the reading of the focus below
+it, in the listener and in that focus's outpost; and the foreground
+application holds the listener's start
+(`docs/design/cross-process-calls-study.md`, instances 1 and 2). That is
+why the listener is a process of its own and not threads in one UIA host
+beside the outposts: nothing short of a process boundary isolates the
+first stall, and in a shared host it would hold every application's UIA
+events, terminal output included, for up to 4 seconds per such event.
 
 ### Why one process per app
 

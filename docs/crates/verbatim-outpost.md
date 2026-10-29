@@ -295,9 +295,12 @@ round in its place. Spares' failures are replaced with their own backoff.
 ### Who calls into an application
 
 Only an application's own outpost sends it a remote operation or makes a
-new UIA connection to its windows
-(`docs/design/listener-without-connections.md`, section 2), so no lock is
-needed around them. The supervisor's `App` table holds each application's
+new UIA connection to its windows by a call of Verbatim's, with the
+exceptions `docs/design/cross-process-calls-study.md` lists: UIA's client
+side's connections to a parent across the boundary, the focus-read and
+walk-up races, and the runtime-id search's entry into another process's
+child window (`docs/design/listener-without-connections.md`, section 2),
+so no lock is needed around them. The supervisor's `App` table holds each application's
 process open while it has a record, so its pid is never reused while an
 outpost or reading thread serves it. Registrations scope windows' subtrees
 by their elements (`Scope::Subtrees`), with no connection by handle.

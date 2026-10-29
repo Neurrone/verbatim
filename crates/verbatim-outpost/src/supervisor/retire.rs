@@ -24,12 +24,16 @@ use super::writer::Outgoing;
 /// crash inside `UIAutomationCore.dll` on 2026-10-08
 /// (`docs/crates/verbatim-outpost.md`, "Shutting down"). Such a call ends by UIA's own timeouts
 /// even when the application never answers: a call waiting on a provider
-/// that does not answer is ended by UIA's transaction timeout, 20 seconds,
-/// UIA's default, which Verbatim leaves as it is (a classic call and a
-/// remote operation's `Execute` alike, as mockapp's `remote_ops` tests
-/// pin), and the connection timeout, 10 seconds, ends a call to a provider
-/// that cannot be reached. So 20 seconds covers every call UIA ends by
-/// itself, and the second on top covers the shutdown's own work. Waiting
+/// that does not answer is ended by UIA's transaction timeout, which
+/// Verbatim sets to 5 seconds (`verbatim_uia::TRANSACTION_TIMEOUT`; a
+/// classic call and a remote operation's `Execute` alike, as mockapp's
+/// `remote_ops` tests pin), and the connection timeout, which Verbatim sets
+/// to 2 seconds (`verbatim_uia::CONNECTION_TIMEOUT`), ends a call to a
+/// provider that cannot be reached. A timeout bounds each provider call,
+/// not an operation, so an operation of several calls, such as a search,
+/// waits a full timeout for each one the application does not answer; the
+/// 20 seconds leave room for four such calls in a row, and the second on
+/// top covers the shutdown's own work. Waiting
 /// longer could only wait on an MSAA call into a hung application, which
 /// nothing times out; that one is killed.
 pub(super) const SHUTDOWN_LIMIT: Duration = Duration::from_secs(21);
