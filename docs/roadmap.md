@@ -569,6 +569,27 @@ abandoned but changes nothing spoken.
   abandoned threads, the bound on an application's abandoned reads, and
   the 11-second `READ_DEADLINE`.
 
+## M6.2 — Outpost retirement
+
+At most one outpost serves an application at any time (Dickson,
+2026-10-29): a failed or retired outpost is ended, killed if it does not
+exit, before its replacement starts, because a failed outpost is retired
+on a thread of its own while its replacement is started after the backoff
+(`crates/verbatim-outpost/src/supervisor/owner.rs`, the failure path),
+so for up to `SHUTDOWN_LIMIT` a stuck outpost and its replacement can
+both be in the application, where two Verbatim processes' calls collide
+inside UIA (`docs/design/listener-without-connections.md`).
+
+- A mockapp test that fails an outpost during a held remote operation and
+  checks what its replacement reads.
+- The replacement started only once the old process has exited, and the
+  kill's place in that order, weighed against the crash inside Windows
+  Terminal's `UIAutomationCore.dll` that the clean shutdown was added for.
+- `SHUTDOWN_LIMIT` (21 seconds) rests on UIA's default transaction timeout
+  of 20 seconds, which Verbatim lowered to 5 seconds on 2026-10-10, and a
+  timeout bounds each provider call, not an operation; its bound is
+  settled with the order above.
+
 ## M7 — Browse mode, browsers, and the injection helper
 
 - Document projection / incremental virtual buffer over the normalized tree;
