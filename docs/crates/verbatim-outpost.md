@@ -254,8 +254,8 @@ whose cached process is not the outpost's application, the console host
 for a console, or that has none cached, is read no further: no
 enrichment, walk, subscription or report, `None` answered, and a debug
 line naming both processes. Each read is logged at debug with what asked
-for it (`read::FocusRead`: a focus-now query, focus-missing, or the read
-after a listener's drop on its verdict). The one connection the call makes into
+for it (`read::FocusRead`: a focus-now query, focus-missing, the read
+after a listener's drop on its verdict, or a cut walk, below). The one connection the call makes into
 the other application cannot be prevented.
 
 Every window the worker judges or acts on for an event, whether its own
@@ -889,6 +889,15 @@ unredirected, never unspawned.
   chain is kept (`outpost::focus_path`) for the controller relation, a
   dialog's text, and queries. A focus whose element is in no tree, as
   Windows Terminal's tab focuses, is reported all the same.
+- A text focus with no window of its own whose walk up the listener cut,
+  so that the chain holds only the focus (`FocusPath::is_cut_at`), has no
+  route; the outpost reads its application's focused element instead
+  (`read::focused_element_in`, trigger `read::FocusRead::CutWalk`), with
+  the focus read's checks and process-id check, and keeps it when its
+  runtime id is the focus's (`Worker::element_after_cut_walk`;
+  `docs/design/focus-pipeline-rework.md`, the audit's difference 5). It
+  finds the element only while the element still has the keyboard focus,
+  a limit; a focus without text is not looked for this way.
 - While the focus's value is its selected item
   (`UiaFocusRead::value_from_selection`), a selection of one of its children
   (found by one `FindFirstBuildCache`, `verbatim_uia::SelectedItem`) is

@@ -1071,6 +1071,13 @@ its probe adds 1 window message (above):
   with 1 window message and 1 connection. A classic edit control through
   MSAA 37 MSAA calls and 6 window messages. A focus without text is
   reported before its search.
+- A windowless text focus whose walk up the listener cut, so that no route
+  leads to its element: the application's focused element is read in
+  place of the search, 1 UIA call and 1 connection, and the field found
+  is read as any other; mockapp's "Notes" in `ancestry.json`, which has no
+  text pattern, costs the outpost 3 UIA calls and 1 window message, where
+  without the read it was not found and its text not read
+  (`a_slow_windowless_text_focus_is_found_as_the_focused_element`).
 - Measured on 2026-10-22 with `cargo xtask measure` (debug, info level,
   five runs; minimum, P50, P95, P99 and maximum in ms). mockapp's field as
   the first focus in a new application (`measure_focus_new_application`):

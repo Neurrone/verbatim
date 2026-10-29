@@ -31,8 +31,9 @@ use std::time::Duration;
 use verbatim_core::SrState;
 use verbatim_ia2::WinEventKind;
 use verbatim_model::{
-    Backend, Effect, Fetches, FocusText, Input, NodeDetails, NodeSnapshot, NormalizedEvent,
-    OutpostId, Pid, PropertyChange, Role, SegmentContent, State, StateSet, TextFormat, TraceId,
+    Backend, CallCounts, Effect, Fetches, FocusText, Input, NodeDetails, NodeSnapshot,
+    NormalizedEvent, OutpostId, Pid, PropertyChange, Role, SegmentContent, State, StateSet,
+    TextFormat, TraceId,
 };
 use verbatim_outpost::focus_read::{FocusEvent, Judged, NO_WINDOW, NOT_FOCUSED};
 use verbatim_outpost::protocol::{
@@ -568,6 +569,89 @@ fn a_focus_without_a_path_is_followed_from_its_next_focus_event() {
         (node.id, Some("Original Name"))
     );
     assert_followed(&mut app, &outpost, "btn1", &node);
+
+    drop(outpost);
+    app.quit();
+}
+
+/// How late the cut walk's step to the text field's parent answers: past
+/// the listener's two-second read budget.
+const SLOW_PARENT_MS: u32 = 2100;
+
+/// A text field with no window of its own whose walk up the listener cut,
+/// so that the chain it sends holds only the field, is found by the outpost
+/// as its application's focused element, read with the focus read's
+/// process-id check and taken because its runtime id is the field's, before
+/// the focus is reported (`docs/design/focus-pipeline-rework.md`, the
+/// audit's difference 5). The field, "Notes", is four levels below its
+/// window, where a walk down from the window by the runtime ids known would
+/// not reach it. The read's first step to the field's parent, after the
+/// nearest window's lookup, answers past the read's budget (`slow-parent`),
+/// spent on the system's clock. Found, the field has no text pattern, so its
+/// text is reported as none, `NoText`; not found, it would be `NotRead`.
+fn a_slow_windowless_text_focus_is_found_as_the_focused_element() {
+    let title = common::unique_title("mockapp-cut-walk");
+    let mut app = common::spawn("ancestry.json", "uia", &title);
+    let hwnd = common::find_window(&title);
+    let client = Client::new(hwnd);
+    let outpost = OutpostUnderTest::new(&app);
+
+    app.send("set-focus notes");
+    let notes = client.focused();
+    outpost.read_focus_as(notes.live().element());
+    outpost.follow_the_system_clock();
+    app.send(&format!("slow-parent notes {SLOW_PARENT_MS} 1"));
+    let (judged, _) = outpost.listener_read(&notes);
+    app.stamped_line("slow-parent started");
+    app.stamped_line("slow-parent ended");
+    app.send("slow-parent notes 0");
+    let Judged::Read(read) = judged else {
+        panic!("the listener dropped the focus: {judged:?}");
+    };
+    assert_eq!(
+        (read.hwnd, read.ancestors.is_none(), read.window),
+        (0, true, Some(hwnd.0 as isize)),
+        "the walk was cut below the field's nearest window"
+    );
+    outpost.deliver(DeliveredFact::UiaFocusRead {
+        marker: 0,
+        read,
+        focus: true,
+    });
+    match outpost.next() {
+        OutpostToSupervisor::Event {
+            event:
+                NormalizedEvent::FocusChanged {
+                    node,
+                    ancestors,
+                    ancestors_unknown: true,
+                    text,
+                    ..
+                },
+            timing,
+            ..
+        } => {
+            assert_eq!(
+                (node.name.as_deref(), ancestors.as_slice(), text.as_deref()),
+                (Some("Notes"), [].as_slice(), Some(&FocusText::NoText))
+            );
+            // The window's probe, one message; the focused-element read,
+            // one UIA call, its stand-in counting no connection; and two on
+            // the field found. Without the read the field is not found, and
+            // no UIA call is made.
+            assert_eq!(
+                timing.calls,
+                CallCounts {
+                    uia: 3,
+                    msaa: 0,
+                    window_messages: 1,
+                    connections: 0,
+                }
+            );
+        }
+        other => panic!("the outpost said {other:?}, not the field's focus"),
+    }
+    outpost.settled();
 
     drop(outpost);
     app.quit();
@@ -2726,6 +2810,10 @@ fn main() {
         (
             "a_focus_without_a_path_is_followed_from_its_next_focus_event",
             a_focus_without_a_path_is_followed_from_its_next_focus_event,
+        ),
+        (
+            "a_slow_windowless_text_focus_is_found_as_the_focused_element",
+            a_slow_windowless_text_focus_is_found_as_the_focused_element,
         ),
         (
             "a_text_change_after_the_focus_returns_to_a_document_is_heard",

@@ -3649,7 +3649,7 @@ impl Worker<'_> {
                 Role::EditableText | Role::Document | Role::Terminal
             );
         if text_first {
-            self.find_focus_element(runtime_id);
+            self.find_focus_element(runtime_id, true);
         }
         context.tracking().value_from_selection = read.value_from_selection.then_some(node.id);
         self.emit_focus(
@@ -3665,7 +3665,7 @@ impl Worker<'_> {
         if !found
             && !text_first
             && context.intake.focused() == Some(Object::Uia(runtime_id.clone()))
-            && let Some(id) = self.find_focus_element(runtime_id)
+            && let Some(id) = self.find_focus_element(runtime_id, false)
         {
             let role = context.tracking().focus_role.unwrap_or(Role::Unknown);
             self.follow_focus((id, role));
@@ -3676,14 +3676,20 @@ impl Worker<'_> {
     /// the listener's read, by the path the listener read: from the nearest
     /// window in the focus's chain, down by runtime ids, one connection
     /// call and one transaction, and keeps it under the focus's node, whose
-    /// id it returns. Not found, as Windows Terminal's tab focus elements,
+    /// id it returns. A `text` focus with no window of its own whose walk up
+    /// the listener cut, so that no path leads to it, is found as the
+    /// application's focused element instead
+    /// ([`element_after_cut_walk`](Self::element_after_cut_walk)). Not
+    /// found, as Windows Terminal's tab focus elements,
     /// which are in no tree, are not, nothing is kept, its text cannot be
     /// read, and nothing is followed, as NVDA hears nothing local before
     /// its group is added to a focus (`docs/design/focus-pipeline.md`,
     /// sections 12.5 and 17).
-    fn find_focus_element(&mut self, runtime_id: &[i32]) -> Option<NodeId> {
+    fn find_focus_element(&mut self, runtime_id: &[i32], text: bool) -> Option<NodeId> {
         let finding = Instant::now();
-        let found = self.element_by_focus_path(runtime_id);
+        let found = self
+            .element_by_focus_path(runtime_id)
+            .or_else(|| text.then(|| self.element_after_cut_walk(runtime_id))?);
         tracing::debug!(
             found = found.is_some(),
             elapsed_us = finding.elapsed().as_micros(),
@@ -3717,6 +3723,35 @@ impl Worker<'_> {
         }
         // Read as `Kept`: the callers keep it, or read only its runtime id.
         found.map(|found| found.narrow())
+    }
+
+    /// The element of a windowless focus whose walk up the listener cut
+    /// ([`FocusPath::is_cut_at`]): the application's focused element, read
+    /// with the focus read's checks, its process-id check among them
+    /// ([`read::focused_element_in`]), and taken when its runtime id is the
+    /// focus's (`docs/design/focus-pipeline-rework.md`, the audit's
+    /// difference 5), since a walk down from the nearest window would find
+    /// it only as that window's direct child, and a search below the window
+    /// costs a round of provider calls per element. Found only while the
+    /// element still has the keyboard focus, a limit.
+    fn element_after_cut_walk(&mut self, runtime_id: &[i32]) -> Option<Cached<Kept>> {
+        let context = self.context;
+        let cut = context
+            .focus_path()
+            .as_ref()
+            .is_some_and(|path| path.is_cut_at(runtime_id));
+        if !cut {
+            return None;
+        }
+        let element =
+            read::focused_element_in(context, self.client, read::FocusRead::CutWalk).ok()?;
+        if element.runtime_id() != runtime_id {
+            tracing::debug!(
+                "the application's focused element is not the focus the listener read; the focus's element is not found"
+            );
+            return None;
+        }
+        Some(element.narrow())
     }
 
     /// The window a UIA focus is reported in, or [`Dropped`] when the focus

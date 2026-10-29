@@ -953,19 +953,7 @@ pub(super) fn focused_control_in(
     client: &mut Client,
     trigger: FocusRead,
 ) -> Result<(isize, FocusedControl), FocusReadMiss> {
-    let hwnd = control_window(context.target_pid(), || context.focus_window())
-        .ok_or(FocusReadMiss::Refused)?;
-    if window_belongs_to_hidden_frame(hwnd) {
-        return Err(FocusReadMiss::Refused);
-    }
-    if let Some(reason) = event_window_unreadable(hwnd) {
-        tracing::debug!(
-            hwnd,
-            reason,
-            "the focus window cannot be read; its focus is not read"
-        );
-        return Err(FocusReadMiss::Refused);
-    }
+    let hwnd = checked_focus_window(context)?;
     // The focused element is read from the window's provider at once.
     if window_uses_uia(context, hwnd) {
         let (uia, nodes) = client
@@ -974,22 +962,7 @@ pub(super) fn focused_control_in(
         let ancestor_request = context
             .ancestor_request(uia)
             .map_err(|_| FocusReadMiss::Failed)?;
-        let focused_request = nodes.with_process().map_err(|_| FocusReadMiss::Failed)?;
-        tracing::debug!(?trigger, hwnd, "the application's focused element is read");
-        let element =
-            (context.focused_element)(uia, &focused_request).map_err(|_| FocusReadMiss::Failed)?;
-        let serving = context.target_pid();
-        let found = element.cached_process();
-        if found != Some(serving) {
-            tracing::debug!(
-                ?trigger,
-                hwnd,
-                serving,
-                ?found,
-                "the focused element read belongs to another process than the one serving the focus window; nothing more is read"
-            );
-            return Err(FocusReadMiss::Refused);
-        }
+        let element = checked_focused_element(context, (uia, &nodes), hwnd, trigger)?;
         let mut node = with_legacy_checked_state(
             element.live().element(),
             element.snapshot(&context.uia_registry),
@@ -1054,6 +1027,75 @@ pub(super) fn focused_control_in(
     }
 }
 
+/// The UIA element of this application's focus, as [`focused_control_in`]
+/// reads it, with its checks and its process-id check, filled as a node and
+/// nothing more read: for the windowless text focus whose element the
+/// focus's route cannot find (`docs/design/focus-pipeline-rework.md`, the
+/// audit's difference 5). `Refused` also when the outpost judges the focus
+/// window MSAA.
+pub(super) fn focused_element_in(
+    context: &Context,
+    client: &mut Client,
+    trigger: FocusRead,
+) -> Result<Cached<Node>, FocusReadMiss> {
+    let hwnd = checked_focus_window(context)?;
+    if !window_uses_uia(context, hwnd) {
+        return Err(FocusReadMiss::Refused);
+    }
+    let (uia, nodes) = client
+        .uia_with(context, Context::node_request)
+        .map_err(|_| FocusReadMiss::Failed)?;
+    checked_focused_element(context, (uia, &nodes), hwnd, trigger)
+}
+
+/// The window with the keyboard focus whose focused element
+/// [`focused_control_in`] may read: this application's, not on Core's
+/// hidden frame, and readable. Local calls.
+fn checked_focus_window(context: &Context) -> Result<isize, FocusReadMiss> {
+    let hwnd = control_window(context.target_pid(), || context.focus_window())
+        .ok_or(FocusReadMiss::Refused)?;
+    if window_belongs_to_hidden_frame(hwnd) {
+        return Err(FocusReadMiss::Refused);
+    }
+    if let Some(reason) = event_window_unreadable(hwnd) {
+        tracing::debug!(
+            hwnd,
+            reason,
+            "the focus window cannot be read; its focus is not read"
+        );
+        return Err(FocusReadMiss::Refused);
+    }
+    Ok(hwnd)
+}
+
+/// The focused element, read with `GetFocusedElementBuildCache` filled by
+/// `nodes` and the element's process, and taken only when that process is
+/// the one serving `hwnd`, this outpost's application.
+fn checked_focused_element(
+    context: &Context,
+    (uia, nodes): (&Uia, &Request<Node>),
+    hwnd: isize,
+    trigger: FocusRead,
+) -> Result<Cached<Node>, FocusReadMiss> {
+    let focused_request = nodes.with_process().map_err(|_| FocusReadMiss::Failed)?;
+    tracing::debug!(?trigger, hwnd, "the application's focused element is read");
+    let element =
+        (context.focused_element)(uia, &focused_request).map_err(|_| FocusReadMiss::Failed)?;
+    let serving = context.target_pid();
+    let found = element.cached_process();
+    if found != Some(serving) {
+        tracing::debug!(
+            ?trigger,
+            hwnd,
+            serving,
+            ?found,
+            "the focused element read belongs to another process than the one serving the focus window; nothing more is read"
+        );
+        return Err(FocusReadMiss::Refused);
+    }
+    Ok(element)
+}
+
 /// Why [`focused_control_in`] answered no focus.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum FocusReadMiss {
@@ -1077,6 +1119,10 @@ pub(super) enum FocusRead {
     /// The listener's drop of a focus on its verdict in a window this
     /// outpost judges UIA.
     VerdictDrop,
+    /// A windowless text focus whose walk up the listener cut, so the
+    /// chain it sent holds only the focus and no route leads to its
+    /// element ([`focused_element_in`]).
+    CutWalk,
 }
 
 /// The window whose focused element [`focused_control_in`] reads for the

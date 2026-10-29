@@ -62,6 +62,13 @@ impl FocusPath {
         Self { chain }
     }
 
+    /// Whether the chain holds only the focus `runtime_id` names, which has
+    /// no window of its own: the listener's walk up from it was cut, so no
+    /// route leads to its element ([`Self::route_to`]).
+    pub(super) fn is_cut_at(&self, runtime_id: &[i32]) -> bool {
+        matches!(self.chain.as_slice(), [(id, 0)] if id == runtime_id)
+    }
+
     /// The route to the element of the chain whose runtime id is
     /// `runtime_id`: from the nearest element at or above it that has a
     /// window of its own. `None` when no element of the chain has that
