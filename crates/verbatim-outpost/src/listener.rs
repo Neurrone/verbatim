@@ -340,7 +340,7 @@ impl Backlog for Waiting {
 }
 
 /// The end of a menu or of the Alt+Tab switcher, waiting for its grace:
-/// when it ended, in milliseconds since the Unix epoch for Core, and its
+/// when it ended, in microseconds since the Unix epoch for Core, and its
 /// observed and handled stamps. NVDA fakes a focus from such an end only
 /// when no focus event was validly processed with it; a focus fact can
 /// still be dropped or fail to read, so Core, which knows which focus it

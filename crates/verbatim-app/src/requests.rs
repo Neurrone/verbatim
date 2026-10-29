@@ -1114,7 +1114,7 @@ mod tests {
     }
 
     /// A focus-now answer, asked for at the start or for a fake focus,
-    /// reaches Core with its stamp in milliseconds and microseconds, by
+    /// reaches Core with its stamp in microseconds, by
     /// which Core orders it against another application's focus.
     #[test]
     fn a_focus_now_answer_reaches_core_with_its_microseconds() {

@@ -99,8 +99,7 @@ recorder unchanged. What the reducer does with each type is in
 - `Input` and `Effect`: the reducer's contract.
   - Inputs are events (each with its source pid, backend, optional
     `WindowFacts`, and the observation time on the run's shared clock in
-    milliseconds and, for a focus, microseconds from the same clock read,
-    0 when the source gave milliseconds only), fetch completions (with
+    microseconds, one clock read for every event kind), fetch completions (with
     their `QueryKind`), `OutpostEnded` (an incarnation ended, so its node
     ids are dead), timer ticks, `Command` (a `ReviewCommand` and a
     press-repeat count), and what the shell's threads learn, since only

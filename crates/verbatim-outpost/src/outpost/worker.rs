@@ -1393,7 +1393,7 @@ impl Worker<'_> {
     /// focus of the same element that comes after it is reported under the
     /// same node, which Core takes as a duplicate. Its log says whether a
     /// listener UIA focus had reached the outpost before the copy was
-    /// observed, to the millisecond (`uia_focus_before`), and whether the
+    /// observed, to the microsecond (`uia_focus_before`), and whether the
     /// copy's window was gone as the read began (`sender_gone`), which
     /// together tell late delivery from a burst of gone senders. The focus
     /// is stamped with the copy's observation, not the time of the read,
